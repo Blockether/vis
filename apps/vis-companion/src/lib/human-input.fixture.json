@@ -2,14 +2,15 @@
   "is_cancellable": true,
   "id": "req-1",
   "submit_label": "Submit",
-  "cancel_label": "Cancel",
-  "title": "Deploy?",
-  "fields": [
+  "nodes": [
     {
+      "id": "heading-1",
       "type": "heading",
-      "text": "Target"
+      "text": "Target",
+      "level": 2
     },
     {
+      "id": "paragraph-2",
       "type": "paragraph",
       "text": "Staging pages nobody."
     },
@@ -104,11 +105,10 @@
       "placeholder": "Anything the on-call should know"
     },
     {
-      "id": "group:host+group:port+tls",
-      "name": "group:host+group:port+tls",
+      "id": "group-4",
       "type": "group",
       "direction": "row",
-      "fields": [
+      "children": [
         {
           "id": "host",
           "name": "host",
@@ -117,11 +117,10 @@
           "is_required": true
         },
         {
-          "id": "group:port+tls",
-          "name": "group:port+tls",
+          "id": "group-3",
           "type": "group",
           "direction": "column",
-          "fields": [
+          "children": [
             {
               "id": "port",
               "name": "port",
@@ -144,6 +143,8 @@
       "description": "Where the pool dials out"
     }
   ],
+  "cancel_label": "Cancel",
+  "title": "Deploy?",
   "session_id": "sid-1",
   "timeout_ms": 300000,
   "description": "prod"

@@ -86,7 +86,7 @@
                 (hi/init-form {:id "request-b"
                                :session-id "b1"
                                :title "Choose platform"
-                               :fields [{:id "platform" :type :plaintext :label "Platform"}]
+                               :nodes [{:id "platform" :type :plaintext :label "Platform"}]
                                :is-cancellable true}))))
 
 (defn news-fixture-db

@@ -38,7 +38,7 @@ class _ViewRecord:
 
 @dataclass(frozen=True, slots=True)
 class InputView(_ViewRecord):
-    """An open input form, including field schemas and engine-owned timeout metadata.
+    """An open input form, including its component tree and engine-owned timeout metadata.
 
     This describes the form, not a person's answers. Public close events do not
     include submitted values. Those values belong to the waiting extension.
@@ -48,7 +48,7 @@ class InputView(_ViewRecord):
     _definition = "input_view"
     id: str
     title: str
-    fields: tuple[Mapping[str, Any], ...]
+    nodes: tuple[Mapping[str, Any], ...]
     submit_label: str
     cancel_label: str
     is_cancellable: bool
@@ -80,6 +80,10 @@ class LiveView(_ViewRecord):
     source: str | None = None
     session_id: str | None = None
     owner: Mapping[str, Any] | None = None
+    placement: str | None = None
+    key: str | None = None
+    extension: str | None = None
+    is_stale: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,7 +15,7 @@ import {
 afterEach(cleanup);
 const view = () => liveViewFromWire(fixture)!;
 const all = (nodes: LiveNode[]): LiveNode[] =>
-  nodes.flatMap((n) => (n.type === 'group' ? [n, ...all(n.fields)] : [n]));
+  nodes.flatMap((n) => (n.type === 'group' ? [n, ...all(n.children)] : [n]));
 
 describe('the complete live vocabulary', () => {
   it('decodes every declared primitive and exposes every heading level', () => {
@@ -28,7 +28,7 @@ describe('the complete live vocabulary', () => {
       ),
     ).toEqual(
       new Set(
-        viewSchema.$defs.live_node.oneOf
+        viewSchema.$defs.component.oneOf
           .map((node) => node.properties.type.const)
           .filter((type) => type !== 'group'),
       ),

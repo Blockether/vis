@@ -126,8 +126,10 @@ class Host(Protocol):
         """Ask the human, and block until the answer settles or is cancelled."""
         ...
 
-    def live(self, envelope_json: str) -> str:
+    def live(self, envelope_json: str, listener: Any = None) -> str:
         """Open, patch, read or close a live view.
+
+        On `open`, `listener(event)` gets each human event of a panel or header view.
 
         `state` accepts timeout_ms (0..86400000) and after_seq (nonnegative).
         A positive timeout blocks until the sequence differs or the view closes.
@@ -3748,21 +3750,21 @@ def _validator_arity(fn):
     return 2 if positional >= 2 else 1
 
 
-def _field_specs(fields, validators):
-    # Canonicalize a field TREE to snake_case string keys and pull the `validate`
-    # callables out of it.
+def _field_specs(nodes, validators):
+    # Canonicalize a component TREE to snake_case string keys and pull the
+    # `validate` callables out of it.
     #
     # A validator is a FUNCTION, and a function is not JSON, so it never leaves
     # this process: every field's callables are popped out of the spec and kept
     # in `validators` by field name. The host is told only HOW MANY each field
     # declared and is handed a callback it re-enters on the thread the human
     # submitted on. Groups nest, so this walks the whole tree.
-    if not isinstance(fields, (list, tuple)) or not fields:
-        raise TypeError("a form needs a non-empty list of field specs")
+    if not isinstance(nodes, (list, tuple)) or not nodes:
+        raise TypeError("a form needs a non-empty list of nodes")
 
     def one(f):
         if not isinstance(f, dict):
-            raise TypeError("each field spec is a dict of snake_case string keys")
+            raise TypeError("each node is a dict of snake_case string keys")
         spec = {str(k): v for k, v in f.items()}
         checks = spec.pop("validate", None)
         if checks is not None:
@@ -3788,24 +3790,24 @@ def _field_specs(fields, validators):
             if not name:
                 raise TypeError("a field with validate needs a name")
             validators[name] = list(checks)
-        children = spec.get("fields")
+        children = spec.get("children")
         if isinstance(children, (list, tuple)):
-            spec["fields"] = [one(c) for c in children]
+            spec["children"] = [one(c) for c in children]
         return spec
 
-    return [one(f) for f in fields]
+    return [one(f) for f in nodes]
 
 
-def _request_spec(title, fields, options, validators):
+def _request_spec(title, nodes, options, validators):
     # The request object the host receives. Dialog options first, then the title
-    # and the field tree, so neither can be shadowed by an option key.
+    # and the component tree, so neither can be shadowed by an option key.
     request = {str(k): v for k, v in options.items()}
     request["title"] = str(title)
-    request["fields"] = _field_specs(fields, validators)
+    request["nodes"] = _field_specs(nodes, validators)
     return request
 
 
-def ask(title, fields, **options):
+def ask(title, nodes, **options):
     # Pause and ask the human for typed values, then BLOCK until they answer.
     #
     #   answer = vis.ask('Deploy', [
@@ -3840,17 +3842,16 @@ def ask(title, fields, **options):
     #        'validate': lambda v: None if v.isdigit() else 'must be digits'},
     #       {'name': 'confirm', 'type': 'password', 'validate':
     #        lambda v, values: None if v == values['pw'] else 'must match Password'},
-    # A 'group' is not a field at all — it LAYS OUT: 'fields' (its children) and
-    # 'direction' ('column' stacks, the default; 'row' side by side). Groups
-    # nest, need no name, and never appear in `values`, which stays flat.
+    # A 'group' is not a field at all — it LAYS OUT: 'children' and 'direction'
+    # ('column' stacks, the default; 'row' side by side). Groups nest and never
+    # appear in `values`, which stays flat.
     # Layout and value keys never mix: 'default'/'is_required'/'validate' on a
-    # group, or 'fields'/'direction' on an answerable field, are both REFUSED.
+    # group, or 'children'/'direction' on an answerable field, are both REFUSED.
     # Field types: plaintext, password, multiline, select, multiselect,
-    # checkbox, range, otp. Two node types answer nothing: 'group' is the node
-    # above them, and 'heading'/'paragraph' are pure DECORATION carrying only
-    # 'text' — a section title and the prose under it, so a long form reads like
-    # a page instead of a list. Decoration has no name and never lands in
-    # `values`; giving one a name, a default or a validate is REFUSED.
+    # checkbox, range, otp. Every other component of the catalog answers
+    # nothing: 'heading', 'paragraph', 'card', 'status' and the rest SHOW text
+    # or state, so a long form reads like a page instead of a list. They never
+    # land in `values`; giving one a name, a default or a validate is REFUSED.
     # Dialog options: description (prose under the title explaining
     # what the whole ask is about — it wraps), submit_label, cancel_label,
     # is_cancellable, timeout_ms.
@@ -3870,7 +3871,7 @@ def ask(title, fields, **options):
     import json
 
     validators = {}
-    request = _request_spec(title, fields, options, validators)
+    request = _request_spec(title, nodes, options, validators)
 
     def _run(name, index, value_json, values_json):
         # One validator, one value, one verdict. A raise is deliberately NOT
@@ -4000,7 +4001,7 @@ def _group(direction, fields):
     if fields and isinstance(fields[0], str):
         group["id"] = fields[0]
         fields = fields[1:]
-    group["fields"] = _group_fields(direction, fields)
+    group["children"] = _group_fields(direction, fields)
     return group
 
 
@@ -4015,6 +4016,26 @@ def column(*fields):
     # Stack these nodes, the default arrangement: worth saying out loud inside a
     # `row`.
     return _group("column", fields)
+
+
+def group(*children, direction="column", **spec):
+    """Group ``children`` with optional ``label``, ``description`` and folding.
+
+    A leading string is the group id. A submit button inside a group collects
+    the inputs of that group, so one view can hold several small forms.
+    """
+    node = _group(str(direction), children)
+    node.update({str(k): v for k, v in spec.items() if v is not None})
+    return node
+
+
+def card(node_id, title, **spec):
+    """A titled card with optional ``text``, ``tone`` and ``meta`` lines.
+
+    With ``is_selectable=True`` the human can activate it like a button, and
+    ``view[node_id].clicks`` counts the activations.
+    """
+    return _live_node("card", node_id, dict(spec, title=str(title)))
 
 
 def heading(text, live_text=None, **spec):
@@ -4238,6 +4259,18 @@ def list_sessions(search=None):
 # Nodes are addressed BY ID, because a view with two tables has no "the" table.
 
 _FLUSH_MS = 100
+_INPUT_TYPES = frozenset(
+    (
+        "plaintext",
+        "password",
+        "multiline",
+        "select",
+        "multiselect",
+        "checkbox",
+        "range",
+        "otp",
+    )
+)
 # Coalesce pushes briefly: a host round trip per written line would park the
 # extension on the journal writer once per line.
 
@@ -4268,6 +4301,33 @@ class Interrupted(Exception):
         super().__init__(f"live view {view_id} is no longer open{ended}{because}")
 
 
+@dataclass(frozen=True)
+class LiveEvent:
+    """One human action on a live view: `change`, `submit` or `activate`.
+
+    `value` is the new value of a changed input; a secret input gives only
+    `is_set`. `values` holds every input that a submit button collected.
+    """
+
+    type: str
+    node_id: str
+    seq: int
+    value: Any = None
+    values: Mapping[str, Any] | None = None
+    is_set: bool | None = None
+
+    @classmethod
+    def _from_wire(cls, raw):
+        return cls(
+            type=str(raw.get("type") or ""),
+            node_id=str(raw.get("node_id") or ""),
+            seq=int(raw.get("seq") or 0),
+            value=raw.get("value"),
+            values=raw.get("values"),
+            is_set=raw.get("is_set"),
+        )
+
+
 class _Node:
     """One node of a live view, addressed by its id."""
 
@@ -4279,10 +4339,12 @@ class _Node:
     def __repr__(self):
         return f"<vis {self.type} {self.node_id!r}>"
 
-    def _op(self, name, **payload):
+    def _op(self, name, keep_none=False, **payload):
         payload["op"] = name
         payload["node_id"] = self.node_id
-        return self._view._push({k: v for k, v in payload.items() if v is not None})
+        return self._view._push(
+            {k: v for k, v in payload.items() if keep_none or v is not None}
+        )
 
 
 class _KeyedNode(_Node):
@@ -4318,6 +4380,49 @@ class Spinner(_Node):
 class Button(_Node):
     def set(self, label=None, *, is_disabled=None):
         return self._op("set", label=label, is_disabled=is_disabled)
+
+    @property
+    def clicks(self):
+        """How often the human pressed this button."""
+        return int(self._view._node_state(self.node_id).get("clicks") or 0)
+
+
+class Card(_Node):
+    """A titled card. A selectable card counts activations like a button."""
+
+    def set(self, title=None, *, text=None, tone=None, meta=None, is_selectable=None):
+        return self._op(
+            "set",
+            title=title,
+            text=text,
+            tone=tone,
+            meta=None if meta is None else [str(line) for line in meta],
+            is_selectable=is_selectable,
+        )
+
+    @property
+    def clicks(self):
+        """How often the human activated this card."""
+        return int(self._view._node_state(self.node_id).get("clicks") or 0)
+
+
+class Input(_Node):
+    """One input component of a live view, read and set by id.
+
+    A secret input never shows its value: `value` is None for it, and its value
+    arrives only in the `submit` event, as a `vis-secret:` handle.
+    """
+
+    def set(self, value):
+        return self._op("set-value", value=value, keep_none=True)
+
+    def clear(self):
+        return self.set(None)
+
+    @property
+    def value(self):
+        """The current value, as the human or the extension last set it."""
+        return self._view._node_state(self.node_id).get("value")
 
 
 class Status(_Node):
@@ -4485,6 +4590,15 @@ _LIVE_NODES = {
     "log": Log,
     "table": Table,
     "link": Link,
+    "card": Card,
+    "plaintext": Input,
+    "password": Input,
+    "multiline": Input,
+    "select": Input,
+    "multiselect": Input,
+    "checkbox": Input,
+    "range": Input,
+    "otp": Input,
 }
 # The typed handle each schema-defined node type answers. Host-boundary tests
 # keep these handles aligned with the canonical View schema.
@@ -4526,7 +4640,7 @@ class LiveView:
     the body raised. A run that died midway still owes the model what happened.
     """
 
-    def __init__(self, request, flush_ms=None):
+    def __init__(self, request, flush_ms=None, on_event=None):
         import json
 
         self._json = json
@@ -4545,7 +4659,22 @@ class LiveView:
         self._last_flush = None
         self._last_read = None
         self._seq = 0
-        answer = self._call({"op": "open", "view": request})
+        self._cursor = 0
+        self._listeners = []
+        # A panel or header view gets its events from the host, as callbacks.
+        self._is_pushed = False
+        if on_event is not None:
+            self.on_event(on_event)
+            answer = self._json.loads(
+                _host.live(
+                    self._json.dumps({"op": "open", "view": request}), self._host_event
+                )
+            )
+            view = answer.get("view")
+            placement = view.get("placement") if isinstance(view, dict) else None
+            self._is_pushed = placement not in (None, "inline")
+        else:
+            answer = self._call({"op": "open", "view": request})
         self.view_id = str(answer.get("view_id") or "")
         self._settle(answer)
 
@@ -4553,6 +4682,12 @@ class LiveView:
 
     def _call(self, envelope):
         return self._json.loads(_host.live(self._json.dumps(envelope)))
+
+    def _host_event(self, raw):
+        """Give one event that the host pushed to every `on_event` callback."""
+        event = LiveEvent._from_wire(raw)
+        for callback in list(self._listeners):
+            callback(event)
 
     def _settle(self, answer):
         """Learn from every answer whether the view is still open."""
@@ -4578,14 +4713,15 @@ class LiveView:
         # A group is LAYOUT: it holds no items and takes no op, so a row lends its
         # place in the order to the nodes it arranges and never answers itself.
         for node in nodes:
-            if not isinstance(node, dict) or not node.get("id"):
+            node_id = isinstance(node, dict) and (node.get("id") or node.get("name"))
+            if not node_id:
                 continue
-            children = node.get("fields")
+            children = node.get("children")
             if isinstance(children, list):
                 self._index(children)
             else:
-                self._nodes[str(node["id"])] = str(node.get("type") or "")
-                self._order.append(str(node["id"]))
+                self._nodes[str(node_id)] = str(node.get("type") or "plaintext")
+                self._order.append(str(node_id))
 
     def _refuse_closed(self):
         raise Interrupted(self.view_id, self.reason, self.note)
@@ -4647,7 +4783,7 @@ class LiveView:
         for earlier in reversed(self._buffer):
             if earlier.get("node_id") != op.get("node_id"):
                 continue
-            if earlier["op"] == op["op"] == "set":
+            if earlier["op"] == op["op"] and op["op"] in ("set", "set-value"):
                 earlier.update(op)
                 return
             if earlier["op"] == op["op"] == "append" and _merge_append(earlier, op):
@@ -4707,6 +4843,8 @@ class LiveView:
             )
         )
         self._last_read = time.monotonic()
+        if self._listeners and self._is_open:
+            self.events()
         return not answer.get("timed_out", False)
 
     @property
@@ -4756,6 +4894,76 @@ class LiveView:
         return self._result
 
     # -- nodes ----------------------------------------------------------------
+
+    def _node_state(self, node_id):
+        """The current wire map of node `node_id`, read from the host."""
+        stack = list(self.state().get("nodes") or [])
+        while stack:
+            node = stack.pop(0)
+            if not isinstance(node, dict):
+                continue
+            if (node.get("id") or node.get("name")) == node_id:
+                return node
+            stack.extend(node.get("children") or [])
+        raise KeyError(f"this view has no node {node_id!r}")
+
+    def values(self):
+        """Every visible input value by node id. Secret inputs are left out."""
+        found = {}
+        stack = list(self.state().get("nodes") or [])
+        while stack:
+            node = stack.pop(0)
+            if not isinstance(node, dict):
+                continue
+            stack.extend(node.get("children") or [])
+            if node.get("type") in _INPUT_TYPES and not node.get("is_secret"):
+                found[str(node.get("id") or node.get("name"))] = node.get("value")
+        return found
+
+    def events(self, timeout=None):
+        """Return the human actions that arrived since the last call.
+
+        Without `timeout` this never waits. With `timeout` seconds it waits up
+        to that long for the first new event. Each event also goes to every
+        callback that `on_event` registered, in arrival order.
+        """
+        wait_ms = 0
+        if timeout is not None:
+            seconds = float(timeout)
+            if not math.isfinite(seconds) or not 0 <= seconds <= 86400:
+                raise ValueError("timeout must be between 0 and 86400 seconds")
+            wait_ms = math.ceil(seconds * 1000)
+        self.flush()
+        answer = self._call(
+            {
+                "op": "events",
+                "view_id": self.view_id,
+                "after": self._cursor,
+                "timeout_ms": wait_ms,
+            }
+        )
+        if not answer.get("is_open", True):
+            self._settle(answer)
+        self._cursor = int(answer.get("cursor") or self._cursor)
+        fresh = [LiveEvent._from_wire(raw) for raw in answer.get("events") or []]
+        if not self._is_pushed:
+            for event in fresh:
+                for callback in list(self._listeners):
+                    callback(event)
+        return fresh
+
+    def on_event(self, callback):
+        """Call `callback(event)` for each event that `events` or `sleep` reads.
+
+        A panel or header view opened with `vis.live(..., on_event=...)` gets its
+        events from the host instead. Each one runs as an extension callback with
+        the view session bound, also when no extension code waits on the view.
+        Returns the callback, so you can use this method as a decorator.
+        """
+        if not callable(callback):
+            raise TypeError("on_event takes a function of one LiveEvent")
+        self._listeners.append(callback)
+        return callback
 
     def node(self, node_id):
         """The typed handle for one node, by id."""
@@ -4936,15 +5144,20 @@ def _merge_append(earlier, op):
     return True
 
 
-def live(title, nodes, **options):
+def live(title, nodes, placement=None, key=None, on_event=None, **options):
     """Open a live view and answer the handle that drives it.
 
     View options: description, source, session_id, channel_ids, plus `flush_ms`
     for the batching window. EVERY key is a snake_case string, exactly as
     `vis.ask` documents. There is no cancellable flag: a human can always stop
     watching, and the verdict says they did (`is_from_human`) and why (`note`).
-    plus `flush_ms` for the batching window. EVERY key is a snake_case string,
-    exactly as `vis.ask` documents.
+
+    `placement` is `inline` (the default), `panel` (one session) or `header`
+    (this machine). Only extension code opens a panel or header view, and it
+    needs a `key`: the extension and the key own one view, so opening the same
+    key again replaces it. Such a view stays open after the call returns. It
+    closes on `close()` or when the extension unloads. `on_event(event)` then
+    runs for each human change, submit or activate, with the view session bound.
 
     The view is mounted at once and nothing blocks — use it as a context
     manager so it closes itself:
@@ -4959,7 +5172,11 @@ def live(title, nodes, **options):
     request = {str(k): v for k, v in options.items()}
     request["title"] = str(title)
     request["nodes"] = list(nodes)
-    return LiveView(request, flush_ms=flush_ms)
+    if placement is not None:
+        request["placement"] = str(placement)
+    if key is not None:
+        request["key"] = str(key)
+    return LiveView(request, flush_ms=flush_ms, on_event=on_event)
 
 
 # -- Extension live-view test harness -----------------------------------------
@@ -4985,6 +5202,9 @@ class _LiveRecorder:
         self._view = None
         self._result = None
         self._seq = 0
+        self._events = []
+        self._cursor = 0
+        self._listener = None
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
@@ -4999,7 +5219,7 @@ class _LiveRecorder:
     def _nodes(nodes):
         for node in nodes or []:
             yield node
-            yield from _LiveRecorder._nodes(node.get("fields"))
+            yield from _LiveRecorder._nodes(node.get("children"))
 
     def _open_view(self):
         """Return the materialized view; a test must open one first."""
@@ -5012,7 +5232,7 @@ class _LiveRecorder:
         return next(
             node
             for node in self._nodes(self._open_view().get("nodes"))
-            if node["id"] == node_id
+            if node.get("id") == node_id
         )
 
     @staticmethod
@@ -5046,6 +5266,14 @@ class _LiveRecorder:
             elif kind == "button":
                 node["clicks"] = 0
                 node.setdefault("is_disabled", False)
+            elif kind == "card" and node.get("is_selectable"):
+                node["clicks"] = 0
+            elif kind in _INPUT_TYPES:
+                node.setdefault("id", node.get("name"))
+                node.setdefault("name", node["id"])
+                node.setdefault("label", node["id"])
+                node.setdefault("is_required", False)
+                node["is_secret"] = kind in ("password", "otp")
             elif kind == "table":
                 node.setdefault("rows", [])
                 node.setdefault("max_rows", 5000)
@@ -5062,7 +5290,7 @@ class _LiveRecorder:
             for index, node in enumerate(nodes or []):
                 if node.get("id") == node_id:
                     return nodes, index
-                found = find(node.get("fields"))
+                found = find(node.get("children"))
                 if found is not None:
                     return found
             return None
@@ -5100,6 +5328,11 @@ class _LiveRecorder:
             # that leaves the key out.
             if "detail" in op and not str(op["detail"]).strip():
                 node.pop("detail", None)
+        elif action == "set-value":
+            if op.get("value") is None:
+                node.pop("value", None)
+            else:
+                node["value"] = self._copy(op["value"])
         elif action == "clear":
             key = "lines" if node["type"] == "log" else self._COLLECTION[node["type"]]
             node[key] = []
@@ -5174,6 +5407,12 @@ class _LiveRecorder:
                     return json.dumps(
                         {"view_id": self.view_id, "is_open": True, "timed_out": True}
                     )
+            if envelope.get("op") == "events" and envelope.get("timeout_ms", 0) > 0:
+                after = envelope.get("after", 0)
+                self._condition.wait_for(
+                    lambda: self._result is not None or self._cursor > after,
+                    timeout=envelope["timeout_ms"] / 1000,
+                )
             answer = self._dispatch_live(envelope)
             if envelope.get("op") in {"patch", "close"}:
                 self._condition.notify_all()
@@ -5199,6 +5438,14 @@ class _LiveRecorder:
             answer = {"view_id": self.view_id, "is_open": True, "seq": self._seq}
         elif action == "state":
             answer = {"view_id": self.view_id, "is_open": True, "view": self._view}
+        elif action == "events":
+            after = envelope.get("after", 0)
+            answer = {
+                "view_id": self.view_id,
+                "is_open": True,
+                "cursor": self._cursor,
+                "events": [e for e in self._events if e["seq"] > after],
+            }
         elif action == "close":
             ending = envelope.get("ending") or {}
             reason = ending.get("reason") or "completed"
@@ -5223,10 +5470,16 @@ class _LiveRecorder:
             raise AssertionError(f"unsupported test live envelope: {envelope!r}")
         return json.dumps(answer)
 
-    def live(self, envelope_json):
-        """Record and apply one envelope emitted by the extension."""
+    def live(self, envelope_json, listener=None):
+        """Record and apply one envelope emitted by the extension.
+
+        A `listener` gets each simulated event of a panel or header view, as the
+        host gives it to `on_event` callbacks.
+        """
         import json
 
+        if listener is not None:
+            self._listener = listener
         self.said.append(json.loads(envelope_json))
         return self.host_live(envelope_json)
 
@@ -5236,14 +5489,17 @@ class _LiveRecorder:
 
         with self._condition:
             node = self.node(node_id)
+            is_card = node.get("type") == "card" and node.get("is_selectable")
             if (
                 self._result is not None
-                or node.get("type") != "button"
+                or (node.get("type") != "button" and not is_card)
                 or node.get("is_disabled")
             ):
                 raise AssertionError(
-                    "only an enabled button in an open view can be activated"
+                    "only an enabled button or a selectable card in an open view "
+                    "can be activated"
                 )
+            self._event("activate", node_id)
             return json.loads(
                 self.host_live(
                     json.dumps(
@@ -5262,6 +5518,118 @@ class _LiveRecorder:
                     )
                 )
             )
+
+    def _event(self, kind, node_id, **payload):
+        self._cursor += 1
+        event = {"type": kind, "node_id": str(node_id), "seq": self._cursor, **payload}
+        self._events.append(event)
+        placement = (self._view or {}).get("placement", "inline")
+        if self._listener is not None and placement != "inline":
+            self._listener(self._copy(event))
+
+    def _patch_ops(self, ops):
+        import json
+
+        return json.loads(
+            self.host_live(
+                json.dumps(
+                    {"op": "patch", "view_id": self.view_id, "patch": {"ops": ops}}
+                )
+            )
+        )
+
+    def change(self, node_id, value):
+        """Simulate the human setting one input; queue its `change` event."""
+        with self._condition:
+            node = self.node(node_id)
+            if self._result is not None or node.get("type") not in _INPUT_TYPES:
+                raise AssertionError("only an input in an open view can change")
+            if node.get("is_secret"):
+                self._event("change", node_id, is_set=value is not None)
+                self._condition.notify_all()
+                return {"is_accepted": True, "node_id": str(node_id)}
+            self._patch_ops(
+                [{"op": "set-value", "node_id": str(node_id), "value": value}]
+            )
+            self._event("change", node_id, value=self._copy(value))
+            self._condition.notify_all()
+            return {"is_accepted": True, "node_id": str(node_id)}
+
+    def submit(self, node_id, values=None):
+        """Simulate a submit button: check its group and queue one `submit` event.
+
+        A required input without a value gives field errors and changes nothing,
+        like the host does.
+        """
+        with self._condition:
+            button = self.node(node_id)
+            if (
+                self._result is not None
+                or button.get("type") != "button"
+                or button.get("action") != "submit"
+            ):
+                raise AssertionError("only a submit button in an open view can submit")
+            if button.get("is_disabled"):
+                return {"is_accepted": False, "reason": "disabled"}
+            scope = [
+                node
+                for node in self._nodes(self._scope(str(node_id)))
+                if node.get("type") in _INPUT_TYPES
+            ]
+            given = dict(values or {})
+            collected = {}
+            errors = {}
+            for node in scope:
+                node_id_ = node["id"]
+                value = given.get(node_id_, node.get("value"))
+                if value in (None, "", []) and node.get("is_required"):
+                    errors[node_id_] = "is required"
+                elif node.get("is_secret"):
+                    collected[node_id_] = (
+                        None if value is None else f"vis-secret:test-{node_id_}"
+                    )
+                else:
+                    collected[node_id_] = self._copy(value)
+            if errors:
+                return {"is_accepted": False, "reason": "invalid", "errors": errors}
+            self._patch_ops(
+                [
+                    {
+                        "op": "set",
+                        "node_id": str(node_id),
+                        "clicks": button.get("clicks", 0) + 1,
+                    }
+                ]
+                + [
+                    {
+                        "op": "set-value",
+                        "node_id": node["id"],
+                        "value": collected[node["id"]],
+                    }
+                    for node in scope
+                    if not node.get("is_secret")
+                ]
+            )
+            self._event("submit", node_id, values=collected)
+            self._condition.notify_all()
+            return {"is_accepted": True, "node_id": str(node_id)}
+
+    def _scope(self, node_id):
+        """The nodes that submit button `node_id` collects: its nearest group."""
+
+        def walk(scope, nodes):
+            for node in nodes or []:
+                if node.get("id") == node_id:
+                    return scope
+                children = node.get("children")
+                if children:
+                    found = walk(children, children)
+                    if found is not None:
+                        return found
+            return None
+
+        nodes = self._open_view().get("nodes")
+        return walk(nodes, nodes) or []
 
     def select(self, node_id, selected_ids):
         """Simulate a surface selecting rows without recording extension output."""
@@ -5423,7 +5791,7 @@ def disclosure(node_id, label, *nodes, default_expanded=False):
         {
             "label": str(label),
             "direction": "column",
-            "fields": _group_fields("disclosure", nodes),
+            "children": _group_fields("disclosure", nodes),
             "is_collapsible": True,
             "default_expanded": default_expanded,
         },

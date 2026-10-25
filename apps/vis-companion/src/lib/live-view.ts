@@ -7,6 +7,11 @@
 import type { SseEvent } from './types';
 import type { ActivityProjection, ActivityRow } from './activity';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, viewKind } from './view';
+import {
+  HUMAN_INPUT_FIELD_TYPES,
+  humanInputFieldFromWire,
+  type HumanInputField,
+} from './human-input';
 
 /** What a view can be MADE of (`view.spec/live-node-types`). CLOSED. */
 export const LIVE_NODE_TYPES = [
@@ -23,7 +28,11 @@ export const LIVE_NODE_TYPES = [
   'spinner',
   'button',
   'divider',
+  'card',
 ] as const;
+
+/** The inputs a live view can hold: the form's own input types. */
+export const LIVE_INPUT_TYPES = HUMAN_INPUT_FIELD_TYPES;
 
 /**
  * The one node that paints NOTHING of its own: it ARRANGES the nodes it holds,
@@ -73,6 +82,7 @@ export const LIVE_TABLE_MAX_ROWS = 5000;
 export const LIVE_NOTE_CHARS = 500;
 
 export type LiveNodeType = (typeof LIVE_NODE_TYPES)[number];
+export type LiveInputType = (typeof LIVE_INPUT_TYPES)[number];
 export type LiveTone = (typeof LIVE_TONES)[number];
 export type LiveLinkTarget = (typeof LIVE_LINK_TARGETS)[number];
 export type LiveAlign = (typeof LIVE_ALIGNS)[number];
@@ -219,8 +229,32 @@ export interface LiveSpinnerNode extends LiveNodeBase {
 export interface LiveButtonNode extends LiveNodeBase {
   type: 'button';
   label: string;
+  /** `activate` sends one click; `submit` sends the inputs of the nearest group. */
+  action: 'activate' | 'submit';
   is_disabled: boolean;
   clicks: number;
+}
+
+/** A choice tile: a title, optional text and meta line, and a click count. */
+export interface LiveCardNode extends LiveNodeBase {
+  type: 'card';
+  title: string;
+  text?: string;
+  meta?: string;
+  tone?: LiveTone;
+  is_selectable: boolean;
+  clicks: number;
+}
+
+/**
+ * A form input inside a live view. `field` is the form's own field; `value` is
+ * the current value, absent for a secret, which only says `is_set`.
+ */
+export interface LiveInputNode extends LiveNodeBase {
+  type: LiveInputType;
+  field: HumanInputField;
+  value?: unknown;
+  is_set?: boolean;
 }
 
 /**
@@ -231,7 +265,7 @@ export interface LiveButtonNode extends LiveNodeBase {
 export interface LiveGroupNode extends LiveNodeBase {
   type: 'group';
   direction: LiveGroupDirection;
-  fields: LiveNode[];
+  children: LiveNode[];
   is_collapsible?: boolean;
   default_expanded?: boolean;
 }
@@ -257,6 +291,8 @@ export type LiveLeafNode =
   | LiveCodeNode
   | LiveSpinnerNode
   | LiveButtonNode
+  | LiveCardNode
+  | LiveInputNode
   | LiveDividerNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
@@ -475,21 +511,33 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
   // What every node carries whatever it paints: its address and its heading.
   const base = { id, label: optionalText(node.label) };
   // A group is a layout, not content: an empty one is a hole rather than an
-  // arrangement, so it never reaches the screen (`:live-view/fields`).
+  // arrangement, so it never reaches the screen (`:live-view/children`).
   if (type === LIVE_GROUP_TYPE) {
-    const fields = liveNodesFromWire(node.fields);
-    if (fields.length === 0) return null;
+    const children = liveNodesFromWire(node.children);
+    if (children.length === 0) return null;
     return {
       ...base,
       type: 'group',
       direction: node.direction === 'row' ? 'row' : 'column',
-      fields,
+      children,
       ...(node.is_collapsible === undefined
         ? {}
         : { is_collapsible: node.is_collapsible === true }),
       ...(node.default_expanded === undefined
         ? {}
         : { default_expanded: node.default_expanded === true }),
+    };
+  }
+  if ((LIVE_INPUT_TYPES as readonly string[]).includes(type)) {
+    const field = humanInputFieldFromWire(node);
+    if (!field) return null;
+    return {
+      ...base,
+      label: field.label,
+      type: field.type as LiveInputType,
+      field,
+      ...('value' in node ? { value: node.value } : {}),
+      ...(node.is_set === undefined ? {} : { is_set: node.is_set === true }),
     };
   }
   if (!(LIVE_NODE_TYPES as readonly string[]).includes(type)) return null;
@@ -527,6 +575,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         ...base,
         type: 'button',
         label: base.label || id,
+        action: node.action === 'submit' ? 'submit' : 'activate',
         is_disabled: node.is_disabled === true,
         clicks: count(node.clicks, 0),
       };
@@ -583,6 +632,17 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
     }
     case 'link':
       return { ...base, type: 'link', links: keyed(node.links, linkFromWire) };
+    case 'card':
+      return {
+        ...base,
+        type: 'card',
+        title: text(node.title) || id,
+        text: optionalText(node.text),
+        meta: optionalText(node.meta),
+        ...(node.tone === undefined ? {} : { tone: tone(node.tone) }),
+        is_selectable: node.is_selectable === true,
+        clicks: count(node.clicks, 0),
+      };
   }
 }
 
@@ -703,6 +763,7 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
     case 'code':
     case 'spinner':
     case 'button':
+    case 'card':
       return liveNodeFromWire({ ...node, ...op }) ?? node;
     case 'status':
       return {
@@ -748,6 +809,13 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
         links: 'links' in op ? keyed(op.links, linkFromWire) : node.links,
       };
     default:
+      if ('field' in node) {
+        return {
+          ...node,
+          ...('value' in op ? { value: op.value } : {}),
+          ...('is_set' in op ? { is_set: op.is_set === true } : {}),
+        };
+      }
       return 'label' in op ? { ...node, label: optionalText(op.label) } : node;
   }
 }
@@ -853,7 +921,7 @@ function applyClear(node: LiveLeafNode): LiveNode {
 /** Every id in the tree, groups included (`live/node-ids`). */
 function treeIds(nodes: LiveNode[]): string[] {
   return nodes.flatMap((node) =>
-    node.type === 'group' ? [node.id, ...treeIds(node.fields)] : [node.id],
+    node.type === 'group' ? [node.id, ...treeIds(node.children)] : [node.id],
   );
 }
 
@@ -871,10 +939,10 @@ function mapNode(nodes: LiveNode[], id: string, rewrite: (node: LiveNode) => Liv
       return patched;
     }
     if (node.type !== 'group') return node;
-    const fields = mapNode(node.fields, id, rewrite);
-    if (fields === node.fields) return node;
+    const children = mapNode(node.children, id, rewrite);
+    if (children === node.children) return node;
     changed = true;
-    return { ...node, fields };
+    return { ...node, children };
   });
   return changed ? next : nodes;
 }
@@ -894,10 +962,10 @@ function insertAfter(nodes: LiveNode[], after: string, node: LiveNode): LiveNode
   for (let index = 0; index < nodes.length; index += 1) {
     const child = nodes[index];
     if (child.type !== 'group') continue;
-    const fields = insertAfter(child.fields, after, node);
-    if (!fields) continue;
+    const children = insertAfter(child.children, after, node);
+    if (!children) continue;
     const next = nodes.slice();
-    next[index] = { ...child, fields };
+    next[index] = { ...child, children };
     return next;
   }
   return null;
@@ -910,10 +978,10 @@ function dropNode(nodes: LiveNode[], id: string): LiveNode[] {
   let changed = false;
   const next = nodes.map((node) => {
     if (node.type !== 'group') return node;
-    const fields = dropNode(node.fields, id);
-    if (fields === node.fields) return node;
+    const children = dropNode(node.children, id);
+    if (children === node.children) return node;
     changed = true;
-    return { ...node, fields };
+    return { ...node, children };
   });
   return changed ? next : nodes;
 }

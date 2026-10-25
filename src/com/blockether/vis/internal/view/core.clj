@@ -35,7 +35,8 @@
             [com.blockether.vis.internal.view.validation :as validation]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
-            [taoensso.telemere :as tel]))
+            [taoensso.telemere :as tel])
+  (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 
 (set! *warn-on-reflection* true)
 
@@ -65,6 +66,15 @@
 (def ^:dynamic *block-owner*
   "The current block's owner token: an atom that becomes true when execution ends.
    Host callbacks inherit this binding. Views keep it until they close."
+  nil)
+
+(def ^:dynamic *live-owner*
+  "The extension whose host door opens or drives a live view, as `{:extension name
+   :context ctx :listener f}`, or nil. Only an owner opens a `panel` or `header`
+   view. The `python_execution` sandbox has no owner, so it never opens one.
+
+   `:listener` receives each human event as `(listener event session-id)` on a
+   thread of its own. The door that made it binds that session for the callback."
   nil)
 
 (defonce ^:private human-stops
@@ -197,25 +207,6 @@
     (invalid-field! field-id why)
     field))
 
-(defn- checked-group
-  "`group` once it satisfies the declared contract for a LAYOUT node, not a
-   field's. A group answers nothing, so what it must have is different: children,
-   a direction they run in, and no key that describes a value."
-  [field-id group]
-  (if-let [why (view-spec/group-error group)]
-    (invalid-field! field-id why)
-    group))
-
-(defn- checked-decor
-  "`decor` once it satisfies the declared contract for a DECORATION. It answers
-   nothing and arranges nothing, so the only thing it must have is the words it
-   paints — and it must carry nothing that would make a surface go looking for a
-   value it can never hold."
-  [decor]
-  (if-let [why (view-spec/decor-error decor)]
-    (invalid-field! nil why)
-    decor))
-
 (defn- checked-request
   [request]
   (if-let [why (view-spec/request-error request)]
@@ -255,10 +246,6 @@
    silence drew the form flat and sent the author hunting for a layout bug in the
    surfaces, so it is refused with the fix in the message."
   view-spec/layout-keys)
-
-(def ^:private group-keys "Every key a `group` may carry." view-spec/group-keys)
-
-(def ^:private decor-keys "Every key a decoration may carry." view-spec/decor-keys)
 
 (def ^:private option-keys "Every key one `:options` entry may carry." view-spec/option-keys)
 
@@ -418,30 +405,20 @@
         (str ":max_length must be at most " (:ceiling view-spec/otp-defaults) " digits")))
     {:min-length lo :max-length hi}))
 
-(defn- normalize-direction
-  [field-id value]
-  (let [name' (str/lower-case (or (trimmed value) "column"))]
-    (or (get view-spec/group-directions name')
-        (invalid-field! field-id
-                        (str "unknown :direction " (pr-str name')
-                             " — expected one of "
-                             (str/join ", " (sort (keys view-spec/group-directions))))))))
+(declare coerce-value)
 
-(declare coerce-value normalize-node)
+(defn- raw-type-name
+  "The lower-case type name of a RAW spec node, from a string or a keyword."
+  [node]
+  (let [type (:type node)]
+    (str/lower-case (or (if (keyword? type) (name type) (trimmed type)) ""))))
 
 (defn- group-node?
   "True when this RAW spec node asks to be a layout group. Decided from the type
    name alone, and decided FIRST: which keys are legal, whether a `:name` is
    required and whether the node may hold children all follow from the answer."
   [node]
-  (= view-spec/group-type-name (str/lower-case (or (trimmed (:type node)) ""))))
-
-(defn- decor-type
-  "The internal DECORATION type this RAW spec node asks for, or nil when it asks
-   for something answerable. Read from the type name alone and read FIRST, like
-   [[group-node?]]: a heading is ink on the form, so it never walks a value path."
-  [node]
-  (get view-spec/decor-types (str/lower-case (or (trimmed (:type node)) ""))))
+  (= view-spec/group-type-name (raw-type-name node)))
 
 (defn normalize-field
   "Validate one FIELD spec — a leaf holding exactly one answer — and return its
@@ -457,21 +434,20 @@
      - `:description` is the prose under that label, rendered in italic by every
        dialog.
 
-   A layout group is not a field and never arrives here: [[normalize-node]]
-   routes it to [[normalize-group]] before a single value key is parsed."
+   A layout group or a display component is not a field and never arrives
+   here: [[normalize-component]] routes it before a single value key is parsed."
   [field]
   (when-not (map? field) (invalid-field! nil "field must be a map"))
   (when (group-node? field)
     (invalid-field! (trimmed (pick field :name :id))
                     (str "a group is not a field — it holds no answer, only the fields it"
                          " arranges. Normalize a node of the tree with normalize-node.")))
-  (when-let [decor (decor-type field)]
+  (when-let [display (get view-spec/live-node-types
+                          (str/lower-case (or (trimmed (:type field)) "")))]
     (invalid-field! (trimmed (pick field :name :id))
-                    (str "a "
-                         (name decor)
-                         " is a decoration, not a field — it holds no answer,"
-                         " only the words it paints. Normalize a node of the tree with"
-                         " normalize-node.")))
+                    (str "a " (name display)
+                         " is a display component, not a field — it holds no answer."
+                         " Normalize a node of the tree with normalize-node.")))
   (let [field-id
         (trimmed (pick field :name :id))
 
@@ -577,70 +553,6 @@
           (some? default)
           (assoc :default default))))))
 
-(defn- normalize-group
-  "Validate a layout `group` and return its internal form.
-
-   A group answers nothing: it has `:fields` of its own and a `:direction` they
-   run in, and because a child may itself be a group, `row` and `column` compose
-   into any arrangement without a single new key. Its `:name` is optional; when
-   the spec does not give one it is derived from the children, so a surface
-   still has a stable key to draw rows under and no author has to invent an
-   identifier for a box that only exists to hold two fields side by side."
-  [group]
-  (let [field-id (trimmed (pick group :name :id))]
-    (check-keys! "group" group-keys group #(invalid-field! field-id %))
-    (let [raw (:fields group)
-          _ (when-not (sequential? raw) (invalid-field! field-id "group needs a :fields sequence"))
-          children (mapv normalize-node raw)
-          _ (when (empty? children) (invalid-field! field-id "group needs at least one field"))
-          id (or field-id (str "group:" (str/join "+" (map :name children))))
-          description (trimmed (:description group))]
-
-      (checked-group id
-                     (cond-> {:id id
-                              :name id
-                              :type view-spec/group-type
-                              :direction (normalize-direction field-id (:direction group))
-                              :fields children}
-                       (trimmed (:label group))
-                       (assoc :label (trimmed (:label group)))
-
-                       description
-                       (assoc :description description))))))
-
-(defn- normalize-decor
-  "Validate a DECORATION — a heading or a paragraph — and return its internal
-   form. Throws `ex-info` with `:type :vis/view-invalid-field` on a bad
-   spec.
-
-   The whole node is two things: which decoration it is, and the words it
-   paints. It has no `:name`, which is the point — there is no identity, so it
-   is never keyed, never focused, never in an answer map, and two paragraphs
-   saying the same thing are two decorations rather than a name collision."
-  [decor]
-  (let [type (decor-type decor)]
-    (check-keys! (name type) decor-keys decor #(invalid-field! nil %))
-    (let [text (trimmed (:text decor))]
-      (when-not text
-        (invalid-field! nil (str "a " (name type) " must carry :text — the words it paints")))
-      (checked-decor {:type type :text text}))))
-
-(defn normalize-node
-  "Validate one node of a request's field TREE and return its internal form.
-
-   This is the fork the whole shape hangs on, and it is taken ONCE, up here: a
-   `group` is control flow — it arranges the children below it and holds no
-   answer — a `heading` or a `paragraph` is pure decoration that neither asks
-   nor arranges, and anything else is a field holding exactly one answer.
-   Deciding it above the three normalizers is why [[normalize-field]] never has
-   to ask whether it is really layout or ink, and why no value path below
-   carries a branch for a node that can never take one."
-  [node]
-  (when-not (map? node) (invalid-field! nil "field must be a map"))
-  (cond (group-node? node) (normalize-group node)
-        (decor-type node) (normalize-decor node)
-        :else (normalize-field node)))
-
 (defn- leaves!
   "Conjoin every ANSWERABLE field of `fields` onto TRANSIENT vector `acc`, depth
    first. A group is walked through and a decoration is dropped — neither holds
@@ -650,7 +562,7 @@
    vector for every group it entered."
   [acc fields]
   (reduce (fn [acc {:keys [type] :as field}]
-            (cond (= view-spec/group-type type) (leaves! acc (:fields field))
+            (cond (= view-spec/group-type type) (leaves! acc (:children field))
                   (view-spec/decoration? field) acc
                   :else (conj! acc field)))
           acc
@@ -673,7 +585,7 @@
   [acc fields]
   (reduce (fn [acc {:keys [type] :as field}]
             (if (= view-spec/group-type type)
-              (nodes! (conj! acc field) (:fields field))
+              (nodes! (conj! acc field) (:children field))
               (conj! acc field)))
           acc
           fields))
@@ -689,7 +601,7 @@
   (mapv (fn [{:keys [type] :as field}]
           (f (cond-> field
                (= view-spec/group-type type)
-               (update :fields #(map-fields f %)))))
+               (update :children #(map-fields f %)))))
         fields))
 
 (defn- ambient-session-id
@@ -750,56 +662,6 @@
     (when (neg? (long ms)) (fail! ":timeout-ms must not be negative — 0 waits indefinitely"))
     (long ms)))
 
-(defn normalize-request
-  "Validate an input View request spec and return its internal form. Throws
-   `ex-info` with View-owned error data on a bad spec."
-  [request]
-  (when-not (map? request) (invalid-request! "request must be a map"))
-  (check-keys! "request" request-keys request invalid-request!)
-  (let [title
-        (trimmed (:title request))
-
-        _
-        (when-not title (invalid-request! "request needs a non-blank :title"))
-
-        raw-fields
-        (:fields request)
-
-        _
-        (when-not (sequential? raw-fields) (invalid-request! ":fields must be a sequence"))
-
-        fields
-        (mapv normalize-node raw-fields)
-
-        _
-        (when (empty? fields) (invalid-request! ":fields must not be empty"))
-
-        _
-        (let [names (into [] (keep :name) (all-fields fields))]
-          (when-not (or (empty? names) (apply distinct? names))
-            (invalid-request! "field names must be distinct")))
-
-        session-id
-        (or (trimmed (:session-id request)) (ambient-session-id))]
-
-    (checked-request
-      (cond-> {:id (or (trimmed (:id request)) (str (random-uuid)))
-               :title title
-               :fields fields
-               :submit-label (or (trimmed (:submit-label request)) "Submit")
-               :cancel-label (or (trimmed (:cancel-label request)) "Cancel")
-               :is-cancellable (normalize-bool nil ":is-cancellable" (:is-cancellable request) true)
-               :timeout-ms (normalize-timeout request default-timeout-ms invalid-request!)
-               :channel-ids (normalize-channel-ids request invalid-request!)}
-        session-id
-        (assoc :session-id session-id)
-
-        (trimmed (:description request))
-        (assoc :description (trimmed (:description request)))
-
-        (trimmed (:source request))
-        (assoc :source (trimmed (:source request)))))))
-
 ;; A live view — the second kind of interaction
 ;;
 ;; The same parser, deliberately: closed tables looked up rather than keywords
@@ -845,10 +707,10 @@
 
 (def ^:private live-node-decl-keys
   "Every key a NODE spec may write. `total_lines` is the engine's stamp on a log:
-   the size of the RECORD is counted, never claimed. `direction` and `fields`
+   the size of the RECORD is counted, never claimed. `direction` and `children`
    belong to a layout GROUP and are refused here BY NAME, so a `status` written
    with children hears about them instead of having them dropped."
-  (reduce disj view-spec/live-node-keys #{:total-lines :clicks :direction :fields}))
+  (reduce disj view-spec/live-node-keys #{:total-lines :clicks :direction :children}))
 
 (def ^:private live-group-decl-keys
   "Every key a live layout GROUP spec may write: its own vocabulary, so `lines` on
@@ -1037,166 +899,314 @@
                              (live-term fail! ":dir" view-spec/live-sort-dirs (:dir order)))))
         :else (live-term fail! ":order" view-spec/live-orders order)))
 
+(defn- input-node
+  "One input component. A form takes the field as declared. A live view also
+   takes its current `:value`, coerced into the field domain; a secret input
+   never declares one, because only the host holds its handle."
+  [fail! context node]
+  (if (= :form context)
+    (do (when (contains? node :value)
+          (invalid-field! (trimmed (pick node :name :id))
+                          "a form input takes :default, not :value"))
+        (normalize-field node))
+    (let [field
+          (try (normalize-field (dissoc node :value))
+               (catch clojure.lang.ExceptionInfo e
+                 (if (= :vis/view-invalid-field (:type (ex-data e)))
+                   (fail! (str "field " (:field-id (ex-data e)) ": " (:reason (ex-data e))))
+                   (throw e))))
+
+          raw
+          (:value node)]
+
+      (cond (nil? raw) field
+            (:is-secret field) (fail! (str "field " (:id field) ": a secret input has no :value"))
+            :else (let [[status value] (coerce-value (assoc field :is-required false) raw)]
+                    (when (= :error status)
+                      (fail! (str "field " (:id field) ": invalid :value — " value)))
+                    (cond-> field
+                      (some? value)
+                      (assoc :value value)))))))
+
+(defn- input-node?
+  "True when this RAW spec node asks for an input component: neither a group nor
+   a display, data or action component. A node without a type is `plaintext`."
+  [node]
+  (and (not (group-node? node)) (not (contains? view-spec/live-node-types (raw-type-name node)))))
+
 (defn- live-node
-  "One declared node of a live view. `fail!` is the refusal of whoever declares
-   it — a view spec, or the `add-node` op that introduces one mid-run — so one
-   node parser serves both without either learning the other's error type.
+  "One declared component of a form or a live view. `fail!` is the refusal of
+   whoever declares it — a view spec, a request, or the `add-node` op that
+   introduces one mid-run — so one parser serves all three without any of them
+   learning the others' error type. `context` is `:form` or `:live`.
 
-   A layout GROUP is parsed here too, by recursion: `row` and `column` are the
-   REQUEST's own vocabulary, so a view arranges its work exactly the way a form
-   arranges its questions, and a row inside a column costs no second grammar."
-  [fail! node]
-  (when-not (map? node) (fail! "a node must be a map"))
-  (let [is-group (group-node? node)]
-    (check-keys! (if is-group "group" "node")
-                 (if is-group live-group-decl-keys live-node-decl-keys)
-                 node
-                 fail!)
-    (if is-group
-      (let [id (or (trimmed (:id node))
-                   (fail! "a group needs a non-blank :id — `add-node :after` names it too"))
-            group-fail! (fn [message]
-                          (fail! (str "group " id ": " message)))
-            children (:fields node)
-            label (trimmed (:label node))]
+   A layout GROUP is parsed here too, by recursion: a view arranges its work
+   exactly the way a form arranges its questions, and a row inside a column
+   costs no second grammar."
+  ([fail! node] (live-node fail! :live node))
+  ([fail! context node]
+   (when-not (map? node) (fail! "a node must be a map"))
+   (if (input-node? node)
+     (input-node fail! context node)
+     (let [is-group (group-node? node)]
+       (check-keys! (if is-group "group" "node")
+                    (if is-group live-group-decl-keys live-node-decl-keys)
+                    node
+                    fail!)
+       (if is-group
+         (let [id (or (trimmed (:id node))
+                      (fail! "a group needs a non-blank :id — `add-node :after` names it too"))
+               group-fail! (fn [message]
+                             (fail! (str "group " id ": " message)))
+               children (:children node)
+               label (trimmed (:label node))
+               description (trimmed (:description node))]
 
-        (when-not (and (sequential? children) (seq children))
-          (group-fail! "a group needs a non-empty :fields — a row arranging nothing is a typo"))
-        (checked-live-node
-          group-fail!
-          (cond-> {:id id
-                   :type view-spec/group-type
-                   :direction (live-term group-fail!
-                                         ":direction"
-                                         view-spec/group-directions
-                                         (or (:direction node) "column"))
-                   :fields (mapv #(live-node group-fail! %) children)}
-            label
-            (assoc :label label)
+           (when-not (and (sequential? children) (seq children))
+             (group-fail!
+               "a group needs a non-empty :children — a row arranging nothing is a typo"))
+           (checked-live-node
+             group-fail!
+             (cond-> {:id id
+                      :type view-spec/group-type
+                      :direction (live-term group-fail!
+                                            ":direction"
+                                            view-spec/group-directions
+                                            (or (:direction node) "column"))
+                      :children (mapv #(live-node group-fail! context %) children)}
+               label
+               (assoc :label label)
 
-            (some? (:is-collapsible node))
-            (assoc :is-collapsible
-              (bool-value group-fail! ":is-collapsible" (:is-collapsible node) false))
+               description
+               (assoc :description description)
 
-            (some? (:default-expanded node))
-            (assoc :default-expanded
-              (bool-value group-fail! ":default-expanded" (:default-expanded node) false)))))
-      (let [id (or (trimmed (:id node))
-                   (fail! "a node needs a non-blank :id — every patch names the node it speaks to"))
-            node-fail! (fn [message]
-                         (fail! (str "node " id ": " message)))
-            type (live-term node-fail! ":type" view-spec/live-node-types (:type node))
-            label (trimmed (:label node))
-            base (cond-> {:id id :type type}
-                   label
-                   (assoc :label label))
-            items (fn [kind]
-                    (normalize-live-items node-fail! kind (get node kind)))]
+               (some? (:is-collapsible node))
+               (assoc :is-collapsible
+                 (bool-value group-fail! ":is-collapsible" (:is-collapsible node) false))
 
-        (checked-live-node
-          node-fail!
-          (case type
-            :divider
-            (do (check-keys! "divider" #{:id :type} node node-fail!) base)
+               (some? (:default-expanded node))
+               (assoc :default-expanded
+                 (bool-value group-fail! ":default-expanded" (:default-expanded node) false)))))
+         (let [id (or (trimmed (:id node))
+                      (fail!
+                        "a node needs a non-blank :id — every patch names the node it speaks to"))
+               node-fail! (fn [message]
+                            (fail! (str "node " id ": " message)))
+               type (live-term node-fail! ":type" view-spec/live-node-types (:type node))
+               label (trimmed (:label node))
+               base (cond-> {:id id :type type}
+                      label
+                      (assoc :label label))
+               items (fn [kind]
+                       (normalize-live-items node-fail! kind (get node kind)))]
 
-            :status
-            (cond-> (assoc base
-                      :text (live-text node-fail! "a status' :text" (:text node))
-                      :tone (or (some->> (:tone node)
-                                         (live-term node-fail! ":tone" view-spec/live-tones))
-                                :idle))
-              (trimmed (:detail node))
-              (assoc :detail (trimmed (:detail node))))
+           (checked-live-node
+             node-fail!
+             (case type
+               :divider
+               (do (check-keys! "divider" #{:id :type} node node-fail!) base)
 
-            (:paragraph :heading :code)
-            (cond-> (assoc base
-                      :text (if (= type :code)
-                              (let [text (:text node)]
-                                (if (string? text) text (node-fail! "code :text must be a string")))
-                              (live-text node-fail! ":text" (:text node))))
-              (= type :heading)
-              (assoc :level (live-long node-fail! ":level" (or (:level node) 2)))
+               :status
+               (cond-> (assoc base
+                         :text (live-text node-fail! "a status' :text" (:text node))
+                         :tone (or (some->> (:tone node)
+                                            (live-term node-fail! ":tone" view-spec/live-tones))
+                                   :idle))
+                 (trimmed (:detail node))
+                 (assoc :detail (trimmed (:detail node))))
 
-              (and (= type :code) (some? (:language node)))
-              (assoc :language (live-text node-fail! ":language" (:language node))))
+               (:paragraph :heading :code)
+               (cond-> (assoc base
+                         :text
+                         (if (= type :code)
+                           (let [text (:text node)]
+                             (if (string? text) text (node-fail! "code :text must be a string")))
+                           (live-text node-fail! ":text" (:text node))))
+                 (= type :heading)
+                 (assoc :level (live-long node-fail! ":level" (or (:level node) 2)))
 
-            :spinner
-            (assoc base
-              :text (live-text node-fail! ":text" (or (:text node) "Working"))
-              :variant (live-term node-fail!
-                                  ":variant"
-                                  view-spec/spinner-variants
-                                  (or (:variant node) "braille"))
-              :is-active (bool-value node-fail! ":is-active" (:is-active node) true))
+                 (and (= type :code) (some? (:language node)))
+                 (assoc :language (live-text node-fail! ":language" (:language node))))
 
-            :button
-            (assoc base
-              :label (live-text node-fail! "button :label" (:label node))
-              :is-disabled (bool-value node-fail! ":is-disabled" (:is-disabled node) false))
+               :spinner
+               (assoc base
+                 :text (live-text node-fail! ":text" (or (:text node) "Working"))
+                 :variant (live-term node-fail!
+                                     ":variant"
+                                     view-spec/spinner-variants
+                                     (or (:variant node) "braille"))
+                 :is-active (bool-value node-fail! ":is-active" (:is-active node) true))
 
-            :progress
-            (cond-> base
-              (some? (:value node))
-              (assoc :value (live-fraction node-fail! ":value" (:value node)))
+               :button
+               (assoc base
+                 :label (live-text node-fail! "button :label" (:label node))
+                 :action (live-term node-fail!
+                                    ":action"
+                                    view-spec/button-actions
+                                    (or (:action node) "activate"))
+                 :is-disabled (bool-value node-fail! ":is-disabled" (:is-disabled node) false))
 
-              (some? (:done node))
-              (assoc :done (live-long node-fail! ":done" (:done node)))
+               :card
+               (cond-> (assoc base :title (live-text node-fail! "a card's :title" (:title node)))
+                 (string? (:text node))
+                 (assoc :text (:text node))
 
-              (some? (:total node))
-              (assoc :total (live-long node-fail! ":total" (:total node))))
+                 (some? (:tone node))
+                 (assoc :tone (live-term node-fail! ":tone" view-spec/live-tones (:tone node)))
 
-            :stat
-            (assoc base :stats (items :stats))
+                 (trimmed (:meta node))
+                 (assoc :meta (trimmed (:meta node)))
 
-            :steps
-            (assoc base :steps (items :steps))
+                 (some? (:is-selectable node))
+                 (assoc :is-selectable
+                   (bool-value node-fail! ":is-selectable" (:is-selectable node) false)))
 
-            :log
-            (cond-> (assoc base
-                      :lines (mapv materializer/log-text
-                                   (text-items node-fail! ":lines" (or (:lines node) [])))
-                      :window-lines (if-some [window (:window-lines node)]
-                                      (live-long node-fail! ":window-lines" window)
-                                      (long (:window-lines view-spec/log-defaults))))
-              (some? (:line-tones node))
-              (assoc :line-tones
-                (let [tones (:line-tones node)]
-                  (when-not (and (sequential? tones) (= (count tones) (count (:lines node))))
-                    (node-fail! ":line-tones must have one tone or nil per line"))
-                  (mapv #(when (some? %)
-                           (live-term node-fail! ":line-tones" view-spec/live-tones %))
-                        tones)))
+               :progress
+               (cond-> base
+                 (some? (:value node))
+                 (assoc :value (live-fraction node-fail! ":value" (:value node)))
 
-              (some? (:default-expanded node))
-              (assoc :default-expanded
-                (bool-value node-fail! ":default-expanded" (:default-expanded node) false)))
+                 (some? (:done node))
+                 (assoc :done (live-long node-fail! ":done" (:done node)))
 
-            :table
-            (cond-> (assoc base
-                      :columns (items :columns)
-                      :rows (items :rows)
-                      :max-rows (if-some [bound (:max-rows node)]
-                                  (live-long node-fail! ":max-rows" bound)
-                                  (long (:max-rows view-spec/table-defaults)))
-                      :order (normalize-live-order node-fail! (:order node)))
-              (seq (:groups node))
-              (assoc :groups (items :groups))
+                 (some? (:total node))
+                 (assoc :total (live-long node-fail! ":total" (:total node))))
 
-              (some? (:is-selectable node))
-              (assoc :is-selectable
-                (bool-value node-fail! ":is-selectable" (:is-selectable node) false))
+               :stat
+               (assoc base :stats (items :stats))
 
-              (some? (:selected-ids node))
-              (assoc :selected-ids (text-items node-fail! ":selected-ids" (:selected-ids node))))
+               :steps
+               (assoc base :steps (items :steps))
 
-            :link
-            (assoc base :links (items :links))))))))
+               :log
+               (cond-> (assoc base
+                         :lines (mapv materializer/log-text
+                                      (text-items node-fail! ":lines" (or (:lines node) [])))
+                         :window-lines (if-some [window (:window-lines node)]
+                                         (live-long node-fail! ":window-lines" window)
+                                         (long (:window-lines view-spec/log-defaults))))
+                 (some? (:line-tones node))
+                 (assoc :line-tones
+                   (let [tones (:line-tones node)]
+                     (when-not (and (sequential? tones) (= (count tones) (count (:lines node))))
+                       (node-fail! ":line-tones must have one tone or nil per line"))
+                     (mapv #(when (some? %)
+                              (live-term node-fail! ":line-tones" view-spec/live-tones %))
+                           tones)))
+
+                 (some? (:default-expanded node))
+                 (assoc :default-expanded
+                   (bool-value node-fail! ":default-expanded" (:default-expanded node) false)))
+
+               :table
+               (cond-> (assoc base
+                         :columns (items :columns)
+                         :rows (items :rows)
+                         :max-rows (if-some [bound (:max-rows node)]
+                                     (live-long node-fail! ":max-rows" bound)
+                                     (long (:max-rows view-spec/table-defaults)))
+                         :order (normalize-live-order node-fail! (:order node)))
+                 (seq (:groups node))
+                 (assoc :groups (items :groups))
+
+                 (some? (:is-selectable node))
+                 (assoc :is-selectable
+                   (bool-value node-fail! ":is-selectable" (:is-selectable node) false))
+
+                 (some? (:selected-ids node))
+                 (assoc :selected-ids (text-items node-fail! ":selected-ids" (:selected-ids node))))
+
+               :link
+               (assoc base :links (items :links))))))))))
 
 (defn normalize-live-node
   "Validate one declared live node, so an unknown key or a `:tone` outside the
    table throws where the node was built rather than in front of the human."
   [node]
   (live-node invalid-live-view! node))
+
+(defn- form-ids
+  "RAW form nodes with a positional `:id` on each group and display component
+   that has none. A form never patches a node, so this id only keys a row."
+  [nodes]
+  (let [counter (volatile! 0)]
+    (letfn [(walk [nodes]
+              (mapv (fn [node]
+                      (if-not (map? node)
+                        node
+                        (let [node (cond-> node
+                                     (and (group-node? node) (sequential? (:children node)))
+                                     (update :children walk))]
+                          (if (or (input-node? node) (trimmed (:id node)))
+                            node
+                            (assoc node
+                              :id (str (or (not-empty (raw-type-name node)) "node")
+                                       "-"
+                                       (vswap! counter #(inc (long %)))))))))
+                    nodes))]
+      (walk nodes))))
+
+(defn- form-node [node] (live-node #(invalid-field! nil %) :form node))
+
+(defn normalize-node
+  "Validate one node of a request's component TREE and return its internal form.
+   Throws `ex-info` with `:type :vis/view-invalid-field` on a bad spec.
+
+   A form uses the same component catalog as a live view: an input holds one
+   answer, a group arranges its children, and any other component shows text or
+   state without an answer."
+  [node]
+  (form-node (first (form-ids [node]))))
+
+(defn normalize-request
+  "Validate an input View request spec and return its internal form. Throws
+   `ex-info` with View-owned error data on a bad spec."
+  [request]
+  (when-not (map? request) (invalid-request! "request must be a map"))
+  (check-keys! "request" request-keys request invalid-request!)
+  (let [title
+        (trimmed (:title request))
+
+        _
+        (when-not title (invalid-request! "request needs a non-blank :title"))
+
+        raw-nodes
+        (:nodes request)
+
+        _
+        (when-not (sequential? raw-nodes) (invalid-request! ":nodes must be a sequence"))
+
+        nodes
+        (mapv form-node (form-ids raw-nodes))
+
+        _
+        (when (empty? nodes) (invalid-request! ":nodes must not be empty"))
+
+        _
+        (let [names (into [] (keep :name) (all-fields nodes))]
+          (when-not (or (empty? names) (apply distinct? names))
+            (invalid-request! "field names must be distinct")))
+
+        session-id
+        (or (trimmed (:session-id request)) (ambient-session-id))]
+
+    (checked-request
+      (cond-> {:id (or (trimmed (:id request)) (str (random-uuid)))
+               :title title
+               :nodes nodes
+               :submit-label (or (trimmed (:submit-label request)) "Submit")
+               :cancel-label (or (trimmed (:cancel-label request)) "Cancel")
+               :is-cancellable (normalize-bool nil ":is-cancellable" (:is-cancellable request) true)
+               :timeout-ms (normalize-timeout request default-timeout-ms invalid-request!)
+               :channel-ids (normalize-channel-ids request invalid-request!)}
+        session-id
+        (assoc :session-id session-id)
+
+        (trimmed (:description request))
+        (assoc :description (trimmed (:description request)))
+
+        (trimmed (:source request))
+        (assoc :source (trimmed (:source request)))))))
 
 (defn live-nodes?
   "Whether `nodes` are the picture a human WATCHES rather than the questions a
@@ -1207,7 +1217,7 @@
   (boolean (some (fn [node]
                    (when (map? node)
                      (if (group-node? node)
-                       (live-nodes? (:fields node))
+                       (live-nodes? (:children node))
                        (and (some? (:id node))
                             (contains? view-spec/live-node-types
                                        (some-> (trimmed (:type node))
@@ -1254,22 +1264,47 @@
           (invalid-live-view! (str "node ids must be distinct — got "
                                    (str/join ", " (sort (mapv :id nodes))))))
 
+        placement
+        (live-term invalid-live-view!
+                   ":placement"
+                   view-spec/placements
+                   (or (:placement view) "inline"))
+
+        owned?
+        (not= :inline placement)
+
+        extension-name
+        (when owned?
+          (or (trimmed (:extension *live-owner*))
+              (invalid-live-view! (str "only extension code can open a "
+                                       (name placement)
+                                       " view; the python_execution sandbox cannot"))))
+
+        _
+        (when (and owned? (not (trimmed (:key view))))
+          (invalid-live-view! (str "a " (name placement) " view needs a :key that names it")))
+
+        ;; A header view belongs to the machine, not to a session.
         session-id
-        (or (trimmed (:session-id view)) (ambient-session-id))]
+        (when-not (= :header placement) (or (trimmed (:session-id view)) (ambient-session-id)))]
 
     (checked-live-view
       (cond-> {:id (str (random-uuid))
                :title title
+               :placement placement
                :nodes nodes
                :timeout-ms (normalize-timeout view no-timeout-ms invalid-live-view!)
                :channel-ids (normalize-channel-ids view invalid-live-view!)
                :seq 0
                :created-at (util/now-ms)}
-        extension/*current-invocation-id*
+        (and extension/*current-invocation-id* (not owned?))
         (assoc :owner
           (cond-> {:invocation-id extension/*current-invocation-id*}
             extension/*activity-history-id*
             (assoc :activity-id extension/*activity-history-id*)))
+
+        extension-name
+        (assoc :extension extension-name)
 
         session-id
         (assoc :session-id session-id)
@@ -1278,7 +1313,10 @@
         (assoc :description (trimmed (:description view)))
 
         (trimmed (:source view))
-        (assoc :source (trimmed (:source view)))))))
+        (assoc :source (trimmed (:source view)))
+
+        (trimmed (:key view))
+        (assoc :key (trimmed (:key view)))))))
 
 (def ^:private live-op-value
   "How ONE key of a patch operation is normalized, by key. A table rather than a
@@ -1308,6 +1346,12 @@
              (if (and (string? value) (str/blank? value)) "" (live-text fail! ":detail" value)))
    :label (fn [fail! value]
             (live-text fail! ":label" value))
+   :title (fn [fail! value]
+            (live-text fail! ":title" value))
+   :meta (fn [fail! value]
+           (live-text fail! ":meta" value))
+   :is-selectable (fn [fail! value]
+                    (bool-value fail! ":is-selectable" value false))
    :tone (fn [fail! value]
            (live-term fail! ":tone" view-spec/live-tones value))
    :value (fn [fail! value]
@@ -1352,12 +1396,17 @@
           (fail! (str article (name kind) " op: " message)))]
 
     (check-keys! (str (name kind) " op") (live-op-decl-keys kind) op op-fail!)
-    (reduce (fn [acc k]
-              (if-some [value (get op k)]
-                (assoc acc k ((live-op-value k) op-fail! value))
-                acc))
-            {:op kind}
-            (disj (view-spec/live-op-key-sets kind) :op))))
+    (if (= :set-value kind)
+      ;; The value domain belongs to the input it lands on, so the materializer
+      ;; checks it against that node. Here a nil value is a clear, not a gap.
+      (do (when-not (contains? op :value) (op-fail! "needs :value — nil clears the input"))
+          {:op kind :node-id ((live-op-value :node-id) op-fail! (:node-id op)) :value (:value op)})
+      (reduce (fn [acc k]
+                (if-some [value (get op k)]
+                  (assoc acc k ((live-op-value k) op-fail! value))
+                  acc))
+              {:op kind}
+              (disj (view-spec/live-op-key-sets kind) :op)))))
 
 (defn normalize-live-op
   "One patch operation, refused where it was BUILT — the seam the `add-node` /
@@ -1661,16 +1710,16 @@
    the errors it is handed rather than to invent its own).
 
    The field TREE is projected as a tree: a group crosses the wire with its own
-   `:direction` and `:fields`, so both surfaces lay the form out from the same
+   `:direction` and `:children`, so both surfaces lay the form out from the same
    data instead of each inventing a layout."
   [request]
   (-> request
       (dissoc :promise :channel-ids :kind)
-      (assoc :fields (map-fields (fn [field]
-                                   (cond-> (dissoc field :is-secret :validate)
-                                     (contains? view-spec/secret-types (:type field))
-                                     (dissoc :default)))
-                                 (:fields request)))))
+      (assoc :nodes (map-fields (fn [field]
+                                  (cond-> (dissoc field :is-secret :validate)
+                                    (contains? view-spec/secret-types (:type field))
+                                    (dissoc :default)))
+                                (:nodes request)))))
 
 (def ^:private request-stamps
   "The engine's own request stamps, wire spelling -> normalized key."
@@ -1737,6 +1786,7 @@
    :align view-spec/live-aligns
    :direction view-spec/group-directions
    :target-kind view-spec/link-targets
+   :placement view-spec/placements
    :reason view-spec/live-reasons})
 
 (defn- live<-wire
@@ -1861,6 +1911,97 @@
           :view
           deref))
 
+;; Owned views — a panel or header view that its extension keeps open
+;;
+;; An extension and a key own one view. It outlives the call that opened it and
+;; closes on an explicit close or when its extension unloads. The store keeps the
+;; last picture, so after a gateway restart the view shows as stale until its
+;; extension opens the same key again.
+
+(defonce ^:private stale-views
+  ;; View id -> the saved picture of an owned view that no extension opened again
+  ;; since this gateway started. It paints as stale and accepts only a dismiss.
+  (atom {}))
+
+(defn- owned-key
+  "`[extension key]` of an owned view, or nil for an inline view."
+  [view]
+  (when (:extension view) [(:extension view) (:key view)]))
+
+(defonce ^:private owned-saver
+  (delay (Executors/newSingleThreadScheduledExecutor (util/daemon-thread-factory
+                                                       "vis-owned-view-save"))))
+
+(defonce ^:private save-due (atom false))
+
+(defonce ^:private ended-owned
+  ;; View id -> session id of each owned view that closed in this process, so a
+  ;; late push still reads its verdict. An owned view has no ambient session.
+  (atom {}))
+
+(defn- owned-pictures
+  "The current picture of each open owned view, then each stale one."
+  []
+  (into (->> (vals @pending)
+             (filter :owned-key)
+             (sort-by :created-at)
+             (mapv #(deref (:view %))))
+        (map #(dissoc % :is-stale))
+        (sort-by :created-at (vals @stale-views))))
+
+(defn flush-owned!
+  "Save the owned pictures now when a change waits for a save. Call it before the
+   process stops, so the last 500 ms of patches are not lost."
+  []
+  (when (compare-and-set! save-due true false)
+    (try (sink/save-owned! (owned-pictures))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::owned-save-failed
+                      :data {:error (ex-message t)}
+                      :msg "Vis could not save the pictures of owned live views"}))))
+  nil)
+
+(defn- save-owned-soon!
+  "Save the owned pictures within 500 ms. Many patches in that time make one write."
+  []
+  (when (compare-and-set! save-due false true)
+    (.schedule ^ScheduledExecutorService @owned-saver
+               ^Runnable flush-owned!
+               500
+               TimeUnit/MILLISECONDS))
+  nil)
+
+(defn- stale-close!
+  "Forget stale view `view` and tell the surfaces that it closed with `reason`."
+  [view reason]
+  (when (contains? (first (swap-vals! stale-views dissoc (:id view))) (:id view))
+    (publish! (:channel-ids view)
+              {:op :view/close
+               :kind :live
+               :view-id (:id view)
+               :session-id (:session-id view)
+               :result {:view-id (:id view)
+                        :reason reason
+                        :is-completed false
+                        :view (select-keys view view-spec/live-picture-keys)}})
+    true))
+
+(defn restore-owned!
+  "Load the saved pictures of owned views as stale views. A key that is open
+   already keeps its live view. Returns the number of stale views."
+  []
+  (let [open-keys (set (keep :owned-key (vals @pending)))]
+    (doseq [saved (sink/load-owned)
+            :let [view (assoc (live<-wire saved) :is-stale true)]
+            :when (and (string? (:id view))
+                       (owned-key view)
+                       (not (open-keys (owned-key view)))
+                       (nil? (view-spec/live-view-error view)))]
+
+      (swap! stale-views assoc (:id view) view))
+    (count @stale-views)))
+
 (defn open-live!
   "Mount a live view the human WATCHES and return it materialized, `:id` and all.
    The caller keeps that id: every patch, and the close, name it.
@@ -1889,8 +2030,11 @@
         view-id
         (:id record)
 
+        owned
+        (owned-key record)
+
         _
-        (when-not (trimmed (:session-id record))
+        (when-not (or (trimmed (:session-id record)) (= :header (:placement record)))
           (invalid-live-view! (str "view " view-id
                                    " names no session — set :session-id, or open it "
                                    "from an extension environment that carries one")))
@@ -1905,6 +2049,9 @@
         {:kind :live
          :id view-id
          :view (atom view)
+         ;; What the human DID in this view, in order: changes, submits and
+         ;; activations. The owner reads them with `events`, waiting when none is new.
+         :events (atom {:cursor 0 :items []})
          :file file
          :promise (promise)
          :session-id (:session-id view)
@@ -1913,16 +2060,22 @@
          ;; The collector of the block that OPENED the view. A human's stop arrives on a
          ;; gateway thread, which holds no artifacts of its own, and the record still
          ;; belongs to the block whose run produced it.
-         :attachment-sink mpl-capture/*attachment-sink*
-         :block-owner *block-owner*
+         :attachment-sink (when-not owned mpl-capture/*attachment-sink*)
+         :block-owner (when-not owned *block-owner*)
          ;; The eval wall of the block that opened it, LIFTED for as long as the
          ;; view is open. A run SHOWING its work is never billed a deadline: a CI
          ;; run takes fifteen minutes and the Python watchdog around the block
          ;; billed five, killing the watch mid-picture. Released at the close,
-         ;; whoever closes it.
-         :wall-hold (rt/hold-blocking-wall!)}]
+         ;; whoever closes it. An owned view outlives every block, so it holds none.
+         :wall-hold (when-not owned (rt/hold-blocking-wall!))
+         :owned-key owned
+         :owner-context (when owned (:context *live-owner*))
+         :listener (when owned (:listener *live-owner*))
+         ;; Callbacks of one view run in order, one at a time.
+         :listener-agent (when (and owned (:listener *live-owner*)) (agent nil))}]
 
     (swap! pending assoc view-id entry)
+    (when owned (save-owned-soon!))
     (tel/log! {:level :debug
                :id ::live-opened
                :data {:view-id view-id :title (:title view) :nodes (mapv :id (:nodes view))}
@@ -1963,6 +2116,7 @@
 
         (reset! cell patched)
         (sink/append! (:file entry) applied)
+        (when (:owned-key entry) (save-owned-soon!))
         (publish! (:channel-ids entry) (lifecycle-event :view/patch entry {:patch applied}))
         (.notifyAll ^Object cell)
         patched))))
@@ -2194,7 +2348,9 @@
                ;; close files no second artifact.
                surface-verdict (assoc (dissoc verdict :elided)
                                  :view (select-keys @cell view-spec/live-picture-keys))
-               artifact (live-artifact @cell surface-verdict (:file entry))
+               ;; No block owns an extension's view, so it files no session artifact.
+               artifact (when-not (:owned-key entry)
+                          (live-artifact @cell surface-verdict (:file entry)))
                [old _] (swap-vals! pending dissoc view-id)]
 
            (when (contains? old view-id)
@@ -2204,13 +2360,16 @@
                    ;; ENDED reaches a collector nobody will ever read again, so the row
                    ;; goes to the iteration that block became: the turn the human is
                    ;; already reading, where every other artifact of that run is listed.
-                   attachment (live-attachment artifact)
-                   filed?
-                   (if-let [home (and (nil? mpl-capture/*attachment-sink*) (:late-home entry))]
-                     (file-late-artifact! home attachment)
-                     (some? (binding [mpl-capture/*attachment-sink*
-                                      (or mpl-capture/*attachment-sink* (:attachment-sink entry))]
-                              (mpl-capture/record-attachment! attachment))))
+                   attachment (some-> artifact
+                                      live-attachment)
+                   filed? (and attachment
+                               (if-let [home (and (nil? mpl-capture/*attachment-sink*)
+                                                  (:late-home entry))]
+                                 (file-late-artifact! home attachment)
+                                 (some? (binding [mpl-capture/*attachment-sink*
+                                                  (or mpl-capture/*attachment-sink*
+                                                      (:attachment-sink entry))]
+                                          (mpl-capture/record-attachment! attachment)))))
                    artifact-id (when filed? (:id artifact))
                    artifact-result (cond-> surface-verdict
                                      artifact-id
@@ -2238,6 +2397,9 @@
                               (assoc :selection-snapshots snapshots)))
                (deliver (:promise entry) model-result)
                (.notifyAll ^Object cell)
+               (when (:owned-key entry)
+                 (swap! ended-owned assoc view-id (:session-id entry))
+                 (save-owned-soon!))
                (publish! (:channel-ids entry)
                          (lifecycle-event :view/close entry {:result artifact-result}))
                (tel/log! {:level :debug
@@ -2284,8 +2446,10 @@
   "The open View `view-id` as `{:kind … :view …}`, or nil. The descriptor is for
    capability policy and routing; renderers still receive the document itself."
   [view-id]
-  (when-let [entry (get @pending (str view-id))]
-    {:kind (:kind entry) :view (entry->view entry)}))
+  (if-let [entry (get @pending (str view-id))]
+    {:kind (:kind entry) :view (entry->view entry)}
+    (when-let [stale (get @stale-views (str view-id))]
+      {:kind :live :view stale})))
 
 ;; Registry
 
@@ -2307,12 +2471,15 @@
    them, oldest first.
 
    This is the resync: a client that joined mid-flight, woke from sleep or lost
-   its stream reads the picture back instead of replaying every patch it missed."
+   its stream reads the picture back instead of replaying every patch it missed.
+   The stale pictures of owned views come with them, each with `:is-stale` true."
   []
   (->> (vals @pending)
        (filter #(= :live (:kind %)))
-       (sort-by :created-at)
-       (mapv entry->view)))
+       (map entry->view)
+       (concat (vals @stale-views))
+       (sort-by (juxt :created-at :id))
+       vec))
 
 (defn open-live-ids
   "The id of every live view open right now.
@@ -2324,6 +2491,39 @@
         (keep (fn [[view-id entry]]
                 (when (= :live (:kind entry)) view-id)))
         @pending))
+
+(defn dismiss-stale!
+  "Remove stale view `view-id` for good. Answers true when it was stale."
+  [view-id]
+  (when-let [view (get @stale-views (str view-id))]
+    (when (stale-close! view :interrupted) (save-owned-soon!) true)))
+
+(defn close-owned-by!
+  "Close each owned view that extension context `ctx` opened, because the
+   extension unloads. Answers the closed view ids."
+  [ctx]
+  (->> (vals @pending)
+       (filter #(and (:owned-key %) (identical? ctx (:owner-context %))))
+       (sort-by :created-at)
+       (keep #(when (close-live! (:id %) {:reason :completed :summary "The extension unloaded."})
+                (:id %)))
+       vec))
+
+(defn- supersede-owned!
+  "Close every other view of the key that the new owned `view` holds, open or
+   stale: an extension and a key own one view."
+  [view]
+  (when-let [k (owned-key view)]
+    (doseq [entry (vals @pending)
+            :when (and (= k (:owned-key entry)) (not= (:id view) (:id entry)))]
+
+      (close-live! (:id entry) {:reason :superseded}))
+    (doseq [stale (vals @stale-views)
+            :when (= k (owned-key stale))]
+
+      (stale-close! stale :superseded))
+    (save-owned-soon!))
+  view)
 
 (defn adopt-open-views!
   "Give ended blocks' unhomed live views in `session-id` the iteration `home`.
@@ -2381,7 +2581,7 @@
   ;; out, undeliverable — so the contract is checked once, here, against the very
   ;; request being answered. The fields are read BEFORE the entry is removed: a
   ;; refusal must not strand the thread parked on that promise.
-  (checked-answer request-id (:fields (get @pending request-id)) result)
+  (checked-answer request-id (:nodes (get @pending request-id)) result)
   (let [[old _] (swap-vals! pending dissoc request-id)]
     (when-let [entry (get old request-id)]
       ;; Close reaches every channel before the resumed caller can finish its turn.
@@ -2404,7 +2604,7 @@
       (invalid-answer! request-id
                        (str "this is a live view, not a form — a view ends when the extension that "
                             "opened it closes it, and carries no values to submit"))
-      (let [outcome (coerce-values (:fields entry) values)]
+      (let [outcome (coerce-values (:nodes entry) values)]
         (if (:is-accepted outcome)
           (if (settle! request-id
                        {:is-submitted true
@@ -2443,6 +2643,130 @@
      false
      (force-cancel! request-id reason))))
 
+(def ^:private max-live-events
+  "How many events one live view keeps for its owner. The oldest event drops first."
+  256)
+
+(defn- push-live-event!
+  "Append `event` to the event queue of live `entry` and wake its readers."
+  [entry event]
+  (let [cell (:view entry)]
+    (locking cell
+      (let [{:keys [items]}
+            (swap! (:events entry) (fn [{:keys [cursor items]}]
+                                     (let [next-cursor (inc (long cursor))
+                                           items (conj items
+                                                       (assoc event
+                                                         :seq next-cursor
+                                                         :at (util/now-ms)))
+                                           extra (- (count items) max-live-events)]
+
+                                       {:cursor next-cursor
+                                        :items (if (pos? extra) (subvec items extra) items)})))]
+        (when-let [listener (:listener entry)]
+          (let [recorded (peek items)]
+            (send-off (:listener-agent entry)
+                      (fn [_]
+                        (try (listener recorded (:session-id entry))
+                             (catch Throwable t
+                               (tel/log! {:level :warn
+                                          :id ::live-callback-failed
+                                          :data {:view-id (:id entry) :error (ex-message t)}
+                                          :msg "A live view callback failed"})))
+                        nil)))))
+      (.notifyAll ^Object cell))))
+
+(defn live-events
+  "The events of live view `view-id` after cursor `after`. Waits up to
+   `timeout-ms` for a new one. Returns `{:events [...] :cursor n :is-open b}`;
+   `:is-open` is false once the view is closed, so a reader can stop."
+  [view-id after timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
+    (loop []
+
+      (if-let [entry (live-entry (str view-id))]
+        (let [cell (:view entry)
+              {:keys [cursor items]} @(:events entry)
+              fresh (filterv #(> (long (:seq %)) (long after)) items)
+              left (- deadline (System/currentTimeMillis))]
+
+          (if (or (seq fresh) (<= left 0))
+            {:events fresh :cursor cursor :is-open true}
+            (do (locking cell (.wait ^Object cell (long (min left 1000)))) (recur))))
+        {:events [] :cursor (long after) :is-open false}))))
+
+(defn- view-node
+  "The node `node-id` anywhere in the component tree `nodes`, or nil."
+  [nodes node-id]
+  (first (filter #(= node-id (:id %)) (tree-seq #(seq (:children %)) :children {:children nodes}))))
+
+(defn- submit-scope
+  "The components a submit button `node-id` collects: the children of its
+   nearest group, or the whole view when no group holds it."
+  [nodes node-id]
+  (letfn [(walk [scope nodes]
+            (some (fn [node]
+                    (cond (= node-id (:id node)) scope
+                          (seq (:children node)) (walk (:children node) (:children node))))
+                  nodes))]
+    (walk nodes nodes)))
+
+(defn- live-change!
+  "Set the value of input `node-id` in live `entry` and queue one change event.
+   A secret input keeps no value: its event says only whether it is set."
+  [entry view-id node-id value]
+  (let [node (view-node (:nodes @(:view entry)) node-id)]
+    (when-not (contains? (set (vals view-spec/field-types)) (:type node))
+      (invalid-view-action! view-id "change requires an input node"))
+    (if (:is-secret node)
+      (do (push-live-event! entry {:type :change :node-id node-id :is-set (some? value)})
+          {:is-accepted true :node-id node-id})
+      (let [[status coerced] (coerce-value (assoc node :is-required false) value)]
+        (if (= :error status)
+          {:is-accepted false :reason "invalid" :errors {node-id coerced}}
+          (do (patch-live! view-id [{:op :set-value :node-id node-id :value coerced}])
+              (push-live-event! entry {:type :change :node-id node-id :value coerced})
+              {:is-accepted true :node-id node-id}))))))
+
+(defn- live-submit!
+  "Submit the inputs that submit button `node-id` collects in live `entry`.
+   Valid values update the view and queue one submit event; an invalid value
+   gives field errors and changes nothing."
+  [entry view-id node-id values]
+  (let [view
+        @(:view entry)
+
+        button
+        (view-node (:nodes view) node-id)]
+
+    (when-not (and (= :button (:type button)) (= :submit (:action button)))
+      (invalid-view-action! view-id "submit requires the node_id of a submit button"))
+    (if (:is-disabled button)
+      {:is-accepted false :reason "disabled"}
+      (let [scope
+            (input-fields (submit-scope (:nodes view) node-id))
+
+            stored
+            (into {}
+                  (keep (fn [field]
+                          (when (contains? field :value) [(:id field) (:value field)])))
+                  scope)
+
+            outcome
+            (coerce-values scope (merge stored (select-keys values (map :id scope))))]
+
+        (if-not (:is-accepted outcome)
+          {:is-accepted false :reason "invalid" :errors (:errors outcome)}
+          (let [shown (remove :is-secret scope)]
+            (patch-live!
+              view-id
+              (into [{:op :set :node-id node-id :clicks (inc (long (or (:clicks button) 0)))}]
+                    (map (fn [{:keys [id]}]
+                           {:op :set-value :node-id id :value (get (:values outcome) id)}))
+                    shown))
+            (push-live-event! entry {:type :submit :node-id node-id :values (:values outcome)})
+            {:is-accepted true :node-id node-id}))))))
+
 (defn- normalize-view-action
   "Normalize one closed operator action. Its keys are engine keywords: the gateway
    converts a decoded action's keys once, and the `:values` it carries stay keyed
@@ -2460,7 +2784,15 @@
       :submit
       (let [values (:values raw)]
         (when-not (map? values) (fail! "submit values must be an object"))
-        {:action action :values values})
+        (cond-> {:action action :values values}
+          (some? (:node-id raw))
+          (assoc :node-id (live-text fail! "submit node_id" (:node-id raw)))))
+
+      :change
+      (do (when-not (contains? raw :value) (fail! "change needs a value — null clears the input"))
+          {:action action
+           :node-id (live-text fail! "change node_id" (:node-id raw))
+           :value (:value raw)})
 
       :cancel
       {:action action}
@@ -2498,7 +2830,7 @@
   (let [view-id
         (str view-id)
 
-        {:keys [action values node-id item-ids note]}
+        {:keys [action values node-id item-ids note value]}
         (normalize-view-action view-id raw)
 
         entry
@@ -2507,77 +2839,97 @@
         base
         {:action action :view-id view-id}]
 
-    (if-not entry
-      (assoc base
-        :is-accepted false
-        :reason "unknown")
-      (let [kind
-            (:kind entry)
-
-            supported?
-            (case action
-              (:submit :cancel)
-              (= :input kind)
-
-              (:select :activate :interrupt)
-              (= :live kind))]
-
-        (when-not supported? (unsupported-view-action! view-id kind action))
-        (case action
-          :submit
-          (merge base (submit! view-id values))
-
-          :cancel
-          (if (false? (:is-cancellable entry))
+    (cond (and (nil? entry) (contains? @stale-views view-id))
+          (if (= :interrupt action)
+            (assoc base :is-accepted (boolean (dismiss-stale! view-id)))
             (assoc base
               :is-accepted false
-              :reason "not_cancellable")
-            (let [accepted? (boolean (cancel! view-id))]
-              (cond-> (assoc base :is-accepted accepted?)
-                (not accepted?)
-                (assoc :reason "unknown"))))
+              :reason "stale"))
+          (nil? entry) (assoc base
+                         :is-accepted false
+                         :reason "unknown")
+          :else
+          (let [kind
+                (:kind entry)
 
-          :activate
-          (let [cell (:view entry)]
-            (locking cell
-              (if-not (identical? entry (get @pending view-id))
+                supported?
+                (case action
+                  :submit
+                  (or (= :input kind) (and (= :live kind) (some? node-id)))
+
+                  :cancel
+                  (= :input kind)
+
+                  (:select :activate :interrupt :change)
+                  (= :live kind))]
+
+            (when-not supported? (unsupported-view-action! view-id kind action))
+            (case action
+              :submit
+              (merge base
+                     (if (= :live kind)
+                       (live-submit! entry view-id node-id values)
+                       (submit! view-id values)))
+
+              :change
+              (merge base (live-change! entry view-id node-id value))
+
+              :cancel
+              (if (false? (:is-cancellable entry))
                 (assoc base
                   :is-accepted false
-                  :reason "unknown")
-                (let [node (first (filter #(= node-id (:id %))
-                                          (tree-seq #(seq (:fields %))
-                                                    :fields
-                                                    {:fields (:nodes @cell)})))]
-                  (when-not (= :button (:type node))
-                    (invalid-view-action! view-id "activate requires a button node"))
-                  (if (:is-disabled node)
+                  :reason "not_cancellable")
+                (let [accepted? (boolean (cancel! view-id))]
+                  (cond-> (assoc base :is-accepted accepted?)
+                    (not accepted?)
+                    (assoc :reason "unknown"))))
+
+              :activate
+              (let [cell (:view entry)]
+                (locking cell
+                  (if-not (identical? entry (get @pending view-id))
                     (assoc base
                       :is-accepted false
-                      :reason "disabled")
-                    (do (patch-live!
+                      :reason "unknown")
+                    (let [node (first (filter #(= node-id (:id %))
+                                              (tree-seq #(seq (:children %))
+                                                        :children
+                                                        {:children (:nodes @cell)})))]
+                      (when-not (or (= :button (:type node))
+                                    (and (= :card (:type node)) (:is-selectable node)))
+                        (invalid-view-action!
                           view-id
-                          [{:op :set :node-id node-id :clicks (inc (long (or (:clicks node) 0)))}])
+                          "activate requires a button or a selectable card node"))
+                      (if (:is-disabled node)
                         (assoc base
-                          :is-accepted true
-                          :node-id node-id)))))))
+                          :is-accepted false
+                          :reason "disabled")
+                        (do (patch-live! view-id
+                                         [{:op :set
+                                           :node-id node-id
+                                           :clicks (inc (long (or (:clicks node) 0)))}])
+                            (push-live-event! entry {:type :activate :node-id node-id})
+                            (assoc base
+                              :is-accepted true
+                              :node-id node-id)))))))
 
-          :select
-          (let [patched
-                (select-live! view-id node-id item-ids)
+              :select
+              (let [patched
+                    (select-live! view-id node-id item-ids)
 
-                node
-                (first (filter #(= node-id (:id %)) (:nodes patched)))]
+                    node
+                    (first (filter #(= node-id (:id %)) (:nodes patched)))]
 
-            (assoc base
-              :is-accepted true
-              :node-id node-id
-              :item-ids (vec (:selected-ids node))))
+                (assoc base
+                  :is-accepted true
+                  :node-id node-id
+                  :item-ids (vec (:selected-ids node))))
 
-          :interrupt
-          (let [accepted? (some? (interrupt-live! view-id note))]
-            (cond-> (assoc base :is-accepted accepted?)
-              (not accepted?)
-              (assoc :reason "unknown"))))))))
+              :interrupt
+              (let [accepted? (some? (interrupt-live! view-id note))]
+                (cond-> (assoc base :is-accepted accepted?)
+                  (not accepted?)
+                  (assoc :reason "unknown"))))))))
 
 (defn cancel-all!
   "Cancel every pending request. Returns how many were released. Used when a
@@ -2589,7 +2941,7 @@
 (defn request!
   "Ask the operator for typed values and BLOCK until they answer.
 
-   `request` is a spec map — `:title`, `:fields`, optional `:description`,
+   `request` is a spec map — `:title`, `:nodes`, optional `:description`,
    `:submit-label`, `:cancel-label`, `:is-cancellable`, `:timeout-ms`,
    `:channel-ids` (string keys from the Python boundary work too).
 
@@ -2651,7 +3003,7 @@
     (tel/log! {:level :debug
                :id ::request-opened
                :data {:request-id request-id
-                      :fields (mapv :id (input-fields (:fields entry)))
+                      :fields (mapv :id (input-fields (:nodes entry)))
                       :timeout-ms (:timeout-ms entry)}
                :msg "Human-input request opened"})
     (if (zero? (long (publish! (:channel-ids entry)
@@ -2727,11 +3079,11 @@
                 (get counts field-name)
 
                 children
-                (:fields field)]
+                (:children field)]
 
             (cond-> field
               (sequential? children)
-              (assoc :fields (attach-validators children counts run))
+              (assoc :children (attach-validators children counts run))
 
               (and (number? declared) (pos? (long declared)))
               (assoc :validate
@@ -2772,14 +3124,14 @@
          spec<-json
          (cond->
            (seq counts)
-           (update :fields #(if (sequential? %) (attach-validators % counts run) %)))
+           (update :nodes #(if (sequential? %) (attach-validators % counts run) %)))
          request!
          answer->wire
          json/write-json-str))))
 
 (def ^:private live-ops
   "Operations implemented by the live view host door."
-  {:default "open" :spawn #{"open"} :handle #{"patch" "state" "close"}})
+  {:default "open" :spawn #{"open"} :handle #{"patch" "state" "events" "close"}})
 
 (defn- live-op-name
   "The op `opts` asks for, refused BY NAME when it is in neither list. An options
@@ -2809,7 +3161,12 @@
    difference between an unattended loop that stops and one that keeps working
    for a screen nobody is watching."
   [view-id]
-  (let [result (sink/verdict (sink/view-file (ambient-session-id) view-id))]
+  (let [sid
+        (if (contains? @ended-owned view-id) (get @ended-owned view-id) (ambient-session-id))
+
+        result
+        (sink/verdict (sink/view-file sid view-id))]
+
     (when-not result
       (invalid-live-patch!
         (str "no live view " view-id " is open — it was closed, interrupted, or never opened")))
@@ -2861,9 +3218,16 @@
   [opts]
   (when-not (map? opts) (invalid-live-view! "a live envelope must be a JSON object"))
   (let [op (live-op-name opts)]
+    (when-not (= "open" op)
+      ;; Only its own extension drives an owned view.
+      (let [view-id (live-handle-id opts op)
+            owner (first (:owned-key (live-entry view-id)))]
+
+        (when (and owner (not= owner (:extension *live-owner*)))
+          (invalid-live-patch! (str "live view " view-id " belongs to extension " owner)))))
     (case op
       "open"
-      (let [view (open-live! (spec<-json (get opts "view")))]
+      (let [view (supersede-owned! (open-live! (spec<-json (get opts "view"))))]
         {:view-id (:id view) :is-open true :view view})
 
       "patch"
@@ -2884,6 +3248,23 @@
       "state"
       (live-state (live-handle-id opts op) opts)
 
+      "events"
+      (let [view-id (live-handle-id opts op)
+            after (get opts "after" 0)
+            timeout (get opts "timeout_ms" 0)]
+
+        (when-not (and (integer? after)
+                       (<= 0 (long after))
+                       (integer? timeout)
+                       (<= 0 (long timeout) 86400000))
+          (invalid-live-patch!
+            "events after must be a nonnegative integer; timeout_ms must be 0..86400000"))
+        (if (live-entry view-id)
+          (assoc (live-events view-id after timeout) :view-id view-id)
+          (assoc (live-ended view-id)
+            :events []
+            :cursor after)))
+
       "close"
       (let [view-id (live-handle-id opts op)]
         (if-let [result (close-live! view-id (spec<-json (or (get opts "ending") {})))]
@@ -2899,11 +3280,15 @@
    the channels the host picked, exactly as [[request-json!]] does.
 
    Only a `state` with `timeout_ms` blocks: it waits for a change or close,
-   without periodic guest callbacks or publishing a view event."
-  [envelope-json]
-  (let [envelope (json/read-json (str envelope-json) :key-fn identity)]
-    (when-not (map? envelope) (invalid-live-view! "a live envelope must be a JSON object"))
-    (-> envelope
-        (dissoc "channel_id" "channel_ids")
-        live-dispatch
-        wire/json-str)))
+   without periodic guest callbacks or publishing a view event.
+
+   `owner` is the [[*live-owner*]] of the extension door that crosses."
+  ([envelope-json] (live-json! envelope-json nil))
+  ([envelope-json owner]
+   (let [envelope (json/read-json (str envelope-json) :key-fn identity)]
+     (when-not (map? envelope) (invalid-live-view! "a live envelope must be a JSON object"))
+     (binding [*live-owner* owner]
+       (-> envelope
+           (dissoc "channel_id" "channel_ids")
+           live-dispatch
+           wire/json-str)))))

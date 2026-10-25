@@ -28,7 +28,7 @@
   {:id "req-1"
    :title "Deploy"
    :description "Pick the target"
-   :fields
+   :nodes
    [{:id "user" :type :plaintext :label "User" :is-required true :max-length 3 :placeholder "who"}
     {:id "pass" :type :password :label "Password" :is-required true}
     {:id "env"
@@ -59,7 +59,7 @@
              (or (:type value) :plaintext)]
 
          (cond (= view-spec/group-type type) (let [children
-                                                   (mapv node (:fields value))
+                                                   (mapv node (:children value))
 
                                                    id
                                                    (or (:id value)
@@ -72,7 +72,7 @@
                                                  :name id
                                                  :type type
                                                  :direction (or (:direction value) :column)
-                                                 :fields children))
+                                                 :children children))
                (view-spec/decoration? (assoc value :type type)) (assoc value :type type)
                :else (let [id (or (:id value) (:name value))]
                        (cond-> (assoc value
@@ -102,7 +102,7 @@
                  :is-cancellable (get value :is-cancellable true)
                  :timeout-ms (or (:timeout-ms value) 300000)
                  :session-id (or (:session-id value) "session-1"))
-          (update :fields #(mapv node %))))))
+          (update :nodes #(mapv node %))))))
 
 (defn- feed
   "Apply normalized events in order, keeping only the form."
@@ -177,7 +177,7 @@
   (it "honors declared defaults, coercing each to its field type"
       (let [form (hi/init-form {:id "r"
                                 :title "T"
-                                :fields [{:id "a" :type :plaintext :label "A" :default 7}
+                                :nodes [{:id "a" :type :plaintext :label "A" :default 7}
                                          {:id "b" :type :checkbox :label "B" :default true}
                                          {:id "c"
                                           :type :select
@@ -226,7 +226,7 @@
   (it "keeps a password out of the paint plan"
       (let [form
             (feed (hi/init-form (assoc (request)
-                                  :fields [{:id "pass" :type :password :label "Password"}]))
+                                  :nodes [{:id "pass" :type :password :label "Password"}]))
                   [(ch \h) (ch \i)])
 
             texts
@@ -646,7 +646,7 @@
                    30
                    (hi/init-form {:id "r"
                                   :title "Tiny"
-                                  :fields [{:id "a" :type :checkbox :label "Yes"}]
+                                  :nodes [{:id "a" :type :checkbox :label "Yes"}]
                                   :is-cancellable true}))
         (expect (not (str/includes? (screen-text screen) "█"))))))
 
@@ -752,7 +752,7 @@
                        80
                        30
                        (hi/init-form (assoc (request)
-                                       :fields [{:id "user" :type :plaintext :label "User"}])))
+                                       :nodes [{:id "user" :type :plaintext :label "User"}])))
 
             title-y
             (first (filter #(str/includes? (screen-row screen %) "Deploy") (range 30)))
@@ -874,7 +874,7 @@
                    80
                    30
                    (hi/init-form
-                     {:id "r" :title "T" :fields [{:id "a" :type :plaintext :label "A"}]}))
+                     {:id "r" :title "T" :nodes [{:id "a" :type :plaintext :label "A"}]}))
         (let [{:keys [left inner-w]} (tr/band-region 80 30 1)
               left (long left)
               right (+ left (long inner-w) 1)
@@ -1087,7 +1087,7 @@
             (hi/form-rows (hi/init-form
                             {:id "r"
                              :title "T"
-                             :fields
+                             :nodes
                              [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]}))]
 
         (expect (= "User *" (label-of "User")))
@@ -1109,7 +1109,7 @@
       (let [cell (cell-under (hi/init-form
                                {:id "r"
                                 :title "T"
-                                :fields
+                                :nodes
                                 [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]})
                              "*")]
         (expect (= t/footer-error-fg (:fg cell)))
@@ -1151,7 +1151,7 @@
   (it "hangs a checkbox description under the box that carries the label"
       (let [rows (hi/form-rows (hi/init-form {:id "r"
                                               :title "T"
-                                              :fields [{:id "ok"
+                                              :nodes [{:id "ok"
                                                         :type :checkbox
                                                         :label "Confirm"
                                                         :description "This cannot be undone"}]}))]
@@ -1172,7 +1172,7 @@
                          {:id "r"
                           :title "T"
                           :description "Pick the target"
-                          :fields
+                          :nodes
                           [{:id "note" :type :plaintext :label "Note" :description "Free text"}]}))]
 
         ;; The request's own description and the field's, both italic, never bold.
@@ -1200,7 +1200,7 @@
                      30
                      (hi/init-form {:id "r"
                                     :title "T"
-                                    :fields
+                                    :nodes
                                     [{:id "env"
                                       :type :select
                                       :label "Environment"
@@ -1248,7 +1248,7 @@
   (it "keeps three authored rows and bold runs at every unwrapped width"
       (let [form (hi/init-form
                    (hi/request<-wire
-                     {:id "r" :title "Confirm" :description markdown-description :fields []}))]
+                     {:id "r" :title "Confirm" :description markdown-description :nodes []}))]
         (doseq [width [nil 80]]
           (let [rows (take-while #(= :description (:kind %)) (hi/form-rows form width))]
             (expect (= ["Environment: DEV01" "Service: glms-plcx-svc" "Command: :init-batch-report"]
@@ -1271,7 +1271,7 @@
                         80
                         30
                         (hi/init-form
-                          {:id "r" :title "Confirm" :description markdown-description :fields []}))
+                          {:id "r" :title "Confirm" :description markdown-description :nodes []}))
              (let [ys (mapv #(screen-row-of screen %) ["Environment:" "Service:" "Command:"])]
                (expect (every? some? ys))
                (expect (= [1 1] (mapv - (rest ys) ys))))
@@ -1284,7 +1284,7 @@
   (it "wraps Markdown without dropping characters or styles"
       (let [rows (take-while #(= :description (:kind %))
                              (hi/form-rows (hi/init-form {:description "**abcdefghijklmnop**\nlast"
-                                                          :fields []})
+                                                          :nodes []})
                                            8))]
         (expect (= "abcdefghijklmnoplast" (apply str (map :text rows))))
         (expect (= "last" (:text (last rows))))
@@ -1296,7 +1296,7 @@
                         80
                         30
                         (hi/init-form
-                          {:title "Confirm" :fields [] :description "**Safe** <b>literal</b>"}))
+                          {:title "Confirm" :nodes [] :description "**Safe** <b>literal</b>"}))
              (expect (contains? (modifiers-of screen "Safe") SGR/BOLD))
              (expect (some? (screen-row-of screen "<b>literal</b>")))
              (expect (not (contains? (modifiers-of screen "literal") SGR/BOLD)))
@@ -1312,7 +1312,7 @@
             (hi/form-rows (hi/init-form {:id "r"
                                          :title "Deploy"
                                          :description prose
-                                         :fields [{:id "env" :type :plaintext :label "Env"}]})
+                                         :nodes [{:id "env" :type :plaintext :label "Env"}]})
                           40)
 
             head
@@ -1330,7 +1330,7 @@
             (hi/form-rows (hi/init-form
                             {:id "r"
                              :title "Deploy"
-                             :fields
+                             :nodes
                              [{:id "env" :type :plaintext :label "Env" :description prose}]})
                           40)
 
@@ -1351,7 +1351,7 @@
       (let [rows (hi/form-rows (hi/init-form {:id "r"
                                               :title "Deploy"
                                               :description prose
-                                              :fields [{:id "env" :type :plaintext}]}))]
+                                              :nodes [{:id "env" :type :plaintext}]}))]
         (expect (= {:kind :description :text prose} (select-keys (first rows) [:kind :text])))
         (expect (= :blank (:kind (second rows))))))
   (it "paints the whole description instead of clipping it at the border"
@@ -1365,7 +1365,7 @@
                        (hi/init-form {:id "r"
                                       :title "Deploy"
                                       :description prose
-                                      :fields [{:id "env" :type :plaintext :label "Env"}]}))]
+                                      :nodes [{:id "env" :type :plaintext :label "Env"}]}))]
 
         ;; The tail of the sentence is on screen only because it wrapped.
         (expect (some? (screen-row-of screen "submit.")))
@@ -1401,7 +1401,7 @@
                        (hi/init-form {:id "r"
                                       :title "Fetch"
                                       :description url
-                                      :fields [{:id "ok" :type :checkbox :label "Go"}]}))
+                                      :nodes [{:id "ok" :type :checkbox :label "Go"}]}))
 
             painted
             (screen-text screen)]
@@ -1418,14 +1418,14 @@
                    (assoc (hi/init-form {:id "r"
                                          :title "Deploy"
                                          :description prose
-                                         :fields [{:id "env" :type :plaintext :label "Env"}]})
+                                         :nodes [{:id "env" :type :plaintext :label "Env"}]})
                      :focus 0))
         (expect (not (str/includes? (screen-text screen) "…")))))
   (it "renders nothing at all for a description that is only whitespace"
       ;; A blank string is not a sentence: it must cost zero rows, not a gap that
       ;; pushes the first field out of view.
       (let [base
-            {:id "r" :title "T" :fields [{:id "ok" :type :checkbox :label "Go"}]}
+            {:id "r" :title "T" :nodes [{:id "ok" :type :checkbox :label "Go"}]}
 
             plain
             (hi/form-rows (hi/init-form base) 40)
@@ -1461,7 +1461,7 @@
   "A text field so ↑/↓ has somewhere to come from, then a slider."
   [& {:as slider}]
   (assoc (request)
-    :fields [{:id "who" :type :plaintext :label "Who"}
+    :nodes [{:id "who" :type :plaintext :label "Who"}
              (merge {:id "pct" :type :range :label "Canary %" :min 0 :max 100 :step 5 :default 25}
                     slider)]))
 
@@ -1601,7 +1601,7 @@
                                     :human-input (hi/init-form
                                                    {:id "r"
                                                     :title "Tiny"
-                                                    :fields [{:id "a" :type :checkbox :label "Yes"}]
+                                                    :nodes [{:id "a" :type :checkbox :label "Yes"}]
                                                     :is-cancellable true})))]
         (expect (rule-row? (screen-row screen 24)))
         (expect (str/includes? (screen-row screen 25) "hello draft"))
@@ -1613,7 +1613,7 @@
                                     :human-input (hi/init-form
                                                    {:id "r"
                                                     :title "Tiny"
-                                                    :fields [{:id "a" :type :checkbox :label "Yes"}]
+                                                    :nodes [{:id "a" :type :checkbox :label "Yes"}]
                                                     :is-cancellable true})))]
         (expect (not= "" (screen-row screen 28))))))
 
@@ -1626,7 +1626,7 @@
   ([lo hi]
    (canonical-input-view
      {"title" "Confirm the code"
-      "fields"
+      "nodes"
       [{"name" "email" "label" "Email" "is_required" true}
        {"name" "code" "type" "otp" "label" "One-time code" "min_length" lo "max_length" hi}]})))
 
@@ -1688,7 +1688,7 @@
       ;; comparison is about ink rather than about what scrolled away.
       (let [two {:id "r"
                  :title "T"
-                 :fields [{:id "a" :type :plaintext :label "A" :description "Free text"}
+                 :nodes [{:id "a" :type :plaintext :label "A" :description "Free text"}
                           {:id "b" :type :plaintext :label "B" :description "Other prose"}]}]
         (expect (= t/dialog-fg (:fg (cell-under (hi/init-form two) "Free text"))))
         (expect (= t/dialog-hint
@@ -1828,7 +1828,7 @@
       (let [request
             (canonical-input-view
               {"title" "Ship"
-               "fields" [{"name" "ok" "type" "checkbox" "label" "Confirm"}
+               "nodes" [{"name" "ok" "type" "checkbox" "label" "Confirm"}
                          {"name" "env" "type" "select" "label" "Env" "options" ["prod" "stg"]}
                          {"name" "risk" "type" "range" "label" "Risk" "min" 0 "max" 10 "step" 1}]})
 
@@ -1872,7 +1872,7 @@
   "A request whose first field is a LAYOUT GROUP, built by the engine so these
    tests pin the real wire contract and not a hand-written guess at it."
   [group]
-  (canonical-input-view {"title" "Connect" "fields" [group {"name" "notes" "label" "Notes"}]}))
+  (canonical-input-view {"title" "Connect" "nodes" [group {"name" "notes" "label" "Notes"}]}))
 
 (defn- server-group
   "Two fields that belong together, laid out in `direction`."
@@ -1880,7 +1880,7 @@
   {"type" "group"
    "direction" direction
    "label" "Server"
-   "fields" [{"name" "host" "label" "Host" "is_required" true "placeholder" "db.internal"}
+   "children" [{"name" "host" "label" "Host" "is_required" true "placeholder" "db.internal"}
              {"name" "port" "label" "Port" "placeholder" "5432"}]})
 
 (defn- ink
@@ -1926,10 +1926,10 @@
       ;; Two directions and no third rule — the tree does the rest.
       (let [rows (ink (hi/init-form (grouped-request {"type" "group"
                                                       "direction" "row"
-                                                      "fields" [{"type" "group"
+                                                      "children" [{"type" "group"
                                                                  "direction" "column"
                                                                  "label" "Left"
-                                                                 "fields" [{"name" "a" "label" "A"}
+                                                                 "children" [{"name" "a" "label" "A"}
                                                                            {"name" "b"
                                                                             "label" "B"}]}
                                                                 {"name" "c" "label" "C"}]})))]
@@ -1982,7 +1982,7 @@
             (hi/init-form (grouped-request
                             {"type" "group"
                              "direction" "row"
-                             "fields" [{"name" "env" "type" "select" "options" ["dev" "prod"]}
+                             "children" [{"name" "env" "type" "select" "options" ["dev" "prod"]}
                                        {"name" "tier" "type" "select" "options" ["free" "paid"]}]}))
 
             focused
@@ -2012,7 +2012,7 @@
       (let [request
             (grouped-request {"type" "group"
                               "direction" "row"
-                              "fields" [(server-group "row") {"name" "region" "label" "Region"}]})
+                              "children" [(server-group "row") {"name" "region" "label" "Region"}]})
 
             form
             (hi/set-errors (hi/init-form request) {"port" "Port is required"})
@@ -2057,13 +2057,13 @@
    INSIDE a group, so these tests pin the real contract."
   []
   (canonical-input-view {"title" "Deploy"
-                         "fields"
+                         "nodes"
                          [{"type" "heading" "text" "Connection"}
                           {"type" "paragraph" "text" "Where the job runs and who it runs as."}
                           {"name" "host" "label" "Host"}
                           {"type" "group"
                            "name" "creds"
-                           "fields" [{"type" "heading" "text" "Credentials"}
+                           "children" [{"type" "heading" "text" "Credentials"}
                                      {"name" "pw" "type" "password" "label" "Password"}]}]}))
 
 (defdescribe
@@ -2087,7 +2087,7 @@
             (hi/init-form (canonical-input-view
                             {"title" "Confirm"
                              "description" "**Deployment effect:** Updates the proxy."
-                             "fields" [{"type" "paragraph"
+                             "nodes" [{"type" "paragraph"
                                         "text" "**Target:** `DEV21`\n\n- **Memory:** 4096 MiB"}]}))
 
             rows
@@ -2122,7 +2122,7 @@
       (let [rows (hi/form-rows (hi/init-form
                                  (identity (engine/view<-wire
                                              {"title" "T"
-                                              "fields" [{"type" "paragraph"
+                                              "nodes" [{"type" "paragraph"
                                                          "text" (str/join " " (repeat 30 "words"))}
                                                         {"name" "a" "label" "A"}]})))
                                40)]

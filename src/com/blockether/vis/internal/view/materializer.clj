@@ -30,6 +30,7 @@
    how many lines it left behind."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.view :as spec]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]))
 
 (defn log-text
@@ -80,6 +81,7 @@
    :code #{:text :language}
    :spinner #{:text :variant :is-active}
    :button #{:is-disabled :clicks}
+   :card #{:title :text :tone :meta :is-selectable :clicks}
    :progress #{:value :done :total}
    :stat #{:stats}
    :steps #{:steps}
@@ -113,7 +115,7 @@
   [nodes]
   (into []
         (mapcat (fn [node]
-                  (cons node (node-tree (:fields node)))))
+                  (cons node (node-tree (:children node)))))
         nodes))
 
 (defn- leaf-nodes
@@ -124,7 +126,7 @@
   [nodes]
   (into []
         (mapcat (fn [node]
-                  (if (seq (:fields node)) (leaf-nodes (:fields node)) [node])))
+                  (if (seq (:children node)) (leaf-nodes (:children node)) [node])))
         nodes))
 
 (defn- node-ids
@@ -138,12 +140,13 @@
   [nodes node-id]
   (first (keep-indexed (fn [i node]
                          (cond (= node-id (:id node)) [i]
-                               (seq (:fields node)) (when-let [sub (path-in (:fields node) node-id)]
-                                                      (into [i :fields] sub))))
+                               (seq (:children node)) (when-let [sub (path-in (:children node)
+                                                                              node-id)]
+                                                        (into [i :children] sub))))
                        nodes)))
 
 (defn- node-path
-  "The path from the view down to `node-id` — `[:nodes 2 :fields 0]` for a node
+  "The path from the view down to `node-id` — `[:nodes 2 :children 0]` for a node
    arranged inside a layout group — or nil. Ids are addresses and unique across
    the tree, so a node standing in a row is patched exactly like one at the top."
   [view node-id]
@@ -239,7 +242,7 @@
     (= :log (:type node))
     (update :total-lines #(long (or % (count (:lines node)))))
 
-    (= :button (:type node))
+    (or (= :button (:type node)) (and (= :card (:type node)) (:is-selectable node)))
     (update :clicks #(long (or % 0)))))
 
 (defn- stamped
@@ -247,8 +250,8 @@
    because a log arranged into a row is still a log."
   [node]
   (cond-> (stamped-log node)
-    (seq (:fields node))
-    (update :fields #(mapv stamped %))))
+    (seq (:children node))
+    (update :children #(mapv stamped %))))
 
 (defn record-view
   "Stamp the complete initial declaration before writing it to the journal.
@@ -263,8 +266,8 @@
     (= :log (:type node))
     trim-log-window
 
-    (seq (:fields node))
-    (update :fields #(mapv windowed-node %))))
+    (seq (:children node))
+    (update :children #(mapv windowed-node %))))
 
 (defn materialize
   "Stamp the declared view and keep only each log's visible window.
@@ -466,6 +469,19 @@
     (update-in view (pop path) drop-at (peek path))
     view))
 
+(defn- apply-set-value
+  "An input with its new `:value`, or without one when the value is nil. The
+   value must fit the input domain; a secret input never takes a value here."
+  [node {:keys [value]}]
+  (cond (not (contains? spec/field-types
+                        (some-> (:type node)
+                                name)))
+        (invalid-patch! (:id node) "only an input component takes a value")
+        (:is-secret node) (invalid-patch! (:id node) "a secret input never takes a value")
+        (nil? value) (dissoc node :value)
+        (spec/value-in-domain? node value) (assoc node :value value)
+        :else (invalid-patch! (:id node) "the value is outside the input domain")))
+
 (defn- apply-op
   "The view after ONE operation."
   [view op]
@@ -497,7 +513,10 @@
             (apply-remove node op)
 
             :clear
-            (apply-clear node))]
+            (apply-clear node)
+
+            :set-value
+            (apply-set-value node op))]
 
       (assoc-in view path patched))))
 
@@ -699,6 +718,54 @@
 (defmethod node->markdown :button
   [{:keys [label clicks]} _]
   (marked-lines :button [(str label " (button; " (long (or clicks 0)) " activations)")]))
+
+(defmethod node->markdown :card
+  [{:keys [title text tone meta]} _]
+  (marked-lines :card
+                (cond-> [(str (tone-tag tone) title)]
+                  meta
+                  (conj (str "_" meta "_"))
+
+                  (seq text)
+                  (conj text))))
+
+(defn- input-text
+  "An input value as one line of text. A secret input shows only that it is set."
+  [{:keys [type value is-secret]}]
+  (cond (nil? value) ""
+        is-secret "(set)"
+        (= :checkbox type) (if value "yes" "no")
+        (sequential? value) (str/join ", " value)
+        :else (str value)))
+
+(def ^:private input-domain-keys
+  "The keys that bound the value of an input, as the wire spells them."
+  {:options "options"
+   :min "min"
+   :max "max"
+   :step "step"
+   :min-length "min_length"
+   :max-length "max_length"})
+
+(defn- input-domain-line
+  "The domain of input `node` as one `Domain:` line of JSON, or nil when it has none."
+  [node]
+  (let [domain (into {}
+                     (keep (fn [[k wire-key]]
+                             (when (contains? node k)
+                               [wire-key
+                                (if (= :options k)
+                                  (mapv #(select-keys % [:value :label]) (k node))
+                                  (k node))])))
+                     input-domain-keys)]
+    (when (seq domain) (str "Domain: " (wire/json-str domain)))))
+
+(doseq [input-type (vals spec/field-types)]
+  (defmethod node->markdown input-type
+    [{:keys [label] :as node} _]
+    (marked-lines input-type
+                  (into (vec (keep identity [(input-domain-line node)]))
+                        [(str label ": " (input-text node))]))))
 
 (defmethod node->markdown :status
   [{:keys [text detail tone]} _]
@@ -1021,6 +1088,8 @@
                (str/replace #"^-+|-+$" ""))]
     (when-not (str/blank? id) id)))
 
+(def ^:private input-types "The node types that hold one answer." (set (vals spec/field-types)))
+
 (defn- addressed
   "`items` given the `:id` markdown does not paint: the slug of the text the eye
    reads, `prefix-N` where that is blank, and a numbered suffix where two would
@@ -1036,7 +1105,10 @@
                            (let [candidate (if (= 1 n) base (str base "-" n))]
                              (if (contains? taken candidate) (recur (inc n)) candidate)))]
 
-                     [(conj acc (assoc item :id id)) (conj taken id)]))
+                     [(conj acc
+                            (cond-> (assoc item :id id)
+                              (contains? input-types (:type item))
+                              (assoc :name id))) (conj taken id)]))
                  [[] #{}]
                  items)))
 
@@ -1109,8 +1181,12 @@
         (not (str/blank? label))
         (assoc :label label)))))
 
+(def ^:private marked-types
+  "The node types whose markdown form starts with a counted `vis:` marker."
+  (into #{:paragraph :heading :divider :code :spinner :button :card} (vals spec/field-types)))
+
 (def ^:private presentation-marker
-  #"<!-- vis:(paragraph|heading|divider|code|spinner|button) ([0-9]+) -->")
+  (re-pattern (str "<!-- vis:(" (str/join "|" (sort (map name marked-types))) ") ([0-9]+) -->")))
 
 (defn- blocks
   "Group numbered lines without splitting fences or counted presentation content."
@@ -1228,6 +1304,84 @@
      :text (if working (second working) text)
      :is-active (boolean working)
      :variant :braille}))
+
+(defmethod markdown->node :card
+  [_ {:keys [at lines]}]
+  (let [[head & more]
+        (rest lines)
+
+        _
+        (when (str/blank? head) (invalid-markdown! at "a card needs a title"))
+
+        [title tone]
+        (untoned head)
+
+        [meta-line & text-lines]
+        more
+
+        meta
+        (some->> meta-line
+                 (re-matches #"_(.+)_")
+                 second)
+
+        text-lines
+        (if meta text-lines more)]
+
+    (cond-> {:type :card :title title}
+      tone
+      (assoc :tone tone)
+
+      meta
+      (assoc :meta meta)
+
+      (seq text-lines)
+      (assoc :text (str/join "\n" text-lines)))))
+
+(defn- markdown-domain
+  "The domain keys of a `Domain:` line, or nil when `line` is not one."
+  [line]
+  (when-let [[_ json] (re-matches #"Domain: (\{.*\})" (str line))]
+    (let [domain (try (wire/parse-json json) (catch Exception _ nil))]
+      (when (map? domain)
+        (into {}
+              (keep (fn [[k wire-key]]
+                      (when (contains? domain wire-key)
+                        [k
+                         (if (= :options k)
+                           (mapv (fn [option]
+                                   {:value (get option "value") :label (get option "label")})
+                                 (get domain wire-key))
+                           (get domain wire-key))])))
+              input-domain-keys)))))
+
+(defn- markdown-input-value
+  "The value that `text` paints for an input of `type`, or nil when it shows none."
+  [type text]
+  (cond (str/blank? text) nil
+        (contains? spec/secret-types type) nil
+        (= :checkbox type) (= "yes" text)
+        (= :multiselect type) (str/split text #", ")
+        (= :range type) (or (parse-long text) (parse-double text))
+        :else text))
+
+(doseq [input-type (vals spec/field-types)]
+  (defmethod markdown->node input-type
+    [_ {:keys [at lines]}]
+    (let [[first-line & more] (rest lines)
+          domain (when (seq more) (markdown-domain first-line))
+          body (if domain more (rest lines))
+          [_ label value] (or (re-matches #"(?s)(.*?): (.*)" (str/join "\n" body))
+                              (re-matches #"(?s)(.*?):()" (str/join "\n" body))
+                              (invalid-markdown! at "an input needs a label and a value"))
+          value (markdown-input-value input-type value)]
+
+      (cond-> (merge {:type input-type
+                      :label label
+                      :is-required false
+                      :is-secret (contains? spec/secret-types input-type)}
+                     domain)
+        (some? value)
+        (assoc :value value)))))
 
 (defmethod markdown->node :button
   [_ {:keys [at lines]}]

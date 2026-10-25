@@ -35,7 +35,7 @@ function withNode(view: LiveView, node: LiveNode): LiveView {
       existing.id === node.id
         ? node
         : existing.type === 'group'
-          ? { ...existing, fields: swap(existing.fields) }
+          ? { ...existing, children: swap(existing.children) }
           : existing,
     );
   return { ...view, nodes: swap(view.nodes) };
@@ -228,7 +228,7 @@ describe('selecting a table row', () => {
   const selectableView = (): LiveView => {
     const view = opened();
     const hosts = view.nodes
-      .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
+      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
       .find((node) => node.id === 'hosts');
     if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
     return withNode(view, {
@@ -260,7 +260,7 @@ describe('selecting a table row', () => {
   /** The hosts table of a view, which sits one level down when the view groups it. */
   const hostsTable = (view: LiveView) => {
     const node = view.nodes
-      .flatMap((one) => (one.type === 'group' ? one.fields : [one]))
+      .flatMap((one) => (one.type === 'group' ? one.children : [one]))
       .find((one) => one.id === 'hosts');
     if (!node || node.type !== 'table') throw new Error('the fixture must hold the hosts table');
     return node;
@@ -689,7 +689,7 @@ describe('what a run says about its own layout', () => {
   it('keeps the name and its value on one line and stacks the rest beneath', () => {
     const view = opened();
     const hosts = view.nodes
-      .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
+      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
       .find((node) => node.id === 'hosts');
     if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
     paint({
@@ -722,7 +722,7 @@ describe('what a run says about its own layout', () => {
   it('marks a table cell too, because a cell is a human string as well', () => {
     const view = opened();
     const hosts = view.nodes
-      .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
+      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
       .find((node) => node.id === 'hosts');
     if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
     paint({

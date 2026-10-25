@@ -125,7 +125,7 @@ describe('log search', () => {
     const load = vi.fn().mockResolvedValue(page());
     const onActivate = vi.fn();
     const saved = view();
-    saved.nodes = [{ id: 'group', type: 'group', direction: 'column', fields: saved.nodes }];
+    saved.nodes = [{ id: 'group', type: 'group', direction: 'column', children: saved.nodes }];
     render(<LiveViewPanel view={saved} load={load} isSettled onActivate={onActivate} />);
     fireEvent.click(screen.getByRole('button', { name: 'Build log' }));
     search('error');

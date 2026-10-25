@@ -48,6 +48,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.dialogs :as dialogs]
+            [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.primitives :as p]
@@ -344,7 +345,7 @@
           (first (filter #(and (= :log (:type %))
                                (not (contains? unread (:id %)))
                                (pos? (long (missing %))))
-                         (mapcat #(tree-seq :fields :fields %) (get-in pane [:view :nodes]))))]
+                         (mapcat #(tree-seq :children :children %) (get-in pane [:view :nodes]))))]
 
       (when node
         (let [behind
@@ -543,7 +544,8 @@
   "Toggle a disclosure locally, or expand a windowed collection. Updates retain choices."
   [pane node-id]
   (let [node (first (filter #(= node-id (:id %))
-                            (mapcat #(tree-seq :fields :fields %) (get-in pane [:view :nodes]))))]
+                            (mapcat #(tree-seq :children :children %)
+                                    (get-in pane [:view :nodes]))))]
     (if (or (= :log (:type node)) (:is-collapsible node))
       (let [initial (and (not (settled? pane)) (true? (:default-expanded node)))
             is-open (get (:disclosures pane) node-id initial)]
@@ -1160,6 +1162,84 @@
                  (conj (more-row id behind "row")))
       {:widths {id measured}})))
 
+(defn- card-segments
+  "One card line: the rail that marks the card, then `segments`. A card that a
+   human can pick wears the accent rail, the one a button wears."
+  [is-selectable segments]
+  (into [{:text "│ " :fg (if is-selectable t/dialog-hint-key t/dialog-hint)}] segments))
+
+(defmethod node-rows :card
+  [{:keys [id title text meta tone is-selectable]} {:keys [text-w is-interactive]}]
+  (let [pickable
+        (boolean (and is-selectable is-interactive))
+
+        body-w
+        (max 4 (- (long text-w) 2))
+
+        head
+        (cond-> []
+          tone
+          (conj {:text (str (get tone-glyph tone "·") " ") :fg (tone-fg tone)})
+
+          true
+          (conj {:text (flat-text title) :fg t/dialog-fg :styles [p/BOLD]}))
+
+        ;; The meta line sits at the right edge, so the title and its figure read as
+        ;; one row the way a table row does, and never wraps under the title.
+        meta-text
+        (some-> meta
+                flat-text
+                not-empty)
+
+        gap
+        (when meta-text
+          (- body-w
+             (long (p/display-width (segment-line head)))
+             (long (p/display-width meta-text))))
+
+        head
+        (cond-> head
+          (and meta-text (pos? (long gap)))
+          (into [{:text (apply str (repeat gap " "))} {:text meta-text :fg t/dialog-hint}])
+
+          (and meta-text (not (pos? (long gap))))
+          (conj {:text (str "  " meta-text) :fg t/dialog-hint}))
+
+        title-row
+        (let [segments (card-segments pickable head)]
+          {:kind :card
+           :node-id id
+           :segments segments
+           :text (segment-line segments)
+           :label (flat-text title)
+           :is-selectable pickable})]
+
+    (into [title-row]
+          (map (fn [runs]
+                 (let [segments (card-segments pickable (run-segments runs t/dialog-fg []))]
+                   {:kind :card :node-id id :segments segments :text (segment-line segments)})))
+          (when (seq (flat-text text)) (md-lines text body-w)))))
+
+(defn- input-rows
+  "An input node is a FIELD: the form's own renderer draws it, so a field in a
+   view and the same field in a form read alike. Each row keeps the field row it
+   came from for that painter, and its text for the plan."
+  [{:keys [id] :as node} {:keys [text-w is-interactive]}]
+  (mapv (fn [row]
+          {:kind :field
+           :node-id id
+           :field row
+           :text (str (:text row))
+           :is-disabled (not is-interactive)})
+        (hi/view-field-rows node text-w)))
+
+(def ^:private input-node-types
+  "The node types a view edits: every field type a form knows."
+  (set (vals hi-spec/field-types)))
+
+(doseq [type input-node-types]
+  (defmethod node-rows type [node ctx] (input-rows node ctx)))
+
 (defmethod node-rows :link
   [{:keys [id links]} {:keys [fresh is-expanded text-w]}]
   (if (seq links)
@@ -1294,7 +1374,7 @@
         (or (not disclosure?) (:is-open node-ctx))
 
         children
-        (not-empty (:fields node))
+        (not-empty (:children node))
 
         cell-w
         (when children (columns/cell-width body-w (count children)))
@@ -1373,6 +1453,32 @@
                                (into sections)))
       {:widths (reduce merge {} (map (comp :widths meta) sections))})))
 
+(defn- view-nodes
+  "Every node of `pane`'s view, groups opened, in declaration order."
+  [pane]
+  (tree-seq #(seq (:children %)) :children {:children (get-in pane [:view :nodes])}))
+
+(defn input-node
+  "The input node `node-id` of `pane`'s view, or nil when it is no input."
+  [pane node-id]
+  (some #(when (and (= node-id (:id %)) (contains? input-node-types (:type %))) %)
+        (view-nodes pane)))
+
+(defn submit-button?
+  "True when `node-id` is a button that submits the view's inputs."
+  [pane node-id]
+  (boolean (some #(and (= node-id (:id %)) (= :button (:type %)) (= :submit (keyword (:action %))))
+                 (view-nodes pane))))
+
+(defn input-values
+  "The value of every input that holds one, keyed by node id: what a submit button
+   sends. A secret never comes back to a surface, so a set secret is left out."
+  [pane]
+  (into {}
+        (keep (fn [{:keys [id type value]}]
+                (when (and (contains? input-node-types type) (some? value)) [id value])))
+        (view-nodes pane)))
+
 (defn controls
   "Keyboard-accessible controls for the visible pane, in reading order."
   [panes]
@@ -1392,10 +1498,18 @@
                              :trow
                              (when (:is-selectable entry) :live-select)
 
+                             :card
+                             (when (:is-selectable entry) :live-activate)
+
+                             :field
+                             (when (and (not (:is-disabled entry))
+                                        (#{:label :checkbox} (get-in entry [:field :kind])))
+                               :live-edit)
+
                              nil)
                       control (assoc (select-keys entry [:node-id :item-id])
                                 :id [(:node-id entry) (:item-id entry)]
-                                :label (:text entry)
+                                :label (or (:label entry) (:text entry))
                                 :kind kind
                                 :view-id (view-id pane))]
 
@@ -1528,7 +1642,7 @@
                     (and (= :group (:type node))
                          (or (not (:is-collapsible node))
                              (get (:disclosures pane) (:id node) (:default-expanded node)))
-                         (some active? (:fields node)))))]
+                         (some active? (:children node)))))]
         (boolean (some active? (get-in pane [:view :nodes])))))))
 
 ;;; ── Where the viewport sits ─────────────────────────────────────────────────
@@ -2005,6 +2119,31 @@
                       :node-id (:node-id entry)
                       :enabled? true})))
 
+    :card
+    (do (paint-segments! g left row inner-w (:segments entry))
+        (when (:is-selectable entry)
+          (.register interactions/hit-map
+                     {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                               :col (+ (long left) 2)
+                               :width (max 0 (- (long inner-w) 3))}
+                      :kind :live-activate
+                      :view-id view-id
+                      :node-id (:node-id entry)
+                      :enabled? true})))
+
+    :field
+    (do (fill! g left row inner-w t/dialog-fg)
+        (hi/paint-field-row! g left row inner-w (:field entry))
+        (when-not (or (:is-disabled entry) (= :blank (get-in entry [:field :kind])))
+          (.register interactions/hit-map
+                     {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                               :col (+ (long left) 2)
+                               :width (max 0 (- (long inner-w) 3))}
+                      :kind :live-edit
+                      :view-id view-id
+                      :node-id (:node-id entry)
+                      :enabled? true})))
+
     :spinner
     (let [frames
           (get hi-spec/spinner-frames (:variant entry))
@@ -2447,7 +2586,7 @@
                  (paint-heading-search! g region title-row view-id heading-search))))
            (when (= 2 search-h)
              (let [node (first (filter #(= (:node-id search) (:id %))
-                                       (mapcat #(tree-seq :fields :fields %)
+                                       (mapcat #(tree-seq :children :children %)
                                                (get-in front [:view :nodes]))))
                    page (:page search)]
 

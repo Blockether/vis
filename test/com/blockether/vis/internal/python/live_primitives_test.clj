@@ -61,9 +61,9 @@
                             (expect (false? (get-in result ["view" "nodes" 3 "is_active"])))
                             ;; #209 crosses the bundled SDK, JSON host call and engine materializer.
                             (expect (= ["ERROR retained"]
-                                       (get-in result ["view" "nodes" 4 "fields" 0 "lines"])))
+                                       (get-in result ["view" "nodes" 4 "children" 0 "lines"])))
                             (expect (= ["error"]
-                                       (get-in result ["view" "nodes" 4 "fields" 0 "line_tones"]))))
+                                       (get-in result ["view" "nodes" 4 "children" 0 "line_tones"]))))
                           (finally (when view (engine/close-live! (:id view)))
                                    (future-cancel work))))))))))
         (finally (doseq [file (reverse (file-seq dir))]

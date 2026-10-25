@@ -8096,3 +8096,32 @@
                    (expect (= 201 (:status (create {}))))
                    (expect (= 201 (:status (create {:vis.host/origin origin}))))
                    (expect (= [nil origin] @created)))))
+
+(defdescribe
+  create-session-draft-backend-test
+  (it "sets the draft backend of the new session only and refuses an unknown one"
+      (let [settings
+            (atom [])
+
+            create
+            (fn [body]
+              (with-redefs-fn {#'state/create-session! (fn [_]
+                                                         {"id" "s1"})
+                               (requiring-resolve 'com.blockether.vis.internal.loop/db-info)
+                               (constantly ::db)
+                               (requiring-resolve 'com.blockether.vis.internal.config.scoped/target)
+                               (fn [_ scope id]
+                                 [scope id])
+                               (requiring-resolve
+                                 'com.blockether.vis.internal.config.scoped/set-setting!)
+                               (fn [_ target setting field value]
+                                 (swap! settings conj [target setting field value]))}
+                (fn []
+                  (#'sessions-api/create-session-handler
+                   {:body (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str body)
+                                                                    "UTF-8"))}))))]
+
+        (expect (= 201 (:status (create {"draft_backend" "worktree"}))))
+        (expect (= 201 (:status (create {}))))
+        (expect (= 400 (:status (create {"draft_backend" "git"}))))
+        (expect (= [[["session" "s1"] "draft_backend" "value" "worktree"]] @settings)))))

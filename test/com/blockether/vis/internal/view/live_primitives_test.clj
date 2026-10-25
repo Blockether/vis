@@ -9,7 +9,7 @@
             [com.blockether.vis.internal.view.sink :as sink]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- nodes [view] (mapcat #(tree-seq :fields :fields %) (:nodes view)))
+(defn- nodes [view] (mapcat #(tree-seq :children :children %) (:nodes view)))
 
 (defn- node [view id] (first (filter #(= id (:id %)) (nodes view))))
 
@@ -35,7 +35,7 @@
                          :label "Details"
                          :direction "column"
                          :is-collapsible true
-                         :fields
+                         :children
                          [{:id "refresh" :type "button" :label "Refresh"}
                           {:id "disabled" :type "button" :label "Unavailable" :is-disabled true}
                           {:id "a" :type "log" :lines ["retained"]}
@@ -58,9 +58,9 @@
                   "nodes"
                   (fn strip [items]
                     (mapv (fn [n]
-                            (cond-> (dissoc n "clicks" "total_lines")
-                              (get n "fields")
-                              (update "fields" strip)))
+                            (cond-> (dissoc n "clicks" "total_lines" "is_secret")
+                              (get n "children")
+                              (update "children" strip)))
                           items)))
 
           raw
@@ -70,8 +70,9 @@
           (materializer/materialize (engine/normalize-live-view (engine/spec<-json raw)))]
 
       (expect (nil? (spec/live-view-error view)))
-      (expect (= (set (vals spec/live-node-types))
-                 (set (map :type (remove #(= :group (:type %)) (nodes view))))))
+      (let [types (set (map :type (remove #(= :group (:type %)) (nodes view))))]
+        (expect (every? types (vals spec/live-node-types)))
+        (expect (some types (vals spec/field-types))))
       (expect (= #{1 2 3 4 5 6} (set (map :level (filter #(= :heading (:type %)) (nodes view))))))
       (expect (= (set (vals spec/spinner-variants))
                  (set (map :variant (filter #(= :spinner (:type %)) (nodes view))))))
@@ -165,7 +166,7 @@
                             :label "Added section"
                             :direction "column"
                             :is-collapsible true
-                            :fields [{:id "late-log" :type "log" :lines lines :window-lines 2}]}}
+                            :children [{:id "late-log" :type "log" :lines lines :window-lines 2}]}}
                {:op :append :node-id "late-log" :lines ["next"]}])
             (expect (= ["line 39" "next"] (:lines (node (engine/live-view id) "late-log"))))
             (expect (= (conj lines "next") (:lines (sink/log-range file "late-log" 0 100)))))))))
@@ -215,7 +216,7 @@
                           :label "Section"
                           :direction "column"
                           :is-collapsible true
-                          :fields [{:id "nested" :type "log" :lines lines :window-lines 2}]}]}
+                          :children [{:id "nested" :type "log" :lines lines :window-lines 2}]}]}
 
                 opened
                 (engine/open-live! declared)]
@@ -387,7 +388,7 @@
                  :nodes [{:id "sections"
                           :type "group"
                           :direction "column"
-                          :fields [{:id "before" :type "paragraph" :text "Build finished"} divider
+                          :children [{:id "before" :type "paragraph" :text "Build finished"} divider
                                    {:id "after" :type "paragraph" :text "Review results"}]}]}))
 
             markdown
@@ -403,7 +404,7 @@
         (expect (= 1
                    (count (filter #(= :divider (:type %))
                                   (nodes (:view (materializer/parse-markdown markdown))))))))
-      (doseq [[key value] [[:label "Section"] [:text "---"] [:tone :idle] [:level 2] [:fields []]
+      (doseq [[key value] [[:label "Section"] [:text "---"] [:tone :idle] [:level 2] [:children []]
                            [:style "dashed"]]]
         (expect (try (engine/normalize-live-node {:id "bad" :type :divider key value})
                      false

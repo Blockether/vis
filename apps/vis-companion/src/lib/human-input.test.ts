@@ -29,7 +29,7 @@ it('reads the canonical SDK input View and its field values', async () => {
   );
   const request = humanInputRequestFromWire(canonical.input);
   expect(request?.id).toBe(canonical.answer.request_id);
-  expect(request?.fields[0]).toMatchObject({
+  expect(request?.nodes[0]).toMatchObject({
     id: 'name',
     name: 'name',
     type: 'plaintext',
@@ -69,7 +69,7 @@ describe('humanInputRequestFromWire', () => {
     expect(request.session_id).toBe('sid-1');
     expect(request.submit_label).toBe('Submit');
     expect(request.is_cancellable).toBe(true);
-    expect(request.fields.map((field) => `${field.name}:${field.type}`)).toEqual([
+    expect(request.nodes.map((field) => `${field.name}:${field.type}`)).toEqual([
       // Two decorations lead the form. They have no name because nothing keys ink.
       ':heading',
       ':paragraph',
@@ -81,11 +81,11 @@ describe('humanInputRequestFromWire', () => {
       'code:otp',
       'notify:plaintext',
       'notes:multiline',
-      'group:host+group:port+tls:group',
+      'group-4:group',
     ]);
     // A group is a BRANCH: it answers nothing, and the leaves under it are the
     // fields the form actually submits.
-    expect(humanInputInputFields(request.fields).map((field) => field.id)).toEqual([
+    expect(humanInputInputFields(request.nodes).map((field) => field.id)).toEqual([
       'env',
       'key',
       'ok',
@@ -100,8 +100,8 @@ describe('humanInputRequestFromWire', () => {
     ]);
     // name keys the answer, label is what the dialog shows, description is the
     // italic line under it. Found by name, not by index: ink leads this form.
-    const env = request.fields.find((field) => field.id === 'env');
-    const key = request.fields.find((field) => field.id === 'key');
+    const env = request.nodes.find((field) => field.id === 'env');
+    const key = request.nodes.find((field) => field.id === 'key');
     expect(env?.name).toBe('env');
     expect(env?.label).toBe('Env');
     expect(env?.description).toBe('Where this deploy lands');
@@ -119,9 +119,9 @@ describe('humanInputRequestFromWire', () => {
     const request = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ id: 'token', type: 'plaintext' }],
+      nodes: [{ id: 'token', type: 'plaintext' }],
     });
-    expect(request?.fields[0]?.label).toBe('token');
+    expect(request?.nodes[0]?.label).toBe('token');
     expect(request?.submit_label).toBe('Submit');
     expect(request?.cancel_label).toBe('Cancel');
     expect(request?.is_cancellable).toBe(true);
@@ -131,21 +131,21 @@ describe('humanInputRequestFromWire', () => {
     const named = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [
+      nodes: [
         { name: 'token', type: 'plaintext', label: 'API token', description: 'from 1Password' },
       ],
     });
-    expect(named?.fields[0]?.name).toBe('token');
-    expect(named?.fields[0]?.id).toBe('token');
-    expect(named?.fields[0]?.label).toBe('API token');
-    expect(named?.fields[0]?.description).toBe('from 1Password');
+    expect(named?.nodes[0]?.name).toBe('token');
+    expect(named?.nodes[0]?.id).toBe('token');
+    expect(named?.nodes[0]?.label).toBe('API token');
+    expect(named?.nodes[0]?.description).toBe('from 1Password');
   });
 
   it('carries a deadline, and reads 0 as no deadline at all', () => {
     const deadline = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ id: 'a' }],
+      nodes: [{ id: 'a' }],
       timeout_ms: 120_000,
     });
     expect(deadline?.timeout_ms).toBe(120_000);
@@ -155,7 +155,7 @@ describe('humanInputRequestFromWire', () => {
     const forever = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ id: 'a' }],
+      nodes: [{ id: 'a' }],
       timeout_ms: 0,
     });
     expect(forever?.timeout_ms).toBeUndefined();
@@ -168,7 +168,7 @@ describe('humanInputRequestFromWire', () => {
     const child = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ id: 'a' }],
+      nodes: [{ id: 'a' }],
       origin: {
         session_id: 'child-1',
         title: 'Read logs',
@@ -190,20 +190,20 @@ describe('humanInputRequestFromWire', () => {
     const top = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ id: 'a' }],
+      nodes: [{ id: 'a' }],
       origin: { session_id: 'leader-1', title: 'Deploy DEV13' },
     });
     expect(originLabel(top?.origin)).toBeNull();
-    expect(humanInputRequestFromWire({ id: 'r', title: 'T', fields: [{ id: 'a' }], origin: {} })?.origin)
+    expect(humanInputRequestFromWire({ id: 'r', title: 'T', nodes: [{ id: 'a' }], origin: {} })?.origin)
       .toBeUndefined();
   });
   it('refuses a frame it could not render as an answerable form', () => {
     expect(humanInputRequestFromWire(null)).toBeNull();
-    expect(humanInputRequestFromWire({ title: 'T', fields: [{ id: 'a' }] })).toBeNull();
-    expect(humanInputRequestFromWire({ id: 'r', fields: [{ id: 'a' }] })).toBeNull();
-    expect(humanInputRequestFromWire({ id: 'r', title: 'T', fields: [] })).toBeNull();
+    expect(humanInputRequestFromWire({ title: 'T', nodes: [{ id: 'a' }] })).toBeNull();
+    expect(humanInputRequestFromWire({ id: 'r', nodes: [{ id: 'a' }] })).toBeNull();
+    expect(humanInputRequestFromWire({ id: 'r', title: 'T', nodes: [] })).toBeNull();
     expect(
-      humanInputRequestFromWire({ id: 'r', title: 'T', fields: [{ type: 'plaintext' }] }),
+      humanInputRequestFromWire({ id: 'r', title: 'T', nodes: [{ type: 'plaintext' }] }),
     ).toBeNull();
   });
 
@@ -234,7 +234,7 @@ describe('initialHumanInputValues', () => {
     const request = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [
+      nodes: [
         { id: 'flag', type: 'checkbox', default: 'yes' },
         { id: 'many', type: 'multiselect', default: ['a', 7] },
       ],
@@ -246,7 +246,7 @@ describe('initialHumanInputValues', () => {
     const request = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ id: '__proto__', type: 'plaintext', is_required: true }],
+      nodes: [{ id: '__proto__', type: 'plaintext', is_required: true }],
     }) as HumanInputRequest;
     const values = initialHumanInputValues(request);
     // `values[id] = …` on an object literal hits the prototype setter: the
@@ -264,7 +264,7 @@ describe('required fields', () => {
     // This used to gate the app's own submit button. The app no longer decides
     // whether an answer is good: `is_required` is a MARK next to the label, and
     // only the engine turns it into a refusal — with its own words.
-    const required = humanInputInputFields(parsed().fields)
+    const required = humanInputInputFields(parsed().nodes)
       .filter((field) => field.is_required)
       .map((field) => field.id);
     // `host` lives inside a layout group — grouping must not hide the mark.
@@ -278,33 +278,33 @@ describe('decorations', () => {
   it('reads the ink the engine sent, and answers none of it', () => {
     const request = parsed();
     expect(
-      request.fields.filter(humanInputIsDecoration).map((node) => [node.type, node.text]),
+      request.nodes.filter(humanInputIsDecoration).map((node) => [node.type, node.text]),
     ).toEqual([
       ['heading', 'Target'],
       ['paragraph', 'Staging pages nobody.'],
     ]);
     // Nothing keys a decoration, so it is not one of the fields an answer walks
     // and it puts no entry in the values map.
-    expect(humanInputInputFields(request.fields).some(humanInputIsDecoration)).toBe(false);
+    expect(humanInputInputFields(request.nodes).some(humanInputIsDecoration)).toBe(false);
     expect(Object.keys(initialHumanInputValues(request))).not.toContain('');
   });
 
   it('drops ink with nothing to paint', () => {
     const request = humanInputRequestFromWire({
       ...(fixture as Record<string, unknown>),
-      fields: [
+      nodes: [
         { type: 'heading', text: '   ' },
         { name: 'a', type: 'plaintext' },
       ],
     });
-    expect(request?.fields.map((field) => field.type)).toEqual(['plaintext']);
+    expect(request?.nodes.map((field) => field.type)).toEqual(['plaintext']);
   });
 });
 
 describe('toggleHumanInputOption', () => {
   it('adds, removes, and keeps the request option order', () => {
     const request = parsed();
-    const tags = request.fields.find((field) => field.id === 'tags');
+    const tags = request.nodes.find((field) => field.id === 'tags');
     if (!tags) throw new Error('fixture must have a multiselect field');
     expect(toggleHumanInputOption(tags, { tags: [] }, 'b')).toEqual(['b']);
     expect(toggleHumanInputOption(tags, { tags: ['b'] }, 'a')).toEqual(['a', 'b']);
@@ -349,14 +349,14 @@ describe('range fields', () => {
     const request = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ id: 'risk', type: 'range', ...extra }],
+      nodes: [{ id: 'risk', type: 'range', ...extra }],
     });
     if (!request) throw new Error('a range request must parse');
-    return request.fields[0]!;
+    return request.nodes[0]!;
   };
 
   it('carries the bounds the engine sent', () => {
-    const risk = parsed().fields.find((field) => field.type === 'range');
+    const risk = parsed().nodes.find((field) => field.type === 'range');
     expect(humanInputRange(risk!)).toEqual({ min: 0, max: 10, step: 0.5 });
   });
 
@@ -378,7 +378,7 @@ describe('range fields', () => {
     const request = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ id: 'risk', type: 'range', min: 5, max: 9 }],
+      nodes: [{ id: 'risk', type: 'range', min: 5, max: 9 }],
     });
     expect(request && initialHumanInputValues(request)).toEqual({ risk: 5 });
   });
@@ -387,7 +387,7 @@ describe('range fields', () => {
     const request = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ id: 'risk', type: 'range', min: 0, max: 10, default: 0 }],
+      nodes: [{ id: 'risk', type: 'range', min: 0, max: 10, default: 0 }],
     }) as HumanInputRequest;
     // 0 is falsy: a default read as `fallback || min` moves the slider off the
     // answer the extension asked for, forever.
@@ -401,9 +401,9 @@ const only = (
   const request = humanInputRequestFromWire({
     id: 'r',
     title: 'T',
-    fields: [{ id: 'f', ...extra }],
+    nodes: [{ id: 'f', ...extra }],
   }) as HumanInputRequest;
-  return { request, field: request.fields[0] as HumanInputField };
+  return { request, field: request.nodes[0] as HumanInputField };
 };
 
 describe('otp fields', () => {
@@ -432,7 +432,7 @@ describe('validation', () => {
     // FUNCTION in the extension that asked the question, and a function cannot
     // be JSON. The app has nothing to run, so it has nothing to guess either.
     expect(JSON.stringify(fixture)).not.toContain('validate');
-    const notify = parsed().fields.find((row) => row.id === 'notify') as HumanInputField;
+    const notify = parsed().nodes.find((row) => row.id === 'notify') as HumanInputField;
     expect(notify.id).toBe('notify');
     expect('validate' in notify).toBe(false);
   });
@@ -451,7 +451,7 @@ describe('the form state machine', () => {
     humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [
+      nodes: [
         { id: 'who', type: 'plaintext', is_required: true },
         { id: 'code', type: 'otp' },
       ],

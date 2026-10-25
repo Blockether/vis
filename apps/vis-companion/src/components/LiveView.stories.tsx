@@ -283,7 +283,7 @@ export const NestedDisclosures: Story = {
           direction: 'column',
           is_collapsible: true,
           default_expanded: true,
-          fields: [
+          children: [
             { id: 'summary', type: 'paragraph', text: '2 workers observed' },
             {
               id: 'log',
@@ -472,12 +472,12 @@ export const Dividers: Story = {
           id: 'results',
           type: 'group',
           direction: 'row',
-          fields: [
+          children: [
             {
               id: 'checks',
               type: 'group',
               direction: 'column',
-              fields: [
+              children: [
                 { id: 'checks-title', type: 'heading', text: 'Checks', level: 3 },
                 { id: 'checks-break', type: 'divider' },
                 { id: 'checks-summary', type: 'paragraph', text: 'All checks passed.' },
@@ -492,7 +492,7 @@ export const Dividers: Story = {
           direction: 'column',
           is_collapsible: true,
           label: 'Build details',
-          fields: [
+          children: [
             { id: 'details-before', type: 'paragraph', text: 'Compiled successfully.' },
             { id: 'details-break', type: 'divider' },
             { id: 'details-after', type: 'paragraph', text: 'No warnings reported.' },
@@ -563,13 +563,13 @@ export const NarrowGroups: Story = {
           id: 'connection',
           type: 'group',
           direction: 'row',
-          fields: [
+          children: [
             { id: 'host', type: 'paragraph', text: 'gateway.example.com' },
             {
               id: 'nested',
               type: 'group',
               direction: 'row',
-              fields: [
+              children: [
                 { id: 'port', type: 'paragraph', text: 'Port 5432' },
                 { id: 'transport', type: 'paragraph', text: 'Encrypted transport' },
               ],

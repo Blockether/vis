@@ -18,7 +18,7 @@ const view = {
   owner: { invocation_id: 'monitor', activity_id: activity.history!.id },
   nodes: [
     ...STORY_LIVE_VIEW.nodes
-      .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
+      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
       .map((node) => (node.type === 'table' ? { ...node, is_selectable: true } : node)),
     { id: 'separator', type: 'divider' as const },
     { id: 'footer', type: 'paragraph' as const, text: 'Watching for updates.' },

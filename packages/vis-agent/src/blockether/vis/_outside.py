@@ -674,12 +674,22 @@ def shell(opts):
 
 # -- Asking a human, with no dialog surface -----------------------------------
 
-_FIELD_SCHEMAS = {
+_COMPONENT_SCHEMAS = {
     branch["properties"]["type"]["const"]: branch
-    for branch in _contracts.definition("view", "field")["oneOf"]
+    for branch in _contracts.definition("view", "component")["oneOf"]
 }
-_GROUP = _contracts.definition("view", "group")["properties"]["type"]["const"]
-_DECOR = set(_contracts.definition("view", "decor_type")["enum"])
+_FIELD_SCHEMAS = {
+    kind: branch
+    for kind, branch in _COMPONENT_SCHEMAS.items()
+    if "name" in branch["required"]
+}
+_GROUP = next(
+    kind
+    for kind, branch in _COMPONENT_SCHEMAS.items()
+    if "children" in branch["properties"]
+)
+# Every component that shows text or state and answers nothing.
+_DECOR = set(_COMPONENT_SCHEMAS) - set(_FIELD_SCHEMAS) - {_GROUP}
 _FIELDS = set(_FIELD_SCHEMAS)
 _TEXT = {
     kind
@@ -748,7 +758,7 @@ def _field_nodes(nodes):
             continue
         kind = node.get("type") or "plaintext"
         if kind == _GROUP:
-            yield from _field_nodes(node.get("fields"))
+            yield from _field_nodes(node.get("children"))
         else:
             yield node
 
@@ -841,7 +851,7 @@ def request_input(request_json, counts_json, run):
     if invalid:
         raise Refused(invalid)
     request_id = str(uuid.uuid4())
-    nodes = list(_field_nodes(request.get("fields")))
+    nodes = list(_field_nodes(request.get("nodes")))
     primed = _primed()
     interactive = _is_interactive()
     if not interactive and not all(
@@ -933,9 +943,9 @@ def _check_node(node, seen):
         return f"every field must be a map, got {node!r}"
     kind = node.get("type") or "plaintext"
     if kind == _GROUP:
-        children = node.get("fields")
+        children = node.get("children")
         if not isinstance(children, (list, tuple)) or not children:
-            return f"a {_GROUP} must arrange at least one field"
+            return f"a {_GROUP} must arrange at least one node"
         for child in children:
             complaint = _check_node(child, seen)
             if complaint:
@@ -978,15 +988,15 @@ def _check_node(node, seen):
 
 def _check_request(request):
     if not isinstance(request, dict):
-        return "a request is a map of title and fields"
+        return "a request is a map of title and nodes"
     title = request.get("title")
     if not isinstance(title, str) or not title.strip():
         return "a request needs a title"
-    fields = request.get("fields")
-    if not isinstance(fields, (list, tuple)) or not fields:
-        return "a request needs at least one field"
+    nodes = request.get("nodes")
+    if not isinstance(nodes, (list, tuple)) or not nodes:
+        return "a request needs at least one node"
     seen = set()
-    for node in fields:
+    for node in nodes:
         complaint = _check_node(node, seen)
         if complaint:
             return complaint
@@ -1007,7 +1017,7 @@ def _check_request(request):
 # either side of the boundary.
 _LIVE_NODE_SCHEMAS = {
     branch["properties"]["type"]["const"]: branch["properties"]
-    for branch in _contracts.definition("view", "live_node")["oneOf"]
+    for branch in _contracts.definition("view", "component")["oneOf"]
 }
 _LIVE_NODE_TYPES = tuple(kind for kind in _LIVE_NODE_SCHEMAS if kind != _GROUP)
 _LIVE_OPS = tuple(
@@ -1021,7 +1031,7 @@ _SPINNER_VARIANTS = tuple(
 )
 _MAX_NODES = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
 _LIVE_REASONS = _contracts.definition("view", "settlement_reason")["enum"]
-_LIVE_HANDLE_OPS = ("patch", "state", "close")
+_LIVE_HANDLE_OPS = ("patch", "state", "events", "close")
 _LIVE_ITEMS = {
     "stat": "stats",
     "steps": "steps",
@@ -1046,12 +1056,21 @@ def _live_check_node(node, seen, *, is_declaration=True):
         if direction is not None and direction not in _GROUP_DIRECTIONS:
             ways = ", ".join(_GROUP_DIRECTIONS)
             return f"a {_GROUP} runs one of {ways}, got {direction!r}"
-        children = node.get("fields")
+        children = node.get("children")
         if not isinstance(children, (list, tuple)) or not children:
             return f"a {_GROUP} must arrange at least one node"
     elif kind not in _LIVE_NODE_TYPES:
         types = ", ".join(_LIVE_NODE_TYPES)
         return f"a node is one of {types}, got {kind!r}"
+    if kind in _FIELDS:
+        # An input is addressed by its id, and its answer is keyed by the same name.
+        node.setdefault("id", node.get("name"))
+        node.setdefault("name", node.get("id"))
+        node.setdefault("label", node.get("id"))
+        node.setdefault("is_required", False)
+        node["is_secret"] = kind in _SECRET
+        if node["is_secret"] and node.get("value") is not None:
+            return f"a {kind} input has no value: only the host holds its handle"
     node_id = node.get("id")
     if not isinstance(node_id, str) or not node_id.strip():
         return f"a {kind} node needs an id"
@@ -1059,7 +1078,7 @@ def _live_check_node(node, seen, *, is_declaration=True):
         return f"two nodes answer to {node_id!r}"
     seen.add(node_id)
     if is_group:
-        for child in node["fields"]:
+        for child in node["children"]:
             complaint = _live_check_node(child, seen, is_declaration=is_declaration)
             if complaint:
                 return complaint
@@ -1107,7 +1126,20 @@ def _live_check_node(node, seen, *, is_declaration=True):
         node.setdefault("is_disabled", False)
         if type(node["clicks"]) is not int or node["clicks"] < 0:
             return "button clicks must be a nonnegative integer"
-    for flag in ("default_expanded", "is_collapsible", "is_active", "is_disabled"):
+    if kind == "card":
+        if not isinstance(node.get("title"), str) or not node["title"].strip():
+            return "a card needs a title"
+        if is_declaration and "clicks" in node:
+            return "card clicks are stamped by the engine"
+        if node.get("is_selectable"):
+            node.setdefault("clicks", 0)
+    for flag in (
+        "default_expanded",
+        "is_collapsible",
+        "is_active",
+        "is_disabled",
+        "is_selectable",
+    ):
         if flag in node and type(node[flag]) is not bool:
             return f"{flag} must be boolean"
     return None
@@ -1140,7 +1172,7 @@ def _live_ids(nodes):
         node_id = node.get("id")
         if node_id is not None:
             seen.add(node_id)
-        seen |= _live_ids(node.get("fields"))
+        seen |= _live_ids(node.get("children"))
     return seen
 
 
@@ -1150,7 +1182,7 @@ def _live_leaves(nodes):
     leaves = []
     for node in nodes or []:
         if node.get("type") == _GROUP:
-            leaves.extend(_live_leaves(node.get("fields")))
+            leaves.extend(_live_leaves(node.get("children")))
         else:
             leaves.append(node)
     return leaves
@@ -1162,7 +1194,7 @@ def _live_find(nodes, node_id):
     for index, node in enumerate(nodes or []):
         if node.get("id") == node_id:
             return nodes, index
-        children = node.get("fields")
+        children = node.get("children")
         if isinstance(children, list):
             found = _live_find(children, node_id)
             if found is not None:
@@ -1290,6 +1322,15 @@ def _live_apply(view, op):
             node["groups"] = _live_upsert(
                 node.get("groups"), op["groups"], is_merged=True
             )
+    elif name == "set-value":
+        if node.get("type") not in _FIELDS:
+            raise Refused("set-value needs an input node")
+        if node.get("is_secret"):
+            raise Refused("a secret input has no value")
+        if op.get("value") is None:
+            node.pop("value", None)
+        else:
+            node["value"] = op["value"]
     elif name == "clear":
         node[_live_items_key(node, "clear")] = []
         if node.get("type") == "log":
@@ -1375,8 +1416,11 @@ def _live_verdict(held, ending):
     return verdict
 
 
-def live(envelope_json):
-    """`vis.live` with no pane: stderr is the surface, and the record with it."""
+def live(envelope_json, listener=None):
+    """`vis.live` with no pane: stderr is the surface, and the record with it.
+
+    No human acts here, so a `listener` never gets an event.
+    """
     envelope = json.loads(envelope_json)
     if not isinstance(envelope, dict):
         raise Refused("a live envelope must be a JSON object")
@@ -1431,6 +1475,12 @@ def _live_handle(held, envelope, op, view_id):
         )
     if op == "state":
         return json.dumps({"view_id": view_id, "is_open": True, "view": held["view"]})
+    if op == "events":
+        # Outside Vis nobody can act on the view, so no event ever arrives.
+        after = envelope.get("after", 0)
+        return json.dumps(
+            {"view_id": view_id, "is_open": True, "cursor": after, "events": []}
+        )
     if op == "patch":
         ops = (envelope.get("patch") or {}).get("ops") or []
         candidate = deepcopy(held["view"])

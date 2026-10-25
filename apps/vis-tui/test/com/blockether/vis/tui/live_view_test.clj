@@ -1875,7 +1875,7 @@
                         :label "Pool state"
                         :is-collapsible true
                         :default-expanded true
-                        :fields [(fixture/log "tail"
+                        :children [(fixture/log "tail"
                                               {:label "Observed workers"
                                                :default-expanded true
                                                :lines ["monitor revision=42 active=4/4"
@@ -2161,7 +2161,7 @@
                         :label "Verification"
                         :is-collapsible true
                         :default-expanded true
-                        :fields [{:id "checks" :type :paragraph :text "All checks passed"}
+                        :children [{:id "checks" :type :paragraph :text "All checks passed"}
                                  {:id "review-break" :type :divider}
                                  {:id "approval" :type :paragraph :text "Ready for review"}]}
                        {:id "next" :type :paragraph :text "Next: publish when approved"})]

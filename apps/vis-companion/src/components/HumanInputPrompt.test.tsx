@@ -82,7 +82,7 @@ describe('human input sheet', () => {
       request: {
         ...HUMAN_INPUT_REQUESTS.minimal,
         description: '**Deployment effect:** Updates the proxy.',
-        fields: [
+        nodes: [
           {
             id: 'target',
             name: 'target',
@@ -105,7 +105,7 @@ describe('human input sheet', () => {
     markup('minimal', {
       request: {
         ...HUMAN_INPUT_REQUESTS.minimal,
-        fields: [
+        nodes: [
           {
             id: 'warning',
             name: 'warning',
@@ -412,11 +412,11 @@ describe('the engine’s whole node vocabulary', () => {
 
   /** Every node of the tree, groups and their children alike. */
   function nodes(fields: readonly HumanInputField[]): HumanInputField[] {
-    return fields.flatMap((field) => [field, ...nodes(field.fields ?? [])]);
+    return fields.flatMap((field) => [field, ...nodes(field.children ?? [])]);
   }
 
   it('is what the engine sends — nothing skipped, nothing invented', () => {
-    expect([...new Set(nodes(request.fields).map((field) => field.type))].sort()).toEqual(
+    expect([...new Set(nodes(request.nodes).map((field) => field.type))].sort()).toEqual(
       [...HUMAN_INPUT_NODE_TYPES].sort(),
     );
   });
@@ -459,7 +459,7 @@ describe('the engine’s whole node vocabulary', () => {
     // A decoration has no name and a group holds no answer, so the values map
     // is exactly the answerable leaves.
     expect(Object.keys(initialHumanInputValues(request)).sort()).toEqual(
-      nodes(request.fields)
+      nodes(request.nodes)
         .filter((field) => field.type !== 'group' && !humanInputIsDecoration(field))
         .map((field) => field.id)
         .sort(),
@@ -467,7 +467,7 @@ describe('the engine’s whole node vocabulary', () => {
   });
 
   it('marks what the engine requires, for the eye and for a screen reader', () => {
-    const required = nodes(request.fields).filter((field) => field.is_required);
+    const required = nodes(request.nodes).filter((field) => field.is_required);
     expect(required.map((field) => field.id).sort()).toEqual(['code', 'host', 'key']);
     expect(html.match(/<span class="sr-only">, required<\/span>/g) ?? []).toHaveLength(
       required.length,
@@ -543,7 +543,7 @@ describe('human input origin', () => {
     const request = humanInputRequestFromWire({
       id: 'r',
       title: 'PingID code',
-      fields: [{ id: 'code', type: 'plaintext' }],
+      nodes: [{ id: 'code', type: 'plaintext' }],
       ...(origin ? { origin } : {}),
     });
     if (!request) throw new Error('the request must parse');

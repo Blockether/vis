@@ -63,7 +63,7 @@ function patched(view: LiveView, seq: number, ops: unknown[], firstSeq = seq): L
 
 /** Every node the view PAINTS, rows flattened — the engine's own `live/leaf-nodes`. */
 function leaves(nodes: LiveNode[]): LiveNode[] {
-  return nodes.flatMap((node) => (node.type === 'group' ? leaves(node.fields) : [node]));
+  return nodes.flatMap((node) => (node.type === 'group' ? leaves(node.children) : [node]));
 }
 
 function nodeOfType<K extends LiveNode['type']>(
@@ -107,7 +107,7 @@ describe('a live view read off the wire', () => {
     const view = opened();
     const row = nodeOfType(view, 'reading', 'group');
     expect(row.direction).toBe('row');
-    expect(row.fields.map((node) => node.id)).toEqual(['hosts', 'why']);
+    expect(row.children.map((node) => node.id)).toEqual(['hosts', 'why']);
     expect(ids(view)).not.toContain('hosts');
     expect(leaves(view.nodes).map((node) => node.id)).toContain('why');
   });
@@ -254,7 +254,7 @@ describe('a patch frame', () => {
         node_spec: { id: 'note', type: 'status', text: 'db-2 only' },
       },
     ]);
-    expect(nodeOfType(grown, 'reading', 'group').fields.map((node) => node.id)).toEqual([
+    expect(nodeOfType(grown, 'reading', 'group').children.map((node) => node.id)).toEqual([
       'hosts',
       'note',
       'why',

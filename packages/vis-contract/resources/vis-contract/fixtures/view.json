@@ -2,7 +2,7 @@
   "input": {
     "id": "input-one",
     "title": "Name",
-    "fields": [
+    "nodes": [
       {
         "id": "name",
         "name": "name",

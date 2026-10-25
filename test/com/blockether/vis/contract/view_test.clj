@@ -26,29 +26,29 @@
           (expect
             (not (document/valid-json? "view" "operator_action" (assoc action "legacy" true))))))))
 
-(defdescribe
-  input-view-fixture-is-the-engine-projection
-  (it "input view fixture is the engine projection"
-      ;; The real SDK flow exposed a false fixture: request includes channel routing,
-      ;; whereas request->view removes it and carries the engine's created_at stamp.
-      (let [sample
-            (get (json/read-json (slurp (io/resource "vis-contract/fixtures/view.json"))) "input")
+(defdescribe input-view-fixture-is-the-engine-projection
+             (it "input view fixture is the engine projection"
+                 ;; The real SDK flow exposed a false fixture: request includes channel routing,
+                 ;; whereas request->view removes it and carries the engine's created_at stamp.
+                 (let [sample
+                       (get (json/read-json (slurp (io/resource "vis-contract/fixtures/view.json")))
+                            "input")
 
-            projected
-            (-> {:id "input-one"
-                 :title "Name"
-                 :timeout-ms 30000
-                 :fields [{:type "plaintext" :id "name" :label "Name" :is-required true}]}
-                view/normalize-request
-                (assoc :created-at 1)
-                view/request->view
-                wire/->wire)]
+                       projected
+                       (-> {:id "input-one"
+                            :title "Name"
+                            :timeout-ms 30000
+                            :nodes [{:type "plaintext" :id "name" :label "Name" :is-required true}]}
+                           view/normalize-request
+                           (assoc :created-at 1)
+                           view/request->view
+                           wire/->wire)]
 
-        (expect (= sample projected))
-        (expect (document/valid-json? "view" "input_view" projected))
-        (expect (not (document/valid-json? "view"
-                                           "input_view"
-                                           (assoc projected "channel_ids" ["app"])))))))
+                   (expect (= sample projected))
+                   (expect (document/valid-json? "view" "input_view" projected))
+                   (expect (not (document/valid-json? "view"
+                                                      "input_view"
+                                                      (assoc projected "channel_ids" ["app"])))))))
 
 (defdescribe every-input-field-crosses-the-real-projection
              (it "every input field crosses the real projection"
@@ -57,7 +57,7 @@
                    (let [field (cond-> {:type type :id "field" :label "Value"}
                                  (#{"select" "multiselect"} type)
                                  (assoc :options ["one" "two"]))
-                         projected (-> {:title "Fields" :fields [{:type "group" :fields [field]}]}
+                         projected (-> {:title "Fields" :nodes [{:type "group" :children [field]}]}
                                        view/normalize-request
                                        (assoc :created-at 1)
                                        view/request->view
@@ -65,10 +65,11 @@
 
                      (expect (document/valid-json? "view" "input_view" projected))
                      (doseq [[key value] [["is_secret" false] ["validate" ["callback"]]]]
-                       (expect (not (document/valid-json?
-                                      "view"
-                                      "input_view"
-                                      (assoc-in projected ["fields" 0 "fields" 0 key] value)))))))))
+                       (expect (not (document/valid-json? "view"
+                                                          "input_view"
+                                                          (assoc-in projected
+                                                            ["nodes" 0 "children" 0 key]
+                                                            value)))))))))
 
 (defdescribe
   view-schema-is-the-source-of-runtime-vocabulary
@@ -77,11 +78,11 @@
     (let [schema
           (document/schema-document "view")
 
-          fields
-          (get-in schema ["$defs" "field" "oneOf"])
+          components
+          (get-in schema ["$defs" "component" "oneOf"])
 
-          live-nodes
-          (get-in schema ["$defs" "live_node" "oneOf"])
+          fields
+          (filter #(contains? (get % "properties") "is_required") components)
 
           names
           #(set (map (fn [shape]
@@ -90,13 +91,15 @@
 
       (expect (nil? (io/resource "vis-contract/view.json")))
       (expect (= (names fields) (set (keys contract/field-types))))
-      (expect (= (disj (names live-nodes) "group") (set (keys contract/live-node-types))))
+      (expect (= (names components) (set (keys contract/component-types))))
+      (expect (= (apply disj (names components) "group" (names fields))
+                 (set (keys contract/live-node-types))))
       (expect (= #{:otp :password} contract/secret-types))
       (expect (= #{:multiline :password :plaintext} contract/text-types))
       (expect (= #{:multiselect :select} contract/choice-types))
       (expect (= {:min 0 :max 100 :step 1} contract/range-defaults))
       (expect (= {:length 6 :ceiling 12} contract/otp-defaults))
-      (expect (= #{:id :seq :created-at :owner} contract/live-view-stamp-keys))
+      (expect (= #{:id :seq :created-at :owner :extension :is-stale} contract/live-view-stamp-keys))
       (expect (= #{:created-at :origin} contract/request-stamp-keys))
       (expect (= #{:is-secret} contract/derived-keys))
       (doseq [[variant frames] contract/spinner-frames]

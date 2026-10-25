@@ -322,7 +322,7 @@ export function HumanInputSheet({
   const origin = originLabel(request.origin);
   // A field that raises the keyboard keeps the sheet where the keyboard puts it.
   // Reported: a double tap on the one-time code made the keyboard and screen jump.
-  const isKeyboardReserved = humanInputInputFields(request.fields).some((field) =>
+  const isKeyboardReserved = humanInputInputFields(request.nodes).some((field) =>
     KEYBOARD_FIELD_TYPES.has(field.type),
   );
   return (
@@ -415,7 +415,7 @@ export function HumanInputSheet({
           )}
           <ViewLayout>
             {/* A decoration has no name; position is its stable identity. */}
-            {request.fields.map((field, at) => (
+            {request.nodes.map((field, at) => (
               <HumanInputFieldRow
                 key={`${request.id}:${at}:${field.id}`}
                 field={field}
@@ -560,7 +560,7 @@ function HumanInputFieldRow({
           data-group-id={field.id}
           data-direction={field.direction ?? 'column'}
         >
-          {(field.fields ?? []).map((child, at) => (
+          {(field.children ?? []).map((child, at) => (
             <HumanInputFieldRow
               key={`${at}:${child.id}`}
               field={child}

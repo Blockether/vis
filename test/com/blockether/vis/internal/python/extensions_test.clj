@@ -7186,7 +7186,7 @@ vis.register_extension(vis.Extension(name=\"stale-ctx\", description=\"Stale ctx
           (expect (= {:is-accepted true} @answered))
           ;; The snake_case string spec a Python extension writes is
           ;; exactly what the dialog draws — name, label, description.
-          (let [[env] (:fields @drawn)]
+          (let [[env] (:nodes @drawn)]
             (expect (= "env" (:name env)))
             (expect (= "Target" (:label env)))
             (expect (= "Where this deploy lands." (:description env)))
@@ -7235,7 +7235,7 @@ vis.register_extension(vis.Extension(name=\"stale-ctx\", description=\"Stale ctx
           ;; A refusal keeps the request open, so the next confirmation answers it.
           (expect (= {:is-accepted true} @answered))
           ;; And the function itself never reaches a channel.
-          (expect (every? #(not (contains? % :validate)) (:fields @drawn)))
+          (expect (every? #(not (contains? % :validate)) (:nodes @drawn)))
           (expect (= {"ok" true "email" "a@b.c"} result))
           (expect (empty? (human-input/pending-requests)))))))
   ;; Regression, issue #104: `vis.ask` raised from an extension SYMBOL was
@@ -7466,8 +7466,8 @@ def forms_report():
     )
     return {
         'kind': good['type'] + ':' + good['direction'],
-        'ink': good['fields'][0],
-        'slider_type': good['fields'][2]['fields'][1]['type'],
+        'ink': good['children'][0],
+        'slider_type': good['children'][2]['children'][1]['type'],
         'bad_option': _refusal('Deploy', [vis.select('env', [])]),
         'bad_track': _refusal('Deploy', [vis.slider('canary', min=5, max=2)]),
         'bad_names': _refusal('Deploy', [vis.plaintext('who'), vis.password('who')]),

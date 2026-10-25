@@ -16,7 +16,7 @@
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { GatewayHealth, GatewayProtocol } from './types';
 
-/** Protocol 18 streams block text as appended spans and compact Activity receipts. */
+/** Protocol 19 sends View component trees as `nodes` and `children`, with live inputs and placements. */
 export const APP_PROTOCOL = gatewaySchema.$defs.handshake.properties.protocol.const;
 
 /** Read the gateway floor from the same contract as the engine. */

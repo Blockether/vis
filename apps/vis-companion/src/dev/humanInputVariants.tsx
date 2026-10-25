@@ -43,7 +43,7 @@ function field(
 function group(
   id: string,
   direction: 'row' | 'column',
-  fields: HumanInputField[],
+  children: HumanInputField[],
   extra: Partial<HumanInputField> = {},
 ): HumanInputField {
   return {
@@ -53,7 +53,7 @@ function group(
     label: '',
     is_required: false,
     direction,
-    fields,
+    children,
     ...extra,
   };
 }
@@ -70,7 +70,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     title: 'Deploy to production?',
     description: 'The migration drops `sessions.legacy_id`. It cannot be undone.',
     source: 'deploy.sh',
-    fields: [
+    nodes: [
       field('env', 'select', 'Target', {
         is_required: true,
         default: 'staging',
@@ -95,7 +95,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     id: 'req-markdown',
     title: 'Run this command?',
     description: '**Environment:** DEV01\n**Service:** glms-plcx-svc\n**Command:** :init-batch-report',
-    fields: [field('confirm', 'checkbox', 'Proceed with this command')],
+    nodes: [field('confirm', 'checkbox', 'Proceed with this command')],
     submit_label: 'Run',
     cancel_label: 'Cancel',
     is_cancellable: true,
@@ -106,7 +106,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     description:
       'Eight answers before the tag is pushed. The list scrolls; the two buttons that end this pause do not.',
     source: 'release-vis',
-    fields: [
+    nodes: [
       field('version', 'plaintext', 'Version', {
         is_required: true,
         default: '1.14.0',
@@ -148,7 +148,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     title: 'Unlock the signing keychain',
     description: 'The run cannot continue without it, and it cannot be cancelled from here.',
     source: 'release:ios',
-    fields: [
+    nodes: [
       field('passphrase', 'password', 'Keychain passphrase', {
         is_required: true,
       }),
@@ -162,7 +162,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     title: 'Deploy to production?',
     description: 'The migration drops `sessions.legacy_id`. It cannot be undone.',
     source: 'deploy.sh',
-    fields: [
+    nodes: [
       field('env', 'select', 'Target', {
         is_required: true,
         default: 'production',
@@ -186,7 +186,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
   minimal: {
     id: 'req-minimal',
     title: 'What should I name the branch?',
-    fields: [field('branch', 'plaintext', 'Branch', { is_required: true })],
+    nodes: [field('branch', 'plaintext', 'Branch', { is_required: true })],
     submit_label: 'Submit',
     cancel_label: 'Cancel',
     is_cancellable: true,
@@ -196,7 +196,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     title: 'How much of the error budget may this rollout spend?',
     description: 'The rollout stops on its own once the budget is gone.',
     source: 'rollout.py',
-    fields: [
+    nodes: [
       field('risk', 'range', 'Error budget', {
         description: 'Percent of the monthly budget this rollout may burn',
         min: 0,
@@ -216,7 +216,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     title: 'Confirm the release with your one-time code',
     description: 'The signing key is behind two factors; the code rotates every 30 seconds.',
     source: 'release.sh',
-    fields: [
+    nodes: [
       field('code', 'otp', 'One-time code', {
         is_required: true,
         description: 'From the authenticator on your phone',
@@ -236,7 +236,7 @@ export const HUMAN_INPUT_REQUESTS: Record<string, HumanInputRequest> = {
     title: 'Where should the pool connect?',
     description: 'Fields that belong together sit together.',
     source: 'db-migrate.py',
-    fields: [
+    nodes: [
       group(
         'group:host+port',
         'row',

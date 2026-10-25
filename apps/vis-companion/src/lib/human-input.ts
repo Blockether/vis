@@ -95,8 +95,8 @@ export interface HumanInputField {
   default?: unknown;
   /** `group` only — how its children are laid out. */
   direction?: 'row' | 'column';
-  /** `group` only — the fields it owns, which may be groups themselves. */
-  fields?: HumanInputField[];
+  /** `group` only — the nodes it owns, which may be groups themselves. */
+  children?: HumanInputField[];
   /** A DECORATION only — the words it paints. It has no name and no label. */
   text?: string;
 }
@@ -117,7 +117,7 @@ export interface HumanInputRequest {
   session_id?: string;
   /** Present on forms from the gateway. See {@link originLabel}. */
   origin?: HumanInputOrigin;
-  fields: HumanInputField[];
+  nodes: HumanInputField[];
   submit_label: string;
   cancel_label: string;
   is_cancellable: boolean;
@@ -186,7 +186,7 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
   // A LAYOUT GROUP answers nothing itself: it owns fields, and an empty one is
   // not a form control but a hole, so it never reaches the screen.
   if (type === 'group') {
-    const children = (Array.isArray(row.fields) ? row.fields : [])
+    const children = (Array.isArray(row.children) ? row.children : [])
       .map(fieldFromWire)
       .filter((field): field is HumanInputField => field !== null);
     if (!children.length) return null;
@@ -197,7 +197,7 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
       label: text(row.label),
       is_required: false,
       direction: row.direction === 'row' ? 'row' : 'column',
-      fields: children,
+      children,
       ...(optionalText(row.description) ? { description: optionalText(row.description) } : {}),
     };
   }
@@ -241,10 +241,10 @@ export function humanInputRequestFromWire(raw: unknown): HumanInputRequest | nul
   const id = text(row.id);
   const title = text(row.title).trim();
   if (id === '' || title === '') return null;
-  const fields = (Array.isArray(row.fields) ? row.fields : [])
+  const nodes = (Array.isArray(row.nodes) ? row.nodes : [])
     .map(fieldFromWire)
     .filter((field): field is HumanInputField => field !== null);
-  if (!fields.length) return null;
+  if (!nodes.length) return null;
   const description = optionalText(row.description);
   const source = optionalText(row.source);
   const sessionId = optionalText(row.session_id);
@@ -257,7 +257,7 @@ export function humanInputRequestFromWire(raw: unknown): HumanInputRequest | nul
   return {
     id,
     title,
-    fields,
+    nodes,
     submit_label: text(row.submit_label).trim() || 'Submit',
     cancel_label: text(row.cancel_label).trim() || 'Cancel',
     // Only an explicit `false` locks the operator out of dismissing the form.
@@ -270,6 +270,8 @@ export function humanInputRequestFromWire(raw: unknown): HumanInputRequest | nul
   };
 }
 
+/** One form input from the wire, the same parser a live view uses for its inputs. */
+export const humanInputFieldFromWire = fieldFromWire;
 function originFromWire(raw: unknown): HumanInputOrigin | undefined {
   const row = record(raw);
   const sessionId = row ? optionalText(row.session_id) : undefined;
@@ -363,7 +365,7 @@ export function humanInputOtpDigits(field: HumanInputField, raw: string): string
  */
 export function humanInputInputFields(fields: readonly HumanInputField[]): HumanInputField[] {
   return fields.flatMap((field) => {
-    if (field.type === 'group') return humanInputInputFields(field.fields ?? []);
+    if (field.type === 'group') return humanInputInputFields(field.children ?? []);
     return humanInputIsDecoration(field) ? [] : [field];
   });
 }
@@ -447,7 +449,7 @@ export function initialHumanInputValues(request: HumanInputRequest): HumanInputV
   // prototype setter and silently drops the field — the form could never be
   // answered from the app while the TUI happily edits it.
   return Object.fromEntries(
-    humanInputInputFields(request.fields).map((field) => [field.id, defaultValue(field)]),
+    humanInputInputFields(request.nodes).map((field) => [field.id, defaultValue(field)]),
   );
 }
 

@@ -50,7 +50,7 @@ def test_builders_and_mutations(monkeypatch, host_kind):
         assert nodes["h1"]["level"] == 2
         assert nodes["code"]["text"] == ""
         assert nodes["braille"]["is_active"] is False
-        children = {n["id"]: n for n in nodes["details"]["fields"]}
+        children = {n["id"]: n for n in nodes["details"]["children"]}
         assert children["go"]["clicks"] == 0
         assert children["go"]["is_disabled"] is True
         assert children["a"]["lines"] == ["retained", "new line"]
@@ -84,13 +84,19 @@ def test_shared_fixture_covers_every_primitive_and_spinner():
     def collect(items):
         for node in items:
             nodes.append(node)
-            collect(node.get("fields", []))
+            collect(node.get("children", []))
 
     collect(json.loads(fixture.read_text())["nodes"])
-    assert {n["type"] for n in nodes} - {"group"} == {
+    branches = definition("view", "component")["oneOf"]
+    inputs = {
         branch["properties"]["type"]["const"]
-        for branch in definition("view", "live_node")["oneOf"]
-    } - {"group"}
+        for branch in branches
+        if "name" in branch["required"]
+    }
+    assert {n["type"] for n in nodes} - {"group"} - inputs == {
+        branch["properties"]["type"]["const"] for branch in branches
+    } - {"group"} - inputs
+    assert {n["type"] for n in nodes} & inputs, "the fixture shows one input"
     assert {n["variant"] for n in nodes if n["type"] == "spinner"} == {
         branch["const"] for branch in definition("view", "spinner_variant")["oneOf"]
     }
@@ -268,7 +274,7 @@ def test_divider_is_static_and_retained(monkeypatch, host_kind):
         view.add(
             vis.column("results", divider, vis.paragraph("after", "Review results"))
         )
-        assert view.state()["nodes"][1]["fields"][0] == divider
+        assert view.state()["nodes"][1]["children"][0] == divider
         receipt = view.close()
         assert receipt["view"]["nodes"][1] == divider
 
@@ -383,3 +389,95 @@ def test_stat_and_step_updates_carry_the_label_the_schema_requires(
         stats, steps = counts["stats"], plan["steps"]
         assert stats == [{"id": "ok", "label": "Passed", "value_text": "2"}]
         assert steps[0]["label"] == "Build" and steps[0]["tone"] == "ok"
+
+
+def _form_nodes():
+    return [
+        vis.heading("title", "Deploy", level=2),
+        vis.group(
+            "deploy-form",
+            vis.plaintext("target", label="Target", is_required=True),
+            vis.password("token", label="Token"),
+            vis.slider("pct", min=0, max=10),
+            vis.button("apply", "Apply", action="submit"),
+            label="Target",
+        ),
+        vis.card("plan-small", "Small", text="2 CPU", meta=["$5"], is_selectable=True),
+    ]
+
+
+def test_a_full_form_runs_inside_a_live_view(monkeypatch):
+    recorder = vis.testing.LiveRecorder(vis._host)
+    monkeypatch.setattr(vis, "_host", recorder)
+    seen = []
+    with vis.live("Deploy", _form_nodes(), placement="panel", key="deploy") as view:
+        view.on_event(seen.append)
+        opened = recorder.said[0]["view"]
+        assert (opened["placement"], opened["key"]) == ("panel", "deploy")
+        assert opened["nodes"][1]["children"][0]["name"] == "target"
+        assert set(view.values()) == {"target", "pct"}, "a secret input stays out"
+        assert recorder.submit("apply")["errors"] == {"target": "is required"}
+        assert view.events() == []
+        recorder.change("target", "db-2")
+        recorder.change("token", "fixture-live-secret")
+        assert recorder.submit("apply", {"token": "fixture-live-secret"})["is_accepted"]
+        recorder.activate("plan-small")
+        events = view.events()
+        assert [(e.type, e.node_id) for e in events] == [
+            ("change", "target"),
+            ("change", "token"),
+            ("submit", "apply"),
+            ("activate", "plan-small"),
+        ]
+        assert events[1].is_set is True and events[1].value is None
+        assert events[2].values["target"] == "db-2"
+        assert events[2].values["token"].startswith("vis-secret:")
+        assert seen == events
+        assert view["target"].value == "db-2"
+        assert view["token"].value is None
+        assert view["apply"].clicks == 1
+        assert view["plan-small"].clicks == 1
+        view["target"].set("db-3")
+        assert view.values()["target"] == "db-3"
+        assert view.events(timeout=0.01) == []
+        assert "fixture-live-secret" not in json.dumps(recorder.picture())
+    assert view.result["is_completed"] is True
+
+
+def test_a_live_form_outside_vis_has_values_and_no_events(monkeypatch):
+    monkeypatch.setattr(vis, "_host", _outside.host)
+    nodes = [
+        vis.plaintext("target", label="Target", value="db-2"),
+        vis.button("apply", "Apply", action="submit"),
+    ]
+    with vis.live("Deploy", nodes, placement="inline") as view:
+        assert view.values() == {"target": "db-2"}
+        view["target"].set("db-3")
+        assert view["target"].value == "db-3"
+        assert view.events() == []
+
+
+def test_ask_sends_one_component_tree():
+    validators = {}
+    request = vis._request_spec(
+        "Deploy",
+        [vis.group("g", vis.plaintext("a"), label="Group"), vis.card("c", "Card")],
+        {},
+        validators,
+    )
+    assert request["nodes"][0]["children"] == [{"type": "plaintext", "name": "a"}]
+    assert request["nodes"][1] == {"type": "card", "id": "c", "title": "Card"}
+
+
+def test_a_panel_view_pushes_events_to_its_open_callback(monkeypatch):
+    recorder = vis.testing.LiveRecorder(vis._host)
+    monkeypatch.setattr(vis, "_host", recorder)
+    seen = []
+    nodes = [vis.button("go", "Rerun")]
+    with vis.live(
+        "Build", nodes, placement="header", key="build", on_event=seen.append
+    ) as view:
+        recorder.activate("go")
+        assert [(e.type, e.node_id) for e in seen] == [("activate", "go")]
+        assert [e.node_id for e in view.events()] == ["go"]
+        assert len(seen) == 1, "a pushed event reaches each callback once"

@@ -40,7 +40,7 @@
   (-> (hi/init-form {:id "docs-ask"
                      :title "Deploy"
                      :description "Pick a target"
-                     :fields [{:id "env"
+                     :nodes [{:id "env"
                                :type :select
                                :label "Target"
                                :is-required true

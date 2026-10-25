@@ -952,3 +952,56 @@ def test_snapshot_info_reads_the_manifest_without_a_request():
     damaged = _snapshot(manifest)[:20]
     with pytest.raises(ValueError, match="damaged"):
         GatewayClient.snapshot_info(damaged)
+
+
+def test_header_views_read_and_act_through_the_machine_routes():
+    view = {
+        "id": "v1",
+        "title": "Build",
+        "placement": "header",
+        "key": "build",
+        "extension": "forge",
+        "nodes": [
+            {
+                "id": "go",
+                "type": "button",
+                "label": "Rerun",
+                "action": "activate",
+                "is_disabled": False,
+                "clicks": 0,
+            }
+        ],
+        "seq": 0,
+        "created_at": 1,
+        "timeout_ms": 0,
+        "channel_ids": ["app"],
+    }
+
+    def respond(method, path, body):
+        if path.startswith(("/v1/capabilities", "/v1/clients")):
+            return compatible(method, path, body)
+        if path == "/v1/views/live":
+            return 200, {"views": [view]}
+        if path.startswith("/v1/sessions/s1/views/live"):
+            return 200, {"views": []}
+        return 200, {"is_accepted": True}
+
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
+        [header] = client.header_views()
+        assert (header.placement, header.key, header.extension) == (
+            "header",
+            "build",
+            "forge",
+        )
+        assert client.header_view_action("v1", "activate", node_id="go")["is_accepted"]
+        assert client.session("s1").live_views(placement="panel") == []
+    sent = [
+        (method, path, json.loads(body or b"null"))
+        for method, path, _, body in calls
+        if not path.startswith(("/v1/capabilities", "/v1/clients"))
+    ]
+    assert sent == [
+        ("GET", "/v1/views/live", None),
+        ("POST", "/v1/views/v1/actions", {"node_id": "go", "action": "activate"}),
+        ("GET", "/v1/sessions/s1/views/live?placement=panel", None),
+    ]

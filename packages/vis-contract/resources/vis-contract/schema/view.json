@@ -12,32 +12,16 @@
             "action": {
               "const": "submit"
             },
+            "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
             "values": {
               "type": "object",
               "propertyNames": {
                 "minLength": 1
               },
               "additionalProperties": {
-                "oneOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  }
-                ]
+                "$ref": "#/$defs/input_value"
               }
             }
           },
@@ -111,6 +95,26 @@
             "action",
             "node_id"
           ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "change"
+            },
+            "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            }
+          },
+          "required": [
+            "action",
+            "node_id",
+            "value"
+          ]
         }
       ]
     },
@@ -131,10 +135,10 @@
         "source": {
           "$ref": "#/$defs/request/properties/source"
         },
-        "fields": {
+        "nodes": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/input_node"
+            "$ref": "#/$defs/public_component"
           },
           "minItems": 1
         },
@@ -166,7 +170,7 @@
       "required": [
         "id",
         "title",
-        "fields",
+        "nodes",
         "submit_label",
         "cancel_label",
         "is_cancellable",
@@ -194,404 +198,6 @@
       },
       "required": [
         "session_id"
-      ]
-    },
-    "input_field": {
-      "description": "Public input fields omit engine-derived secrecy flags and executable validators. Constraints reference the same normalized field vocabulary.",
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/field/oneOf/0/properties/id"
-            },
-            "name": {
-              "$ref": "#/$defs/field/oneOf/0/properties/name"
-            },
-            "label": {
-              "$ref": "#/$defs/field/oneOf/0/properties/label"
-            },
-            "description": {
-              "$ref": "#/$defs/field/oneOf/0/properties/description"
-            },
-            "placeholder": {
-              "$ref": "#/$defs/field/oneOf/0/properties/placeholder"
-            },
-            "is_required": {
-              "$ref": "#/$defs/field/oneOf/0/properties/is_required"
-            },
-            "default": {
-              "$ref": "#/$defs/field/oneOf/0/properties/default"
-            },
-            "type": {
-              "$ref": "#/$defs/field/oneOf/0/properties/type"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/field/oneOf/1/properties/id"
-            },
-            "name": {
-              "$ref": "#/$defs/field/oneOf/1/properties/name"
-            },
-            "label": {
-              "$ref": "#/$defs/field/oneOf/1/properties/label"
-            },
-            "description": {
-              "$ref": "#/$defs/field/oneOf/1/properties/description"
-            },
-            "placeholder": {
-              "$ref": "#/$defs/field/oneOf/1/properties/placeholder"
-            },
-            "is_required": {
-              "$ref": "#/$defs/field/oneOf/1/properties/is_required"
-            },
-            "default": {
-              "$ref": "#/$defs/field/oneOf/1/properties/default"
-            },
-            "type": {
-              "$ref": "#/$defs/field/oneOf/1/properties/type"
-            },
-            "min_length": {
-              "$ref": "#/$defs/field/oneOf/1/properties/min_length"
-            },
-            "max_length": {
-              "$ref": "#/$defs/field/oneOf/1/properties/max_length"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/field/oneOf/2/properties/id"
-            },
-            "name": {
-              "$ref": "#/$defs/field/oneOf/2/properties/name"
-            },
-            "label": {
-              "$ref": "#/$defs/field/oneOf/2/properties/label"
-            },
-            "description": {
-              "$ref": "#/$defs/field/oneOf/2/properties/description"
-            },
-            "placeholder": {
-              "$ref": "#/$defs/field/oneOf/2/properties/placeholder"
-            },
-            "is_required": {
-              "$ref": "#/$defs/field/oneOf/2/properties/is_required"
-            },
-            "default": {
-              "$ref": "#/$defs/field/oneOf/2/properties/default"
-            },
-            "type": {
-              "$ref": "#/$defs/field/oneOf/2/properties/type"
-            },
-            "options": {
-              "$ref": "#/$defs/field/oneOf/2/properties/options"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "options"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/field/oneOf/3/properties/id"
-            },
-            "name": {
-              "$ref": "#/$defs/field/oneOf/3/properties/name"
-            },
-            "label": {
-              "$ref": "#/$defs/field/oneOf/3/properties/label"
-            },
-            "description": {
-              "$ref": "#/$defs/field/oneOf/3/properties/description"
-            },
-            "placeholder": {
-              "$ref": "#/$defs/field/oneOf/3/properties/placeholder"
-            },
-            "is_required": {
-              "$ref": "#/$defs/field/oneOf/3/properties/is_required"
-            },
-            "default": {
-              "$ref": "#/$defs/field/oneOf/3/properties/default"
-            },
-            "type": {
-              "$ref": "#/$defs/field/oneOf/3/properties/type"
-            },
-            "min_length": {
-              "$ref": "#/$defs/field/oneOf/3/properties/min_length"
-            },
-            "max_length": {
-              "$ref": "#/$defs/field/oneOf/3/properties/max_length"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "min_length",
-            "max_length"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/field/oneOf/4/properties/id"
-            },
-            "name": {
-              "$ref": "#/$defs/field/oneOf/4/properties/name"
-            },
-            "label": {
-              "$ref": "#/$defs/field/oneOf/4/properties/label"
-            },
-            "description": {
-              "$ref": "#/$defs/field/oneOf/4/properties/description"
-            },
-            "placeholder": {
-              "$ref": "#/$defs/field/oneOf/4/properties/placeholder"
-            },
-            "is_required": {
-              "$ref": "#/$defs/field/oneOf/4/properties/is_required"
-            },
-            "default": {
-              "$ref": "#/$defs/field/oneOf/4/properties/default"
-            },
-            "type": {
-              "$ref": "#/$defs/field/oneOf/4/properties/type"
-            },
-            "min_length": {
-              "$ref": "#/$defs/field/oneOf/4/properties/min_length"
-            },
-            "max_length": {
-              "$ref": "#/$defs/field/oneOf/4/properties/max_length"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/field/oneOf/5/properties/id"
-            },
-            "name": {
-              "$ref": "#/$defs/field/oneOf/5/properties/name"
-            },
-            "label": {
-              "$ref": "#/$defs/field/oneOf/5/properties/label"
-            },
-            "description": {
-              "$ref": "#/$defs/field/oneOf/5/properties/description"
-            },
-            "placeholder": {
-              "$ref": "#/$defs/field/oneOf/5/properties/placeholder"
-            },
-            "is_required": {
-              "$ref": "#/$defs/field/oneOf/5/properties/is_required"
-            },
-            "default": {
-              "$ref": "#/$defs/field/oneOf/5/properties/default"
-            },
-            "type": {
-              "$ref": "#/$defs/field/oneOf/5/properties/type"
-            },
-            "min_length": {
-              "$ref": "#/$defs/field/oneOf/5/properties/min_length"
-            },
-            "max_length": {
-              "$ref": "#/$defs/field/oneOf/5/properties/max_length"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/field/oneOf/6/properties/id"
-            },
-            "name": {
-              "$ref": "#/$defs/field/oneOf/6/properties/name"
-            },
-            "label": {
-              "$ref": "#/$defs/field/oneOf/6/properties/label"
-            },
-            "description": {
-              "$ref": "#/$defs/field/oneOf/6/properties/description"
-            },
-            "placeholder": {
-              "$ref": "#/$defs/field/oneOf/6/properties/placeholder"
-            },
-            "is_required": {
-              "$ref": "#/$defs/field/oneOf/6/properties/is_required"
-            },
-            "default": {
-              "$ref": "#/$defs/field/oneOf/6/properties/default"
-            },
-            "type": {
-              "$ref": "#/$defs/field/oneOf/6/properties/type"
-            },
-            "min": {
-              "$ref": "#/$defs/field/oneOf/6/properties/min"
-            },
-            "max": {
-              "$ref": "#/$defs/field/oneOf/6/properties/max"
-            },
-            "step": {
-              "$ref": "#/$defs/field/oneOf/6/properties/step"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "min",
-            "max",
-            "step"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "#/$defs/field/oneOf/7/properties/id"
-            },
-            "name": {
-              "$ref": "#/$defs/field/oneOf/7/properties/name"
-            },
-            "label": {
-              "$ref": "#/$defs/field/oneOf/7/properties/label"
-            },
-            "description": {
-              "$ref": "#/$defs/field/oneOf/7/properties/description"
-            },
-            "placeholder": {
-              "$ref": "#/$defs/field/oneOf/7/properties/placeholder"
-            },
-            "is_required": {
-              "$ref": "#/$defs/field/oneOf/7/properties/is_required"
-            },
-            "default": {
-              "$ref": "#/$defs/field/oneOf/7/properties/default"
-            },
-            "type": {
-              "$ref": "#/$defs/field/oneOf/7/properties/type"
-            },
-            "options": {
-              "$ref": "#/$defs/field/oneOf/7/properties/options"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "options"
-          ]
-        }
-      ]
-    },
-    "input_group": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "$ref": "#/$defs/group/properties/id"
-        },
-        "name": {
-          "$ref": "#/$defs/group/properties/name"
-        },
-        "type": {
-          "$ref": "#/$defs/group/properties/type"
-        },
-        "label": {
-          "$ref": "#/$defs/group/properties/label"
-        },
-        "description": {
-          "$ref": "#/$defs/group/properties/description"
-        },
-        "direction": {
-          "$ref": "#/$defs/group/properties/direction"
-        },
-        "fields": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/input_node"
-          },
-          "minItems": 1
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "type",
-        "direction",
-        "fields"
-      ]
-    },
-    "input_node": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/input_field"
-        },
-        {
-          "$ref": "#/$defs/input_group"
-        },
-        {
-          "$ref": "#/$defs/decor"
-        }
       ]
     },
     "open_event": {
@@ -723,529 +329,25 @@
         "label"
       ]
     },
-    "field": {
+    "input_value": {
       "oneOf": [
         {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "name": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "placeholder": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "is_required": {
-              "type": "boolean"
-            },
-            "is_secret": {
-              "const": false,
-              "readOnly": true
-            },
-            "default": {},
-            "validate": {
-              "type": "array",
-              "items": {},
-              "minItems": 1
-            },
-            "type": {
-              "const": "checkbox"
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "is_secret"
-          ]
+          "type": "null"
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "name": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "placeholder": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "is_required": {
-              "type": "boolean"
-            },
-            "is_secret": {
-              "const": false,
-              "readOnly": true
-            },
-            "default": {},
-            "validate": {
-              "type": "array",
-              "items": {},
-              "minItems": 1
-            },
-            "type": {
-              "const": "multiline"
-            },
-            "min_length": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "max_length": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "is_secret"
-          ]
+          "type": "string"
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "name": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "placeholder": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "is_required": {
-              "type": "boolean"
-            },
-            "is_secret": {
-              "const": false,
-              "readOnly": true
-            },
-            "default": {},
-            "validate": {
-              "type": "array",
-              "items": {},
-              "minItems": 1
-            },
-            "type": {
-              "const": "multiselect"
-            },
-            "options": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "value": {
-                    "$ref": "common.json#/$defs/non_blank_string"
-                  },
-                  "label": {
-                    "$ref": "common.json#/$defs/non_blank_string"
-                  }
-                },
-                "required": [
-                  "value",
-                  "label"
-                ]
-              },
-              "minItems": 1
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "is_secret",
-            "options"
-          ]
+          "type": "boolean"
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "name": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "placeholder": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "is_required": {
-              "type": "boolean"
-            },
-            "is_secret": {
-              "const": true,
-              "readOnly": true
-            },
-            "default": {},
-            "validate": {
-              "type": "array",
-              "items": {},
-              "minItems": 1
-            },
-            "type": {
-              "const": "otp"
-            },
-            "min_length": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 6,
-              "maximum": 12
-            },
-            "max_length": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 6,
-              "maximum": 12
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "is_secret",
-            "min_length",
-            "max_length"
-          ]
+          "type": "number"
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "name": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "placeholder": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "is_required": {
-              "type": "boolean"
-            },
-            "is_secret": {
-              "const": true,
-              "readOnly": true
-            },
-            "default": {},
-            "validate": {
-              "type": "array",
-              "items": {},
-              "minItems": 1
-            },
-            "type": {
-              "const": "password"
-            },
-            "min_length": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "max_length": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "is_secret"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "name": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "placeholder": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "is_required": {
-              "type": "boolean"
-            },
-            "is_secret": {
-              "const": false,
-              "readOnly": true
-            },
-            "default": {},
-            "validate": {
-              "type": "array",
-              "items": {},
-              "minItems": 1
-            },
-            "type": {
-              "const": "plaintext"
-            },
-            "min_length": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "max_length": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "is_secret"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "name": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "placeholder": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "is_required": {
-              "type": "boolean"
-            },
-            "is_secret": {
-              "const": false,
-              "readOnly": true
-            },
-            "default": {},
-            "validate": {
-              "type": "array",
-              "items": {},
-              "minItems": 1
-            },
-            "type": {
-              "const": "range"
-            },
-            "min": {
-              "type": "number",
-              "default": 0
-            },
-            "max": {
-              "type": "number",
-              "default": 100
-            },
-            "step": {
-              "type": "number",
-              "default": 1
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "is_secret",
-            "min",
-            "max",
-            "step"
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "name": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "label": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "description": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "placeholder": {
-              "$ref": "common.json#/$defs/non_blank_string"
-            },
-            "is_required": {
-              "type": "boolean"
-            },
-            "is_secret": {
-              "const": false,
-              "readOnly": true
-            },
-            "default": {},
-            "validate": {
-              "type": "array",
-              "items": {},
-              "minItems": 1
-            },
-            "type": {
-              "const": "select"
-            },
-            "options": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "value": {
-                    "$ref": "common.json#/$defs/non_blank_string"
-                  },
-                  "label": {
-                    "$ref": "common.json#/$defs/non_blank_string"
-                  }
-                },
-                "required": [
-                  "value",
-                  "label"
-                ]
-              },
-              "minItems": 1
-            }
-          },
-          "required": [
-            "id",
-            "name",
-            "type",
-            "label",
-            "is_required",
-            "is_secret",
-            "options"
-          ]
-        }
-      ]
-    },
-    "decor": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "$ref": "#/$defs/decor_type"
-        },
-        "text": {
-          "$ref": "common.json#/$defs/non_blank_string"
-        }
-      },
-      "required": [
-        "type",
-        "text"
-      ]
-    },
-    "group": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "$ref": "common.json#/$defs/non_blank_string"
-        },
-        "name": {
-          "$ref": "common.json#/$defs/non_blank_string"
-        },
-        "type": {
-          "const": "group"
-        },
-        "label": {
-          "$ref": "common.json#/$defs/non_blank_string"
-        },
-        "description": {
-          "$ref": "common.json#/$defs/non_blank_string"
-        },
-        "direction": {
-          "$ref": "#/$defs/group_direction"
-        },
-        "fields": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/node"
-          },
-          "minItems": 1
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "type",
-        "direction",
-        "fields"
-      ]
-    },
-    "node": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/field"
-        },
-        {
-          "$ref": "#/$defs/group"
-        },
-        {
-          "$ref": "#/$defs/decor"
+            "type": "string"
+          }
         }
       ]
     },
@@ -1265,10 +367,10 @@
         "source": {
           "$ref": "common.json#/$defs/non_blank_string"
         },
-        "fields": {
+        "nodes": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/node"
+            "$ref": "#/$defs/component"
           },
           "minItems": 1
         },
@@ -1300,7 +402,7 @@
       "required": [
         "id",
         "title",
-        "fields",
+        "nodes",
         "submit_label",
         "cancel_label",
         "is_cancellable",
@@ -1510,7 +612,7 @@
         "target"
       ]
     },
-    "live_node": {
+    "component": {
       "oneOf": [
         {
           "type": "object",
@@ -1815,18 +917,61 @@
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "type": {
+              "const": "card"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "title": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "tone": {
+              "$ref": "#/$defs/tone"
+            },
+            "meta": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_selectable": {
+              "type": "boolean"
+            },
+            "clicks": {
+              "type": "integer",
+              "minimum": 0,
+              "readOnly": true
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "title"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
               "const": "group"
             },
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
             "direction": {
               "$ref": "#/$defs/group_direction"
             },
-            "fields": {
+            "children": {
               "type": "array",
               "items": {
-                "$ref": "#/$defs/live_node"
+                "$ref": "#/$defs/component"
               },
               "minItems": 1
             },
@@ -1841,7 +986,7 @@
             "id",
             "type",
             "direction",
-            "fields"
+            "children"
           ]
         },
         {
@@ -1966,6 +1111,13 @@
             "label": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
+            "action": {
+              "enum": [
+                "activate",
+                "submit"
+              ],
+              "default": "activate"
+            },
             "is_disabled": {
               "type": "boolean"
             },
@@ -1996,8 +1148,496 @@
             "id",
             "type"
           ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "placeholder": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": false,
+              "readOnly": true
+            },
+            "default": {},
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "checkbox"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "placeholder": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": false,
+              "readOnly": true
+            },
+            "default": {},
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "min_length": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_length": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "multiline"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "placeholder": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": false,
+              "readOnly": true
+            },
+            "default": {},
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "$ref": "common.json#/$defs/non_blank_string"
+                  },
+                  "label": {
+                    "$ref": "common.json#/$defs/non_blank_string"
+                  }
+                },
+                "required": [
+                  "value",
+                  "label"
+                ]
+              },
+              "minItems": 1
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "multiselect"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "options"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "placeholder": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": true,
+              "readOnly": true
+            },
+            "default": {},
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "min_length": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 6,
+              "maximum": 12
+            },
+            "max_length": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 6,
+              "maximum": 12
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "otp"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "min_length",
+            "max_length"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "placeholder": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": true,
+              "readOnly": true
+            },
+            "default": {},
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "min_length": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_length": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "password"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "placeholder": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": false,
+              "readOnly": true
+            },
+            "default": {},
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "min_length": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_length": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "plaintext"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "placeholder": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": false,
+              "readOnly": true
+            },
+            "default": {},
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "min": {
+              "type": "number",
+              "default": 0
+            },
+            "max": {
+              "type": "number",
+              "default": 100
+            },
+            "step": {
+              "type": "number",
+              "default": 1
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "range"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "min",
+            "max",
+            "step"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "description": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "placeholder": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_required": {
+              "type": "boolean"
+            },
+            "is_secret": {
+              "const": false,
+              "readOnly": true
+            },
+            "default": {},
+            "validate": {
+              "type": "array",
+              "items": {},
+              "minItems": 1
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "$ref": "common.json#/$defs/non_blank_string"
+                  },
+                  "label": {
+                    "$ref": "common.json#/$defs/non_blank_string"
+                  }
+                },
+                "required": [
+                  "value",
+                  "label"
+                ]
+              },
+              "minItems": 1
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            },
+            "type": {
+              "const": "select"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "options"
+          ]
         }
       ]
+    },
+    "public_component": {
+      "description": "A component as the input View projection shows it. Validation rules and secret-storage flags stay at the host.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/component"
+        }
+      ],
+      "properties": {
+        "is_secret": false,
+        "validate": false,
+        "children": {
+          "items": {
+            "$ref": "#/$defs/public_component"
+          }
+        }
+      }
     },
     "live_owner": {
       "description": "Host-stamped Activity invocation and optional persistent history that own a live view.",
@@ -2016,6 +1656,15 @@
       "required": [
         "invocation_id"
       ]
+    },
+    "placement": {
+      "type": "string",
+      "enum": [
+        "inline",
+        "panel",
+        "header"
+      ],
+      "default": "inline"
     },
     "live_view": {
       "type": "object",
@@ -2041,6 +1690,22 @@
         "session_id": {
           "$ref": "common.json#/$defs/non_blank_string"
         },
+        "placement": {
+          "$ref": "#/$defs/placement"
+        },
+        "key": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "extension": {
+          "description": "The extension that owns this panel or header view.",
+          "$ref": "common.json#/$defs/non_blank_string",
+          "readOnly": true
+        },
+        "is_stale": {
+          "description": "True for the saved picture of an owned view after a gateway restart, until its extension opens the same key again.",
+          "type": "boolean",
+          "readOnly": true
+        },
         "channel_ids": {
           "type": "array",
           "items": {
@@ -2052,7 +1717,7 @@
         "nodes": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/live_node"
+            "$ref": "#/$defs/component"
           },
           "minItems": 1
         },
@@ -2080,7 +1745,7 @@
         "seq",
         "created_at"
       ],
-      "x-vis-max-nodes": 32
+      "x-vis-max-nodes": 64
     },
     "live_op": {
       "oneOf": [
@@ -2092,6 +1757,9 @@
               "const": "set"
             },
             "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "title": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
             "text": {
@@ -2172,6 +1840,12 @@
             "clicks": {
               "type": "integer",
               "minimum": 0
+            },
+            "meta": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "is_selectable": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -2292,10 +1966,30 @@
           "additionalProperties": false,
           "properties": {
             "op": {
+              "const": "set-value"
+            },
+            "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "value": {
+              "$ref": "#/$defs/input_value"
+            }
+          },
+          "required": [
+            "op",
+            "node_id",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "op": {
               "const": "add-node"
             },
             "node_spec": {
-              "$ref": "#/$defs/live_node"
+              "$ref": "#/$defs/component"
             },
             "after": {
               "oneOf": [
@@ -2369,7 +2063,7 @@
         "nodes": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/live_node"
+            "$ref": "#/$defs/component"
           },
           "minItems": 0
         }
@@ -2622,13 +2316,6 @@
       "enum": [
         "column",
         "row"
-      ]
-    },
-    "decor_type": {
-      "type": "string",
-      "enum": [
-        "heading",
-        "paragraph"
       ]
     },
     "spinner_variant": {

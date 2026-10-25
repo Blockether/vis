@@ -1303,6 +1303,26 @@
     {
       "audience": "sdk",
       "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/views/live"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/views/:view-id/actions"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "post": {
           "request": "binary",
           "response": "json"
@@ -2413,15 +2433,15 @@
       "properties": {
         "protocol": {
           "type": "integer",
-          "const": 18
+          "const": 19
         },
         "min_client": {
           "type": "integer",
-          "const": 18
+          "const": 19
         },
         "min_gateway": {
           "type": "integer",
-          "const": 18
+          "const": 19
         },
         "version": {
           "type": [

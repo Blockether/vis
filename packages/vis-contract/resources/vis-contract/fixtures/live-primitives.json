@@ -62,7 +62,7 @@
       "id": "spinners",
       "type": "group",
       "direction": "row",
-      "fields": [
+      "children": [
         {
           "id": "braille",
           "type": "spinner",
@@ -97,7 +97,7 @@
       "id": "actions",
       "type": "group",
       "direction": "row",
-      "fields": [
+      "children": [
         {
           "id": "refresh",
           "type": "button",
@@ -111,6 +111,136 @@
           "label": "Unavailable action",
           "is_disabled": true,
           "clicks": 0
+        },
+        {
+          "id": "target",
+          "name": "target",
+          "type": "plaintext",
+          "label": "Target",
+          "is_required": false,
+          "is_secret": false,
+          "value": "db-2"
+        },
+        {
+          "id": "token",
+          "name": "token",
+          "type": "password",
+          "label": "Token",
+          "is_required": false,
+          "is_secret": true
+        },
+        {
+          "id": "notes",
+          "name": "notes",
+          "type": "multiline",
+          "label": "Notes",
+          "is_required": false,
+          "is_secret": false,
+          "value": "Ship after the checks pass."
+        },
+        {
+          "id": "region",
+          "name": "region",
+          "type": "select",
+          "label": "Region",
+          "is_required": false,
+          "is_secret": false,
+          "options": [
+            {
+              "value": "eu",
+              "label": "EU"
+            },
+            {
+              "value": "us",
+              "label": "US"
+            }
+          ],
+          "value": "eu"
+        },
+        {
+          "id": "tags",
+          "name": "tags",
+          "type": "multiselect",
+          "label": "Tags",
+          "is_required": false,
+          "is_secret": false,
+          "options": [
+            {
+              "value": "api",
+              "label": "API"
+            },
+            {
+              "value": "web",
+              "label": "Web"
+            }
+          ],
+          "value": [
+            "api"
+          ]
+        },
+        {
+          "id": "notify",
+          "name": "notify",
+          "type": "checkbox",
+          "label": "Notify",
+          "is_required": false,
+          "is_secret": false,
+          "value": true
+        },
+        {
+          "id": "risk",
+          "name": "risk",
+          "type": "range",
+          "label": "Risk",
+          "is_required": false,
+          "is_secret": false,
+          "min": 0,
+          "max": 10,
+          "step": 1,
+          "value": 3
+        },
+        {
+          "id": "pin",
+          "name": "pin",
+          "type": "otp",
+          "label": "Code",
+          "is_required": false,
+          "is_secret": true,
+          "min_length": 6,
+          "max_length": 6
+        },
+        {
+          "id": "apply",
+          "type": "button",
+          "label": "Apply",
+          "action": "submit",
+          "is_disabled": false,
+          "clicks": 0
+        }
+      ]
+    },
+    {
+      "id": "plans",
+      "type": "group",
+      "direction": "row",
+      "label": "Plans",
+      "children": [
+        {
+          "id": "plan-small",
+          "type": "card",
+          "title": "Small",
+          "text": "Two hosts, one region",
+          "meta": "2 vCPU",
+          "tone": "ok",
+          "is_selectable": true,
+          "clicks": 0
+        },
+        {
+          "id": "plan-large",
+          "type": "card",
+          "title": "Large",
+          "text": "Six hosts, three regions",
+          "meta": "8 vCPU"
         }
       ]
     },
@@ -121,7 +251,7 @@
       "label": "Details",
       "is_collapsible": true,
       "default_expanded": false,
-      "fields": [
+      "children": [
         {
           "id": "inside",
           "type": "paragraph",

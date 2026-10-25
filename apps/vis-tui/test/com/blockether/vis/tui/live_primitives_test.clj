@@ -42,7 +42,9 @@
         (expect (= 4 (count (filter #(= :spinner (:kind %)) rows))))
         (expect (str/includes? (str/join "\n" (map :text rows)) "# <button> is literal text"))
         (expect (lv/animating? [pane]))
-        (expect (= #{"refresh" "details" "table"} (set (map :node-id (lv/controls [pane])))))
+        (expect (= #{"refresh" "target" "token" "notes" "region" "tags" "notify" "risk" "pin"
+                     "apply" "plan-small" "details" "table"}
+                   (set (map :node-id (lv/controls [pane])))))
         (expect (not (lv/animating? [(lv/settled pane {:reason :completed})])))
         (expect (not (lv/animating? [(lv/minimized pane)])))
         (expect (str/includes? (materializer/->markdown view) "Heading level 6"))
@@ -90,37 +92,91 @@
 
 (defdescribe
   primitives-paint-real-terminal-test
-  (it "primitives paint real terminal"
-      (doseq [cols [40 80 120]]
-        (let [view (update (fixture)
-                           :nodes
-                           #(filterv (fn [n]
-                                       (contains? #{"h1" "code" "spinners" "actions" "details"
-                                                    "links"}
-                                                  (:id n)))
-                              %))
-              pane (assoc (lv/opened view) :is-following false)
-              captured (capture/capture!
-                         {:cols cols
-                          :rows 80
-                          :paint!
-                          (fn [{:keys [screen]}]
-                            (.beginFrame interactions/hit-map)
-                            (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 80 [pane] 1 3)
-                            (.commitFrame interactions/hit-map)
-                            (.refresh ^TerminalScreen screen)
-                            (vec (.current interactions/hit-map)))})
-              text (capture/frame-text (last (:frames captured)))]
+  (it
+    "primitives paint real terminal"
+    (doseq [cols [40 80 120]]
+      (let [view (update (fixture)
+                         :nodes
+                         #(filterv (fn [n]
+                                     (contains? #{"h1" "code" "spinners" "actions" "details"
+                                                  "links"}
+                                                (:id n)))
+                            %))
+            view (update view
+                         :nodes
+                         (fn [nodes]
+                           (mapv (fn [n]
+                                   (cond-> n
+                                     (= "actions" (:id n))
+                                     (update :children (partial filterv #(= :button (:type %))))))
+                                 nodes)))
+            pane (assoc (lv/opened view) :is-following false)
+            captured (capture/capture!
+                       {:cols cols
+                        :rows 80
+                        :paint!
+                        (fn [{:keys [screen]}]
+                          (.beginFrame interactions/hit-map)
+                          (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 80 [pane] 1 3)
+                          (.commitFrame interactions/hit-map)
+                          (.refresh ^TerminalScreen screen)
+                          (vec (.current interactions/hit-map)))})
+            text (capture/frame-text (last (:frames captured)))]
 
-          (expect (str/includes? text "Heading level 1"))
-          (expect (str/includes? text "Refresh results"))
-          (expect (str/includes? text "Details"))
-          (expect (str/includes? text "F3"))
-          (expect (str/includes? text "Braille"))
-          (expect (str/includes? text "Documentation"))
-          (expect (some #(= :url (:kind %)) (:ret captured)))
-          (expect (some #(= :live-activate (:kind %)) (:ret captured)))
-          (expect (not-any? #(= "disabled" (:node-id %)) (:ret captured)))))))
+        (expect (str/includes? text "Heading level 1"))
+        (expect (str/includes? text "Refresh results"))
+        (expect (str/includes? text "Details"))
+        (expect (str/includes? text "F3"))
+        (expect (str/includes? text "Braille"))
+        (expect (str/includes? text "Documentation"))
+        (expect (some #(= :url (:kind %)) (:ret captured)))
+        (expect (some #(= :live-activate (:kind %)) (:ret captured)))
+        (expect (not-any? #(= "disabled" (:node-id %)) (:ret captured)))))))
+
+(defdescribe
+  inputs-and-cards-test
+  (it "paints every input with the form's field renderer and offers it as a control"
+      (let [pane
+            (lv/opened (fixture))
+
+            rows
+            (entries pane)
+
+            edits
+            (filter #(= :live-edit (:kind %)) (lv/controls [pane]))]
+
+        (expect (= ["target" "token" "notes" "region" "tags" "notify" "risk" "pin"]
+                   (mapv :node-id edits)))
+        (expect (= "Region" (:label (first (filter #(= "region" (:node-id %)) edits)))))
+        (expect (some #(and (= :field (:kind %)) (= "EU" (:text %))) rows))
+        (expect (some #(and (= :field (:kind %)) (str/includes? (:text %) "(0-10)")) rows))
+        (expect (= {"target" "db-2"
+                    "notes" "Ship after the checks pass."
+                    "region" "eu"
+                    "tags" ["api"]
+                    "notify" true
+                    "risk" 3}
+                   (lv/input-values pane)))
+        (expect (lv/submit-button? pane "apply"))
+        (expect (not (lv/submit-button? pane "refresh")))
+        (expect (= :multiselect (:type (lv/input-node pane "tags"))))
+        (expect (nil? (lv/input-node pane "apply")))))
+  (it "paints a card with its title, figure and text, and only a selectable card acts"
+      (let [pane
+            (lv/opened (fixture))
+
+            cards
+            (filter #(= :card (:kind %)) (entries pane))]
+
+        (expect (some #(and (str/includes? (:text %) "Small") (str/includes? (:text %) "2 vCPU"))
+                      cards))
+        (expect (some #(str/includes? (:text %) "Six hosts, three regions") cards))
+        (expect (= [["plan-small" "Small"]]
+                   (->> (lv/controls [pane])
+                        (filter #(= :live-activate (:kind %)))
+                        (filter #(str/starts-with? (:node-id %) "plan-"))
+                        (mapv (juxt :node-id :label)))))
+        (expect (not-any? :is-selectable (entries (lv/settled pane {:reason :completed})))))))
 
 (defn write-review!
   "Render the shared fixture with the production terminal painter for browser review."

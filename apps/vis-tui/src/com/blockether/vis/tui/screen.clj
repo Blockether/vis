@@ -802,19 +802,22 @@
     true))
 
 (defn- activate-live-button!
-  "Send one explicit operator press; the shared patch is the acknowledgement."
+  "Send one explicit operator press; the shared patch is the acknowledgement. A
+   submit button sends the value of every input in the view with it."
   [db {:keys [view-id node-id]}]
   (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
-    (future (try
-              (let [outcome (vis/gateway-view-action! (get-in pane [:view :session-id])
-                                                      view-id
-                                                      {:action :activate :node-id node-id})]
-                (when-not (:is-accepted outcome)
-                  (vis/notify! "That button is disabled or the run has finished." :level :error)))
-              (catch Throwable _
-                (vis/notify! "The action could not be confirmed. Check the run before trying again."
-                             :level
-                             :error))))))
+    (let [action (if (lv/submit-button? pane node-id)
+                   {:action :submit :node-id node-id :values (lv/input-values pane)}
+                   {:action :activate :node-id node-id})]
+      (future
+        (try (let [outcome
+                   (vis/gateway-view-action! (get-in pane [:view :session-id]) view-id action)]
+               (when-not (:is-accepted outcome)
+                 (vis/notify! "That button is disabled or the run has finished." :level :error)))
+             (catch Throwable _
+               (vis/notify! "The action could not be confirmed. Check the run before trying again."
+                            :level
+                            :error)))))))
 
 (defn- search-live-log!
   [db {:keys [view-id node-id]}]
@@ -2310,6 +2313,66 @@
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock ^ReentrantLock draw-lock))))
 
+(defn- live-input-value
+  "Ask the human for a new value of one view input. Returns `{:value v}`, or nil
+   when the human cancels or types a number outside the field's domain."
+  [screen {:keys [type label options value is-secret]}]
+  (let [option-label (fn [o]
+                       (or (:label o) (str (:value o))))]
+    (case type
+      :checkbox
+      {:value (not (boolean value))}
+
+      :select
+      (when-let [choice (dlg/list-dialog!
+                          screen
+                          label
+                          (mapv #(hash-map :label (option-label %) :value (:value %)) options)
+                          {:enter-label "choose" :height :content})]
+        {:value (:value choice)})
+
+      :multiselect
+      (when-let [picked
+                 (dlg/multi-select-dialog!
+                   screen
+                   label
+                   (mapv option-label options)
+                   (into #{} (keep #(when (some #{(:value %)} value) (option-label %))) options))]
+        {:value (into [] (keep #(when (some #{(option-label %)} picked) (:value %))) options)})
+
+      :range
+      (when-let [typed (dlg/text-input-dialog! screen label "Value" :initial (str value))]
+        (when-let [n (parse-double (str/trim typed))]
+          {:value (if (== n (Math/rint n)) (long n) n)}))
+
+      (when-let [typed (dlg/text-input-dialog! screen
+                                               label
+                                               "Value"
+                                               :initial (if is-secret "" (str (or value "")))
+                                               :mask (when (or is-secret (= :password type)) \*))]
+        {:value typed}))))
+
+(defn- edit-live-input!
+  "Edit one input of a live view and send the new value at once as a `change`.
+   The engine answers with the ordinary patch, so the TUI keeps no private copy."
+  [screen db {:keys [view-id node-id]}]
+  (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
+    (when-let [node (lv/input-node pane node-id)]
+      (when-let [{:keys [value]} (with-dialog-lock #(live-input-value screen node))]
+        (future
+          (try (let [outcome (vis/gateway-view-action!
+                               (get-in pane [:view :session-id])
+                               view-id
+                               {:action :change :node-id node-id :value value})]
+                 (when-not (:is-accepted outcome)
+                   (vis/notify! "That value was refused or the run has finished." :level :error)))
+               (catch Throwable _
+                 (vis/notify!
+                   "The change could not be confirmed. Check the run before trying again."
+                   :level
+                   :error)))))))
+  true)
+
 (defn- live-controls!
   "F3 controls belong to the explicitly opened viewer, never a hidden receipt."
   [screen db]
@@ -2319,7 +2382,9 @@
                                                            items
                                                            {:enter-label "activate"
                                                             :height :content}))]
-      (activate-live-region! @state/app-db choice))))
+      (if (= :live-edit (:kind choice))
+        (edit-live-input! screen @state/app-db choice)
+        (activate-live-region! @state/app-db choice)))))
 
 (defn- attachment-capabilities!
   []
@@ -8690,6 +8755,9 @@
                                  :live-select
                                  (activate-live-region! db hit)
 
+                                 :live-edit
+                                 (edit-live-input! screen db hit)
+
                                  :artifact
                                  (open-produced-artifact! (:session-id hit) (:artifact hit))
 
@@ -8872,6 +8940,9 @@
 
                                  :live-select
                                  (activate-live-region! db hit)
+
+                                 :live-edit
+                                 (edit-live-input! screen db hit)
 
                                  :artifact
                                  (open-produced-artifact! (:session-id hit) (:artifact hit))

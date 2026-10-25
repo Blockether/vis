@@ -174,7 +174,7 @@
 (defn stops
   "Flat vector of focus stops for `request` — the linear order ↑/↓/Tab walks."
   [request]
-  (into (into [] (mapcat field-stops) (engine/input-fields (:fields request)))
+  (into (into [] (mapcat field-stops) (engine/input-fields (:nodes request)))
         (action-stops request)))
 
 (defn init-form
@@ -182,7 +182,7 @@
    and focus starts on the first stop."
   [request]
   (let [answerable
-        (engine/input-fields (:fields request))
+        (engine/input-fields (:nodes request))
 
         values
         (into {} (map (juxt :id default-value)) answerable)]
@@ -244,7 +244,7 @@
 
 (defn- field-by-id
   [form field-id]
-  (first (filter #(= field-id (:id %)) (engine/input-fields (get-in form [:request :fields])))))
+  (first (filter #(= field-id (:id %)) (engine/input-fields (get-in form [:request :nodes])))))
 
 (defn focused-stop
   "The stop under the cursor, or nil for a form with no stops."
@@ -735,19 +735,19 @@
   "A group's optional heading and children. Row groups share columns only when
    [[columns/row-fits?]] allows it; otherwise they stack in source order, just
    like Live. Nested groups apply the same rule to their available text width."
-  [ctx text-w {:keys [direction fields] :as group}]
+  [ctx text-w {:keys [direction children] :as group}]
   (let [heading
         (into (if (:label group) [{:kind :label :text (:label group)}] [])
               (description-rows (:description group) text-w))
 
         n
-        (count fields)
+        (count children)
 
         body
         (if (and (= :row direction) (columns/row-fits? text-w n))
           (let [cell-w (columns/cell-width text-w n)]
-            (columns/zip-columns (mapv #(vec (field-rows ctx cell-w %)) fields)))
-          (into [] (mapcat #(field-rows ctx text-w %)) fields))]
+            (columns/zip-columns (mapv #(vec (field-rows ctx cell-w %)) children)))
+          (into [] (mapcat #(field-rows ctx text-w %)) children))]
 
     (into (if (seq heading) (conj (vec heading) {:kind :blank}) []) body)))
 
@@ -880,6 +880,22 @@
         true
         (conj {:kind :blank})))))
 
+(defn view-field-rows
+  "Rows for ONE input node of a LIVE VIEW, drawn by the renderer a form uses, so
+   a field reads the same in both surfaces. A view gives no field the keyboard,
+   so every section paints at full strength and none wears a cursor. A secret
+   that the human already set shows a mask, never its value."
+  [{:keys [id type is-set is-secret] :as field} text-w]
+  (let [value (cond (some? (:value field)) (:value field)
+                    (and is-set is-secret) (apply str (repeat 6 mask-char))
+                    (= :select type) nil
+                    :else (default-value field))]
+    (mapv (fn [row]
+            (cond-> (dissoc row :is-focused)
+              (contains? row :is-active-field)
+              (assoc :is-active-field true)))
+          (field-rows {:form {:values {id value}} :errors nil :focus -1 :index {}} text-w field))))
+
 (defn action-bar
   "The request's own buttons as ONE row: the solid ` Submit ` pill, then the muted
    ` Cancel ` one.
@@ -930,7 +946,7 @@
          ctx
          {:form form :errors (:errors form) :focus (or focus 0) :index (stop-index stops)}]
 
-     (into (vec head) (mapcat #(field-rows ctx text-w %)) (:fields request)))))
+     (into (vec head) (mapcat #(field-rows ctx text-w %)) (:nodes request)))))
 
 (defn focused-row
   "Index of the row carrying the focused stop, or 0."
@@ -1276,6 +1292,12 @@
       (when (:is-focused entry) pos))
 
     nil))
+
+(defn paint-field-row!
+  "Paint one row of [[view-field-rows]] with the form's own field painters."
+  [g left row inner-w entry]
+  (paint-row! g left row inner-w entry)
+  nil)
 
 (defn- prose-width
   "Columns a plan row's TEXT actually gets out of a `row-w`-wide row.

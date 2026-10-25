@@ -617,7 +617,9 @@ def test_ask_names_what_is_wrong_with_a_form(form):
 
 def test_ask_knows_only_the_contracts_field_types(monkeypatch):
     monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
-    for branch in _contracts.definition("view", "field")["oneOf"]:
+    for branch in _contracts.definition("view", "component")["oneOf"]:
+        if "name" not in branch["required"]:
+            continue
         wire_type = branch["properties"]["type"]["const"]
         node = {"name": "a", "type": wire_type}
         if "options" in branch["properties"]:
@@ -634,7 +636,7 @@ def _painted(nodes):
     flat = {}
     for node in nodes:
         if node["type"] == "group":
-            flat.update(_painted(node["fields"]))
+            flat.update(_painted(node["children"]))
         else:
             flat[node["id"]] = node
     return flat
@@ -691,7 +693,7 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         arranged = state["nodes"][1]
         assert arranged["type"] == "group"
         assert arranged["direction"] == "row"
-        assert [child["id"] for child in arranged["fields"]] == ["jobs", "why"]
+        assert [child["id"] for child in arranged["children"]] == ["jobs", "why"]
 
     verdict = view.result
     assert verdict["is_completed"] is True

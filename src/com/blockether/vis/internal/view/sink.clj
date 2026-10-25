@@ -40,9 +40,10 @@
   (io/file (System/getProperty "user.home") ".vis" "gateway" "views"))
 
 (defn view-file
-  "The record of view `view-id`, kept under the session that opened it."
+  "The record of view `view-id`, kept under the session that opened it. A header
+   view has no session, so its record is kept under `machine`."
   ^File [session-id view-id]
-  (io/file (views-dir) (str session-id) (str view-id ".ndjson")))
+  (io/file (views-dir) (or (not-empty (str session-id)) "machine") (str view-id ".ndjson")))
 
 (def ^:private record-scheme
   "URI scheme of a live record. Owned by [[record-backend]], which is the only thing
@@ -142,6 +143,41 @@
   ^File [^File file result]
   (append-line! file {:kind :close :at (util/now-ms) :result result}))
 
+(defn- owned-file
+  "The last pictures of every extension-owned view, one JSON array."
+  ^File []
+  (io/file (views-dir) "owned.json"))
+
+(defn save-owned!
+  "Replace the saved pictures of owned views with `views`, atomically. A crash
+   between two saves keeps the older file whole."
+  [views]
+  (let [file
+        (owned-file)
+
+        tmp
+        (io/file (.getParentFile file) (str "owned." (util/now-ms) ".tmp"))]
+
+    (io/make-parents file)
+    (spit tmp (wire/json-str (mapv materializer/redact-presentation views)))
+    (Files/move (.toPath tmp)
+                (.toPath file)
+                (into-array java.nio.file.CopyOption
+                            [java.nio.file.StandardCopyOption/REPLACE_EXISTING
+                             java.nio.file.StandardCopyOption/ATOMIC_MOVE]))
+    file))
+
+(defn load-owned
+  "The saved pictures of owned views as wire maps, or [] when there are none or
+   the file does not parse."
+  []
+  (let [file (owned-file)]
+    (if-not (.isFile file)
+      []
+      (try (let [views (json/read-json (slurp file) :key-fn identity)]
+             (if (sequential? views) (filterv map? views) []))
+           (catch Exception _ [])))))
+
 (defn stats
   "How much of the run the record in `file` holds: `:size` bytes and `:line-count`
    NDJSON lines. `{:size 0 :line-count 0}` for a record nothing ever wrote.
@@ -203,7 +239,7 @@
   "Find log node `node-id` at any depth of a declared layout."
   [nodes node-id]
   (first (filter #(and (= node-id (str (:id %))) (= "log" (str (:type %))))
-                 (mapcat #(tree-seq :fields :fields %) nodes))))
+                 (mapcat #(tree-seq :children :children %) nodes))))
 
 (def ^:private empty-log
   "Counters and one retained result page. Line numbers are one-based."

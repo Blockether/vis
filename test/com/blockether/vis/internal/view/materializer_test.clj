@@ -241,11 +241,11 @@
                 {:id "reading"
                  :type :group
                  :direction :row
-                 :fields [(log-node) (table-node :insertion)]})
+                 :children [(log-node) (table-node :insertion)]})
 
           beside
           (fn [w]
-            (mapv :id (:fields (second (:nodes w)))))
+            (mapv :id (:children (second (:nodes w)))))
 
           grown
           (patched v
@@ -262,7 +262,7 @@
       (expect (= ["log" "extra" "t"] (beside grown))
               "`after` names a SIBLING, so the node lands in that sibling's own row")
       (expect (nil? (hs/live-view-error grown)))
-      (expect (= ["a"] (mapv :id (:rows (last (:fields (second (:nodes written)))))))
+      (expect (= ["a"] (mapv :id (:rows (last (:children (second (:nodes written)))))))
               "and a patch reaches a nested node by its id alone")
       (expect (= ["state"] (mapv :id (:nodes cut)))
               "dropping a row takes the nodes it was holding with it")
@@ -510,7 +510,7 @@
                   {:id "reading"
                    :type :group
                    :direction :row
-                   :fields [(log-node) (table-node :insertion)]})
+                   :children [(log-node) (table-node :insertion)]})
 
             md
             (live/->markdown v)]

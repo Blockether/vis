@@ -1265,7 +1265,7 @@ function NodeCell({
         >
           {node.type === 'group' && (
             <ViewLayout direction={node.direction}>
-              {node.fields.map((child) => (
+              {node.children.map((child) => (
                 <NodeCell
                   key={child.id}
                   node={child}
@@ -1367,7 +1367,7 @@ function findNode<T extends LiveNode>(
   for (const node of nodes) {
     if (pick(node)) return node;
     if (node.type === 'group') {
-      const inner = findNode(node.fields, pick);
+      const inner = findNode(node.children, pick);
       if (inner) return inner;
     }
   }

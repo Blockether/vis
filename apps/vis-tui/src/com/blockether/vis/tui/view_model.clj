@@ -8,7 +8,7 @@
   (persistent! (letfn [(walk [acc nodes]
                          (reduce (fn [a node]
                                    (cond (= view-spec/group-type (:type node)) (walk a
-                                                                                     (:fields node))
+                                                                                     (:children node))
                                          (view-spec/decoration? node) a
                                          :else (conj! a node)))
                                  acc

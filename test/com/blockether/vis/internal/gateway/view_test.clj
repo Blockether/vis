@@ -32,7 +32,7 @@
 (defn- spec
   [& {:as overrides}]
   (merge
-    {:title "Deploy?" :fields [{:id "confirm" :type "checkbox" :label "Confirm"}] :timeout-ms 4000}
+    {:title "Deploy?" :nodes [{:id "confirm" :type "checkbox" :label "Confirm"}] :timeout-ms 4000}
     overrides))
 
 (defn- await-true
@@ -106,7 +106,7 @@
                   (expect (= "input" (get event "kind")))
                   (expect (= "Deploy?" (get-in event ["view" "title"])))
                   (expect (= sid (get-in event ["view" "session_id"])))
-                  (expect (= ["confirm"] (mapv #(get % "id") (get-in event ["view" "fields"])))))
+                  (expect (= ["confirm"] (mapv #(get % "id") (get-in event ["view" "nodes"])))))
                 ;; a client that connects later still finds the open form
                 (let [view (first (filterv #(= rid (:id %)) (gw-hi/input-views sid)))]
                   (expect (some? view))
@@ -211,7 +211,7 @@
                                              :id rid
                                              :session-id sid
                                              :timeout-ms 4000
-                                             :fields
+                                             :nodes
                                              [{:id "key" :type "plaintext" :is-required true}]}))]
 
                    (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
@@ -328,7 +328,7 @@
           (future (hi/request!
                     (spec :id rid
                           :session-id sid
-                          :fields
+                          :nodes
                           [{:id "note" :type "plaintext" :label "Note" :is-required true}])))]
 
       (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
@@ -344,8 +344,8 @@
              (expect (= rid (get request "id")))
              (expect (= sid (get request "session_id")))
              (expect (= "Deploy?" (get request "title")))
-             (expect (= ["note"] (mapv #(get % "id") (get request "fields"))))
-             (expect (true? (get-in request ["fields" 0 "is_required"]))))
+             (expect (= ["note"] (mapv #(get % "id") (get request "nodes"))))
+             (expect (true? (get-in request ["nodes" 0 "is_required"]))))
            ;; the engine's validation answers the app, and the run stays parked
            (let [body (json-body
                         (view-action-response sid rid {:action "submit" :values {"note" "   "}}))]
@@ -410,7 +410,7 @@
    :timeout-ms 300000
    ;; Two DECORATIONS lead the form: they answer nothing, so the app must render
    ;; them and keep them out of its values map.
-   :fields
+   :nodes
    [{:type "heading" :text "Target"} {:type "paragraph" :text "Staging pages nobody."}
     {:name "env"
      :type "select"
@@ -446,14 +446,14 @@
      :direction "row"
      :label "Server"
      :description "Where the pool dials out"
-     :fields [{:name "host" :label "Host" :is-required true}
-              {:type "group"
-               :direction "column"
-               :fields [{:name "port"
-                         :label "Port"
-                         :validate (fn [value]
-                                     (when-not (re-matches #"\d+" value) "digits only"))}
-                        {:name "tls" :type "checkbox" :label "TLS"}]}]}]})
+     :children [{:name "host" :label "Host" :is-required true}
+                {:type "group"
+                 :direction "column"
+                 :children [{:name "port"
+                             :label "Port"
+                             :validate (fn [value]
+                                         (when-not (re-matches #"\d+" value) "digits only"))}
+                            {:name "tls" :type "checkbox" :label "TLS"}]}]}]})
 
 (defn- fixture-file
   "`apps/vis-companion/src/lib/human-input.fixture.json`, found from the working
@@ -468,8 +468,8 @@
   "Every `type` in a request view's field tree, groups and decorations included."
   [fields]
   (into #{}
-        (mapcat (fn [{:keys [type fields]}]
-                  (cons type (node-types fields))))
+        (mapcat (fn [{:keys [type children]}]
+                  (cons type (node-types children))))
         fields))
 
 (defdescribe
@@ -487,9 +487,8 @@
         ;; spec and left out of the fixture would otherwise ship an app that paints
         ;; a hole in a dialog which has already stopped somebody's run.
         ;; and holds one node of every kind the engine can send
-        (expect (= (conj (into (set (vals hi-spec/field-types)) (vals hi-spec/decor-types))
-                         hi-spec/group-type)
-                   (node-types (:fields view)))))))
+        (expect (= (into #{hi-spec/group-type :heading :paragraph} (vals hi-spec/field-types))
+                   (node-types (:nodes view)))))))
 
 (defdescribe the-companion-urls-route-to-the-shared-view-action-handler-test
              (it "the URLs `gateway.ts` builds are the URLs this router serves"
@@ -538,7 +537,7 @@
           answer
           (future (hi/request! (spec :id rid
                                      :session-id sid
-                                     :fields [{:id "note" :type "plaintext" :label "Note"}])))]
+                                     :nodes [{:id "note" :type "plaintext" :label "Note"}])))]
 
       (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
            ;; a malformed body is a 400 — never a 500, never a settled run
@@ -594,7 +593,7 @@
               (future (hi/request! (spec :id rid
                                          :session-id sid
                                          :timeout-ms 10000
-                                         :fields
+                                         :nodes
                                          [{:id "note" :type "plaintext" :is-required true}])))
 
               _
@@ -662,7 +661,7 @@
           (future (hi/request! (spec :id rid
                                      :session-id sid
                                      :is-cancellable false
-                                     :fields [{:id "note" :type "plaintext" :is-required true}])))]
+                                     :nodes [{:id "note" :type "plaintext" :is-required true}])))]
 
       (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
            ;; the app is refused the escape hatch the TUI dialog also denies
@@ -1155,7 +1154,7 @@
     {:id "reading"
      :type "group"
      :direction "row"
-     :fields
+     :children
      [{:id "hosts"
        :type "table"
        :label "Hosts"
@@ -1192,36 +1191,43 @@
 
 (defdescribe
   the-app-live-fixture-is-the-engines-own-projection-test
-  (it "the app live fixture is the engines own projection"
-      (let [view
-            (live/materialize (hi/normalize-live-view live-fixture-spec))
+  (it
+    "the app live fixture is the engines own projection"
+    (let [view
+          (live/materialize (hi/normalize-live-view live-fixture-spec))
 
-            file
-            (live-fixture-file)
+          file
+          (live-fixture-file)
 
-            fixture
-            (some-> file
-                    slurp
-                    wire/parse-json)]
+          fixture
+          (some-> file
+                  slurp
+                  wire/parse-json)]
 
-        (expect (some? file))
-        (when fixture
-          ;; the companion parses engine bytes, not a hand-written lookalike
-          (expect (= (without-mint (wire/parse-json (wire/json-str view))) (without-mint fixture)))
-          ;; the two minted values are still there, because the app keys on them
-          (expect (some? (parse-uuid (get fixture "id"))))
-          (expect (pos-int? (get fixture "created_at")))
-          ;; the engine and shared presentation fixtures cover every node type
-          (let [presentation (wire/parse-json
-                               (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))]
-            (expect (= (conj (set (keys hi-spec/live-node-types)) hi-spec/group-type-name)
-                       (set (map #(get % "type")
-                                 (mapcat #(tree-seq map?
-                                                    (fn [node]
-                                                      (get node "fields"))
-                                                    %)
-                                         (concat (get fixture "nodes")
-                                                 (get presentation "nodes"))))))))))))
+      (expect (some? file))
+      (when fixture
+        ;; the companion parses engine bytes, not a hand-written lookalike
+        (expect (= (without-mint (wire/parse-json (wire/json-str view))) (without-mint fixture)))
+        ;; the two minted values are still there, because the app keys on them
+        (expect (some? (parse-uuid (get fixture "id"))))
+        (expect (pos-int? (get fixture "created_at")))
+        ;; the engine and shared presentation fixtures cover every node type
+        (let [presentation
+              (wire/parse-json (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))
+
+              covered
+              (set (map #(get % "type")
+                        (mapcat #(tree-seq map?
+                                           (fn [node]
+                                             (get node "children"))
+                                           %)
+                                (concat (get fixture "nodes") (get presentation "nodes")))))]
+
+          ;; every display, data and action component, and every layout group
+          (expect (every? covered
+                          (conj (set (keys hi-spec/live-node-types)) hi-spec/group-type-name)))
+          ;; and an input inside a live view
+          (expect (some (set (keys hi-spec/field-types)) covered)))))))
 
 (defdescribe
   the-app-activity-fixture-is-the-host-projection-test
@@ -1305,3 +1311,68 @@
               (expect
                 (= 404 (:status (view-action-response sid id {:action "activate" :node_id "go"}))))
               (finally (hi/close-live! id))))))))
+
+(defdescribe
+  owned-views-reach-the-app-over-http-test
+  "A panel view lists under its session with the placement filter. A header view
+   belongs to the machine and has its own list and action routes."
+  (it
+    "lists panel and header views and acts on a header view"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              router
+              ((rv 'router) "token" [])
+
+              match
+              (fn [path]
+                ((requiring-resolve 'reitit.core/match-by-path) router path))
+
+              [panel header]
+              (binding [hi/*live-owner* {:extension "forge" :context (Object.)}]
+                [(hi/open-live! {:title "Agents"
+                                 :session-id sid
+                                 :placement "panel"
+                                 :key "agents"
+                                 :nodes [{:id "count" :type :stat :label "Agents" :value 2}]})
+                 (hi/open-live! {:title "Build"
+                                 :placement "header"
+                                 :key "build"
+                                 :nodes [{:id "go" :type :button :label "Rerun"}]})])
+
+              listed
+              (fn [placement]
+                (#'views-api/list-live-views-handler
+                 {:path-params {:sid sid} :query-params {"placement" placement}}))
+
+              ids
+              (fn [response]
+                (mapv #(get % "id") (get (json-body response) "views")))]
+
+          (try (expect (= [(:id panel)] (ids (listed "panel"))))
+               (expect (= [] (ids (listed "inline"))))
+               (expect (= 400 (:status (listed "side"))))
+               (expect (= [(:id header)]
+                          (filterv #{(:id header) (:id panel)}
+                            (ids (#'views-api/list-header-views-handler {})))))
+               (expect (= @#'views-api/list-header-views-handler
+                          (get-in (match "/v1/views/live") [:data :get :handler])))
+               (expect (= @#'views-api/header-view-action-handler
+                          (get-in (match (str "/v1/views/" (:id header) "/actions"))
+                                  [:data :post :handler])))
+               (let [response (#'views-api/header-view-action-handler
+                               {:path-params {:view-id (:id header)}
+                                :body (body-stream {:action "activate" :node_id "go"})})]
+                 (expect (= 200 (:status response)))
+                 (expect (true? (get (json-body response) "is_accepted")))
+                 (expect (= 1
+                            (get-in (gw-hi/header-view-of (:id header)) [:view :nodes 0 :clicks]))))
+               (expect (= 404
+                          (:status (#'views-api/header-view-action-handler
+                                    {:path-params {:view-id (:id panel)}
+                                     :body (body-stream {:action "activate" :node_id "count"})}))))
+               (finally (hi/close-live! (:id panel))
+                        (hi/close-live! (:id header))
+                        (hi/flush-owned!))))))))

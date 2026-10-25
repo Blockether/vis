@@ -31,9 +31,9 @@
   ;; own contract refuses the half that is behind, in whichever direction it is
   ;; behind, instead of serving a shape neither side maintains.
   (it "this release serves only the protocol it speaks"
-      (expect (= 18 contract/protocol-version))
-      (expect (= 18 contract/minimum-client-protocol))
-      (expect (= 18 contract/minimum-gateway-protocol)))
+      (expect (= 19 contract/protocol-version))
+      (expect (= 19 contract/minimum-client-protocol))
+      (expect (= 19 contract/minimum-gateway-protocol)))
   ;; Protocol 13 peers disagreed on Activity fields but still accepted each other.
   (it "rejects protocol 13 peers in both directions"
       (let [gateway

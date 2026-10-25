@@ -34,9 +34,25 @@
 
 (defn- enum-values [name] (get (definition name) "enum"))
 
-(def ^:private fields (variants "field" "type"))
+(def ^:private components (variants "component" "type"))
 
-(def ^:private live-nodes (variants "live_node" "type"))
+(def ^:private component-index
+  "Wire component name to its position in the `component` union."
+  (into {}
+        (map-indexed (fn [index shape]
+                       [(get-in shape ["properties" "type" "const"]) index]))
+        (get (definition "component") "oneOf")))
+
+(def ^:private fields
+  "The input components. Each one holds exactly one answer."
+  (into {}
+        (filter (fn [[_ shape]]
+                  (contains? (get shape "properties") "is_required")))
+        components))
+
+(def ^:private live-nodes
+  "The components that hold no answer: display, data, action and layout."
+  (apply dissoc components (keys fields)))
 
 (def ^:private operators (variants "operator_action" "action"))
 
@@ -78,13 +94,9 @@
 
                  type)))
 
-(def decor-types
-  "Wire decoration name to internal decoration type."
-  (keyword-map (enum-values "decor_type")))
-
 (def group-type-name
   "Wire name of a layout group."
-  (get-in (definition "group") ["properties" "type" "const"]))
+  (get-in components ["group" "properties" "type" "const"]))
 
 (def group-type "Internal type of a layout group." (keyword group-type-name))
 
@@ -109,8 +121,18 @@
   (subs (get (definition "secret_handle") "pattern") 1))
 
 (def live-node-types
-  "Wire semantic live-node name to internal node type."
+  "Wire display, data and action component name to internal type."
   (keyword-map (remove #{group-type-name} (keys live-nodes))))
+
+(def component-types
+  "Wire component name to internal type, for every component in the catalog."
+  (keyword-map (keys components)))
+
+(def placements "Wire live-view placement to internal placement." (keyword-map (enum-values "placement")))
+
+(def button-actions
+  "Wire button action to internal action."
+  (keyword-map (get-in live-nodes ["button" "properties" "action" "enum"])))
 
 (def link-targets
   "Wire link target name to internal target type."
@@ -183,14 +205,14 @@
                [(keyword action) (property-keys shape)]))
         operators))
 
-(def ^:private decor-node-types (set (vals decor-types)))
+(def ^:private display-node-types (set (vals live-node-types)))
 
 (defn decoration?
-  "True when this normalized node is a [[decor-types]] decoration — ink on the
-   form rather than a question. Every surface asks this before it looks for a
-   value, and the answer contract never sees such a node at all."
+  "True when this normalized node is a display, data or action component. It
+   holds no answer, so every surface asks this before it looks for a value, and
+   the answer contract never sees such a node."
   [{:keys [type]}]
-  (contains? decor-node-types type))
+  (contains? display-node-types type))
 
 (defn secret-handle?
   "True when `value` is an opaque handle minted for a `secret-types` field."
@@ -240,12 +262,10 @@
   (property-keys (get-in live-nodes ["table" "properties" "order" "oneOf" 1])))
 
 (def live-group-keys
-  "Every key a live layout group may carry. Shares the row/column layout
-   vocabulary of [[group-type]], not the complete input-group schema: live
-   groups have ids and optional collapse state, while input groups describe
-   answer fields. Nested groups use their own available width in each client.
+  "Every key a layout group may carry, in a form and in a live view. Nested
+   groups use their own available width in each client.
 
-   No `:name`: a live group holds no answer, so there is nothing to key."
+   No `:name`: a group holds no answer, so there is nothing to key."
   (property-keys (get live-nodes group-type-name)))
 
 (def live-node-keys
@@ -342,17 +362,12 @@
 (def group-keys
   "Every key a layout group may carry. A node that holds no answer has no key
    that describes one."
-  (schema-keys "group"))
+  live-group-keys)
 
 (def layout-keys
   "The keys only a group has. A field carrying one meant to group and forgot to
    say so, which is worth its own message rather than an unknown-key refusal."
   (apply disj group-keys field-keys))
-
-(def decor-keys
-  "Every key a decoration may carry: its own type and the words it paints. A node
-   nobody can answer has nothing else to say."
-  (schema-keys "decor"))
 
 (def option-keys "Every key one `:options` entry may carry." (schema-keys "option"))
 
@@ -367,6 +382,13 @@
   (some-> (document/explain "view" definition value)
           pr-str
           (str/replace "_" "-")))
+
+(defn- component-error
+  "The schema error of `value` against the one `component` variant `type-name`."
+  [type-name value]
+  (if-let [index (get component-index type-name)]
+    (schema-error (str "component/oneOf/" index) value)
+    (str "unknown component type " (pr-str type-name))))
 
 (defn- one-identity? [{:keys [id name]}] (= id name))
 
@@ -411,7 +433,9 @@
   "nil when `field` is a valid normalized answer field, otherwise a reason."
   [field]
   (or (when-not (every? keyword? (keys field)) "field keys must be normalized keywords")
-      (schema-error "field" field)
+      (component-error (some-> (:type field)
+                               name)
+                       field)
       (when-not (one-identity? field) "id and name must match")
       (when-not (secret-marked? field) "is-secret must follow type")
       (when (and (contains? field :validate) (not-every? ifn? (:validate field)))
@@ -428,24 +452,19 @@
 (defn group-error
   "nil when `group` is a valid normalized layout group, otherwise a reason."
   [group]
-  (or (schema-error "group" group) (when-not (one-identity? group) "id and name must match")))
-
-(defn decor-error
-  "nil when `decor` is a valid normalized decoration, otherwise a reason."
-  [decor]
-  (schema-error "decor" decor))
+  (component-error group-type-name group))
 
 (defn- field-names
   [fields]
   (mapcat (fn [node]
-            (cond-> (field-names (:fields node))
+            (cond-> (field-names (:children node))
               (:name node)
               (conj (:name node))))
           fields))
 
 (defn- distinct-names?
-  [{:keys [fields]}]
-  (let [names (field-names fields)]
+  [{:keys [nodes]}]
+  (let [names (field-names nodes)]
     (= (count names) (count (set names)))))
 
 (defn request-error
@@ -518,7 +537,7 @@
 (defn- answerable
   [fields]
   (mapcat (fn [{:keys [type] :as node}]
-            (cond (= group-type type) (answerable (:fields node))
+            (cond (= group-type type) (answerable (:children node))
                   (decoration? node) []
                   :else [node]))
           fields))
@@ -539,6 +558,12 @@
                 (when-not (answer-value-valid? (get by-name field-name) value)
                   (str field-name ": value is outside the field domain")))
               values))))
+
+(defn value-in-domain?
+  "True when `value` fits the domain of the input component `field`. A blank
+   value always fits: a change is a draft, and only a submit checks requiredness."
+  [field value]
+  (answer-value-valid? (assoc field :is-required false) value))
 
 (defn answer-error
   "nil when `answer` is valid for `fields`, otherwise a reason."
@@ -566,12 +591,13 @@
   (if (= :table type)
     (and (or (not (contains? node :selected-ids)) (true? is-selectable))
          (every? (set (map :id rows)) selected-ids))
-    (and (not (contains? node :is-selectable)) (not (contains? node :selected-ids)))))
+    (and (or (= :card type) (not (contains? node :is-selectable)))
+         (not (contains? node :selected-ids)))))
 
 (defn live-node-error
   "nil when `node` is a valid normalized live node, otherwise a reason."
   [node]
-  (or (schema-error "live_node" node)
+  (or (schema-error "component" node)
       (when-not (ordered-by-declared-column? node) "table order must name a declared column")
       (when-not (selection-belongs-to-table? node) "selection must belong to a selectable table")))
 
@@ -579,7 +605,7 @@
   [nodes]
   (into []
         (mapcat (fn [node]
-                  (cons node (live-tree (:fields node)))))
+                  (cons node (live-tree (:children node)))))
         nodes))
 
 (defn live-view-error

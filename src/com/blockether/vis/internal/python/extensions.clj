@@ -1143,8 +1143,32 @@
     (put! g
           "__vis_host_live__"
           ;; Pushes return immediately; a timed state read waits for change or close.
-          (fn [envelope]
-            (view/live-json! envelope)))
+          ;; This door makes the extension the owner of the panel and header views
+          ;; it opens. `listener` is the optional sealed `on_event` callable: each
+          ;; human event runs it as an extension callback with the view session bound.
+          (fn [envelope & [listener]]
+            (let [env
+                  extension/*current-environment*
+
+                  f
+                  (when (some? listener) (unseal sess listener))
+
+                  callback
+                  (when (fn? f)
+                    (fn [event sid]
+                      (let [cb-env (cond-> (merge bound-session env)
+                                     sid
+                                     (assoc :session-id sid)
+
+                                     (nil? (:db-info (merge bound-session env)))
+                                     (assoc :db-info
+                                       (persistance/db-shared-connection!
+                                         (config/resolve-db-spec))))]
+                        (extension/with-context
+                          {:ext {:ext/name label} :env cb-env}
+                          (python-host/conveying sess (f [(wire/->wire event)]))))))]
+
+              (view/live-json! envelope {:extension label :context sess :listener callback}))))
     (put! g
           "__vis_host_reveal_secret__"
           (fn [handle]
@@ -1282,6 +1306,8 @@
                  ;; A pending namespace was never opened in its worker.
                  opened? (not (pending-context? ctx))]
 
+             ;; An owned live view closes with the extension context that opened it.
+             (try (view/close-owned-by! ctx) (catch Throwable _ nil))
              (swap! pending-contexts dissoc ctx)
              (swap! live-contexts disj ctx)
              (swap! context-workers dissoc ctx)

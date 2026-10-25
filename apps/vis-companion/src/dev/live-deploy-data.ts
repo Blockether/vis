@@ -76,7 +76,7 @@ export const DEPLOY_RECOMPOSED_NODES: LiveNode[] = [
     id: 'overview',
     type: 'group',
     direction: 'row',
-    fields: [
+    children: [
       { id: 'phases', type: 'progress', label: 'Phases', done: 3, total: 5 },
       {
         id: 'timing',

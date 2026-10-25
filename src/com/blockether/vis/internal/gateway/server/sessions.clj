@@ -6,6 +6,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.channel.file-picker :as file-picker]
             [com.blockether.vis.internal.channel.slash :as slash]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.extension.client :as client-extensions]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.gateway.push :as push]
@@ -13,6 +14,7 @@
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gw-view]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.session.snapshot :as snapshot]
@@ -92,6 +94,9 @@
    Optional `provider` and `model` pin the session model before the answer, as
    `PATCH /v1/sessions/:sid/model` does. Give both or neither.
 
+   An optional `draft_backend` (`worktree`, `rift`, `auto` or `off`) is a setting
+   of this one session. The project and global settings do not change.
+
    The extension host exchange sets `:vis.host/origin` on the request. The new
    session then records which extension created it. An HTTP client cannot set it."
   [request]
@@ -126,50 +131,61 @@
         provider-error
         (unknown-provider-error pid)
 
+        draft-backend
+        (get body "draft_backend")
+
         string-list?
         #(or (nil? %) (and (sequential? %) (every? string? %)))]
 
-    (cond (and (not (str/blank? (str raw))) (nil? gid))
-          (http/error-response 400 :invalid-request "group_id must be a session group id")
-          (and gid (nil? (state/get-session-group gid))) (http/group-404 (str raw))
-          (not (string-list? sources))
-          (http/error-response 400 :invalid-request "sources must be a list of global and project")
-          (not (string-list? extensions))
-          (http/error-response 400 :invalid-request "extensions must be a list of extension names")
-          (not (string-list? tools))
-          (http/error-response 400 :invalid-request "tools must be a list of tool names")
-          (not= (some? pid) (some? model))
-          (http/error-response 400 :invalid-request "provider and model must be given together")
-          provider-error provider-error
-          (not (or (nil? idempotency-key)
-                   (and (string? idempotency-key) (<= 1 (count idempotency-key) 200))))
-          (http/error-response 400
-                               :invalid-request
-                               "idempotency_key must be a string of 1 to 200 characters")
-          :else (try (let [created (state/create-session!
-                                     (cond-> {:channel (some-> (get body "channel")
-                                                               keyword)
-                                              :title (get body "title")
-                                              :external-id (get body "external_id")
-                                              :workspace-id (get body "workspace_id")
-                                              :root (get body "root")
-                                              :sources sources
-                                              :extensions extensions
-                                              :tools tools
-                                              :idempotency-key idempotency-key}
-                                       gid
-                                       (assoc :group-id gid)
+    (cond
+      (and (not (str/blank? (str raw))) (nil? gid))
+      (http/error-response 400 :invalid-request "group_id must be a session group id")
+      (and gid (nil? (state/get-session-group gid))) (http/group-404 (str raw))
+      (not (string-list? sources))
+      (http/error-response 400 :invalid-request "sources must be a list of global and project")
+      (not (string-list? extensions))
+      (http/error-response 400 :invalid-request "extensions must be a list of extension names")
+      (not (string-list? tools))
+      (http/error-response 400 :invalid-request "tools must be a list of tool names")
+      (not= (some? pid) (some? model))
+      (http/error-response 400 :invalid-request "provider and model must be given together")
+      provider-error provider-error
+      (not (or (nil? draft-backend) (#{"worktree" "rift" "auto" "off"} draft-backend)))
+      (http/error-response 400 :invalid-request "draft_backend must be worktree, rift, auto or off")
+      (not (or (nil? idempotency-key)
+               (and (string? idempotency-key) (<= 1 (count idempotency-key) 200))))
+      (http/error-response 400
+                           :invalid-request
+                           "idempotency_key must be a string of 1 to 200 characters")
+      :else
+      (try (let [created (state/create-session! (cond-> {:channel (some-> (get body "channel")
+                                                                          keyword)
+                                                         :title (get body "title")
+                                                         :external-id (get body "external_id")
+                                                         :workspace-id (get body "workspace_id")
+                                                         :root (get body "root")
+                                                         :sources sources
+                                                         :extensions extensions
+                                                         :tools tools
+                                                         :idempotency-key idempotency-key}
+                                                  gid
+                                                  (assoc :group-id gid)
 
-                                       (:vis.host/origin request)
-                                       (assoc :origin (:vis.host/origin request))))]
-                       (when pid (state/set-session-model! (get created "id") pid model))
-                       (http/json-response 201 created))
-                     (catch clojure.lang.ExceptionInfo e
-                       (if-let [status (:status (ex-data e))]
-                         (http/error-response status
-                                              (or (:type (ex-data e)) :invalid-request)
-                                              (ex-message e))
-                         (throw e)))))))
+                                                  (:vis.host/origin request)
+                                                  (assoc :origin (:vis.host/origin request))))]
+             (when pid (state/set-session-model! (get created "id") pid model))
+             (when draft-backend
+               (let [db (lp/db-info)]
+                 (scoped/set-setting! db
+                                      (scoped/target db "session" (get created "id"))
+                                      "draft_backend"
+                                      "value"
+                                      draft-backend)))
+             (http/json-response 201 created))
+           (catch clojure.lang.ExceptionInfo e
+             (if-let [status (:status (ex-data e))]
+               (http/error-response status (or (:type (ex-data e)) :invalid-request) (ex-message e))
+               (throw e)))))))
 
 (defn- sessions-etag
   "Conditional-GET validator for a session-list ANSWER: SHA-256 over the rows
