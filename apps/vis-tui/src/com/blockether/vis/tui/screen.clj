@@ -729,10 +729,22 @@
   ^long [message ^long text-top ^long top]
   (+ text-top top 1 (if (or (= :user (:role message)) (error-card-row-geometry? message)) 1 0)))
 
+(defn- live-panel-layout
+  "The side panel on `cols` chat columns, or nil while it is closed or has no view."
+  [db cols]
+  (when (get-in db [:live-panel :open?])
+    (when-let [panes (seq (lv/panel-panes (:live-views db)))]
+      (assoc (lv/panel-geometry cols) :panes (vec panes)))))
+
+(defn- live-pane
+  "The mounted view `view-id`: a view of this session, or a header view of this machine."
+  [db view-id]
+  (first (filter #(= view-id (lv/view-id %)) (concat (:live-views db) (:header-views db)))))
+
 (defn- viewer-panes
   "Project the selected transient view without modifying its transcript state."
   [db]
-  (when-let [pane (first (filter #(= (:live-viewer-id db) (lv/view-id %)) (:live-views db)))]
+  (when-let [pane (live-pane db (:live-viewer-id db))]
     (let [search (:live-viewer-search db)]
       [(cond-> (assoc (lv/restored pane)
                  :is-reopened true
@@ -791,7 +803,7 @@
    the TUI keeps no optimistic private selection that could race the extension's next
    GitHub poll."
   [db {:keys [view-id node-id item-id]}]
-  (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
+  (when-let [pane (live-pane db view-id)]
     (let [session-id (get-in pane [:view :session-id])
           action {:action :select :node-id node-id :item-ids [item-id]}]
 
@@ -805,7 +817,7 @@
   "Send one explicit operator press; the shared patch is the acknowledgement. A
    submit button sends the value of every input in the view with it."
   [db {:keys [view-id node-id]}]
-  (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
+  (when-let [pane (live-pane db view-id)]
     (let [action (if (lv/submit-button? pane node-id)
                    {:action :submit :node-id node-id :values (lv/input-values pane)}
                    {:action :activate :node-id node-id})]
@@ -927,6 +939,23 @@
 
     :live-select
     (do (select-live-row! db hit) true)
+
+    ;; A click on a panel title selects that view and folds or unfolds it.
+    :live-panel-toggle
+    (let [id (:view-id hit)]
+      (state/dispatch [:live-panel-select id])
+      (state/dispatch [:live-panel-fold id (not (contains? (get-in db [:live-panel :folded]) id))])
+      (state/dispatch [:bump-render-version])
+      true)
+
+    :live-panel-tab
+    (do (state/dispatch [:live-panel-tab (:tab hit)]) (state/dispatch [:bump-render-version]) true)
+
+    ;; A header pin opens its view in the viewer.
+    :header-pin
+    (do (state/dispatch [:live-view-reopen (:view-id hit)])
+        (state/dispatch [:bump-render-version])
+        true)
 
     false))
 
@@ -2356,7 +2385,7 @@
   "Edit one input of a live view and send the new value at once as a `change`.
    The engine answers with the ordinary patch, so the TUI keeps no private copy."
   [screen db {:keys [view-id node-id]}]
-  (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
+  (when-let [pane (live-pane db view-id)]
     (when-let [node (lv/input-node pane node-id)]
       (when-let [{:keys [value]} (with-dialog-lock #(live-input-value screen node))]
         (future
@@ -2374,17 +2403,86 @@
   true)
 
 (defn- live-controls!
-  "F3 controls belong to the explicitly opened viewer, never a hidden receipt."
-  [screen db]
-  (when-let [items (seq (lv/controls (viewer-panes db)))]
+  "F3 controls belong to the explicitly opened viewer, never a hidden receipt. The
+   side panel passes its selected view as `panes`."
+  ([screen db] (live-controls! screen db (viewer-panes db)))
+  ([screen _db panes]
+   (when-let [items (seq (lv/controls panes))]
+     (when-let [choice (with-dialog-lock #(dlg/list-dialog! screen
+                                                            "Live view controls"
+                                                            items
+                                                            {:enter-label "activate"
+                                                             :height :content}))]
+       (if (= :live-edit (:kind choice))
+         (edit-live-input! screen @state/app-db choice)
+         (activate-live-region! @state/app-db choice))))))
+
+(defn- open-live-panel!
+  "C-x V: open the side panel, then move the focus between it and the transcript."
+  []
+  (if (seq (lv/panel-panes (:live-views @state/app-db)))
+    (do (state/dispatch [:live-panel-focus]) (state/dispatch [:bump-render-version]))
+    (vis/notify! "No view uses the side panel in this session." :level :info)))
+
+(defn- show-header-pins!
+  "C-x P: list the header pins of this machine; the chosen pin opens in the viewer."
+  [screen]
+  (if-let [chips (seq (map lv/pin-chip (:header-views @state/app-db)))]
     (when-let [choice (with-dialog-lock #(dlg/list-dialog! screen
-                                                           "Live view controls"
-                                                           items
-                                                           {:enter-label "activate"
-                                                            :height :content}))]
-      (if (= :live-edit (:kind choice))
-        (edit-live-input! screen @state/app-db choice)
-        (activate-live-region! @state/app-db choice)))))
+                                                           "Header pins"
+                                                           (mapv (fn [{:keys [text view-id]}]
+                                                                   {:label text :view-id view-id})
+                                                                 chips)
+                                                           {:enter-label "open" :height :content}))]
+      (state/dispatch [:live-view-reopen (:view-id choice)])
+      (state/dispatch [:bump-render-version]))
+    (vis/notify! "This machine has no header pins." :level :info)))
+
+(defn- live-panel-key!
+  "Keys of the focused side panel. ↑ and ↓ select a view, ← folds it, → unfolds it,
+   Enter lists its controls, Tab shows the next owner and Esc closes the panel.
+   Returns true when the panel used the key."
+  [screen db ^KeyStroke key]
+  (when-let [panes (seq (lv/panel-panes (:live-views db)))]
+    (let [{:keys [tab selected]} (:live-panel db)
+          tabs (lv/panel-tabs panes)
+          shown (lv/panel-shown panes tab)
+          ids (mapv lv/view-id shown)
+          selected (lv/panel-selected shown selected)
+          idx (long (or (first (keep-indexed #(when (= selected %2) %1) ids)) 0))
+          select! #(state/dispatch [:live-panel-select (get ids (max 0 (min (dec (count ids)) %)))])
+          handled?
+          (case (some-> key
+                        .getKeyType
+                        .name)
+            "ArrowUp"
+            (do (select! (dec idx)) true)
+
+            "ArrowDown"
+            (do (select! (inc idx)) true)
+
+            "ArrowLeft"
+            (do (state/dispatch [:live-panel-fold selected true]) true)
+
+            "ArrowRight"
+            (do (state/dispatch [:live-panel-fold selected false]) true)
+
+            "Tab"
+            (do (when (> (count tabs) 1)
+                  (let [at (long (or (first (keep-indexed #(when (= tab %2) %1) tabs)) 0))]
+                    (state/dispatch [:live-panel-tab (get tabs (mod (inc at) (count tabs)))])))
+                true)
+
+            "Escape"
+            (do (state/dispatch [:live-panel-close]) true)
+
+            "Enter"
+            (do (live-controls! screen db (filter #(= selected (lv/view-id %)) shown)) true)
+
+            false)]
+
+      (when handled? (state/dispatch [:bump-render-version]))
+      handled?)))
 
 (defn- attachment-capabilities!
   []
@@ -3046,6 +3144,13 @@
         cols
         (long (if (project-sidebar-locked? db cols) cols (projects/chat-cols db cols)))
 
+        ;; A docked side panel takes its columns from the chat; an overlay keeps them.
+        live-panel
+        (live-panel-layout db cols)
+
+        cols
+        (long (if (:is-docked live-panel) (:chat-cols live-panel) cols))
+
         rows
         (long rows)
 
@@ -3417,6 +3522,24 @@
           ;; missing; the page that lands repaints and asks for the next one.
           (fill-live-log!)
           (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom)))))
+      ;; The side panel spans the whole height when docked; an overlay covers only
+      ;; the transcript rows, so the composer stays usable.
+      (when-let [{:keys [left width is-docked panes]} live-panel]
+        (let [left (if is-docked cols left)
+              top (if is-docked 0 messages-top)
+              height (if is-docked rows (- (long messages-bottom) (long messages-top)))
+              geom (lv/paint-panel!
+                     (frame/surface-graphics screen (+ (long left) (long width)) rows)
+                     left
+                     top
+                     width
+                     height
+                     panes
+                     (:live-panel db)
+                     now-ms)]
+
+          (when (not= (:selected geom) (get-in db [:live-panel :selected]))
+            (state/dispatch [:live-panel-select (:selected geom)]))))
       (let [rail-cursor (binding [frame/*column-offset* 0]
                           (projects/paint! (frame/surface-graphics screen screen-cols rows)
                                            (if (project-sidebar-locked? db screen-cols)
@@ -4606,17 +4729,31 @@
         chat-cols
         (projects/chat-cols db cols)
 
+        ;; The side panel repaints with every full frame; a docked one also narrows
+        ;; the composer that the cheap typing path paints.
+        live-panel
+        (live-panel-layout db chat-cols)
+
+        path
+        (if (and live-panel (not= path :input) (not sidebar?)) :full path)
+
+        rail-cols
+        chat-cols
+
+        chat-cols
+        (if (:is-docked live-panel) (:chat-cols live-panel) chat-cols)
+
         ;; On narrow terminals the rail covers the composer; a partial input paint
         ;; would erase its lower rows. Wide terminals retain the cheap typing path.
         path
         (if (and
               sidebar?
-              (or (not= path :input) (= cols chat-cols) (get-in db [:project-sidebar :focused?])))
+              (or (not= path :input) (= cols rail-cols) (get-in db [:project-sidebar :focused?])))
           :full
           path)
 
         cols
-        (if (and sidebar? (= path :input)) chat-cols cols)
+        (if (and (or sidebar? live-panel) (= path :input)) chat-cols cols)
 
         started-ns
         (System/nanoTime)
@@ -6093,6 +6230,33 @@
 
             (load-project-page! pid true)))))))
 
+(defn- header-view-event!
+  "Fold one fleet `view.*` frame of a header view into the header pins."
+  [event]
+  (when (= "live" (get event "kind"))
+    (case (get event "type")
+      "view.open"
+      (when-let [view (hi/live-view<-wire (get event "view"))]
+        (state/dispatch [:header-view-open view]))
+
+      "view.patch"
+      (when-let [patch (hi/live-patch<-wire (get event "patch"))]
+        (state/dispatch [:header-view-patch patch]))
+
+      "view.close"
+      (when-let [view-id (some-> (get event "view_id")
+                                 str)]
+        (state/dispatch [:header-view-close view-id]))
+
+      nil)))
+
+(defn- load-header-views!
+  "Read the machine's header views once; the fleet stream keeps them current."
+  []
+  (try (state/dispatch [:header-views-set
+                        (into [] (keep hi/live-view<-wire) (vis/gateway-header-views))])
+       (catch Throwable _ nil)))
+
 (defn- start-projects-refresh!
   "Follow fleet status/title deltas and periodically catch arrivals outside this TUI.
    A created or forked session reads only its own project. The same deltas keep the
@@ -6113,16 +6277,20 @@
         (atom false)
 
         stop
-        (try (vis/gateway-fleet-subscribe!
-               (fn [event]
-                 (case (get event "type")
-                   "session.created"
-                   (do (swap! created conj event) (reset! picker-stale? true))
+        (try (vis/gateway-fleet-subscribe! (fn [event]
+                                             (case (get event "type")
+                                               "session.created"
+                                               (do (swap! created conj event)
+                                                   (reset! picker-stale? true))
 
-                   ("session.status" "session.title_updated")
-                   (do (reset! dirty? true) (reset! picker-stale? true))
+                                               ("session.status" "session.title_updated")
+                                               (do (reset! dirty? true) (reset! picker-stale? true))
 
-                   nil)))
+                                               ;; Header views belong to the machine, so their events ride this stream.
+                                               ("view.open" "view.patch" "view.close")
+                                               (header-view-event! event)
+
+                                               nil)))
              (catch Throwable _
                (fn [])))
 
@@ -6130,6 +6298,7 @@
         (Thread.
           ^Runnable
           (fn []
+            (load-header-views!)
             (loop [last-read
                    0
 
@@ -8111,6 +8280,11 @@
                    (recur)
                    ;; Forms retain ordinary typing; C-x still reaches global navigation.
                    (human-input-owns-key? db key) (do (human-input-key! db key) (recur))
+                   ;; The side panel takes its navigation keys only after C-x V gave it focus.
+                   (and (get-in db [:live-panel :open?])
+                        (get-in db [:live-panel :focused?])
+                        (live-panel-key! screen db key))
+                   (recur)
                    ;; The agent Questions inbox takes its keys only after C-x Q gave it focus,
                    ;; or while the person types an answer to one question.
                    (agent-team/inbox-owns-key? (get-in db [:session :id]) key)
@@ -8755,6 +8929,12 @@
                                  :live-select
                                  (activate-live-region! db hit)
 
+                                 (:live-panel-toggle :live-panel-tab :header-pin)
+                                 (activate-live-region! db hit)
+
+                                 :header-pins-list
+                                 (show-header-pins! screen)
+
                                  :live-edit
                                  (edit-live-input! screen db hit)
 
@@ -8940,6 +9120,12 @@
 
                                  :live-select
                                  (activate-live-region! db hit)
+
+                                 (:live-panel-toggle :live-panel-tab :header-pin)
+                                 (activate-live-region! db hit)
+
+                                 :header-pins-list
+                                 (show-header-pins! screen)
 
                                  :live-edit
                                  (edit-live-input! screen db hit)
@@ -9252,6 +9438,12 @@
                                      :agent-questions
                                      (focus-agent-questions!)
 
+                                     :live-panel
+                                     (open-live-panel!)
+
+                                     :header-pins
+                                     (show-header-pins! screen)
+
                                      :automations
                                      (open-automations! screen)
 
@@ -9494,6 +9686,13 @@
                          ;; C-x Q — give the agent Questions inbox the keyboard.
                          :agent-questions
                          (do (focus-agent-questions!) (recur))
+
+                         ;; C-x V — open the side panel or move the focus; C-x P — header pins.
+                         :live-panel
+                         (do (open-live-panel!) (recur))
+
+                         :header-pins
+                         (do (show-header-pins! screen) (recur))
 
                          ;; C-x k — mark the whole queue for the running turn's
                          ;; next step (the header's `→ Send now`).

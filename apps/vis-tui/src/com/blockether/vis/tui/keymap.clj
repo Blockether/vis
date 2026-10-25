@@ -152,6 +152,10 @@
    ;; advertises its own `g` menu.
    {:action :session-group :key \d :label "move to group" :group "Session" :show-when :never}
    {:action :recenter :key \j :label "jump to bottom" :group "Buffer"}
+   ;; C-x V (Shift+v) opens the side panel, then moves the focus between it and the
+   ;; transcript. C-x P (Shift+p) lists the header pins of this machine.
+   {:action :live-panel :key \V :label "side panel" :group "Buffer" :show-when :has-panel}
+   {:action :header-pins :key \P :label "header pins" :group "Buffer" :show-when :has-pins}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
    {:action :toggle-detail-labels :key \z :label "label folds" :group "Buffer"}
    {:action :providers :key \o :label "providers" :group "Tools"}])
@@ -338,7 +342,8 @@
    act — `:multi-tab` needs a second tab to close, `:has-turns` needs a turn to
    fork at, `:codex` needs a session on OpenAI Codex (the screen marks it as
    `:codex-session?`), `:has-images` needs a picture in the session (the screen
-   marks it as `:has-images?`), and `:never` is palette-only. Resolving a chord
+   marks it as `:has-images?`), `:has-panel` needs a panel view, `:has-pins` needs a
+   header view, and `:never` is palette-only. Resolving a chord
    does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
@@ -353,6 +358,12 @@
 
     :has-images
     (true? (:has-images? db))
+
+    :has-panel
+    (boolean (some #(= :panel (get-in % [:view :placement])) (:live-views db)))
+
+    :has-pins
+    (boolean (seq (:header-views db)))
 
     :never
     false

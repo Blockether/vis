@@ -7,8 +7,8 @@
   [fields]
   (persistent! (letfn [(walk [acc nodes]
                          (reduce (fn [a node]
-                                   (cond (= view-spec/group-type (:type node)) (walk a
-                                                                                     (:children node))
+                                   (cond (= view-spec/group-type (:type node))
+                                         (walk a (:children node))
                                          (view-spec/decoration? node) a
                                          :else (conj! a node)))
                                  acc
@@ -16,7 +16,8 @@
                  (walk (transient []) fields))))
 
 (def ^:private keyword-value-keys
-  #{:type :direction :tone :variant :target-kind :status :state :action :kind :mode :align :op})
+  #{:type :direction :tone :variant :target-kind :status :state :action :kind :mode :align :op
+    :placement})
 
 (defn- restore-values
   [x]

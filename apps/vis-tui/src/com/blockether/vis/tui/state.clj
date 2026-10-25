@@ -4051,9 +4051,10 @@
   (if (some #(= (:id view) (lv/view-id %)) (:live-views workspace))
     workspace
     (let [pane (lv/opened view)]
-      (-> workspace
-          (update :live-views (fnil conj []) pane)
-          (upsert-run-row pane)))))
+      ;; Only an inline view files a transcript receipt; a panel view lives beside it.
+      (cond-> (update workspace :live-views (fnil conj []) pane)
+        (= :inline (lv/placement pane))
+        (upsert-run-row pane)))))
 
 (reg-event-db :live-view-open
               ;; Owner matching happens during rendering, after Activity rows can arrive.
@@ -4096,13 +4097,19 @@
                                (if-let [pane (first (filter #(and (= view-id (lv/view-id %))
                                                                   (not (lv/settled? %)))
                                                             (:live-views w)))]
-                                 (let [settled (lv/settled pane result)]
-                                   (-> w
-                                       (update :live-views
-                                               (fn [panes]
-                                                 (mapv #(if (= view-id (lv/view-id %)) settled %)
-                                                       panes)))
-                                       (upsert-run-row settled)))
+                                 (if (= :inline (lv/placement pane))
+                                   (let [settled (lv/settled pane result)]
+                                     (-> w
+                                         (update :live-views
+                                                 (fn [panes]
+                                                   (mapv #(if (= view-id (lv/view-id %)) settled %)
+                                                         panes)))
+                                         (upsert-run-row settled)))
+                                   ;; A closed panel view leaves the panel: it has no receipt.
+                                   (update w
+                                           :live-views
+                                           (fn [panes]
+                                             (filterv #(not= view-id (lv/view-id %)) panes))))
                                  w)))))
 
 (reg-event-db :live-view-reopen
@@ -4115,6 +4122,65 @@
 (reg-event-db :live-viewer-close
               (fn [db _]
                 (dissoc db :live-viewer-id :live-viewer-search)))
+
+(defn- header-pane
+  "The pane for header `view`; a mounted pane keeps its local fold and scroll."
+  [panes view]
+  (if-let [pane (first (filter #(= (:id view) (lv/view-id %)) panes))]
+    (assoc pane :view view)
+    (lv/opened view)))
+
+(reg-event-db :header-views-set
+              ;; The machine's header views from a cold read, oldest first.
+              (fn [db [_ views]]
+                (assoc db :header-views (mapv #(header-pane (:header-views db) %) views))))
+
+(reg-event-db :header-view-open
+              (fn [db [_ view]]
+                (if (some #(= (:id view) (lv/view-id %)) (:header-views db))
+                  db
+                  (update db :header-views (fnil conj []) (lv/opened view)))))
+
+(reg-event-db :header-view-patch
+              (fn [db [_ patch]]
+                (update db
+                        :header-views
+                        (fn [panes]
+                          (mapv #(if (= (:view-id patch) (lv/view-id %)) (lv/patched % patch) %)
+                                panes)))))
+
+(reg-event-db :header-view-close
+              ;; A closed header view leaves the header, and the viewer that showed it closes.
+              (fn [db [_ view-id]]
+                (cond-> (update db
+                                :header-views
+                                (fn [panes]
+                                  (filterv #(not= view-id (lv/view-id %)) panes)))
+                  (= view-id (:live-viewer-id db))
+                  (dissoc :live-viewer-id :live-viewer-search))))
+
+(reg-event-db :live-panel-focus
+              ;; C-x V: open the panel with the focus, then move the focus between the
+              ;; panel and the transcript.
+              (fn [db _]
+                (let [{:keys [open? focused?]} (:live-panel db)]
+                  (update db :live-panel assoc :open? true :focused? (not (and open? focused?))))))
+
+(reg-event-db :live-panel-close
+              (fn [db _]
+                (update db :live-panel assoc :open? false :focused? false)))
+
+(reg-event-db :live-panel-select
+              (fn [db [_ view-id]]
+                (assoc-in db [:live-panel :selected] view-id)))
+
+(reg-event-db :live-panel-fold
+              (fn [db [_ view-id folded?]]
+                (update-in db [:live-panel :folded] (fnil (if folded? conj disj) #{}) view-id)))
+
+(reg-event-db :live-panel-tab
+              (fn [db [_ tab]]
+                (update db :live-panel assoc :tab tab :selected nil)))
 
 (reg-event-db :live-view-search-open
               (fn [db [_ view-id node-id]]

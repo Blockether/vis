@@ -311,6 +311,15 @@
            ["Enter" "Send the typed answer to the subagent"] ["Tab" "Show the next question"]
            ["C-d" "Deny a budget or file request"] ["Esc" "Later: move the question to the end"]
            ["Click a team card row" "Open the session of that subagent"]]}
+   {:title "Live views"
+    :rows [[(keymap/label-for :live-panel)
+            "Open the side panel, then move the focus between it and the transcript"]
+           ["↑ · ↓" "Select a view in the focused panel"]
+           ["← · →" "Fold · unfold the selected view"]
+           ["Enter" "List the controls of the selected view"]
+           ["Tab" "Show the views of the next owner"] ["Esc" "Close the side panel"]
+           [(keymap/label-for :header-pins) "List the header pins of this machine"]
+           ["Click a header pin" "Open its view; +N lists every pin"]]}
    {:title "Project sidebar"
     :rows [[(keymap/label-for :switch-project) "Show or hide the project sidebar"]
            [keymap/sidebar-help-hint "List the sidebar keys while the sidebar has focus"]

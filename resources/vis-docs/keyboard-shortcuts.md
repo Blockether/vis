@@ -113,6 +113,8 @@ footer.
 | Ctrl+X I (Shift+I) | Show the pictures in this session one at a time. See [View pictures](#view-pictures) |
 | Ctrl+X v | Start or stop a voice recording |
 | Ctrl+X b | Turn voice conversation on or off: Vis reads each answer aloud and sends each recording once it is transcribed |
+| Ctrl+X V (Shift+V) | Show the live view panel at the side, or move the focus to it. In the panel, ↑ and ↓ select a view, ← folds it, → unfolds it, Tab shows the next extension and Esc closes the panel |
+| Ctrl+X P (Shift+P) | List the live views pinned to the header |
 
 ## View pictures
 

@@ -2689,6 +2689,221 @@
    (when (last (remove dormant? panes))
      (paint-generic! g cols rows panes content-top prompt-h now-ms))))
 
+(defn placement
+  "Where a view shows: `:inline` (the default), `:panel` or `:header`."
+  [pane]
+  (or (get-in pane [:view :placement]) :inline))
+
+(defn- owner
+  "The extension that owns a panel or header view, or an empty string."
+  [pane]
+  (flat-text (get-in pane [:view :extension])))
+
+(defn panel-panes
+  "The open panel views among `panes`, oldest first. A closed panel view leaves at once."
+  [panes]
+  (filterv #(and (= :panel (placement %)) (not (settled? %))) panes))
+
+(defn panel-tabs
+  "The owners of `panes` in first-open order. The panel shows tabs only for two or more."
+  [panes]
+  (vec (distinct (map owner panes))))
+
+(defn panel-shown
+  "The panel views on `tab`. With one owner, every view shows."
+  [panes tab]
+  (let [tabs
+        (panel-tabs panes)
+
+        tab
+        (if (some #{tab} tabs) tab (first tabs))]
+
+    (if (< (count tabs) 2) (vec panes) (filterv #(= tab (owner %)) panes))))
+
+(defn panel-selected
+  "The selected view id among `shown`: the stored one when it still shows, else the first."
+  [shown selected]
+  (let [ids (mapv view-id shown)]
+    (if (some #{selected} ids) selected (first ids))))
+
+(defn panel-geometry
+  "The side panel on `cols` chat columns: 40% of them, at least 40. It docks only
+   when 60 chat columns remain; otherwise it covers the right side of the chat."
+  [cols]
+  (let [cols
+        (long cols)
+
+        width
+        (min cols (max 40 (quot (* 2 cols) 5)))
+
+        docked?
+        (>= (- cols width) 60)]
+
+    {:left (- cols width)
+     :width width
+     :is-docked docked?
+     :chat-cols (if docked? (- cols width) cols)}))
+
+(defn pin-chip
+  "One header pin: the view title and its first status or progress, with that tone."
+  [pane]
+  (let [title
+        (flat-text (get-in pane [:view :title]))
+
+        {:keys [text tone]}
+        (status-summary pane)]
+
+    {:view-id (view-id pane)
+     :tone tone
+     :glyph (or (tone-glyph tone) "▸")
+     :title title
+     :status (when (not= text title) text)
+     :text (str/join " · " (remove str/blank? [title (when (not= text title) text)]))}))
+
+(defn- panel-rows
+  "The panel body: one title row for each shown view, then the plan rows of an open view."
+  [shown {:keys [selected folded]} text-w now-ms]
+  (vec
+    (mapcat (fn [idx pane]
+              (let [id
+                    (view-id pane)
+
+                    open?
+                    (not (contains? folded id))]
+
+                (concat (when (pos? (long idx)) [{:view-id id :entry {:kind :blank}}])
+                        [{:view-id id
+                          :is-title true
+                          :is-open open?
+                          :is-selected (= id selected)
+                          :pane pane
+                          :elapsed (title-line pane now-ms)}]
+                        (when open?
+                          (map (fn [entry]
+                                 {:view-id id :entry entry})
+                               (plan pane text-w))))))
+            (range)
+            shown)))
+
+(defn- paint-panel-title!
+  [g left row width {:keys [view-id is-open is-selected pane]} focused?]
+  (let [{:keys [text tone]}
+        (status-summary pane)
+
+        title
+        (flat-text (get-in pane [:view :title]))
+
+        bg
+        (if (and is-selected focused?) t/header-active-tab-bg t/dialog-bg)
+
+        meta
+        (when (not= text title) text)
+
+        meta-w
+        (if meta (min (quot (long width) 2) (long (p/display-width meta))) 0)
+
+        title-w
+        (max 1 (- (long width) 5 meta-w (if meta 2 0)))]
+
+    (p/set-colors! g t/dialog-fg bg)
+    (p/fill-rect! g (inc (long left)) row (dec (long width)) 1)
+    ;; The selected row of a focused panel inverts, so its marks take the row's ink.
+    (p/set-colors! g
+                   (cond (and is-selected focused?) t/header-active-tab-fg
+                         is-selected t/header-active-tab-accent
+                         :else t/dialog-hint-key)
+                   bg)
+    (p/put-str! g (+ (long left) 2) row (if is-open "▾" "▸"))
+    (p/set-colors! g (if (and is-selected focused?) t/header-active-tab-fg t/dialog-fg) bg)
+    (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 4) row (p/ellipsize title title-w)))
+    (when meta
+      (p/set-colors!
+        g
+        (if (and is-selected focused?) t/header-active-tab-fg (tone-fg tone t/dialog-hint))
+        bg)
+      (p/put-str! g (- (+ (long left) (long width)) meta-w 1) row (p/ellipsize meta meta-w)))
+    (.register interactions/hit-map
+               {:bounds {:row row :col (inc (long left)) :width (dec (long width))}
+                :kind :live-panel-toggle
+                :label (if is-open "Fold view" "Unfold view")
+                :view-id view-id
+                :enabled? true})))
+
+(defn- paint-panel-tabs!
+  [g left row width tabs tab]
+  (p/set-colors! g t/dialog-fg t/dialog-bg)
+  (p/fill-rect! g (inc (long left)) row (dec (long width)) 1)
+  (reduce (fn [^long col name]
+            (let [label
+                  (str " " (if (str/blank? name) "Views" name) " ")
+
+                  label
+                  (p/ellipsize label (max 0 (- (+ (long left) (long width)) col 1)))
+
+                  w
+                  (long (p/display-width label))
+
+                  on?
+                  (= name tab)]
+
+              (when (pos? w)
+                (p/set-colors! g
+                               (if on? t/header-active-tab-fg t/dialog-hint)
+                               (if on? t/header-active-tab-bg t/dialog-bg))
+                (p/styled g (if on? [p/BOLD] []) (p/put-str! g col row label))
+                (.register interactions/hit-map
+                           {:bounds {:row row :col col :width w}
+                            :kind :live-panel-tab
+                            :label "Show views"
+                            :tab name
+                            :enabled? true}))
+              (+ col w 1)))
+          (+ (long left) 2)
+          tabs))
+
+(defn paint-panel!
+  "Paint the side panel at `left` from row `top`, `height` rows tall. `state` is the
+   TUI panel state: `:tab`, `:selected`, `:folded` and `:focused?`. A `│` rule at
+   `left` divides the panel from the chat; it takes the accent while the panel has
+   the keyboard. Returns `{:selected view-id :shown [view-id …]}`."
+  [g left top width height panes state now-ms]
+  (binding [t/dialog-bg t/terminal-bg]
+    (let [left (long left)
+          top (long top)
+          width (long width)
+          height (long height)
+          tabs (panel-tabs panes)
+          tab (if (some #{(:tab state)} tabs) (:tab state) (first tabs))
+          shown (panel-shown panes tab)
+          selected (panel-selected shown (:selected state))
+          focused? (boolean (:focused? state))
+          tabs? (>= (count tabs) 2)
+          body-top (if tabs? (+ top 2) top)
+          visible (max 0 (- (+ top height) body-top))
+          inner-w (- width 2)
+          text-w (max 8 (- inner-w 4))
+          rows (panel-rows shown {:selected selected :folded (set (:folded state))} text-w now-ms)
+          sel-idx (long (or (first (keep-indexed #(when (and (:is-title %2) (:is-selected %2)) %1)
+                                                 rows))
+                            0))
+          start (if (< sel-idx visible)
+                  0
+                  (min (- sel-idx (quot visible 3)) (max 0 (- (count rows) visible))))]
+
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/fill-rect! g left top width height)
+      (p/set-colors! g (if focused? t/header-active-tab-accent t/border-fg) t/dialog-bg)
+      (doseq [row (range top (+ top height))]
+        (p/put-str! g left row "│"))
+      (when tabs? (paint-panel-tabs! g left top width tabs tab))
+      (doseq [[idx row-entry] (map-indexed vector (take visible (drop start rows)))]
+        (let [row (+ body-top (long idx))]
+          (if (:is-title row-entry)
+            (paint-panel-title! g left row width row-entry focused?)
+            (paint-entry! g (+ left 2) row (dec inner-w) (:view-id row-entry) (:entry row-entry)))))
+      (p/clear-styles! g)
+      {:selected selected :shown (mapv view-id shown) :tab tab})))
+
 (defn inline-entries
   "A compact LIVE receipt. Pane details belong only to the transient viewer."
   [pane _width]
