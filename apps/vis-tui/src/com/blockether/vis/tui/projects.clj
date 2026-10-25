@@ -1216,20 +1216,29 @@
           (recur (+ col w sep-w) more))))))
 
 (defn- row-indent
-  "The columns before a row's text: projects at the edge, sections and groups
-   one step in, sessions under them."
+  "The columns before a row's text: projects at the edge, sections one step in,
+   groups under their section and sessions as list items under them."
   ^long [entry]
   (case (:kind entry)
     :project-select
     0
 
-    (:project-set :project-group :project-input :project-unread)
+    :project-set
     2
 
+    (:project-group :project-input :project-unread)
+    4
+
     :project-session
-    (if (:nested? entry) 6 4)
+    (if (:nested? entry) 8 6)
 
     4))
+
+(defn- list-row?
+  "True for a row that names one session. It starts with a list bullet: `●` for
+   the current session, `*` for a favourite, else `-`."
+  [entry]
+  (contains? #{:project-session :project-input :project-unread} (:kind entry)))
 
 (defn- row-lead
   "The `[text ink bold?]` parts left of a row's status. The last part is the
@@ -1324,12 +1333,17 @@
       (cond (or focused? (and session? active? (not (:focused? sidebar))))
             (paint-marker! g (inc left) row t/header-active-tab-accent)
             (:selected? entry) (paint-marker! g (inc left) row t/dialog-hint))
-      (when (and session? (or active? (:favorite? entry)) (> start (+ left 3)))
+      (when (and (list-row? entry) (> start (+ left 3)))
         (p/set-colors! g
                        (t/legible-ink (if active? t/header-active-tab-accent t/dialog-hint)
                                       t/dialog-bg)
                        t/dialog-bg)
-        (p/put-str! g (- start 2) row (if active? "●" "*")))
+        (p/put-str! g
+                    (- start 2)
+                    row
+                    (cond active? "●"
+                          (:favorite? entry) "*"
+                          :else "-")))
       (let [end (- (+ left width) (if hot? (long (row-tools g entry left width row)) 2))
             lead (row-lead entry sidebar)
             name-col

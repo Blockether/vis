@@ -1592,7 +1592,7 @@
                                  (filter #(= :project-group (:kind %))
                                          (.current projects/hit-map)))]
           (expect (= (#'theme-test/rgb-tuple (theme/group-ink (:color group) theme/terminal-bg))
-                     (get-in capture [:frames 0 (get-in hit [:bounds :row]) 6 :fg])))))))
+                     (get-in capture [:frames 0 (get-in hit [:bounds :row]) 8 :fg])))))))
 
 (defdescribe project-rail-g-opens-the-row-menu-test
              (it "project rail g opens the row menu"
@@ -2574,10 +2574,20 @@
 
       (expect (nil? (:error capture)))
       (expect (= (+ 2 (column project-row "Vis")) (column groups-row "Groups")))
-      (expect (= (+ 2 (column groups-row "Groups")) (column group-row "Release apps")))
+      ;; A group sits under its section's label; each session is a list item: a
+      ;; bullet under the parent's label, then the title.
+      (expect (= (+ 4 (column groups-row "Groups")) (column group-row "Release apps")))
       (expect (= (column group-row "Release apps") (column grouped-row "Grouped session")))
+      (expect (= "-"
+                 (subs (nth lines grouped-row)
+                       (- (column grouped-row "Grouped session") 2)
+                       (dec (column grouped-row "Grouped session")))))
       (expect (= (+ 2 (column project-row "Vis")) (column sessions-row "Sessions")))
-      (expect (= (column sessions-row "Sessions") (column loose-row "Loose session")))
+      (expect (= (+ 2 (column sessions-row "Sessions")) (column loose-row "Loose session")))
+      (expect (= "-"
+                 (subs (nth lines loose-row)
+                       (column sessions-row "Sessions")
+                       (inc (column sessions-row "Sessions")))))
       (expect (not-any? #(str/includes? (nth lines %) "turns") [grouped-row loose-row])
               "Only a focused or hovered session shows its turns")
       (expect (not-any? #(str/includes? (nth lines %) "-id") [grouped-row loose-row]))
@@ -2849,9 +2859,9 @@
           (expect (= highlight bg))
           (when (= :project-group (:kind hit))
             (expect (= (#'theme-test/rgb-tuple theme/dialog-fg)
-                       (get-in capture [:frames 0 row 8 :fg])))
+                       (get-in capture [:frames 0 row 10 :fg])))
             (expect (= (#'theme-test/rgb-tuple (theme/group-ink "violet" (tuple-rgb bg)))
-                       (get-in capture [:frames 0 row 6 :fg]))))))
+                       (get-in capture [:frames 0 row 8 :fg]))))))
       (let [db
             (assoc-in (fixture-db) [:project-sidebar :focused?] false)
 
@@ -2961,7 +2971,7 @@
 
         (expect (nil? (:error capture)))
         (expect (str/includes? (nth lines row)
-                               (if (= cols 32) "* Writing the te" "* Writing the tests")))
+                               (if (= cols 32) "* Writing the t" "* Writing the tests")))
         (expect (not (str/includes? (nth lines row) "LIVE")))
         (expect (str/ends-with? (nth lines row) "running │"))
         (expect (= (#'theme-test/rgb-tuple
