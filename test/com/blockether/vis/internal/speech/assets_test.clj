@@ -129,7 +129,8 @@
                  (mapv :id (assets/for-engine :piper))))
       (expect (= ["pocket-tts-int8"] (mapv :id (assets/for-engine :pocket-tts))))
       (expect (= ["vibevoice-realtime-0.5b-int8"] (mapv :id (assets/for-engine :vibevoice-tts))))
-      (expect (= ["qwen3-tts-12hz-1.7b-customvoice-int4"] (mapv :id (assets/for-engine :qwen-tts))))
+      (expect (= ["qwen3-tts-12hz-1.7b-customvoice-int4" "qwen3-tts-12hz-1.7b-base-int4"]
+                 (mapv :id (assets/for-engine :qwen-tts))))
       (expect (= ["vibevoice-asr-streaming-1.5b-int8"]
                  (mapv :id (assets/for-engine :vibevoice-asr))))
       (let [data (ex-data-of #(assets/entry "no-such-model"))]
@@ -295,7 +296,13 @@
         (expect (= 9 (count (:voices entry))))
         (expect (every? (set (:requires entry))
                         ["talker_cache.onnx" "config.json" "tokenizer.json"]))
-        (expect (not-any? :clip (:voices entry))))))
+        (expect (not-any? :clip (:voices entry)))))
+  (it "lists no voices for the Qwen3-TTS Base model, which clones an imported recording"
+      (let [entry (assets/entry "qwen3-tts-12hz-1.7b-base-int4")]
+        (expect (empty? (:voices entry)))
+        (expect (every? (set (:requires entry))
+                        ["speaker_encoder.onnx" "tok_encoder.onnx" "code_predictor.onnx"]))
+        (expect (some? (:notice entry))))))
 
 (defn- repo-document
   "The generated document at the repository root, found by walking up from the

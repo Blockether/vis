@@ -293,6 +293,55 @@
       :path "tokenizer.json"
       :sha256 "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"
       :url "https://huggingface.co/Qwen/Qwen2.5-0.5B/resolve/060db6499f32faf8b98477b0a26969ef7d8b9987/tokenizer.json"}]}]}
+ ;; About 1.6 GB. Only an imported voice needs it: it clones a recording.
+ {:id "qwen3-tts-12hz-1.7b-base-int4"
+  :engine :qwen-tts
+  :install-dir "qwen3-tts-12hz-1.7b-base-int4"
+  :requires ["text_embed.onnx" "codec_embed.onnx" "talker_cache.onnx" "code_predictor.onnx" "residual_embed.onnx" "speaker_encoder.onnx" "tok_encoder.onnx" "config.json"]
+  :license "Apache-2.0"
+  :attribution
+  "Qwen3-TTS-12Hz-1.7B-Base by the Qwen team, Alibaba Cloud (https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0. ONNX export by onnx-community (https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0, revision 16ec6f33. Speaks in voices that you import from a recording."
+  :source-url "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+  :notice
+  "Tell listeners that the audio is synthetic, and clone only your own voice or a voice whose owner gave consent."
+  :is-commercial-ok true
+  :is-redistributed false
+  :sources
+  [{:host :upstream
+    :kind :files
+    :files
+    [{:bytes 204732501
+      :path "text_embed.onnx"
+      :sha256 "9ac763d32c370d026a01164fc66f4fb1bea87c1ba3831ac83c33c06a258abd16"
+      :url "https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base/resolve/16ec6f3335d919e0e007d825a6f47fdd2cd77594/cpu_int4/text_embed.onnx"}
+     {:bytes 4031014
+      :path "codec_embed.onnx"
+      :sha256 "25b29578550d26671c54b245e1efa7a51932f1de2335d5e51812517edcff47d9"
+      :url "https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base/resolve/16ec6f3335d919e0e007d825a6f47fdd2cd77594/cpu_int4/codec_embed.onnx"}
+     {:bytes 911514323
+      :path "talker_cache.onnx"
+      :sha256 "2eb11eaf0fd81d1cc0759f0b8546f625ba5788abdc36a22a63d559f79e4ad555"
+      :url "https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base/resolve/16ec6f3335d919e0e007d825a6f47fdd2cd77594/cpu_int4/talker_cache.onnx"}
+     {:bytes 113841219
+      :path "code_predictor.onnx"
+      :sha256 "e496278c6e8a393daa06c4b646a4a781f7ee2296df486364be96ff5411f2143f"
+      :url "https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base/resolve/16ec6f3335d919e0e007d825a6f47fdd2cd77594/cpu_int4/code_predictor.onnx"}
+     {:bytes 44346842
+      :path "residual_embed.onnx"
+      :sha256 "21825e1be3c4cf93d020369fe2cdbb4cfc39fee6bf190bb94472b93ed2969301"
+      :url "https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base/resolve/16ec6f3335d919e0e007d825a6f47fdd2cd77594/cpu_int4/residual_embed.onnx"}
+     {:bytes 48691731
+      :path "speaker_encoder.onnx"
+      :sha256 "9339938f6f1b1b6a840455da30381c71f0ef202f34381be88f171be4459a938a"
+      :url "https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base/resolve/16ec6f3335d919e0e007d825a6f47fdd2cd77594/cpu_int4/speaker_encoder.onnx"}
+     {:bytes 225554101
+      :path "tok_encoder.onnx"
+      :sha256 "4a335eaf525ceef17b457f82704d3bc835d4cb15f42fc6f5908f2e860d3da400"
+      :url "https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base/resolve/16ec6f3335d919e0e007d825a6f47fdd2cd77594/cpu_int4/tok_encoder.onnx"}
+     {:bytes 4494
+      :path "config.json"
+      :sha256 "b4f01752d15a488abde3e1ab44723ae4f4b9e68a4037257b098b3737893cc1f9"
+      :url "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base/resolve/fd4b254389122332181a7c3db7f27e918eec64e3/config.json"}]}]}
  ;; WHAT A VIBEVOICE VOICE SOUNDS LIKE, before the 1.2 GB model is here: the Piper
  ;; sample sentence in all 25 voices, levelled like the Piper samples. Made by
  ;; `bin/make-vibevoice-samples` with the model above. A machine that has the model

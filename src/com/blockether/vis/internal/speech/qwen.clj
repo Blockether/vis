@@ -13,6 +13,16 @@
      residual_embed       the 16 codes of a frame to the next talker input
      tok_decoder          frames to 24 kHz audio, 1920 samples for each frame
 
+   A voice imported from a recording uses the Base model, the `cpu_int4` export of
+   onnx-community. It has its own text_embed, codec_embed, talker_cache and
+   residual_embed, and these graphs:
+
+     code_predictor   the logits of the 15 other codebooks, one call for each codebook
+     speaker_encoder  24 kHz audio to the speaker vector of the codec prompt
+     tok_encoder      one second of 24 kHz audio to 13 frames of codes
+
+   It uses the tokenizer and the decoder of the speaker bundle.
+
    The prompt and the sampling follow the reference generation of Qwen3-TTS
    (`Qwen3TTSModel.generate` in mlx-audio): the whole text goes into the prefill,
    and each later step feeds the embedded frame plus the pad embedding. The KV
@@ -21,7 +31,8 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.tts :as tts]
-            [com.blockether.vis.internal.speech.vibevoice :as vv])
+            [com.blockether.vis.internal.speech.vibevoice :as vv]
+            [com.blockether.vis.internal.speech.voices :as voices])
   (:import [ai.onnxruntime OnnxTensor OrtEnvironment OrtSession OrtSession$Result]
            [java.io File]
            [java.util Arrays HashMap]))
@@ -29,6 +40,10 @@
 (set! *warn-on-reflection* true)
 
 (def ^:const asset-id "qwen3-tts-12hz-1.7b-customvoice-int4")
+
+(def ^:const clone-asset-id
+  "The Base model, which speaks in an imported voice."
+  "qwen3-tts-12hz-1.7b-base-int4")
 
 (def ^:const hidden-size 2048)
 
@@ -77,6 +92,13 @@
 
 (def ^:const chunk-gap-seconds "Silence between two chunks of one text." 0.2)
 
+(def ^:const encoder-window "Samples that one tok_encoder call reads: one second." 24000)
+
+(def ^:const encoder-stride
+  "Frames kept from each encoder window. A second is 12.5 frames, so a stride of 12
+   frames keeps every window on the 80 ms grid."
+  12)
+
 (def ^:const default-seed
   "Noise seed of a request without one, so the same text in the same voice gives
    the same audio."
@@ -86,13 +108,43 @@
 
 (defn asset [] (assets/entry asset-id))
 
+(defn clone-asset [] (assets/entry clone-asset-id))
+
+(defn- imported-voice
+  "The imported voice `voice-id`, or nil. An import with the name of a built-in
+   speaker wins, as in pocket-tts."
+  [voice-id]
+  (some-> voice-id
+          name
+          not-empty
+          voices/imported-voice))
+
 (defn voices
   "The speakers of the bundle, from the manifest, so a surface can list them before
-   the download."
+   the download. Then the voices imported from a recording, which the Base model
+   speaks."
   []
-  (mapv #(select-keys % [:id :label :language :gender]) (:voices (asset))))
+  (let [mine
+        (mapv #(select-keys % [:id :label :language :clip-text :is-imported]) (voices/imported))
+
+        taken
+        (set (map :id mine))]
+
+    (into (vec (for [v
+                     (:voices (asset))
+
+                     :when (not (taken (name (:id v))))]
+
+                 (select-keys v [:id :label :language :gender])))
+          mine)))
 
 (defn- known-voice? [voice-id] (boolean (some #(= (name voice-id) (name (:id %))) (voices))))
+
+(defn- voice-assets
+  "The models that `voice-id` needs: the speaker bundle, and the Base model too for
+   an imported voice."
+  [voice-id]
+  (if (imported-voice voice-id) [(asset) (clone-asset)] [(asset)]))
 
 ;; Language
 
@@ -169,18 +221,46 @@
 
 ;; Bundle
 
+(defn- input-names [^OrtSession session] (vec (.getInputNames session)))
+
+(defn- nth-output ^OnnxTensor [^OrtSession$Result r ^long i] (.get r (int i)))
+
 (defn- open-bundle
-  [^OrtEnvironment env ^File dir]
-  (let [f #(io/file dir %)]
-    {:env env
-     :config (vv/read-json (f "config.json"))
-     :tokenizer (vv/open-tokenizer (f "tokenizer.json"))
-     :text-embed (vv/open-session env (f "text_embed.onnx"))
-     :codec-embed (vv/open-session env (f "codec_embed.onnx"))
-     :talker (vv/open-session env (f "talker_cache.onnx"))
-     :code-predictor (vv/open-session env (f "code_predictor_loop.onnx"))
-     :residual-embed (vv/open-session env (f "residual_embed.onnx"))
-     :decoder (vv/open-session env (f "tok_decoder.onnx"))}))
+  "The graphs in `dir`. The two exports name their tensors differently, so a graph
+   with one input and one output is fed by position. A Base bundle takes the
+   tokenizer and the decoder from the speaker bundle in `shared`."
+  ([env dir] (open-bundle env dir dir))
+  ([^OrtEnvironment env ^File dir ^File shared]
+   (let [f
+         #(io/file dir %)
+
+         talker
+         (vv/open-session env (f "talker_cache.onnx"))
+
+         base
+         {:env env
+          :config (vv/read-json (f "config.json"))
+          :tokenizer (vv/open-tokenizer (io/file shared "tokenizer.json"))
+          :text-embed (vv/open-session env (f "text_embed.onnx"))
+          :codec-embed (vv/open-session env (f "codec_embed.onnx"))
+          :talker talker
+          :past-names (subvec (input-names talker) 3)
+          :residual-embed (vv/open-session env (f "residual_embed.onnx"))
+          :decoder (vv/open-session env (io/file shared "tok_decoder.onnx"))}]
+
+     (if (.isFile ^File (f "speaker_encoder.onnx"))
+       (assoc base
+         :group-predictor (vv/open-session env (f "code_predictor.onnx"))
+         :speaker-encoder (vv/open-session env (f "speaker_encoder.onnx"))
+         :audio-encoder (vv/open-session env (f "tok_encoder.onnx")))
+       (assoc base :code-predictor (vv/open-session env (f "code_predictor_loop.onnx")))))))
+
+(defn- run-one
+  "Run a graph with one input and return its first output as floats."
+  ^floats [^OrtSession session ^OnnxTensor input]
+  (with-open [r (vv/run-session session
+                                (doto (HashMap.) (.put (first (input-names session)) input)))]
+    (vv/floats-of (nth-output r 0))))
 
 (defn- longs-of
   ^longs [^OnnxTensor tensor]
@@ -196,13 +276,8 @@
 (defn- embed
   "The embedding rows of `ids` from an embedding graph, as one flat array."
   ^floats [{:keys [^OrtEnvironment env]} ^OrtSession session ids]
-  (with-open [input
-              (vv/long-tensor env (long-array ids) [1 (count ids)])
-
-              r
-              (vv/run-session session (doto (HashMap.) (.put "input_ids" input)))]
-
-    (vv/floats-of (vv/output r "embeds"))))
+  (with-open [input (vv/long-tensor env (long-array ids) [1 (count ids)])]
+    (run-one session input)))
 
 (defn- add-row!
   "Write row `i` of `a` plus row `j` of `b` into row `k` of `out`."
@@ -223,59 +298,72 @@
       (aset out (+ (* k h) x) (+ (aget a (+ (* i h) x)) (aget b (+ (* j h) x)))))))
 
 (defn prefill-embeddings
-  "The talker input of the prefill for the text token `ids`: the role, the codec
-   prompt with the speaker, the whole text, then the codec start. Returns the flat
-   embeddings and the pad embedding that each later step adds."
-  [{:keys [config text-embed codec-embed] :as bundle} ids codec-ids]
-  (let [text
-        (embed bundle text-embed ids)
+  "The talker input of the prefill for the text token `ids` and the flat `codec`
+   prompt rows: the role, the codec prompt with the speaker, the whole text, then
+   the codec start. A clone `ref` adds the transcript of the recording before the
+   text and its frames after the codec start, as the in-context prompt of the
+   reference does. Returns the flat embeddings and the pad embedding that each
+   later step adds."
+  ([bundle ids codec] (prefill-embeddings bundle ids codec nil))
+  ([{:keys [config text-embed] :as bundle} ids ^floats codec {:keys [text-ids ^floats steps]}]
+   (let [h
+         (long hidden-size)
 
-        special
-        (embed bundle
-               text-embed
-               [(get config "tts_bos_token_id") (get config "tts_eos_token_id")
-                (get config "tts_pad_token_id")])
+         text
+         (embed bundle text-embed ids)
 
-        codec
-        (embed bundle codec-embed codec-ids)
+         special
+         (embed bundle
+                text-embed
+                [(get config "tts_bos_token_id") (get config "tts_eos_token_id")
+                 (get config "tts_pad_token_id")])
 
-        t
-        (count ids)
+         t
+         (count ids)
 
-        n
-        (count codec-ids)
+         n
+         (quot (alength codec) h)
 
-        rows
-        (+ 3 (dec n) (- t 8) 1 1)
+         r
+         (count text-ids)
 
-        out
-        (float-array (* rows (long hidden-size)))]
+         ref-text
+         (when (pos? r) (embed bundle text-embed text-ids))
 
-    (System/arraycopy text 0 out 0 (* 3 (long hidden-size)))
-    ;; The codec prompt: pad text rows, then the text start, over all codec rows but the last.
-    (dotimes [j (dec n)]
-      (add-row! out (+ 3 j) special (if (< j (- n 2)) 2 0) codec j))
-    ;; The text without its role and closing tokens, then the text end, over the codec pad.
-    (dotimes [i (- t 8)]
-      (add-row! out (+ 3 (dec n) i) text (+ 3 i) codec (- n 2)))
-    (add-row! out (+ 3 (dec n) (- t 8)) special 1 codec (- n 2))
-    (add-row! out (dec rows) special 2 codec (dec n))
-    {:embeds out
-     :rows rows
-     :pad (Arrays/copyOfRange special (* 2 (long hidden-size)) (* 3 (long hidden-size)))}))
+         m
+         (if steps (quot (alength steps) h) 0)
 
-(defn- kv-feed-names
-  []
-  (vec (for [l
-             (range talker-layers)
+         start
+         (+ 3 (dec n))
 
-             kind
-             ["key" "value"]]
+         end
+         (+ start r (- t 8))
 
-         [(str "past_key_values." l "." kind) (str "present." l "." kind)])))
+         rows
+         (+ end 2 m)
+
+         out
+         (float-array (* rows h))]
+
+     (System/arraycopy text 0 out 0 (* 3 h))
+     ;; The codec prompt: pad text rows, then the text start, over all codec rows but the last.
+     (dotimes [j (dec n)]
+       (add-row! out (+ 3 j) special (if (< j (- n 2)) 2 0) codec j))
+     ;; The transcript of the recording and the text without its role and closing
+     ;; tokens, then the text end, over the codec pad.
+     (dotimes [i r]
+       (add-row! out (+ start i) ref-text i codec (- n 2)))
+     (dotimes [i (- t 8)]
+       (add-row! out (+ start r i) text (+ 3 i) codec (- n 2)))
+     (add-row! out end special 1 codec (- n 2))
+     (add-row! out (inc end) special 2 codec (dec n))
+     ;; The frames of the recording over the text pad.
+     (dotimes [k m]
+       (add-row! out (+ end 2 k) steps k special 2))
+     {:embeds out :rows rows :pad (Arrays/copyOfRange special (* 2 h) (* 3 h))})))
 
 (defn- talker-step
-  ^OrtSession$Result [{:keys [^OrtEnvironment env talker]} ^floats embeds rows past kv]
+  ^OrtSession$Result [{:keys [^OrtEnvironment env talker past-names]} ^floats embeds rows past kv]
   (let [rows
         (long rows)
 
@@ -303,9 +391,59 @@
                 (.put "inputs_embeds" x)
                 (.put "position_ids" pos)
                 (.put "attention_mask" mask))]
-        (doseq [[[past-name] tensor] (map vector (kv-feed-names) kv)]
+        (doseq [[^String past-name tensor] (map vector past-names kv)]
           (.put m past-name tensor))
         (vv/run-session talker m)))))
+
+(defn- draw
+  "One token from the scores `v`: the [[top-k]] best, scaled by [[temperature]], then
+   one draw from `noise`."
+  ^long [^doubles v ^longs noise]
+  (let [n
+        (alength v)
+
+        sorted
+        (doto (aclone v) Arrays/sort)
+
+        threshold
+        (aget sorted (- n (long top-k)))
+
+        top
+        (aget sorted (dec n))
+
+        weights
+        (double-array n)]
+
+    (dotimes [i n]
+      (let [x (aget v i)]
+        (aset weights i (if (< x threshold) 0.0 (Math/exp (/ (- x top) (double temperature)))))))
+    (let [total
+          (areduce weights i acc 0.0 (+ acc (aget weights i)))
+
+          target
+          (* total (vv/uniform noise))]
+
+      (loop [i
+             0
+
+             acc
+             0.0
+
+             last-kept
+             -1]
+
+        (if (= i n)
+          last-kept
+          (let [w
+                (aget weights i)
+
+                acc
+                (+ acc w)
+
+                kept
+                (if (pos? w) i last-kept)]
+
+            (if (and (pos? w) (>= acc target)) i (recur (inc i) acc kept))))))))
 
 (defn sample-first-code
   "The first codebook of the next frame from the last row of the talker `logits`
@@ -332,48 +470,7 @@
         (aset v
               (long token)
               (if (neg? x) (* x (double repetition-penalty)) (/ x (double repetition-penalty))))))
-    (let [sorted
-          (doto (aclone v) Arrays/sort)
-
-          threshold
-          (aget sorted (- (long codec-vocab) (long top-k)))
-
-          top
-          (aget sorted (dec (long codec-vocab)))
-
-          weights
-          (double-array codec-vocab)]
-
-      (dotimes [i codec-vocab]
-        (let [x (aget v i)]
-          (aset weights i (if (< x threshold) 0.0 (Math/exp (/ (- x top) (double temperature)))))))
-      (let [total
-            (areduce weights i acc 0.0 (+ acc (aget weights i)))
-
-            target
-            (* total (vv/uniform noise))]
-
-        (loop [i
-               0
-
-               acc
-               0.0
-
-               last-kept
-               -1]
-
-          (if (= i codec-vocab)
-            last-kept
-            (let [w
-                  (aget weights i)
-
-                  acc
-                  (+ acc w)
-
-                  kept
-                  (if (pos? w) i last-kept)]
-
-              (if (and (pos? w) (>= acc target)) i (recur (inc i) acc kept)))))))))
+    (draw v noise)))
 
 (defn- gumbel
   "Gumbel noise for the in-graph sampling of the code predictor."
@@ -420,15 +517,41 @@
 
     (longs-of (vv/output r "codes"))))
 
+(defn- group-frame-codes
+  "All 16 codes of a frame with the Base model: its code predictor gives the logits
+   of every codebook after the codes before it, so each codebook is one call and
+   one draw from `noise`."
+  ^longs [{:keys [^OrtEnvironment env group-predictor]} ^floats hidden ^long code0 ^longs noise]
+  (let [width
+        (inc (long residual-groups))
+
+        vocab
+        (long residual-vocab)
+
+        codes
+        (long-array width)]
+
+    (aset codes 0 code0)
+    (with-open [h (vv/float-tensor env hidden [1 hidden-size])]
+      (doseq [j (range 1 width)]
+        (with-open [c (vv/long-tensor env (aclone codes) [1 width])
+                    r (vv/run-session
+                        group-predictor
+                        (doto (HashMap.) (.put "talker_hidden" h) (.put "codec_ids" c)))]
+
+          (let [logits (vv/floats-of (nth-output r 0))
+                offset (* (dec (long j)) vocab)
+                v (double-array vocab)]
+
+            (dotimes [i vocab]
+              (aset v i (double (aget logits (+ offset i)))))
+            (aset codes (long j) (draw v noise))))))
+    codes))
+
 (defn- next-input
   ^floats [{:keys [^OrtEnvironment env residual-embed]} ^longs codes ^floats pad]
-  (with-open [c
-              (vv/long-tensor env codes [1 (inc residual-groups)])
-
-              r
-              (vv/run-session residual-embed (doto (HashMap.) (.put "codes" c)))]
-
-    (let [e (vv/floats-of (vv/output r "embeds"))]
+  (with-open [c (vv/long-tensor env codes [1 (inc residual-groups)])]
+    (let [e (run-one residual-embed c)]
       (dotimes [i hidden-size]
         (aset e i (+ (aget e i) (aget pad i))))
       e)))
@@ -470,36 +593,35 @@
               (vv/hold! slots 0 (talker-step bundle input rows past kv))
 
               logits
-              (vv/floats-of (vv/output r "logits"))
+              (vv/floats-of (nth-output r 0))
 
               hidden
-              (vv/floats-of (vv/output r "hidden"))
+              (vv/floats-of (nth-output r 1))
 
               code0
               (sample-first-code logits (* (dec rows) codec-vocab) history eos noise)]
 
           (if (or (= code0 eos) (>= (count frames) (long max-frames)))
             frames
-            (let [codes (frame-codes bundle
-                                     (Arrays/copyOfRange hidden
-                                                         (int (* (dec rows) hidden-size))
-                                                         (int (* rows hidden-size)))
-                                     code0
-                                     noise)]
+            (let [codes ((if (:group-predictor bundle) group-frame-codes frame-codes)
+                          bundle
+                          (Arrays/copyOfRange hidden
+                                              (int (* (dec rows) hidden-size))
+                                              (int (* rows hidden-size)))
+                          code0
+                          noise)]
               (when (zero? (rem (count frames) 25)) (report (count frames)))
               (recur (next-input bundle codes pad)
                      1
                      (+ past rows)
-                     (mapv (fn [[_ present-name]]
-                             (vv/output r present-name))
-                           (kv-feed-names))
+                     (mapv #(nth-output r %) (range 2 (+ 2 (* 2 (long talker-layers)))))
                      (conj history code0)
                      (conj frames codes))))))
       (finally (vv/close-all! slots)
                (doseq [^OnnxTensor t empty-kv]
                  (.close t))))))
 
-(defn decode-frames
+(defn- decode-all
   "The 24 kHz samples of `frames`, decoded in windows of [[decode-window]] frames
    with [[decode-context]] frames of context before each window."
   ^floats [{:keys [^OrtEnvironment env decoder]} frames]
@@ -529,8 +651,117 @@
           (recur end))))
     out))
 
+(defn decode-frames
+  "The 24 kHz samples of `frames`. The last [[decode-context]] frames of `context`,
+   the frames of a recording, are decoded before them and then dropped, so the
+   speech continues the recording as in the reference."
+  (^floats [bundle frames] (decode-frames bundle frames nil))
+  (^floats [bundle frames context]
+   (let [before
+         (vec (take-last (long decode-context) context))
+
+         ^floats audio
+         (decode-all bundle (into before frames))]
+
+     (if (seq before)
+       (Arrays/copyOfRange audio (int (* (count before) (long frame-samples))) (alength audio))
+       audio))))
+
+;; A recording as a prompt
+
+(defn encode-reference
+  "The frames of 24 kHz `samples`, one for each started 80 ms. The encoder reads one
+   second at a time, and [[encoder-stride]] frames of each window are kept."
+  [{:keys [^OrtEnvironment env audio-encoder]} ^floats samples]
+  (let [n
+        (alength samples)
+
+        total
+        (long (Math/ceil (/ (double n) (double frame-samples))))
+
+        width
+        (inc (long residual-groups))
+
+        stride
+        (long encoder-stride)]
+
+    (loop [w
+           0
+
+           frames
+           (transient [])]
+
+      (let [first-frame (* w stride)]
+        (if (>= first-frame total)
+          (persistent! frames)
+          (let [start (* first-frame (long frame-samples))
+                window (float-array encoder-window)
+                _ (System/arraycopy samples start window 0 (min (long encoder-window) (- n start)))
+                codes (with-open [x (vv/float-tensor env window [1 1 encoder-window])
+                                  r (vv/run-session audio-encoder
+                                                    (doto (HashMap.) (.put "audio" x)))]
+
+                        (longs-of (nth-output r 0)))
+                keep (min stride (- total first-frame))]
+
+            (recur (inc w)
+                   (reduce (fn [acc k]
+                             (conj! acc
+                                    (Arrays/copyOfRange ^longs codes
+                                                        (int (* (long k) width))
+                                                        (int (* (inc (long k)) width)))))
+                           frames
+                           (range keep)))))))))
+
+(defn- speaker-vector
+  "The speaker vector of 24 kHz `samples`."
+  ^floats [{:keys [^OrtEnvironment env speaker-encoder]} ^floats samples]
+  (with-open [x (vv/float-tensor env samples [1 (alength samples)])]
+    (run-one speaker-encoder x)))
+
+(defn reference
+  "The prompt of the imported `voice` for the Base `bundle`: the speaker vector of
+   its recording, and with a transcript also the text ids, frames and frame
+   embeddings for the in-context prompt."
+  [{:keys [^OrtEnvironment env tokenizer residual-embed] :as bundle} {:keys [clip clip-text]}]
+  (let [{rate :sample-rate recorded :samples}
+        (vv/read-wav (io/file clip))
+
+        samples
+        (vv/resample recorded (long rate) (long sample-rate))
+
+        speaker
+        (speaker-vector bundle samples)
+
+        spoken
+        (str/trim (str clip-text))]
+
+    (if (str/blank? spoken)
+      {:speaker speaker}
+      (let [ids
+            (vv/token-ids tokenizer (str "<|im_start|>assistant\n" spoken "<|im_end|>\n"))
+
+            frames
+            (encode-reference bundle samples)
+
+            width
+            (inc (long residual-groups))
+
+            flat
+            (long-array (* (count frames) width))]
+
+        (doseq [[k ^longs f] (map-indexed vector frames)]
+          (System/arraycopy f 0 flat (* (long k) width) width))
+        {:speaker speaker
+         :text-ids (subvec ids 3 (- (count ids) 2))
+         :frames frames
+         :steps (with-open [c (vv/long-tensor env flat [(count frames) width])]
+                  (run-one residual-embed c))}))))
+
 (defn- chunk-prompt
-  [{:keys [config tokenizer]} voice text]
+  "The text ids and the codec rows of one chunk. `speaker` is the speaker vector of
+   an imported voice, or nil for the built-in speaker `voice`."
+  [{:keys [config tokenizer codec-embed] :as bundle} voice speaker text]
   (let [talker
         (get config "talker_config")
 
@@ -541,27 +772,51 @@
         language
         (language-id config voice text)
 
-        codec-ids
-        (concat (if language
-                  [(get talker "codec_think_id") (get talker "codec_think_bos_id") language
-                   (get talker "codec_think_eos_id")]
-                  [(get talker "codec_nothink_id") (get talker "codec_think_bos_id")
-                   (get talker "codec_think_eos_id")])
-                [(get-in talker ["spk_id" voice]) (get talker "codec_pad_id")
-                 (get talker "codec_bos_id")])]
+        tags
+        (if language
+          [(get talker "codec_think_id") (get talker "codec_think_bos_id") language
+           (get talker "codec_think_eos_id")]
+          [(get talker "codec_nothink_id") (get talker "codec_think_bos_id")
+           (get talker "codec_think_eos_id")])
 
-    {:ids ids :codec-ids (mapv long codec-ids)}))
+        codec
+        (embed bundle
+               codec-embed
+               (mapv long
+                     (concat
+                       tags
+                       [(if speaker (get talker "codec_pad_id") (get-in talker ["spk_id" voice]))
+                        (get talker "codec_pad_id") (get talker "codec_bos_id")])))]
+
+    ;; The speaker vector of a recording takes the row of the speaker token.
+    (when speaker
+      (System/arraycopy ^floats speaker
+                        0
+                        codec
+                        (* (count tags) (long hidden-size))
+                        (long hidden-size)))
+    {:ids ids :codec codec}))
 
 (defn speak
-  "Speak `text` in `voice` with the bundle in `dir`. Returns the mono samples and
-   their rate."
+  "Speak `text` in `voice` with the speaker bundle in `dir`. An imported voice uses
+   the installed Base model. Returns the mono samples and their rate."
   ([dir text voice] (speak dir text voice nil))
   ([dir text voice
     {:keys [seed report]
      :or {seed default-seed
           report (fn [_])}}]
-   (let [bundle
-         (vv/loaded :qwen-tts (io/file dir) open-bundle)
+   (let [imported
+         (imported-voice voice)
+
+         bundle
+         (if imported
+           (vv/loaded :qwen-tts-clone
+                      (io/file (assets/install-dir (clone-asset)))
+                      #(open-bundle %1 %2 (io/file dir)))
+           (vv/loaded :qwen-tts (io/file dir) open-bundle))
+
+         ref
+         (when imported (reference bundle imported))
 
          pieces
          (chunks text)
@@ -580,15 +835,16 @@
                       :progress (min 99 (long (/ (* 100.0 (+ i part)) (count pieces))))})))
 
          parts
-         (vec (map-indexed (fn [i piece]
-                             (let [{:keys [ids codec-ids]} (chunk-prompt bundle voice piece)]
-                               (decode-frames bundle
-                                              (generate-frames
-                                                bundle
-                                                (prefill-embeddings bundle ids codec-ids)
-                                                noise
-                                                #(progress i piece %)))))
-                           pieces))
+         (vec (map-indexed
+                (fn [i piece]
+                  (let [{:keys [ids codec]} (chunk-prompt bundle voice (:speaker ref) piece)]
+                    (decode-frames bundle
+                                   (generate-frames bundle
+                                                    (prefill-embeddings bundle ids codec ref)
+                                                    noise
+                                                    #(progress i piece %))
+                                   (:frames ref))))
+                pieces))
 
          joined
          (float-array (+ (reduce + 0 (map #(alength ^floats %) parts))
@@ -642,6 +898,10 @@
           (assets/ensure! (asset) #(report (assoc % :phase :preparing)))
 
           _
+          (when (imported-voice voice)
+            (assets/ensure! (clone-asset) #(report (assoc % :phase :preparing))))
+
+          _
           (report {:phase :synthesizing :progress 0})
 
           {:keys [^floats samples sample-rate]}
@@ -659,8 +919,18 @@
 ;; Samples - one English sentence in each voice, spoken on this machine
 
 (defn- spoken-sample
+  "Where this machine keeps the sample of `voice-id`. The name of an imported voice
+   carries a digest of its recording and transcript, so an import again under the
+   same name gets a new sample."
   ^File [voice-id]
-  (io/file (assets/models-root) "qwen3-tts-samples-spoken" (str (name voice-id) ".wav")))
+  (let [stem (if-let [{:keys [clip clip-text]} (imported-voice voice-id)]
+               (let [f (io/file clip)]
+                 (str "imported-" (name voice-id)
+                      "-" (Integer/toHexString (hash [(.length f) (.lastModified f) clip-text]))))
+               (name voice-id))]
+    (io/file (assets/models-root) "qwen3-tts-samples-spoken" (str stem ".wav"))))
+
+(defn- installed-for? [voice-id] (every? assets/installed? (voice-assets voice-id)))
 
 (defn- sample-on-disk
   [voice-id]
@@ -672,7 +942,7 @@
    `{:is-preparable true}` when the installed model can speak it, or nil."
   [voice-id]
   (when (known-voice? voice-id)
-    (or (sample-on-disk voice-id) (when (assets/installed? (asset)) {:is-preparable true}))))
+    (or (sample-on-disk voice-id) (when (installed-for? voice-id) {:is-preparable true}))))
 
 (defn prepare-voice-sample!
   "Speak the shared sample sentence in `voice-id` with the installed model and keep
@@ -682,7 +952,7 @@
     (throw (ex-info (str "No Qwen3-TTS voice named " (pr-str voice-id))
                     {:type :speech-tts/unknown-voice :family :qwen :voice-id voice-id})))
   (or (sample-on-disk voice-id)
-      (when (assets/installed? (asset))
+      (when (installed-for? voice-id)
         (let [{:keys [^floats samples sample-rate]}
               (speak (assets/install-dir (asset)) tts/sample-text (name voice-id))
 
@@ -706,5 +976,11 @@
    :voices voices
    :model-state #(tts/model-state-of [(asset)])
    :start-download #(tts/start-downloads! [(asset)])
+   :voice-model-state #(tts/model-state-of (voice-assets %))
+   :start-voice-download (fn [{:keys [voice-id]}]
+                           (tts/start-downloads! (voice-assets voice-id)))
+   :import-voice voices/import!
+   :update-voice voices/update!
+   :forget-voice voices/forget!
    :voice-sample voice-sample
    :prepare-voice-sample prepare-voice-sample!})

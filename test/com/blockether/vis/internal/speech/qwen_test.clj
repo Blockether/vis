@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.speech.qwen :as qwen]
             [com.blockether.vis.internal.speech.vibevoice :as vibevoice]
+            [com.blockether.vis.internal.speech.voices :as voices]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- peaked-logits
@@ -52,6 +53,27 @@
              (it "splits at line breaks"
                  (let [line (str/join " " (repeat 40 "word"))]
                    (expect (= [line line] (qwen/chunks (str line "\n\n" line)))))))
+
+(defdescribe
+  voices-test
+  (it "lists the built-in speakers when no voice is imported"
+      (with-redefs [voices/imported (constantly [])]
+        (expect (= 9 (count (qwen/voices))))
+        (expect (not-any? :is-imported (qwen/voices)))))
+  (it "adds the imported voices, and an import with a speaker name wins"
+      (with-redefs [voices/imported (constantly [{:id "ryan" :label "Me" :is-imported true}
+                                                 {:id "marius" :label "Marius" :is-imported true}])]
+        (let [listed (qwen/voices)]
+          (expect (= 10 (count listed)))
+          (expect (= [{:id "ryan" :label "Me" :is-imported true}
+                      {:id "marius" :label "Marius" :is-imported true}]
+                     (filterv :is-imported listed)))
+          (expect (= 1 (count (filter #(= "ryan" (name (:id %))) listed)))))))
+  (it "needs the Base model only for an imported voice"
+      (with-redefs [voices/imported-voice #(when (= "marius" %) {:id "marius" :clip "/x.wav"})]
+        (expect (= [qwen/asset-id] (mapv :id (#'qwen/voice-assets :ryan))))
+        (expect (= [qwen/asset-id qwen/clone-asset-id]
+                   (mapv :id (#'qwen/voice-assets "marius")))))))
 
 (defdescribe sample-first-code-test
              (it "takes a clear winner among the codec tokens"

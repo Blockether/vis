@@ -24,7 +24,7 @@ The download can take some minutes.
 | Engine | Use | Voices |
 |---|---|---|
 | `vibevoice-local` | Natural speech for long text, with a seed for each take | Built-in voices, such as `emma` and `carter` |
-| `qwen3-tts-local` | Expressive speech in ten languages | Built-in voices, such as `ryan` and `serena` |
+| `qwen3-tts-local` | Expressive speech in ten languages | Built-in voices, such as `ryan` and `serena`, and voices that you add |
 | `pocket-tts-local` | Fast speech with your own voices | Built-in voices and voices that you add |
 | `piper-local` | Small and fast speech | Built-in voices |
 | `parakeet-local` | Fast transcription of short recordings | — |
@@ -55,6 +55,10 @@ recording with a name. `pocket-tts-local` learns the voice from it.
   uses this gateway can use them.
 
 The voice gets an ID from its name. Scripts and settings use this ID.
+
+`qwen3-tts-local` also speaks the voices that you add. For these voices, Vis downloads a second
+model of 1.6 GB on first use. This model is slower than the built-in voices. On a CPU, a sentence can
+take more than a minute. A transcript makes the voice closer to the recording.
 
 ## Change or remove a voice
 
