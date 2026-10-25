@@ -4,7 +4,8 @@ Pass an executable, or keep the default `vis-agent`. The default runs the engine
 this SDK's release (see `ensure_installed`). There is no gateway discovery or
 user-server shutdown. Each engine gets a temporary database and stderr log, and
 closing discards them.
-Supports Linux and macOS. Instances use one calling thread, like GatewayClient.
+Supports Linux and macOS. Threads can share an instance: its requests take turns on
+the one stdio pipe.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import select
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 from email.message import Message
 from pathlib import Path
@@ -150,6 +152,8 @@ class LocalEngine(ExecutionLayer):
         self._exit_status = None
         self._stderr_tail = ""
         self._cleanup_complete = False
+        # The stdio frames carry no request ids, so only one exchange can be in flight.
+        self._exchange = threading.RLock()
 
     def session_options(self, project=".") -> dict:
         """Resolve an existing local directory before the caller changes directory."""
@@ -197,6 +201,10 @@ class LocalEngine(ExecutionLayer):
         failure or close, create a new one. A startup failure cleans up the process and
         temporary database before the error propagates.
         """
+        with self._exchange:
+            return self._connect()
+
+    def _connect(self):
         if self._closed:
             raise TransportError("client is closed")
         if self._process is not None:
@@ -262,6 +270,17 @@ class LocalEngine(ExecutionLayer):
         data = (json.dumps(request, allow_nan=False) + "\n").encode()
         if len(data) > 67108864:
             raise ValueError("local request exceeds 64 MiB")
+        if not self._exchange.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            raise VisTimeout("local engine request timed out")
+        try:
+            return self._exchange_frame(data, deadline)
+        finally:
+            self._exchange.release()
+
+    def _exchange_frame(self, data, deadline):
+        """Write one request frame and read its reply. The caller holds `_exchange`."""
+        if self._process is None or self._process.stdin is None:
+            raise TransportError("client is closed")
         try:
             offset = 0
             while offset < len(data):

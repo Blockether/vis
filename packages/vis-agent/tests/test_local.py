@@ -512,3 +512,37 @@ for count, line in enumerate(sys.stdin, 1):
         assert reply["request"]["headers"] == {"x-vis-client-id": "local-owner"}
     with pytest.raises(TransportError, match="closed"):
         engine._ensure_client_lease()
+
+
+def test_threads_sharing_an_engine_each_get_their_own_reply(tmp_path):
+    import json
+    import sys
+    import threading
+
+    hello = json.dumps({"protocol": _PROTOCOL})
+    # The engine answers each frame with its route after a short delay, like a slow job.
+    code = (
+        "import base64, json, sys, time\n"
+        f"print({hello!r}, flush=True)\n"
+        "for line in sys.stdin:\n"
+        "    route = json.loads(line)['route']\n"
+        "    time.sleep(0.002)\n"
+        "    content = base64.b64encode(route.encode()).decode()\n"
+        "    print(json.dumps({'status': 200, 'headers': {}, 'content': content}), flush=True)\n"
+    )
+    wrong = []
+    with LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path) as engine:
+
+        def ask(worker):
+            for i in range(25):
+                route = f"/v1/probe/{worker}/{i}"
+                with engine._open("GET", route) as reply:
+                    if reply.read().decode() != route:
+                        wrong.append(route)
+
+        threads = [threading.Thread(target=ask, args=(w,)) for w in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert wrong == []
