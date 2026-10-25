@@ -1385,6 +1385,37 @@
                ;; Like a tool, the callback ran in the session's trusted worker.
                (expect (some? (:context (get @@#'pyx/session-contexts [ctx "slashroot"]))))
                (finally (ep/dispose-python-context! ctx)))))))
+  (it "lets an extension thread drive its views but not open one"
+      ;; A Swarm Forge worker thread repaints its board between callbacks (Phase 7).
+      (let [live
+            (get (pyx/host-doors nil "test" nil) "__vis_host_live__")
+
+            seen
+            (atom [])]
+
+        (with-redefs [human-input/live-json! (fn [envelope owner]
+                                               (swap! seen conj [envelope (:extension owner)])
+                                               "{}")]
+          (binding [python-host/*guest-thread?* true]
+            (expect (= :vis/forbidden-route
+                       (try (live "{\"op\":\"open\"}")
+                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+            (expect (= "{}" (live "{\"op\":\"patch\"}"))))
+          (expect (= "{}" (live "{\"op\":\"open\"}")) "a callback opens views")
+          (expect (= [["{\"op\":\"patch\"}" "test"] ["{\"op\":\"open\"}" "test"]] @seen)))))
+  (it "keeps the state of an extension thread under its own extension"
+      (let [doors
+            (pyx/host-doors nil "state-owner" nil)
+
+            store
+            (ps/db-create-connection! :memory)]
+
+        (binding [extension/*current-environment* {:db-info store}]
+          ((get doors "__vis_host_state_put__") "board" {"lanes" 2})
+          (expect (= {"lanes" 2} ((get doors "__vis_host_state_get__") "board")))
+          (expect (nil? (binding [extension/*current-extension* {:ext/name 'other}]
+                          ((get doors "__vis_host_state_get__") "board")))
+                  "another extension does not read it"))))
   (it "refuses a hosted call without an owning session"
       (let [root (get (pyx/host-doors nil "test" nil) "__vis_host_workspace_root__")]
         (expect (= :session-not-bound

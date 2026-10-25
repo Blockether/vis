@@ -603,11 +603,16 @@ print(worker_value)"))))
   background-wake-authorization-test
   ;; #202: connection ownership survives a trusted thread's missing activation;
   ;; it never grants an unbound sandbox thread access to host tools.
-  (it "admits only the host request door from a trusted worker's assigned namespace"
+  (it "admits only the thread doors from a trusted worker's assigned namespace"
       (doseq [[trusted? caller tool payload assigned? allowed?]
               [[true "" "__vis_host_request__" "{\"session\":\"owned\"}" true true]
                [false "" "__vis_host_request__" "{\"session\":\"owned\"}" true false]
                [true "" "__vis_host_shell__" "{\"session\":\"owned\"}" true false]
+               ;; A Swarm Forge worker thread drives its board and its state (Phase 7).
+               [true "" "__vis_host_live__" "{\"session\":\"owned\"}" true true]
+               [true "" "__vis_host_state_put__" "{\"session\":\"owned\"}" true true]
+               [true "" "__vis_host_call_tool__" "{\"session\":\"owned\"}" true false]
+               [false "" "__vis_host_live__" "{\"session\":\"owned\"}" true false]
                [true "" "__vis_host_request__" "{\"session\":\"other\"}" true false]
                [true "" "__vis_host_request__" "{\"session\":\"owned\"}" false false]
                [true "other" "__vis_host_request__" "{\"session\":\"owned\"}" true false]

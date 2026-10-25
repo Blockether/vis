@@ -464,6 +464,14 @@
 
 (def ^:private state-kind "py-state")
 
+(defn- as-own-extension
+  "Call `f` as extension `label` when no callback bound an extension. A thread that
+   the extension created has no callback, and its state is still its own."
+  [label f]
+  (if (extension/current-extension-id)
+    (f)
+    (extension/with-context {:ext {:ext/name label}} (f))))
+
 (defn- state-env
   "State handle for `vis.state`: the session's OWN env when the current context
    carries a DB, else the process-wide shared connection. Tests confine
@@ -1064,19 +1072,19 @@
     (put! g
           "__vis_host_state_get__"
           (fn [k]
-            (state-get* k)))
+            (as-own-extension label #(state-get* k))))
     (put! g
           "__vis_host_state_put__"
           (fn [k v]
-            (state-put!* k v)))
+            (as-own-extension label #(state-put!* k v))))
     (put! g
           "__vis_host_state_del__"
           (fn [k]
-            (state-del!* k)))
+            (as-own-extension label #(state-del!* k))))
     (put! g
           "__vis_host_state_keys__"
           (fn []
-            (state-keys*)))
+            (as-own-extension label state-keys*)))
     (put! g
           "__vis_host_log__"
           (fn [level msg]
@@ -1147,6 +1155,11 @@
           ;; it opens. `listener` is the optional sealed `on_event` callable: each
           ;; human event runs it as an extension callback with the view session bound.
           (fn [envelope & [listener]]
+            (when (and python-host/*guest-thread?*
+                       (= "open" (get (try (json/read-json (str envelope)) (catch Throwable _ nil)) "op")))
+              (throw (ex-info (str "A thread that the extension created cannot open a live view;"
+                                   " use an extension callback")
+                              {:type :vis/forbidden-route})))
             (let [env
                   extension/*current-environment*
 
@@ -3426,6 +3439,14 @@
    owned by their sessions; another session's reload must not revoke them."
   [ctx]
   (discard-context! ctx))
+
+(defn ^:no-doc drives-owned-view?
+  "True when an extension namespace of sandbox `worker` drives an open owned live
+   view. [[close-session-contexts!]] would close that view."
+  [worker]
+  (boolean (some (fn [[[k _] row]]
+                   (and (= worker k) (view/owner-context-open? (:context row))))
+                 @session-contexts)))
 
 (defn ^:no-doc close-session-contexts!
   "Stop the session's separate trusted extension worker and forget its namespaces.

@@ -140,6 +140,14 @@
   (materialize-guest-sources! (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")
                               @guest-sources))
 
+(def ^:private guest-thread-doors
+  "The host doors that a thread of a trusted extension can call. The request door
+   allows reads, Council and the sessions that the extension created. The live door
+   drives only the views that the extension already owns. State and the log stay
+   in the extension's own storage."
+  #{"__vis_host_request__" "__vis_host_live__" "__vis_host_state_get__" "__vis_host_state_put__"
+    "__vis_host_state_del__" "__vis_host_state_keys__" "__vis_host_log__"})
+
 (defn- serve-host-call!
   "Serve only identities the host assigned to this connection. Worker claims do
    not authorize access to another worker's host bindings. This does not separate
@@ -152,11 +160,11 @@
         (get message "session")
 
         ;; Guest-created threads have no runtime activation identity. Only the
-        ;; host request door may use a trusted connection's assigned namespace
-        ;; from such a thread, and it limits that call to reads and Council.
+        ;; doors in [[guest-thread-doors]] may use a trusted connection's assigned
+        ;; namespace from such a thread, and each door limits what the call does.
         ;; Model workers and every other host op still refuse.
         guest-thread?
-        (and (= "" caller) (true? (:trusted? peer)) (= "__vis_host_request__" (get message "tool")))
+        (and (= "" caller) (true? (:trusted? peer)) (contains? guest-thread-doors (get message "tool")))
 
         caller
         (if guest-thread?

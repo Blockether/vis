@@ -2509,6 +2509,13 @@
                 (:id %)))
        vec))
 
+(defn owner-context-open?
+  "True when extension context `ctx` drives an open owned view. Disposal of that
+   context closes the view, so the idle sandbox reaper keeps its session."
+  [ctx]
+  (boolean (and ctx
+                (some #(and (:owned-key %) (identical? ctx (:owner-context %))) (vals @pending)))))
+
 (defn- supersede-owned!
   "Close every other view of the key that the new owned `view` holds, open or
    stale: an extension and a key own one view."

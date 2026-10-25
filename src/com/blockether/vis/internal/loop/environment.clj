@@ -1306,9 +1306,17 @@
     (.set la (util/now-ms)))
   entry)
 
+(defn- drives-owned-view?
+  "True when an extension namespace of `environment`'s sandbox drives an open
+   panel or header. Disposal would close that view while its work continues."
+  [environment]
+  (boolean (some-> (env/python-context-if-built environment)
+                   python-extensions/drives-owned-view?)))
+
 (defn- evict-if-idle!
-  "Dispose + `dissoc` cache entry `k` when its lock is free (no turn running)
-   AND it has been idle at least `min-idle-ms` (0 = force). Lock-guarded and
+  "Dispose + `dissoc` cache entry `k` when its lock is free (no turn running),
+   it has been idle at least `min-idle-ms` (0 = force) and no extension of its
+   sandbox drives an open owned view ([[drives-owned-view?]]). Lock-guarded and
    re-checked under the lock, so it never races a live turn or a concurrent
    `close!`. `cause` and `(detail-fn idle-ms)` say why, for the log. Returns true
    iff it evicted."
@@ -1319,22 +1327,25 @@
         ^java.util.concurrent.locks.ReentrantLock lock
         (:lock entry)]
 
-    (boolean (when (and entry lock (.tryLock lock))
-               (try (let [cur
-                          (get @cache k)
+    (boolean
+      (when (and entry lock (.tryLock lock))
+        (try (let [cur
+                   (get @cache k)
 
-                          ^java.util.concurrent.atomic.AtomicLong la
-                          (:last-active cur)
+                   ^java.util.concurrent.atomic.AtomicLong la
+                   (:last-active cur)
 
-                          idle
-                          (if la (- (util/now-ms) (.get la)) 0)]
+                   idle
+                   (if la (- (util/now-ms) (.get la)) 0)]
 
-                      (when (and cur (>= (long idle) (long min-idle-ms)))
-                        (try (dispose-environment! (:environment cur) cause (detail-fn idle))
-                             (catch Throwable _ nil))
-                        (swap! cache dissoc k)
-                        true))
-                    (finally (.unlock lock)))))))
+               (when (and cur
+                          (>= (long idle) (long min-idle-ms))
+                          (not (drives-owned-view? (:environment cur))))
+                 (try (dispose-environment! (:environment cur) cause (detail-fn idle))
+                      (catch Throwable _ nil))
+                 (swap! cache dissoc k)
+                 true))
+             (finally (.unlock lock)))))))
 
 (defn reap-idle-envs!
   "One reaper sweep: dispose + evict cached session envs idle past

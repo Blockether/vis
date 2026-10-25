@@ -2952,7 +2952,10 @@
           (expect (true? (:is-accepted (hi/action! second-id {:action :activate :node-id "go"}))))
           (expect (await-true #(= 1 (count @events))) "the listener gets the pushed event")
           (expect (= [:activate "go"] ((juxt :type :node-id) (first @events))))
+          (expect (true? (hi/owner-context-open? ctx)) "the idle reaper keeps this context")
+          (expect (false? (hi/owner-context-open? (Object.))))
           (expect (= #{second-id other-id} (set (hi/close-owned-by! ctx))))
+          (expect (false? (hi/owner-context-open? ctx)))
           (expect (every? nil? (map hi/live-view [second-id other-id])))))))
   (it "brings the saved picture back as a stale view that only a dismiss removes"
       (owned

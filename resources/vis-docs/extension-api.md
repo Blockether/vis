@@ -1268,6 +1268,8 @@ Vis checks each call against the thread that makes it:
 | Reads: `get`, `list`, `export`, `models()`, transcripts, turns and Council reads | In a callback and in a thread that your extension created. |
 | `Session.send()` and `Turn.cancel()` | In a callback. A thread of your extension can use them only in sessions that your extension created. |
 | Other changes: `create`, `restore`, `run`, `fork`, `set_model` and `publish` | Only in an active callback, such as a tool call or a command. |
+| `vis.state` and `vis.log` | In a callback and in a thread that your extension created. |
+| Patch, read and close a panel or header view that your extension opened | In a callback and in a thread that your extension created. Open the view in a callback. |
 
 A change also needs a bound session. It can change only that session and the sessions that your
 extension created. A refused call raises `GatewayError` with the status 403:

@@ -9940,6 +9940,38 @@
           (try (touch-entry! entry)
                (expect (false? (evict-if-idle! k 60000 :idle-timeout str)))
                (expect (contains? @env-cache k))
+               (finally (swap! env-cache dissoc k)))))
+    (it "keeps an idle entry whose extension drives an open owned view"
+        ;; A Swarm Forge board closed after five idle minutes: the reaper disposed the
+        ;; session sandbox and with it the extension context that drove the panel.
+        (let [k
+              "reaper-test/panel"
+
+              entry
+              (new-cache-entry {:marker :panel})
+
+              driven
+              (atom true)]
+
+          (swap! env-cache assoc k entry)
+          (try (backdate-entry! entry 10000)
+               (with-redefs [env/python-context-if-built
+                             (fn [environment]
+                               (when (= :panel (:marker environment)) :worker))
+
+                             python-extensions/drives-owned-view?
+                             (fn [worker]
+                               (and (= :worker worker) @driven))
+
+                             loop-env/dispose-environment!
+                             (fn [& _]
+                               nil)]
+
+                 (expect (false? (evict-if-idle! k 5000 :idle-timeout str)))
+                 (expect (contains? @env-cache k))
+                 (reset! driven false)
+                 (expect (true? (evict-if-idle! k 5000 :idle-timeout str)))
+                 (expect (not (contains? @env-cache k))))
                (finally (swap! env-cache dissoc k)))))))
 
 (def ^:private reap-idle-envs! (deref #'loop-env/reap-idle-envs!))
@@ -11985,7 +12017,7 @@
                      (fn []
                        (hi/request! {:title "Login"
                                      :session-id "loop-hitl-session"
-                                     :fields [{:id "otp" :label "OTP"}]
+                                     :nodes [{:id "otp" :label "OTP"}]
                                      :timeout-ms 10000
                                      :channel-ids [chan]}))]
 
