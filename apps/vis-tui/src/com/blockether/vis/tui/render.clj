@@ -9355,11 +9355,11 @@
 (defn- python-busy-segment
   "Suffix for the spinner row while a Python block runs without a tool call, or nil:
 
-     — no tool call for 1m 12s · CPU 99% · stops in 3m 48s
+     — no tool call for 1m 12s · Python CPU 99% · stops in 3m 48s
 
    Both clocks move from the moment the notice arrived (`:received-ms`). The CPU
-   share is the use of the Python process since the last notice. At the deadline
-   Vis stops the block."
+   share covers the Python worker and its child processes since the last notice.
+   At the deadline, Vis stops the block."
   [iterations now-ms]
   (let [{:keys [activity] busy :activity/busy} (last iterations)]
     (when (and (= :python activity) (map? busy) (:busy-ms busy))
@@ -9367,7 +9367,7 @@
             passed (max 0 (- (long now-ms) (long (or received-ms now-ms))))
             parts (cond-> [(str "no tool call for " (wait-clock (+ (long busy-ms) passed)))]
                     cpu-percent
-                    (conj (str "CPU " (long cpu-percent) "%"))
+                    (conj (str "Python CPU " (long cpu-percent) "%"))
 
                     deadline-in-ms
                     (conj (str "stops in " (wait-clock (- (long deadline-in-ms) passed)))))]

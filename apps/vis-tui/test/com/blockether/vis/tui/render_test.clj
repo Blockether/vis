@@ -4110,9 +4110,13 @@
         (let [timeline (busy {:busy-ms 72000 :deadline-in-ms 228000 :cpu-percent 99})]
           (expect (str/includes? (spinner timeline received) "Vis is running Python code (iter 1)"))
           (expect (str/includes? (spinner timeline received)
-                                 "no tool call for 1m 12s · CPU 99% · stops in 3m 48s"))
+                                 "no tool call for 1m 12s · Python CPU 99% · stops in 3m 48s"))
           (expect (str/includes? (spinner timeline (+ received 5000))
-                                 "no tool call for 1m 17s · CPU 99% · stops in 3m 43s"))))
+                                 "no tool call for 1m 17s · Python CPU 99% · stops in 3m 43s"))))
+    (it "names the measured process when Python is idle"
+        (expect (str/includes?
+                  (spinner (busy {:busy-ms 72000 :deadline-in-ms 228000 :cpu-percent 0}) received)
+                  "no tool call for 1m 12s · Python CPU 0% · stops in 3m 48s")))
     (it "leaves out the CPU share when Vis cannot read it"
         (expect (str/includes? (spinner (busy {:busy-ms 30000 :deadline-in-ms 270000}) received)
                                "no tool call for 30s · stops in 4m 30s")))

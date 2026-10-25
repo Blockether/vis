@@ -449,8 +449,12 @@ describe('the busy Python notice', () => {
   });
 
   it('moves both clocks on from the moment the notice arrived', () => {
-    expect(pythonBusyDetail(busy, 1_000)).toBe('No tool call for 1m 12s · CPU 99% · stops in 3m 48s');
-    expect(pythonBusyDetail(busy, 6_000)).toBe('No tool call for 1m 17s · CPU 99% · stops in 3m 43s');
+    expect(pythonBusyDetail(busy, 1_000)).toBe('No tool call for 1m 12s · Python CPU 99% · stops in 3m 48s');
+    expect(pythonBusyDetail(busy, 6_000)).toBe('No tool call for 1m 17s · Python CPU 99% · stops in 3m 43s');
+  });
+
+  it('names the measured process when Python is idle', () => {
+    expect(pythonBusyDetail({ ...busy, cpuPercent: 0 }, 1_000)).toBe('No tool call for 1m 12s · Python CPU 0% · stops in 3m 48s');
   });
 
   it('leaves out the CPU use when Vis cannot read it', () => {

@@ -42,7 +42,7 @@ export interface PythonBusy {
   busyMs: number;
   /** Device clock when the notice arrived; the clocks move from here. */
   receivedAt: number;
-  /** CPU use of the Python process since the last notice, when known. */
+  /** CPU use of the Python worker and its child processes since the last notice, when known. */
   cpuPercent?: number;
   /** Time until Vis stops the block. */
   deadlineInMs?: number;
@@ -162,11 +162,11 @@ export function providerWaitDetail(wait: ProviderWait, now: number): string {
   return parts.join(' · ');
 }
 
-/** The line under the ticker: `No tool call for 1m 12s · CPU 99% · stops in 3m 48s`. */
+/** The line under the ticker: `No tool call for 1m 12s · Python CPU 99% · stops in 3m 48s`. */
 export function pythonBusyDetail(busy: PythonBusy, now: number): string {
   const passed = Math.max(0, now - busy.receivedAt);
   const parts = [`No tool call for ${waitClock(busy.busyMs + passed)}`];
-  if (busy.cpuPercent !== undefined) parts.push(`CPU ${Math.round(busy.cpuPercent)}%`);
+  if (busy.cpuPercent !== undefined) parts.push(`Python CPU ${Math.round(busy.cpuPercent)}%`);
   if (busy.deadlineInMs !== undefined) {
     parts.push(`stops in ${waitClock(busy.deadlineInMs - passed)}`);
   }

@@ -6972,7 +6972,46 @@
         (expect (nil? (cpu-percent nil [5000 4000])))
         (expect (nil? (cpu-percent [5000 1000] [5000 4000])))
         (expect (= 99 (cpu-percent [0 0] [5000 4950])))
+        (expect (= 200 (cpu-percent [0 0] [5000 10000])))
+        (expect (nil? (cpu-percent [0 5000] [5000 100])))
         (expect (= 0 (cpu-percent [0 100] [5000 100]))))))
+
+(defdescribe
+  python-process-cpu-test
+  ;; Regression: the busy indicator showed zero for an idle launcher with a busy child.
+  (it
+    "counts child CPU when the platform cannot measure the whole tree through Java"
+    (let [^Process launcher (.start (ProcessBuilder. ^java.util.List
+                                                     ["sh" "-c"
+                                                      "sleep 30 & printf '%s\n' \"$!\"; wait"]))]
+      (try (with-open [^java.io.BufferedReader reader (clojure.java.io/reader (.getInputStream
+                                                                                launcher))]
+             (let [parent-pid (.pid launcher)
+                   child-pid (Long/parseLong (.readLine reader))
+                   ps-calls (atom [])
+                   ps-sample (fn [pid]
+                               (swap! ps-calls conj pid)
+                               (get {parent-pid 0 child-pid 500} pid))
+                   sample @#'python-exec/process-cpu-ms]
+
+               (with-redefs-fn {#'python-exec/handle-cpu-ms (constantly nil)
+                                #'python-exec/ps-cpu-ms ps-sample}
+                 #(do (expect (= 500 (sample parent-pid)))
+                      (expect (= #{parent-pid child-pid} (set @ps-calls)))))
+               (reset! ps-calls [])
+               (with-redefs-fn {#'python-exec/handle-cpu-ms (fn [^java.lang.ProcessHandle handle]
+                                                              (when (= parent-pid (.pid handle)) 0))
+                                #'python-exec/ps-cpu-ms ps-sample}
+                 #(do (expect (= 500 (sample parent-pid))) (expect (= [child-pid] @ps-calls))))
+               (with-redefs-fn {#'python-exec/handle-cpu-ms (fn [^java.lang.ProcessHandle handle]
+                                                              (when (= parent-pid (.pid handle)) 0))
+                                #'python-exec/ps-cpu-ms (constantly nil)}
+                 #(expect (nil? (sample parent-pid))))))
+           (finally (with-open [children (.descendants (.toHandle launcher))]
+                      (doseq [^java.lang.ProcessHandle child (.toList children)]
+                        (.destroyForcibly child)))
+                    (.destroyForcibly launcher)
+                    (.waitFor launcher 2 java.util.concurrent.TimeUnit/SECONDS))))))
 
 (defdescribe final-answer-gate-test
              ;; `final-answer-gate-error` itself carries ONLY extension

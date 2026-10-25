@@ -362,23 +362,24 @@
     (when (.isPresent cpu) (.toMillis ^java.time.Duration (.get cpu)))))
 
 (defn- process-cpu-ms
-  "Total CPU time of process `pid` and its descendants in milliseconds, or nil when the
-   OS does not report it. A worker can run under a launcher process, so its CPU is in a
-   descendant. For this process, only its own CPU counts. On macOS, `ProcessHandle`
-   reports the CPU of this process only, so another process falls back to `ps`."
+  "Total CPU time of a process and its descendants, in milliseconds.
+   For this process, count only its own CPU time.
+   If Java cannot measure a process, read that process with `ps`.
+   Return nil when any process has no measurement."
   [pid]
   (when pid
-    (or (try (let [^java.util.Optional found (java.lang.ProcessHandle/of (long pid))]
-               (when (.isPresent found)
-                 (let [^java.lang.ProcessHandle handle (.get found)
-                       tree (if (= (long pid) (.pid (java.lang.ProcessHandle/current)))
-                              [handle]
-                              (cons handle (iterator-seq (.iterator (.descendants handle)))))
-                       cpus (keep handle-cpu-ms tree)]
+    (try (when-let [^java.lang.ProcessHandle handle (.orElse (java.lang.ProcessHandle/of (long pid))
+                                                             nil)]
+           (let [tree (if (= (long pid) (.pid (java.lang.ProcessHandle/current)))
+                        [handle]
+                        (with-open [children (.descendants handle)]
+                          (into [handle] (.toList children))))
+                 cpus (mapv (fn [^java.lang.ProcessHandle process]
+                              (or (handle-cpu-ms process) (ps-cpu-ms (.pid process))))
+                            tree)]
 
-                   (when (seq cpus) (reduce + cpus)))))
-             (catch Throwable _ nil))
-        (ps-cpu-ms pid))))
+             (when (every? some? cpus) (reduce + cpus))))
+         (catch Throwable _ nil))))
 
 (defn- busy-notice
   "Busy notice for one block, or nil while the block is not busy.
@@ -415,8 +416,9 @@
           span
           (- (long now) (long at))]
 
-      (when (pos? span)
-        (max 0 (Math/round (/ (* 100.0 (- (long spent) (long used))) (double span))))))))
+      ;; A child can exit between samples and reduce the total. This is not idle CPU.
+      (when (and (pos? span) (>= (long spent) (long used)))
+        (Math/round (/ (* 100.0 (- (long spent) (long used))) (double span)))))))
 
 (defn- start-busy-monitor!
   "Watch one running block and send each busy notice to `on-busy`. Answer a
