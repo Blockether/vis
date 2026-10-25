@@ -3,6 +3,7 @@
 import dataclasses
 import hashlib
 import threading
+import time
 
 import blockether.vis.extension as vis
 from blockether.vis.engine import GatewayError
@@ -54,8 +55,19 @@ class Sessions:
 
     @vis.method(activity=_activity("Wait for children"))
     def wait(self, ids: list[str] | None = None, timeout: int = 240) -> list:
-        """Wait for children and return their records."""
-        return [_record(r) for r in vis.council.wait(ids, timeout_secs=timeout)]
+        """Wait until no child runs, then return their records.
+
+        A Council wait also ends at each child event, so wait again until the deadline.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            left = max(1, int(deadline - time.monotonic()))
+            records = [_record(r) for r in vis.council.wait(ids, timeout_secs=left)]
+            if (
+                all(r["status"] != "running" for r in records)
+                or time.monotonic() >= deadline
+            ):
+                return records
 
     @vis.method(tag="mutation", activity=_activity("Extend a child", slow=False))
     def extend(self, session_id: str, iterations: int) -> dict:
