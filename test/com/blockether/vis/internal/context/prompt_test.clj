@@ -908,7 +908,10 @@
       ;; 12.6k → 13.25k: four §4 rules on the class of a bug, related cases, exact-case measurement
       ;; and live systems. In a CTB screen on GPT-6.1 Sol, the same rules as a task note took solo
       ;; Vis from 3/9 to 7/9 on the same build: fixes reached only the reported case before.
-      (expect (< (count text) 13250))
+      ;; 13.25k → 13.4k: in CTB, Vis measured a speedup on mismatched graph pairs and a baseline
+      ;; with its own client, while the checkers used matching pairs and the running load. It
+      ;; claimed 12x to 67000x and got 1.75x and 940x. It lands at 13 359.
+      (expect (< (count text) 13400))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
         (expect (every? some? steps))
