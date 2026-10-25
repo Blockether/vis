@@ -466,10 +466,12 @@ A case is one task with one agent and one model. The answer has the `verdict`, t
 difference with its interval, the `routes` tests, the `worse` and `better` cases and the
 `caveats`. The baseline and candidate names are optional names for the error messages.
 
-`margin_points` is optional. It is the smallest change in points that matters to you, from 0 to
-100. Without it, a result without a clear change is `no measurable difference`. With it, the
-verdict is `equivalent`, `not worse`, `not better` or `inconclusive`. The answer repeats the
-margin in `margin_points`. Read [Decide on a change](evals.md#decide-on-a-change) to choose an
+`margin_points` is optional. It is the smallest change in points that matters to you, above 0
+and at most 100. Without it, a result without a clear change is `no measurable difference`. With
+it, the verdict is `equivalent`, `not worse`, `not better` or `inconclusive`. The answer repeats
+the margin in `margin_points`.
+
+A `better` or `worse` verdict inside the margin gets a caveat. Read [Decide on a change](evals.md#decide-on-a-change) to choose an
 action from the verdict.
 
 ## Read the leaderboard position

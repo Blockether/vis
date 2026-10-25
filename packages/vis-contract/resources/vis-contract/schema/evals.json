@@ -153,7 +153,7 @@
         "margin_points": {
           "description": "The smallest change in points that matters. It splits a result without a clear change into equivalent, not worse, not better or inconclusive.",
           "type": "number",
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "maximum": 100
         }
       },

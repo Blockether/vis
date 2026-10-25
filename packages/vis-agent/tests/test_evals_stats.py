@@ -214,6 +214,14 @@ def test_wilson_interval_covers_the_true_rate_95_percent_of_the_time(runs):
     assert min(coverages) >= 0.91
 
 
+@pytest.mark.parametrize("runs", [10, 30, 100])
+def test_wilson_interval_covers_less_near_zero(runs):
+    coverages = [
+        _wilson_coverage(runs, permille / 1000) for permille in range(5, 50, 5)
+    ]
+    assert 0.85 <= min(coverages) < 0.92
+
+
 def test_mcnemar_exact_keeps_false_alarms_at_most_5_percent():
     # Without a true change, each changed case is a fair coin.
     for changed in range(1, 81):
@@ -240,6 +248,9 @@ def test_pass_at_k_and_pass_all_k_have_no_bias(runs, k, rate):
 
 
 def _z_test_power(runs, rate, other):
+    # The power of the two-sided two-proportion z-test, summed exactly over the
+    # binomial distribution of both runs. `detectable_change` uses a normal
+    # approximation, so this check finds where that approximation fails.
     total = 0.0
     for first in range(runs + 1):
         for second in range(runs + 1):
@@ -258,24 +269,32 @@ def test_detectable_change_has_80_percent_power_for_a_rise_and_a_fall(runs, pass
     change = detectable_change([(1, 1)] * passed + [(0, 1)] * (runs - passed))
     for other in (rate - change, rate + change):
         if 0 <= other <= 1:
-            assert _z_test_power(runs, rate, other) >= 0.79
+            assert _z_test_power(runs, rate, other) >= 0.80
 
 
-def test_cluster_interval_covers_repeated_attempts_where_wilson_fails():
-    # 30 tasks with 3 attempts each. Tasks are mostly easy or hard, so the attempts of
-    # one task agree. A Wilson interval over all attempts then covers too rarely.
+@pytest.mark.parametrize(
+    ("tasks", "attempts"), [(16, 2), (16, 5), (30, 3), (100, 2), (100, 5)]
+)
+def test_cluster_interval_covers_repeated_attempts_where_wilson_fails(tasks, attempts):
+    # Tasks are mostly easy or hard, so the attempts of one task agree. A Wilson
+    # interval over all attempts then covers too rarely.
     rng = random.Random(7)
     cluster = plain = 0
     trials = 600
     for _ in range(trials):
-        rates = [rng.betavariate(0.5, 0.5) for _ in range(30)]
-        units = [(sum(rng.random() < rate for _ in range(3)), 3) for rate in rates]
+        rates = [rng.betavariate(0.5, 0.5) for _ in range(tasks)]
+        units = [
+            (sum(rng.random() < rate for _ in range(attempts)), attempts)
+            for rate in rates
+        ]
         low, high = cluster_interval(units)
         cluster += low <= 0.5 <= high
-        low, high = wilson_interval(sum(passed for passed, _ in units), 90)
+        low, high = wilson_interval(
+            sum(passed for passed, _ in units), tasks * attempts
+        )
         plain += low <= 0.5 <= high
     assert cluster / trials >= 0.93
-    assert plain / trials <= 0.88
+    assert plain / trials <= 0.89
 
 
 def test_benjamini_hochberg_keeps_the_false_discovery_rate():

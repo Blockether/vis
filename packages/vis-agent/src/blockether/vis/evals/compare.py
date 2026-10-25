@@ -62,12 +62,16 @@ class CaseComparison:
     - `not better`: the interval is below the margin, but reaches the negative margin.
     - `inconclusive`: the interval reaches both sides of the margin.
 
+    The verdict uses the 95% interval before rounding. With a margin, a `better` or
+    `worse` verdict gets a caveat when the change is, or can be, smaller than the margin.
+
     At this case count, a true change of `detectable_change_points` or more shows with
-    80% power. `p_value` is the two-sided exact McNemar p-value of the changed cases.
-    With repeats, it is the exact sign test of the case changes. `routes` holds this
-    test for each route. `worse` and `better` list the changed cases, largest change
-    first. `unpaired` counts cases on one side only; the comparison leaves them out. A
-    caveat names a verdict that the exact test does not confirm.
+    about 80% power, by a normal approximation. `p_value` is the two-sided exact McNemar
+    p-value of the changed cases. With repeats, it is the exact sign test of the case
+    changes. `routes` holds this test for each route. `worse` and `better` list the
+    changed cases, largest change first. `unpaired` counts cases on one side only; the
+    comparison leaves them out. Caveats name unpaired cases, different routes, a change
+    smaller than the margin and a verdict that the exact test does not confirm.
     """
 
     paired_cases: int
@@ -96,6 +100,42 @@ def _case_name(key: tuple[str, ...]) -> str:
 
 def _points(change: float) -> float:
     return round(change * 100, 1)
+
+
+def _crossed_caveat(base: tuple[str, ...], other: tuple[str, ...]) -> str:
+    if base[1] != other[1] and base[2] != other[2]:
+        return (
+            f"The sides used different agents and models, {_route(base)} and "
+            f"{_route(other)}. The change can come from either one."
+        )
+    if base[1] != other[1]:
+        return (
+            f"The sides used different agents, {base[1]} and {other[1]}, "
+            f"with the same model {base[2]}."
+        )
+    return (
+        f"The sides used different models, {base[2]} and {other[2]}, "
+        f"with the same agent {base[1]}."
+    )
+
+
+def _margin_caveat(
+    verdict: str, interval: tuple[float, float], margin: float | None
+) -> str | None:
+    if not margin or verdict not in ("better", "worse"):
+        return None
+    low, high = interval if verdict == "better" else (-interval[1], -interval[0])
+    change = "gain" if verdict == "better" else "loss"
+    if high < margin:
+        return (
+            f"The {change} is real, but smaller than the margin of {margin:g} points."
+        )
+    if low < margin:
+        return (
+            f"The {change} is real, but it can be smaller than the margin of "
+            f"{margin:g} points."
+        )
+    return None
 
 
 def _verdict(interval: tuple[float, float], margin: float | None) -> str:
@@ -152,11 +192,11 @@ def compare_cases(
     Each key is `(task, agent, model)`. When the sides share no key and each side has
     one route, the comparison pairs the cases by task and adds a caveat. The names
     appear in error messages. `margin_points` is the smallest change in points that
-    matters, from 0 to 100. Raise ValueError when no case pairs, or for a margin
-    outside 0 to 100.
+    matters, above 0 and at most 100. Raise ValueError when no case pairs, or for a
+    margin outside that range.
     """
-    if margin_points is not None and not 0 <= margin_points <= 100:
-        raise ValueError("margin_points must be from 0 to 100")
+    if margin_points is not None and not 0 < margin_points <= 100:
+        raise ValueError("margin_points must be above 0 and at most 100")
     caveats = []
     crossed = None
     if not baseline.keys() & candidate.keys():
@@ -168,12 +208,10 @@ def compare_cases(
                 "has more than one route. Compare results with the same agent and model."
             )
         crossed = f"{min(base_routes)} against {min(other_routes)}"
+        if base_routes != other_routes:
+            caveats.append(_crossed_caveat(next(iter(baseline)), next(iter(candidate))))
         baseline = {key[:1]: value for key, value in baseline.items()}
         candidate = {key[:1]: value for key, value in candidate.items()}
-        caveats.append(
-            f"The sides used different routes, {min(base_routes)} and "
-            f"{min(other_routes)}. Model and harness differ together."
-        )
     paired = sorted(baseline.keys() & candidate.keys())
     if not paired:
         raise ValueError(f"{baseline_name} and {candidate_name} share no case")
@@ -189,8 +227,7 @@ def compare_cases(
             )
             changed.append((change, row))
     (low, high), floor = paired_change(list(changes.values()))
-    interval = (_points(low), _points(high))
-    verdict = _verdict(interval, margin_points)
+    verdict = _verdict((low * 100, high * 100), margin_points)
     unpaired = len(baseline.keys() ^ candidate.keys())
     if unpaired:
         cases = "1 case" if unpaired == 1 else f"{unpaired} cases"
@@ -205,6 +242,9 @@ def compare_cases(
             f"The interval says {verdict}, but the exact test gives p = "
             f"{p_value:.3f}. Confirm the change with more cases."
         )
+    margin_caveat = _margin_caveat(verdict, (low * 100, high * 100), margin_points)
+    if margin_caveat:
+        caveats.append(margin_caveat)
 
     def rate(cases: Cases) -> float:
         return round(
@@ -216,7 +256,7 @@ def compare_cases(
         baseline_rate_percent=rate(baseline),
         candidate_rate_percent=rate(candidate),
         difference_points=round(100 * sum(values) / count, 1),
-        difference_ci95=interval,
+        difference_ci95=(_points(low), _points(high)),
         verdict=verdict,
         detectable_change_points=_points(floor),
         p_value=p_value,
