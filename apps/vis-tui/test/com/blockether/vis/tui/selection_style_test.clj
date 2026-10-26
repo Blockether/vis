@@ -33,39 +33,41 @@
     (expect (nil? (:error capture)))
     (last (:frames capture))))
 
-(defdescribe selectable-row-style-test
-             (it "uses bold and reversed colors without a marker, on dialog and transient surfaces"
-                 (doseq [background
-                         [t/dialog-bg t/terminal-bg]
+(defdescribe
+  selectable-row-style-test
+  (it "uses bold and reversed colors without a marker, on dialog and transient surfaces"
+      (doseq [background
+              [t/dialog-bg t/terminal-bg]
 
-                         paint!
-                         [(fn [g row selected?]
-                            (dlg/draw-selectable-row! g 1 row 30 selected? "Option"))
-                          (fn [g row selected?]
-                            (dlg/draw-checkbox-item! g 1 row 30 selected? true "Option"))
-                          (fn [g row selected?]
-                            (#'dlg/draw-list-item! g 1 row 30 selected? "Option" "M-x"))
-                          (fn [g row selected?]
-                            (table/draw-line! g 2 row 30 selected? "Option"))
-                          (fn [g row selected?]
-                            (#'dlg/draw-session-row! g 1 row 30 selected? "Option"))]]
+              paint!
+              [(fn [g row selected?]
+                 (dlg/draw-selectable-row! g 1 row 30 selected? "Option"))
+               (fn [g row selected?]
+                 (dlg/draw-checkbox-item! g 1 row 30 selected? true "Option"))
+               (fn [g row selected?]
+                 (#'dlg/draw-list-item! g 1 row 30 selected? "Option" "M-x"))
+               (fn [g row selected?]
+                 (table/draw-line! g 2 row 30 selected? "Option"))
+               (fn [g row selected?]
+                 (#'dlg/draw-session-row! g 1 row 30 selected? "Option"))]]
 
-                   (binding [t/dialog-bg background]
-                     (let [frame (capture-frame (fn [{:keys [g]}]
-                                                  (paint! g 4 true)
-                                                  (paint! g 5 false)
-                                                  (p/put-str! g 2 6 "Next")))
-                           selected (subvec (nth frame 4) 2 32)
-                           unselected (subvec (nth frame 5) 2 32)]
+        (binding [t/dialog-bg background]
+          (let [frame (capture-frame (fn [{:keys [g]}]
+                                       (paint! g 4 true)
+                                       (paint! g 5 false)
+                                       (p/put-str! g 2 6 "Next")))
+                selected (subvec (nth frame 4) 2 32)
+                unselected (subvec (nth frame 5) 2 32)]
 
-                       (expect (= (row-text unselected) (row-text selected)))
-                       (expect (str/includes? (row-text selected) "Option"))
-                       (doseq [[on off] (map vector selected unselected)]
-                         (expect (:bold on))
-                         (expect (not (:bold off)))
-                         (expect (= (:fg off) (:bg on)))
-                         (expect (= (:bg off) (:fg on))))
-                       (expect (every? #(not (:bold %)) (text-cells frame "Next"))))))))
+            (expect (= (row-text unselected) (row-text selected)))
+            (expect (str/includes? (row-text selected) "Option"))
+            ;; A selected row is one band: its hint keeps no band of its own.
+            (doseq [[on off] (map vector selected unselected)]
+              (expect (:bold on))
+              (expect (not (:bold off)))
+              (expect (= (:fg (first unselected)) (:bg on)))
+              (expect (= (:bg off) (:fg on))))
+            (expect (every? #(not (:bold %)) (text-cells frame "Next"))))))))
 
 (defdescribe
   boxed-selection-style-test

@@ -4627,3 +4627,44 @@
                             (mapv dlg/session-status-text
                                   ["Live" "Idle" "Stopped" "Waiting" "Dirty" "Archived" "HITL"
                                    "New x2" "HITL x12" nil])))))
+
+;; User report, this Vis session (paraphrased: a stray letter showed beside a row menu
+;; in the sidebar): the cells beside the shadow ends showed cut-off text from below.
+(defdescribe
+  region-dialog-shadow-gap-test
+  (it
+    "clears the cells beside the shadow ends of a dialog in a band"
+    (let [capture
+          (cap/capture! {:cols 60
+                         :rows 30
+                         :keys [:esc]
+                         :paint! (fn [{:keys [screen]}]
+                                   (let [g (.newTextGraphics screen)]
+                                     (dotimes [row 30]
+                                       (.putString g 0 (int row) (apply str (repeat 40 "x")))))
+                                   (binding [dlg/*dialog-region* {:width (fn [_ _]
+                                                                           40)
+                                                                  :anchor-row 2}]
+                                     (dlg/select-dialog! screen
+                                                         "Menu"
+                                                         [{:id :a :label "Rename"}
+                                                          {:id :b :label "Delete"}])))})
+
+          lines
+          (vec (str/split-lines (cap/frame-text capture 0)))
+
+          top
+          (first (keep-indexed #(when (str/includes? %2 "┌") %1) lines))
+
+          bottom
+          (first (keep-indexed #(when (str/includes? %2 "└") %1) lines))
+
+          corner
+          (str/index-of (nth lines top) "┐")
+
+          left
+          (str/index-of (nth lines bottom) "└")]
+
+      (expect (nil? (:error capture)))
+      (expect (= "  " (subs (nth lines top) (inc (long corner)) (+ (long corner) 3))))
+      (expect (= "  " (subs (nth lines (inc (long bottom))) left (+ (long left) 2)))))))

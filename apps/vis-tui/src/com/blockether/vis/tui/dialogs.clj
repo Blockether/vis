@@ -670,7 +670,8 @@
                (p/fill-rect! g (inc (long left)) row inner-w 1)
                (p/put-str! g (inc (long left)) row draw-text)
                (when hint
-                 (p/set-colors! g t/dialog-hint t/dialog-bg)
+                 ;; A selected row is reversed: a hint in its own ink would get its own band.
+                 (p/set-colors! g (if selected? t/dialog-fg t/dialog-hint) t/dialog-bg)
                  (p/put-str! g (- (+ (long left) (long inner-w)) (p/display-width hint)) row hint)
                  (p/set-colors! g t/dialog-fg t/dialog-bg))))))
 
@@ -1043,6 +1044,13 @@
            shd-h
            (min box-h (- rows shd-top))]
 
+       ;; In a band the two cells beside each shadow end show the rows under the box.
+       ;; Clear them, so that no cut-off text from those rows touches the box.
+       (when *dialog-region*
+         (p/set-bg! g t/terminal-bg)
+         (when (< (inc box-right) cols)
+           (p/fill-rect! g (inc box-right) box-top (min 2 (- cols box-right 1)) 1))
+         (when (< (inc box-bottom) rows) (p/fill-rect! g box-left (inc box-bottom) 2 1)))
        (when (and (pos? shd-w) (pos? shd-h))
          (p/set-bg! g t/dialog-shadow)
          (p/fill-rect! g shd-left shd-top shd-w shd-h)))
@@ -2022,7 +2030,7 @@
              (footer-content-width cols footer item-w)
 
              content-h-req
-             (if content? (+ head-rows (min (count items) 16) 1) (adaptive-content-height rows nil))
+             (if content? (+ head-rows (min (count items) 24) 1) (adaptive-content-height rows nil))
 
              bounds
              (dialog-bounds cols rows content-w content-h-req)
