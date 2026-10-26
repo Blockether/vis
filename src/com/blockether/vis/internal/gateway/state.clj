@@ -2201,11 +2201,25 @@
    :assistant-prose {:type "content.block.delta" :payload prose-delta-payload}
    :iteration-final {:type "iteration.completed" :payload iteration-final-payload}
    :iteration-error {:type "iteration.error" :payload iteration-error-payload}
-   :provider-retry-reset {:
+   :provider-retry-reset {:type "provider.retry" :payload provider-retry-payload}})
 
-…[1056 chars omitted]…
-
-x (name phase))
+(defn- chunk->event
+  "Translate one phased iteration chunk (progress.clj contract) into a
+   `[type store? payload]` wire event triple. Model text phases
+   (reasoning/content/prose) stream LIVE - the caller coalesces them to sentence
+   granularity - as replayable `content.block.delta` frames; the iteration
+   boundary still ships the complete text on `iteration.completed`, which is what
+   persists."
+  [{:keys [phase iteration] :as chunk}]
+  ;; Every streaming chunk carries its iteration POSITION under `:iteration`.
+  ;; It MUST ride the wire event, or `make-progress-tracker` silently DROPS the
+  ;; chunk (it skips chunks with no iteration) — which is how `block.started` /
+  ;; `block.output` once lost their forms.
+  (or (progress-chunk->event chunk)
+      (form-activity-chunk->event chunk)
+      (let [{:keys [type payload]} (get chunk-events
+                                        phase
+                                        {:type (str unknown-chunk-type-prefix (name phase))
                                          :payload unknown-chunk-payload})]
         ;; Block deltas are replayable: reconnect applies the same ordered event
         ;; sequence instead of reconstructing text from renderer state.
