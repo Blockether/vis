@@ -3,7 +3,12 @@ import { useRef } from 'react';
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isAppForeground, useKeyboardInset, useVisualViewportShell } from './viewport';
+import {
+  isAppForeground,
+  useKeyboardInset,
+  useVisualViewportShell,
+  watchKeyboardInset,
+} from './viewport';
 
 const native = vi.hoisted(() => ({
   keyboard: new Map<string, (info: { keyboardHeight: number }) => void>(),
@@ -79,13 +84,19 @@ describe('the native shell after backgrounding', () => {
     render(<ViewportProbe />);
     const shell = screen.getByTestId('shell');
     const composer = screen.getByRole('textbox', { name: 'Message' });
+    // Each inset with the shell height its listener sees: the pin is already written.
+    const insets: string[] = [];
+    const stopWatching = watchKeyboardInset((inset) => insets.push(`${inset}@${shell.style.height}`));
     composer.focus();
     act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
     expect(shell).toHaveStyle({ height: '544px' });
+    // A box that reaches under the keyboard hears the inset in the same task.
+    expect(insets.at(-1)).toBe('300@544px');
 
     act(() => native.app.get('appStateChange')?.({ isActive: false }));
     // The shell is back at full height before the app is on screen again.
     expect(shell.style.height).toBe('');
+    expect(insets.at(-1)).toBe('0@');
     expect(screen.getByTestId('inset')).toHaveTextContent('0');
 
     const focus = vi.spyOn(composer, 'focus');
@@ -96,6 +107,7 @@ describe('the native shell after backgrounding', () => {
     }
     expect(focus).not.toHaveBeenCalled();
     expect(document.activeElement).not.toBe(composer);
+    stopWatching();
   });
 
   // Regression: TestFlight builds 5358 and 5468 blocked in

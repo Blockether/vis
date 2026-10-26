@@ -6,6 +6,21 @@ import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 import { noteReaderGesture } from '../lib/reader-gesture';
 import { flushParked } from '../lib/parked';
 
+const keyboardInset = vi.hoisted(() => new Set<(inset: number) => void>());
+
+vi.mock('../lib/viewport', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/viewport')>()),
+  watchKeyboardInset: (listener: (inset: number) => void) => {
+    keyboardInset.add(listener);
+    return () => keyboardInset.delete(listener);
+  },
+}));
+
+/** The shell driver publishes how much of the bottom edge the keyboard covers. */
+function insetIs(inset: number): void {
+  for (const listener of keyboardInset) listener(inset);
+}
+
 // Regression, user report ("sometimes I tap somewhere in the middle of the
 // screen and the whole thing shoots off"): a tap outside the composer is what
 // takes the iOS keyboard DOWN, the shell grows back by the keyboard's height,
@@ -239,5 +254,74 @@ describe("the keyboard against the reader's place", () => {
 
     expect(latestOffered()).toBe(false);
     expect(viewport.scrollTop).toBe(TRANSCRIPT - (SHELL - KEYBOARD));
+  });
+
+  // Regression, user report: a one-time code sheet over the session raised the
+  // number pad, and the transcript above the sheet scrolled by the keyboard's
+  // height. The keyboard belongs to the sheet, so the lines must not move.
+  it('keeps the lines still for a keyboard that a sheet raised', async () => {
+    const paint = installFrames();
+    const shell = { height: SHELL };
+    shellIs(SHELL);
+    const resize = installObserver();
+    renderSessionScreen({
+      session: sessionFixture({ id: 'sheet' }),
+      client: { transcript: () => Promise.resolve(transcript()) },
+    });
+    await act(async () => {});
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
+    const moves: number[] = [];
+    measure(viewport, shell, moves);
+    await paint();
+    act(() => resize(viewport));
+    viewport.scrollTop = TRANSCRIPT - SHELL;
+    fireEvent.scroll(viewport);
+    await paint();
+    moves.length = 0;
+
+    const sheet = document.createElement('div');
+    sheet.setAttribute('role', 'dialog');
+    const code = document.createElement('input');
+    code.setAttribute('inputmode', 'numeric');
+    sheet.append(code);
+    document.body.append(sheet);
+    try {
+      act(() => code.focus());
+      // The scroller reaches under this keyboard, so on a phone its box never shrinks.
+      act(() => insetIs(KEYBOARD));
+      expect(viewport).toHaveAttribute('data-under-keyboard');
+      expect(viewport.style.marginBottom).not.toBe('');
+      shell.height = SHELL - KEYBOARD;
+      shellIs(SHELL - KEYBOARD);
+      act(() => resize(viewport));
+      await paint();
+      expect(moves).toEqual([]);
+
+      // The composer gives up its safe bottom under the keyboard: the box grows by it.
+      shell.height = SHELL - KEYBOARD + 34;
+      act(() => resize(viewport));
+      await paint();
+      expect(moves).toEqual([]);
+
+      // The sheet closes, and the keyboard goes down: the end is under the reader again.
+      act(() => code.blur());
+      shell.height = SHELL;
+      shellIs(SHELL);
+      act(() => resize(viewport));
+      await paint();
+      expect(moves.filter((top) => top !== TRANSCRIPT - SHELL)).toEqual([]);
+      expect(viewport.scrollTop).toBe(TRANSCRIPT - SHELL);
+
+      act(() => insetIs(0));
+      expect(viewport).not.toHaveAttribute('data-under-keyboard');
+      expect(viewport.style.marginBottom).toBe('');
+
+      // The composer's own keyboard takes the scroller's bottom.
+      act(() => (screen.getByLabelText('Message Vis') as HTMLTextAreaElement).focus());
+      act(() => insetIs(KEYBOARD));
+      expect(viewport).not.toHaveAttribute('data-under-keyboard');
+    } finally {
+      sheet.remove();
+    }
   });
 });

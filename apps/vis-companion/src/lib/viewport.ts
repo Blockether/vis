@@ -739,6 +739,16 @@ const subscribeKeyboardReserve = (listener: () => void): (() => void) => {
 };
 
 /**
+ * Calls `listener` with each new keyboard inset, in the task that pins the shell.
+ *
+ * A box that must keep its height through a keyboard change adjusts in that task,
+ * so no frame shows the shell moved without it.
+ */
+export function watchKeyboardInset(listener: (inset: number) => void): () => void {
+  return subscribeKeyboardInset(() => listener(keyboardInset));
+}
+
+/**
  * Pixels a sheet docked to the bottom keeps free for a keyboard that is not up yet.
  *
  * With this band under it, the sheet already stands where the keyboard puts it, so
@@ -852,26 +862,31 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         next && safeBottom === SAFE_BOTTOM_KEYBOARD
           ? layoutHeight(readViewportMetrics()) - next.height - next.top
           : 0;
-      setKeyboardInset(inset);
       setKeyboardReserve((kind) =>
         nativeKeyboard && !hasHardwarePointer()
           ? keyboardHeightForPrepin(layoutHeight(readViewportMetrics()), keyboardOrientation(), kind) - inset
           : 0,
       );
       if (
-        currentBox === next ||
-        (currentBox && next && currentBox.height === next.height && currentBox.top === next.top)
-      )
-        return;
-      currentBox = next;
-      if (!next) {
-        shell.style.removeProperty('height');
-        shell.style.removeProperty('transform');
-        return;
+        !(
+          currentBox === next ||
+          (currentBox && next && currentBox.height === next.height && currentBox.top === next.top)
+        )
+      ) {
+        currentBox = next;
+        if (!next) {
+          shell.style.removeProperty('height');
+          shell.style.removeProperty('transform');
+        } else {
+          shell.style.height = `${next.height}px`;
+          if (next.top === 0) shell.style.removeProperty('transform');
+          else shell.style.transform = `translateY(${next.top}px)`;
+        }
       }
-      shell.style.height = `${next.height}px`;
-      if (next.top === 0) shell.style.removeProperty('transform');
-      else shell.style.transform = `translateY(${next.top}px)`;
+      // Publish after the writes and read nothing after them. A box that changes in
+      // step with the shell (the transcript under a sheet's keyboard) otherwise met
+      // a layout with the old shell, and WebKit clamped its scroll position.
+      setKeyboardInset(inset);
     };
 
     let frame = 0;

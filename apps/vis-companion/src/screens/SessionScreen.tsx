@@ -180,6 +180,7 @@ import { onWake } from '../lib/wake';
 import {
   applyScrollAnchor,
   applyScrollAnchorGrowth,
+  isKeyboardInputElement,
   isViewportRotating,
   onViewportRotation,
   scrollAnchorFor,
@@ -187,6 +188,7 @@ import {
   seatScroller,
   shellViewportHeight,
   useSafeBottomStyle,
+  watchKeyboardInset,
 } from '../lib/viewport';
 import { visibleAnsweredTurnCount } from '../lib/unread';
 import { App } from '@capacitor/app';
@@ -3256,6 +3258,37 @@ export function SessionScreen({
     // just left must not forgive a clamp in this one.
     lowestEndRef.current = -1;
 
+    // Only the composer's keyboard re-pins the end. A field elsewhere keeps the lines.
+    const keyboardBelongsElsewhere = () => {
+      const active = document.activeElement;
+      return isKeyboardInputElement(active) && active !== composerRef.current;
+    };
+    // A field over the session (a sheet) lets the scroller reach under its keyboard.
+    // The box then keeps its height, so no follow moves the lines and no clamp
+    // moves them back when the keyboard falls. A live turn grew the transcript
+    // under a one-time code sheet, and its close moved the lines by the keyboard.
+    // The composer gives up its safe bottom under a keyboard, so the reach is
+    // shorter by that much. Only a keyboard that rises for such a field reaches.
+    let fieldOverSession = false;
+    let lastInset = 0;
+    const reachUnder = (inset: number) => {
+      const reaches = inset > 0 && (lastInset === 0 ? fieldOverSession : viewport.hasAttribute('data-under-keyboard'));
+      lastInset = inset;
+      viewport.toggleAttribute('data-under-keyboard', reaches);
+      viewport.style.marginBottom = reaches ? `calc(env(safe-area-inset-bottom) - ${inset}px)` : '';
+    };
+    const stopReaching = watchKeyboardInset(reachUnder);
+    const noteKeyboardOwner = (event: FocusEvent) => {
+      const field = event.target;
+      if (!(field instanceof Element) || !isKeyboardInputElement(field)) return;
+      fieldOverSession = field !== composerRef.current && !viewport.contains(field);
+      // The composer's keyboard takes the scroller's bottom at once.
+      if (!fieldOverSession && viewport.hasAttribute('data-under-keyboard')) {
+        viewport.removeAttribute('data-under-keyboard');
+        viewport.style.marginBottom = '';
+      }
+    };
+    document.addEventListener('focusin', noteKeyboardOwner);
     const observer = new ResizeObserver(() => {
       // The keyboard going down GROWS this box and lowers its end under the reader:
       // the same clamp the content observer records, from the viewport's side.
@@ -3278,6 +3311,11 @@ export function SessionScreen({
         const shellMoved =
           shellHeightRef.current === null || Math.abs(shell - shellHeightRef.current) > 1;
         shellHeightRef.current = shell;
+        // A field over the session (a one-time code sheet) owns the keyboard. Reported
+        // on an iPhone: the transcript above the sheet scrolled by the keyboard, and
+        // then by the safe bottom that the composer gave up. Every change here comes
+        // off the bottom edge, so lines that stay put are correct.
+        if (previous !== null && previous !== height && keyboardBelongsElsewhere()) return;
         if (previous !== null && previous !== height) {
           // ...unless the reader is parked at the END. Those pixels come off the
           // scroller's bottom edge, so the last streamed line slides under the
@@ -3326,6 +3364,10 @@ export function SessionScreen({
 
     return () => {
       observer.disconnect();
+      document.removeEventListener('focusin', noteKeyboardOwner);
+      stopReaching();
+      viewport.removeAttribute('data-under-keyboard');
+      viewport.style.marginBottom = '';
       if (disclosureScrollFrameRef.current !== null) {
         window.cancelAnimationFrame(disclosureScrollFrameRef.current);
         disclosureScrollFrameRef.current = null;
