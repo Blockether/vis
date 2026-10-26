@@ -683,6 +683,25 @@ describe('stopping the run from the phone', () => {
     const html = paint({ onInterrupt: vi.fn(), error: 'That view would not stop.' });
     expect(html).toContain('That view would not stop.');
   });
+
+  // Regression: in the dialog the stop stood alone on an empty row above the
+  // headline, not on the headline's line.
+  it('puts the dialog stop on the headline line, without an empty header', () => {
+    const view = opened();
+    const headline = view.nodes[0];
+    if (headline.type !== 'status') throw new Error('the fixture must open with its headline');
+    paint({ view, onInterrupt: vi.fn(), inDialog: true });
+    const button = screen.getByRole('button', { name: 'Interrupt' });
+    expect(button.parentElement?.textContent).toContain(headline.text);
+    expect(document.querySelector('.live-view-panel > header')).toBeNull();
+  });
+
+  it('keeps the dialog stop in the header when the run has no headline', () => {
+    const view = opened();
+    paint({ view: { ...view, nodes: view.nodes.slice(1) }, onInterrupt: vi.fn(), inDialog: true });
+    const button = screen.getByRole('button', { name: 'Interrupt' });
+    expect(button.closest('header')).not.toBeNull();
+  });
 });
 
 describe('what a run says about its own layout', () => {

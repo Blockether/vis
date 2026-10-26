@@ -269,19 +269,29 @@ function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolea
 /**
  * The HEADLINE: the run's one sentence at reading size. Its state stands over it as
  * a word, and its detail sits under it one size down, so the sentence owns the
- * whole column on a phone.
+ * whole column on a phone. An `aside` stands at the right end of the sentence's line.
  */
-function StatusRow({ node }: { node: LiveStatusNode }) {
+function StatusRow({ node, aside }: { node: LiveStatusNode; aside?: ReactNode }) {
+  const sentence = (
+    <p
+      className={`min-w-0 text-subhead font-bold ${PROSE} [overflow-wrap:anywhere] ${
+        node.tone === 'error' ? 'text-err' : 'text-white'
+      } ${aside ? 'flex-1' : ''}`}
+    >
+      <InlineMarkdown>{node.text}</InlineMarkdown>
+    </p>
+  );
   return (
     <div className="min-w-0 space-y-1 font-mono">
       <ToneWord tone={node.tone} />
-      <p
-        className={`min-w-0 text-subhead font-bold ${PROSE} [overflow-wrap:anywhere] ${
-          node.tone === 'error' ? 'text-err' : 'text-white'
-        }`}
-      >
-        <InlineMarkdown>{node.text}</InlineMarkdown>
-      </p>
+      {aside ? (
+        <div className="flex min-w-0 items-center gap-2">
+          {sentence}
+          {aside}
+        </div>
+      ) : (
+        sentence
+      )}
       {node.detail && (
         <p className="min-w-0 text-body text-dialog-hint [overflow-wrap:anywhere]">
           <InlineMarkdown>{node.detail}</InlineMarkdown>
@@ -1461,11 +1471,14 @@ function NodeCell({
   load,
   onSelect,
   presentation,
+  statusAside,
 }: {
   node: LiveNode;
   load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
   onSelect?: (nodeId: string, itemIds: string[]) => void;
   presentation: NodePresentation;
+  /** A control that stands on the headline's line, at its right end. */
+  statusAside?: ReactNode;
 }) {
   const contentId = useId();
   const isDisclosure = node.type === 'log' || (node.type === 'group' && node.is_collapsible);
@@ -1578,7 +1591,7 @@ function NodeCell({
               onActivate={presentation.onActivate}
             />
           )}
-          {node.type === 'status' && <StatusRow node={node} />}
+          {node.type === 'status' && <StatusRow node={node} aside={statusAside} />}
           {node.type === 'progress' && <ProgressRow node={node} />}
           {node.type === 'stat' && <StatRow node={node} />}
           {node.type === 'steps' && <StepsRows node={node} />}
@@ -1760,6 +1773,19 @@ export function LiveViewPanel({
   };
   const canInterrupt = !isSettled && Boolean(onInterrupt) && !isArmed;
   const isCard = !embedded && !inDialog;
+  // In the dialog the band names the run, so the stop stands on the headline's line
+  // instead of on an empty header row above it.
+  const headlineHoldsStop = inDialog && canInterrupt && view.nodes[0]?.type === 'status';
+  const stopInHeadline = headlineHoldsStop ? (
+    <Button
+      variant="secondary"
+      className="shrink-0"
+      onClick={() => setNote('')}
+      disabled={isInterrupting}
+    >
+      {isInterrupting ? 'Stopping...' : 'Interrupt'}
+    </Button>
+  ) : undefined;
   return (
     <>
       {/* Embedded, a run is a band like the TUI draws it: no frame of its own, the
@@ -1773,7 +1799,7 @@ export function LiveViewPanel({
         role={isSettled ? undefined : 'status'}
         aria-live={isSettled ? undefined : 'polite'}
       >
-        {(!inDialog || canInterrupt || isSettled) && (
+        {(!inDialog || (canInterrupt && !headlineHoldsStop) || isSettled) && (
         <header
           className={
             embedded
@@ -1922,7 +1948,13 @@ export function LiveViewPanel({
                     : ''
                 }`}
               >
-                <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
+                <NodeCell
+                  node={node}
+                  load={load}
+                  onSelect={onSelect}
+                  presentation={presentation}
+                  statusAside={index === 0 ? stopInHeadline : undefined}
+                />
               </li>
             ))}
           </ul>
