@@ -7,11 +7,13 @@ Two functions run this file behind the Lambda Web Adapter:
   request goes to SQS, the response comes back as S3 objects.
 - worker (VIS_ROLE=worker) holds a lease in S3, restores ~/.vis from S3,
   runs the native gateway and answers relayed calls. Before the Lambda
-  time limit it saves the state, starts its successor and gives the lease
-  away. The successor continues the turns that were still running.
+  time limit it drains the gateway, saves the state, starts its successor
+  and gives the lease away. The new gateway continues the parked turns.
 
-S3 is the database of record: state/home.tar.gz holds the home folder with
-a consistent SQLite copy, lease.json names the one live worker.
+S3 is the database of record. Each save uploads a new checkpoint under
+state/ with a consistent SQLite copy. lease.json names the one live worker
+and the current checkpoint. A save counts only after the conditional lease
+write, so a worker that lost the lease cannot replace the state.
 """
 
 import base64
@@ -43,15 +45,20 @@ from botocore.exceptions import ClientError
 ENV = os.environ
 ROLE, BUCKET, QUEUE = ENV["VIS_ROLE"], ENV["VIS_BUCKET"], ENV["VIS_QUEUE_URL"]
 WORKER = ENV.get("VIS_WORKER_FUNCTION", "")
-LIFETIME = int(ENV.get("VIS_LIFETIME_S", "900")) - int(
-    ENV.get("VIS_HANDOFF_MARGIN_S", "90")
-)
+MARGIN = int(ENV.get("VIS_HANDOFF_MARGIN_S", "90"))
+LIFETIME = int(ENV.get("VIS_LIFETIME_S", "900")) - MARGIN
+# The drain gives running turns this time to park; the save and the handoff use the rest.
+DRAIN_S = max(5, MARGIN // 2)
 IDLE_S = int(ENV.get("VIS_IDLE_S", "600"))
 # A relayed event stream ends after STREAM_S; the client reconnects from its cursor.
 # Gateway heartbeats (15 s) keep the CloudFront 60 s origin read timeout open.
 STREAM_S = int(ENV.get("VIS_STREAM_S", "600"))
+# The front waits ANSWER_S for the first answer, under the CDN's 60 s read timeout.
+ANSWER_S = 55
 HOME, WEB, VIS = "/tmp/home", "/opt/vis-web", "/opt/vis"
-LEASE, STATE, LEASE_TTL = "lease.json", "state/home.tar.gz", 90
+LEASE, LEASE_TTL = "lease.json", 90
+# The state of a lease that names no checkpoint, for example from an older worker.
+FIRST_STATE = "state/home.tar.gz"
 # Logs, download caches and models stay out of the saved state; tools fetch them again.
 UNSAVED = {
     HOME + p for p in ("/.vis/logs", "/.vis/models", "/.m2", "/.gitlibs", "/.cache")
@@ -215,6 +222,8 @@ class Front(http.server.BaseHTTPRequestHandler):
             "method": self.command,
             "path": self.path,
             "deadline": deadline,
+            # After this time no client waits for the answer, so the worker drops the call.
+            "answer_by": time.time() + ANSWER_S,
             "headers": {
                 k: v
                 for k, v in self.headers.items()
@@ -235,9 +244,7 @@ class Front(http.server.BaseHTTPRequestHandler):
         while time.time() < deadline:
             chunk, _ = get(f"relay/{rid}/{index}")
             if chunk is None:
-                if (
-                    index == 0 and time.time() - started > 55
-                ):  # under the CDN's 60 s read timeout
+                if index == 0 and time.time() - started > ANSWER_S:
                     return self.send(504, b'{"error":"the Vis worker did not answer"}')
                 if index == 0:
                     self.wake()
@@ -282,7 +289,7 @@ class Front(http.server.BaseHTTPRequestHandler):
 
 class Lease:
     def __init__(self):
-        self.id, self.etag, self.data = str(uuid.uuid4()), None, {}
+        self.id, self.etag, self.data, self.saves = str(uuid.uuid4()), None, {}, 0
 
     def write(self, **data):
         self.data = {**self.data, **data, "owner": self.id}
@@ -293,12 +300,14 @@ class Lease:
         data, self.etag = lease()
         if alive(data):
             return None
+        # The new lease keeps the checkpoint and the pending work of the last worker.
+        self.data = {k: v for k, v in data.items() if k != "owner"}
         self.write(expires=time.time() + LEASE_TTL)
         return data
 
 
-def gateway(method, path, body=None):
-    c = http.client.HTTPConnection("127.0.0.1", PORT, timeout=30)
+def gateway(method, path, body=None, timeout=30):
+    c = http.client.HTTPConnection("127.0.0.1", PORT, timeout=timeout)
     c.request(
         method,
         path,
@@ -327,15 +336,18 @@ def link_image():
             os.symlink(os.path.join(MODELS, name), target)
 
 
-def restore():
+def restore(key):
+    """Unpack checkpoint key, or seed a new home when no state exists yet."""
     shutil.rmtree(HOME, ignore_errors=True)
     os.makedirs(HOME + "/work", exist_ok=True)
     try:
-        raw, _ = get(STATE)
+        raw, _ = get(key or FIRST_STATE)
         if raw:
             with tarfile.open(fileobj=io.BytesIO(raw)) as t:
                 t.extractall(HOME, filter="data")
-            return log("restored state", len(raw))
+            return log("restored state", key or FIRST_STATE, len(raw))
+        if key:  # a new seed would replace the saved sessions
+            raise RuntimeError(f"the checkpoint {key} is missing")
         seed()
     finally:
         link_image()
@@ -385,11 +397,20 @@ def fingerprint():
     return digest.hexdigest()
 
 
-def save(lease_obj):
-    """Upload the home folder with a consistent copy of every SQLite file."""
-    lease_obj.write(
-        expires=time.time() + LEASE_TTL
-    )  # fence: fails when the lease was lost
+def drop(key):
+    """Delete an S3 object that no lease names."""
+    try:
+        s3.delete_object(Bucket=BUCKET, Key=key)
+    except ClientError as e:
+        log("could not delete", key, repr(e))
+
+
+def save(held):
+    """Upload a new checkpoint of the home folder, then point the lease at it.
+
+    Each checkpoint has a new key, so an upload never replaces the saved state.
+    The conditional lease write is the commit: it fails when another worker holds the lease.
+    """
     out = "/tmp/home.tar.gz"
     with tarfile.open(out, "w:gz") as t:
         for path, name in saved_files():
@@ -403,14 +424,48 @@ def save(lease_obj):
                 os.remove(copy)
             else:
                 t.add(path, name)
+    held.saves += 1
+    key = f"state/{held.id}/{held.saves:06d}.tar.gz"
     with open(out, "rb") as f:
-        put(STATE, f.read())
-    log("saved state", os.path.getsize(out))
+        put(key, f.read(), IfNoneMatch="*")
+    previous = held.data.get("state")
+    try:
+        held.write(expires=time.time() + LEASE_TTL, state=key)
+    except ClientError:
+        drop(key)  # the lease was lost, so this checkpoint never became the state
+        raise
+    if previous and previous != key:
+        drop(previous)
+    log("saved state", key, os.path.getsize(out))
 
 
 def running_sessions():
-    rows = gateway("GET", "/v1/sessions?limit=500").get("sessions", [])
-    return [r["id"] for r in rows if r.get("status") == "running"]
+    """Ids of the running sessions, from every page of the session list."""
+    running, after = set(), None
+    while True:
+        query = "limit=200" + (f"&after={urllib.parse.quote(after)}" if after else "")
+        page = gateway("GET", "/v1/sessions?" + query)
+        rows = page.get("sessions", []) + page.get("awaiting", [])
+        running |= {r["id"] for r in rows if r.get("status") == "running"}
+        after = page.get("next_cursor")
+        if not (page.get("has_more") and after):
+            return sorted(running)
+
+
+def drain():
+    """Park the running turns, so that the next gateway continues them."""
+    try:
+        result = gateway(
+            "POST",
+            "/v1/admin/drain",
+            {"timeout_ms": DRAIN_S * 1000, "grace_ms": 10_000},
+            timeout=DRAIN_S + 30,
+        )
+    except (OSError, ValueError) as e:  # the running turns become interrupted
+        log("drain failed", repr(e))
+        return {}
+    log("drained", json.dumps(result))
+    return result if isinstance(result, dict) else {}
 
 
 def next_due():
@@ -424,9 +479,48 @@ def next_due():
     return min(times) if times else None
 
 
+def delete_message(receipt, rid):
+    try:
+        sqs.delete_message(QueueUrl=QUEUE, ReceiptHandle=receipt)
+    except ClientError as e:  # SQS gives the call again; accept() then deletes it
+        log("could not delete relay message", rid, repr(e))
+
+
 class Relay:
     def __init__(self):
         self.inflight, self.last = 0, time.time()
+        # The newest SQS receipt of each relay id, and the ids that have an answer.
+        self.receipts, self.answered, self.lock = {}, set(), threading.Lock()
+
+    def accept(self, m):
+        """Return the relay call of SQS message m, or None when this worker must not answer it.
+
+        A message stays in SQS until its call has an answer. A worker that stops
+        before it answers leaves the call to the next worker.
+        """
+        try:
+            msg = json.loads(m["Body"])
+            rid, answer_by = msg["id"], float(msg["answer_by"])
+        except (ValueError, KeyError, TypeError) as e:
+            log("dropped a malformed relay message", m.get("MessageId"), repr(e))
+            delete_message(m["ReceiptHandle"], m.get("MessageId"))
+            return None
+        with self.lock:
+            known, answered = rid in self.receipts, rid in self.answered
+            self.receipts[rid] = m["ReceiptHandle"]
+        if answered or answer_by <= time.time():
+            if not answered:
+                log("dropped a relay call that no client waits for", rid)
+            self.done(rid)
+            return None
+        return None if known else msg  # a known call came again while it runs
+
+    def done(self, rid):
+        """The call has an answer: delete its message."""
+        with self.lock:
+            self.answered.add(rid)
+            receipt = self.receipts[rid]
+        delete_message(receipt, rid)
 
     def handle(self, m):
         self.inflight += 1
@@ -441,6 +535,7 @@ class Relay:
                     {"status": 502, "headers": []}, b'{"error":"worker relay failed"}'
                 ),
             )
+            self.done(m["id"])
         finally:
             self.inflight -= 1
             self.last = time.time()
@@ -458,7 +553,8 @@ class Relay:
             "headers": [(k, v) for k, v in r.getheaders() if k.lower() not in HOP],
         }
         if "text/event-stream" not in (r.getheader("content-type") or ""):
-            return put(f"relay/{rid}/0", b"E" + frame(head, r.read()))
+            put(f"relay/{rid}/0", b"E" + frame(head, r.read()))
+            return self.done(rid)
         chunks = queue.Queue()
 
         def read():
@@ -485,6 +581,8 @@ class Relay:
             done = done or time.time() > m["deadline"] - 2
             if buf or done:
                 put(f"relay/{rid}/{index}", (b"E" if done else b"M") + buf)
+                if index == 0:
+                    self.done(rid)
                 index, buf, self.last = index + 1, b"", time.time()
                 time.sleep(max(0.0, 0.15 - (time.time() - flushed)))
         c.close()
@@ -523,37 +621,25 @@ def start_gateway():
     raise RuntimeError("the gateway did not start")
 
 
-def resume(sessions, held):
-    for sid in sessions:
-        gateway(
-            "POST",
-            f"/v1/sessions/{sid}/turns",
-            {
-                "request": "Vis moved this session to a new worker, which stopped your last turn. "
-                "Continue the task from where it stopped. Check the work that is done before you repeat a step.",
-                "idempotency_key": f"handoff-{held.id}-{sid}",
-            },
-        )
-        log("resumed session", sid)
-
-
 def worker(raw):
     event, held = json.loads(raw or b"{}"), Lease()
     if event.get("kind") == "tick":
         data, _ = lease()
         due = data.get("next_due")
         if alive(data) or not (
-            data.get("running") or (due and due - time.time() < 120)
+            data.get("running")
+            or data.get("parked")
+            or (due and due - time.time() < 120)
         ):
             return b'{"worker":"nothing to do"}'
     started, previous = time.time(), held.acquire()
     if previous is None:
         return b'{"worker":"another worker holds the lease"}'
     log("lease acquired by", event.get("kind"))
-    restore()
+    restore(previous.get("state"))
+    # The gateway continues the parked turns and the queued turns of the last worker.
     gw = start_gateway()
     log("gateway ready", round(time.time() - started, 1))
-    resume(previous.get("running", []), held)
     relay, pool = Relay(), ThreadPoolExecutor(64)
     renewed = saved = time.time()
     stored = None
@@ -562,16 +648,17 @@ def worker(raw):
             for m in sqs.receive_message(
                 QueueUrl=QUEUE, MaxNumberOfMessages=10, WaitTimeSeconds=1
             ).get("Messages", []):
-                sqs.delete_message(QueueUrl=QUEUE, ReceiptHandle=m["ReceiptHandle"])
-                msg = json.loads(m["Body"])
-                if msg["deadline"] > time.time():
+                if msg := relay.accept(m):
                     relay.last = time.time()
                     pool.submit(relay.handle, msg)
             now = time.time()
             if now - renewed > 30:
                 running = running_sessions()
                 held.write(
-                    expires=now + LEASE_TTL, running=running, next_due=next_due()
+                    expires=now + LEASE_TTL,
+                    running=running,
+                    parked=0,
+                    next_due=next_due(),
                 )
                 renewed, relay.last = now, (now if running else relay.last)
             # Save a changed home within SAVE_S seconds, and a rotated token at once.
@@ -594,14 +681,20 @@ def worker(raw):
         log("lease lost", repr(e))
         gw.kill()
         return b'{"worker":"lease lost"}'
+    parked = drain().get("parked", 0)
     gw.terminate()
     gw.wait(30)
     pool.shutdown(wait=True, cancel_futures=True)
-    save(held)
-    held.write(expires=0, running=running, next_due=due)
-    # A successor starts only for work: running turns, recent requests or a due automation.
+    try:
+        save(held)
+        held.write(expires=0, running=running, parked=parked, next_due=due)
+    except ClientError as e:
+        log("lease lost", repr(e))
+        return b'{"worker":"lease lost"}'
+    # A successor starts only for work: running or parked turns, recent requests or a due automation.
     handoff = handoff and bool(
         running
+        or parked
         or time.time() - relay.last < IDLE_S
         or (due and due - time.time() < 120)
     )

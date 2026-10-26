@@ -19,14 +19,18 @@ A worker gives its work to a new worker before the 15-minute Lambda limit.
 - CloudFront serves the web app files (`/assets/*`) from `s3://<bucket>/web/`, without Lambda.
 - The `vis-front` function answers `/`, `/login` and the API behind CloudFront. It checks the password.
   It sends each API call to the live worker through SQS and reads the answer from S3.
+- The worker deletes an SQS message only after it answers the call. A call that no client waits for after 55 s is dropped.
 - The `vis-worker` function holds `lease.json` in S3 and runs `vis-agent-native gateway`.
-  It restores `state/home.tar.gz`. It saves a changed home folder within 15 s and before it stops.
-- At 810 s the worker saves the state, gives the lease away and starts a successor.
-  The successor continues each turn that was running.
+  It restores the checkpoint that `lease.json` names. It saves a changed home folder within 15 s and before it stops.
+- Each save uploads a new checkpoint, `state/<worker>/<number>.tar.gz`. Then a conditional write points `lease.json` at it.
+  A worker that lost the lease cannot replace the state, because its conditional write fails.
+- At 810 s the worker drains the gateway with `POST /v1/admin/drain`. Running turns stop at the end of their current step, and new turns wait in the queue.
+  Then the worker saves the state, gives the lease away and starts a successor.
+  The gateway of the successor continues the parked turns, then the queued turns.
 - A provider that rotates its refresh token writes `~/.vis/*auth*.json`. The worker then saves the state at once.
 - After 600 s without requests, the worker saves the state and stops.
 - The EventBridge schedule `vis-tick` runs each minute. It starts a worker when work is due.
-  Work is due when a turn was running or an automation runs within 120 s.
+  Work is due when a turn was running or parked, or when an automation runs within 120 s.
 
 | File | Purpose |
 |---|---|
@@ -107,7 +111,7 @@ Function environment values:
 | Name | Default | Meaning |
 |---|---|---|
 | `VIS_LIFETIME_S` | 900 | Lambda timeout of the worker |
-| `VIS_HANDOFF_MARGIN_S` | 90 | Time before the timeout for the handoff |
+| `VIS_HANDOFF_MARGIN_S` | 90 | Time before the timeout for the handoff; the drain uses half of it |
 | `VIS_IDLE_S` | 600 | Idle time before the worker stops; keep it below the lifetime |
 | `VIS_STREAM_S` | 600 | Length of one relayed event stream; the client then reconnects |
 | `VIS_SAVE_S` | 15 | Longest time before the worker saves a change in the home folder |
@@ -160,6 +164,13 @@ Two installations that share one token sign each other out at the next refresh.
 - A cold start of the worker takes about 25 s. The first request waits for it.
 - Lambda has no `/dev/ptmx`, so shell commands run without a terminal.
 - The worker saves only its home folder, `/tmp/home`. Keep your work in it, for example in `~/work`.
+- A worker that stops without a drain loses the work after its last save. Examples are a crash or a lost lease.
+  Its running turns become interrupted, and each session keeps its queue on hold until you continue it.
+- The handoff does not make tool effects exactly once. After half of `VIS_HANDOFF_MARGIN_S` (45 s), the drain stops a turn inside its step.
+  A tool call in that step can be partly done. The model gets a note to check the state before it repeats a change.
+- A turn that stops in three workers in a row ends as interrupted.
+- An API call can reach the gateway twice when a worker stops before it answers.
+  Send each turn with an `idempotency_key`, so that a repeated call does not start a second turn.
 
 ## Remove the stack
 

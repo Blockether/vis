@@ -30,7 +30,8 @@ Resources:
     Properties:
       QueueName: vis-relay
       MessageRetentionPeriod: 300
-      VisibilityTimeout: 60
+      # A call that a lost worker did not answer goes to the next worker while the client waits.
+      VisibilityTimeout: 20
 
   FrontLogs:
     Type: AWS::Logs::LogGroup
@@ -70,6 +71,7 @@ Resources:
           PolicyDocument:
             Statement:
               - {Effect: Allow, Action: [s3:GetObject, s3:PutObject], Resource: !Sub "${StateBucket.Arn}/*"}
+              - {Effect: Allow, Action: s3:DeleteObject, Resource: !Sub "${StateBucket.Arn}/state/*"}
               - {Effect: Allow, Action: s3:ListBucket, Resource: !GetAtt StateBucket.Arn}
               - {Effect: Allow, Action: [sqs:ReceiveMessage, sqs:DeleteMessage], Resource: !GetAtt RelayQueue.Arn}
               - {Effect: Allow, Action: lambda:InvokeFunction, Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:vis-worker"}
