@@ -294,10 +294,21 @@
                    ;; The chord still resolves; its handler gives the reason.
                    (expect (= :toggle-codex-fast (keymap/prefix-action-for \q))))))
 
-(defdescribe view-images-hydra-test
-             (it "shows View images only in a session with a picture"
-                 (let [rows (fn [db]
-                              (set (map :id (mapcat :items (:groups (keymap/prefix-spec db))))))]
-                   (expect (not (contains? (rows {}) :view-images)))
-                   (expect (contains? (rows {:has-images? true}) :view-images))
-                   (expect (= :view-images (keymap/prefix-action-for \I))))))
+(defdescribe
+  view-images-hydra-test
+  (let [rows (fn [db]
+               (set (map :id (mapcat :items (:groups (keymap/prefix-spec db))))))]
+    (it "shows View images only in a graphical terminal, in a session with a picture"
+        (expect (not (contains? (rows {}) :view-images)))
+        (expect (not (contains? (rows {:has-images? true}) :view-images))
+                "A plain terminal cannot show the image viewer")
+        (expect (not (contains? (rows {:graphical-terminal? true}) :view-images)))
+        (expect (contains? (rows {:has-images? true :graphical-terminal? true}) :view-images))
+        (expect (= :view-images (keymap/prefix-action-for \I))))
+    (it "shows Open picture in every terminal, in a session with a picture"
+        (expect (not (contains? (rows {}) :open-newest-image)))
+        (expect (contains? (rows {:has-images? true}) :open-newest-image))
+        (expect (contains? (rows {:has-images? true :graphical-terminal? true}) :open-newest-image))
+        (expect (= :open-newest-image (keymap/prefix-action-for \O)))
+        (expect (= "C-x O" (keymap/label-for :open-newest-image)))
+        (expect (= :providers (keymap/prefix-action-for \o)) "C-x O stays apart from C-x o"))))

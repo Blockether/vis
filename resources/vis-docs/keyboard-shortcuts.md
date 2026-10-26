@@ -110,7 +110,8 @@ footer.
 | Ctrl+X f | Search in the session |
 | Ctrl+X a | Attach a file |
 | Ctrl+X i | Review your attached files and the files this session produced |
-| Ctrl+X I (Shift+I) | Show the pictures in this session one at a time. See [View pictures](#view-pictures) |
+| Ctrl+X I (Shift+I) | Show the pictures in this session one at a time. Only terminals that show pictures have this key. See [View pictures](#view-pictures) |
+| Ctrl+X O (Shift+O) | Open the newest picture of this session in the picture app of your computer |
 | Ctrl+X v | Start or stop a voice recording |
 | Ctrl+X b | Turn voice conversation on or off: Vis reads each answer aloud and sends each recording once it is transcribed |
 | Ctrl+X V (Shift+V) | Show the live view panel at the side, or move the focus to it. In the panel, ↑ and ↓ select a view, ← folds it, → unfolds it, Tab shows the next extension and Esc closes the panel |
@@ -122,9 +123,12 @@ small preview of the picture, its name, type and size, and an **Open externally*
 button opens the picture in your system's picture app. kitty, Ghostty, WezTerm, Warp and iTerm2 can
 show the previews. Other terminals show the same table without previews.
 
+To open the newest picture in your picture app, press **Ctrl+X O**. This key works in every
+terminal.
+
 To see one picture larger, click its preview. To see every picture in the session, press
-**Ctrl+X I**. The picture viewer opens and fills most of the window. In a terminal that cannot show
-pictures, the viewer is a numbered list.
+**Ctrl+X I**. The picture viewer opens and fills most of the window. A terminal that cannot show
+pictures has no picture viewer. There, use **Ctrl+X O** or the **Open externally** buttons.
 
 To see a detail, zoom in. Turn the mouse wheel over the picture to zoom at the pointer, or press
 **+** and **-**. The header shows the zoom, for example `250%`. Then drag the picture with the mouse

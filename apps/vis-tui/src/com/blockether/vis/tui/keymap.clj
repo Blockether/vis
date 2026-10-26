@@ -116,8 +116,12 @@
     :group "Tools"
     :show-when :never}
    ;; C-x I (Shift+i) shows every picture of the session in the image viewer, next to
-   ;; `i` for the attachment inspector. The hydra lists it only when the session has a picture.
-   {:action :view-images :key \I :label "view images" :group "Tools" :show-when :has-images}
+   ;; `i` for the attachment inspector. Only a graphical terminal can show the viewer, so the
+   ;; hydra lists it only there, and only when the session has a picture.
+   {:action :view-images :key \I :label "view images" :group "Tools" :show-when :image-viewer}
+   ;; C-x O (Shift+o) opens the newest picture of the session in the system viewer. It works
+   ;; on every terminal, also where the TUI cannot show pictures.
+   {:action :open-newest-image :key \O :label "open picture" :group "Tools" :show-when :has-images}
    {:action :toggle-voice-recording :key \v :label "voice" :group "Tools"}
    ;; `b` = the conversation MODE, next to `v` = one recording. Arming is not a
    ;; setting: it says SPEAK THE ANSWERS OF THIS CONVERSATION, and only this one.
@@ -341,7 +345,8 @@
    act — `:multi-tab` needs a second tab to close, `:has-turns` needs a turn to
    fork at, `:codex` needs a session on OpenAI Codex (the screen marks it as
    `:codex-session?`), `:has-images` needs a picture in the session (the screen
-   marks it as `:has-images?`), `:has-panel` needs a panel view, and `:never` is
+   marks it as `:has-images?`), `:image-viewer` also needs a graphical terminal (the
+   screen marks it as `:graphical-terminal?`), `:has-panel` needs a panel view, and `:never` is
    palette-only. Resolving a chord
    does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
@@ -357,6 +362,9 @@
 
     :has-images
     (true? (:has-images? db))
+
+    :image-viewer
+    (and (true? (:has-images? db)) (true? (:graphical-terminal? db)))
 
     :has-panel
     (boolean (some #(= :panel (get-in % [:view :placement])) (:live-views db)))

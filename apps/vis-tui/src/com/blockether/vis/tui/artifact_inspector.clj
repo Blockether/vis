@@ -258,11 +258,6 @@
   [^TerminalScreen screen staged artifacts load-error]
   (dlg/run-modal! screen (inspector-modal-component staged artifacts load-error)))
 
-(defn- image-row-label
-  "One image viewer table row: the number, the file name, then its type and size."
-  [i {:keys [name label]}]
-  (str " " (inc (long i)) "  " name (when-not (str/blank? label) (str "  ·  " label))))
-
 (def ^:private image-zoom-max
   "Largest zoom of the image viewer, as a multiple of the fitted picture."
   8.0)
@@ -573,21 +568,17 @@
 (defn image-viewer-component
   "The image viewer modal over `images` (`render/markdown-images` entries), opened at `index`.
 
-   On a graphical terminal it shows one picture ENLARGED to fill the dialog, with its number,
-   name, type and size above it. The keys and the mouse wheel zoom it, and the arrows or a
-   drag move a zoomed picture (see [[image-viewer-key]]). `paint-images!` receives the picture
-   region after each refresh, because Lanterna does not model terminal pictures. On any other
-   terminal it is a numbered table of the pictures. In both forms Enter opens the selected
-   picture in the system viewer."
-  [images index {:keys [graphical? paint-images!]}]
+   It shows one picture ENLARGED to fill the dialog, with its number, name, type and size above
+   it. The keys and the mouse wheel zoom it, and the arrows or a drag move a zoomed picture (see
+   [[image-viewer-key]]). `paint-images!` receives the picture region after each refresh,
+   because Lanterna does not model terminal pictures. Enter opens the selected picture in the
+   system viewer. Only a graphical terminal opens this viewer."
+  [images index {:keys [paint-images!]}]
   (let [images
         (vec images)
 
         n
         (count images)
-
-        table-footer
-        [["←/→" "picture"] ["1-9" "jump"] ["Enter" "open"] ["Esc" "close"]]
 
         fit-footer
         [["←/→" "picture"] ["+/-" "zoom"] ["Enter" "open"] ["Esc" "close"]]
@@ -595,39 +586,26 @@
         zoomed-footer
         [["Arrows/drag" "move"] ["+/-" "zoom"] ["0" "fit"] ["Esc" "close"]]]
 
-    {:init (merge {:index (p/clamp (long (or index 0)) 0 (max 0 (dec n))) :scroll 0} image-view-fit)
+    {:init (merge {:index (p/clamp (long (or index 0)) 0 (max 0 (dec n)))} image-view-fit)
      :measure (fn [_ cols rows]
                 (let [content-w
-                      (if graphical? (max 20 (- (long cols) 10)) (dlg/default-content-width cols))
+                      (max 20 (- (long cols) 10))
 
                       content-h-req
-                      (if graphical? (max 6 (- (long rows) 8)) (min 18 (max 3 (inc n))))
+                      (max 6 (- (long rows) 8))
 
                       bounds
-                      (dlg/dialog-bounds cols rows content-w content-h-req)
+                      (dlg/dialog-bounds cols rows content-w content-h-req)]
 
-                      layout
-                      (dlg/dialog-layout bounds)]
-
-                  (merge layout
+                  (merge (dlg/dialog-layout bounds)
                          {:cols cols
                           :rows rows
                           :content-w content-w
                           :content-h-req content-h-req
                           :bounds bounds
-                          :cell-px (timg/cell-pixels)
-                          :list-h (max 1 (long (:content-h layout)))})))
-     :reconcile (fn [{:keys [index scroll] :as state} {:keys [list-h]}]
-                  ;; The table header takes the first list row.
-                  (let [rows-h (max 1 (dec (long list-h)))]
-                    (assoc state
-                      :scroll (-> (long scroll)
-                                  (min (long index))
-                                  (max (inc (- (long index) rows-h)))
-                                  (max 0)))))
-     :paint (fn [g {:keys [index scroll] :as state}
-                 {:keys [cols rows content-w content-h-req content-top content-h hint-row bounds
-                         list-h]}]
+                          :cell-px (timg/cell-pixels)})))
+     :paint (fn [g {:keys [index] :as state}
+                 {:keys [cols rows content-w content-h-req content-top content-h hint-row bounds]}]
               (let [{:keys [left inner-w]}
                     bounds
 
@@ -641,64 +619,46 @@
                     (nth images index nil)
 
                     zoomed
-                    (zoomed? state)
+                    (zoomed? state)]
 
-                    title
-                    (if graphical? (str "Image " (inc (long index)) " of " n) "Images")]
-
-                (dlg/draw-dialog-chrome! g cols rows title content-w content-h-req)
+                (dlg/draw-dialog-chrome! g
+                                         cols
+                                         rows
+                                         (str "Image " (inc (long index)) " of " n)
+                                         content-w
+                                         content-h-req)
                 (p/set-colors! g t/dialog-fg t/dialog-bg)
                 (p/fill-rect! g (inc left) content-top inner-w content-h)
-                (if graphical?
-                  (when image
-                    (p/styled g
-                              [p/BOLD]
-                              (p/put-str! g
-                                          (+ left 2)
-                                          content-top
-                                          (p/ellipsize (:name image) (max 1 (- inner-w 4)))))
-                    (p/set-colors! g t/dialog-hint t/dialog-bg)
-                    (let [label
-                          (str (inc (long index))
-                               " / "
-                               n
-                               (when-not (str/blank? (:label image)) (str "  ·  " (:label image)))
-                               (when zoomed
-                                 (str "  ·  " (Math/round (* 100.0 (double (:zoom state)))) "%")))
+                (when image
+                  (p/styled g
+                            [p/BOLD]
+                            (p/put-str! g
+                                        (+ left 2)
+                                        content-top
+                                        (p/ellipsize (:name image) (max 1 (- inner-w 4)))))
+                  (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (let [label
+                        (str (inc (long index))
+                             " / "
+                             n
+                             (when-not (str/blank? (:label image)) (str "  ·  " (:label image)))
+                             (when zoomed
+                               (str "  ·  " (Math/round (* 100.0 (double (:zoom state)))) "%")))
 
-                          width
-                          (long (p/display-width label))]
+                        width
+                        (long (p/display-width label))]
 
-                      (when (< (+ 4 width (long (p/display-width (:name image)))) inner-w)
-                        (p/put-str! g (- (+ left inner-w) width 1) content-top label)))
-                    (when-not (and (:width image) (:height image))
-                      (p/put-str! g
-                                  (+ left 2)
-                                  (+ (long content-top) 2)
-                                  "No preview. Press Enter to open the picture.")))
-                  (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                      (p/put-str! g
-                                  (+ left 2)
-                                  content-top
-                                  (p/ellipsize "#  Image  ·  Type · Size" (max 1 (- inner-w 3))))
-                      (dotimes [i (min (max 0 (dec (long list-h))) (- n (long scroll)))]
-                        (let [at (+ (long scroll) (long i))]
-                          (dlg/draw-selectable-row! g
-                                                    left
-                                                    (+ (long content-top) 1 (long i))
-                                                    inner-w
-                                                    (= at (long index))
-                                                    (image-row-label at (nth images at)))))))
-                (dlg/draw-hint-bar! g
-                                    left
-                                    hint-row
-                                    inner-w
-                                    (cond (not graphical?) table-footer
-                                          zoomed zoomed-footer
-                                          :else fit-footer))
+                    (when (< (+ 4 width (long (p/display-width (:name image)))) inner-w)
+                      (p/put-str! g (- (+ left inner-w) width 1) content-top label)))
+                  (when-not (and (:width image) (:height image))
+                    (p/put-str! g
+                                (+ left 2)
+                                (+ (long content-top) 2)
+                                "No preview. Press Enter to open the picture.")))
+                (dlg/draw-hint-bar! g left hint-row inner-w (if zoomed zoomed-footer fit-footer))
                 nil))
      :after-refresh (fn [{:keys [index] :as state} geom]
-                      (when (and graphical? paint-images!)
+                      (when paint-images!
                         (let [{:keys [path mime] :as image} (nth images index nil)]
                           (paint-images!
                             (if-let [{:keys [row col cols rows view] :as frame}

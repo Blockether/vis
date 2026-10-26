@@ -2854,18 +2854,27 @@
 
             nil))))))
 
+(defn- open-image-externally!
+  "Open the picture at `path` in the system viewer, off the input thread."
+  [path]
+  (when path
+    (vis/worker-future "vis-tui-open-image"
+                       #(try (report-open-result! (opener/open-local! path))
+                             (catch Throwable e
+                               (tel/log! {:level :warn :id ::open-image :data {:path path} :error e}
+                                         "could not open the picture in the system viewer"))))))
+
 (defn- open-image-viewer!
-  "Show `images` in the image viewer at `index`: enlarged on a graphical terminal, as a
-   table on any other. Enter opens the selected picture in the system viewer."
+  "Show `images` enlarged in the image viewer at `index`. Enter opens the selected picture
+   in the system viewer. A terminal that cannot show pictures gets no viewer."
   [^TerminalScreen screen images index]
-  (when (seq images)
+  (when (and (seq images) (timg/graphical-terminal?))
     (when-let [{:keys [image]} (with-dialog-lock
                                  #(try (artifact-inspector/show-images!
                                          screen
                                          images
                                          index
-                                         {:graphical? (timg/graphical-terminal?)
-                                          :paint-images!
+                                         {:paint-images!
                                           (fn [regions]
                                             (paint-terminal-images!
                                               (mapv (fn [region]
@@ -2873,18 +2882,15 @@
                                                     regions)))})
                                        ;; The enlarged picture leaves the graphics layer with the modal.
                                        (finally (drop-terminal-images!))))]
-      (when-let [path (:path image)]
-        (vis/worker-future "vis-tui-open-image"
-                           #(try (report-open-result! (opener/open-local! path))
-                                 (catch Throwable _ nil)))))))
+      (open-image-externally! (:path image)))))
 
 (defn- open-image-hit!
-  "A click on a transcript picture: the image viewer when the hit lists its gallery, else
-   the system viewer."
+  "A click on a transcript picture: the image viewer when the hit lists its gallery and the
+   terminal can show pictures, else the system viewer."
   [^TerminalScreen screen hit]
-  (if (seq (:images hit))
-    (open-image-viewer! screen (:images hit) (:index hit))
-    (open-click-target! screen hit)))
+  (cond (empty? (:images hit)) (open-click-target! screen hit)
+        (timg/graphical-terminal?) (open-image-viewer! screen (:images hit) (:index hit))
+        :else (open-image-externally! (:path (nth (:images hit) (:index hit 0) nil)))))
 
 (defn- session-images
   "Every picture in `messages`, oldest first, once for each file path."
@@ -2901,12 +2907,23 @@
                      (mapcat render/markdown-images texts)))))
 
 (defn- open-session-images!
-  "C-x I: the image viewer over every picture in the session, at the newest one."
+  "C-x I: the image viewer over every picture in the session, at the newest one. A terminal
+   that cannot show pictures has no viewer; C-x O opens the newest picture there."
   [^TerminalScreen screen]
   (let [images (session-images (:messages @state/app-db))]
-    (if (seq images)
-      (open-image-viewer! screen images (dec (count images)))
-      (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000))))
+    (cond (empty? images) (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000)
+          (timg/graphical-terminal?) (open-image-viewer! screen images (dec (count images)))
+          :else (vis/notify!
+                  "This terminal cannot show pictures. Press C-x O to open the newest one."
+                  :level :info
+                  :ttl-ms 3000))))
+
+(defn- open-newest-image!
+  "C-x O: open the newest picture of the session in the system viewer."
+  []
+  (if-let [image (peek (session-images (:messages @state/app-db)))]
+    (open-image-externally! (:path image))
+    (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000)))
 
 (defn- open-automations!
   "Open the Automations view: run one now, pause or resume it, read its runs, create a
@@ -7209,7 +7226,8 @@
     ;; only when the session has a picture to show.
     (let [db (assoc db
                :codex-session? (state/codex-session? db)
-               :has-images? (boolean (seq (session-images (:messages db)))))]
+               :has-images? (boolean (seq (session-images (:messages db))))
+               :graphical-terminal? (timg/graphical-terminal?))]
       (if-let [key (with-band-lock
                      (band-top-row db (keymap/prefix-spec db))
                      #(dlg/prefix-band! screen (state/band-anchor db) (keymap/prefix-spec db)))]
@@ -9429,6 +9447,9 @@
                                      :view-images
                                      (open-session-images! screen)
 
+                                     :open-newest-image
+                                     (open-newest-image!)
+
                                      :search-open
                                      (state/dispatch [:search-open])
 
@@ -9600,6 +9621,9 @@
 
                          :view-images
                          (do (open-session-images! screen) (recur))
+
+                         :open-newest-image
+                         (do (open-newest-image!) (recur))
 
                          :toggle-tasks
                          (do (state/dispatch [:toggle-tasks]) (recur))

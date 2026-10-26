@@ -47,7 +47,9 @@
                                  ((:measure component) state 96 24)
 
                                  state
-                                 ((:reconcile component) state geom)]
+                                 (if-let [reconcile (:reconcile component)]
+                                   (reconcile state geom)
+                                   state)]
 
                              ((:paint component) g state geom)))}))
 
@@ -257,50 +259,41 @@
         (expect (= "/tmp/b.png" (get-in (step 1 (KeyStroke. KeyType/Enter)) [done :image :path])))
         (expect (= "/tmp/c.png" (get-in (step 2 (KeyStroke. \o false false)) [done :image :path])))
         (expect (= {done nil} (step 1 (KeyStroke. KeyType/Escape))))))
-  (it
-    "a graphical terminal shows the picture enlarged inside the dialog"
-    (let [painted
-          (atom nil)
+  (it "a graphical terminal shows the picture enlarged inside the dialog"
+      (let [painted
+            (atom nil)
 
-          component
-          (inspector/image-viewer-component pictures
-                                            1
-                                            {:graphical? true :paint-images! #(reset! painted %)})
+            component
+            (inspector/image-viewer-component pictures 1 {:paint-images! #(reset! painted %)})
 
-          state
-          ((:reconcile component) (:init component) ((:measure component) (:init component) 120 40))
+            state
+            (:init component)
 
-          geom
-          ((:measure component) state 120 40)
+            geom
+            ((:measure component) state 120 40)
 
-          text
-          (cap/frame-text (paint-component component))]
+            text
+            (cap/frame-text (paint-component component))]
 
-      ((:after-refresh component) state geom)
-      (expect (str/includes? text "Image 2 of 3"))
-      (expect (str/includes? text "b.png"))
-      (let [[{:keys [row col img]}]
-            @painted
+        ((:after-refresh component) state geom)
+        (expect (str/includes? text "Image 2 of 3"))
+        (expect (str/includes? text "b.png"))
+        (let [[{:keys [row col img]}]
+              @painted
 
-            {:keys [left right top bottom]}
-            (:bounds geom)]
+              {:keys [left right top bottom]}
+              (:bounds geom)]
 
-        (expect (= "/tmp/b.png" (:path img)))
-        ;; The picture fills the dialog height and stays inside its frame.
-        (expect (< 10 (long (:rows img))))
-        (expect (< (long left) (long col) (+ (long col) (long (:cols img))) (long right)))
-        (expect (< (long top) (long row) (+ (long row) (long (:rows img))) (long bottom))))))
-  (it "any other terminal gets a numbered table of the pictures"
-      (let [text (cap/frame-text (paint-component
-                                   (inspector/image-viewer-component pictures 0 {})))]
-        (expect (str/includes? text "1  a.png  ·  PNG · 1600x900"))
-        (expect (str/includes? text "3  c.png  ·  PNG · 800x800"))
-        (expect (str/includes? text "Enter open")))))
+          (expect (= "/tmp/b.png" (:path img)))
+          ;; The picture fills the dialog height and stays inside its frame.
+          (expect (< 10 (long (:rows img))))
+          (expect (< (long left) (long col) (+ (long col) (long (:cols img))) (long right)))
+          (expect (< (long top) (long row) (+ (long row) (long (:rows img))) (long bottom)))))))
 
 (defdescribe
   image-viewer-zoom-test
   (let [component
-        (inspector/image-viewer-component pictures 0 {:graphical? true})
+        (inspector/image-viewer-component pictures 0 {})
 
         geom
         ((:measure component) (:init component) 120 40)
@@ -391,10 +384,7 @@
               (atom nil)
 
               component
-              (inspector/image-viewer-component pictures
-                                                0
-                                                {:graphical? true
-                                                 :paint-images! #(reset! painted %)})
+              (inspector/image-viewer-component pictures 0 {:paint-images! #(reset! painted %)})
 
               text
               (cap/frame-text (cap/capture! {:cols 120

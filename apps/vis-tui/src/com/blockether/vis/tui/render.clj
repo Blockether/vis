@@ -5354,102 +5354,101 @@
    thumbnail opens the image viewer at that picture, and the footer tells how to open the
    viewer. A terminal without inline pictures shows the same table without thumbnails."
   [nodes content-w {:keys [session-turn-id] :as opts}]
-  (let
-    [parts
-     (mapv image-block-parts nodes)
+  (let [parts
+        (mapv image-block-parts nodes)
 
-     images
-     (mapv image-view-entry parts)
+        images
+        (mapv image-view-entry parts)
 
-     viewable
-     (filterv :path images)
+        viewable
+        (filterv :path images)
 
-     graphical?
-     (timg/graphical-terminal?)
+        graphical?
+        (timg/graphical-terminal?)
 
-     first-id
-     (or (some-> (re-find #"#(\d+)" (:summary (first parts)))
-                 second)
-         "0")
+        first-id
+        (or (some-> (re-find #"#(\d+)" (:summary (first parts)))
+                    second)
+            "0")
 
-     node-id
-     (str (detail-node-id {:session-turn-id session-turn-id
-                           :section (:image-section opts :user)
-                           :kind :image
-                           :details-path ["table" first-id]}))
+        node-id
+        (str (detail-node-id {:session-turn-id session-turn-id
+                              :section (:image-section opts :user)
+                              :kind :image
+                              :details-path ["table" first-id]}))
 
-     separator
-     (attachment-card-row :separator "" {})
+        separator
+        (attachment-card-row :separator "" {})
 
-     thumb-w
-     (image-table-thumb-w content-w)
+        thumb-w
+        (image-table-thumb-w content-w)
 
-     block
-     (fn [i {:keys [path mime width height name label size-label] :as image}]
-       (let [box
-             (when (and graphical? path) (image-table-box image thumb-w))
+        block
+        (fn [i {:keys [path mime width height name label size-label] :as image}]
+          (let [box
+                (when (and graphical? path) (image-table-box image thumb-w))
 
-             img
-             (when box
-               {:id (str node-id "/" path)
-                :path path
-                :mime mime
-                :cols (:cols box)
-                :rows (:rows box)
-                :width width
-                :height height})
+                img
+                (when box
+                  {:id (str node-id "/" path)
+                   :path path
+                   :mime mime
+                   :cols (:cols box)
+                   :rows (:rows box)
+                   :width width
+                   :height height})
 
-             view
-             (when path {:images viewable :index (count (filter :path (take i images)))})
+                view
+                (when path {:images viewable :index (count (filter :path (take i images)))})
 
-             target
-             (when path
-               {:doc {:path path :mime mime :name name :size-label size-label :title name}})
+                target
+                (when path
+                  {:doc {:path path :mime mime :name name :size-label size-label :title name}})
 
-             rows
-             (image-table-block-rows image graphical? thumb-w)
+                rows
+                (image-table-block-rows image graphical? thumb-w)
 
-             label
-             (if path label (str label " · Unavailable"))
+                label
+                (if path label (str label " · Unavailable"))
 
-             img-col
-             (+ 2 (quot (- (long thumb-w) (long (or (:cols box) 0))) 2))]
+                img-col
+                (+ 2 (quot (- (long thumb-w) (long (or (:cols box) 0))) 2))]
 
-         (mapv (fn [r]
-                 (attachment-card-row :image-table
-                                      (case (long r)
-                                        0
-                                        name
+            (mapv (fn [r]
+                    (attachment-card-row :image-table
+                                         (case (long r)
+                                           0
+                                           name
 
-                                        1
-                                        label
+                                           1
+                                           label
 
-                                        "")
-                                      (cond-> {:table-line r
-                                               :table-text-col (+ 2 (long thumb-w) 3)
-                                               :table-name name
-                                               :table-label label
-                                               :table-target target
-                                               :table-preview? (some? img)}
-                                        ;; Each row of the thumbnail carries the picture, so it paints and
-                                        ;; opens the image viewer.
-                                        (and img (< (long r) (long (:rows box))))
-                                        (assoc :kind
-                                          (if (zero? (long r)) :image :image-pad) :img
-                                          img :img-idx
-                                          r :image-col-offset
-                                          img-col :view
-                                          view :node-id
-                                          node-id))))
-               (range rows))))
+                                           "")
+                                         (cond-> {:table-line r
+                                                  :table-text-col (+ 2 (long thumb-w) 3)
+                                                  :table-name name
+                                                  :table-label label
+                                                  :table-target target
+                                                  :table-preview? (some? img)}
+                                           ;; Each row of the thumbnail carries the picture, so it paints and
+                                           ;; opens the image viewer.
+                                           (and img (< (long r) (long (:rows box))))
+                                           (assoc :kind
+                                             (if (zero? (long r)) :image :image-pad) :img
+                                             img :img-idx
+                                             r :image-col-offset
+                                             img-col :view
+                                             view :node-id
+                                             node-id))))
+                  (range rows))))
 
-     hint-text
-     (if graphical?
-       "Click a thumbnail or press Ctrl+X I to open the image viewer."
-       "No thumbnails here: kitty, Ghostty, WezTerm, Warp and iTerm2 show them. Ctrl+X I opens the image viewer.")
+        hint-text
+        (if graphical?
+          "Click a thumbnail or press Ctrl+X I to view pictures. Ctrl+X O opens the newest one."
+          "This terminal cannot show pictures. Ctrl+X O opens the newest one.")
 
-     hint
-     (attachment-card-row :image-table-hint hint-text {:table-hint hint-text})]
+        hint
+        (attachment-card-row :image-table-hint hint-text {:table-hint hint-text})]
 
     (-> [(attachment-card-row :top "" {})]
         (into (comp (interpose [separator]) cat) (map-indexed block images))
