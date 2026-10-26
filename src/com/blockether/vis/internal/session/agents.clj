@@ -1685,6 +1685,7 @@
 - First make a short plan. Do the critical-path step yourself: the step that your next action waits for.
 - Do shared work yourself before you split, for example a file that every part uses or changes.
 - Give one coupled design one owner. Never split modules that share an invariant, a protocol or a data format between children, or between a child and yourself.
+- Treat the modules of one program as one coupled design. Split only parts that you can build and test apart, such as separate repositories or services.
 - Do small tasks, single-file edits, one search or one check yourself. A child costs more time than a few tool calls.
 - Give each large independent part one child, usually two to four in total. Do not split one small task into many children.
 - For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.

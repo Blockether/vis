@@ -99,6 +99,9 @@
                       ;; In CTB, a leader split one WAL design between itself and a child. The
                       ;; parts broke a shared invariant, and a hidden live-snapshot check failed.
                       "Give one coupled design one owner."
+                      ;; CTB leaders still split one program, for example graph classes and the
+                      ;; matcher that reads their adjacency. Delegated trials passed 4/14, others 12/22.
+                      "Treat the modules of one program as one coupled design."
                       "give the child the code, not your conclusion" "Do not do their work again."]]
           (expect (str/includes? text rule) rule))
         (expect (not (str/includes? text "Verify answers before you use them"))
