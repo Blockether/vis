@@ -6611,11 +6611,21 @@
   [entry offset]
   (mapv #(update % :col + (long offset)) (get-in entry [:meta :links])))
 
+(def ^:private agent-wait-operations
+  "Council operations whose sections hold one record for each subagent, with its answer."
+  #{"council.run" "council.wait" "council.resume"})
+
+(defn- presentation-sections
+  "The sections of Activity `row`. Records of the leader's own subagents stay out: the team
+   block of the turn shows them, and their answers stay in their own sessions."
+  [row]
+  (when-not (contains? agent-wait-operations (:operation row)) (:sections (:presentation row))))
+
 (defn- activity-row-openable?
   "Disclosure opens content, never the visible headline or summary."
   [{:keys [summary children resources evidence presentation] :as row}]
   (boolean (or (seq (activity-content-blocks (:content presentation)))
-               (seq (:sections presentation))
+               (seq (presentation-sections row))
                (seq children)
                (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
                (and (empty? children)
@@ -7426,7 +7436,7 @@
                                                              content)
 
                                                        sections
-                                                       (:sections presentation)
+                                                       (presentation-sections row)
 
                                                        summary-entry
                                                        (when presentation

@@ -269,13 +269,8 @@
                         (map (comp first second)))
                   (re-seq #"(?m)^\|([^|\n]*)\|" (or page "")))
 
-            ;; Subagents are experimental, and the published manual leaves
-            ;; experimental features out (docs core-test, experimental-feature-docs-test).
             published
-            (conj (into #{}
-                        (comp (remove #(= :agent-questions (:action %))) (map :key))
-                        keymap/prefix-commands)
-                  keymap/prefix-palette-key)]
+            (conj (into #{} (map :key) keymap/prefix-commands) keymap/prefix-palette-key)]
 
         (expect (some? page)
                 "resources/vis-docs/keyboard-shortcuts.md is above the working directory")

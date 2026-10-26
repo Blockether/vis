@@ -850,6 +850,17 @@
       "operations": {
         "get": {
           "request": "none",
+          "response": "json",
+          "extension": "background"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/:child-id/timeline"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
           "response": "json"
         }
       },

@@ -86,30 +86,35 @@
                  (let [row
                        {"session_id" "child"
                         "parent_id" "parent"
+                        "team_id" "turn-1"
                         "task" "Verify routing"
+                        "title" "Verify routing"
                         "status" "budget_limited"
-                        "model" "small"
-                        "iterations_used" 4
-                        "iteration_budget" 4
-                        "routing_locked" true
-                        "usage" {"cost_usd" 0.025}}
+                        "result" "Stopped at the budget"
+                        "created_at" 1000
+                        "finished_at" 65000}
 
-                       label
-                       (:label (last (team/items [row] "parent")))]
+                       labels
+                       (mapv :label (team/items [row] "parent"))]
 
-                   (expect (str/includes? label "budget limited"))
-                   (expect (str/includes? label "4/4"))
-                   (expect (str/includes? label "$0.025"))
-                   (expect (str/includes? label "locked"))
-                   (expect (= :inspect (:action (second (team/items [] "parent")))))
-                   (expect (str/starts-with? (:label (last (team/items [(assoc row "role" "audit")]
-                                                                       nil)))
-                                             "audit · ")))))
+                   (expect (some #(str/starts-with? % "Turn · 1 agent") labels))
+                   (expect (some #(and (str/includes? % "Verify routing")
+                                       (str/includes? % "out of budget")
+                                       (str/includes? % "Stopped at the budget")
+                                       (str/ends-with? % "1m 04s"))
+                                 labels))
+                   (expect (= :parent (:action (second (team/items [] "parent")))))
+                   (expect (some #(str/starts-with? % "audit  #1")
+                                 (map :label
+                                      (team/items [(dissoc (assoc row "role" "audit") "title")]
+                                                  nil)))))))
 
 (def review-agent
   {"session_id" "child"
    "parent_id" "parent"
+   "team_id" "turn-1"
    "task" "Verify routing"
+   "title" "Verify routing"
    "status" "running"
    "model" "small"
    "iterations_used" 2
@@ -144,8 +149,12 @@
             (reduce (fn [state _]
                       ((:on-key c) state (KeyStroke. KeyType/ArrowDown) geom))
                     initial
-                    (range 2))]
+                    ;; The turn header comes first, then the agent, Refresh team and Open parent.
+                    (range 3))]
 
+        (expect (= "child"
+                   (:agent-id (::dlg/done ((:on-key c) initial (KeyStroke. KeyType/Enter) geom))))
+                "Enter on the first agent row opens its timeline")
         (expect (= "parent"
                    (:session-id (::dlg/done ((:on-key c) next (KeyStroke. KeyType/Enter) geom))))))
       (reset! snapshot {:agents []})
@@ -158,32 +167,41 @@
 
 (defdescribe
   inspect-and-confirmed-cancel-test
-  (it "inspect and confirmed cancel"
+  (it "opens the timeline of a row, stops it after a confirmation and opens its session"
       (doseq [confirmed? [false true]]
-        (let [choices (atom [{:agent review-agent} nil])
-              actions (atom [{:action :stop} {:action (if confirmed? :stop :keep)}])
+        (let [choices (atom [{:agent-id "child"} nil])
+              actions (atom [{:action :stop} {:action (if confirmed? :stop :keep)} nil])
               requests (atom [])]
 
           (with-redefs [team/choose-team! (fn [& _]
                                             (let [r (first @choices)]
                                               (swap! choices rest)
                                               r))
+                        team/fetch! (constantly nil)
+                        team/summary (constantly {:agents [review-agent]})
                         dlg/select-dialog! (fn [& _]
                                              (let [r (first @actions)]
                                                (swap! actions rest)
                                                r))
                         vis/request! (fn [& args]
                                        (swap! requests conj args)
-                                       {:status 200})]
+                                       {:status 200
+                                        :body "{\"session_id\":\"child\",\"items\":[]}"})]
 
             (expect (nil? (team/show! nil "leader" nil)))
             (expect (= (if confirmed?
                          [[:post "/v1/sessions/leader/agents/cancel" {:body {:session_id "child"}}]]
                          [])
-                       @requests)))))
+                       (filterv #(= :post (first %)) @requests))))))
       (with-redefs [team/choose-team!
                     (fn [& _]
-                      {:agent review-agent})
+                      {:agent-id "child"})
+
+                    team/summary
+                    (constantly {:agents [review-agent]})
+
+                    vis/request!
+                    (constantly {:status 404})
 
                     dlg/select-dialog!
                     (fn [& _]
@@ -191,7 +209,7 @@
 
         (expect (= "child" (team/show! nil "leader" nil))))
       (with-redefs [team/choose-team! (fn [& _]
-                                        {:action :inspect :session-id "parent"})]
+                                        {:action :parent :session-id "parent"})]
         (expect (= "parent" (team/show! nil "leader" "parent"))))))
 
 (defdescribe
@@ -204,9 +222,9 @@
             [snapshot text]
             [[{:loading? true} "Loading"] [{:agents []} "No subagents"]
              [{:error "Could not load team. Refresh to retry."} "Unavailable"]
-             [{:agents [(assoc review-agent "status" "completed")]} "Verify routing"]
-             [{:agents [(assoc review-agent "status" "budget_limited")]} "Verify routing"]
-             [{:agents [(assoc review-agent "pending_input" true)]} "Verify routing"]]]
+             [{:agents [(assoc review-agent "status" "completed")]} "done"]
+             [{:agents [(assoc review-agent "status" "budget_limited")]} "out of bu"]
+             [{:agents [(assoc review-agent "pending_input" true)]} "needs you"]]]
 
       (let [rows
             20
@@ -344,18 +362,16 @@
 
 (defdescribe
   footer-team-chip-test
-  (it "names each agent with its state and leaves while no agent works or waits"
+  (it "counts the agents of each status and leaves while no agent works or waits"
       (doseq [[agents label]
               [[nil nil] [[{"status" "completed"}] nil]
                [[{"status" "completed"}
                  {"status" "running" "iterations_used" 3 "iteration_budget" 20}
                  {"status" "running" "pending_input" true "pending_input_count" 2}
-                 {"status" "queued"}] "Agents: A3 asks you (2) · A1 done · A2 3/20 · A4 queued"]
-               [[{"status" "running" "role" "verify" "iterations_used" 1 "iteration_budget" 9}
-                 {"status" "queued"}
-                 {"status" "running" "role" "research" "iterations_used" 2 "iteration_budget" 9}
-                 {"status" "completed" "role" "implement"}]
-                "Agents: A3 2/9 · A4 done · A1 1/9 · A2 queued"]]]
+                 {"status" "queued"}] "Agents: 1 needs you · 1 running · 1 queued"]
+               [[{"status" "running" "role" "verify"} {"status" "running" "question" "Keep it?"}
+                 {"status" "running" "role" "research"} {"status" "completed" "role" "implement"}]
+                "Agents: 1 asking · 2 running"]]]
         (with-redefs [team/summary (constantly {:agents agents})]
           (expect (= label (team/footer-label "leader")))))))
 
@@ -428,49 +444,147 @@
     "status" "completed"
     "role" "audit"}])
 
-(defn- key-of
-  ([ch] (KeyStroke. (char ch) false false))
-  ([ch ctrl?] (KeyStroke. (char ch) (boolean ctrl?) false)))
-
 (defdescribe waiting-agents-first-test
-             (it "puts waiting agents first, keeps numbers per team and says asks you in the footer"
+             (it "puts waiting agents first, keeps numbers per team and says asking in the footer"
                  (with-redefs [team/summary (constantly {:agents waiting-team})]
                    (expect (= [[2 "c2"] [3 "c3"] [1 "c1"] [1 "c4"]]
                               (mapv (fn [[n agent]]
                                       [n (get agent "session_id")])
                                     (team/numbered waiting-team))))
-                   (expect (= "Agents: A2 asks you · A3 asks you · A1 4/10"
-                              (team/footer-label "leader"))))))
+                   (expect (= "Agents: 2 asking · 1 running" (team/footer-label "leader"))))))
+
+(def ^:private now-ms 1700000100000)
+
+(defn- agent-row
+  [n status & {:as more}]
+  (merge {"session_id" (str "s" n)
+          "parent_id" "leader"
+          "leader_id" "leader"
+          "team_id" "turn-1"
+          "task" (str "Task " n)
+          "status" status
+          "created_at" (- now-ms 64000)}
+         more))
+
+(def ^:private every-state
+  "One agent for each status that the design names."
+  [(agent-row 1 "queued" "role" "research" "title" "Map the gateway routes")
+   (agent-row 2 "running"
+              "role" "implement"
+              "title" "Fix the parser"
+              "activity" "Patched src/a.clj")
+   (agent-row 3 "running" "role" "research" "question" "Keep the old API?" "question_entry_id" 7)
+   (agent-row 4 "running" "role" "implement" "pending_input" true)
+   (agent-row 5 "completed"
+              "role" "research"
+              "title" "Read docs"
+              "result" "Found 3 routes"
+              "finished_at" (- now-ms 4000))
+   (agent-row 6 "completed"
+              "role" "verify"
+              "title" "Run tests"
+              "outcome" "passed"
+              "result" "All 120 tests pass"
+              "finished_at" now-ms)
+   (agent-row 7 "completed"
+              "role" "verify"
+              "title" "Check lint"
+              "outcome" "failed"
+              "result" "2 reflection warnings"
+              "finished_at" now-ms)
+   (agent-row 8 "failed"
+              "role" "audit"
+              "title" "Review diff"
+              "result" "Provider error"
+              "finished_at" now-ms)
+   (agent-row 9 "cancelled" "title" "Old task" "finished_at" now-ms)
+   (agent-row 10 "budget_limited"
+              "role" "implement"
+              "title" "Port the theme"
+              "resumed_at" (- now-ms 30000)
+              "finished_at" now-ms)])
+
+(defdescribe status-word-test
+             (it "names each status in words, without icons"
+                 (expect (= ["queued" "running" "asking" "needs you" "done" "passed" "failed"
+                             "failed" "cancelled" "out of budget"]
+                            (mapv team/status-word every-state)))))
+
+(defdescribe
+  team-rows-test
+  (it "shows role, title or #N, status, now or result and time in one line"
+      (let [rows
+            (team/team-rows "turn-1" every-state)
+
+            columns
+            (team/row-columns rows)
+
+            lines
+            (mapv #(first (team/row-lines % columns 100 now-ms)) rows)]
+
+        (expect (= (range 1 11) (map :n rows)) "Rows keep their start order")
+        (expect (str/starts-with? (nth lines 0) "research   Map the gateway routes  queued"))
+        (expect (not (re-find #"\d+s$" (nth lines 0))) "A queued agent shows no time")
+        (expect (str/includes? (nth lines 1) "running"))
+        (expect (str/includes? (nth lines 1) "Patched src/a.clj"))
+        (expect (str/ends-with? (nth lines 1) "1m 04s") "Running time counts from the start")
+        (expect (str/includes? (nth lines 2) "#3"))
+        (expect (str/includes? (nth lines 2) "asking  "))
+        (expect (str/includes? (nth lines 2) "Keep the old API?"))
+        (expect (str/includes? (nth lines 3) "needs you"))
+        (expect (str/includes? (nth lines 4) "Found 3 routes"))
+        (expect (str/ends-with? (nth lines 4) "1m 00s") "A finished agent shows its duration")
+        (expect (str/includes? (nth lines 5) "passed"))
+        (expect (str/includes? (nth lines 6) "failed"))
+        (expect (str/ends-with? (nth lines 9) "30s") "A resumed task counts from the resume")
+        (expect (str/includes? (nth lines 9) "out of budget"))
+        (expect (every? #(re-matches #"[\x20-\x7e]*" %) lines) "Rows hold no icons or marks")))
+  (it "ends a long title and a long result with an ellipsis"
+      (let [long-agent
+            (agent-row 1 "completed"
+                       "title" (apply str (repeat 40 "t"))
+                       "result" (apply str (repeat 200 "r"))
+                       "finished_at" now-ms)
+
+            row
+            (first (team/team-rows "turn-1" [long-agent]))
+
+            line
+            (first (team/row-lines row (team/row-columns [row]) 80 now-ms))]
+
+        (expect (str/includes? line (apply str (repeat 40 "t"))))
+        (expect (str/includes? line "r…"))
+        (expect (<= (count line) 80))))
+  (it "takes two lines on a phone width"
+      (let [rows
+            (team/team-rows "turn-1" every-state)
+
+            columns
+            (team/row-columns rows)
+
+            running
+            (second rows)
+
+            [head now]
+            (team/row-lines running columns 40 now-ms)]
+
+        (expect (team/narrow? 40))
+        (expect (str/includes? head "running"))
+        (expect (str/ends-with? head "1m 04s"))
+        (expect (str/starts-with? head "Fix the parser") "The title gets the first line")
+        (expect (= "  implement  Patched src/a.clj" now)
+                "The role and the text share the second line")
+        (expect (= 2 (team/row-line-count (first rows) 40)) "A queued row keeps its role")
+        (expect (= 1 (team/row-line-count (nth rows 8) 40))
+                "A row without role or text keeps one line"))))
 
 (defdescribe
   team-card-test
-  (it "draws one row per agent of the team with role, task, state and count"
-      (let [team-card
-            (team/card "turn-1" waiting-team)
-
-            rows
-            (:rows team-card)]
-
-        (expect (= "Team · 3 agents · 2 ask you · 1 running" (team/card-title team-card)))
-        ;; Every part starts in the same column on each row, and counts end in one column.
-        (expect (= ["A2  implement  Fix parser  asks you   2/10"
-                    "A3  verify     Run tests   asks you  10/10"
-                    "A1  research   Read docs   running    4/10"]
-                   (mapv team/card-row-text rows)))
-        (expect (nil? (team/card "turn-9" waiting-team)))
-        (let [long-task
-              (assoc-in (vec waiting-team) [0 "task"] (apply str (repeat 60 "x")))
-
-              long-row
-              (first (filter #(= 1 (:n %)) (:rows (team/card "turn-1" long-task))))]
-
-          (expect (str/includes? (team/card-row-text long-row)
-                                 (str (apply str (repeat 39 "x")) "…  "))
-                  "A long task ends with an ellipsis at the task column width"))
-        (expect (= 4 (count (filter :meta (team/card-entries team-card))))
-                "The card has the title and one row for each agent, without activity rows")))
-  (it "decorates only the last assistant message of the team turn"
-      (with-redefs [team/summary (constantly {:agents waiting-team})]
+  (it "keeps the final state of the team in the turn after the turn ends"
+      (with-redefs [team/summary (constantly {:agents (filterv #(not (contains? #{"queued"
+                                                                                  "running"}
+                                                                                (get % "status")))
+                                                        every-state)})]
         (let [messages [{:role :user :session-turn-id "turn-1" :text "go"}
                         {:role :assistant :session-turn-id "turn-1" :text "ok"}
                         {:role :assistant :session-turn-id "turn-3" :text "other"}]
@@ -480,67 +594,93 @@
           (expect (nil? (:agent-team-card (nth decorated 0))))
           (expect (nil? (:agent-team-card (nth decorated 2))))
           (expect (identical? (nth decorated 1) (nth (team/decorate-messages messages "leader") 1)))
+          (expect (= messages (team/decorate-messages messages "leader" "turn-1"))
+                  "The running turn shows its team in the dock, not in the transcript")
           (let [projected (team/with-card-lines (assoc (nth decorated 1)
                                                   :prewrapped-lines ["ok"]
-                                                  :line-meta [nil]))]
+                                                  :line-meta [nil])
+                                                100)]
             (expect (= (count (:prewrapped-lines projected)) (count (:line-meta projected))))
-            (expect (some #(str/includes? % "Team · 3 agents") (:prewrapped-lines projected))))))))
+            (expect (some #(str/includes? % "All 120 tests pass") (:prewrapped-lines projected)))
+            (expect (not-any? #(str/includes? % "Team ·") (:prewrapped-lines projected)))))))
+  (it "keeps a team with a working agent in the dock after its turn ends"
+      (with-redefs [team/summary (constantly {:agents waiting-team})]
+        (let [messages [{:role :assistant :session-turn-id "turn-1" :text "ok"}
+                        {:role :assistant :session-turn-id "turn-2" :text "later"}]
+              decorated (team/decorate-messages messages "leader")]
+
+          (expect (nil? (:agent-team-card (first decorated))))
+          (expect (= "turn-2" (get-in decorated [1 :agent-team-card :team-id])))
+          (expect (= #{"turn-1"} (team/dock-team-ids waiting-team nil)))
+          (expect (= #{"turn-1" "turn-2"} (team/dock-team-ids waiting-team "turn-2")))))))
 
 (defdescribe
-  questions-inbox-test
-  (it
-    "orders requests oldest first and answers with the actions of each kind"
-    (let [posts (atom [])]
-      (with-redefs [team/summary (constantly {:agents waiting-team})
-                    vis/worker-future (fn [_ f]
-                                        (f))
-                    team/fetch! (fn [_]
-                                  nil)
-                    vis/request! (fn [method path opts]
-                                   (swap! posts conj [method path (:body opts)])
-                                   {:status 200 :body "[]"})]
+  dock-test
+  (it "shows one row for each agent of the running turn and leaves when the team ends"
+      (with-redefs [team/summary (constantly {:agents every-state})]
+        (let [text (team/dock-text "leader" "turn-1" 120 now-ms)]
+          (expect (= 8 (count text)) "The dock caps its rows and counts the rest")
+          (expect (= "+3 more" (peek text)))
+          (expect (= 8 (team/dock-height "leader" "turn-1" 120)))))
+      (with-redefs [team/summary (constantly {:agents (take 2 every-state)})]
+        (expect (= 2 (team/dock-height "leader" "turn-1" 120)))
+        (expect (= 4 (team/dock-height "leader" "turn-1" 40)) "A phone row takes two lines"))
+      (with-redefs [team/summary (constantly {:agents (drop 4 every-state)})]
+        (expect (zero? (team/dock-height "leader" nil 120)) "No dock after a finished team")
+        (expect (= 6 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock"))
+      (with-redefs [team/summary (constantly {:agents []})]
+        (expect (zero? (team/dock-height "leader" "turn-1" 120)) "An empty team has no dock"))))
 
-        (let [sid (str "inbox-" (random-uuid))
-              changed (atom 0)
-              opts {:changed! #(swap! changed inc)
-                    :open-session! identity
-                    :input-text (constantly " Yes, keep it ")
-                    :reset-input! (constantly nil)}]
-
-          (expect (= [:budget :question] (mapv :kind (team/requests sid))))
-          (expect (pos? (team/inbox-height sid 80)))
-          (expect (not (team/inbox-owns-key? sid (key-of \1))))
-          (expect (= " Questions · 1 of 2 " (:title (team/inbox-view sid 80))))
-          (expect (str/includes? (:head (team/inbox-view sid 80)) "NEW"))
-          (expect (team/focus-inbox! sid))
-          (expect (not (str/includes? (:head (team/inbox-view sid 80)) "NEW")))
-          (expect (= "1 Grant +20 · 2 Deny · C-d deny · Tab next · Esc later"
-                     (:hint (team/inbox-view sid 80))))
-          (expect (team/inbox-owns-key? sid (key-of \1)))
-          (expect (not (team/inbox-owns-key? sid (key-of \a))))
-          (team/inbox-key! sid (key-of \1) opts)
-          (expect (= [[:post "/v1/sessions/" "/agents/extend" {:session_id "c3" :iterations 20}]]
-                     (mapv (fn [[m p b]]
-                             [m (subs p 0 13) (subs p (str/last-index-of p "/agents")) b])
-                           @posts)))
-          (team/focus-inbox! sid)
-          (team/inbox-key! sid (KeyStroke. KeyType/Tab) opts)
-          (expect (= "Fix parser" (get-in (nth (team/requests sid) 1) [:agent "task"])))
-          (team/inbox-key! sid (key-of \1) opts)
-          (expect (team/inbox-owns-key? sid (KeyStroke. KeyType/Enter)))
-          (expect (not (team/inbox-owns-key? sid (key-of \x))))
-          (team/inbox-key! sid (KeyStroke. KeyType/Enter) opts)
-          (expect (= {:session_id "c2" :text "Yes, keep it"} (last (map last @posts))))
-          (expect (str/ends-with? (second (last @posts)) "/agents/answer"))
-          (expect (not (team/inbox-owns-key? sid (KeyStroke. KeyType/Enter))))
-          (team/focus-inbox! sid)
-          (team/inbox-key! sid (KeyStroke. KeyType/Escape) opts)
-          (expect (not (team/inbox-owns-key? sid (key-of \1))))
-          (expect (pos? @changed)))))))
-
-(defdescribe child-breadcrumb-test
-             (it "names the path from the leader to the child session"
+(defdescribe child-traffic-test
+             (it "hides Council requests that the leader's own agents send"
                  (with-redefs [team/summary (constantly {:agents waiting-team})]
-                   (expect (= {:parent-id "leader" :text "Leader → A1 research · Read docs"}
-                              (team/breadcrumb "c1")))
-                   (expect (nil? (team/breadcrumb "unknown"))))))
+                   (let [ids (team/child-session-ids "leader")
+                         council (fn [author]
+                                   {:role :user
+                                    :request-kind :council
+                                    :council {"author_session_id" author}})]
+
+                     (expect (team/child-traffic? (council "c2") ids))
+                     (expect (not (team/child-traffic? (council "peer") ids)) "Peer messages stay")
+                     (expect (not (team/child-traffic? {:role :user :text "hi"} ids)))
+                     (expect (not (team/child-traffic? (council "c2") #{})))))))
+
+(defdescribe
+  timeline-test
+  (it "reads the timeline route and lists its steps with times"
+      (let [calls
+            (atom [])
+
+            body
+            (str "{\"session_id\":\"s 1\",\"items\":["
+                 "{\"at\":1700000000000,\"kind\":\"started\",\"text\":\"Fix the parser\"},"
+                 "{\"at\":1700000005000,\"kind\":\"note\",\"text\":\"Read tests\"},"
+                 "{\"at\":1700000064000,\"kind\":\"finished\",\"status\":\"completed\","
+                 "\"outcome\":\"passed\",\"text\":\"All pass\"}]}")]
+
+        (with-redefs [vis/request! (fn [method url _]
+                                     (swap! calls conj [method url])
+                                     {:status 200 :body body})]
+          (let [{:keys [items]} (team/timeline! "leader" "s 1")
+                utc (java.time.ZoneId/of "UTC")]
+
+            (expect (= [[:get "/v1/sessions/leader/agents/s+1/timeline"]] @calls))
+            (expect (= ["22:13:20  started  Fix the parser" "22:13:25  note  Read tests"
+                        "22:14:24  passed  All pass"]
+                       (mapv #(team/timeline-line % utc) items)))
+            (expect (= [:inspect :stop nil nil nil nil]
+                       (mapv :action (team/timeline-items {"status" "running"} {:items items}))))))
+        (with-redefs [vis/request! (constantly {:status 404})]
+          (expect (string? (:error (team/timeline! "leader" "s1"))))
+          (expect (some #(= "No steps yet" (:label %))
+                        (team/timeline-items {"status" "completed"} {:items []})))))))
+
+(defdescribe
+  child-breadcrumb-test
+  (it "names the path from the leader to the child session"
+      (with-redefs [team/summary (constantly {:agents waiting-team})]
+        (expect (= {:parent-id "leader" :text "Leader → research #1"} (team/breadcrumb "c1")))
+        (with-redefs [team/summary (constantly {:agents
+                                                (assoc-in waiting-team [1 "title"] "Fix parser")})]
+          (expect (= "Leader → implement Fix parser" (:text (team/breadcrumb "c2")))))
+        (expect (nil? (team/breadcrumb "unknown"))))))

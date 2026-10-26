@@ -208,6 +208,30 @@ it.each([
   }
 });
 
+// The team rows of the turn show the work of its subagents; a team call does not open into their answers.
+it.each([
+  ['council.run', false],
+  ['council.wait', false],
+  ['council.resume', false],
+  ['council.read', true],
+])('opens %s into its sections: %s', (operation, shown) => {
+  const activity = activityProjection();
+  activity.rows = [{
+    ...activity.rows[0],
+    operation,
+    state: 'succeeded',
+    presentation: {
+      headline: 'Council',
+      summary: '1 completed',
+      content: [],
+      sections: [{ headline: 'All 85 SDK tests pass and the answer is long', summary: 'Completed', content: [] }],
+    },
+  }];
+  paintActivity({ activity });
+  openEverySettledStep();
+  expect(document.body.textContent?.includes('All 85 SDK tests pass and the answer is long')).toBe(shown);
+});
+
 it('keeps embedded document headings and code inside their Activity step', () => {
   const activity = structuredClone(storyData.ACTIVITY_RESULTS);
   // Grep keeps only its summary, so the engine fixture has no code block. Give the

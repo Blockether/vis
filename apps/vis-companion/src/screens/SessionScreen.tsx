@@ -19,10 +19,9 @@ import {
   UserMessage,
 } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, useAgentTeam } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, dockTeams, useAgentTeam } from '../components/AgentTeam';
 import { AgentCrumb } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
-import { AgentInbox } from '../components/AgentInbox';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
 import {
   ComposerAttachmentPicker,
@@ -168,6 +167,8 @@ import type {
   RouterModelDetails,
   Toggle,
   GatewayAttachment,
+  RequestKind,
+  CouncilRequest,
 } from '../lib/types';
 import {
   beginVoiceAudioSession,
@@ -4612,9 +4613,14 @@ export function SessionScreen({
   // Subagents belong to the turn that started them, so each turn shows its own.
   const team = useAgentTeam(client, sid, hasRunningTurn, turns.length);
   const teams = useMemo(() => agentsByTurn(team.agents), [team.agents]);
+  // A team stands in the dock while its turn runs or an agent of it still works; then in its turn.
+  const docked = useMemo(
+    () => new Set(dockTeams(team.agents, sid, runningTurnId).map((members) => members[0].team_id)),
+    [team.agents, sid, runningTurnId],
+  );
   const teamFor = useCallback(
     (turnId: string | undefined) => {
-      const agents = turnId ? teams.get(turnId) : undefined;
+      const agents = turnId && !docked.has(turnId) ? teams.get(turnId) : undefined;
       return agents ? (
         <TurnAgents
           agents={agents}
@@ -4622,10 +4628,22 @@ export function SessionScreen({
           error={team.error}
           onOpen={onOpenSession}
           onCancel={team.cancel}
+          timeline={team.timeline}
         />
       ) : undefined;
     },
-    [teams, team.pending, team.error, team.cancel, onOpenSession],
+    [teams, docked, team.pending, team.error, team.cancel, team.timeline, onOpenSession],
+  );
+  // Traffic between this leader and its own subagents stays out of its transcript:
+  // the team rows show their work, and each child session keeps its own record.
+  const children = useMemo(
+    () => new Set(team.agents.filter((agent) => agent.parent_id === sid).map((agent) => agent.session_id)),
+    [team.agents, sid],
+  );
+  const isChildWake = useCallback(
+    (kind: RequestKind | undefined, council: CouncilRequest | undefined) =>
+      kind === 'council' && council?.author_session_id != null && children.has(council.author_session_id),
+    [children],
   );
   // Activity is transcript-native, like in the TUI. Resolve its live picture before
   // building either row owner so optimistic and persisted handoff paints one slot.
@@ -4788,7 +4806,7 @@ export function SessionScreen({
         // scroll position when you flew up into a turn on iOS.
         return (
           <div className={index === 0 ? '' : 'mt-10'} key={turn.turn_id} data-turn-id={turn.turn_id}>
-            {(request || (turn.attachments?.length ?? 0) > 0) && (
+            {(request || (turn.attachments?.length ?? 0) > 0) && !isChildWake(turn.request_kind, turn.council) && (
               <UserMessage
                 position={turn.position}
                 createdAt={turn.created_at}
@@ -4819,6 +4837,7 @@ export function SessionScreen({
       }),
     [
       teamFor,
+      isChildWake,
       visibleTurns,
       turnsSettled,
       hasRunningTurn,
@@ -4875,7 +4894,8 @@ export function SessionScreen({
         data-live="true"
         data-turn-id={runningTurn.id}
       >
-        {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) && (
+        {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) &&
+          !isChildWake(runningTurn.requestKind, runningTurn.council) && (
           <UserMessage
             position={runningTurn.position}
             createdAt={runningTurn.createdAt ?? runningTurn.startedAt}
@@ -4910,6 +4930,7 @@ export function SessionScreen({
     );
   }, [
     teamFor,
+    isChildWake,
     runningTurn,
     turns.length,
     openedAt,
@@ -4933,7 +4954,8 @@ export function SessionScreen({
         data-settling="true"
         data-turn-id={settlingTurn.id}
       >
-        {(settlingTurn.request || (attachments?.length ?? 0) > 0) && (
+        {(settlingTurn.request || (attachments?.length ?? 0) > 0) &&
+          !isChildWake(settlingTurn.requestKind, settlingTurn.council) && (
           <UserMessage
             position={settlingTurn.position}
             createdAt={settlingTurn.createdAt ?? settlingTurn.startedAt}
@@ -4958,6 +4980,7 @@ export function SessionScreen({
     );
   }, [
     teamFor,
+    isChildWake,
     settlingShown,
     settlingTurn,
     turns.length,
@@ -5534,15 +5557,16 @@ export function SessionScreen({
               />
             )}
 
-            {/* The open requests of this session's agents, then its live team, above the composer. */}
-            <AgentInbox agents={team.agents} sid={sid} pending={team.pending} actions={team} onOpen={onOpenSession} />
+            {/* The live team of this session, above the composer. */}
             <AgentDock
               agents={team.agents}
               sid={sid}
+              runningTurnId={runningTurnId}
               pending={team.pending}
               error={team.error}
               onOpen={onOpenSession}
               onCancel={team.cancel}
+              timeline={team.timeline}
             />
 
             <ComposerSuggestions

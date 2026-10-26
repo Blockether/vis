@@ -33,41 +33,43 @@
 
 (defdescribe
   canonical-agent-routes-and-validation-test
-  (it "canonical agent routes and validation"
-      (doseq [[path methods]
-              [["/v1/sessions/:sid/agents" [:get :post]] ["/v1/sessions/:sid/agents/answer" [:post]]
-               ["/v1/sessions/:sid/agents/cancel" [:post]]
-               ["/v1/sessions/:sid/agents/deny" [:post]] ["/v1/sessions/:sid/agents/extend" [:post]]
-               ["/v1/sessions/:sid/agents/grant" [:post]]
-               ["/v1/sessions/:sid/agents/resume" [:post]]
-               ["/v1/sessions/:sid/agents/route" [:post]] ["/v1/sessions/:sid/agents/run" [:post]]
-               ["/v1/sessions/:sid/agents/wait" [:post]]]
+  (it
+    "canonical agent routes and validation"
+    (doseq [[path methods]
+            [["/v1/sessions/:sid/agents" [:get :post]] ["/v1/sessions/:sid/agents/answer" [:post]]
+             ["/v1/sessions/:sid/agents/cancel" [:post]] ["/v1/sessions/:sid/agents/deny" [:post]]
+             ["/v1/sessions/:sid/agents/extend" [:post]] ["/v1/sessions/:sid/agents/grant" [:post]]
+             ["/v1/sessions/:sid/agents/resume" [:post]] ["/v1/sessions/:sid/agents/route" [:post]]
+             ["/v1/sessions/:sid/agents/run" [:post]] ["/v1/sessions/:sid/agents/wait" [:post]]
+             ["/v1/sessions/:sid/agents/:child-id/timeline" [:get]]]
 
-              method
-              methods]
+            method
+            methods]
 
-        (expect (some? (contract/operation method path))))
-      (let [db
-            (h/store)
+      (expect (some? (contract/operation method path))))
+    (let [db
+          (h/store)
 
-            leader
-            (str (h/store-session! db {:channel :api}))
+          leader
+          (str (h/store-session! db {:channel :api}))
 
-            path
-            (str "/v1/sessions/" leader "/agents")]
+          path
+          (str "/v1/sessions/" leader "/agents")]
 
-        (with-redefs [lp/db-info
-                      (constantly db)
+      (with-redefs [lp/db-info
+                    (constantly db)
 
-                      lp/env-for
-                      (fn [_]
-                        (expect false "Listing a team must not bootstrap a session"))]
+                    lp/env-for
+                    (fn [_]
+                      (expect false "Listing a team must not bootstrap a session"))]
 
-          (expect (= [] (json/read-json (:body (request :get path nil)))))
-          (doseq [body ["[]" "not json" "{}" (json/write-json-str {:task " "})
-                        "{\"task\":\"Work\",\"iteration_budget\":0}"]]
-            (expect (= 400 (:status (request :post path body))) body))
-          (expect (= 404 (:status (request :get "/v1/sessions/unknown/agents" nil))))))))
+        (expect (= [] (json/read-json (:body (request :get path nil)))))
+        (doseq [body ["[]" "not json" "{}" (json/write-json-str {:task " "})
+                      "{\"task\":\"Work\",\"iteration_budget\":0}"]]
+          (expect (= 400 (:status (request :post path body))) body))
+        (expect (= 404 (:status (request :get "/v1/sessions/unknown/agents" nil))))
+        (expect (= 404 (:status (request :get (str path "/missing/timeline") nil)))
+                "A timeline needs a subagent of the session")))))
 
 ;; Regression for #405: every managed-child operation has a gateway route.
 (defdescribe

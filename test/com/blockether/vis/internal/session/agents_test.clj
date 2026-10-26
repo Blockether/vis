@@ -1838,6 +1838,7 @@
                      (expect (str/includes? text "return at the first event"))
                      (expect (str/includes? text "Start one verifier early"))
                      (expect (str/includes? text "End with the complete result and its evidence"))
+                     (expect (str/includes? text "call council.result(text)"))
                      (expect (not (str/includes? text "orchestration is on")))))))
 
 ;; Regression for #405: only a finished child with iterations left can resume.
@@ -1928,3 +1929,112 @@
                                      nil
                                      (catch clojure.lang.ExceptionInfo e (ex-message e))))
                              (name operation))))))
+
+;; Subagent views: people see a short title, a one-line result and a timeline of each child.
+(defdescribe
+  child-title-result-and-timeline-test
+  (it "accepts a one-line title of 1 to 40 characters and a one-line result"
+      (expect (document/valid-json? "agents" "spawn" {"task" "x" "title" "Fix login test"}))
+      (expect (document/valid-json? "agents" "run" {"tasks" [{"task" "x" "title" "Audit"}]}))
+      (doseq [bad ["" " " (apply str (repeat 41 "x")) "Two\nlines"]]
+        (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "title" bad})) bad))
+      (expect (document/valid-json? "agents" "result" {"text" "All pass" "outcome" "passed"}))
+      (expect (not (document/valid-json? "agents" "result" {"text" "All pass" "outcome" "maybe"})))
+      (expect (not (document/valid-json? "agents" "result" {"text" "a\nb"}))))
+  (it
+    "stores council.result and else the first line of the answer, and a resume clears it"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          reported
+          (child! db leader {:title "Run the suite" :role "verify"})
+
+          answer
+          (fn [sid text]
+            (with-redefs [ps/db-list-session-turns (fn [_ id]
+                                                     (if (= sid (str id))
+                                                       [{:id "t"
+                                                         :status :success
+                                                         :content [{"type" "prose"
+                                                                    "markdown" text}]}]
+                                                       []))]
+              (agents/finish! db sid "completed")))]
+
+      (expect (= "Run the suite" (:title (agents/info db reported))))
+      (expect (= :invalid-request
+                 (outcome #(agents/report-result {:db-info db :session-id leader} "Done")))
+              "Only a subagent reports a result")
+      (expect (= :invalid-request
+                 (outcome #(agents/report-result {:db-info db :session-id reported}
+                                                 "Done"
+                                                 {"outcome" "maybe"}))))
+      (agents/report-result {:db-info db :session-id reported}
+                            " 42 tests pass "
+                            {"outcome" "passed"})
+      (answer reported "Long answer\nwith details")
+      (let [row (agents/info db reported)]
+        (expect (= ["completed" "42 tests pass" "passed"] ((juxt :status :result :outcome) row)))
+        (expect (pos-int? (:finished_at row))))
+      (let [plain (child! db leader {})]
+        (expect (nil? (:title (agents/info db plain))))
+        (answer plain "## **Found the cause**\n\nThe parser drops a newline.")
+        (expect (= "Found the cause" (:result (agents/info db plain)))))
+      (ps/db-agent-resume! db reported 1 (System/currentTimeMillis))
+      (let [row (agents/info db reported)]
+        (expect (= "queued" (:status row)))
+        (expect (every? #(not (contains? row %)) [:result :outcome :finished_at])))))
+  (it
+    "lists the turns, notes, messages and end of a child, oldest first"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:title "Check docs"})
+
+          t0
+          (:created_at (agents/info db child))]
+
+      (agents/report-result {:db-info db :session-id child} "Docs are current")
+      (with-redefs [ps/db-list-session-turns
+                    (constantly [])
+
+                    ps/db-list-session-turns-meta
+                    (fn [_ _]
+                      [{:id "old" :created-at (- t0 60000)} {:id "t1" :created-at (+ t0 10)}
+                       {:id "t2" :created-at (+ t0 50)}])
+
+                    ps/db-list-session-turn-iterations
+                    (fn [_ turn-id]
+                      (case turn-id
+                        "t1"
+                        [{:position 1
+                          :created-at (+ t0 30)
+                          :finished-at (+ t0 40)
+                          :assistant-prose "I read the docs."
+                          :council-publications [{:entry_id 7}]}
+                         {:position 0 :created-at (+ t0 20) :assistant-prose "I start."}]
+
+                        "t2"
+                        [{:position 0 :created-at (+ t0 60) :assistant-prose " "}]
+
+                        []))
+
+                    ps/db-council-get
+                    (fn [_ id]
+                      (when (= 7 id) {:entry_id 7 :content "A finding"}))]
+
+        (agents/finish! db child "completed")
+        (let [view (agents/timeline db leader child)]
+          (expect (= [["started" nil] ["note" "I start."] ["note" "I read the docs."]
+                      ["message" "A finding"] ["continued" nil] ["finished" "Docs are current"]]
+                     (mapv (juxt :kind :text) (:items view))))
+          (expect (= "completed" (:status (peek (:items view)))))
+          (expect (document/valid-json? "agents" "timeline" (walk/stringify-keys view)))
+          (expect (= :session-not-found (outcome #(agents/timeline db child child)))
+                  "Only the parent reads the timeline of its child"))))))

@@ -30,6 +30,12 @@ class Subagent:
     activity: str | None = None
     usage: dict[str, Any] | None = None
     files: dict[str, list[str]] | None = None
+    title: str | None = None
+    result: str | None = None
+    outcome: str | None = None
+    created_at: int | None = None
+    resumed_at: int | None = None
+    finished_at: int | None = None
 
     @classmethod
     def from_wire(cls, value: dict[str, Any]) -> Subagent:

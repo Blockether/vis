@@ -536,6 +536,7 @@
    "council.ask" ["Ask parent" "Asked parent" true]
    "council.ask_budget" ["Ask parent for iterations" "Asked parent for iterations" true]
    "council.ask_files" ["Ask parent for files" "Asked parent for files" true]
+   "council.result" ["Report result" "Reported result" false]
    "automations.list" ["List automations" "Listed automations" false]
    "automations.get" ["Read automation" "Read automation" false]
    "automations.create" ["Create automation" "Created automation" false]
@@ -834,6 +835,19 @@
                          :else "No files granted"))
        "content"
        (if (util/non-blank-string? (field value "reply")) (council-body value "reply") [])}
+
+      "council.result"
+      {"headline" headline
+       "summary" (str (case (field value "outcome")
+                        "passed"
+                        "Passed · "
+
+                        "failed"
+                        "Failed · "
+
+                        "")
+                      (field value "text"))
+       "content" []}
 
       "council.ask_budget"
       (let [granted (field value "granted")]

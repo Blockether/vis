@@ -31,7 +31,7 @@ import { approxBytes, registerMemoryOwner, registerMemorySource, type MemoryCell
 import { flattenSettings, replaceSetting } from './setting-tree';
 import { randomUuid } from './uuid';
 import type {
-  AgentFiles,
+  AgentTimeline,
   ArchiveView,
   AuthFlow,
   AuthVerdict,
@@ -4205,41 +4205,19 @@ export class GatewayClient {
     return this.request('GET', `/v1/sessions/${encodeURIComponent(sid)}/agents`, undefined, signal);
   }
 
+  /** The steps of child `childId` of `sid`, oldest first, with their times. */
+  async agentTimeline(sid: string, childId: string, signal?: AbortSignal): Promise<AgentTimeline> {
+    return this.request(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(childId)}/timeline`,
+      undefined,
+      signal,
+    );
+  }
+
   async cancelAgent(sid: string, childId: string): Promise<void> {
     await this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/agents/cancel`, {
       session_id: childId,
-    });
-  }
-
-  /** Answer the open question of child `childId` for its parent `sid`. */
-  async answerAgent(sid: string, childId: string, text: string): Promise<Subagent[]> {
-    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/agents/answer`, {
-      session_id: childId,
-      text,
-    });
-  }
-
-  /** Give child `childId` more iterations; this answers its budget request. */
-  async extendAgent(sid: string, childId: string, iterations: number): Promise<Subagent[]> {
-    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/agents/extend`, {
-      session_id: childId,
-      iterations,
-    });
-  }
-
-  /** Refuse the open budget or file request of child `childId`. */
-  async denyAgent(sid: string, childId: string, reason: string): Promise<Subagent[]> {
-    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/agents/deny`, {
-      session_id: childId,
-      reason,
-    });
-  }
-
-  /** Give child `childId` the files that it asks for. */
-  async grantAgent(sid: string, childId: string, files: AgentFiles): Promise<Subagent[]> {
-    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/agents/grant`, {
-      session_id: childId,
-      files,
     });
   }
 

@@ -175,6 +175,8 @@ CREATE TABLE session_agent (
   task             TEXT NOT NULL CHECK (trim(task) <> ''),
   -- A label for people from the agents contract, for example research. It sets no limit.
   role             TEXT,
+  -- A short one-line label for people from council.run. NULL = people see the child number.
+  title            TEXT CHECK (title IS NULL OR length(title) BETWEEN 1 AND 40),
   status           TEXT NOT NULL DEFAULT 'queued'
                    CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'budget_limited')),
   depth            INTEGER NOT NULL CHECK (depth BETWEEN 1 AND 2),
@@ -191,6 +193,12 @@ CREATE TABLE session_agent (
   -- council.resume: the turn count before the follow-up task, and when it started.
   resumed_turns    INTEGER NOT NULL DEFAULT 0 CHECK (resumed_turns >= 0),
   resumed_at       INTEGER,
+  -- The one-line result of the current task: from council.result or the answer's first line.
+  result           TEXT,
+  -- The outcome of a verify child from council.result. NULL = the child gave none.
+  outcome          TEXT CHECK (outcome IS NULL OR outcome IN ('passed', 'failed')),
+  -- When the current task ended. NULL = the task runs or never ended.
+  finished_at      INTEGER,
   UNIQUE (parent_id, spawn_key),
   CHECK (session_id <> parent_id AND session_id <> leader_id)
 );

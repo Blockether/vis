@@ -1,64 +1,110 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
+import { STORY_AGENT_LEADER, STORY_AGENT_LIVE_TURN, STORY_DONE_TEAM, STORY_LIVE_TEAM, storyTimeline } from '../dev/story-agents';
 import type { Subagent } from '../lib/types';
+import { AgentCrumb } from './AgentCrumb';
+import { AgentDock } from './AgentDock';
 import { TurnAgents } from './AgentTeam';
 
-const child: Subagent = {
-  session_id: 'contract-review', parent_id: 'leader', leader_id: 'leader', team_id: 'turn-1',
-  task: 'Verify the SDK contract and report remaining risks', status: 'running',
-  iteration_budget: 32, iterations_used: 4, provider: 'openai', model: 'gpt-5',
-  routing_locked: true, usage: { cost_usd: 0.0123 },
-};
+const timeline = fn(async (child: string) => {
+  const agent = [...STORY_LIVE_TEAM, ...STORY_DONE_TEAM].find((row) => row.session_id === child);
+  return agent ? storyTimeline(agent) : { session_id: child, items: [] };
+});
 
 const meta = {
-  title: 'Session/Turn agents', component: TurnAgents,
+  title: 'Session/Subagents',
+  component: TurnAgents,
   parameters: { layout: 'padded' },
-  args: { agents: [child], pending: null, onOpen: fn(), onCancel: fn() },
+  args: { agents: STORY_DONE_TEAM, pending: null, onOpen: fn(), onCancel: fn(), timeline },
 } satisfies Meta<typeof TurnAgents>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Live: Story = {
-  args: {
-    agents: [
-      { ...child, session_id: 'done', status: 'completed', iterations_used: 3, role: 'audit' },
-      { ...child, session_id: 'working', task: 'List the components that render the team', role: 'research', iterations_used: 12, activity: 'Search files AgentTeam' },
-      { ...child, session_id: 'asking', task: 'Count the Clojure sources', question: 'Should I count tests in test/ or only sources in src/?', role: 'research' },
-      { ...child, session_id: 'blocked', task: 'Release the bundle', pending_input: true, pending_input_count: 2, role: 'implement' },
-      { ...child, session_id: 'check', task: 'Run the gateway tests', role: 'verify', activity: 'Run tests agents-test' },
-    ],
-  },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    expect(canvas.getByText('needs you ×2')).toBeVisible();
-    expect(canvas.getByText('asks leader')).toBeVisible();
-    expect(canvas.getByText('4/32')).toBeVisible();
-    expect(canvas.getByText('Search files AgentTeam')).toBeVisible();
-  },
-};
-
-export const Expanded: Story = {
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole('button', { expanded: false }));
-    await userEvent.click(canvas.getByRole('button', { name: 'Stop agent' }));
-    expect(canvas.getByRole('button', { name: 'Confirm stop' })).toBeVisible();
-    await userEvent.click(canvas.getByRole('button', { name: 'Keep working' }));
-  },
-};
-
+/** The finished team in its turn of the transcript: final statuses, results and durations. */
 export const Finished: Story = {
-  args: {
-    agents: [
-      { ...child, session_id: 'a', status: 'completed' },
-      { ...child, session_id: 'b', status: 'failed', task: 'Run the native tests' },
-      { ...child, session_id: 'c', status: 'budget_limited', iterations_used: 32, task: 'Review the gateway routes' },
-    ],
-  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    expect(canvas.getByText('done')).toBeVisible();
-    await userEvent.click(canvas.getAllByRole('button', { expanded: false })[0]);
-    expect(canvas.queryByRole('button', { name: 'Stop agent' })).toBeNull();
+    await expect(canvas.getByText('out of budget')).toBeVisible();
+    await expect(canvas.getByText('passed')).toBeVisible();
+    await expect(canvas.getByText('#3')).toBeVisible();
+    await expect(canvasElement.querySelector('svg')).toBeNull();
+  },
+};
+
+/** The dock above the composer while the turn runs: one row for each agent of the turn. */
+export const Dock: Story = {
+  render: (args) => (
+    <AgentDock {...args} agents={STORY_LIVE_TEAM} sid={STORY_AGENT_LEADER} runningTurnId={STORY_AGENT_LIVE_TURN} />
+  ),
+  play: async ({ canvasElement }) => {
+    const dock = within(canvasElement).getByRole('region', { name: 'Subagents of this turn' });
+    for (const word of ['running', 'needs you', 'queued', 'passed']) await expect(within(dock).getByText(word)).toBeVisible();
+    await expect(within(dock).getAllByText('asking')).toHaveLength(2);
+    await expect(dock.querySelector('svg')).toBeNull();
+  },
+};
+
+const waiting = STORY_LIVE_TEAM.filter((agent) =>
+  agent.pending_input || agent.question || agent.budget_request || agent.files_request);
+
+/**
+ * Agents that wait: on their leader (asking, with the question as the line) or on a
+ * form (needs you). The rows only read; the leader answers, the form prompt asks you.
+ */
+export const AskingRow: Story = {
+  render: (args) => (
+    <AgentDock {...args} agents={waiting} sid={STORY_AGENT_LEADER} runningTurnId={STORY_AGENT_LIVE_TURN} />
+  ),
+  play: async ({ canvasElement }) => {
+    const dock = within(canvasElement).getByRole('region', { name: 'Subagents of this turn' });
+    await expect(within(dock).getAllByText('asking').length).toBeGreaterThan(0);
+    await expect(within(dock).getByText('needs you')).toBeVisible();
+    for (const control of [/Answer/, /Grant/, /Deny/, /Later/]) {
+      await expect(within(dock).queryByRole('button', { name: control })).toBeNull();
+    }
+    await userEvent.click(within(dock).getByRole('button', { name: /needs you/ }));
+    await expect(await within(document.body).findByRole('dialog')).toBeVisible();
+  },
+};
+
+/** A row opens the timeline of its agent, with the way into its session. */
+export const Timeline: Story = {
+  args: { agents: STORY_LIVE_TEAM },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('button', { name: /Map the agents routes/ }));
+    const sheet = await within(document.body).findByRole('dialog', { name: 'Map the agents routes' });
+    await expect(await within(sheet).findByRole('list', { name: 'Timeline' })).toBeVisible();
+    await expect(within(sheet).getByRole('button', { name: 'Open session' })).toBeVisible();
+  },
+};
+
+/** The timeline of a finished verify agent ends with its verdict and its result. */
+export const TimelineFinished: Story = {
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole('button', { name: /Unit tests/ }));
+    const sheet = await within(document.body).findByRole('dialog', { name: 'Unit tests' });
+    await expect(await within(sheet).findByText(/38 of 38 tests pass/)).toBeVisible();
+  },
+};
+
+/** The header of a child session: the way back to its leader, and the name and status of the agent. */
+export const ChildCrumb: Story = {
+  args: { agents: STORY_LIVE_TEAM },
+  render: (args) => <AgentCrumb sid="live-native" parentId={STORY_AGENT_LEADER} agents={args.agents} onOpen={fn()} />,
+};
+
+const empty: Subagent[] = [];
+
+/** A turn without agents shows no block and no dock. */
+export const EmptyTeam: Story = {
+  args: { agents: empty },
+  render: (args) => (
+    <div data-empty-team>
+      <TurnAgents {...args} />
+      <AgentDock {...args} sid={STORY_AGENT_LEADER} runningTurnId={STORY_AGENT_LIVE_TURN} />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector('[data-empty-team]')).toBeEmptyDOMElement();
   },
 };

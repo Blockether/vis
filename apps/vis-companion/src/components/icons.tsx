@@ -24,13 +24,11 @@ import {
   CircleDot,
   CircleSlash,
   CircleX,
-  Cog,
   Copy,
   Crop,
   Download,
   EllipsisVertical,
   Eraser,
-  Eye,
   Folder,
   FolderPlus,
   GitFork,
@@ -55,7 +53,6 @@ import {
   Settings,
   Share2,
   Square,
-  SquareCheck,
   SquarePen,
   Star,
   SwatchBook,
@@ -518,22 +515,4 @@ export function CircleSlashIcon({ className }: { className?: string }) {
 /** A warning that belongs in the status column, where the triangle would not fit the ring. */
 export function CircleAlertIcon({ className }: { className?: string }) {
   return <Mark icon={CircleAlert} className={className} />;
-}
-
-/**
- * The mark of each subagent role in the agents contract: a lens for research, a
- * gear for implement, a checked box for verify and an eye for audit. Roles are
- * not states, so none of them is a ring.
- */
-export const ROLE_ICONS: Readonly<Record<string, LucideIcon>> = {
-  research: Search,
-  implement: Cog,
-  verify: SquareCheck,
-  audit: Eye,
-};
-
-/** The mark of one subagent role, or nothing for a role that this build does not know. */
-export function RoleIcon({ role, className }: { role: string; className?: string }) {
-  const icon = ROLE_ICONS[role];
-  return icon ? <Mark icon={icon} className={className} /> : null;
 }

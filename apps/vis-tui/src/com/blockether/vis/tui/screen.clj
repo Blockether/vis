@@ -2982,6 +2982,11 @@
 
     (min (long input-max-lines) (max (long input-min-lines) n))))
 
+(defn- running-turn-id
+  "The gateway id of the turn that runs now, or nil. The agent dock pins to its team."
+  [db]
+  (when (:loading? db) (:gateway-turn-id db)))
+
 (defn- composer-geometry
   "One geometry contract for the prompt, attachment rail, and echo boundary."
   [db cols rows]
@@ -2994,10 +2999,10 @@
         input-top
         (- (long rows) input-box-h (long footer/height))
 
-        ;; The agent Questions inbox stands above the attachment rail, inside the same band.
+        ;; The agent dock stands above the attachment rail, inside the same band.
         rail-h
         (+ (attachment-rail/rail-height (:attachments db))
-           (agent-team/inbox-height (get-in db [:session :id]) cols))
+           (agent-team/dock-height (get-in db [:session :id]) (running-turn-id db) cols))
 
         rail-top
         (- input-top rail-h)
@@ -3036,18 +3041,21 @@
   (or (not (project-sidebar-locked? db cols)) (and (:help-open? db) (projects/help-key? db key))))
 
 (defn- paint-attachment-rail!
-  "Paint the agent Questions inbox, then the attachment rail below it."
+  "Paint the agent dock, then the attachment rail below it."
   [g db rail-top cols]
   (let [sid
         (get-in db [:session :id])
 
-        inbox-h
-        (agent-team/inbox-height sid cols)]
+        running-turn
+        (running-turn-id db)
 
-    (agent-team/draw-inbox! g sid rail-top cols)
+        dock-h
+        (agent-team/dock-height sid running-turn cols)]
+
+    (agent-team/draw-dock! g sid running-turn rail-top cols)
     (attachment-rail/draw! g
                            (:attachments db)
-                           (+ (long rail-top) inbox-h)
+                           (+ (long rail-top) dock-h)
                            cols
                            {:focused? (:attachment-focus? db)
                             :focused-index (:attachment-index db)})))
@@ -3276,7 +3284,8 @@
                          ;; corrections (which move `total-h`) don't lurch the
                          ;; viewport / scrollbar thumb mid-scroll.
                          :prev-offsets (get-in db [:layout :offsets])
-                         :prev-row-anchors (get-in db [:layout :row-anchors])})
+                         :prev-row-anchors (get-in db [:layout :row-anchors])
+                         :running-turn-id (running-turn-id db)})
 
         layout-end-ns
         (System/nanoTime)
@@ -4105,7 +4114,8 @@
                          ;; estimate→real height fixes must keep the scrolled
                          ;; content visually put instead of lurching.
                          :prev-offsets (get-in db [:layout :offsets])
-                         :prev-row-anchors (get-in db [:layout :row-anchors])})
+                         :prev-row-anchors (get-in db [:layout :row-anchors])
+                         :running-turn-id (running-turn-id db)})
 
         layout-end-ns
         (System/nanoTime)
@@ -4441,7 +4451,8 @@
                         {:session-id (get-in db [:session :id])
                          :detail-expansions (:detail-expansions db)
                          :prev-offsets (get-in db [:layout :offsets])
-                         :prev-row-anchors (get-in db [:layout :row-anchors])})
+                         :prev-row-anchors (get-in db [:layout :row-anchors])
+                         :running-turn-id (running-turn-id db)})
 
         layout-end-ns
         (System/nanoTime)
@@ -8084,11 +8095,14 @@
                                                                                  [:session :agent
                                                                                   :parent-id])))]
                                         (switch-session! {:action :switch :id id}))))
-                 focus-agent-questions!
-                 (fn []
-                   (if (agent-team/focus-inbox! (current-session-id))
-                     (state/dispatch [:bump-render-version :full-frame])
-                     (vis/notify! "No agent asks you anything now" :level :info :ttl-ms 2000)))
+                 show-agent-timeline! (fn [child-id]
+                                        (when-not (:dialog-open? @state/app-db)
+                                          (when-let [id (with-dialog-lock
+                                                          #(agent-team/show-timeline!
+                                                             screen
+                                                             (current-session-id)
+                                                             child-id))]
+                                            (switch-session! {:action :switch :id id}))))
                  show-session-metrics! (fn []
                                          (when-not (:dialog-open? @state/app-db)
                                            (with-dialog-lock #(dlg/session-metrics-dialog!
@@ -8288,17 +8302,6 @@
                         (get-in db [:live-panel :focused?])
                         (live-panel-key! screen db key))
                    (recur)
-                   ;; The agent Questions inbox takes its keys only after C-x Q gave it focus,
-                   ;; or while the person types an answer to one question.
-                   (agent-team/inbox-owns-key? (get-in db [:session :id]) key)
-                   (do (agent-team/inbox-key!
-                         (get-in db [:session :id])
-                         key
-                         {:changed! #(state/dispatch [:bump-render-version :full-frame])
-                          :open-session! #(switch-session! {:action :switch :id %})
-                          :input-text #(input/input->text (:input @state/app-db))
-                          :reset-input! #(state/dispatch [:reset-input])})
-                       (recur))
                    (live-log-search-key! db key) (recur)
                    ;; An ARMED stop swallows it next: the human is typing the
                    ;; comment that travels with the interrupt, so no stroke of it
@@ -8557,6 +8560,9 @@
 
                                      :footer-agents
                                      (show-agent-team!)
+
+                                     :agent-timeline
+                                     (show-agent-timeline! (:text hit))
 
                                      :header-tasks
                                      (state/dispatch [:toggle-tasks])
@@ -8868,6 +8874,9 @@
                                  :footer-agents
                                  (show-agent-team!)
 
+                                 :agent-timeline
+                                 (show-agent-timeline! (:text hit))
+
                                  :header-tasks
                                  (state/dispatch [:toggle-tasks])
 
@@ -9041,6 +9050,9 @@
 
                                  :footer-agents
                                  (show-agent-team!)
+
+                                 :agent-timeline
+                                 (show-agent-timeline! (:text hit))
 
                                  :header-tasks
                                  (state/dispatch [:toggle-tasks])
@@ -9432,9 +9444,6 @@
                                      :agent-team
                                      (show-agent-team!)
 
-                                     :agent-questions
-                                     (focus-agent-questions!)
-
                                      :live-panel
                                      (open-live-panel!)
 
@@ -9682,10 +9691,6 @@
 
                          :session-metrics
                          (do (show-session-metrics!) (recur))
-
-                         ;; C-x Q — give the agent Questions inbox the keyboard.
-                         :agent-questions
-                         (do (focus-agent-questions!) (recur))
 
                          ;; C-x V — open the side panel or move the focus.
                          :live-panel

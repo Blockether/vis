@@ -6918,12 +6918,13 @@
                     sid
                     {:workspace-id ws
                      :through-turn-id through
-                     :title (subs (:task opts) 0 (min 80 (count (:task opts))))
+                     :title (or (:title opts) (subs (:task opts) 0 (min 80 (count (:task opts)))))
                      :agent {:parent_id sid
                              :leader_id sid
                              :team_id through
                              :task (:task opts)
                              :role (:role opts)
+                             :title (:title opts)
                              :iteration_budget budget
                              :allowed_models allowed
                              :files (not-empty files)

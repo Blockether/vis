@@ -1,15 +1,27 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
-import type { Subagent } from '../lib/types';
-import { ROLES, TurnAgents, agentsByTurn, useAgentTeam } from './AgentTeam';
-import { ROLE_ICONS } from './icons';
+import type { AgentTimeline, Subagent } from '../lib/types';
+import {
+  ROLES,
+  TurnAgents,
+  agentLabel,
+  agentStatus,
+  agentTime,
+  agentsByTurn,
+  clockTime,
+  dockTeams,
+  formatAgentTime,
+  useAgentTeam,
+} from './AgentTeam';
 
+const T0 = new Date(2026, 4, 3, 14, 3, 7).getTime();
 const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: 'leader', team_id: 'turn-1',
   task: 'Verify the contract', status: 'running', iteration_budget: 4, iterations_used: 2,
-  provider: 'p', model: 'small', routing_locked: true, usage: { cost_usd: 0.0123 } };
-const props = { pending: null, onOpen: vi.fn(), onCancel: vi.fn() };
+  provider: 'p', model: 'small', routing_locked: true, usage: { cost_usd: 0.0123 }, created_at: T0 };
+const empty = async (): Promise<AgentTimeline> => ({ session_id: 'child', items: [] });
+const props = { pending: null, onOpen: vi.fn(), onCancel: vi.fn(), timeline: vi.fn(empty) };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -17,102 +29,100 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+const rowTexts = () => screen.getAllByRole('button').map((row) => row.textContent);
+
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
-describe('turn agents', () => {
-  it('gives each agent one line with its state, and folds its details', () => {
-    render(<TurnAgents {...props} agents={[child]} />);
-    const row = screen.getByRole('button', { expanded: false });
-    expect(row).toHaveTextContent('A1');
-    expect(row).toHaveTextContent('2/4');
-    expect(row).toHaveTextContent('Verify the contract');
-    expect(screen.queryByText(/Human model lock/)).not.toBeInTheDocument();
-    fireEvent.click(row);
-    expect(row).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText(/small · Human model lock · 2 \/ 4 iterations · \$0.0123/)).toBeInTheDocument();
-  });
-
-  it('marks each contract role with its own Lucide icon', () => {
-    expect(ROLES.map((role) => role.const)).toEqual(['research', 'implement', 'verify', 'audit']);
-    expect(Object.keys(ROLE_ICONS)).toEqual(ROLES.map((role) => role.const));
-    expect(new Set(Object.values(ROLE_ICONS)).size).toBe(ROLES.length);
-  });
-
-  it('keeps one role together and the A-numbers in start order', () => {
-    render(<TurnAgents {...props} agents={[
-      { ...child, session_id: 'check', task: 'Run the tests', role: 'verify' },
-      { ...child, session_id: 'plain', task: 'No role' },
-      { ...child, session_id: 'read', task: 'Read the logs', role: 'research' },
-      { ...child, session_id: 'fix', task: 'Fix the bug', role: 'implement' },
-    ]} />);
-    const rows = screen.getAllByRole('button', { expanded: false });
-    expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringMatching(/^A3research.*Read the logs$/),
-      expect.stringMatching(/^A4implement.*Fix the bug$/),
-      expect.stringMatching(/^A1verify.*Run the tests$/),
-      expect.stringMatching(/^A2.*No role$/),
-    ]);
-    expect(screen.getByTitle('research: Finds facts').querySelector('svg')).toHaveClass('lucide-search');
-    fireEvent.click(rows[0]);
-    expect(screen.getByText(/research · small/)).toBeInTheDocument();
-  });
-
-  it('inspects an agent and confirms a stop', () => {
-    const onOpen = vi.fn(); const onCancel = vi.fn();
-    render(<TurnAgents {...props} agents={[child]} onOpen={onOpen} onCancel={onCancel} />);
-    fireEvent.click(screen.getByRole('button', { expanded: false }));
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect agent' }));
-    expect(onOpen).toHaveBeenCalledWith('child');
-    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
-    expect(onCancel).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
-    expect(onCancel).toHaveBeenCalledWith('child');
-  });
-
-  it('names done, blocked, asking and terminal agents, and offers no stop after the end', () => {
-    render(<TurnAgents {...props} agents={[
-      { ...child, session_id: 'done', status: 'completed' },
-      { ...child, session_id: 'blocked', pending_input: true, pending_input_count: 2 },
-      { ...child, session_id: 'asking', question: 'Count only src/?' },
-      { ...child, session_id: 'spent', status: 'budget_limited' },
-    ]} />);
-    expect(screen.getByText('done')).toBeInTheDocument();
-    expect(screen.getByText('needs you ×2')).toBeInTheDocument();
-    expect(screen.getByText('asks leader')).toBeInTheDocument();
-    expect(screen.getByText('budget used')).toBeInTheDocument();
-    // A child that waited on its leader showed only its iterations, as if it still worked.
-    fireEvent.click(screen.getByRole('button', { name: /asks leader/ }));
-    expect(screen.getByText('Count only src/?')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /asks leader/ }));
-    expect(screen.queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
-  });
-
-  it('puts an agent that waits for a person or the leader first, then the roles', () => {
-    render(<TurnAgents {...props} agents={[
-      { ...child, session_id: 'read', task: 'Read the logs', role: 'research' },
-      { ...child, session_id: 'spend', task: 'Wants budget', role: 'verify', budget_request: { iterations: 8 }, question: 'More?' },
-      { ...child, session_id: 'form', task: 'Needs a form', role: 'audit', pending_input: true },
-    ]} />);
-    expect(screen.getAllByRole('button', { expanded: false }).map((row) => row.textContent)).toEqual([
-      expect.stringMatching(/^A2verify.*Wants budget$/),
-      expect.stringMatching(/^A3audit.*Needs a form$/),
-      expect.stringMatching(/^A1research.*Read the logs$/),
+describe('agent rows', () => {
+  it('reads every status as words, with needs you and asking first', () => {
+    const words = [
+      { status: 'queued' }, { status: 'running' }, { question: 'Which branch?' }, { budget_request: { iterations: 8 } },
+      { files_request: { reason: 'Docs' } }, { pending_input: true, question: 'Both?' }, { status: 'completed' },
+      { status: 'completed', outcome: 'passed' }, { status: 'completed', outcome: 'failed' }, { status: 'failed' },
+      { status: 'cancelled' }, { status: 'budget_limited' },
+    ].map((change) => agentStatus({ ...child, ...change } as Subagent).text);
+    expect(words).toEqual([
+      'queued', 'running', 'asking', 'asking', 'asking', 'needs you', 'done',
+      'passed', 'failed', 'failed', 'cancelled', 'out of budget',
     ]);
   });
 
-  it('shows what a working agent does now with a bar for its budget', () => {
+  it('names an agent by its title, else by #N in the spawn order of its team', () => {
+    const team = [
+      { ...child, session_id: 'b', created_at: T0 + 2 },
+      { ...child, session_id: 'a', created_at: T0 + 1, title: '  Map routes ' },
+      { ...child, session_id: 'other', team_id: 'turn-2', created_at: T0 },
+    ];
+    expect(team.map((agent) => agentLabel(agent, team))).toEqual(['#2', 'Map routes', '#1']);
+  });
+
+  it('times the current task: so far while it runs, its duration after, none while queued', () => {
+    const resumed = { ...child, resumed_at: T0 + 60_000 };
+    expect(agentTime(child, T0 + 45_000)).toBe(45_000);
+    expect(agentTime(resumed, T0 + 90_000)).toBe(30_000);
+    expect(agentTime({ ...resumed, status: 'completed', finished_at: T0 + 244_000 }, 0)).toBe(184_000);
+    expect(agentTime({ ...child, status: 'queued' }, T0 + 9_000)).toBeUndefined();
+    expect(agentTime({ ...child, status: 'failed' }, T0 + 9_000)).toBeUndefined();
+    expect(agentTime({ ...child, created_at: undefined }, T0)).toBeUndefined();
+    expect([0, 45_999, 184_000, 3_725_000].map(formatAgentTime)).toEqual(['0s', '45s', '3m 04s', '1h 02m']);
+  });
+
+  it('gives each agent one row: role, name, status, now or result, time; without icons', () => {
+    vi.useFakeTimers({ now: T0 + 65_000 });
     const { container } = render(<TurnAgents {...props} agents={[
-      { ...child, activity: 'Patched ~/src/a.clj' },
-      { ...child, session_id: 'done', status: 'completed', activity: 'Old line' },
-      { ...child, session_id: 'asking', question: 'Which branch?', activity: 'Waits' },
+      { ...child, role: 'research', activity: 'Search files AgentTeam' },
+      { ...child, session_id: 'v', role: 'verify', title: 'Gateway tests', status: 'completed', outcome: 'failed',
+        result: '2 of 40 tests fail', activity: 'Old line', finished_at: T0 + 30_000, created_at: T0 + 1 },
+      { ...child, session_id: 'q', status: 'queued', created_at: T0 + 2 },
     ]} />);
+    expect(rowTexts()).toEqual([
+      'research#1runningSearch files AgentTeam1m 05s',
+      'verifyGateway testsfailed2 of 40 tests fail29s',
+      '#3queued',
+    ]);
+    expect(container.querySelector('svg')).toBeNull();
+    // A row without a line takes one line on a phone, not a blank second line.
+    const queued = container.querySelector('[data-agent-row="q"]')!;
+    expect(queued.querySelector('.order-last')).toHaveClass('hidden', 'sm:block');
+    expect(screen.getByText('Gateway tests')).toHaveAttribute('title', 'Verify the contract');
+    // The time ticks while an agent runs; no message is needed for it.
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(rowTexts()[0]).toBe('research#1runningSearch files AgentTeam1m 07s');
+  });
+
+  it('shows the open request of an asking agent as its line', () => {
+    render(<TurnAgents {...props} agents={[{ ...child, question: 'Count only src/?', activity: 'Waits' }]} />);
+    expect(rowTexts()[0]).toMatch(/^#1askingCount only src\/\?/);
     expect(screen.queryByText('Waits')).not.toBeInTheDocument();
-    expect(screen.getByText('Patched ~/src/a.clj')).toBeInTheDocument();
-    expect(screen.queryByText('Old line')).not.toBeInTheDocument();
-    const bars = container.querySelectorAll('[data-agent-progress]');
-    expect(bars).toHaveLength(1);
-    expect((bars[0].firstElementChild as HTMLElement).style.width).toBe('50%');
-    expect(screen.getByText('2/4')).toBeInTheDocument();
+  });
+
+  it('truncates a long title and a long result in their own columns, with the full text on hover', () => {
+    const long = 'A result line that is much longer than the row can show on a phone or a desk';
+    render(<TurnAgents {...props} agents={[{ ...child, title: 'T'.repeat(40), status: 'completed', result: long }]} />);
+    expect(screen.getByText('T'.repeat(40))).toHaveClass('truncate');
+    expect(screen.getByText(long)).toHaveClass('truncate');
+    expect(screen.getByText(long)).toHaveAttribute('title', long);
+  });
+
+  it('keeps the spawn order whatever the status', () => {
+    render(<TurnAgents {...props} agents={[
+      { ...child, session_id: 'late', created_at: T0 + 5, pending_input: true },
+      { ...child, session_id: 'early', created_at: T0 + 1, status: 'completed' },
+    ]} />);
+    expect(rowTexts()).toEqual([expect.stringMatching(/^#1done/), expect.stringMatching(/^#2needs you/)]);
+  });
+
+  // The form itself reaches the person through the form prompt of the leader session.
+  it('opens the timeline for an agent that needs a person, with no control for its requests', () => {
+    const onOpen = vi.fn();
+    render(<TurnAgents {...props} onOpen={onOpen} agents={[
+      { ...child, pending_input: true },
+      { ...child, session_id: 'asks', question: 'Keep the old API?', budget_request: { iterations: 8 } },
+    ]} />);
+    expect(screen.queryByRole('button', { name: /^(Answer|Grant|Deny|Later)/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /needs you/ }));
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   it('renders nothing for a turn without agents', () => {
@@ -120,6 +130,67 @@ describe('turn agents', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('keeps the contract roles in their order', () => {
+    expect(ROLES.map((role) => role.const)).toEqual(['research', 'implement', 'verify', 'audit']);
+  });
+});
+
+describe('agent timeline', () => {
+  const steps: AgentTimeline = { session_id: 'child', items: [
+    { at: T0, kind: 'started', text: 'Verify the contract' },
+    { at: T0 + 12_000, kind: 'note', text: 'The schema has the new fields.' },
+    { at: T0 + 40_000, kind: 'message', text: 'Asked: keep the old API?' },
+    { at: T0 + 61_000, kind: 'finished', status: 'completed', outcome: 'passed', text: 'All 40 tests pass' },
+  ] };
+
+  it('reads the steps of the selected agent with their times, and opens its session', async () => {
+    const timeline = vi.fn(async () => steps);
+    const onOpen = vi.fn();
+    render(<TurnAgents {...props} timeline={timeline} onOpen={onOpen} agents={[
+      { ...child, role: 'verify', status: 'completed', outcome: 'passed', finished_at: T0 + 61_000 },
+    ]} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /passed/ })); });
+    expect(timeline).toHaveBeenCalledWith('child');
+    const sheet = screen.getByRole('dialog', { name: '#1' });
+    const items = within(sheet).getAllByRole('listitem').map((item) => item.textContent);
+    expect(items).toEqual([
+      `${clockTime(T0)}StartedVerify the contract`,
+      `${clockTime(T0 + 12_000)}NoteThe schema has the new fields.`,
+      `${clockTime(T0 + 40_000)}MessageAsked: keep the old API?`,
+      `${clockTime(T0 + 61_000)}Finishedpassed · All 40 tests pass`,
+    ]);
+    expect(clockTime(T0)).toBe('14:03:07');
+    expect(sheet).toHaveTextContent('verifypassed1m 01s');
+    expect(sheet.querySelectorAll('svg')).toHaveLength(1);
+    expect(within(sheet).queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Open session' }));
+    expect(onOpen).toHaveBeenCalledWith('child');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('says when there are no steps, and shows a read error', async () => {
+    const timeline = vi.fn().mockResolvedValueOnce({ session_id: 'child', items: [] }).mockRejectedValue(new Error('Not found'));
+    const { rerender } = render(<TurnAgents {...props} timeline={timeline} agents={[child]} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
+    expect(screen.getByText('No steps yet.')).toBeInTheDocument();
+    // A step of the agent reads the timeline again; a clock tick does not.
+    await act(async () => { rerender(<TurnAgents {...props} timeline={timeline} agents={[{ ...child, iterations_used: 3 }]} />); });
+    expect(screen.getByRole('alert')).toHaveTextContent('Not found');
+    expect(timeline).toHaveBeenCalledTimes(2);
+  });
+
+  it('confirms a stop of a working agent', async () => {
+    const onCancel = vi.fn();
+    render(<TurnAgents {...props} onCancel={onCancel} agents={[child]} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
+    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
+    expect(onCancel).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
+    expect(onCancel).toHaveBeenCalledWith('child');
+  });
+});
+
+describe('teams', () => {
   it('groups agents by the turn that started them, in start order', () => {
     const groups = agentsByTurn([
       child,
@@ -129,11 +200,24 @@ describe('turn agents', () => {
     expect(groups.get('turn-1')?.map((agent) => agent.session_id)).toEqual(['child', 'second']);
     expect(groups.get('turn-2')?.map((agent) => agent.session_id)).toEqual(['later']);
   });
+
+  it('docks the team of the running turn and each team with a live agent, of this leader only', () => {
+    const done = { ...child, status: 'completed' as const };
+    const agents = [
+      { ...done, session_id: 'now', team_id: 'turn-3' },
+      { ...done, session_id: 'old', team_id: 'turn-1' },
+      { ...child, session_id: 'still', team_id: 'turn-2' },
+      { ...child, session_id: 'grandchild', team_id: 'child-turn', parent_id: 'still' },
+    ];
+    expect(dockTeams(agents, 'leader', 'turn-3').map((team) => team[0].team_id)).toEqual(['turn-3', 'turn-2']);
+    expect(dockTeams(agents, 'leader').map((team) => team[0].team_id)).toEqual(['turn-2']);
+    expect(dockTeams([], 'leader', 'turn-3')).toEqual([]);
+  });
 });
 
 function Team({ client, sid, running = false }: { client: GatewayClient; sid: string; running?: boolean }) {
   const team = useAgentTeam(client, sid, running);
-  return <TurnAgents agents={team.agents} pending={team.pending} error={team.error} onOpen={vi.fn()} onCancel={team.cancel} />;
+  return <TurnAgents agents={team.agents} pending={team.pending} error={team.error} onOpen={vi.fn()} onCancel={team.cancel} timeline={team.timeline} />;
 }
 
 describe('agent team reader', () => {
@@ -148,7 +232,7 @@ describe('agent team reader', () => {
     await act(async () => { vi.advanceTimersByTime(9000); });
     expect(agents).toHaveBeenCalledTimes(1);
     await act(async () => { first.resolve([child]); });
-    expect(screen.getByText('Verify the contract')).toBeInTheDocument();
+    expect(screen.getByTitle('Verify the contract')).toBeInTheDocument();
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
     await act(async () => { vi.advanceTimersByTime(3000); });
     expect(agents).toHaveBeenCalledTimes(1);
@@ -186,16 +270,16 @@ describe('agent team reader', () => {
     rerender(<Team client={client} sid="new" />);
     await act(async () => {});
     await act(async () => { old.resolve([child]); });
-    expect(screen.queryByText('Verify the contract')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Verify the contract')).not.toBeInTheDocument();
   });
 
   it('keeps a stop failure visible across background reads until a stop succeeds', async () => {
     vi.useFakeTimers();
     const agents = vi.fn().mockResolvedValue([child]);
     const cancelAgent = vi.fn().mockRejectedValue(new Error('Stop failed. Try again.'));
-    render(<Team client={{ agents, cancelAgent } as unknown as GatewayClient} sid="leader" />);
+    render(<Team client={{ agents, cancelAgent, agentTimeline: vi.fn(empty) } as unknown as GatewayClient} sid="leader" />);
     await act(async () => {});
-    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
     expect(cancelAgent).toHaveBeenCalledWith('leader', 'child');

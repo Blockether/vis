@@ -1,193 +1,285 @@
 import { useCallback, useEffect, useState } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
-import type { AgentFiles, Subagent } from '../lib/types';
-import {
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CircleDashedIcon,
-  CircleDotIcon,
-  ChevronIcon,
-  CircleXIcon,
-  MARK_NUDGE,
-  RoleIcon,
-} from './icons';
+import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
+import { Button, DialogFrame, Modal } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
-
-// Rows of one role stand together in contract order; a row without a role comes last.
-const roleRank = (agent: Subagent) => {
-  const rank = ROLES.findIndex((role) => role.const === agent.role);
-  return rank < 0 ? ROLES.length : rank;
-};
 
 /** The agent waits for a person or for its parent: a form, a question or a request. */
 export const isAsking = (agent: Subagent) =>
   Boolean(agent.pending_input || agent.question || agent.budget_request || agent.files_request);
 
-// An agent that waits comes first, then the roles in contract order.
-const rowRank = (agent: Subagent) => (isAsking(agent) ? 0 : 1) * (ROLES.length + 1) + roleRank(agent);
-
-/** The agents of one turn with their A-numbers (start order), asking agents first, then by role. */
-export function rankedAgents(agents: readonly Subagent[]): { agent: Subagent; index: number }[] {
-  return agents.map((agent, index) => ({ agent, index })).sort((a, b) => rowRank(a.agent) - rowRank(b.agent));
-}
-
-// Each state is a SHAPE, with colour that agrees, like the live-view rail.
-// Colour alone is not a state for every reader.
-export function agentMark(agent: Subagent): { Mark: typeof CircleDotIcon; ink: string; text: string } {
-  if (agent.pending_input) {
-    const open = agent.pending_input_count ?? 1;
-    return { Mark: CircleAlertIcon, ink: 'text-warn', text: open > 1 ? `needs you ×${open}` : 'needs you' };
-  }
-  if (agent.question || agent.budget_request || agent.files_request) {
-    return { Mark: CircleDotIcon, ink: 'text-warn', text: 'asks leader' };
-  }
-  switch (agent.status) {
-    case 'running':
-      return { Mark: CircleDotIcon, ink: 'text-accent-ink', text: `${agent.iterations_used}/${agent.iteration_budget}` };
-    case 'completed':
-      return { Mark: CircleCheckIcon, ink: 'text-ok', text: 'done' };
-    case 'failed':
-      return { Mark: CircleXIcon, ink: 'text-err', text: 'failed' };
-    case 'queued':
-      return { Mark: CircleDashedIcon, ink: 'text-dialog-hint', text: 'queued' };
-    case 'cancelled':
-      return { Mark: CircleDashedIcon, ink: 'text-dialog-hint', text: 'stopped' };
-    default:
-      return { Mark: CircleAlertIcon, ink: 'text-dialog-hint', text: 'budget used' };
-  }
-}
-
-// A finished agent shows only its green check.
-const quiet = (agent: Subagent) => agent.status === 'completed' && !isAsking(agent);
+// The agent asks its parent, not a person: a question, more iterations or files.
+const asksParent = (agent: Subagent) => Boolean(agent.question || agent.budget_request || agent.files_request);
 
 export const isLive = (agent: Subagent) => ['queued', 'running'].includes(agent.status);
 
-/**
- * A thin bar for the used part of the iteration budget. The `n/m` text in the row says
- * the same for readers, so the bar is hidden from assistive technology.
- */
-export function AgentProgress({ agent, className = '' }: { agent: Subagent; className?: string }) {
-  const share = agent.iteration_budget > 0 ? Math.min(1, agent.iterations_used / agent.iteration_budget) : 0;
-  return (
-    <span aria-hidden data-agent-progress className={`relative block h-0.5 shrink-0 bg-edge-strong ${className}`}>
-      <span style={{ width: `${Math.round(share * 100)}%` }} className="absolute inset-y-0 left-0 bg-accent" />
-    </span>
-  );
+/** The agents of one team in spawn order: by `created_at`, then in the order of the gateway. */
+export function spawnOrder(agents: readonly Subagent[]): Subagent[] {
+  return agents
+    .map((agent, index) => ({ agent, index }))
+    .sort((a, b) => (a.agent.created_at ?? 0) - (b.agent.created_at ?? 0) || a.index - b.index)
+    .map(({ agent }) => agent);
 }
 
-// Actions read as text, so they start on the same edge as the lines they act on.
-const LINK = 'rounded-none font-bold hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50';
+/** The name of an agent for people: its title, else `#N`, its place in the spawn order of its team. */
+export function agentLabel(agent: Subagent, agents: readonly Subagent[]): string {
+  if (agent.title?.trim()) return agent.title.trim();
+  const team = spawnOrder(agents.filter((other) => other.team_id === agent.team_id));
+  return `#${team.findIndex((other) => other.session_id === agent.session_id) + 1}`;
+}
+
+/** The status words of an agent, with the theme ink that agrees with them. Text only, no marks. */
+export function agentStatus(agent: Subagent): { text: string; ink: string } {
+  if (agent.pending_input) return { text: 'needs you', ink: 'text-warn' };
+  if (asksParent(agent)) return { text: 'asking', ink: 'text-warn' };
+  switch (agent.status) {
+    case 'queued':
+      return { text: 'queued', ink: 'text-dialog-hint' };
+    case 'running':
+      return { text: 'running', ink: 'text-accent-ink' };
+    case 'completed':
+      if (agent.outcome === 'passed') return { text: 'passed', ink: 'text-ok-ink' };
+      if (agent.outcome === 'failed') return { text: 'failed', ink: 'text-err-ink' };
+      return { text: 'done', ink: 'text-ok-ink' };
+    case 'failed':
+      return { text: 'failed', ink: 'text-err-ink' };
+    case 'cancelled':
+      return { text: 'cancelled', ink: 'text-dialog-hint' };
+    default:
+      return { text: 'out of budget', ink: 'text-warn' };
+  }
+}
+
+// The start of the current task: the spawn, or the last resume.
+function startOf(agent: Subagent): number | undefined {
+  const marks = [agent.created_at, agent.resumed_at].filter((mark): mark is number => typeof mark === 'number');
+  return marks.length ? Math.max(...marks) : undefined;
+}
 
 /**
- * The subagents that one turn started, in that turn of the transcript. The rows
- * stay where the work happened: live while the turn runs, then for review.
+ * The time of the current task in ms: the time so far while the agent runs, the
+ * duration when its task ended. A queued agent has no time yet.
  */
-export function TurnAgents({ agents, pending, error, onOpen, onCancel }: {
+export function agentTime(agent: Subagent, now: number): number | undefined {
+  const start = startOf(agent);
+  if (start === undefined || agent.status === 'queued') return undefined;
+  if (agent.status === 'running') return Math.max(0, now - start);
+  return agent.finished_at == null ? undefined : Math.max(0, agent.finished_at - start);
+}
+
+/** `45s`, `3m 04s`, `1h 02m`. */
+export function formatAgentTime(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
+}
+
+/** The second part of a row: the open request, what the agent does now, or its result. */
+export function agentLine(agent: Subagent): string | undefined {
+  if (asksParent(agent)) return agent.question ?? agent.budget_request?.reason ?? agent.files_request?.reason;
+  return isLive(agent) ? agent.activity : agent.result;
+}
+
+// The clock of the rows. It ticks once a second only while an agent runs.
+function useNow(ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return undefined;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [ticking]);
+  return now;
+}
+
+// One grid for every row: role, name, status, line, time. On a phone the line is the second line.
+const ROW = 'group grid w-full min-w-0 items-baseline gap-x-3 rounded-none py-0.5 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent';
+const COLUMNS_WITH_ROLE = 'grid-cols-[9ch_minmax(0,1fr)_auto_auto] sm:grid-cols-[9ch_minmax(0,24ch)_13ch_minmax(0,1fr)_7ch]';
+const COLUMNS = 'grid-cols-[minmax(0,1fr)_auto_auto] sm:grid-cols-[minmax(0,24ch)_13ch_minmax(0,1fr)_7ch]';
+
+/** The props of a team block. `timeline` reads the steps of one child. */
+export interface TeamProps {
   agents: readonly Subagent[];
   pending: string | null;
   error?: string | null;
   onOpen: (sid: string) => void;
   onCancel: (sid: string) => void;
+  timeline: (child: string) => Promise<AgentTimeline>;
+}
+
+/**
+ * The subagents of one turn: one row each, in spawn order. A row opens the timeline
+ * of its agent. The form of an agent that needs you opens in the form prompt of
+ * this session: the gateway sends it to every ancestor session.
+ */
+export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline, placement = 'transcript' }: TeamProps & {
+  /** The dock above the composer while the team works, or the turn of the transcript after. */
+  placement?: 'dock' | 'transcript';
 }) {
-  const [open, setOpen] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const now = useNow(agents.some((agent) => agent.status === 'running'));
   if (agents.length === 0) return null;
-  // The state column is as wide as its longest shown state, so tasks start near the left.
-  const stateWidth = Math.max(0, ...agents.filter((agent) => !quiet(agent)).map((agent) => agentMark(agent).text.length));
-  // A-numbers keep the start order, so A2 is still the second agent after the sort.
-  const rows = rankedAgents(agents);
-  const roles = agents.some((agent) => agent.role);
+  const rows = spawnOrder(agents);
+  const roles = rows.some((agent) => agent.role);
+  const chosen = rows.find((agent) => agent.session_id === selected);
   return (
-    <ul aria-label="Subagents" className="my-3 space-y-1 font-mono text-ui text-white" data-transcript-part>
-      {rows.map(({ agent, index }) => {
-        const { Mark, ink, text } = agentMark(agent);
-        const role = ROLES.find((known) => known.const === agent.role);
-        const shown = open === agent.session_id;
-        const route = `${agent.provider ? `${agent.provider} / ` : ''}${agent.model ?? 'Router default'}`;
-        return (
-          <li key={agent.session_id}>
-            <button
-              type="button"
-              aria-expanded={shown}
-              onClick={() => setOpen(shown ? null : agent.session_id)}
-              className="group flex w-full min-w-0 items-center gap-2 rounded-none text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
-            >
-              <ChevronIcon open={shown} className={`size-3 shrink-0 ${MARK_NUDGE} text-dialog-hint`} />
-              <Mark className={`size-3 shrink-0 ${MARK_NUDGE} ${ink}`} />
-              <span className="w-[3ch] shrink-0 font-bold">A{index + 1}</span>
-              {roles && (
-                <span className="flex w-3 shrink-0 text-dialog-hint" title={role && `${role.const}: ${role.title}`}>
-                  {agent.role && <RoleIcon role={agent.role} className={`size-3 ${MARK_NUDGE}`} />}
-                  {agent.role && <span className="sr-only">{agent.role}</span>}
-                </span>
-              )}
-              {/* The green check already says done; the word stays for screen readers only. */}
-              {stateWidth > 0 ? (
+    <>
+      <ul
+        aria-label="Subagents"
+        className={`font-mono text-meta text-white sm:text-ui ${placement === 'transcript' ? 'my-3' : ''}`}
+        {...(placement === 'transcript' ? { 'data-transcript-part': true } : {})}
+      >
+        {rows.map((agent) => {
+          const status = agentStatus(agent);
+          const line = agentLine(agent);
+          const time = agentTime(agent, now);
+          return (
+            <li key={agent.session_id}>
+              <button
+                type="button"
+                data-agent-row={agent.session_id}
+                onClick={() => setSelected(agent.session_id)}
+                className={`${ROW} ${roles ? COLUMNS_WITH_ROLE : COLUMNS}`}
+              >
+                {roles && <span className="truncate text-dialog-hint">{agent.role ?? ''}</span>}
+                <span className="truncate font-bold group-hover:underline" title={agent.task}>{agentLabel(agent, rows)}</span>
+                <span className={`whitespace-nowrap ${status.ink}`}>{status.text}</span>
                 <span
-                  style={{ width: `${stateWidth}ch` }}
-                  className={`shrink-0 tabular-nums ${isAsking(agent) ? 'text-warn' : 'text-dialog-hint'}`}
+                  className={`order-last col-span-full truncate text-dialog-hint sm:order-none sm:col-span-1 ${line ? '' : 'hidden sm:block'}`}
+                  title={line}
                 >
-                  {quiet(agent) ? <span className="sr-only">{text}</span> : text}
+                  {line ?? ''}
                 </span>
-              ) : <span className="sr-only">{text}</span>}
-              <span className="min-w-0 flex-1 truncate group-hover:underline">{agent.task}</span>
-            </button>
-            {/* What a working agent does now, outside the row button: the row names the task. */}
-            {isLive(agent) && !isAsking(agent) && (
-              <div className="ml-10 flex min-w-0 items-center gap-2 text-dialog-hint">
-                <AgentProgress agent={agent} className="w-12" />
-                {agent.activity && <span className="min-w-0 flex-1 truncate" title={agent.activity}>{agent.activity}</span>}
-              </div>
-            )}
-            {shown && (
-              <div className="ml-10 mt-1 space-y-1 pb-2">
-                <p className="whitespace-pre-wrap break-words">{agent.task}</p>
-                {agent.question && <p className="break-words text-warn">{agent.question}</p>}
-                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                  <span className="min-w-0 truncate text-dialog-hint" title={route}>
-                    {agent.role && `${agent.role} · `}
-                    {agent.model ?? 'Router default'}
-                    {agent.routing_locked && ' · Human model lock'}
-                    {` · ${agent.iterations_used} / ${agent.iteration_budget} iterations`}
-                    {agent.usage?.cost_usd != null && ` · $${agent.usage.cost_usd.toFixed(4)}`}
-                  </span>
-                  <span className="flex shrink-0 gap-4">
-                    <button type="button" className={LINK} onClick={() => onOpen(agent.session_id)}>Inspect agent</button>
-                    {isLive(agent) && (confirm === agent.session_id ? <>
-                      <button
-                        type="button"
-                        className={`${LINK} text-err-ink`}
-                        disabled={pending === agent.session_id}
-                        onClick={() => { setConfirm(null); onCancel(agent.session_id); }}
-                      >
-                        Confirm stop
-                      </button>
-                      <button type="button" className={LINK} onClick={() => setConfirm(null)}>Keep working</button>
-                    </> : (
-                      <button
-                        type="button"
-                        className={LINK}
-                        disabled={pending === agent.session_id}
-                        onClick={() => setConfirm(agent.session_id)}
-                      >
-                        Stop agent
-                      </button>
-                    ))}
-                  </span>
-                </div>
-                {confirm === agent.session_id && (
-                  <p className="text-dialog-hint">Stops this agent and its descendants, including queued work.</p>
-                )}
-              </div>
-            )}
-          </li>
-        );
-      })}
-      {error && <li role="alert" className="text-err-ink">{error}</li>}
-    </ul>
+                <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">
+                  {time === undefined ? '' : formatAgentTime(time)}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+        {error && <li role="alert" className="text-err-ink">{error}</li>}
+      </ul>
+      {chosen && (
+        <AgentTimelineSheet
+          agent={chosen}
+          label={agentLabel(chosen, rows)}
+          now={now}
+          pending={pending}
+          load={timeline}
+          onOpen={(child) => { setSelected(null); onOpen(child); }}
+          onCancel={onCancel}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </>
+  );
+}
+
+const STEP_WORDS: Record<AgentTimelineItem['kind'], string> = {
+  started: 'Started',
+  continued: 'Continued',
+  note: 'Note',
+  message: 'Message',
+  finished: 'Finished',
+};
+
+const pad = (value: number) => String(value).padStart(2, '0');
+
+/** The local clock time of an epoch ms, `14:03:07`. */
+export function clockTime(at: number): string {
+  const date = new Date(at);
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/**
+ * The steps of one agent with their times, read from the timeline route, and the
+ * way into its session. A working agent can also be stopped here.
+ */
+export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, onCancel, onClose }: {
+  agent: Subagent;
+  label: string;
+  now: number;
+  pending: string | null;
+  load: (child: string) => Promise<AgentTimeline>;
+  onOpen: (sid: string) => void;
+  onCancel: (sid: string) => void;
+  onClose: () => void;
+}) {
+  const [steps, setSteps] = useState<{ items: AgentTimelineItem[] } | { error: string } | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const child = agent.session_id;
+  // Read again when the agent moves on, not on a clock.
+  const progress = `${agent.status}:${agent.iterations_used}:${agent.finished_at ?? ''}:${agent.resumed_at ?? ''}`;
+  useEffect(() => {
+    let current = true;
+    load(child).then(
+      (timeline) => { if (current) setSteps({ items: Array.isArray(timeline?.items) ? timeline.items : [] }); },
+      (cause: unknown) => {
+        if (current) setSteps({ error: cause instanceof Error && cause.message ? cause.message : 'Could not read the timeline. Try again.' });
+      },
+    );
+    return () => { current = false; };
+  }, [load, child, progress]);
+  const status = agentStatus(agent);
+  const time = agentTime(agent, now);
+  return (
+    <Modal size="fit" within="session" onDismiss={onClose}>
+      <DialogFrame title={label} onClose={onClose}>
+        <div className="space-y-3 px-4 py-3 font-mono text-meta text-white sm:text-ui" data-agent-timeline>
+          <p className="flex flex-wrap gap-x-3">
+            {agent.role && <span className="text-dialog-hint">{agent.role}</span>}
+            <span className={status.ink}>{status.text}</span>
+            {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
+          </p>
+          <p className="whitespace-pre-wrap break-words text-dialog-hint">{agent.task}</p>
+          {steps === null ? (
+            <p className="text-dialog-hint">Reading the timeline…</p>
+          ) : 'error' in steps ? (
+            <p role="alert" className="text-err-ink">{steps.error}</p>
+          ) : steps.items.length === 0 ? (
+            <p className="text-dialog-hint">No steps yet.</p>
+          ) : (
+            <ol aria-label="Timeline" className="space-y-1">
+              {steps.items.map((item, index) => {
+                const end = item.kind === 'finished' && item.status
+                  ? agentStatus({ ...agent, status: item.status, outcome: item.outcome, pending_input: false, question: undefined, budget_request: undefined, files_request: undefined })
+                  : null;
+                return (
+                  <li key={index} className="grid grid-cols-[8ch_9ch_minmax(0,1fr)] gap-x-3">
+                    <time dateTime={new Date(item.at).toISOString()} className="text-dialog-hint tabular-nums">{clockTime(item.at)}</time>
+                    <span className="text-dialog-hint">{STEP_WORDS[item.kind] ?? item.kind}</span>
+                    <span className="whitespace-pre-wrap break-words">
+                      {end && <span className={end.ink}>{end.text}</span>}
+                      {end && item.text && ' · '}
+                      {item.text}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button density="inline" onClick={() => onOpen(child)}>Open session</Button>
+            {isLive(agent) && (confirm ? <>
+              <Button density="inline" variant="danger" disabled={pending === child} onClick={() => { setConfirm(false); onCancel(child); }}>
+                Confirm stop
+              </Button>
+              <Button density="inline" variant="secondary" onClick={() => setConfirm(false)}>Keep working</Button>
+            </> : (
+              <Button density="inline" variant="secondary" disabled={pending === child} onClick={() => setConfirm(true)}>
+                Stop agent
+              </Button>
+            ))}
+          </div>
+          {confirm && <p className="text-dialog-hint">Stops this agent and its descendants, including queued work.</p>}
+        </div>
+      </DialogFrame>
+    </Modal>
   );
 }
 
@@ -196,6 +288,20 @@ export function agentsByTurn(agents: readonly Subagent[]): ReadonlyMap<string, S
   const byTurn = new Map<string, Subagent[]>();
   for (const agent of agents) byTurn.set(agent.team_id, [...(byTurn.get(agent.team_id) ?? []), agent]);
   return byTurn;
+}
+
+/**
+ * The teams of `sid` in the dock: the team of the running turn, and each team that
+ * still has an agent at work or waiting after its turn ended. Spawn order.
+ */
+export function dockTeams(agents: readonly Subagent[], sid: string, runningTurnId?: string | null): Subagent[][] {
+  const teams = new Map<string, Subagent[]>();
+  for (const agent of agents) {
+    if (agent.parent_id === sid) teams.set(agent.team_id, [...(teams.get(agent.team_id) ?? []), agent]);
+  }
+  return [...teams.entries()]
+    .filter(([id, team]) => id === runningTurnId || team.some((agent) => isLive(agent) || isAsking(agent)))
+    .map(([, team]) => team);
 }
 
 /**
@@ -251,27 +357,11 @@ export function useAgentTeam(client: GatewayClient, sid: string, running: boolea
     setError(null);
     setError(await control(child, () => client.cancelAgent(sid, child), 'Could not stop agent. Try again.'));
   }, [client, sid, control]);
-  const answer = useCallback(
-    (child: string, text: string) =>
-      control(child, () => client.answerAgent(sid, child, text), 'Could not send the answer. Try again.'),
-    [client, sid, control],
+  const timeline = useCallback(
+    (child: string) => client.agentTimeline(sid, child),
+    [client, sid],
   );
-  const extend = useCallback(
-    (child: string, iterations: number) =>
-      control(child, () => client.extendAgent(sid, child, iterations), 'Could not add iterations. Try again.'),
-    [client, sid, control],
-  );
-  const deny = useCallback(
-    (child: string, reason: string) =>
-      control(child, () => client.denyAgent(sid, child, reason), 'Could not deny the request. Try again.'),
-    [client, sid, control],
-  );
-  const grant = useCallback(
-    (child: string, files: AgentFiles) =>
-      control(child, () => client.grantAgent(sid, child, files), 'Could not grant the files. Try again.'),
-    [client, sid, control],
-  );
-  return { agents: current, pending, error, cancel, answer, extend, deny, grant };
+  return { agents: current, pending, error, cancel, timeline };
 }
 
 /** What `useAgentTeam` gives its views. */

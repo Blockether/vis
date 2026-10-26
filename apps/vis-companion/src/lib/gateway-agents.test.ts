@@ -25,59 +25,42 @@ const sent = (fetcher: ReturnType<typeof stub>) => {
 };
 
 describe('Subagent control client', () => {
-  it('answers the open question of a child for its leader', async () => {
+  it('reads the timeline of one child of the leader', async () => {
+    const fetcher = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ session_id: 'child', items: [{ at: 1, kind: 'started', text: 'Go' }] }), {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetcher);
+    const timeline = await new GatewayClient(conn).agentTimeline('lead/1', 'child/2');
+    expect(timeline.items).toEqual([{ at: 1, kind: 'started', text: 'Go' }]);
+    const [input, init] = fetcher.mock.calls[0];
+    expect(new URL(String(input)).pathname).toBe('/v1/sessions/lead%2F1/agents/child%2F2/timeline');
+    expect(init?.method).toBe('GET');
+  });
+
+  it('stops a child for its leader', async () => {
     const fetcher = stub();
-    await new GatewayClient(conn).answerAgent('lead/1', 'child', 'Use the main branch');
+    await new GatewayClient(conn).cancelAgent('lead/1', 'child');
     expect(sent(fetcher)).toEqual({
-      path: '/v1/sessions/lead%2F1/agents/answer',
+      path: '/v1/sessions/lead%2F1/agents/cancel',
       method: 'POST',
-      body: { session_id: 'child', text: 'Use the main branch' },
+      body: { session_id: 'child' },
     });
   });
 
-  it('gives a child more iterations', async () => {
-    const fetcher = stub();
-    await new GatewayClient(conn).extendAgent('lead', 'child', 10);
-    expect(sent(fetcher)).toEqual({
-      path: '/v1/sessions/lead/agents/extend',
-      method: 'POST',
-      body: { session_id: 'child', iterations: 10 },
-    });
-  });
-
-  it('refuses an open request with a reason', async () => {
-    const fetcher = stub();
-    await new GatewayClient(conn).denyAgent('lead', 'child', 'Not now');
-    expect(sent(fetcher)).toEqual({
-      path: '/v1/sessions/lead/agents/deny',
-      method: 'POST',
-      body: { session_id: 'child', reason: 'Not now' },
-    });
-  });
-
-  it('grants the requested files', async () => {
-    const fetcher = stub();
-    await new GatewayClient(conn).grantAgent('lead', 'child', { write: ['src/a/**'] });
-    expect(sent(fetcher)).toEqual({
-      path: '/v1/sessions/lead/agents/grant',
-      method: 'POST',
-      body: { session_id: 'child', files: { write: ['src/a/**'] } },
-    });
-  });
-
-  it('keeps a refused answer as an error with its status', async () => {
+  it('keeps a refused stop as an error with its status', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ error: 'invalid', message: 'No open question' }), {
+          new Response(JSON.stringify({ error: 'invalid', message: 'No such agent' }), {
             status: 400,
             headers: { 'Content-Type': 'application/json' },
           }),
       ),
     );
-    await expect(
-      new GatewayClient(conn).answerAgent('lead', 'child', 'Yes'),
-    ).rejects.toMatchObject({ status: 400 });
+    await expect(new GatewayClient(conn).cancelAgent('lead', 'child')).rejects.toMatchObject({ status: 400 });
   });
 });

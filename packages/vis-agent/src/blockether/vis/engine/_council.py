@@ -229,6 +229,7 @@ class Council:
         self,
         task: str,
         *,
+        title: str | None = None,
         role: str | None = None,
         provider: str | None = None,
         model: str | None = None,
@@ -247,13 +248,15 @@ class Council:
         and it does not grant broader permissions. ``files`` narrows file access with
         ``write``, ``read_only`` and ``deny`` rules: paths or globs, also for future files.
         ``role`` is ``research``, ``implement``, ``verify`` or ``audit``: a label for people
-        that sets no limit.
+        that sets no limit. ``title`` is a short label for people: one line of 1 to 40
+        characters.
         """
         body = {"task": task}
         body.update(
             {
                 name: value
                 for name, value in {
+                    "title": title,
                     "role": role,
                     "provider": provider,
                     "iteration_budget": iteration_budget,
@@ -278,6 +281,21 @@ class Council:
             Subagent.from_wire(row) for row in self._session._call("GET", "/agents")
         )
 
+    def timeline(self, session_id: str) -> dict[str, Any]:
+        """Return the steps of one owned subagent, oldest first.
+
+        ``items`` holds each turn start, progress note, Council message and the end of the
+        current task with its ``status``, one-line result and optional ``outcome``.
+        Each item has ``at`` in epoch milliseconds.
+        """
+        return validate(
+            "agents",
+            "timeline",
+            self._session._call(
+                "GET", "/agents/:child-id/timeline", path={"child-id": session_id}
+            ),
+        )
+
     def _records(self, suffix, body, definition, timeout_secs=None):
         validate("agents", definition, body)
         kwargs = {}
@@ -293,7 +311,7 @@ class Council:
     ) -> tuple[SubagentRecord, ...]:
         """Spawn one subagent for each task, wait for all of them and return their records.
 
-        A task is a string, or a dict with ``task`` and optional ``role``, ``model``,
+        A task is a string, or a dict with ``task`` and optional ``title``, ``role``, ``model``,
         ``provider``, ``iteration_budget`` and ``files``. The wait ends when every child answers, asks
         or stops, or after ``timeout_secs`` (at most 1800). A running child stays running.
         """

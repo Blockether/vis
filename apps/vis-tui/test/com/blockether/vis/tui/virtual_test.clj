@@ -14,7 +14,8 @@
       inputs (`:eff-scroll in [0, max(0, total-h - inner-h)]`) and
       visible bubbles' `:top + :height` fits inside the viewport's
       forward extent, even when estimates differ from real heights."
-  (:require [com.blockether.vis.tui.render :as render]
+  (:require [com.blockether.vis.tui.agent-team :as agent-team]
+            [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe describe expect it]]
@@ -272,6 +273,27 @@
                   (expect (= 0 total-h))
                   (expect (= 0 eff-scroll))
                   (expect (= [] visible)))))
+  (describe
+    "subagent traffic"
+    (it "gives a Council request from an own subagent no rows, in both scroll modes"
+        (with-redefs [agent-team/summary (constantly {:agents [{"session_id" "child"
+                                                                "team_id" "turn-9"
+                                                                "task" "t"
+                                                                "status" "completed"}]})]
+          (let [child {:role :user
+                       :request-kind :council
+                       :council {"author_session_id" "child" "content" "CHILD ANSWER"}
+                       :text "CHILD ANSWER"}
+                peer (assoc-in child [:council "author_session_id"] "peer")
+                msgs [(user-msg "first") child peer (user-msg "last")]]
+
+            (doseq [scroll [nil 0]]
+              (let [{:keys [heights visible]}
+                    (virtual/layout msgs bubble-w settings scroll 200 {} {:session-id "leader"})]
+                (expect (zero? (long (nth heights 1))))
+                (expect (pos? (long (nth heights 2))) "A peer's Council message stays")
+                (expect (not-any? #(= 1 (:idx %)) visible))
+                (expect (some #(= 3 (:idx %)) visible))))))))
   (describe "single message smaller than viewport"
             (it "is fully visible at top, eff-scroll = 0"
                 (let [m

@@ -5412,7 +5412,7 @@
 (def ^:private agent-columns
   [:session_id :parent_id :leader_id :team_id :task :role :status :iteration_budget :iterations_used
    :inherited_turns :allowed_models :files :spawn_key :spawn_fingerprint :created_at :resumed_turns
-   :resumed_at])
+   :resumed_at :title :result :outcome :finished_at])
 
 (defn- agent-row
   [row]
@@ -5429,6 +5429,10 @@
                                      (mapv #(update-keys % keyword))))))
         (nil? (:role row))
         (dissoc :role)
+
+        ;; A child without a title, result, outcome or end time has no such key either.
+        :always
+        (as-> r (apply dissoc r (filter #(nil? (get r %)) [:title :result :outcome :finished_at])))
 
         files
         (assoc :files files)))))
@@ -5463,7 +5467,9 @@
 
 (defn db-agent-update!
   [db sid changes]
-  (let [changes (cond-> (select-keys changes [:status :resumed_turns :resumed_at])
+  (let [changes (cond-> (select-keys changes
+                                     [:status :resumed_turns :resumed_at :result :outcome
+                                      :finished_at])
                   (contains? changes :files)
                   (assoc :files
                     (some-> (:files changes)
@@ -5519,20 +5525,25 @@
    can pass the active cap. `turns` is the turn count before the task. Answers the new row, or nil
    when the child cannot resume."
   [db sid turns now]
-  (when (pos? (long (or (:next.jdbc/update-count
-                          (first (sqlite-write-tx!
-                                   db
-                                   (fn [tx-info]
-                                     (execute! tx-info
-                                               {:update :session_agent
-                                                :set {:status "queued"
-                                                      :resumed_turns (long turns)
-                                                      :resumed_at (long now)}
-                                                :where
-                                                [:and [:= :session_id (str sid)]
-                                                 [:not-in :status ["queued" "running" "cancelled"]]
-                                                 [:< :iterations_used :iteration_budget]]})))))
-                        0)))
+  (when (pos?
+          (long
+            (or (:next.jdbc/update-count
+                  (first (sqlite-write-tx!
+                           db
+                           (fn [tx-info]
+                             (execute! tx-info
+                                       {:update :session_agent
+                                        ;; The follow-up task has no result yet.
+                                        :set {:status "queued"
+                                              :resumed_turns (long turns)
+                                              :resumed_at (long now)
+                                              :result nil
+                                              :outcome nil
+                                              :finished_at nil}
+                                        :where [:and [:= :session_id (str sid)]
+                                                [:not-in :status ["queued" "running" "cancelled"]]
+                                                [:< :iterations_used :iteration_budget]]})))))
+                0)))
     (db-agent-info db sid)))
 
 (defn- turn-copy-rows

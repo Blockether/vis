@@ -81,6 +81,36 @@ export interface Subagent {
   /** The latest Activity line of a queued or running agent, such as `Patched ~/src/a.clj`. */
   activity?: string;
   usage?: SessionUsage | null;
+  /** A one-line label from `council.run`, 1-40 characters. Without it, people see `#N`. */
+  title?: string;
+  /** The one-line result of the finished task. */
+  result?: string;
+  /** The verdict of a finished verify task. */
+  outcome?: 'passed' | 'failed';
+  /** Epoch ms of the spawn. */
+  created_at?: number;
+  /** Epoch ms of the start of the current task after a resume, or null. */
+  resumed_at?: number | null;
+  /** Epoch ms when the current task ended. */
+  finished_at?: number;
+}
+
+/** One step of a subagent, as `GET /v1/sessions/:sid/agents/:child/timeline` gives it. */
+export interface AgentTimelineItem {
+  /** Epoch ms. */
+  at: number;
+  kind: 'started' | 'continued' | 'note' | 'message' | 'finished';
+  text?: string;
+  /** The end status, on a `finished` step only. */
+  status?: Subagent['status'];
+  /** The verdict, on a `finished` step of a verify task only. */
+  outcome?: 'passed' | 'failed';
+}
+
+/** The steps of one subagent, oldest first. */
+export interface AgentTimeline {
+  session_id: string;
+  items: AgentTimelineItem[];
 }
 
 /** A subagent file grant: paths or globs. Deny wins over read_only, read_only over write. */

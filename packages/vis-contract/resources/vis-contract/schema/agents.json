@@ -15,6 +15,13 @@
           "maxLength": 65536,
           "pattern": "\\S"
         },
+        "title": {
+          "description": "A short label for people: one line of 1 to 40 characters. Without it, people see the child number, such as #2.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+        },
         "role": {
           "$ref": "#/$defs/role"
         },
@@ -79,6 +86,9 @@
                 "properties": {
                   "task": {
                     "$ref": "#/$defs/spawn/properties/task"
+                  },
+                  "title": {
+                    "$ref": "#/$defs/spawn/properties/title"
                   },
                   "role": {
                     "$ref": "#/$defs/spawn/properties/role"
@@ -255,6 +265,29 @@
       ],
       "additionalProperties": false
     },
+    "result": {
+      "$comment": "The arguments of council.result: the one-line result of a child's current task.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+        },
+        "outcome": {
+          "description": "The verdict of a verify child: passed or failed.",
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
     "resume": {
       "type": "object",
       "properties": {
@@ -395,6 +428,9 @@
           "type": "string",
           "minLength": 1
         },
+        "title": {
+          "$ref": "#/$defs/spawn/properties/title"
+        },
         "role": {
           "$ref": "#/$defs/role"
         },
@@ -473,6 +509,14 @@
           "type": "string",
           "minLength": 1
         },
+        "result": {
+          "$comment": "The one-line result of a finished task: from council.result, else the first line of the answer.",
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "$ref": "#/$defs/result/properties/outcome"
+        },
         "usage": {
           "type": [
             "object",
@@ -481,6 +525,24 @@
         },
         "files": {
           "$ref": "#/$defs/files"
+        },
+        "created_at": {
+          "$comment": "Epoch ms of the spawn.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "resumed_at": {
+          "$comment": "Epoch ms of the last council.resume or Council ping.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "finished_at": {
+          "$comment": "Epoch ms when the current task ended.",
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [
@@ -682,6 +744,58 @@
       "items": {
         "$ref": "#/$defs/record"
       }
+    },
+    "timeline": {
+      "$comment": "GET /v1/sessions/:sid/agents/:child-id/timeline: the steps of one child, oldest first, from its turns, notes and Council messages.",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "$comment": "Epoch ms.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "kind": {
+                "enum": [
+                  "started",
+                  "continued",
+                  "note",
+                  "message",
+                  "finished"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "$ref": "#/$defs/agent/properties/status"
+              },
+              "outcome": {
+                "$ref": "#/$defs/result/properties/outcome"
+              }
+            },
+            "required": [
+              "at",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "session_id",
+        "items"
+      ],
+      "additionalProperties": false
     }
   }
 }

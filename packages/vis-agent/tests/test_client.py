@@ -709,6 +709,11 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         route = path.split("?")[0]
         if route.endswith("/council"):
             return 200, {"default_group_id": "G", "activation_id": "active"}
+        if route.endswith("/timeline"):
+            return 200, {
+                "session_id": "child",
+                "items": [{"at": 1, "kind": "finished", "status": "completed"}],
+            }
         if "/agents" in route:
             if method == "GET":
                 return 200, [child]
@@ -742,12 +747,14 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.answer("child", "Use the fixture")
         council.grant("child", {"read_only": ["/tmp/x"]})
         council.route("small", provider="fixture")
+        assert council.timeline("child")["items"][0]["kind"] == "finished"
         seen.update(
             (
                 method,
                 path.split("?")[0]
                 .replace("/example/", "/:sid/")
-                .replace("/entries/1", "/entries/:entry-id"),
+                .replace("/entries/1", "/entries/:entry-id")
+                .replace("/agents/child/timeline", "/agents/:child-id/timeline"),
             )
             for method, path, _, _ in calls
             if "/council" in path or "/agents" in path

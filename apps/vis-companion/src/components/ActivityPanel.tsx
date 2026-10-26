@@ -54,6 +54,9 @@ const ACTIVITY_VERBS: Record<string, readonly [running: string, settled: string,
     delete: ['Deleting', 'Deleted', 'Delete failed'],
   };
 
+// The Council calls that start or collect subagents.
+const TEAM_CALLS: ReadonlySet<string> = new Set(['council.run', 'council.wait', 'council.resume']);
+
 function formatActivityDuration(value?: number): string | null {
   if (value == null || !Number.isFinite(value) || value <= 0) return null;
   const milliseconds = Math.trunc(value);
@@ -891,7 +894,9 @@ function ActivityStep({
   const lead = presentation?.headline ?? activityStepLead(row);
   const error = row.evidence.find((item): item is ActivityTextEvidence => item.kind === 'error');
   const content = presentation && activityContentWithoutError(presentation.content, error?.text);
-  const sections = presentation?.sections ?? [];
+  // The team rows of the turn show what its subagents did. Their answers stay in their own
+  // sessions, so a team call does not open into them here.
+  const sections = TEAM_CALLS.has(row.operation) ? [] : (presentation?.sections ?? []);
   const summary = presentation ? '' : activityStepObject(row);
   // The head says WHAT the step was about — the authored summary, failed or not. WHY it
   // failed belongs to the body, said once, under the head, to a reader who opened it.

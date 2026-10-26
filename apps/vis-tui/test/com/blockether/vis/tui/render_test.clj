@@ -9925,6 +9925,31 @@ h = 8"
       (expect (some #(str/includes? (:line %) "directory-one") expanded))
       (expect (not-any? #(str/includes? (:line %) "one-file") expanded)))))
 
+(defdescribe subagent-answers-stay-out-of-the-leader-transcript-test
+             (it "shows only the summary of council.run, never the answer of a subagent"
+                 (doseq [operation ["council.run" "council.wait" "council.resume"]]
+                   (let [row {:id "run"
+                              :sequence 1
+                              :operation operation
+                              :state "succeeded"
+                              :presentation {:headline "Ran subagents"
+                                             :summary "2 completed"
+                                             :content []
+                                             :sections [{:headline "SECRET CHILD ANSWER"
+                                                         :summary "Completed"
+                                                         :content []}]}}
+                         entries (#'render/activity-detail-entries
+                                  {:node-id "team"
+                                   :activity-rows [row]
+                                   :activity-expanded? (fn [_ _]
+                                                         true)}
+                                  100
+                                  "team")]
+
+                     (expect (some #(str/includes? (:line %) "2 completed") entries))
+                     (expect (not-any? #(str/includes? (:line %) "SECRET CHILD ANSWER") entries))
+                     (expect (not (#'render/activity-row-openable? row)))))))
+
 (defdescribe
   activity-row-spacing-test
   (it "keeps settled adjacent operations compact under one group"

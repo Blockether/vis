@@ -360,20 +360,58 @@
               (:session-id env)
               "\")."))))
 
+(defn- final-answer
+  "The prose answer of the last turn of child `row`, or nil. After council.resume, only a turn
+   of the follow-up task counts: `resumed_turns` in the row is the turn count before it."
+  [db row]
+  (let [turns (ps/db-list-session-turns db (:session_id row))]
+    (when (> (count turns) (long (or (:resumed_turns row) 0)))
+      (some->> (:content (last turns))
+               (filterv #(contains? #{"prose" "speech"} (get % "type")))
+               content/text-projection
+               str/trim
+               not-empty))))
+
+(defn- answer-line
+  "The first nonblank line of `text` without a Markdown list or heading mark, at most 200
+   characters. A child without council.result gets this line as its result."
+  [text]
+  (some-> (->> (str/split-lines (str text))
+               (map str/trim)
+               (remove str/blank?)
+               first)
+          (str/replace #"^(#+|[-*>]|\d+\.)\s+" "")
+          (str/replace #"^\*\*(.+)\*\*$" "$1")
+          str/trim
+          not-empty
+          (as-> line (if (> (count line) 200) (str (subs line 0 199) "…") line))))
+
 (defn finish!
   "Store the status of a finished child turn. A child that ended its turn in its handoff
    iteration becomes `budget_limited`, so its parent knows that it needs council.extend before
-   council.resume. A child that answered within its budget is `completed`."
+   council.resume. A child that answered within its budget is `completed`. The first end of a task
+   stores `finished_at`, and a task without council.result gets the first line of its answer."
   [db sid status]
   (let [handoff? (contains? (first (swap-vals! handoffs disj (str sid))) (str sid))]
     (when-let [child (info db sid)]
-      (when-not (contains? #{"cancelled" "budget_limited"} (:status child))
+      (let [line (when-not (:result child)
+                   (some-> (final-answer db child)
+                           answer-line))]
         (ps/db-agent-update! db
                              sid
-                             {:status (cond (= "cancelled" status) "cancelled"
-                                            handoff? "budget_limited"
-                                            (contains? #{"completed" "success"} status) "completed"
-                                            :else "failed")})))))
+                             (cond-> {}
+                               (not (contains? #{"cancelled" "budget_limited"} (:status child)))
+                               (assoc :status
+                                 (cond (= "cancelled" status) "cancelled"
+                                       handoff? "budget_limited"
+                                       (contains? #{"completed" "success"} status) "completed"
+                                       :else "failed"))
+
+                               (nil? (:finished_at child))
+                               (assoc :finished_at (util/now-ms))
+
+                               line
+                               (assoc :result line)))))))
 
 (defn reconcile-orphans!
   "Fail the children that a dead process left queued or running. Spare a child or a leader
@@ -389,7 +427,7 @@
           (ps/db-agent-list db nil))]
 
     (doseq [{sid :session_id} orphans]
-      (ps/db-agent-update! db sid {:status "failed"}))
+      (ps/db-agent-update! db sid {:status "failed" :finished_at (util/now-ms)}))
     (count orphans)))
 
 (defn controls?
@@ -648,18 +686,6 @@
    held child."
   []
   (or (get @runtime :held?) (constantly false)))
-
-(defn- final-answer
-  "The prose answer of the last turn of child `row`, or nil. After council.resume, only a turn
-   of the follow-up task counts: `resumed_turns` in the row is the turn count before it."
-  [db row]
-  (let [turns (ps/db-list-session-turns db (:session_id row))]
-    (when (> (count turns) (long (or (:resumed_turns row) 0)))
-      (some->> (:content (last turns))
-               (filterv #(contains? #{"prose" "speech"} (get % "type")))
-               content/text-projection
-               str/trim
-               not-empty))))
 
 (defn- record
   "One wait record. A queued or running child without a live turn after 30 s settles from its
@@ -978,6 +1004,92 @@
     (mapv #(if (= "running" (:status %)) (merge % (digest db (get rows (:session_id %)) now)) %)
           recs)))
 
+(defn timeline
+  "The steps of child `child-id` of session `sid`, oldest first: the start of each child turn, its
+   progress notes, its Council messages and the end of its current task with its result. Copied
+   turns of the fork are older than the child, so they never count."
+  [db sid child-id]
+  (let [row
+        (info db child-id)
+
+        _
+        (when-not (and row (some #(= (str sid) (str %)) [(:leader_id row) (:parent_id row)]))
+          (fail! :session-not-found "Unknown subagent of this session"))
+
+        since
+        (- (long (or (:created_at row) 0)) 1000)
+
+        turns
+        (filterv #(>= (long (or (epoch-ms (:created-at %)) 0)) since)
+          (ps/db-list-session-turns-meta db child-id))
+
+        step-items
+        (fn [step]
+          (let [at (epoch-ms ((some-fn :finished-at :created-at) step))]
+            (concat (when-let [note (:assistant-prose step)]
+                      (when-not (str/blank? note) [{:at at :kind "note" :text (clip note 600)}]))
+                    (for [e (keep #(some->> (:entry_id %)
+                                            (ps/db-council-get db))
+                                  (:council-publications step))
+                          :when (util/non-blank-string? (:content e))]
+
+                      {:at at :kind "message" :text (clip (:content e) 600)}))))
+
+        items
+        (into []
+              (comp (map-indexed (fn [idx turn]
+                                   (cons {:at (epoch-ms (:created-at turn))
+                                          :kind (if (zero? idx) "started" "continued")}
+                                         (mapcat step-items
+                                                 (sort-by #(long (or (:position %) 0))
+                                                          (ps/db-list-session-turn-iterations
+                                                            db
+                                                            (:id turn)))))))
+                    cat
+                    (filter :at))
+              turns)
+
+        end
+        (when (terminal-statuses (:status row))
+          (cond-> {:at (or (:finished_at row) (:at (peek items)) (:created_at row))
+                   :kind "finished"
+                   :status (:status row)}
+            (:result row)
+            (assoc :text (:result row))
+
+            (:outcome row)
+            (assoc :outcome (:outcome row))))]
+
+    {:session_id (str child-id)
+     :items (cond-> items
+              end
+              (conj end))}))
+
+(defn report-result
+  "As a subagent, report the result of your task in one line, before your final answer. An
+   example is \"All 42 tests pass\". text is one line of at most 200 characters. As a verifier,
+   also give outcome \"passed\" or \"failed\". A later call replaces the line."
+  ([env text] (report-result env text {}))
+  ([env text opts]
+   (let [db
+         (:db-info env)
+
+         sid
+         (str (:session-id env))
+
+         outcome
+         (:outcome (walk/keywordize-keys (or opts {})))
+
+         args
+         (cond-> {:text (if (string? text) (str/trim text) text)}
+           outcome
+           (assoc :outcome outcome))]
+
+     (when-not (info db sid) (fail! :invalid-request "council.result works only in a subagent"))
+     (check-arguments! :result (wire/->wire args))
+     (ps/db-agent-update! db sid {:result (:text args) :outcome (:outcome args)})
+     (result :council.result args))))
+
 (defn- wait-timeout
   [opts default]
   (let [t (or (:timeout_secs opts) default)]
@@ -1030,8 +1142,11 @@
 
 (defn run
   "Run each task in its own subagent and wait for all of them. A task is a string or a dict with
-   task and optional role, model, provider, iteration_budget and files. iteration_budget defaults
-   to 120 (max 600). Give a large task more at the start.
+   task and optional title, role, model, provider, iteration_budget and files. iteration_budget
+   defaults to 120 (max 600). Give a large task more at the start.
+
+   title is a short label for people: one line of 1 to 40 characters, such as \"Fix login test\".
+   Without it, people see the child number, such as #2.
 
    role is research, implement, verify or audit. It is a label for people and sets no tool, file or
    model limit. Choose it by the result that you need: facts, changed files, a pass or fail, or
@@ -1448,7 +1563,12 @@
   (let [child (info db sid)]
     (cond (or (nil? child) (contains? #{"queued" "running"} (:status child))) (constantly nil)
           (ps/db-agent-resume! db sid (count (ps/db-list-session-turns db sid)) (util/now-ms))
-          #(ps/db-agent-update! db sid (select-keys child [:status :resumed_turns :resumed_at])))))
+          #(ps/db-agent-update! db
+                                sid
+                                (merge {:result nil :outcome nil :finished_at nil}
+                                       (select-keys child
+                                                    [:status :resumed_turns :resumed_at :result
+                                                     :outcome :finished_at]))))))
 
 (defn task-request
   "The turn request of a Council wake from the parent of managed child `sid`, or nil for another
@@ -1568,8 +1688,8 @@
 (defn operation!
   "Run one managed-subagent operation for the calling session and answer its plain result.
    Gateway routes and extensions call this entry point; model tools call the same functions.
-   `operation` is :spawn, :list, :route, :run, :wait, :cancel, :resume, :extend, :deny, :answer
-   or :grant. Records answer in their wire form."
+   `operation` is :spawn, :list, :route, :run, :wait, :cancel, :resume, :extend, :deny, :answer,
+   :grant or :timeline. Records answer in their wire form."
   [env operation opts]
   (let [opts
         (walk/keywordize-keys (or opts {}))
@@ -1609,6 +1729,9 @@
           :grant
           (grant-records env (:session_id opts) (:files opts))
 
+          :timeline
+          (timeline (:db-info env) (:session-id env) (:session_id opts))
+
           (fail! :invalid-request (str "Unknown subagent operation " (name operation))))))))
 
 (def symbols
@@ -1644,6 +1767,8 @@
         "A plain string with the parent's reply, or None."]
        [#'ask-budget 'council.ask_budget {:pos ["iterations" "reason"] :rest :always}
         ["timeout_secs"] "A dict with `granted`, `iteration_budget` and `reply`."]
+       [#'report-result 'council.result {:pos ["text"] :rest :always} ["outcome"]
+        "A dict with `text` and, for a verifier, `outcome`."]
        [#'ask-files 'council.ask_files {:pos ["files" "reason"] :rest :always} ["timeout_secs"]
         "A dict with `granted`, `files`, `missing` and `reply`."]])))
 
@@ -1692,7 +1817,7 @@
 
 (def ^:private lead-child-guide
   "The subagent rules for reports and independent checks."
-  "- As a subagent, do only your task. End with the complete result and its evidence: command, input and output. For a decision, call council.ask(question). For more budget or files, call council.ask_budget(iterations, reason) or council.ask_files({\"write\": [path]}, reason). You cannot start subagents.
+  "- As a subagent, do only your task. Before your final answer, call council.result(text) with one line of at most 200 characters; as a verifier, add outcome=\"passed\" or \"failed\". End with the complete result and its evidence: command, input and output. For a decision, call council.ask(question). For more budget or files, call council.ask_budget(iterations, reason) or council.ask_files({\"write\": [path]}, reason). You cannot start subagents.
 - As a verifier, check the request, not your parent's summary. Write checks only in your scratch directory.")
 
 (defn prompt
@@ -1702,7 +1827,7 @@
       "## Subagents (Council)
 - Use subagents only when the user asks or the work has two or more large independent parts. When in doubt, do the work yourself.
 - Do the critical-path step and shared work yourself. Give one coupled design one owner: never split modules that share an invariant, a protocol or a data format. Treat the modules of one program as one coupled design.
-- Start children with council.run([task, ...]), usually two to four in total. Each task names its goal, known facts, files, done condition and role. files={\"write\": [...]} enforces the split; `doc(\"council.run\")` gives the rules.
+- Start children with council.run([task, ...]), usually two to four in total. Each task names its goal, known facts, files, done condition, role and a short title of at most 40 characters. files={\"write\": [...]} enforces the split; `doc(\"council.run\")` gives the rules.
 "
       role-guide
       "- A child sees your requests and notes, not your tool output. For an independent review, give the child the code, not your conclusion.

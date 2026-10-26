@@ -652,13 +652,16 @@
                :missing ["/b" "/c"]
                :reply "Granted: write /a."} nil]
              [:council.ask_files "" {:granted false :missing ["/b"] :reply "Denied: no."} nil]
-             [:council.ask_files "" {:granted false :missing ["/b"] :reply nil} nil]])]
+             [:council.ask_files "" {:granted false :missing ["/b"] :reply nil} nil]
+             [:council.result "" {:text "All 42 tests pass" :outcome "passed"} nil]
+             [:council.result "" {:text "Found the cause"} nil]])]
       (expect (contract/valid-projection? projection))
       (let [views (mapv #(get % "presentation") (get projection "rows"))]
         (expect (= ["1 asking" "1 failed" "Cancelled" "Parent replied" "No reply"
                     "Budget now 20 iterations" "1 asking" "Granted 10 iterations"
                     "No iterations granted" "No reply" "Grant now write 1 rule" "Files granted"
-                    "2 files not granted" "1 file not granted" "No reply"]
+                    "2 files not granted" "1 file not granted" "No reply"
+                    "Passed · All 42 tests pass" "Found the cause"]
                    (mapv #(get % "summary") views)))
         ;; A control of one agent is one line: the team rows in the turn show the agent.
         (expect (every? #(empty? (get-in views [% "sections"])) [2 5 10]))
@@ -668,17 +671,18 @@
                    (get-in views [3 "content"])))
         (expect (not (re-find #"child|Session|Parent:" (pr-str views)))))))
   (it "shows slow agent work as running"
-      (doseq [[operation visible?]
-              [[:council.run true] [:council.wait true] [:council.ask true] [:council.resume true]
-               [:council.ask_budget true] [:council.cancel false] [:council.extend false]
-               [:council.deny false] [:council.grant false] [:council.ask_files true]]]
+      (doseq [[operation visible?] [[:council.run true] [:council.wait true] [:council.ask true]
+                                    [:council.resume true] [:council.ask_budget true]
+                                    [:council.cancel false] [:council.extend false]
+                                    [:council.deny false] [:council.grant false]
+                                    [:council.ask_files true] [:council.result false]]]
         (expect (= visible? (:show-start (presenter/for-tool operation))))))
   (it
     "preserves failures and cancellation across every Council binding"
     (doseq [operation
             [:council.publish :council.get :council.read :council.threads :council.members
              :council.run :council.wait :council.cancel :council.ask :council.resume :council.extend
-             :council.deny :council.ask_budget :council.grant :council.ask_files]
+             :council.deny :council.ask_budget :council.grant :council.ask_files :council.result]
 
             outcome
             [:failed :cancelled]]

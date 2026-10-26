@@ -956,7 +956,8 @@
                                                                   settings
                                                                   {:session-id session-id
                                                                    :detail-expansions
-                                                                   detail-expansions}))))
+                                                                   detail-expansions})
+                                                 bubble-w)))
 
 ;;; ── Layout plan ────────────────────────────────────────────────────────────
 ;;
@@ -1148,7 +1149,7 @@
    plain Object args here - we cast with `long` inside the body."
   [messages bubble-w settings scroll inner-h
    {:keys [progress loading? progress-extra] :or {progress nil loading? false}} &
-   [{:keys [session-id detail-expansions prev-offsets prev-row-anchors]}]]
+   [{:keys [session-id detail-expansions prev-offsets prev-row-anchors running-turn-id]}]]
   (let [bubble-w
         (long bubble-w)
 
@@ -1178,10 +1179,21 @@
 
         ;; The turn that started a team carries its team card from the cached snapshot.
         messages
-        (agent-team/decorate-messages messages session-id)
+        (agent-team/decorate-messages messages session-id running-turn-id)
 
         n
         (long (count messages))
+
+        ;; Council traffic between the leader and its own agents takes no rows; the dock and
+        ;; the team block show the agents instead.
+        hidden
+        (let [child-ids (agent-team/child-session-ids session-id)]
+          (if (empty? child-ids)
+            #{}
+            (into #{}
+                  (keep-indexed (fn [i m]
+                                  (when (agent-team/child-traffic? m child-ids) i)))
+                  messages)))
 
         ;; Pass 1 ── sticky-real height if we've measured this
         ;; message before, otherwise the cheap estimate. Identity-
@@ -1207,14 +1219,16 @@
                   (nth messages i)
 
                   h
-                  (or (height-cache-get m bubble-w settings detail-expansions session-id)
-                      (estimated-height-cached messages
-                                               settings
-                                               bubble-w
-                                               i
-                                               m
-                                               detail-expansions
-                                               session-id))]
+                  (if (contains? hidden i)
+                    0
+                    (or (height-cache-get m bubble-w settings detail-expansions session-id)
+                        (estimated-height-cached messages
+                                                 settings
+                                                 bubble-w
+                                                 i
+                                                 m
+                                                 detail-expansions
+                                                 session-id)))]
 
               (recur (unchecked-inc i) (conj! acc h)))
             (persistent! acc)))
@@ -1281,7 +1295,7 @@
         (when (and loading? (pos? n) (= :assistant (:role (peek messages)))) (long (dec n)))
 
         ;; Share complete projection and measurement across all layout passes.
-        project-idx!
+        project-idx*
         (fn [^long i]
           (let [m
                 (nth messages i)
@@ -1325,7 +1339,8 @@
                     (agent-team/with-card-lines (assoc m
                                                   :text text
                                                   :prewrapped-lines lines
-                                                  :line-meta line-meta)))
+                                                  :line-meta line-meta)
+                                                bubble-w))
                   ;; The bottom and scrollback must use the same complete projection.
                   ;; A tail slice has no full-height metadata and would poison the
                   ;; sticky height cache with only the visible tail's height (#244).
@@ -1349,6 +1364,12 @@
             (when (and (not loading-bubble?) (nil? window-total-h))
               (height-cache-put! m bubble-w settings detail-expansions session-id real-h))
             {:idx i :projected pm :height real-h}))
+
+        project-idx!
+        (fn [^long i]
+          (if (contains? hidden i)
+            {:idx i :projected nil :height 0 :hidden? true}
+            (project-idx* i)))
 
         result
         (if (nil? scroll)
@@ -1407,11 +1428,13 @@
                 (long (max 0 (- total-h' inner-h)))
 
                 visible-set
-                (mapv (fn [{:keys [^long idx ^long height projected]}]
-                        {:idx idx
-                         :height height
-                         :projected projected
-                         :top (- (long (nth offsets' idx)) eff)})
+                (into []
+                      (comp (remove :hidden?)
+                            (map (fn [{:keys [^long idx ^long height projected]}]
+                                   {:idx idx
+                                    :height height
+                                    :projected projected
+                                    :top (- (long (nth offsets' idx)) eff)})))
                       tail)]
 
             {:total-h total-h'
@@ -1575,11 +1598,13 @@
                 (long (max 0 (min (+ (long scroll) anchor-shift'') (max 0 (- total-h'' inner-h)))))
 
                 visible-set
-                (mapv (fn [{:keys [^long idx ^long height projected]}]
-                        {:idx idx
-                         :height height
-                         :projected projected
-                         :top (- (long (nth offsets'' idx)) eff-3)})
+                (into []
+                      (comp (remove :hidden?)
+                            (map (fn [{:keys [^long idx ^long height projected]}]
+                                   {:idx idx
+                                    :height height
+                                    :projected projected
+                                    :top (- (long (nth offsets'' idx)) eff-3)})))
                       projected-all)]
 
             {:total-h total-h''
@@ -1603,7 +1628,9 @@
                   (:eff-scroll anchored-result)
                   inner-h
                   {:progress progress :loading? loading? :progress-extra progress-extra}
-                  {:session-id session-id :detail-expansions detail-expansions}))]
+                  {:session-id session-id
+                   :detail-expansions detail-expansions
+                   :running-turn-id running-turn-id}))]
 
     {:total-h (:total-h result)
      :eff-scroll (:eff-scroll result)

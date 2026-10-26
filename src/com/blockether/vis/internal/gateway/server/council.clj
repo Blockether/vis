@@ -6,7 +6,14 @@
 (defn- agents-handler
   [operation]
   (fn [request]
-    (try (let [opts (if (= :list operation) {} (http/body-json request))]
+    (try (let [opts (case operation
+                      :list
+                      {}
+
+                      :timeline
+                      {:session_id (get-in request [:path-params :child-id])}
+
+                      (http/body-json request))]
            (when-not (map? opts)
              (throw (ex-info "Expected an agents JSON object" {:error :invalid-request})))
            (http/json-response
@@ -86,6 +93,7 @@
    [:post "/v1/sessions/:sid/agents/route"] (agents-handler :route)
    [:post "/v1/sessions/:sid/agents/run"] (agents-handler :run)
    [:post "/v1/sessions/:sid/agents/wait"] (agents-handler :wait)
+   [:get "/v1/sessions/:sid/agents/:child-id/timeline"] (agents-handler :timeline)
    [:get "/v1/sessions/:sid/council"] (council-handler :binding)
    [:post "/v1/sessions/:sid/council/wake"] (council-handler :wake)
    [:get "/v1/sessions/:sid/council/members"] (council-handler :members)
