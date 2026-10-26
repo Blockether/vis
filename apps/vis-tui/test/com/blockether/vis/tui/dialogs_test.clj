@@ -420,6 +420,28 @@
         (expect (re-find #"│ +Yes +No +│" (nth lines yes-row)))
         (expect (re-find #"├─+┤" (nth lines (inc (long yes-row))))))))
 
+;; User request, this Vis session (paraphrased: row menu labels sat too close to the
+;; border): each select list label starts after one space inside the border.
+(defdescribe select-list-label-padding-test
+             (it "puts one space between the border and each label"
+                 (let [capture
+                       (cap/capture! {:cols 80
+                                      :rows 30
+                                      :keys [:esc]
+                                      :paint! (fn [{:keys [screen]}]
+                                                (dlg/select-dialog! screen
+                                                                    "Session"
+                                                                    [{:id :new-session
+                                                                      :label "New session here"
+                                                                      :hint "n"}]))})
+
+                       line
+                       (first (filter #(str/includes? % "New session here")
+                                      (str/split-lines (cap/frame-text capture 0))))]
+
+                   (expect (nil? (:error capture)))
+                   (expect (re-find #"│ New session here +n │" (str line)) (str line)))))
+
 (defdescribe select-modal-paging-test
              (it "PageDown and PageUp move a viewport and stop at list boundaries"
                  (let [items

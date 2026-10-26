@@ -1985,8 +1985,9 @@
                true
                (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"]))
 
+             ;; One space before each label keeps it off the border.
              item-w
-             (+ 4
+             (+ 5
                 (long (reduce max
                               0
                               (map (fn [it]
@@ -2074,7 +2075,7 @@
                        row
                        (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)
                        (= idx selected)
-                       (:label item)
+                       (str " " (:label item))
                        (:hint item))))))
              (when (> (long total) (long list-h))
                (ScrollBar/draw g
