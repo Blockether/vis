@@ -222,7 +222,29 @@ function RowActionMenu({
 }
 
 /** The observer that marks the tracks on screen, with the number of tracks it watches. */
-let watcher: { observer: IntersectionObserver; size: number } | null = null;
+interface TrackWatcher {
+  observer: IntersectionObserver;
+  size: number;
+  /** What each track's last report said, held while a list around it still moves. */
+  held: Map<Element, boolean>;
+  timer: ReturnType<typeof setTimeout> | null;
+  release: () => void;
+}
+
+let watcher: TrackWatcher | null = null;
+
+/** When each scroller last moved. A track's own sideways scroll never holds it back. */
+const scrolledAt = new WeakMap<EventTarget, number>();
+
+/** How long a list stays still before its tracks change. Momentum scrolls every frame. */
+const LIST_REST_MS = 120;
+
+function isListMoving(track: Element, now: number): boolean {
+  for (let node: Node | null = track.parentNode; node; node = node.parentNode) {
+    if (now - (scrolledAt.get(node) ?? -Infinity) < LIST_REST_MS) return true;
+  }
+  return false;
+}
 
 /**
  * ONLY A ROW ON THE SCREEN IS A SCROLLER.
@@ -242,28 +264,69 @@ let watcher: { observer: IntersectionObserver; size: number } | null = null;
  * The observer measures against the viewport, so every scrolling list above a track
  * clips it too. A hidden track looks the same, because a closed drawer stands past the
  * row's edge. Where nothing can observe, every track stays a scroller.
+ *
+ * A TRACK CHANGES ONLY WHILE ITS LIST STANDS STILL. Regression, user report (paraphrased:
+ * a hard swipe over a 445-session group lagged and showed blank stripes): each track that
+ * entered or left the screen in a fling changed its overflow, so WebKit laid out all
+ * 33,000 nodes of the list and made or dropped a native scroll view, about once for every
+ * row passed. On an iOS 18.6 simulator, 153 of 354 page frames ran past 34 ms and 175
+ * recorded frames showed an empty list. Reports from a moving list now wait until it
+ * rests for `LIST_REST_MS`, then apply at once. A thumb that stops a fling lands on a
+ * still list, so the rows under it are scrollers by its next swipe.
  */
 function watchOnScreen(track: HTMLElement): () => void {
   if (typeof IntersectionObserver !== 'function') {
     track.setAttribute('data-on-screen', '');
     return () => {};
   }
-  watcher ??= {
-    observer: new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        entry.target.toggleAttribute('data-on-screen', entry.isIntersecting);
+  if (!watcher) {
+    const onScroll = (event: Event) => {
+      if (event.target) scrolledAt.set(event.target, performance.now());
+    };
+    const state: TrackWatcher = {
+      observer: new IntersectionObserver((entries) => {
+        const now = performance.now();
+        for (const entry of entries) {
+          if (isListMoving(entry.target, now)) {
+            state.held.set(entry.target, entry.isIntersecting);
+          } else {
+            state.held.delete(entry.target);
+            entry.target.toggleAttribute('data-on-screen', entry.isIntersecting);
+          }
+        }
+        if (state.held.size > 0) state.timer ??= setTimeout(settle, LIST_REST_MS / 2);
+      }),
+      size: 0,
+      held: new Map(),
+      timer: null,
+      release: () => {
+        window.removeEventListener('scroll', onScroll, true);
+        if (state.timer !== null) clearTimeout(state.timer);
+      },
+    };
+    const settle = () => {
+      state.timer = null;
+      const now = performance.now();
+      for (const [target, isOnScreen] of state.held) {
+        if (isListMoving(target, now)) continue;
+        state.held.delete(target);
+        target.toggleAttribute('data-on-screen', isOnScreen);
       }
-    }),
-    size: 0,
-  };
+      if (state.held.size > 0) state.timer = setTimeout(settle, LIST_REST_MS / 2);
+    };
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    watcher = state;
+  }
   const current = watcher;
   current.observer.observe(track);
   current.size += 1;
   return () => {
     current.observer.unobserve(track);
+    current.held.delete(track);
     current.size -= 1;
     if (current.size > 0) return;
     current.observer.disconnect();
+    current.release();
     watcher = null;
   };
 }

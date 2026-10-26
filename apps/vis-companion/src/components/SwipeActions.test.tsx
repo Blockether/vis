@@ -615,6 +615,9 @@ describe('a track scrolls sideways only on screen', () => {
   beforeEach(() => {
     observers = 0;
     watched.clear();
+    // Other tests scroll the page. Start far past their last scroll, so the list is at rest.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] });
+    vi.advanceTimersByTime(1e9);
     vi.stubGlobal(
       'IntersectionObserver',
       class {
@@ -636,6 +639,7 @@ describe('a track scrolls sideways only on screen', () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   const list = (...labels: string[]) => (
@@ -693,5 +697,58 @@ describe('a track scrolls sideways only on screen', () => {
     vi.stubGlobal('IntersectionObserver', undefined);
     render(list('first'));
     expect(trackOf('first')).toHaveAttribute('data-on-screen');
+  });
+
+  // Regression, user report (paraphrased: a hard swipe over a 445-session group lagged and
+  // showed blank stripes): each row that crossed the screen edge in a fling changed its
+  // overflow, and WebKit laid out the whole list again for each of them.
+  describe('while the list moves', () => {
+    it('holds each report until the list rests, then applies the last one', () => {
+      render(list('first', 'second'));
+      const first = trackOf('first');
+      const second = trackOf('second');
+      const rows = first.parentElement as HTMLElement;
+
+      fireEvent.scroll(rows);
+      report(first, true);
+      report(second, true);
+      report(second, false);
+      expect(first).not.toHaveAttribute('data-on-screen');
+
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.scroll(rows);
+      act(() => vi.advanceTimersByTime(100));
+      expect(first).not.toHaveAttribute('data-on-screen');
+
+      act(() => vi.advanceTimersByTime(100));
+      expect(first).toHaveAttribute('data-on-screen');
+      expect(second).not.toHaveAttribute('data-on-screen');
+    });
+
+    it('is not held back by its own sideways scroll or by another scroller', () => {
+      render(
+        <>
+          {list('first')}
+          <div data-testid="transcript" />
+        </>,
+      );
+      const first = trackOf('first');
+
+      fireEvent.scroll(first);
+      fireEvent.scroll(screen.getByTestId('transcript'));
+      report(first, true);
+      expect(first).toHaveAttribute('data-on-screen');
+    });
+
+    it('drops the report of a row that leaves before the list rests', () => {
+      const { unmount } = render(list('first'));
+      const first = trackOf('first');
+
+      fireEvent.scroll(first.parentElement as HTMLElement);
+      report(first, true);
+      unmount();
+      act(() => vi.advanceTimersByTime(500));
+      expect(first).not.toHaveAttribute('data-on-screen');
+    });
   });
 });
