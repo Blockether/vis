@@ -471,16 +471,19 @@
   core-prompt-project-style-test
   ;; Regression: Blockether/vis#188 reported missing spacing between definitions and YAML resources.
   ;; These assertions pin the prompt contract, not model compliance.
-  (it "makes project style and logical spacing part of editing correctness"
-      (let [text
-            (var-get #'prompt/CORE_SYSTEM_PROMPT)
+  (it
+    "makes project style and logical spacing part of editing correctness"
+    (let [text
+          (var-get #'prompt/CORE_SYSTEM_PROMPT)
 
-            edit-section
-            (second (re-find #"(?s)- EDIT: (.*?)\n- CHECK: " text))]
+          edit-section
+          (second (re-find #"(?s)- EDIT: (.*?)\n- CHECK: " text))]
 
-        (expect (some? edit-section))
-        (doseq [rule ["Make small in-scope changes in the style of the code nearby"]]
-          (expect (str/includes? (str/replace (or edit-section "") #"\s+" " ") rule) rule))))
+      (expect (some? edit-section))
+      (doseq
+        [rule
+         ["Ship the smallest in-scope edit that fixes the cause, in the style of the code nearby"]]
+        (expect (str/includes? (str/replace (or edit-section "") #"\s+" " ") rule) rule))))
   (it "owns scope and verification once, separately from response style"
       (let [text
             (var-get #'prompt/CORE_SYSTEM_PROMPT)
@@ -488,7 +491,7 @@
             edit-section
             (second (re-find #"(?s)- EDIT: (.*?)\n- FINISH: " text))]
 
-        (doseq [rule ["Make small in-scope changes" "Test the changed code"
+        (doseq [rule ["Ship the smallest in-scope edit" "Test the changed code"
                       "Run the affected tests, format and lint, and review the diff"]]
           (let [pattern (re-pattern (java.util.regex.Pattern/quote rule))
                 normalized (str/replace text #"\s+" " ")]
@@ -843,7 +846,9 @@
       ;; lands at 7 364.
       ;; 7.4k → 3.6k: user decision. The state machine keeps only the minimum: state rules,
       ;; sandbox facts, call shapes and the fold rule. It lands at 3546.
-      (expect (< (count text) 3600))
+      ;; 3.6k → 4.7k: user decision after CTB round m11. The engineering rules of ub-mode and the
+      ;; v7 measurement rule return to EDIT and CHECK.
+      (expect (< (count text) 4700))
       (let [steps (mapv #(str/index-of text %) ["`N│ text` rows" "`grep({" "`patch(path, edits)`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
@@ -895,6 +900,20 @@
                "Keep results in" "Reproduce each symptom before you edit"
                "Show that each symptom is gone" "Name unrelated failures; do not fix them"
                "Write only production code and tests"
+               ;; Regression, CTB round m11: without these rules, agents left probe and
+               ;; test files in the project root and failed a structural gate.
+               "Add a test only where nearby tests show a place"
+               "Keep scratch work, probes and benchmarks in sandbox variables, not in files"
+               ;; User decision after CTB round m11: ub-mode rules. Agents called a missed
+               ;; latency target a limitation and measured an easier case than the checker.
+               "See it fail for the reason that you expect"
+               "A guard that only hides a failure is not a fix"
+               "Give shared mutable state one writer"
+               "again after a crash halfway, must end in the same state" "the way its user calls it"
+               "Drop a test that still passes when every function returns nothing"
+               "Measure a stated target on the exact stated case in a fresh process"
+               "use the slowest" "Keep a wide margin"
+               "A missed target is a failure, not a limitation"
                ;; Regression, user report: sessions stopped folding when §6 named no callable.
                ;; Real A/B data showed that a forced early fold doubled cost, so the fold
                ;; waits for the measured hint and a large phase.
@@ -963,6 +982,9 @@
           (expect (str/includes? text "real CPython"))
           (expect (str/includes? text "same `~/.vis/python/packages`"))
           (expect (str/includes? text "Imports never install packages"))
+          ;; Regression, CTB round m11: an agent probed lxml with a sandbox import, saw
+          ;; it missing and avoided a library that the project interpreter had.
+          (expect (str/includes? text "not the interpreter of the project"))
           (expect (not (str/includes? text "fetched once")))
           (expect (str/includes? text "Modules from Vis"))
           (doseq [module ["PIL" "brotli" "fontTools" "numpy" "zoneinfo"]]
@@ -1038,7 +1060,9 @@
         ;; 1.5k → 1.55k: user report — a session read `blockether.vis.__file__` as proof the
         ;; import was broken, so the frozen SDK's missing on-disk path is named here.
         ;; 1.55k → 1.75k: the shell handle and the file-work rule moved here from the core.
-        (expect (< (count text) 1750)))))
+        ;; 1.75k → 1.95k: CTB round m11 — name the sandbox as the Vis environment and send
+        ;; project package checks to the project interpreter through `shell`.
+        (expect (< (count text) 1950)))))
 
 (defdescribe
   project-instructions-hoist-test
