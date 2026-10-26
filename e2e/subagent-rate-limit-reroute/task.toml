@@ -1,4 +1,4 @@
-artifacts = ["busy-calls.jsonl"]
+artifacts = [".vis/calls/busy-calls.jsonl"]
 
 [metadata]
 lang = "python"

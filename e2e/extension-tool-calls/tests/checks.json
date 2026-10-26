@@ -8,7 +8,7 @@
   "max_form_output_chars": 6000,
   "want_requested_route": true,
   "want_json_files": {
-    "seat-desk-calls.jsonl": [
+    ".vis/calls/seat-desk-calls.jsonl": [
       {
         "operation": "seat_desk.hold",
         "arguments": {
@@ -24,7 +24,7 @@
         }
       }
     ],
-    "front-desk-calls.jsonl": [
+    ".vis/calls/front-desk-calls.jsonl": [
       {
         "operation": "front_desk.book",
         "hold_class": "Hold",

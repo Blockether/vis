@@ -1,4 +1,4 @@
-artifacts = ["front-desk-calls.jsonl", "seat-desk-calls.jsonl"]
+artifacts = [".vis/calls/front-desk-calls.jsonl", ".vis/calls/seat-desk-calls.jsonl"]
 
 [metadata]
 lang = "python"

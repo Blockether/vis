@@ -46,7 +46,7 @@ def status_activity(*, phase, result, **_):
 
 def journal_call(operation, arguments):
     """Record fixture invocations independently of model output."""
-    journal = Path(__file__).resolve().parents[2] / "contract-calls.jsonl"
+    journal = Path(__file__).resolve().parents[1] / "calls" / "contract-calls.jsonl"
     with journal.open("a") as stream:
         stream.write(
             json.dumps({"operation": operation, "arguments": arguments}) + "\n"
@@ -57,7 +57,7 @@ class ContractProbe:
     def __init__(self) -> None:
         self._records = 0
         self._total = 0
-        self._ledger = Path(__file__).resolve().parents[2] / "contract-receipts.jsonl"
+        self._ledger = Path(__file__).resolve().parents[1] / "calls" / "contract-receipts.jsonl"
 
     @vis.method(
         tag="mutation",

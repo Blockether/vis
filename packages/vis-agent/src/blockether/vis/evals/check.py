@@ -2,7 +2,9 @@
 
 Run it with ``python -m blockether.vis.evals.check TASK_DIR --provider P --model M``.
 ``TASK_DIR`` is one task or a directory of tasks, for example ``e2e`` of the Vis
-repository. Each check makes paid model calls.
+repository. Each check makes paid model calls. Before them, the command runs the
+file checks of `task_problems` and stops at the first problem. ``--static`` runs only
+those file checks, without a model.
 
 ``harbor check`` runs Claude Code in Docker. This module uses the same rubric,
 prompt and result validation of Harbor. The Vis agent runs each check in the host
@@ -33,6 +35,7 @@ from harbor.models.job.config import JobConfig
 from harbor.models.trial.config import AgentConfig, EnvironmentConfig, TaskConfig
 
 from .environment import WORKSPACE_DIRECTORY
+from .harbor import TASK_FILE, read_tasks, task_problems
 
 AGENT = "blockether.vis.evals.agent:VisAgent"
 ENVIRONMENT = "blockether.vis.evals.environment:HostEnvironment"
@@ -117,6 +120,8 @@ async def check(
     from harbor.job import Job
 
     task_dirs = checker._resolve_task_dirs(Path(path), None, None, None)
+    if problems := [problem for task in task_dirs for problem in task_problems(task)]:
+        raise ValueError("fix the tasks before a paid check:\n" + "\n".join(problems))
     rubric = load_rubric(None)
     response_model = build_check_response_model(rubric)
     name = job_name or datetime.now(UTC).strftime("check-%Y%m%d-%H%M%S")
@@ -177,18 +182,45 @@ def print_report(report: CheckReport, job_dir: Path) -> None:
     console.print(f"Report: {job_dir / REPORT_FILE}")
 
 
+def static_check(path: Path) -> int:
+    """Print the file problems of the tasks in ``path``. Return 1 if a task has one."""
+    root = Path(path)
+    if (root / TASK_FILE).is_file():
+        folders = [root]
+    else:
+        try:
+            folders = [task.path for task in read_tasks(root)]
+        except FileNotFoundError as error:
+            print(error, file=sys.stderr)
+            return 1
+    problems = [problem for folder in folders for problem in task_problems(folder)]
+    for problem in problems:
+        print(problem)
+    print(f"{len(folders)} tasks, {len(problems)} problems")
+    return 1 if problems or not folders else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Check the tasks of ``argv``. Return 1 if a check has no valid result."""
     parser = argparse.ArgumentParser(prog="python -m blockether.vis.evals.check")
     parser.add_argument(
         "path", type=Path, help="a task directory or a directory of tasks"
     )
-    parser.add_argument("--provider", required=True)
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--provider")
+    parser.add_argument("--model")
     parser.add_argument("--jobs-dir", type=Path, default=Path(DEFAULT_JOBS))
     parser.add_argument("--job-name")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument(
+        "--static",
+        action="store_true",
+        help="run only the file checks of each task, without model calls",
+    )
     args = parser.parse_args(argv)
+    if args.static:
+        return static_check(args.path)
+    if not args.provider or not args.model:
+        parser.error("--provider and --model are required without --static")
     try:
         report, job_dir = asyncio.run(
             check(

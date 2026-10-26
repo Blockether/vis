@@ -35,7 +35,7 @@ def create_activity(*, phase, result, **_):
 
 class GitHubIssues:
     def __init__(self):
-        self._ledger = Path(__file__).resolve().parents[2] / "issue-events.jsonl"
+        self._ledger = Path(__file__).resolve().parents[1] / "calls" / "issue-events.jsonl"
         self._created = None
         self._searched = False
 

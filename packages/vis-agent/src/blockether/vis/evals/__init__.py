@@ -57,6 +57,7 @@ from .harbor import (
     seal_rows,
     split_turns,
     summarize,
+    task_problems,
     write_task,
 )
 from .labels import (
@@ -219,6 +220,7 @@ __all__ = [
     "stage_agreement",
     "standing",
     "summarize",
+    "task_problems",
     "summary_attempts",
     "task_attempts",
     "task_note",

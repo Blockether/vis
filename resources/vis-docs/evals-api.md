@@ -132,8 +132,12 @@ turns](evals.md#write-a-task-with-several-turns): one string for each user messa
 `artifacts` lists the workspace files that Harbor copies to the trial folder, for example the
 record of a [mock extension](evals.md#replace-an-extension-with-a-mock). `filesystem_roots` maps
 each filesystem root id to a workspace folder, for example `{"library": "library"}`. The trial
-registers each root in `vis.yml`, and the agent finds it with `ls`. The `e2e/py-project-paths`
-task uses it.
+registers each root in `.vis/config.yml`, and the agent finds it with `ls`. The
+`e2e/py-project-paths` task uses it.
+
+`test_files` maps each new file name in `tests/` to its text, for example `{"verify.py": source}` for
+the [`verify` check](evals.md#grade-with-the-rules-of-the-task). The call raises `ValueError` for an
+unknown key in `checks`, with the nearest known key.
 
 </div>
 

@@ -18,7 +18,7 @@
     "council.run"
   ],
   "want_json_files": {
-    "busy-calls.jsonl": [
+    ".vis/calls/busy-calls.jsonl": [
       {
         "model": "busy-1",
         "status": 429

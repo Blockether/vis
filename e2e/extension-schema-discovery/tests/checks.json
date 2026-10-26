@@ -8,7 +8,7 @@
   "max_form_output_chars": 6000,
   "want_requested_route": true,
   "want_json_files": {
-    "schema-calls.jsonl": [
+    ".vis/calls/schema-calls.jsonl": [
       {
         "operation": "schema_probe.cards",
         "arguments": {

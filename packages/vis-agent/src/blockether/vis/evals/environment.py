@@ -7,8 +7,16 @@ container paths map to host directories, and the trial log directories are the
 
 A task gives its seed files in ``environment/workspace``. An optional
 ``environment/workspace_filesystem.json`` maps filesystem root ids to workspace
-paths; the environment registers them in ``vis.yml``. The verifier of a task runs
-the SDK grader with ``"$VIS_HARBOR_PYTHON" -m blockether.vis.evals.grade``.
+paths. The verifier of a task runs the SDK grader with
+``"$VIS_HARBOR_PYTHON" -m blockether.vis.evals.grade``.
+
+The ``.vis`` folder of the workspace belongs to the harness: mock extensions in
+``.vis/extensions`` and their call records in ``.vis/calls``, which the environment
+makes. The environment writes the trial policy to ``.vis/config.yml``. It turns on the process
+jail and denies the agent every read and write in ``.vis``. Extension code is trusted
+host code, so a mock can still write its record. Git ignores ``.vis``, so the first
+commit holds no mock either. The option ``jail=false`` (``--ek jail=false``) turns
+the jail off; then only the Vis file tools keep the deny rule.
 """
 
 from __future__ import annotations
@@ -32,8 +40,11 @@ from harbor.models.trial.paths import EnvironmentPaths
 from .harbor import WORKSPACE_FILESYSTEM_FILE
 
 WORKSPACE_DIRECTORY = "workspace"
+HARNESS_DIRECTORY = ".vis"
+HARNESS_CONFIG = "config.yml"
+HARNESS_CALLS = "calls"
+GIT_INIT = ("git", "init", "-q", ".")
 GIT_SETUP = (
-    ("git", "init", "-q", "."),
     ("git", "config", "user.email", "t@t.co"),
     ("git", "config", "user.name", "t"),
     ("git", "add", "-A"),
@@ -48,6 +59,10 @@ class HostEnvironment(BaseEnvironment):
     """A Harbor environment that runs each command with bash on this host."""
 
     _root: Path | None = None
+
+    def __init__(self, *args, jail: bool | str = True, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.jail = _flag("jail", jail)
 
     @staticmethod
     def type() -> str:
@@ -144,18 +159,38 @@ class HostEnvironment(BaseEnvironment):
             )
         for host in hosts:
             host.mkdir(parents=True, exist_ok=True)
+        harness = self.workspace / HARNESS_DIRECTORY
+        policy_file = harness / HARNESS_CONFIG
+        if policy_file.exists() or (harness / "config.yaml").exists():
+            raise ValueError(
+                f"{HARNESS_DIRECTORY}/{HARNESS_CONFIG} belongs to the harness: "
+                "put the settings of the task in vis.yml"
+            )
+        filesystem = {
+            "deny_read": [HARNESS_DIRECTORY],
+            "deny_write": [HARNESS_DIRECTORY],
+        }
+        config = {"jail": {"enabled": self.jail, "filesystem": filesystem}}
         registrations_file = self.environment_dir / WORKSPACE_FILESYSTEM_FILE
         if registrations_file.is_file():
             registrations = json.loads(registrations_file.read_text())
-            entries = [
-                {"id": name, "path": os.path.realpath(self.workspace / relative)}
-                for name, relative in registrations.items()
-            ]
-            config = {
-                "workspace": {"filesystem": entries},
-                "jail": {"filesystem": {"allow": list(registrations)}},
+            config["workspace"] = {
+                "filesystem": [
+                    {"id": name, "path": os.path.realpath(self.workspace / relative)}
+                    for name, relative in registrations.items()
+                ]
             }
-            (self.workspace / "vis.yml").write_text(json.dumps(config, indent=2) + "\n")
+            filesystem["allow"] = list(registrations)
+        (harness / HARNESS_CALLS).mkdir(parents=True, exist_ok=True)
+        # JSON is YAML, and this overlay wins over the vis.yml of the task.
+        policy_file.write_text(json.dumps(config, indent=2) + "\n")
+        subprocess.run(
+            GIT_INIT, cwd=self.workspace, check=True, capture_output=True, text=True
+        )
+        exclude = self.workspace / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a") as stream:
+            stream.write(f"/{HARNESS_DIRECTORY}/\n")
         for command in GIT_SETUP:
             subprocess.run(
                 command, cwd=self.workspace, check=True, capture_output=True, text=True
@@ -240,6 +275,17 @@ async def _stop_group(process: asyncio.subprocess.Process) -> None:
         os.killpg(process.pid, signal.SIGKILL)
     with contextlib.suppress(Exception):
         await asyncio.wait_for(process.wait(), timeout=10)
+
+
+def _flag(name: str, value: bool | str) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "on"}:
+        return True
+    if text in {"false", "0", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false, not {value!r}")
 
 
 def _copy_file(source: Path, target: Path) -> None:

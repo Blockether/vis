@@ -89,6 +89,10 @@ class VisOptions(AgentOptions):
         default=None,
         description="File whose text each trial adds to the system prompt.",
     )
+    global_config: bool = Field(
+        default=False,
+        description="Read all of ~/.vis, not only the providers and their sign-in.",
+    )
 
 
 @functools.cache
@@ -196,6 +200,11 @@ class VisAgent(BaseAgent):
     agent runs the ``vis-agent`` CLI of the SDK's release. When the installed CLI is
     missing or another release, setup downloads that release once into the SDK cache.
 
+    Each trial reads only the project tier of the configuration (``VIS_SOURCES=project``).
+    From ``~/.vis`` it then gets the providers and their sign-in, but not the toggles,
+    rules, MCP servers or extensions of the operator. ``global_config`` reads all of
+    ``~/.vis``. A ``VIS_SOURCES`` value in ``--ae`` wins over both.
+
     ``append_system`` (``VIS_HARBOR_APPEND_SYSTEM``) names a file. Each trial writes
     its text to ``.vis/APPEND_SYSTEM.md`` in the workspace, so two runs can compare a
     prompt rule on the same tasks. A task that has that file already is an error.
@@ -231,6 +240,7 @@ class VisAgent(BaseAgent):
         source = options.source or self._setting("VIS_HARBOR_SOURCE")
         self.source = Path(source).resolve() if source else None
         self.engine_override = options.command
+        self.global_config = options.global_config
         append_system = options.append_system or self._setting(
             "VIS_HARBOR_APPEND_SYSTEM"
         )
@@ -316,6 +326,8 @@ class VisAgent(BaseAgent):
         env["VIS_EXTENSIONS_DIR"] = self._setting("VIS_EXTENSIONS_DIR") or str(
             runtime / "extensions"
         )
+        if not self.global_config:
+            env.setdefault("VIS_SOURCES", "project")
         env["VIS_HARBOR_PROMPT"] = instruction
         if self.native_bin:
             env["VIS_HARBOR_ENGINE"] = self.native_bin

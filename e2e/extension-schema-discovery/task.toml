@@ -1,4 +1,4 @@
-artifacts = ["schema-calls.jsonl"]
+artifacts = [".vis/calls/schema-calls.jsonl"]
 
 [metadata]
 lang = "python"

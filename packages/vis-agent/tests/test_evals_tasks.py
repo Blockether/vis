@@ -23,6 +23,7 @@ from blockether.vis.evals import (
     round_summary,
     run_tasks,
     split_turns,
+    task_problems,
     write_task,
 )
 from blockether.vis.evals._gateway import handle
@@ -297,9 +298,106 @@ def test_write_task_writes_each_e2e_task_again(tmp_path, task):
             "artifacts", ()
         ),
         filesystem_roots=json.loads(roots.read_text()) if roots.exists() else None,
+        test_files={
+            name.removeprefix("tests/"): data.decode()
+            for name, data in task_files(folder).items()
+            if name.startswith("tests/")
+            and name not in {"tests/checks.json", "tests/test.sh"}
+        },
     )
     assert workspace.is_dir()
     assert task_files(written.path) == task_files(folder)
+
+
+@pytest.mark.parametrize("task", read_tasks(E2E), ids=lambda task: task.name)
+def test_each_e2e_task_has_no_file_problems(task):
+    assert task_problems(task.path) == ()
+
+
+def _problems_of(tmp_path, change):
+    task = write_add_c(tmp_path, "add-c", "In m.py add a function c that returns 3.")
+    change(task.path)
+    return task_problems(task.path)
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        (
+            lambda folder: (folder / "tests/test.sh").chmod(0o644),
+            "add-c: tests/test.sh is not executable",
+        ),
+        (
+            lambda folder: (folder / "tests/checks.json").write_text(
+                '{"want_tool": ["patch"]}'
+            ),
+            "add-c: unknown check key 'want_tool'; did you mean 'want_tools'?",
+        ),
+        (
+            lambda folder: (folder / "tests/checks.json").write_text(
+                '{"verify": "verify.py"}'
+            ),
+            "add-c: verify names a missing file: tests/verify.py",
+        ),
+        (
+            lambda folder: (folder / "tests/checks.json").write_text("{"),
+            "add-c: tests/checks.json is not JSON",
+        ),
+        (
+            lambda folder: (
+                (folder / "environment/workspace/.vis").mkdir(),
+                (folder / "environment/workspace/.vis/config.yml").write_text(""),
+            ),
+            "add-c: environment/workspace/.vis/config.yml belongs to the harness",
+        ),
+    ],
+)
+def test_task_problems_find_a_broken_task(tmp_path, change, problem):
+    problems = _problems_of(tmp_path, change)
+    assert len(problems) == 1
+    assert problems[0].startswith(problem)
+
+
+def test_write_task_writes_the_test_files_and_refuses_unknown_checks(tmp_path):
+    verifier = "def verify(evidence):\n    return []\n"
+    task = write_task(
+        tmp_path,
+        "verified",
+        "Do it.",
+        {"want_answer": ["x"], "verify": "verify.py"},
+        test_files={"verify.py": verifier},
+    )
+    assert (task.path / "tests/verify.py").read_text() == verifier
+    assert task_problems(task.path) == ()
+    with pytest.raises(ValueError, match="unknown check key 'want_answers'"):
+        write_task(tmp_path, "typo", "Do it.", {"want_answers": ["x"]})
+    with pytest.raises(ValueError, match="new file name in tests/"):
+        write_task(
+            tmp_path, "nested", "Do it.", {"want": {}}, test_files={"a/b.py": ""}
+        )
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["verified"]
+
+
+def test_run_tasks_refuses_a_broken_task_before_a_model_call(tmp_path):
+    task = write_add_c(tmp_path, "add-c", "In m.py add a function c that returns 3.")
+    (task.path / "tests/test.sh").chmod(0o644)
+    with pytest.raises(ValueError, match="add-c: tests/test.sh is not executable"):
+        run_tasks(tmp_path, MODEL, jobs_dir=tmp_path / "jobs")
+    assert not (tmp_path / "jobs").exists()
+
+
+def test_the_static_check_needs_no_model(tmp_path, capsys):
+    from blockether.vis.evals.check import main as check_main
+
+    task = write_add_c(tmp_path, "add-c", "In m.py add a function c that returns 3.")
+    assert check_main([str(tmp_path), "--static"]) == 0
+    assert capsys.readouterr().out == "1 tasks, 0 problems\n"
+    (task.path / "tests/checks.json").write_text('{"wantnot_files": {}}')
+    assert check_main([str(task.path), "--static"]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "add-c: unknown check key 'wantnot_files'; did you mean 'want_json_files'?",
+        "1 tasks, 1 problems",
+    ]
 
 
 def test_run_tasks_refuses_a_folder_without_tasks(tmp_path):
@@ -389,6 +487,9 @@ def test_the_mock_extension_of_the_guide_records_each_call(tmp_path, monkeypatch
     monkeypatch.setattr(sdk, "register_extension", registered.append)
     extensions = tmp_path / "workspace/.vis/extensions"
     extensions.mkdir(parents=True)
+    (
+        tmp_path / "workspace/.vis/calls"
+    ).mkdir()  # HostEnvironment makes it for each trial
     mock = extensions / "mylib.py"
     mock.write_text(blocks["python"][0])
     code = compile(mock.read_text(), str(mock), "exec")
@@ -404,11 +505,15 @@ def test_the_mock_extension_of_the_guide_records_each_call(tmp_path, monkeypatch
         {"status": "accepted", "id": "job-1"},
         {"status": "accepted", "id": "job-2"},
     ]
-    record = (tmp_path / "workspace/payload-calls.jsonl").read_text()
+    record = (tmp_path / "workspace/.vis/calls/payload-calls.jsonl").read_text()
     checks = json.loads(blocks["json"][0])
-    assert all(text in record for text in checks["want"]["payload-calls.jsonl"])
+    assert all(
+        text in record for text in checks["want"][".vis/calls/payload-calls.jsonl"]
+    )
     assert all(json.loads(line)["size"] == 1300 for line in record.splitlines())
-    assert blocks["toml"][0].startswith('artifacts = ["payload-calls.jsonl"]\n')
+    assert blocks["toml"][0].startswith(
+        'artifacts = [".vis/calls/payload-calls.jsonl"]\n'
+    )
 
 
 def test_the_python_examples_of_the_api_page_run(tmp_path, monkeypatch):

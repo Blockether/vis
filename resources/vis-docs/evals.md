@@ -58,8 +58,8 @@ tool does a different part of the work:
 The Vis setup is different from the Harbor defaults in three ways:
 
 - **No containers.** Harbor usually runs each trial in Docker. `HostEnvironment` runs each trial
-  in a new git repository on your computer. The agent can read files outside that repository,
-  so run only tasks that you trust.
+  in a new git repository on your computer, inside the [process jail](jail.md). Read [How a
+  trial is isolated](#how-a-trial-is-isolated) for what the agent can and cannot reach.
 - **A Vis grader.** A standard Harbor verifier runs tests, for example `pytest`, and writes a
   reward. The Vis grader also reads the agent trajectory. It can check the answer, the tools
   that the agent used and its errors, not only the files.
@@ -105,6 +105,11 @@ tasks/
     tests/checks.json
     tests/test.sh
 ```
+
+Everything that a task needs stays in its folder: the prompt, the seed files, the mock
+extensions, the checks and the verifier. Harbor finds each folder with a `task.toml`, so you add a
+task without a change to a shared list. The task checksum of a [round seal](#report-the-round)
+covers every file in the folder, also nested ones.
 
 `task.toml` sets the time limits in seconds:
 
@@ -161,6 +166,7 @@ A trial passes only when all its checks pass. These are the checks that most tas
 | `want_answer_program` | A Python file in `tests/` accepts the final answer. |
 | `want_json_files` | Each named file is JSON Lines with exactly these rows, in this order. |
 | `want_tools` | The agent used each named tool. |
+| `verify` | A Python file in `tests/` grades the trial with the rules of this task. |
 | `forbid_tools` | The agent did not use any named tool. |
 | `max_patch_calls_per_file` | The agent changed each file with at most this number of successful `patch` calls. |
 | `max_total_output_chars` | The tool output of the run stayed below this size. |
@@ -169,8 +175,54 @@ A trial passes only when all its checks pass. These are the checks that most tas
 file gets the answer on its standard input. Exit code 0 accepts the answer. Any other exit code fails
 the check, and the last line of the error output becomes the failure detail.
 
+The grader refuses a key that it does not know, for example `want_tool` instead of `want_tools`.
+A misspelled key would check nothing, so the trial would pass without that check.
+
 The grader always checks that the agent finished without an error. The `e2e/` folder of the Vis
-repository has 42 tasks that use these checks. Read them for more examples.
+repository has 44 tasks that use these checks. Read them for more examples.
+
+### Grade with the rules of the task
+
+Use `verify` when a rule belongs to one task only, for example "each call in the mock record
+has a matching tool call". Then the rule stays in the task folder, and the shared grader does
+not change. Name the file in `tests/checks.json`:
+
+```json
+{
+  "want_answer": ["job-1"],
+  "verify": "verify.py"
+}
+```
+
+The file defines `verify(evidence)`. It returns a list of failure texts. An empty list passes:
+
+```python
+import json
+
+
+def verify(evidence):
+    record = evidence.workspace / ".vis" / "calls" / "payload-calls.jsonl"
+    rows = [json.loads(line) for line in record.read_text().splitlines()]
+    sent = evidence.tools.count("mylib.send_some_huge_payload")
+    if len(rows) != sent:
+        return [f"the mock recorded {len(rows)} calls, but {sent} calls succeeded"]
+    return []
+```
+
+`evidence` has these fields:
+
+| Field | Value |
+|---|---|
+| `answer` | The final answer of the agent. |
+| `workspace` | The trial workspace after the run, as a `Path`. |
+| `forms` | The code of each block, in order. |
+| `activities` | The final Activity row of each tool call, with `operation`, `state` and `scope`. |
+| `tools` | The operation of each tool call that succeeded. |
+| `trajectory` | The whole run as a `Trajectory`, or None when the agent wrote none. |
+
+The result is the `task` guard of the trial. An exception in `verify` fails the guard with the
+error text. The agent never sees the files in `tests/`. With `write_task`, give the file in
+`test_files`, for example `test_files={"verify.py": text}`.
 
 To test a project with its own test suite, write a standard Harbor verifier instead. Read the
 Harbor guide [Create a task](https://docs.harborframework.com/tutorials/create-a-task).
@@ -194,8 +246,8 @@ for each task. They follow the Anthropic guides in [References](#references).
   `forbid_tools` only when the tool is a requirement, as in the [mock
   example](#replace-an-extension-with-a-mock).
 - **Keep the solution out of the trial.** The seed files must not hold the solution, a solved
-  copy or a hint in a comment. `HostEnvironment` lets the agent read files outside its
-  repository, also the `tests/` folder of the task. Look for such reads in the trajectories.
+  copy or a hint in a comment. Put fixtures that only the harness may read under `.vis/` in
+  the workspace. Read [How a trial is isolated](#how-a-trial-is-isolated).
 - **Give a judge a rubric and a way out.** When a model grades the result, give it a detailed
   rubric. Ask for the reason before the score, and let it answer that it does not know. Then
   [check the judge with labels](#check-the-causes-with-labels).
@@ -217,6 +269,12 @@ real function does not run. The mock replaces the whole extension, so copy each 
 the agent needs. Keep the names, the parameters and the docstrings the same as in the real
 extension. The agent then sees the same contract.
 
+The agent cannot read or change `.vis/` in the trial workspace. It sees the contract of the mock
+through `doc()` and `apropos()`, but not its code. Only the mock can write its record, because
+extension code runs outside the jail. Write the record to `.vis/calls/`, which the harness makes
+for each trial. Then the agent cannot write a false record. Your instruction then needs no rule
+such as "do not read the source".
+
 This mock writes the target, the size and the SHA-256 hash of each payload, not the payload:
 
 ```python
@@ -228,8 +286,8 @@ from pathlib import Path
 
 import blockether.vis.extension as sdk
 
-# The workspace root is two folders above .vis/extensions/.
-LEDGER = Path(__file__).resolve().parents[2] / "payload-calls.jsonl"
+# The harness makes .vis/calls/ next to .vis/extensions/. The agent cannot open it.
+LEDGER = Path(__file__).resolve().parents[1] / "calls" / "payload-calls.jsonl"
 
 
 class Payloads:
@@ -266,7 +324,7 @@ Save it as `environment/workspace/.vis/extensions/mylib.py`. Then check the call
 {
   "want_tools": ["mylib.send_some_huge_payload"],
   "want": {
-    "payload-calls.jsonl": ["\"target\": \"north\"", "\"target\": \"south\""]
+    ".vis/calls/payload-calls.jsonl": ["\"target\": \"north\"", "\"target\": \"south\""]
   },
   "want_answer": ["job-1", "job-2"]
 }
@@ -275,17 +333,20 @@ Save it as `environment/workspace/.vis/extensions/mylib.py`. Then check the call
 - `want_tools` passes when the agent called the function at least once without an error.
 - `want` checks each call in the record. Add one text for each call that you expect.
 - `want_answer` shows that the agent used the answers of the mock.
+- To compare the record with the tool calls of the trajectory, add a [`verify`
+  file](#grade-with-the-rules-of-the-task).
 
 The record must also stay after the trial, because the workspace of a trial is temporary. Name
 it in `artifacts` at the start of `task.toml`, before the first table:
 
 ```toml
-artifacts = ["payload-calls.jsonl"]
+artifacts = [".vis/calls/payload-calls.jsonl"]
 
 [metadata]
 ```
 
-After the check, Harbor copies the file to `artifacts/payload-calls.jsonl` in the trial folder.
+After the check, Harbor copies the file to `artifacts/.vis/calls/payload-calls.jsonl` in the trial
+folder.
 `artifacts/manifest.json` gives the status of each file: `ok`, or `failed` when the file is
 missing. A missing file does not change the reward. `write_task` writes this line when you give
 [`artifacts`](evals-api.md#write-a-task).
@@ -361,7 +422,23 @@ the note is lost. To measure what the notes keep, [import LongMemEval](#import-l
 ## Step 3: Check the tasks
 
 A bad task gives wrong scores. For example, its instruction does not name a file that its checks
-need. Review each task with the Harbor check rubric:
+need. First check the files of each task. This check makes no model calls:
+
+```bash
+python -m blockether.vis.evals.check tasks --static
+```
+
+It reports these problems in a task:
+
+- A `tests/test.sh` that cannot run.
+- No `environment/workspace` folder.
+- A seeded `.vis/config.yml`.
+- An unknown key in `checks.json`.
+- A missing `verify` program.
+
+`run_tasks` refuses a task with a problem before it starts a paid run.
+
+Then review each task with the Harbor check rubric:
 
 ```bash
 python -m blockether.vis.evals.check tasks --provider zai-coding-plan --model glm-5.3-flash
@@ -726,6 +803,35 @@ Each task counts once, by its latest scored attempt. A task without a scored att
 `unscored_model_tasks`.
 
 [![A scored attempt counts in the attempt pass rate and in pass@k and pass^k. The latest scored attempt of each task gives the pass rate and the strict pass rate. An unscored task counts as failed only in the strict pass rate.](assets/diagrams/evals-scoring.svg)](assets/diagrams/evals-scoring.svg)
+
+## How a trial is isolated
+
+The agent must solve the task with the tools of the session. It must not read the answer from
+the grader or change the evidence. `HostEnvironment` gives each trial these limits:
+
+- **The jail is on.** Each trial runs inside the [process jail](jail.md). The agent can read and
+  write the workspace and the trial folders of Harbor. It cannot read your home folder or other
+  projects.
+- **The `.vis/` folder is private.** The harness writes `.vis/config.yml` in the workspace. That
+  file denies all reads of `.vis/` by the agent. Extension code and the grader run outside the
+  jail, so they can still read `.vis/extensions/` and write `.vis/calls/`.
+- **Git does not show `.vis/`.** The harness adds `/.vis/` to `.git/info/exclude` before the
+  first commit. So `git show` and `git log` cannot give the agent a mock or a record.
+- **Only the project configuration applies.** The agent sets `VIS_SOURCES=project`. From
+  `~/.vis` the trial then gets only the providers and their sign-in. It does not get your
+  toggles, rules, MCP servers or extensions, so another computer gives the same setup.
+
+A task must not put its own `.vis/config.yml` in the workspace, because the harness owns that
+file. [Step 3](#step-3-check-the-tasks) refuses such a task.
+
+Change these limits only to find the cause of a failure:
+
+| Option | Effect |
+|---|---|
+| `--ek jail=false` | Runs the trial without the process jail. Then only the Vis file tools deny `.vis/`. |
+| `--ak global_config=true` | Reads all of `~/.vis`, also your extensions and rules. |
+
+A result with one of these options does not compare with a normal round.
 
 ## Scores and intervals
 

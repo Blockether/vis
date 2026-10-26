@@ -386,3 +386,80 @@ def test_main_needs_the_paths_outside_the_host_environment(tmp_path, monkeypatch
 
     with pytest.raises(SystemExit):
         grade.main([str(tmp_path / "checks.json")])
+
+
+def test_check_problems_name_each_unknown_key():
+    assert grade.check_problems(SCENARIO) == []
+    assert grade.check_problems({"want_tool": ["patch"], "wantnot": {}}) == [
+        "unknown check key 'want_tool'; did you mean 'want_tools'?"
+    ]
+    assert grade.check_problems([]) == ["checks.json must hold a JSON object"]
+    assert grade.check_problems({}) == ["checks.json must hold at least one check"]
+    assert grade.check_problems({"verify": 3}) == [
+        "verify must name a Python file next to checks.json"
+    ]
+
+
+def test_main_refuses_an_unknown_check_key(tmp_path, capsys):
+    # A misspelled key checks nothing, so the trial would pass without that check.
+    checks, workspace, agent_logs, verifier_logs = _main_inputs(tmp_path)
+    checks.write_text(json.dumps({**SCENARIO, "want_answers": ["Done"]}))
+
+    with pytest.raises(SystemExit):
+        grade.main(
+            [
+                str(checks),
+                "--workspace",
+                str(workspace),
+                "--agent-logs",
+                str(agent_logs),
+                "--verifier-logs",
+                str(verifier_logs),
+            ]
+        )
+    assert "unknown check key 'want_answers'" in capsys.readouterr().err
+    assert not verifier_logs.exists()
+
+
+VERIFIER = """\
+def verify(evidence):
+    record = evidence.workspace / "calls.jsonl"
+    failures = []
+    if evidence.tools.count("patch") != len(record.read_text().splitlines()):
+        failures.append("the record and the tool calls differ")
+    if "Done" not in evidence.answer or not evidence.forms:
+        failures.append("no answer evidence")
+    if evidence.trajectory is None or evidence.activities[0]["state"] != "succeeded":
+        failures.append("no trajectory evidence")
+    return failures
+"""
+
+
+@pytest.mark.parametrize(
+    ("record", "program", "failure"),
+    [
+        ("one\n", VERIFIER, None),
+        ("one\ntwo\n", VERIFIER, "the record and the tool calls differ"),
+        ("", "def check(evidence):\n    return []\n", "defines no verify(evidence)"),
+        ("", "def verify(evidence):\n    raise KeyError('x')\n", "raised KeyError"),
+        ("", "def verify(evidence):\n    return 'bad'\n", "list of failure texts"),
+    ],
+)
+def test_the_verifier_of_a_task_reads_the_trial_evidence(
+    tmp_path, record, program, failure
+):
+    work = tmp_path / "workspace"
+    work.mkdir()
+    (work / "notes.txt").write_text("fixed\n")
+    (work / "calls.jsonl").write_text(record)
+    verifier = tmp_path / "verify.py"
+    verifier.write_text(program)
+    document = _run(_form("t1/i1/f1", PATCH_CODE), answer="Done.")
+    result = grade.grade_trial(
+        {**SCENARIO, "verify": str(verifier)}, work, _trial(document)
+    )
+
+    assert result.result["guards"]["task"] is (failure is None)
+    assert result.is_passed is (failure is None)
+    if failure:
+        assert any(failure in line for line in result.result["detail"])

@@ -25,7 +25,7 @@ class Hold:
 
 def journal_call(row):
     """Record fixture invocations independently of model output."""
-    journal = Path(__file__).resolve().parents[2] / "seat-desk-calls.jsonl"
+    journal = Path(__file__).resolve().parents[1] / "calls" / "seat-desk-calls.jsonl"
     with journal.open("a") as stream:
         stream.write(json.dumps(row, sort_keys=True) + "\n")
 

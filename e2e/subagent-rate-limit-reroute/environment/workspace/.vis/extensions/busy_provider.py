@@ -9,7 +9,7 @@ from pathlib import Path
 
 import blockether.vis.extension as vis
 
-JOURNAL = Path(__file__).resolve().parents[2] / "busy-calls.jsonl"
+JOURNAL = Path(__file__).resolve().parents[1] / "calls" / "busy-calls.jsonl"
 MODEL = "busy-1"
 REFUSAL = json.dumps(
     {

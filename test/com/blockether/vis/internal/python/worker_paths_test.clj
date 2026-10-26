@@ -192,3 +192,38 @@
                    (worker/forget-policy! key)
                    (doseq [^File file (reverse (file-seq directory))]
                      (Files/deleteIfExists (.toPath file)))))))))
+
+(defdescribe
+  worker-starts-in-the-engine-working-directory-test
+  (it "starts a confined worker when user.dir is not the process directory"
+      ;; #420: the eval harness sets -Duser.dir to the trial workspace and starts the
+      ;; engine from another directory. The worker inherited that directory, which its
+      ;; jail does not grant, and the packaged worker failed to resolve its cwd.
+      (let [workspace
+            (.getCanonicalFile (.toFile (Files/createTempDirectory "vis-worker-cwd-"
+                                                                   (make-array FileAttribute 0))))
+
+            previous-dir
+            (System/getProperty "user.dir")
+
+            key
+            (str (java.util.UUID/randomUUID))]
+
+        (try (System/setProperty "user.dir" (.getPath workspace))
+             (worker/configure! key
+                                (fn []
+                                  {:roots-fn (constantly [(.getPath workspace)])
+                                   :net-enabled? false}))
+             (worker/exec! key
+                           runtime/default-session
+                           "import os; os.write(2, ('cwd=' + os.getcwd() + '\\n').encode())")
+             (let [^File log (:log (get @@#'worker/workers key))]
+               (expect (loop [attempt 0]
+                         (cond (str/includes? (slurp log) (str "cwd=" (.getPath workspace))) true
+                               (< attempt 200) (do (Thread/sleep 10) (recur (inc attempt)))))
+                       (slurp log)))
+             (finally (System/setProperty "user.dir" previous-dir)
+                      (worker/stop-worker! key)
+                      (worker/forget-policy! key)
+                      (doseq [^File file (reverse (file-seq workspace))]
+                        (Files/deleteIfExists (.toPath file))))))))

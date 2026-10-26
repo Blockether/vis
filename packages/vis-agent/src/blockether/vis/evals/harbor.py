@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 import tomllib
@@ -39,6 +40,7 @@ __all__ = [
     "seal_rows",
     "split_turns",
     "summarize",
+    "task_problems",
     "write_task",
 ]
 
@@ -442,6 +444,51 @@ def _seed_path(name: str) -> PurePosixPath:
     return path
 
 
+def task_problems(task: Path | str) -> tuple[str, ...]:
+    """Return the problems of one task folder that give a wrong score; empty is valid.
+
+    The check reads only files and makes no model calls. It needs an executable
+    `tests/test.sh` and the folder `environment/workspace`. It checks
+    `tests/checks.json` with `check_problems` and needs each Python file that the
+    checks name. The harness writes `.vis/config.yml` in the trial workspace, so a seed
+    file there is a problem. Each problem starts with the task name. `run_tasks` and
+    `python -m blockether.vis.evals.check` refuse tasks with problems.
+    """
+    from .grade import check_problems
+
+    folder = Path(task)
+    tests = folder / "tests"
+    workspace = folder / "environment" / WORKSPACE_DIRECTORY
+    problems = []
+    script = tests / TEST_SCRIPT_FILE
+    if not script.is_file():
+        problems.append(f"no tests/{TEST_SCRIPT_FILE}")
+    elif not os.access(script, os.X_OK):
+        problems.append(f"tests/{TEST_SCRIPT_FILE} is not executable")
+    if not workspace.is_dir():
+        problems.append(f"no environment/{WORKSPACE_DIRECTORY} folder")
+    for name in ("config.yml", "config.yaml"):
+        if (workspace / ".vis" / name).exists():
+            problems.append(
+                f"environment/{WORKSPACE_DIRECTORY}/.vis/{name} belongs to the harness;"
+                " put the settings of the task in vis.yml"
+            )
+    checks_path = tests / CHECKS_FILE
+    if checks_path.is_file():
+        try:
+            checks = json.loads(checks_path.read_text(encoding="utf-8"))
+        except ValueError as error:
+            checks = None
+            problems.append(f"tests/{CHECKS_FILE} is not JSON: {error}")
+        if checks is not None:
+            problems.extend(check_problems(checks))
+        for key in ("verify", "want_answer_program"):
+            program = checks.get(key) if isinstance(checks, Mapping) else None
+            if isinstance(program, str) and not (tests / program).is_file():
+                problems.append(f"{key} names a missing file: tests/{program}")
+    return tuple(f"{folder.name}: {problem}" for problem in problems)
+
+
 def write_task(
     dataset: Path | str,
     name: str,
@@ -454,6 +501,7 @@ def write_task(
     metadata: Mapping[str, str | int | float | bool] | None = None,
     artifacts: Sequence[str] = (),
     filesystem_roots: Mapping[str, str] | None = None,
+    test_files: Mapping[str, str] | None = None,
 ) -> HarborTask:
     """Write the Vis task `name` in the folder `dataset` and return it.
 
@@ -464,9 +512,11 @@ def write_task(
     text. The paths are relative to `environment/workspace/`. `artifacts` lists the
     workspace files that Harbor copies to `artifacts/` in the trial folder after the
     check, for example the call record of a mock extension. `filesystem_roots` maps each
-    filesystem root id to a workspace folder; the trial registers them in `vis.yml`. The
-    task gets `tests/test.sh`, which runs the grader. An existing task folder, an invalid
-    name, empty checks or a path outside the workspace raise an error.
+    filesystem root id to a workspace folder; the trial registers them. `test_files` maps
+    each file name in `tests/` to its text, for example the verifier that the `verify`
+    check names. The agent never sees these files. The task gets `tests/test.sh`, which
+    runs the grader. An existing task folder, an invalid name, invalid checks or a path
+    outside its folder raise an error.
     """
     if not TASK_NAME.fullmatch(name):
         raise ValueError(
@@ -474,6 +524,15 @@ def write_task(
         )
     if not isinstance(checks, Mapping) or not checks:
         raise ValueError("checks must be a nonempty object")
+    from .grade import check_problems
+
+    if problems := check_problems(checks):
+        raise ValueError("; ".join(problems))
+    extra_tests = {}
+    for path, text in (test_files or {}).items():
+        if PurePosixPath(path).name != path or path in {CHECKS_FILE, TEST_SCRIPT_FILE}:
+            raise ValueError(f"test file must be a new file name in tests/: {path!r}")
+        extra_tests[path] = text
     instruction = _join_turns(instruction)
     seeds = {_seed_path(path): text for path, text in (files or {}).items()}
     kept = [str(_seed_path(path)) for path in artifacts]
@@ -518,6 +577,8 @@ def write_task(
     (tests / CHECKS_FILE).write_text(
         json.dumps(checks, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    for path, text in extra_tests.items():
+        (tests / path).write_text(text, encoding="utf-8")
     script = tests / TEST_SCRIPT_FILE
     script.write_text(GRADER_SCRIPT, encoding="utf-8")
     script.chmod(0o755)
@@ -550,7 +611,6 @@ def run_tasks(
     keeps the job folder.
     """
     import asyncio
-    import os
     import warnings
 
     from harbor.job import Job
@@ -564,6 +624,8 @@ def run_tasks(
         folders = [task.path for task in read_tasks(root)]
     if not folders:
         raise ValueError(f"no Harbor tasks in {root}")
+    if problems := [problem for folder in folders for problem in task_problems(folder)]:
+        raise ValueError("fix the tasks before a paid run:\n" + "\n".join(problems))
     os.environ["HARBOR_TELEMETRY"] = "off"
     config = JobConfig(
         jobs_dir=Path(jobs_dir),

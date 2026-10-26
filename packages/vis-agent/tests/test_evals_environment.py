@@ -83,7 +83,10 @@ def test_start_accepts_a_task_without_seed_files(tmp_path):
     asyncio.run(environment.start(force_build=False))
     try:
         assert _git(environment.workspace, "log", "--format=%s") == "init\n"
-        assert list(environment.workspace.iterdir()) == [environment.workspace / ".git"]
+        assert sorted(path.name for path in environment.workspace.iterdir()) == [
+            ".git",
+            ".vis",
+        ]
     finally:
         asyncio.run(environment.stop(delete=True))
 
@@ -217,24 +220,84 @@ def test_upload_and_download_use_the_host_directories(started, tmp_path):
     assert (started.trial_paths.verifier_dir / "reward.json").is_file()
 
 
-def test_workspace_filesystem_writes_vis_yml_before_the_first_commit(tmp_path):
+def test_workspace_filesystem_registers_the_roots_in_the_harness_policy(tmp_path):
     environment = _environment(
         tmp_path,
-        files={"library/mod.py": "X = 1\n"},
+        files={"library/mod.py": "X = 1\n", "vis.yml": "toggles: {}\n"},
         registrations={"library": "library"},
     )
     asyncio.run(environment.start(force_build=False))
     try:
         workspace = environment.workspace
-        assert json.loads((workspace / "vis.yml").read_text()) == {
+        assert json.loads((workspace / ".vis/config.yml").read_text()) == {
+            "jail": {
+                "enabled": True,
+                "filesystem": {
+                    "deny_read": [".vis"],
+                    "deny_write": [".vis"],
+                    "allow": ["library"],
+                },
+            },
             "workspace": {
                 "filesystem": [{"id": "library", "path": str(workspace / "library")}]
             },
-            "jail": {"filesystem": {"allow": ["library"]}},
         }
+        # The vis.yml of the task stays as it is.
+        assert (workspace / "vis.yml").read_text() == "toggles: {}\n"
         assert _git(workspace, "ls-files").split() == ["library/mod.py", "vis.yml"]
     finally:
         asyncio.run(environment.stop(delete=True))
+
+
+def test_the_harness_folder_is_jailed_and_out_of_git(tmp_path):
+    mock = ".vis/extensions/mock.py"
+    environment = _environment(tmp_path, files={**SEED_FILES, mock: "X = 1\n"})
+    asyncio.run(environment.start(force_build=False))
+    try:
+        workspace = environment.workspace
+        policy = json.loads((workspace / ".vis/config.yml").read_text())
+        assert policy == {
+            "jail": {
+                "enabled": True,
+                "filesystem": {"deny_read": [".vis"], "deny_write": [".vis"]},
+            }
+        }
+        assert (workspace / ".vis/calls").is_dir()
+        assert (workspace / mock).read_text() == "X = 1\n"
+        # The agent cannot read the mock from the first commit either.
+        assert sorted(_git(workspace, "ls-files").split()) == sorted(SEED_FILES)
+        assert _git(workspace, "status", "--porcelain") == ""
+    finally:
+        asyncio.run(environment.stop(delete=True))
+
+
+@pytest.mark.parametrize(("value", "enabled"), [("false", False), (True, True)])
+def test_the_jail_option_sets_the_trial_policy(tmp_path, value, enabled):
+    environment_dir = tmp_path / "task" / "environment"
+    (environment_dir / "workspace").mkdir(parents=True)
+    trial_paths = TrialPaths(tmp_path / "trial")
+    trial_paths.mkdir()
+    environment = HostEnvironment(
+        environment_dir=environment_dir,
+        environment_name="host-task",
+        session_id="host-task__trial",
+        trial_paths=trial_paths,
+        task_env_config=EnvironmentConfig(),
+        jail=value,
+    )
+    asyncio.run(environment.start(force_build=False))
+    try:
+        policy = json.loads((environment.workspace / ".vis/config.yml").read_text())
+        assert policy["jail"]["enabled"] is enabled
+    finally:
+        asyncio.run(environment.stop(delete=True))
+
+
+def test_a_seeded_harness_policy_is_an_error(tmp_path):
+    environment = _environment(tmp_path, files={".vis/config.yml": "jail: {}\n"})
+    with pytest.raises(ValueError, match="belongs to the harness"):
+        asyncio.run(environment.start(force_build=False))
+    asyncio.run(environment.stop(delete=True))
 
 
 def test_stop_deletes_the_trial_directory_only_on_request(tmp_path):

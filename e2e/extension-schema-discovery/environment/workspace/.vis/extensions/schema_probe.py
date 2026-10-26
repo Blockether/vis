@@ -83,7 +83,7 @@ def monitor_activity(*, phase, result, **_):
 
 def journal_call(operation, arguments):
     """Record fixture invocations independently of model output."""
-    journal = Path(__file__).resolve().parents[2] / "schema-calls.jsonl"
+    journal = Path(__file__).resolve().parents[1] / "calls" / "schema-calls.jsonl"
     with journal.open("a") as stream:
         stream.write(
             json.dumps({"operation": operation, "arguments": arguments}) + "\n"

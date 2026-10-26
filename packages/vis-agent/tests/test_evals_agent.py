@@ -293,6 +293,15 @@ def test_native_binary_replaces_the_source_engine(tmp_path, clean_settings):
         check_native_binary(str(launcher))
 
 
+def test_a_trial_reads_only_the_project_configuration(tmp_path, clean_settings):
+    # The toggles, rules and MCP servers in ~/.vis of the operator change the measurement.
+    assert make_agent(tmp_path).process_env("go", tmp_path)["VIS_SOURCES"] == "project"
+    agent = make_agent(tmp_path, global_config=True)
+    assert "VIS_SOURCES" not in agent.process_env("go", tmp_path)
+    agent = make_agent(tmp_path, extra_env={"VIS_SOURCES": "global,project"})
+    assert agent.process_env("go", tmp_path)["VIS_SOURCES"] == "global,project"
+
+
 def test_process_env_isolates_the_database(tmp_path, monkeypatch, clean_settings):
     monkeypatch.delenv("VIS_EXTENSIONS_DIR", raising=False)
     agent = make_agent(tmp_path, extra_env={"EXTRA": "1"})

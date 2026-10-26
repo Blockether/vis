@@ -533,9 +533,11 @@
 
           (spit log "" :append true)
           (let [^Process process
+                ;; #420: start in user.dir, which the boot policy grants. A host can set
+                ;; -Duser.dir apart from its process directory, which the jail does not grant.
                 (process-jail/spawn!
                   (child-argv library (.getAbsolutePath socket) guest-dir dir runtime-roots)
-                  nil
+                  (System/getProperty "user.dir")
                   policy
                   {:extra-environment extra :merge-stderr? true})
                 _ (drain-output! process log)

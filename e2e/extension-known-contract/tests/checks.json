@@ -8,7 +8,7 @@
   "max_form_output_chars": 6000,
   "want_requested_route": true,
   "want_json_files": {
-    "contract-receipts.jsonl": [
+    ".vis/calls/contract-receipts.jsonl": [
       {
         "bucket": "inbox",
         "copies": 2,
@@ -26,7 +26,7 @@
         "total": 5
       }
     ],
-    "contract-calls.jsonl": [
+    ".vis/calls/contract-calls.jsonl": [
       {
         "operation": "contract_probe.status",
         "arguments": {}

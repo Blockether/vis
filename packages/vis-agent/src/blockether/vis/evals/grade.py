@@ -21,7 +21,9 @@ from __future__ import annotations
 import argparse
 import ast
 import collections
+import difflib
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -41,6 +43,38 @@ RUN_FILE = "run.json"
 REWARD_FILE = "reward.json"
 GRADE_FILE = "grade.json"
 ANSWER_PROGRAM_TIMEOUT_SEC = 120
+VERIFY_FUNCTION = "verify"
+# The keys of `tests/checks.json`. The grader refuses every other key.
+CHECK_KEYS = frozenset(
+    {
+        "discovery",
+        "forbid_tools",
+        "id",
+        "max_form_output_chars",
+        "max_patch_calls_per_file",
+        "max_total_output_chars",
+        "measurement",
+        "verify",
+        "want",
+        "want_activity_sequence",
+        "want_answer",
+        "want_answer_json",
+        "want_answer_program",
+        "want_cache_metrics",
+        "want_cache_read",
+        "want_context_budget",
+        "want_council_recovery",
+        "want_folded_prefix",
+        "want_forms",
+        "want_goal_complete",
+        "want_helper_reuse",
+        "want_json_files",
+        "want_requested_route",
+        "want_stdout_recovery",
+        "want_tools",
+        "wantnot",
+    }
+)
 
 
 TERMINAL_ACTIVITY_STATES = {"succeeded", "failed", "cancelled"}
@@ -1069,6 +1103,81 @@ def answer_program_problem(program: str, answer: str, work: str) -> str | None:
     return f"answer program rejected the answer: {reason}"
 
 
+@dataclass(frozen=True)
+class TaskEvidence:
+    """The evidence of one trial that the verifier of a task reads.
+
+    `answer` is the final answer of the agent. `workspace` is the trial workspace
+    after the run. `forms` holds the code of each block, in order. `activities` holds
+    the final Activity row of each tool call, with its `operation`, `state` and
+    `scope`. `tools` holds the operation of each succeeded Activity. `trajectory` is
+    the whole run, or None when the agent wrote no trajectory.
+    """
+
+    answer: str
+    workspace: Path
+    forms: tuple[str, ...]
+    activities: tuple[Mapping[str, Any], ...]
+    tools: tuple[str, ...]
+    trajectory: Trajectory | None
+
+
+def verifier_failures(
+    program: str | os.PathLike[str], evidence: TaskEvidence
+) -> list[str]:
+    """Run the ``verify`` function of the task verifier ``program``; return its failures.
+
+    ``verify(evidence)`` gets a `TaskEvidence` and returns a list of failure texts. An
+    empty list or None passes. A missing function, an exception or another result
+    is a failure.
+    """
+    path = Path(program)
+    spec = importlib.util.spec_from_file_location("vis_task_verifier", path)
+    if spec is None or spec.loader is None:
+        return [f"cannot load the task verifier {path.name}"]
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        verify = getattr(module, VERIFY_FUNCTION, None)
+        if not callable(verify):
+            return [f"{path.name} defines no {VERIFY_FUNCTION}(evidence) function"]
+        result = verify(evidence)
+    except Exception as error:  # noqa: BLE001 - the verifier is task code.
+        return [f"{path.name} raised {type(error).__name__}: {error}"]
+    if result is None:
+        return []
+    if isinstance(result, (str, bytes)) or not isinstance(result, Iterable):
+        return [f"{path.name}: {VERIFY_FUNCTION} must return a list of failure texts"]
+    failures = list(result)
+    if not all(isinstance(item, str) for item in failures):
+        return [f"{path.name}: {VERIFY_FUNCTION} must return a list of failure texts"]
+    return failures
+
+
+def check_problems(checks: object) -> list[str]:
+    """Return the problems of a ``checks.json`` object; an empty list is valid.
+
+    The object must be nonempty and hold only `CHECK_KEYS`. A misspelled key would
+    otherwise check nothing, and the trial would pass without that check.
+    """
+    if not isinstance(checks, Mapping):
+        return ["checks.json must hold a JSON object"]
+    if not checks:
+        return ["checks.json must hold at least one check"]
+    problems = []
+    for key in sorted(set(checks) - CHECK_KEYS):
+        close = difflib.get_close_matches(key, sorted(CHECK_KEYS), n=1)
+        hint = f"; did you mean {close[0]!r}?" if close else ""
+        problems.append(f"unknown check key {key!r}{hint}")
+    for key in ("verify", "want_answer_program"):
+        value = checks.get(key)
+        if value is not None and (
+            not isinstance(value, str) or not value.endswith(".py")
+        ):
+            problems.append(f"{key} must name a Python file next to checks.json")
+    return problems
+
+
 def grade_trial(
     sc: Mapping[str, Any], work: str | os.PathLike[str], trial: TrialFiles
 ) -> Grade:
@@ -1232,6 +1341,16 @@ def grade_trial(
             ),
         )
     checks.check("structured", structured_failures(sc, work, answer, activity_rows))
+    if program := sc.get("verify"):
+        evidence_view = TaskEvidence(
+            answer=answer,
+            workspace=Path(work),
+            forms=tuple(forms),
+            activities=tuple(activity_rows),
+            tools=tuple(tools),
+            trajectory=run,
+        )
+        checks.check("task", verifier_failures(program, evidence_view))
     discovery = {}
     if "discovery" in sc:
         discovery, discovery_failures = discovery_evidence(
@@ -1578,8 +1697,11 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, name) is None:
             parser.error(f"--{name.replace('_', '-')} is required outside Vis Harbor")
     checks = json.loads(args.checks.read_text())
-    if program := checks.get("want_answer_program"):
-        checks["want_answer_program"] = str(args.checks.parent / program)
+    if problems := check_problems(checks):
+        parser.error(f"{args.checks}: " + "; ".join(problems))
+    for key in ("verify", "want_answer_program"):
+        if program := checks.get(key):
+            checks[key] = str(args.checks.parent / program)
     if args.task:
         checks["id"] = args.task
     grade = grade_trial(checks, args.workspace, load_trial(args.agent_logs))

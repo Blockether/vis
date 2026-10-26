@@ -23,7 +23,7 @@ class Booking:
 
 def journal_call(row):
     """Record what vis.tools answered, independently of model output."""
-    journal = Path(__file__).resolve().parents[2] / "front-desk-calls.jsonl"
+    journal = Path(__file__).resolve().parents[1] / "calls" / "front-desk-calls.jsonl"
     with journal.open("a") as stream:
         stream.write(json.dumps(row, sort_keys=True) + "\n")
 
