@@ -156,6 +156,16 @@ describe('a form with a typed field on the iPhone', () => {
     expect(sheetBottom()).toBe(resting);
   });
 
+  // Regression, user report: the one-time code form in a session floated above the empty
+  // keyboard band, and the transcript showed below it. The band is the sheet's paper.
+  it('paints the reserved band under the form in the session pane', () => {
+    pointing('coarse');
+    render(<SessionWithForm request={HUMAN_INPUT_REQUESTS.otp} />);
+    const box = screen.getByRole('dialog').parentElement;
+    expect(reserve()).toBeGreaterThan(0);
+    expect(box).toHaveClass('after:bg-panel', 'after:top-full', 'after:h-[var(--keyboard-reserve,0px)]');
+  });
+
   it('stays docked to the bottom edge with a hardware keyboard', () => {
     pointing('fine');
     render(<SessionWithForm request={HUMAN_INPUT_REQUESTS.otp} />);
