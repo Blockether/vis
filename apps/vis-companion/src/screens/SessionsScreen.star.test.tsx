@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -151,11 +151,9 @@ describe('starring a session', () => {
   // don't see the star automatically, only after I do slide once again ... there is
   // some mismatch with the state", with the cell painted over its own old caption):
   // the row starred at the TOP of the list showed its mark at once and every other row
-  // did not. A verb closed the drawer by ASKING for an animated slide home while
-  // `open` flipped on the spot, and the pin then fired a second animated scroll at
-  // that same scroller in the same commit; when the platform ran neither, the strip
-  // stood open over a row whose state said shut — and the mark the tap had just left
-  // sits at the row's LEADING edge, which is the half a slid-open row hides.
+  // did not. A verb closed the drawer with an animated slide home that the platform
+  // could drop, so the strip stood open over a row whose state said shut — and the
+  // mark the tap had just left sits at the row's LEADING edge, which a slid-open row hides.
   it('sends the row it pins home in the same tap, not on an animation', async () => {
     const view = renderSessionsScreen({ machines });
     restore = view.restore;
@@ -166,28 +164,30 @@ describe('starring a session', () => {
     const row = document.querySelector(`[data-session-id="${moved}"]`) as HTMLElement;
     const track = row.closest('[data-swipe-track]') as HTMLElement;
 
-    // A thumb slid it open: the platform scrolls the track, the component reads it.
-    Object.defineProperty(track, 'scrollLeft', { value: 216, configurable: true });
-    fireEvent.scroll(track);
+    const panel = track.firstElementChild as HTMLElement;
+    const star = screen
+      .getByRole('group', { name: `${title} actions` })
+      .querySelector<HTMLElement>('button[aria-label="Star"]')!;
 
-    const home: ScrollToOptions[] = [];
-    const scrollTo = Element.prototype.scrollTo;
-    Element.prototype.scrollTo = function record(this: Element, options?: ScrollToOptions) {
-      if (this === track && options) home.push(options);
-    } as typeof Element.prototype.scrollTo;
+    // jsdom lays nothing out: the strip gets a phone's width for its verbs.
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get: () => 216,
+    });
     try {
-      await userEvent.click(
-        screen
-          .getByRole('group', { name: `${title} actions` })
-          .querySelector('button[aria-label="Star"]')!,
-      );
+      // The row stands open, as a thumb leaves it.
+      act(() => star.focus());
+      expect(panel.style.translate).toBe('-216px');
+      await userEvent.click(star);
     } finally {
-      Element.prototype.scrollTo = scrollTo;
+      if (width) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', width);
     }
 
     // Home in the same frame the star was tapped, with no animation that could
     // cover the changed mark.
-    expect(home).toEqual([{ left: 0, behavior: 'auto' }]);
+    expect(panel.style.translate).toBe('');
+    expect(panel.style.transition).toBe('');
     expect(row.parentElement!.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
   });
 

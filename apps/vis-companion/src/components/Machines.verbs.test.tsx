@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -64,11 +64,11 @@ describe('a machine keeps its verbs under its own row', () => {
   it('keeps sliding on touch and reserves the dropdown for a mouse', () => {
     fleet();
     // The row is the whole width and the strip waits past its trailing edge: one
-    // snap track per row, the row first, the verbs second.
-    const tracks = document.querySelectorAll('.snap-x');
+    // track per row, the row first, the verbs second.
+    const tracks = document.querySelectorAll('[data-swipe-track]');
     expect(tracks).toHaveLength(2);
     const html = tracks[0]!.innerHTML;
-    expect(html.indexOf('snap-start')).toBeLessThan(html.indexOf('snap-end'));
+    expect(html.indexOf('mouse:contents')).toBeLessThan(html.indexOf('role="group"'));
 
     // The menu is desktop-only: nothing stands beside the touch gesture.
     const menus = screen.getAllByRole('button', { name: /^Actions for/ });
@@ -89,23 +89,26 @@ describe('a machine keeps its verbs under its own row', () => {
 
   it('opens one machine at a time', () => {
     fleet();
-    const closed: Element[] = [];
-    const scrollTo = Element.prototype.scrollTo;
-    Element.prototype.scrollTo = function record(this: Element) {
-      closed.push(this);
-    };
+    // jsdom lays nothing out: each strip gets a phone's width for its verbs.
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get: () => 96,
+    });
     try {
-      const tracks = [...document.querySelectorAll<HTMLElement>('.snap-x')];
-      for (const track of tracks) {
-        Object.defineProperty(track, 'scrollLeft', { value: 96, configurable: true });
-        fireEvent.scroll(track);
-      }
-      // Sliding the second row closed the first: two rows standing open is a list
+      const offset = (machine: string) =>
+        (screen.getByRole('group', { name: `${machine} actions` }).previousElementSibling
+          ?.previousElementSibling as HTMLElement).style.translate;
+      // A verb that takes the focus opens its row, as a slide does.
+      act(() => stripOf('tower').getAllByRole('button')[0]!.focus());
+      expect(offset('tower')).toBe('-96px');
+      act(() => stripOf('laptop').getAllByRole('button')[0]!.focus());
+      // Opening the second row closed the first: two rows standing open is a list
       // with two right edges and a red verb armed under a thumb that moved on.
-      expect(closed).toContain(tracks[0]);
-      expect(closed).not.toContain(tracks[1]);
+      expect(offset('tower')).toBe('');
+      expect(offset('laptop')).toBe('-96px');
     } finally {
-      Element.prototype.scrollTo = scrollTo;
+      if (width) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', width);
     }
   });
 

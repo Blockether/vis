@@ -64,16 +64,15 @@ describe('SwipeActions tones', () => {
   // 2px short of the rule under it. The panel is a GRID: one child, stretched on both
   // axes, so whatever height the track ends up with is the row's height too.
   it('lets the row fill the swipe track', () => {
-    expect(strip()).toContain('grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start');
+    expect(strip()).toContain('grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] mouse:contents');
   });
 
   // The verbs are under the row's TRAILING edge and nowhere else: the row is panel
   // one at full width and the strip is panel two, so the slide always uncovers them
-  // on the right, and a slide that stops halfway snaps to one of the two.
+  // on the right.
   it('keeps the strip on the trailing edge, behind the whole row', () => {
     const html = strip();
-    expect(html.indexOf('snap-start')).toBeLessThan(html.indexOf('snap-end'));
-    expect(html).toContain('snap-x snap-mandatory');
+    expect(html.indexOf('grid w-full')).toBeLessThan(html.indexOf('role="group"'));
   });
 });
 
@@ -91,7 +90,7 @@ it.each([false, true])(
       </SwipeActions>,
     );
     const strip = screen.getByRole('group', { name: 'a session actions' });
-    expect(strip).toHaveClass('snap-end');
+    expect(strip).toHaveClass('shrink-0');
     expect(strip.className).not.toMatch(/\b(?:p|px|pr|pe)-/);
     expect(strip.lastElementChild).toBe(screen.getByRole('button', { name: 'Delete' }));
   },
@@ -114,7 +113,7 @@ it.each([1, 3, 6, 8])(
     );
     const track = container.querySelector<HTMLElement>('[data-swipe-track]')!;
     const strip = screen.getByRole('group', { name: 'a session actions' });
-    expect(track.scrollLeft).toBe(0);
+    expect((track.firstElementChild as HTMLElement).style.translate).toBe('');
     expect(strip).toHaveClass('max-w-full');
     expect(strip).toHaveStyle({ width: `${count * 4.5}rem` });
     for (const button of strip.querySelectorAll('button')) {
@@ -123,7 +122,7 @@ it.each([1, 3, 6, 8])(
       expect(button.lastElementChild).toHaveClass('max-w-full', 'truncate');
     }
     const sizing = strip.getAttribute('style');
-    fireEvent.scroll(track, { target: { scrollLeft: 120 } });
+    act(() => strip.querySelector('button')!.focus());
     rerender(
       <SwipeActions
         label="a session"
@@ -168,18 +167,11 @@ describe('a mouse never slides', () => {
       </SwipeActions>,
     );
 
-  it('takes the horizontal track away from a pointer', () => {
-    const html = markup();
-    expect(html).toContain('mouse:snap-none');
-    // The touch surface is untouched: a finger still slides the same snap track.
-    expect(html).toContain('snap-x snap-mandatory overflow-x-auto');
-  });
-
   it('reserves only a menu trigger and hides the touch strip from a pointer', () => {
     const html = markup();
     expect(html).toContain('aria-label="Actions for a session"');
     expect(html).toContain('aria-haspopup="dialog"');
-    expect(html).toContain('snap-end mouse:hidden');
+    expect(html).toContain('shrink-0 mouse:hidden');
     expect(html).not.toContain('group-hover/swipe:opacity');
   });
 
@@ -190,7 +182,7 @@ describe('a mouse never slides', () => {
     const settings = markup(true);
     expect(session).toContain('mouse:flex pr-3 sm:pr-4');
     expect(settings).toContain('mouse:flex pr-1 sm:pr-2');
-    expect(settings).toContain('snap-end mouse:hidden');
+    expect(settings).toContain('shrink-0 mouse:hidden');
   });
 
   // Regression, user report (paraphrased: a plus standing on the left is unacceptable,
@@ -264,35 +256,57 @@ it.each([false, true])('retains one permanent control with actions=%s', (hasActi
 
 describe('the slide', () => {
   const track = (index = 0) =>
-    document.querySelectorAll<HTMLElement>('.snap-x')[index] as HTMLElement;
+    document.querySelectorAll<HTMLElement>('[data-swipe-track]')[index] as HTMLElement;
+  /** How far the row stands to the left: '' is home. */
+  const offset = (index = 0) => (track(index).firstElementChild as HTMLElement).style.translate;
 
-  /** What a thumb does: the platform scrolls the track, the component reads it. */
-  function slide(element: HTMLElement) {
-    Object.defineProperty(element, 'scrollLeft', { value: 96, configurable: true });
-    fireEvent.scroll(element);
-  }
-
-  /** Every drawer this component closed, in the order it closed them. */
-  let closed: Element[] = [];
-  /** How each of those closes asked to travel: the animation is the bug. */
-  let asked: ScrollToOptions[] = [];
-  const scrollTo = Element.prototype.scrollTo;
+  // jsdom lays nothing out: every drawer gets the width two verbs take on a phone.
+  const WIDTH = 144;
+  const offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
   beforeAll(() => {
-    Element.prototype.scrollTo = function record(this: Element, options?: ScrollToOptions) {
-      closed.push(this);
-      if (options) asked.push(options);
-    } as typeof Element.prototype.scrollTo;
-  });
-  afterEach(() => {
-    closed = [];
-    asked = [];
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get: () => WIDTH,
+    });
   });
   afterAll(() => {
-    Element.prototype.scrollTo = scrollTo;
+    if (offsetWidth) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', offsetWidth);
   });
+  // A slide swallows the click that follows it, so each test starts long after the last one.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['performance', 'Date'] });
+    vi.advanceTimersByTime(1e6);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** What a thumb does: land, move sideways in four steps over `ms`, then lift or be taken. */
+  function drag(
+    element: HTMLElement,
+    by: number,
+    {
+      pointerType = 'touch',
+      ms = 400,
+      lift = true,
+    }: { pointerType?: string; ms?: number; lift?: boolean } = {},
+  ) {
+    const at = { pointerId: 1, pointerType, isPrimary: true, clientY: 20 };
+    fireEvent.pointerDown(element, { ...at, clientX: 300 });
+    for (let step = 1; step <= 4; step += 1) {
+      vi.advanceTimersByTime(ms / 4);
+      fireEvent.pointerMove(element, { ...at, clientX: 300 - (by * step) / 4 });
+    }
+    if (lift) fireEvent.pointerUp(element, { ...at, clientX: 300 - by });
+    else fireEvent.pointerCancel(element, { ...at, clientX: 300 - by });
+  }
+
+  /** The click that a slide swallows has passed. */
+  const later = () => vi.advanceTimersByTime(1000);
 
   const row = (label: string, onOpen = () => {}) => (
     <SwipeActions
+      key={label}
       label={label}
       actions={[
         { key: 'rename', label: 'Rename', icon: <PencilIcon />, onSelect: () => {} },
@@ -320,6 +334,75 @@ describe('the slide', () => {
     expect(screen.getByRole('group', { name: 'first actions' })).toBeVisible();
   });
 
+  it('follows the finger, then opens past half its drawer and shuts short of it', () => {
+    render(row('first'));
+    const at = { pointerId: 1, pointerType: 'touch', isPrimary: true, clientY: 20 };
+    fireEvent.pointerDown(track(), { ...at, clientX: 300 });
+    fireEvent.pointerMove(track(), { ...at, clientX: 250 });
+    expect(offset()).toBe('-50px');
+    // The drawer is as wide as the finger can take it, and no wider.
+    fireEvent.pointerMove(track(), { ...at, clientX: 0 });
+    expect(offset()).toBe(`-${WIDTH}px`);
+    fireEvent.pointerCancel(track(), at);
+    expect(offset()).toBe(`-${WIDTH}px`);
+
+    later();
+    drag(track(), -WIDTH * 0.6);
+    expect(offset()).toBe('');
+    later();
+    drag(track(), WIDTH * 0.4);
+    expect(offset()).toBe('');
+  });
+
+  it('goes the way a quick flick goes, short of half', () => {
+    render(row('first'));
+    drag(track(), 40, { ms: 40 });
+    expect(offset()).toBe(`-${WIDTH}px`);
+
+    // A finger that rests before it lifts makes no flick.
+    later();
+    const at = { pointerId: 1, pointerType: 'touch', isPrimary: true, clientY: 20 };
+    fireEvent.pointerDown(track(), { ...at, clientX: 300 });
+    vi.advanceTimersByTime(10);
+    fireEvent.pointerMove(track(), { ...at, clientX: 330 });
+    vi.advanceTimersByTime(300);
+    fireEvent.pointerUp(track(), { ...at, clientX: 330 });
+    expect(offset()).toBe(`-${WIDTH}px`);
+  });
+
+  it('leaves a vertical drag to the list', () => {
+    const onOpen = vi.fn();
+    render(row('first', onOpen));
+    const at = { pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: 300 };
+    fireEvent.pointerDown(track(), { ...at, clientY: 20 });
+    fireEvent.pointerMove(track(), { ...at, clientX: 295, clientY: 60 });
+    fireEvent.pointerMove(track(), { ...at, clientX: 200, clientY: 70 });
+    fireEvent.pointerCancel(track(), at);
+    expect(offset()).toBe('');
+    // Nothing slid, so nothing swallows the next press.
+    fireEvent.click(screen.getByRole('button', { name: 'first' }));
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it('takes no slide from a mouse', () => {
+    render(row('first'));
+    drag(track(), WIDTH, { pointerType: 'mouse' });
+    expect(offset()).toBe('');
+  });
+
+  it('swallows the click that ends a slide, and only that click', () => {
+    const onOpen = vi.fn();
+    render(row('first', onOpen));
+    drag(track(), 30);
+    expect(offset()).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'first' }));
+    expect(onOpen).not.toHaveBeenCalled();
+
+    later();
+    fireEvent.click(screen.getByRole('button', { name: 'first' }));
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
   it('opens one row at a time, so no second row keeps a delete armed', () => {
     render(
       <>
@@ -327,88 +410,55 @@ describe('the slide', () => {
         {row('second')}
       </>,
     );
-    slide(track(0));
-    expect(closed).not.toContain(track(0));
+    drag(track(0), WIDTH);
+    expect(offset(0)).toBe(`-${WIDTH}px`);
 
-    slide(track(1));
-    // The row that was open is the row that closed — nobody pressed it.
-    expect(closed).toContain(track(0));
-    expect(closed).not.toContain(track(1));
-  });
-
-  // The row that CLOSES must not take the row that opened with it. `close()` animates
-  // its own scrollLeft home and every frame of that animation is a scroll event on the
-  // window; read as "the list moved under me", it shut the drawer the thumb had just
-  // opened — measured in the browser as both rows sliding back to 0 together.
-  it('keeps the opened row open while the row it replaced slides shut', () => {
-    render(
-      <>
-        {row('first')}
-        {row('second')}
-      </>,
-    );
-    slide(track(0));
-    slide(track(1));
-    const shut = () => closed.filter((element) => element === track(1)).length;
-    expect(shut()).toBe(0);
-
-    // The first row animating home, frame by frame.
-    fireEvent.scroll(track(0));
-    expect(shut()).toBe(0);
-
-    // The LIST moving under it still closes it: that scroll comes from a
-    // scroller the row itself stands in.
-    fireEvent.scroll(document.body);
-    expect(shut()).toBe(1);
+    // The open row shuts the moment another one starts to move.
+    const at = { pointerId: 2, pointerType: 'touch', isPrimary: true, clientY: 20 };
+    fireEvent.pointerDown(track(1), { ...at, clientX: 300 });
+    fireEvent.pointerMove(track(1), { ...at, clientX: 280 });
+    expect(offset(0)).toBe('');
+    fireEvent.pointerMove(track(1), { ...at, clientX: 300 - WIDTH });
+    fireEvent.pointerUp(track(1), { ...at, clientX: 300 - WIDTH });
+    expect(offset(1)).toBe(`-${WIDTH}px`);
+    expect(offset(0)).toBe('');
   });
 
   // Regression, user report (paraphrased: every update to the session hides what
   // I have open): a transcript following its end rewrites its own `scrollTop` on
   // every update it receives, and on the window that reached an open drawer as
   // "the list moved under me" — from a scroller the row does not stand in.
-  it('keeps the drawer open while a scroller that does not carry the row moves', () => {
+  it('shuts when the list under it moves, not when another scroller moves', () => {
     render(row('first'));
-    slide(track(0));
+    drag(track(), WIDTH);
     const elsewhere = document.body.appendChild(document.createElement('div'));
 
     fireEvent.scroll(elsewhere);
-
-    expect(closed).not.toContain(track(0));
+    expect(offset()).toBe(`-${WIDTH}px`);
     elsewhere.remove();
+
+    fireEvent.scroll(document.body);
+    expect(offset()).toBe('');
   });
 
-  // A drawer animating home reports itself OPEN for every frame of that slide, and
-  // the row took those frames for a fresh gesture: it re-opened itself, and in
-  // re-opening closed whichever row had just replaced it.
-  it('stays shut while it slides home, so the row is a navigation again', () => {
+  it('closes on Escape, and the row is a navigation again at once', () => {
     const onOpen = vi.fn();
     render(row('first', onOpen));
-    slide(track(0));
+    drag(track(), WIDTH);
+    later();
     fireEvent.keyDown(window, { key: 'Escape' });
+    expect(offset()).toBe('');
 
-    // Mid-animation: the track keeps reporting the offset it has not given back yet.
-    fireEvent.scroll(track(0));
     fireEvent.click(screen.getByRole('button', { name: 'first' }));
-    expect(onOpen).toHaveBeenCalledTimes(1);
-  });
-
-  it('closes on Escape, and gives the row back to the list', () => {
-    render(row('first'));
-    slide(track(0));
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(closed).toContain(track(0));
+    expect(onOpen).toHaveBeenCalledOnce();
   });
 
   // Regression, user report about the star on iOS ("first I don't see the star
   // automatically, only after I do slide once again ... there is some mismatch with
-  // the state"): a verb closed the row by ASKING for an animated slide home while
-  // `open` flipped on the spot, so the one time the platform declined that animation
-  // — an animated `scrollTo` inside a mandatory scroll-snap track, measured in WebKit
-  // still 216px from home 800ms after the call — the strip stayed standing over a row
-  // whose state said shut. The mark the verb had just left was off-screen to the left
-  // behind that strip, the row was a navigation again, and the next row opened beside
-  // it instead of in place of it.
-  it("takes the way home out of the platform's hands when a verb is pressed", () => {
+  // the state"): a verb closed the row with an animated slide home that the platform
+  // could drop, so the strip stayed over a row whose state said shut. A verb puts the
+  // row home at once, because starring moves the row in the same commit.
+  it('puts the row home at once when a verb is pressed', () => {
     const onSelect = vi.fn();
     render(
       <SwipeActions
@@ -418,51 +468,59 @@ describe('the slide', () => {
         <span>row</span>
       </SwipeActions>,
     );
-    slide(track(0));
+    drag(track(), WIDTH);
+    later();
 
     fireEvent.click(screen.getByRole('button', { name: 'Star' }));
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(closed).toContain(track(0));
-    // Home in the same frame the verb was pressed: no animation to lose, whatever
-    // the row does next — and starring moves this row to the top of its project.
-    expect(asked).toEqual([{ left: 0, behavior: 'auto' }]);
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(offset()).toBe('');
+    expect((track().firstElementChild as HTMLElement).style.transition).toBe('');
   });
 
   it('makes an open row a dismiss target, never a navigation', () => {
     const onOpen = vi.fn();
     render(row('first', onOpen));
-    slide(track(0));
+    drag(track(), WIDTH);
+    later();
 
     fireEvent.click(screen.getByRole('button', { name: 'first' }));
     // A thumb resting on the slid row closes it and goes nowhere.
     expect(onOpen).not.toHaveBeenCalled();
-    expect(closed).toContain(track(0));
+    expect(offset()).toBe('');
   });
 
   // Regression, user report about the star on iOS, second round (paraphrased: from the
   // fifth row down the star did not arrive on the first tap, only after sliding the row a
-  // second time, and the row's state disagreed with what was on the screen): the rows
-  // above it are LIVE, every poll re-sorts the list, and a re-sort MOVES this row's node
-  // to its new place. WebKit returns a moved scroller home in the same task and fires NO
-  // scroll event for it — measured on iOS 26.5, Safari: 216 -> 0 synchronously, zero
-  // scroll events — so the strip left the screen while `open` went on saying it was
-  // standing there, and the row, which is a dismiss target while open, ate the tap that
-  // was meant for the star. Only a second slide, which does fire events, put them back
-  // in step.
-  it('gives the row back the frame the platform shuts its drawer without an event', async () => {
+  // second time): every poll re-sorts the list and MOVES a row's node. The native track
+  // went home on that move without an event, so the strip and `open` disagreed. The
+  // offset is now the row's own style, and it moves with the node.
+  it('keeps its place and its state when a re-sort moves the row', () => {
     const onOpen = vi.fn();
-    render(row('first', onOpen));
-    slide(track(0));
+    const { rerender } = render(
+      <>
+        {row('first')}
+        {row('second', onOpen)}
+      </>,
+    );
+    drag(track(1), WIDTH);
+    later();
 
-    // The re-sort: the node is moved, the offset is gone with it, and nothing said so.
-    Object.defineProperty(track(0), 'scrollLeft', { value: 0, configurable: true });
-    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    rerender(
+      <>
+        {row('second', onOpen)}
+        {row('first')}
+      </>,
+    );
+    expect(offset(0)).toBe(`-${WIDTH}px`);
+    fireEvent.click(screen.getByRole('button', { name: 'second' }));
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(offset(0)).toBe('');
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'first' }));
-    // The tap the star was waiting for reaches the row, first time.
-    expect(onOpen).toHaveBeenCalledTimes(1);
-    // And nothing was asked to travel: the platform had already taken it home.
-    expect(closed).not.toContain(track(0));
+  it('opens the drawer for a focus that reaches a verb, so the clip never hides it', () => {
+    render(row('first'));
+    act(() => screen.getByRole('button', { name: 'Rename' }).focus());
+    expect(offset()).toBe(`-${WIDTH}px`);
   });
 
   // A row whose owner wired no verb has no drawer at all: `ConnectScreen` lists
@@ -532,10 +590,11 @@ describe('the slide', () => {
         <span>row</span>
       </SwipeActions>,
     );
-    slide(track());
+    drag(track(), WIDTH);
+    later();
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(onDetails).not.toHaveBeenCalled();
-    expect(closed).toContain(track());
+    expect(offset()).toBe('');
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(onDetails).toHaveBeenCalledOnce();
   });
@@ -603,152 +662,22 @@ describe('a press paints the whole row', () => {
   });
 });
 
-// Regression, user report (paraphrased: scrolling over a big group on the phone was extremely
-// slow): every row's track was a horizontal scroller, and WebKit carried all 188 of them through
-// every frame of the list's own scroll. Only a row on screen can take a finger, so only it scrolls.
-describe('a track scrolls sideways only on screen', () => {
-  const OFF_SCREEN = 'not-data-on-screen:overflow-x-hidden';
-  let notify: IntersectionObserverCallback = () => {};
-  let observers = 0;
-  const watched = new Set<Element>();
-
-  beforeEach(() => {
-    observers = 0;
-    watched.clear();
-    // Other tests scroll the page. Start far past their last scroll, so the list is at rest.
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] });
-    vi.advanceTimersByTime(1e9);
-    vi.stubGlobal(
-      'IntersectionObserver',
-      class {
-        constructor(callback: IntersectionObserverCallback) {
-          notify = callback;
-          observers += 1;
-        }
-        observe(target: Element) {
-          watched.add(target);
-        }
-        unobserve(target: Element) {
-          watched.delete(target);
-        }
-        disconnect() {
-          watched.clear();
-        }
-      },
+// Regression, user reports (paraphrased: scrolling over a big group on the phone was extremely
+// slow, then a hard swipe over a 445-session group lagged and showed blank stripes): each row's
+// track was a native horizontal scroller, and WebKit paid for each one in the list's own scroll.
+describe('a row is never a native scroller', () => {
+  it('clips the row and leaves the page only the vertical pan', () => {
+    const html = renderToStaticMarkup(
+      <SwipeActions
+        label="a session"
+        actions={[{ key: 'rename', label: 'Rename', icon: <PencilIcon />, onSelect: () => {} }]}
+      >
+        <span>row</span>
+      </SwipeActions>,
     );
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.useRealTimers();
-  });
-
-  const list = (...labels: string[]) => (
-    <div>
-      {labels.map((label) => (
-        <SwipeActions
-          key={label}
-          label={label}
-          actions={[{ key: 'rename', label: 'Rename', icon: <PencilIcon />, onSelect: () => {} }]}
-        >
-          <span>{label}</span>
-        </SwipeActions>
-      ))}
-    </div>
-  );
-  const trackOf = (label: string) =>
-    screen.getByRole('group', { name: `${label} actions` }).parentElement as HTMLElement;
-  const report = (target: Element, isIntersecting: boolean) =>
-    act(() =>
-      notify(
-        [{ target, isIntersecting } as unknown as IntersectionObserverEntry],
-        {} as IntersectionObserver,
-      ),
-    );
-
-  it('keeps a row off screen from scrolling until the list shows it', () => {
-    render(list('first', 'second'));
-    const first = trackOf('first');
-    expect(first).toHaveClass('overflow-x-auto', OFF_SCREEN);
-    expect(first).not.toHaveAttribute('data-on-screen');
-
-    report(first, true);
-    expect(first).toHaveAttribute('data-on-screen');
-    expect(trackOf('second')).not.toHaveAttribute('data-on-screen');
-
-    report(first, false);
-    expect(first).not.toHaveAttribute('data-on-screen');
-  });
-
-  it('watches every row with one observer and lets each row go', () => {
-    const { unmount } = render(
-      <>
-        {list('first', 'second')}
-        {list('third')}
-      </>,
-    );
-    expect(observers).toBe(1);
-    expect(watched).toEqual(new Set([trackOf('first'), trackOf('second'), trackOf('third')]));
-
-    unmount();
-    expect(watched.size).toBe(0);
-  });
-
-  it('leaves every row scrollable where nothing reports what is on screen', () => {
-    vi.stubGlobal('IntersectionObserver', undefined);
-    render(list('first'));
-    expect(trackOf('first')).toHaveAttribute('data-on-screen');
-  });
-
-  // Regression, user report (paraphrased: a hard swipe over a 445-session group lagged and
-  // showed blank stripes): each row that crossed the screen edge in a fling changed its
-  // overflow, and WebKit laid out the whole list again for each of them.
-  describe('while the list moves', () => {
-    it('holds each report until the list rests, then applies the last one', () => {
-      render(list('first', 'second'));
-      const first = trackOf('first');
-      const second = trackOf('second');
-      const rows = first.parentElement as HTMLElement;
-
-      fireEvent.scroll(rows);
-      report(first, true);
-      report(second, true);
-      report(second, false);
-      expect(first).not.toHaveAttribute('data-on-screen');
-
-      act(() => vi.advanceTimersByTime(100));
-      fireEvent.scroll(rows);
-      act(() => vi.advanceTimersByTime(100));
-      expect(first).not.toHaveAttribute('data-on-screen');
-
-      act(() => vi.advanceTimersByTime(100));
-      expect(first).toHaveAttribute('data-on-screen');
-      expect(second).not.toHaveAttribute('data-on-screen');
-    });
-
-    it('is not held back by its own sideways scroll or by another scroller', () => {
-      render(
-        <>
-          {list('first')}
-          <div data-testid="transcript" />
-        </>,
-      );
-      const first = trackOf('first');
-
-      fireEvent.scroll(first);
-      fireEvent.scroll(screen.getByTestId('transcript'));
-      report(first, true);
-      expect(first).toHaveAttribute('data-on-screen');
-    });
-
-    it('drops the report of a row that leaves before the list rests', () => {
-      const { unmount } = render(list('first'));
-      const first = trackOf('first');
-
-      fireEvent.scroll(first.parentElement as HTMLElement);
-      report(first, true);
-      unmount();
-      act(() => vi.advanceTimersByTime(500));
-      expect(first).not.toHaveAttribute('data-on-screen');
-    });
+    const track = /<div data-swipe-track="" class="([^"]*)"/.exec(html)?.[1] ?? '';
+    expect(track.split(/\s+/)).toEqual(expect.arrayContaining(['overflow-clip', 'touch-pan-y']));
+    expect(html).not.toMatch(/overflow-x-auto|overflow-auto/);
+    expect(html).not.toMatch(/snap-x|snap-mandatory|snap-start|snap-end/);
   });
 });

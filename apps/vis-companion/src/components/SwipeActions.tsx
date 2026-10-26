@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type PointerEvent,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -84,12 +85,40 @@ export interface SwipeAction {
  */
 let openDrawer: (() => void) | null = null;
 
-/**
- * How far the track has to have travelled before the drawer counts as OPEN —
- * clear of the rubber band and of a stray pixel left by a snap, and the SAME
- * number in every reader of that offset: two thresholds would disagree at 4px.
- */
-const OPEN_PAST_PX = 8;
+/** How far a finger moves before the row takes it as a sideways slide or as the list's scroll. */
+const SLIDE_SLOP_PX = 8;
+
+/** A release faster than this, in px per ms, opens or shuts the row in the way it moved. */
+const FLICK_PX_PER_MS = 0.3;
+
+/** A finger that rests this long before it lifts makes no flick. */
+const FLICK_REST_MS = 150;
+
+/** How long the row takes to settle open or shut after the finger lifts. */
+const SETTLE_MS = 200;
+
+/** A click this soon after a slide ends that slide. It is not a press. */
+const SLIDE_CLICK_MS = 400;
+
+/** One finger on a row, from its first contact to its release. */
+interface Slide {
+  pointerId: number;
+  x: number;
+  y: number;
+  /** The row's offset when the finger landed: the open width, or 0. */
+  from: number;
+  offset: number;
+  /** The finger moved sideways past the slop, so the row follows it. */
+  isSliding: boolean;
+  at: number;
+  /** Px per ms toward open, smoothed over the last moves. */
+  velocity: number;
+}
+
+/** Does this reader want the motion at all? */
+function wantsMotion(): boolean {
+  return !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
 
 /** The row's menu asked for from somewhere other than its own trigger. */
 export interface RowMenuHandle {
@@ -221,118 +250,24 @@ function RowActionMenu({
   );
 }
 
-/** The observer that marks the tracks on screen, with the number of tracks it watches. */
-interface TrackWatcher {
-  observer: IntersectionObserver;
-  size: number;
-  /** What each track's last report said, held while a list around it still moves. */
-  held: Map<Element, boolean>;
-  timer: ReturnType<typeof setTimeout> | null;
-  release: () => void;
-}
-
-let watcher: TrackWatcher | null = null;
-
-/** When each scroller last moved. A track's own sideways scroll never holds it back. */
-const scrolledAt = new WeakMap<EventTarget, number>();
-
-/** How long a list stays still before its tracks change. Momentum scrolls every frame. */
-const LIST_REST_MS = 120;
-
-function isListMoving(track: Element, now: number): boolean {
-  for (let node: Node | null = track.parentNode; node; node = node.parentNode) {
-    if (now - (scrolledAt.get(node) ?? -Infinity) < LIST_REST_MS) return true;
-  }
-  return false;
-}
-
 /**
- * ONLY A ROW ON THE SCREEN IS A SCROLLER.
+ * A ROW IS NEVER A NATIVE SCROLLER. The finger slides it, and the list keeps the only scroll.
  *
- * Regression, user report (paraphrased: scrolling over a big group on the phone was
- * extremely slow): every row's track was a horizontal scroller, and a project with a
- * 134-session group put 188 of them in one list. WebKit carries every scroller through
- * every frame of the list's own scroll, even when nothing overflows it. In real touch
- * flings over that group on an iOS 26.5 simulator, about one frame in five ran past
- * 25 ms, some to 60 ms. With only the rows on screen scrolling, about one in twenty did,
- * and the page drew 30% more frames.
+ * Regression, user reports (paraphrased: scrolling over a big group on the phone was
+ * extremely slow, then a hard swipe over a 445-session group lagged and showed blank
+ * stripes): each row's track was a horizontal scroll-snap scroller. WebKit carried each
+ * one through the list's own scroll, and each change of which rows scrolled laid out the
+ * whole list. With only still rows on screen as scrollers, the touch that starts or ends
+ * a fling still took 40-60 ms. On an iOS 18.6 simulator, 12 flings over that group gave
+ * 17 such frames, and 2 with no row scroller.
  *
- * A track must be a scroller BEFORE the finger lands: UIKit picks the scroll views a
- * touch drives when the touch begins. A track that turned scrollable on its own
- * `touchstart` missed its first swipe on the same simulator. So one observer marks the
- * tracks on screen as their lists move, and every other track keeps `overflow-x: hidden`.
- * The observer measures against the viewport, so every scrolling list above a track
- * clips it too. A hidden track looks the same, because a closed drawer stands past the
- * row's edge. Where nothing can observe, every track stays a scroller.
- *
- * A TRACK CHANGES ONLY WHILE ITS LIST STANDS STILL. Regression, user report (paraphrased:
- * a hard swipe over a 445-session group lagged and showed blank stripes): each track that
- * entered or left the screen in a fling changed its overflow, so WebKit laid out all
- * 33,000 nodes of the list and made or dropped a native scroll view, about once for every
- * row passed. On an iOS 18.6 simulator, 153 of 354 page frames ran past 34 ms and 175
- * recorded frames showed an empty list. Reports from a moving list now wait until it
- * rests for `LIST_REST_MS`, then apply at once. A thumb that stops a fling lands on a
- * still list, so the rows under it are scrollers by its next swipe.
+ * So the track clips its row and is never a scroll container (`overflow: clip`). The page
+ * pans only vertically over it (`touch-action: pan-y`), so a sideways drag reaches the row
+ * as pointer moves. The row follows the finger with `translate` and settles open or shut
+ * on release. A vertical drag is the list's scroll, and the browser cancels the pointer.
  */
-function watchOnScreen(track: HTMLElement): () => void {
-  if (typeof IntersectionObserver !== 'function') {
-    track.setAttribute('data-on-screen', '');
-    return () => {};
-  }
-  if (!watcher) {
-    const onScroll = (event: Event) => {
-      if (event.target) scrolledAt.set(event.target, performance.now());
-    };
-    const state: TrackWatcher = {
-      observer: new IntersectionObserver((entries) => {
-        const now = performance.now();
-        for (const entry of entries) {
-          if (isListMoving(entry.target, now)) {
-            state.held.set(entry.target, entry.isIntersecting);
-          } else {
-            state.held.delete(entry.target);
-            entry.target.toggleAttribute('data-on-screen', entry.isIntersecting);
-          }
-        }
-        if (state.held.size > 0) state.timer ??= setTimeout(settle, LIST_REST_MS / 2);
-      }),
-      size: 0,
-      held: new Map(),
-      timer: null,
-      release: () => {
-        window.removeEventListener('scroll', onScroll, true);
-        if (state.timer !== null) clearTimeout(state.timer);
-      },
-    };
-    const settle = () => {
-      state.timer = null;
-      const now = performance.now();
-      for (const [target, isOnScreen] of state.held) {
-        if (isListMoving(target, now)) continue;
-        state.held.delete(target);
-        target.toggleAttribute('data-on-screen', isOnScreen);
-      }
-      if (state.held.size > 0) state.timer = setTimeout(settle, LIST_REST_MS / 2);
-    };
-    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
-    watcher = state;
-  }
-  const current = watcher;
-  current.observer.observe(track);
-  current.size += 1;
-  return () => {
-    current.observer.unobserve(track);
-    current.held.delete(track);
-    current.size -= 1;
-    if (current.size > 0) return;
-    current.observer.disconnect();
-    current.release();
-    watcher = null;
-  };
-}
-
 /**
- * Shared row actions: a scroll-snap drawer on touch and a vertical-dot dropdown
+ * Shared row actions: a sliding drawer on touch and a vertical-dot dropdown
  * under a pointer. Only the trigger reserves desktop width, regardless of action
  * count. Permanent row controls stay mounted once, after the action trigger.
  */
@@ -365,81 +300,57 @@ export function SwipeActions({
   /** Permanent row controls: inside the touch panel, before the desktop menu trigger. */
   trailing?: ReactNode;
 }) {
-  const scrollerRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const trayRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<RowMenuHandle | null>(null);
   const [open, setOpen] = useState(false);
-  /** True while this drawer is settling home; see `close`. */
-  const isClosing = useRef(false);
+  const slide = useRef<Slide | null>(null);
+  /** When the last slide ended, so the click that follows it goes nowhere. */
+  const slidAt = useRef(-Infinity);
 
-  // CLOSED IS A FACT, NEVER AN ANIMATION. `open` flips the moment a close is
-  // asked for, so a close that only REQUESTS the slide home leaves the state
-  // saying shut while the strip is still standing on the screen whenever the
-  // platform declines to run it: the row navigates instead of dismissing, the
-  // next row opens beside it rather than in place of it, and the mark the verb
-  // just left is scrolled off to the left, behind the strip that left it.
-  //
-  // Regression, user report ("when I click the star on some other row, first I
-  // don't see the star ... only after I do slide once again", with the cell
-  // painted over its own old caption): an ANIMATED `scrollTo` inside a mandatory
-  // scroll-snap track is exactly what WebKit is free to swallow — measured there
-  // at 216px eight hundred milliseconds after `behavior: 'smooth'` was asked for,
-  // against home in the same frame for `behavior: 'auto'`, same track, same call
-  // — and starring fires a second animated scroll (`ProjectGroup`'s pin) at this
-  // same scroller in the same commit. The slide OPEN is still the platform's,
-  // finger and momentum and all; only the way home is taken out of its hands.
-  const close = useCallback(() => {
-    isClosing.current = true;
-    setOpen(false);
-    scrollerRef.current?.scrollTo({ left: 0, behavior: 'auto' });
+  /** Put the row and its drawer `offset` px to the left. Only this changes their place. */
+  const place = useCallback((offset: number, isAnimated: boolean) => {
+    for (const element of [panelRef.current, trayRef.current]) {
+      if (!element) continue;
+      element.style.transition =
+        isAnimated && wantsMotion() ? `translate ${SETTLE_MS}ms ease-out` : '';
+      element.style.translate = offset > 0 ? `${-offset}px` : '';
+    }
   }, []);
 
-  // OPEN IS WHAT THE TRACK SAYS, RE-READ — not what a scroll event last said.
+  // CLOSED IS A FACT. `open` and the row's offset change together, in one call, and
+  // nothing else moves the row: a re-sort that moves the row's node keeps its inline
+  // offset. A verb closes at once, because starring moves the row in the same commit.
   //
-  // Regression, user report (paraphrased: from the fifth row down the star did
-  // not arrive on the first tap, only after sliding the row a second time, and
-  // the row's state disagreed with what was on the screen): the rows above it
-  // are LIVE, every poll re-sorts the list, and a re-sort MOVES this row's node
-  // to its new place. WebKit returns a moved scroller home in the same task and
-  // fires NO scroll event for it — measured on iOS 26.5, Safari: 216 -> 0
-  // synchronously, zero scroll events — so the strip left the screen while
-  // `open` went on saying it was standing there, and the row, which is a
-  // dismiss target while open, ate the tap that was meant for the star. Only
-  // the second slide, which does fire scroll events, put the two back in step.
-  //
-  // The offset is the platform's to change, with or without an event, so the
-  // state RE-READS it every frame it claims to be open.
-  useEffect(() => {
-    if (!open) return;
-    let frame = 0;
-    const reread = () => {
-      frame = requestAnimationFrame(reread);
-      if ((scrollerRef.current?.scrollLeft ?? 0) <= OPEN_PAST_PX) setOpen(false);
-    };
-    frame = requestAnimationFrame(reread);
-    return () => cancelAnimationFrame(frame);
-  }, [open]);
+  // Regression, user report about the star on iOS (paraphrased: the star did not show
+  // until the row slid a second time): the native track was free to drop an animated
+  // close or to reset its offset without an event, so the strip and `open` disagreed.
+  const close = useCallback(
+    (isAnimated = true) => {
+      setOpen(false);
+      place(0, isAnimated);
+    },
+    [place],
+  );
 
   // An open drawer is a modal-ish state: Escape closes it, scrolling the list
   // away from it closes it, and opening another row closes it — otherwise a
   // forgotten row keeps a delete button armed under the user's thumb.
   useEffect(() => {
     if (!open) return;
-    openDrawer?.();
+    if (openDrawer !== close) openDrawer?.();
     openDrawer = close;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') close();
     };
     const onScroll = (event: Event) => {
       // The LIST moving under an open row closes it; a scroller that does not
-      // carry the row does not. Closing row A animates its own scrollLeft back to
-      // 0, and every frame of that was reaching row B as "something else
-      // scrolled", so the row the thumb had just opened shut itself before the
-      // finger left the glass — and a live transcript, which rewrites its own
-      // `scrollTop` on every update the session receives, reached every open row
-      // on another screen the very same way.
-      const track = scrollerRef.current;
+      // carry the row does not. A live transcript rewrites its own `scrollTop` on
+      // every update the session receives, and must not shut a row on another screen.
+      const track = trackRef.current;
       const scroller = event.target;
-      if (!track || scroller === track) return;
+      if (!track) return;
       if (scroller instanceof Node && scroller.contains(track)) close();
     };
     window.addEventListener('keydown', onKey);
@@ -451,13 +362,28 @@ export function SwipeActions({
     };
   }, [open, close]);
 
-  // Only a track on screen scrolls sideways; see `watchOnScreen`.
-  const hasTrack = actions.length > 0;
-  useEffect(() => {
-    const track = scrollerRef.current;
-    if (!hasTrack || !track) return;
-    return watchOnScreen(track);
-  }, [hasTrack]);
+  const trayWidth = () => trayRef.current?.offsetWidth ?? 0;
+
+  /** The finger lifts or the browser takes it: settle open or shut. */
+  const release = (event: PointerEvent<HTMLDivElement>, isLift: boolean) => {
+    const current = slide.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    slide.current = null;
+    if (!current.isSliding) return;
+    const now = performance.now();
+    slidAt.current = now;
+    const width = trayWidth();
+    // A finger that rests before it lifts has no speed left to give.
+    const isFresh = now - current.at < FLICK_REST_MS;
+    const isFlick = isLift && isFresh && Math.abs(current.velocity) >= FLICK_PX_PER_MS;
+    const isOpening = isFlick ? current.velocity > 0 : current.offset > width / 2;
+    if (!isOpening) {
+      close();
+      return;
+    }
+    place(width, true);
+    setOpen(true);
+  };
 
   if (actions.length === 0) {
     if (!trailing) return <>{children}</>;
@@ -471,13 +397,56 @@ export function SwipeActions({
 
   return (
     <div
-      ref={scrollerRef}
+      ref={trackRef}
       data-swipe-track=""
-      // A finger on the track cancels the browser's own animation, so it cancels
-      // this flag too: a drag that catches a closing drawer mid-slide is a new
-      // gesture, not the tail of the old one.
-      onPointerDown={() => {
-        isClosing.current = false;
+      onPointerDown={(event) => {
+        if (event.pointerType === 'mouse' || !event.isPrimary) return;
+        const from = open ? trayWidth() : 0;
+        slide.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          from,
+          offset: from,
+          isSliding: false,
+          at: performance.now(),
+          velocity: 0,
+        };
+      }}
+      onPointerMove={(event) => {
+        const current = slide.current;
+        if (!current || current.pointerId !== event.pointerId) return;
+        const across = current.x - event.clientX;
+        if (!current.isSliding) {
+          const down = Math.abs(event.clientY - current.y);
+          // The list's scroll: the browser takes this finger and cancels the pointer.
+          if (down >= SLIDE_SLOP_PX && down >= Math.abs(across)) {
+            slide.current = null;
+            return;
+          }
+          if (Math.abs(across) < SLIDE_SLOP_PX || trayWidth() === 0) return;
+          current.isSliding = true;
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          // Another open row shuts the moment this one starts to move.
+          if (openDrawer !== close) openDrawer?.();
+        }
+        const offset = Math.min(trayWidth(), Math.max(0, current.from + across));
+        const now = performance.now();
+        const elapsed = now - current.at;
+        if (elapsed > 0) {
+          current.velocity = 0.8 * ((offset - current.offset) / elapsed) + 0.2 * current.velocity;
+        }
+        current.offset = offset;
+        current.at = now;
+        place(offset, false);
+      }}
+      onPointerUp={(event) => release(event, true)}
+      onPointerCancel={(event) => release(event, false)}
+      // A slide is not a press: the click that can follow its release goes nowhere.
+      onClickCapture={(event) => {
+        if (performance.now() - slidAt.current > SLIDE_CLICK_MS) return;
+        event.preventDefault();
+        event.stopPropagation();
       }}
       // THE ROW'S OWN MENU, WHERE THE SYSTEM ONE WOULD HAVE BEEN. Under a pointer every
       // verb this row has already lives behind its `⋯`; a right-click is the second way
@@ -489,25 +458,14 @@ export function SwipeActions({
         event.preventDefault();
         menuRef.current?.openAt({ x: event.clientX, y: event.clientY });
       }}
-      onScroll={(event) => {
-        const next = event.currentTarget.scrollLeft > OPEN_PAST_PX;
-        // A drawer animating home still reports itself OPEN for every frame of the
-        // slide. Taken at face value those frames re-opened the row that was
-        // closing — and re-opening it closed the row that had just replaced it, so
-        // two rows slid back to 0 together and the thumb ended up with nothing.
-        if (isClosing.current) {
-          if (next) return;
-          isClosing.current = false;
-        }
-        setOpen((current) => (current === next ? current : next));
-      }}
-      className={`group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden not-data-on-screen:overflow-x-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden ${isSelected ? 'bg-accent/15' : ''} ${ROW_PRESS_PAPER}`}
+      className={`group/swipe flex touch-pan-y overflow-clip ${isSelected ? 'bg-accent/15' : ''} ${ROW_PRESS_PAPER}`}
     >
-      {/* Touch keeps content and permanent controls in one full-width snap panel.
+      {/* Touch keeps content and permanent controls in one full-width panel.
           Desktop ends the row with its menu trigger and stands the permanent controls
           one slot inside it, the two cells every header in the list uses. */}
       <div
-        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents ${isSelected ? 'bg-accent/15' : isCurrent ? 'bg-standing' : paper === 'set-sessions' ? 'bg-set-sessions' : 'bg-panel'} ${ROW_PRESS_PAPER}`}
+        ref={panelRef}
+        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] mouse:contents ${isSelected ? 'bg-accent/15' : isCurrent ? 'bg-standing' : paper === 'set-sessions' ? 'bg-set-sessions' : 'bg-panel'} ${ROW_PRESS_PAPER}`}
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.
@@ -525,13 +483,20 @@ export function SwipeActions({
       >
         <RowActionMenu actions={actions} label={label} handle={menuRef} />
       </div>
-      {/* Layout sizes every action before the first swipe. Scrolling does not change
-          these widths; only the row width or action count can change them. */}
+      {/* Layout sizes every action before the first swipe. A slide does not change
+          these widths; only the row width or action count can change them. A focus
+          that reaches a verb opens the drawer, so the clip never hides it. */}
       <div
-        className="flex min-w-0 max-w-full shrink-0 snap-end mouse:hidden"
+        ref={trayRef}
+        className="flex min-w-0 max-w-full shrink-0 mouse:hidden"
         style={{ width: `${actions.length * 4.5}rem` }}
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}
+        onFocus={() => {
+          if (open) return;
+          place(trayWidth(), false);
+          setOpen(true);
+        }}
       >
         {actions.map((action) => (
           <button
@@ -548,7 +513,7 @@ export function SwipeActions({
             }`}
             onClick={(event) => {
               const anchor = event.currentTarget;
-              close();
+              close(false);
               action.onSelect(anchor);
             }}
           >

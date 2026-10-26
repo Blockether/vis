@@ -12,7 +12,7 @@ import { ListRow } from './ui';
  * The action cells share the available row width, up to 72px each.
  * Keep captions short. Use `name` for the full accessible action name.
  *
- * Touch opens the scroll-snap drawer. A pointer opens a vertical-dot dropdown,
+ * Touch slides the row open to show the drawer. A pointer opens a vertical-dot dropdown,
  * reserving only one target beside the row's permanent controls.
  */
 const MARKS: Record<string, ReactNode> = {
