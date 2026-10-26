@@ -176,8 +176,8 @@ namespace paths start at `src/com/blockether/vis/internal/`.
 | Area | Owner and boundary |
 |---|---|
 | Python host API | The engine also runs `packages/vis-agent/src/blockether/vis/extension.py`. Never mirror it. |
-| Sandbox | `sandbox/` defines host policy and process integration; `python/` implements host execution. The interpreter, handles, descriptor limits and guest runtime Python belong in `vis-python-runtime`; read its `AGENTS.md` before you change it. Host-call shims go in `resources/vis-shims/`, host guest modules in `resources/vis-guest/`. Do not copy runtime code. |
-| Shims | `attach` and `ls` expose host functions; they do not replace Python packages. The Python docstrings in `resources/vis-shims/` generate the apropos resources; `apropos-resource-test/regenerate!` updates them. |
+| Sandbox | `sandbox/` defines host policy and process integration; `python/` implements host execution. The interpreter, handles, descriptor limits and guest runtime Python belong in `vis-python-runtime`; read its `AGENTS.md` before you change it. Host-call shims and host guest modules go in `resources/vis-host-python/`, without subdirectories. Do not copy runtime code. |
+| Shims | `attach` and `ls` expose host functions; they do not replace Python packages. The Python docstrings of the shims in `resources/vis-host-python/` generate the apropos resources; `apropos-resource-test/regenerate!` updates them. |
 | Contracts | `packages/vis-contract/resources/vis-contract/schema/` owns the canonical JSON Schemas; Skjema validates portable shapes. Derive vocabulary and bounds from the schemas, never from paired catalogs. Callbacks, IO and mutable state stay local. |
 | Tool declarations | `extension/core.clj` and its mirrored test own description, result, params, requiredness and wire keys. |
 | Gateway transport | `packages/vis-contract/src/com/blockether/vis/contract/wire.clj` defines snake_case wire keys, kebab-case engine keys and total JSON encoding. Use `wire/->wire` and `wire/json-str`; a transport encoding failure can break event replay. |

@@ -3,7 +3,7 @@
 
    Every shim is three things that must stay in step: a lazy `shim_*.clj`
    initializer named by the one distribution manifest, a registered extension,
-   and a `resources/vis-shims/<name>.py` classpath resource. Drift in any one is
+   and a `resources/vis-host-python/<name>.py` classpath resource. Drift in any one is
    invisible until an agent imports the module, so this test pins the boundary."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -17,7 +17,7 @@
 
 (def ^:private shim-ns-dir "src/com/blockether/vis/internal/foundation")
 
-(def ^:private shim-resource-dir "resources/vis-shims")
+(def ^:private shim-resource-dir "resources/vis-host-python")
 
 (defn- shim-namespaces
   "Every namespace the distribution initializes that lends sandbox shims. Role is
@@ -78,50 +78,50 @@
              (it "registers exactly one shim per shim namespace"
                  (expect (= (count (shim-ns-files)) (count (registered-shims))))))
 
-(defdescribe
-  shim-source-test
-  (it "names its Python source under vis-shims/, never inline Clojure strings"
-      (let [bad (remove #(str/starts-with? (str (:shim/source %)) "vis-shims/") (registered-shims))]
-        (expect (empty? bad)
-                (str "shims with a non-vis-shims source: " (pr-str (map :shim/name bad))))))
-  (it "resolves every :shim/source as a classpath resource"
-      ;; `extension/shim-python-source` slurps this resource at sandbox boot; a
-      ;; typo here is a hard failure the moment an agent imports the module.
-      (let [missing (remove #(io/resource (:shim/source %)) (registered-shims))]
-        (expect (empty? missing)
-                (str "shims whose source resource is missing: "
-                     (pr-str (map :shim/source missing))))))
-  (it "keeps shim names and their imports unique"
-      (let [shims
-            (registered-shims)
+(defdescribe shim-source-test
+             (it "names its Python source under vis-host-python/, never inline Clojure strings"
+                 (let [bad (remove #(str/starts-with? (str (:shim/source %)) "vis-host-python/")
+                             (registered-shims))]
+                   (expect (empty? bad)
+                           (str "shims with another source: " (pr-str (map :shim/name bad))))))
+             (it "resolves every :shim/source as a classpath resource"
+                 ;; `extension/shim-python-source` slurps this resource at sandbox boot; a
+                 ;; typo here is a hard failure the moment an agent imports the module.
+                 (let [missing (remove #(io/resource (:shim/source %)) (registered-shims))]
+                   (expect (empty? missing)
+                           (str "shims whose source resource is missing: "
+                                (pr-str (map :shim/source missing))))))
+             (it "keeps shim names and their imports unique"
+                 (let [shims
+                       (registered-shims)
 
-            dupe-names
-            (->> shims
-                 (map :shim/name)
-                 frequencies
-                 (filter #(< 1 (val %)))
-                 (map key))
+                       dupe-names
+                       (->> shims
+                            (map :shim/name)
+                            frequencies
+                            (filter #(< 1 (val %)))
+                            (map key))
 
-            dupe-imports
-            (->> shims
-                 (mapcat :shim/imports)
-                 frequencies
-                 (filter #(< 1 (val %)))
-                 (map key))]
+                       dupe-imports
+                       (->> shims
+                            (mapcat :shim/imports)
+                            frequencies
+                            (filter #(< 1 (val %)))
+                            (map key))]
 
-        (expect (empty? dupe-names) (str "duplicate shim names: " (pr-str dupe-names)))
-        (expect (empty? dupe-imports)
-                (str "two shims claim the same import: " (pr-str dupe-imports)))))
-  (it "declares a name and a way for the sandbox to reach it"
-      ;; A shim reaches Python either as an importable module (`:shim/imports`) or as
-      ;; prebound globals (`:shim/bindings`, how the `attach` shim publishes `attach`
-      ;; and friends) — declaring NEITHER makes it unreachable. WHAT each name does is
-      ;; documented in the shim's own Python `__doc__`, harvested into the resource
-      ;; that pack's own manifest entry names (`META-INF/vis/apropos/shim-<pack>.edn`).
-      (doseq [{:shim/keys [name imports bindings]} (registered-shims)]
-        (expect (not (str/blank? name)))
-        (expect (or (seq imports) (some? bindings))
-                (str name " declares neither :shim/imports nor :shim/bindings")))))
+                   (expect (empty? dupe-names) (str "duplicate shim names: " (pr-str dupe-names)))
+                   (expect (empty? dupe-imports)
+                           (str "two shims claim the same import: " (pr-str dupe-imports)))))
+             (it "declares a name and a way for the sandbox to reach it"
+                 ;; A shim reaches Python either as an importable module (`:shim/imports`) or as
+                 ;; prebound globals (`:shim/bindings`, how the `attach` shim publishes `attach`
+                 ;; and friends) — declaring NEITHER makes it unreachable. WHAT each name does is
+                 ;; documented in the shim's own Python `__doc__`, harvested into the resource
+                 ;; that pack's own manifest entry names (`META-INF/vis/apropos/shim-<pack>.edn`).
+                 (doseq [{:shim/keys [name imports bindings]} (registered-shims)]
+                   (expect (not (str/blank? name)))
+                   (expect (or (seq imports) (some? bindings))
+                           (str name " declares neither :shim/imports nor :shim/bindings")))))
 
 (defdescribe
   shim-source-snapshot-test
@@ -133,7 +133,7 @@
             (File/createTempFile "vis-shim-source" ".py")
 
             resource
-            (io/resource "vis-shims/ls.py")
+            (io/resource "vis-host-python/ls.py")
 
             slurp-source
             slurp
@@ -142,7 +142,7 @@
             {:ext/name "shim-source-snapshot"
              :ext/description "Test a shim source snapshot."
              :ext/sandbox-shims [{:shim/name "snapshot"
-                                  :shim/source "vis-shims/ls.py"
+                                  :shim/source "vis-host-python/ls.py"
                                   :shim/globals ["snapshot"]
                                   :shim/bindings {"__vis_snapshot_value__" (constantly "paired")}}]}
 
@@ -175,31 +175,37 @@
              (finally (.delete file))))))
 
 (defdescribe shim-resource-test
-             (it "has a shim declaring every resources/vis-shims/*.py"
+             (it "has an owner for every resources/vis-host-python/*.py"
                  ;; The reverse direction: an orphan .py is either dead weight in the native
-                 ;; image or a shim someone forgot to register.
+                 ;; image or a shim someone forgot to register. Engine code names the guest
+                 ;; modules in the same directory by file name.
                  (let [declared
                        (set (map :shim/source (registered-shims)))
 
-                       on-disk
+                       engine-src
+                       (->> (file-seq (io/file "src"))
+                            (filter (fn [^File f]
+                                      (.endsWith (.getName f) ".clj")))
+                            (map slurp)
+                            (str/join "\n"))
+
+                       orphans
                        (->> (.listFiles (io/file shim-resource-dir))
                             (map (fn [^File f]
                                    (.getName f)))
-                            ;; Only Python source files are shim implementations.
                             (filter (fn [^String n]
                                       (.endsWith n ".py")))
-                            (map (fn [^String n]
-                                   (str "vis-shims/" n))))
+                            (remove (fn [^String n]
+                                      (or (declared (str "vis-host-python/" n))
+                                          (str/includes? engine-src (str "\"" n "\""))
+                                          (str/includes? engine-src (str "/" n "\""))))))]
 
-                       orphans
-                       (remove declared on-disk)]
-
-                   (expect (empty? orphans)
-                           (str "Python shim sources nobody declares: " (pr-str orphans)))))
-             (it "embeds vis-shims/ in the native image"
+                   (expect (empty? orphans) (str "Python sources nobody uses: " (pr-str orphans)))))
+             (it "embeds vis-host-python/ in the native image"
                  ;; Without this native-image argument every shim resolves in dev and none
                  ;; of them resolves in the shipped binary.
-                 (expect (str/includes? (slurp "build.clj") "-H:IncludeResources=vis-shims/.*"))))
+                 (expect (str/includes? (slurp "build.clj")
+                                        "-H:IncludeResources=vis-host-python/.*"))))
 
 (defdescribe
   shim-docs-are-pulled-test

@@ -2354,7 +2354,7 @@
    before another sandbox starts. Reconstruct from the raw descriptor to adopt new
    source. Raw descriptors read `:shim/source` from the classpath, also supporting
    doctor checks before construction. Missing resources fail loudly. Native images
-   embed the same resources through `-H:IncludeResources=vis-shims/.*`."
+   embed the same resources through `-H:IncludeResources=vis-host-python/.*`."
   ^String [shim]
   (or (::shim-source shim)
       (let [res (:shim/source shim)]

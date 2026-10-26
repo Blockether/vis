@@ -55,9 +55,9 @@
   doctor-sandbox-deps-test
   (it "reports one info line when every sandbox shim's dependencies resolve"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "ls"
-                                                          :shim/source "vis-shims/ls.py"}
+                                                          :shim/source "vis-host-python/ls.py"}
                                                          {:shim/name "attachments"
-                                                          :shim/source "vis-shims/attach.py"
+                                                          :shim/source "vis-host-python/attach.py"
                                                           :shim/bindings {"probe" (fn []
                                                                                     :ok)}}])]
         (let [msgs (#'doctor/sandbox-shim-messages {})]
@@ -69,18 +69,18 @@
           (expect (str/includes? (:message (first msgs)) "1 host bridges")))))
   (it "errors on a shim whose Python source is not on the classpath"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "ghost"
-                                                          :shim/source "vis-shims/nope.py"}])]
+                                                          :shim/source "vis-host-python/nope.py"}])]
         (let [msgs (#'doctor/sandbox-shim-messages {})
               err (first (filterv #(= :error (:level %)) msgs))]
 
           (expect (some? err))
           (expect (str/includes? (:message err) "Sandbox shim 'ghost' source is unavailable"))
-          (expect (str/includes? (:remediation err) "vis-shims/nope.py"))
+          (expect (str/includes? (:remediation err) "vis-host-python/nope.py"))
           (expect (= 2 (doctor/exit-code msgs))))))
   (it "errors on a shim whose host bindings cannot be realized"
       (with-redefs [extension/sandbox-shims
                     (constantly [{:shim/name "broken"
-                                  :shim/source "vis-shims/ls.py"
+                                  :shim/source "vis-host-python/ls.py"
                                   :shim/bindings (fn []
                                                    (throw (ex-info "bridge unavailable" {})))}])]
         (let [msgs (#'doctor/sandbox-shim-messages {})
@@ -91,8 +91,8 @@
                                  "host bindings failed to resolve: bridge unavailable")))))
   (it "warns on duplicate shim names, which shadow each other at install time"
       (with-redefs [extension/sandbox-shims
-                    (constantly [{:shim/name "yaml" :shim/source "vis-shims/yaml.py"}
-                                 {:shim/name "yaml" :shim/source "vis-shims/yaml.py"}])]
+                    (constantly [{:shim/name "yaml" :shim/source "vis-host-python/yaml.py"}
+                                 {:shim/name "yaml" :shim/source "vis-host-python/yaml.py"}])]
         (let [msgs (#'doctor/sandbox-shim-messages {})
               warn (first (filterv #(= :warn (:level %)) msgs))]
 

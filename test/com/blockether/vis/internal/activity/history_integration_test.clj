@@ -125,7 +125,7 @@
                       (let [result
                             (#'python-exec/run-python-code
                              pc
-                             "for i in range(160):\n    ls('resources/vis-shims')\nprint('done')"
+                             "for i in range(160):\n    ls('resources/vis-host-python')\nprint('done')"
                              :env
                              {:db-info store :session-id sid})
 

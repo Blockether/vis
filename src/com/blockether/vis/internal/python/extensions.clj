@@ -118,10 +118,10 @@
    PyPI ships as `vis-agent`, so an author reads, lints and unit-tests the code
    the sandbox runs — handed to the injector as the `_vis_body` literal, because
    `exec` into a module dict is the one thing that keeps the API off the
-   extension's globals. The INJECTOR is `vis-guest/extension_bootstrap.py`,
+   extension's globals. The INJECTOR is `vis-host-python/extension_bootstrap.py`,
    which also seals this session's Python callables so the host can hold them."
   (str "_vis_body = " (python-string-literal (classpath-src "blockether/vis/extension.py"))
-       "\n" (classpath-src "vis-guest/extension_bootstrap.py")))
+       "\n" (classpath-src "vis-host-python/extension_bootstrap.py")))
 
 ;; Marshalling helpers
 
@@ -2889,7 +2889,7 @@
         ctx
         (build-context "evals")]
 
-    (try (exec-in! ctx (classpath-src "vis-guest/vis_evals.py"))
+    (try (exec-in! ctx (classpath-src "vis-host-python/vis_evals.py"))
          (run-in ctx
                  (str "evals_call("
                       (python-string-literal (json/write-json-str sources))
@@ -3080,7 +3080,7 @@
                                      ", python_version='.'.join(map(str, sys.version_info[:3])))")))
               (str/includes? source "# /// script")
               (let [ctx (build-context "extension-metadata")]
-                (try (exec-in! ctx (classpath-src "vis-guest/extension_metadata.py"))
+                (try (exec-in! ctx (classpath-src "vis-host-python/extension_metadata.py"))
                      (run-in ctx (str "extension_metadata(" (python-string-literal source) ")"))
                      (finally (discard-context! ctx))))
               :else {})
@@ -3533,8 +3533,8 @@
 (def ^:private manifest-host
   "The digest of the Python that turns an extension file into its registration data."
   (delay (util/sha256-hex (str bootstrap-python
-                               (classpath-src "vis-guest/vis_sdk.py")
-                               (classpath-src "vis-guest/vis_code.py")))))
+                               (classpath-src "vis-host-python/vis_sdk.py")
+                               (classpath-src "vis-host-python/vis_code.py")))))
 
 (defn- manifest-file
   "The saved registration of the extension file `path` in `project-root`."

@@ -23,7 +23,7 @@
                 (expect (= (slurp (io/file agent-dir "src/blockether/vis/extension.py"))
                            (slurp (io/resource "blockether/vis/extension.py")))))
             (it "is the only copy — the injector carries the host and nothing else"
-                (let [injector (slurp (io/resource "vis-guest/extension_bootstrap.py"))]
+                (let [injector (slurp (io/resource "vis-host-python/extension_bootstrap.py"))]
                   (expect (str/includes? injector "_vis_body"))
                   (expect (not (str/includes? injector "def ask(")))))
             (it "imports nothing a sandbox cannot give it"

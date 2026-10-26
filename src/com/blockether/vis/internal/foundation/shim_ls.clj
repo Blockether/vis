@@ -191,6 +191,6 @@
      :ext/sandbox-shims [{:shim/name "ls"
                           :shim/globals ["ls"]
                           :shim/bindings ls-bridge-bindings
-                          :shim/source "vis-shims/ls.py"}]}))
+                          :shim/source "vis-host-python/ls.py"}]}))
 
 (defn register! [] (extension/register-extension! vis-extension))

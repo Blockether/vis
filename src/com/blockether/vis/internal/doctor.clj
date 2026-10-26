@@ -86,7 +86,7 @@
 (defn- inspect-shim
   "Resolve ONE sandbox shim's dependencies WITHOUT starting a Python interpreter:
    its `:shim/source` classpath resource (the Python file build.clj embeds via
-   `-H:IncludeResources=vis-shims/.*`) and its host bindings. Never throws."
+   `-H:IncludeResources=vis-host-python/.*`) and its host bindings. Never throws."
   [shim]
   (let [nm
         (or (:shim/name shim) "(unnamed)")

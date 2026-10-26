@@ -1140,14 +1140,11 @@
              ;; read a page), so without this pattern the corpus holds zero pages in
              ;; the native binary.
              "-H:IncludeResources=vis-docs/.*"
-             ;; The two host doors (resources/vis-shims/*.py), slurped at session
-             ;; creation via io/resource: `attach` and `ls`.
-             "-H:IncludeResources=vis-shims/.*"
-             ;; Host modules are materialized for the runtime worker at first use.
-             "-H:IncludeResources=vis-guest/.*"
-             ;; The shared-package range check (resources/vis-python/*.py), run by the
-             ;; embedded interpreter while Vis prepares extensions (#391).
-             "-H:IncludeResources=vis-python/.*"
+             ;; Vis' own Python (resources/vis-host-python/*.py): the `attach` and `ls`
+             ;; host doors slurped at session creation, the guest modules materialized
+             ;; for the runtime worker at first use, and the shared-package range check
+             ;; (#391). The runtime jar registers its own `vis-python/` tree.
+             "-H:IncludeResources=vis-host-python/.*"
              ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/blockether/vis/*.py, on
              ;; :paths as a resource root): the body every extension context execs, and
              ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an

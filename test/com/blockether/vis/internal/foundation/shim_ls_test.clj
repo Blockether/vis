@@ -3,7 +3,8 @@
 
    The listing returns a printable Python string. Host failures remain catchable
    Python exceptions, and the `:fs/access` gate decides which trees may be seen."
-  (:require [clojure.string :as string]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as string]
             [charred.api :as json]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.activity.core :as activity]
@@ -19,6 +20,11 @@
    confinement, so the repo's own tree is the fixture."
   []
   (:python-context (tpc/new-context {})))
+
+(defn- host-python-files
+  "The regular files of the `resources/vis-host-python` fixture directory."
+  []
+  (filter #(.isFile ^java.io.File %) (.listFiles (io/file "resources/vis-host-python"))))
 
 (defn- out
   "Stdout of `code` run as ONE driven block."
@@ -70,10 +76,10 @@
          code
          (str
            names-py
-           "text = ls([\"resources/vis-shims\",\n"
+           "text = ls([\"resources/vis-host-python\",\n"
            "           {\"path\": \"src/com/blockether/vis/internal/foundation\", \"depth\": 1}])\n"
            "first, second = text.split(\"\\n\\n\")\n"
-           "print(first.split(\"\\n\")[0].split(\"  \")[0].endswith(\"vis-shims\"),\n"
+           "print(first.split(\"\\n\")[0].split(\"  \")[0].endswith(\"vis-host-python\"),\n"
            "      \"ls.py\" in names(first), \"editing/\" in names(second),\n"
            "      \"ls.py\" not in second)")]
 
@@ -114,13 +120,13 @@
             code
             (str names-py
                  "from pathlib import Path\n"
-                 "p = Path('resources/vis-shims')\n" "plain = ls(p)\n"
+                 "p = Path('resources/vis-host-python')\n" "plain = ls(p)\n"
                  "filtered = ls(p, pattern='l?.py')\n"
                  "batch = ls([p, {'path': p, 'pattern': None}], pattern='l?.py').split('\\n\\n')\n"
                  "tree = ls('resources', depth=2, pattern='ls.py')\n"
                  "print(ls(p, pattern=None) == plain, ls(p, pattern='*') == plain,\n"
                  "      '  0d 1f\\n' in filtered, 'ls.py' in names(filtered),\n"
-                 "      batch == [filtered, plain], 'vis-shims/ 1' in tree,\n"
+                 "      batch == [filtered, plain], 'vis-host-python/ 1' in tree,\n"
                  "      'ls.py' in names(tree), 'attach.py' not in tree,\n"
                  "      ls(p, pattern='__no_match__').endswith('  empty'),\n"
                  "      '.gitignore' not in names(ls('.', pattern='.git*')),\n"
@@ -136,9 +142,9 @@
                  "    try:\n" "        ls('resources', pattern=pattern)\n"
                  "    except Exception as e:\n" "        return type(e).__name__\n"
                  "print(rejected(42), rejected('['),\n"
-                 "      ls('resources/vis-shims', pattern='LS.PY').endswith('  empty'),\n"
+                 "      ls('resources/vis-host-python', pattern='LS.PY').endswith('  empty'),\n"
                  "      ls('resources', depth=1, pattern='ls.py').endswith('  empty'),\n"
-                 "      'vis-shims/' in ls('resources', pattern='vis-shims'))")]
+                 "      'vis-host-python/' in ls('resources', pattern='vis-host-python'))")]
 
         (expect (= "VisToolError VisToolError True True True\n" (out ctx code)))))
   (it
@@ -187,7 +193,7 @@
          "from pathlib import Path\n"
          "root = Path(\"src/com/blockether/vis/internal/foundation\")\n"
          "text = ls(root)\n"
-         "batch = ls([Path(\"resources/vis-shims\"), {\"path\": root, \"depth\": 1}]).split(\"\\n\\n\")\n"
+         "batch = ls([Path(\"resources/vis-host-python\"), {\"path\": root, \"depth\": 1}]).split(\"\\n\\n\")\n"
          "print(\"core.clj\" in text.split(), len(batch) == 2,\n"
          "      \"ls.py\" in batch[0].split(), \"editing/\" in batch[1].split())")]
 
@@ -211,16 +217,15 @@
                                 {:roots-fn roots-fn :net-enabled? false})
             :jail-enabled? true
             :enabled? false}]
-          (expect
-            (= "True True True True\n"
-               (out ctx
-                    (str "from pathlib import Path\n"
-                         "text = ls(Path('.'), depth=2)\n"
-                         "batch = ls([Path('resources/vis-shims'), "
-                         "{'path': Path('src/com/blockether/vis/internal/foundation')}])\n"
-                         "print('AGENTS.md' in text.split(), 'vis-shims/' in text, "
-                         "'ls.py' in batch.split() and 'core.clj' in batch.split(), "
-                         "'  0d 1f\\n' in ls(Path('resources/vis-shims'), pattern='ls.py'))"))))))))
+          (expect (= "True True True True\n"
+                     (out ctx
+                          (str "from pathlib import Path\n"
+                               "d = Path('resources/vis-host-python')\n"
+                               "text = ls(Path('.'), depth=2)\n" "batch = ls([d, "
+                               "{'path': Path('src/com/blockether/vis/internal/foundation')}])\n"
+                               "print('AGENTS.md' in text.split(), 'vis-host-python/' in text, "
+                               "'ls.py' in batch.split() and 'core.clj' in batch.split(), "
+                               "'  0d 1f\\n' in ls(d, pattern='ls.py'))"))))))))
 
 (defdescribe
   ls-shim-failure-test
@@ -260,15 +265,14 @@
             (sandbox)
 
             code
-            (str "g = globals()\n"
-                 "saved = g[\"__vis_list_directories__\"]\n"
+            (str "g = globals()\n" "saved = g[\"__vis_list_directories__\"]\n"
                  "g[\"__vis_list_directories__\"] = lambda _a: \"[Ljava.lang.String;@1a\"\n"
-                 "try:\n" "    ls(\".\")\n"
-                 "except Exception as e:\n" "    m = str(e)\n"
+                 "try:\n"
+                 "    ls(\".\")\n" "except Exception as e:\n"
+                 "    m = str(e)\n"
                  "    print(type(e).__name__, \"listing bridge\" in m, \"Ljava\" in m)\n"
-                 "finally:\n"
-                 "    g[\"__vis_list_directories__\"] = saved\n"
-                 "print(ls(\"resources/vis-shims\").startswith(\"resources/vis-shims\"))")]
+                 "finally:\n" "    g[\"__vis_list_directories__\"] = saved\n"
+                 "d = \"resources/vis-host-python\"\n" "print(ls(d).startswith(d))")]
 
         (expect (= "RuntimeError True True\nTrue\n" (out ctx code)))))
   (it
@@ -279,7 +283,7 @@
 
        hook
        (fn [_env _op ctx]
-         (when (string/includes? (str (:path ctx)) "vis-shims")
+         (when (string/includes? (str (:path ctx)) "vis-host-python")
            "the shim sources are sealed; ask their owner"))
 
        code
@@ -288,7 +292,7 @@
          "        f()\n" "        return \"none\"\n"
          "    except Exception as e:\n"
          "        return type(e).__name__ + \":\" + (\"sealed\" in str(e) and \"said\" or \"mute\")\n"
-         "print(kind(lambda: ls(\"resources/vis-shims\")),\n"
+         "print(kind(lambda: ls(\"resources/vis-host-python\")),\n"
          "      kind(lambda: ls(\"src/com/blockether/vis/internal/foundation\")))")]
 
       ;; The gate's own sentence crosses the boundary verbatim, and a directory
@@ -305,7 +309,7 @@
         [ctx {}]
         (let [code
               (str "print('before')\n"
-                   "paths = ['resources/vis-shims', 'resources/__vis_missing_ls__/nested']\n"
+                   "paths = ['resources/vis-host-python', 'resources/__vis_missing_ls__/nested']\n"
                    "ls(paths)\n" "print('after')")
 
               result
@@ -371,7 +375,7 @@
                                               (swap! state activity/reduce-event event)
                                               (swap! visible-counts conj
                                                 (count (:rows (activity/presentation @state)))))]
-        (expect (string/includes? (out ctx "print(ls('resources/vis-shims'))") "ls.py")))
+        (expect (string/includes? (out ctx "print(ls('resources/vis-host-python'))") "ls.py")))
       (let [projection
             (activity/presentation @state)
 
@@ -385,7 +389,8 @@
         (expect (= [:start :content :terminal] (mapv :phase @events)))
         (expect (false? (:show-start (first @events))))
         (expect (= "Listed directory" (get-in row [:presentation "headline"])))
-        (expect (string/includes? (get-in row [:presentation "summary"]) "resources/vis-shims"))
+        (expect (string/includes? (get-in row [:presentation "summary"])
+                                  "resources/vis-host-python"))
         (expect (= @state (activity/replay @events)))
         (expect (string/includes? (get-in row [:presentation "summary"]) "files"))
         (expect (= "table" (get-in row [:presentation "content" 0 "type"])))
@@ -434,7 +439,7 @@
 
             result
             (binding [extension/*tool-event-sink* #(swap! events conj %)]
-              (out ctx "p = 'resources/vis-shims'\nprint(ls([p] * 8, pattern='AGENTS.md'))"))
+              (out ctx "p = 'resources/vis-host-python'\nprint(ls([p] * 8, pattern='AGENTS.md'))"))
 
             view
             (get-in (activity/presentation (activity/replay @events)) [:rows 0 :presentation])]
@@ -456,7 +461,7 @@
             result
             (binding [extension/*tool-event-sink* #(swap! events conj %)]
               (out ctx
-                   (str "p = 'resources/vis-shims'\n"
+                   (str "p = 'resources/vis-host-python'\n"
                         "print(ls([p, {'path': p, 'pattern': None}], pattern='AGENTS.md'))")))
 
             view
@@ -466,7 +471,8 @@
         (expect (string/includes? (get view "summary") "Filters differ by directory"))
         (expect (= "Pattern: AGENTS.md · 0 shown directories · 0 matching files"
                    (get-in view ["sections" 0 "summary"])))
-        (expect (= "Unfiltered · 0 directories · 2 files" (get-in view ["sections" 1 "summary"])))))
+        (expect (= (str "Unfiltered · 0 directories · " (count (host-python-files)) " files")
+                   (get-in view ["sections" 1 "summary"])))))
   (it "shows the pattern before the path for a single filtered directory"
       (let [ctx
             (sandbox)
@@ -476,7 +482,7 @@
 
             result
             (binding [extension/*tool-event-sink* #(swap! events conj %)]
-              (out ctx "print(ls('resources/vis-shims', pattern='ls.py'))"))
+              (out ctx "print(ls('resources/vis-host-python', pattern='ls.py'))"))
 
             summary
             (get-in (activity/presentation (activity/replay @events))
@@ -485,7 +491,7 @@
         (expect (string/includes? result "ls.py"))
         (expect (string/starts-with? summary
                                      "Pattern: ls.py · 0 shown directories · 1 matching file"))
-        (expect (string/includes? summary "resources/vis-shims"))))
+        (expect (string/includes? summary "resources/vis-host-python"))))
   (it
     "bounds batch content and reports omitted entries without losing nested paths"
     (let [entry
@@ -699,11 +705,11 @@
             (sandbox)
 
             code
-            (str "paths = ls([\"resources/vis-shims\",\n"
+            (str "paths = ls([\"resources/vis-host-python\",\n"
                  "            \"src/com/blockether/vis/internal/foundation\"], depth=2,\n"
                  "           as_paths=True)\n"
                  "print(all(isinstance(p, str) for p in paths),\n"
-                 "      any(p.endswith(\"resources/vis-shims/ls.py\") for p in paths),\n"
+                 "      any(p.endswith(\"resources/vis-host-python/ls.py\") for p in paths),\n"
                  "      any(p.endswith(\"/foundation/editing/core.clj\") for p in paths),\n"
                  "      not any(p.endswith(\"//\") for p in paths))")]
 

@@ -407,6 +407,6 @@
          "stored image back in front of the MODEL for the next request.\n\n"
          "The shim is native to Vis and uses no upstream library.")
        :shim/bindings attach-bridge-bindings
-       :shim/source "vis-shims/attach.py"}]}))
+       :shim/source "vis-host-python/attach.py"}]}))
 
 (defn register! [] (extension/register-extension! vis-extension))

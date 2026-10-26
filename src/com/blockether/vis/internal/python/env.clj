@@ -11,7 +11,7 @@
    namespace renders, guest to host is `python-host`'s envelope. **The guest's
    Python is a FILE**, never a string built here: the runtime ships the sandbox
    runtime, auto-imports, network probe and process redirect as modules it imports,
-   and Vis' own guest code lives under `resources/vis-guest/`. **The boundaries are
+   and Vis' own guest code lives under `resources/vis-host-python/`. **The boundaries are
    native:** the worker's OS jail owns filesystem and egress confinement, while the
    runtime audit hook is the fail-closed file/socket backstop before policy setup.
    Python modules provide ergonomics, never security.
@@ -503,7 +503,7 @@
    said verbatim by every surface that has to say them:
 
      - the `sandbox-shims` prompt block (`prompt/sandbox-shims-prompt-block`);
-     - the POSIX refusal (`vis-shims/posix.py`), when `subprocess` / `os.system` /
+     - the POSIX refusal (`vis-python/async_runtime.py`), when `subprocess` / `os.system` /
        `os.popen` is called;
      - a live handle that cannot be driven (`__VisShell__.__vis_op__` in
        `vis-python/async_runtime.py`);

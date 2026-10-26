@@ -419,7 +419,7 @@
 (def viewer-document-media-types
   "The documents a SURFACE can show in a document viewer: a PDF handed to the
    system viewer, an HTML page rendered inside the companion's sandboxed frame.
-   The sandbox spells the same closed table in `resources/vis-shims/attach.py`
+   The sandbox spells the same closed table in `resources/vis-host-python/attach.py`
    (`__vis_doc_media_types`). Markdown, CSV, TSV and NDJSON are documents too,
    but they ride the transcript as text or as a table fence, so they never mint
    a display file."

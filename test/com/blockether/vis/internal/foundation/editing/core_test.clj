@@ -5074,7 +5074,7 @@
   "The fff-backed listing agrees with the OS on directories with nothing ignored."
   (it "returns exactly the non-hidden children `File.listFiles` reports"
       (doseq [dir ["src/com/blockether/vis/internal/foundation"
-                   "src/com/blockether/vis/internal/foundation/editing" "resources/vis-shims"]]
+                   "src/com/blockether/vis/internal/foundation/editing" "resources/vis-host-python"]]
         (let [listed (set (map #(get % "name")
                                (get ((private-fn "ls-one") {"path" dir}) "entries")))
               on-disk (set (remove #(string/starts-with? % ".")

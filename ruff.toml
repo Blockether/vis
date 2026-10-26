@@ -1,7 +1,7 @@
 # ruff configuration for the Python that ships INSIDE vis.
 #
-# The Python that ships INSIDE vis is the five host doors
-# (`resources/vis-shims/*.py`) embedded into the native image, plus the Python
+# The Python that ships INSIDE vis is `resources/vis-host-python/*.py` (the host
+# doors and the guest modules) embedded into the native image, plus the Python
 # language pack's fixtures. It runs on the embedded CPython, and stays 3.11
 # compatible — hence `target-version`.
 #
@@ -43,7 +43,7 @@ ignore = [
 # 3.11-era syntax (UP*/C4*) because the code is CPython-embedded and mirrors the
 # upstream package's own shape. Rewriting proven shim internals to satisfy a
 # modernization rule is churn; real breakage (E9/F6/F7/F82) still fails here.
-"**/vis-shims/*.py" = [
+"**/vis-host-python/{attach,ls}.py" = [
   "F401", "F811", "F821", "E402", "E741", "B904", "B905", "UP004",
   "E401", "E731", "I001", "B007", "B023", "F841", "UP", "C4",
 ]

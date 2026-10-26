@@ -1045,8 +1045,8 @@
 
 (def ^:private shared-check-source
   "Python source that writes range requirements from a pylock and `uv.lock` (#391)."
-  (delay (slurp (or (io/resource "vis-python/shared_check.py")
-                    (throw (ex-info "Missing Vis resource vis-python/shared_check.py" {}))))))
+  (delay (slurp (or (io/resource "vis-host-python/shared_check.py")
+                    (throw (ex-info "Missing Vis resource vis-host-python/shared_check.py" {}))))))
 
 (defn- shared-workspace
   "uv's workspace directory of `project`, where uv resolves local sources."

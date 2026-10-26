@@ -269,7 +269,7 @@ print(worker_value)"))))
                               (expect (= directory (worker/guest-source-dir)))
                               (doseq [module ["vis_introspection.py" "vis_results.py"]]
                                 (let [file (io/file (worker/guest-source-dir) module)]
-                                  (expect (= (slurp (io/resource (str "vis-guest/" module)))
+                                  (expect (= (slurp (io/resource (str "vis-host-python/" module)))
                                              (when (.isFile file) (slurp file)))))))))
                         (finally (System/setProperty "user.home" old-home)
                                  (doseq [^java.io.File file (reverse (file-seq (.toFile base)))]
