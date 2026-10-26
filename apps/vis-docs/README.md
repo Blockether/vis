@@ -267,8 +267,8 @@ anonymous submission API. It does not weaken Turnstile.
 
 Blockether's own extensions need no dispatch. The same workflow also runs on a daily schedule and
 publishes the newest GitHub release of each first-party repository it lists: `vis-lang-interface`,
-`vis-lang-python`, `vis-lang-clojure`, `vis-decisions` and `vis-optmem`. Publishing a release that
-is already in the catalog is a no-op, so a repeated sweep cannot replace a reviewed commit.
+`vis-lang-python`, `vis-lang-clojure`, `vis-decisions`, `vis-optmem` and `vis-podcaster`. Publishing a
+release that is already in the catalog is a no-op, so a repeated sweep cannot replace a reviewed commit.
 Dispatch the workflow without inputs to run that sweep immediately.
 
 Review the source and dependencies first. The package version, matching tag and published

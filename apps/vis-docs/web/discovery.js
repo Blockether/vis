@@ -23,6 +23,7 @@ const officialExtensions = [
   { repository: 'blockether/vis-lang-interface', subdirectory: '', name: 'vis-lang-interface' },
   { repository: 'blockether/vis-lang-python', subdirectory: '', name: 'vis-lang-python' },
   { repository: 'blockether/vis-optmem', subdirectory: '', name: 'vis-optmem' },
+  { repository: 'blockether/vis-podcaster', subdirectory: '', name: 'vis-podcaster' },
 ];
 /** Match the verified GitHub source and package, never author-controlled official flags. */
 export function isOfficialExtension(item) {

@@ -11,6 +11,7 @@ const officialSources = [
   ['Blockether/vis-lang-interface', '', 'vis-lang-interface'],
   ['Blockether/vis-lang-python', '', 'vis-lang-python'],
   ['Blockether/vis-optmem', '', 'vis-optmem'],
+  ['Blockether/vis-podcaster', '', 'vis-podcaster'],
 ];
 const official = {
   ...fixtures[0],
