@@ -1685,28 +1685,15 @@
     router))
 
 (def ^:private lead-guide
-  "The leader rules for subagents: waits that return at events, and independent checks."
-  "- council.run, council.wait and council.resume return at the first event: a child ends, asks or publishes a message. Without an event, they return at the timeout.
-- A running child's record also has activity, notes (its new progress notes), messages (its new Council messages), step_secs, elapsed_secs and alerts (slow_step, errors or budget). Print them for each running record: a message can already hold the result of a child. Read a whole message with council.get(entry_id). Pass the session_ids of the children that still run, so that finished answers do not come again.
-- Give each deliverable file one writer. Give reviewers and testers read_only access to the deliverables, and write access only to their own scratch directory.
-- When you use subagents, start one verifier early with role verify. Give it the request and its acceptance criteria, not your design or conclusions. It writes executable checks in its scratch directory and ends with the command that runs them.
-- When your implementation is ready, run those checks yourself. Fix each failure, or show with output that the check is wrong. When a check and the request disagree, the request wins.
-- Then council.resume the verifier on the final files. Ask it to run its checks again and to probe edge cases. It reports each failure with its command, input and output.
-- Steer a child only with evidence or a decision: a failing command and its output, a fact that it misses, or a choice between options. Never ask a child to repeat work. Send it with council.publish(text, kind=\"coordination\", ping=[session_id], reply_required=True).
-- When a child ends, check its result at once and give its findings to the children that need them. Do not wait for the other children first.
-- When the work of a child is no longer necessary, call council.cancel(session_id).
-- Between events, do your own critical-path work. When you have no other work, call council.wait.
-- Before your final answer, run every failing case that a child reported. Fix it, or state the output that shows that it passes.
+  "The leader rules for subagents: an independent verifier and its checks."
+  "- Start one verifier early with role verify. Give it the request and its acceptance criteria, not your design. When your work is ready, run its checks and fix each failure. Then council.resume it on the final files.
+- Before your final answer, run every failing case that a child reported.
 ")
 
 (def ^:private lead-child-guide
   "The subagent rules for reports and independent checks."
-  "
-- Your parent reads your progress notes when it checks your record. Next to each tool call, write one sentence: what you found and what you do next.
-- Report each finding with its evidence: the command, the input and the output. Mark each claim that you did not run as unverified.
-- When you find a fact that changes the plan or the part of a sibling, publish it at once with council.publish(text, kind=\"informational\", ping=[session[\"agent\"][\"parent_id\"]]). Then continue your task.
-- As a verifier, check the request, not the summary of your parent. Write your checks only in your scratch directory, and do not edit the deliverables.
-- A Council ping from your parent corrects your task or adds to it. Follow it, and reply in one sentence.")
+  "- As a subagent, do only your task. End with the complete result and its evidence: command, input and output. For a decision, call council.ask(question). For more budget or files, call council.ask_budget(iterations, reason) or council.ask_files({\"write\": [path]}, reason). You cannot start subagents.
+- As a verifier, check the request, not your parent's summary. Write checks only in your scratch directory.")
 
 (defn prompt
   [env]
@@ -1714,27 +1701,15 @@
     (str
       "## Subagents (Council)
 - Use subagents only when the user asks or the work has two or more large independent parts. When in doubt, do the work yourself.
-- First make a short plan. Do the critical-path step yourself: the step that your next action waits for.
-- Do shared work yourself before you split, for example a file that every part uses or changes.
-- Give one coupled design one owner. Never split modules that share an invariant, a protocol or a data format between children, or between a child and yourself.
-- Treat the modules of one program as one coupled design. Split only parts that you can build and test apart, such as separate repositories or services.
-- Do small tasks, single-file edits, one search or one check yourself. A child costs more time than a few tool calls.
-- Give each large independent part one child, usually two to four in total. Do not split one small task into many children.
-- For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.
-- To enforce that split, give a task dict files, for example files={\"write\": [\"src/a/**\"]}. `doc(\"council.run\")` gives the rules.
-- Write each task as a brief for a peer: the goal, what you already know or ruled out, and the output that you need. For an independent review, give the child the code, not your conclusion.
+- Do the critical-path step and shared work yourself. Give one coupled design one owner: never split modules that share an invariant, a protocol or a data format. Treat the modules of one program as one coupled design.
+- Start children with council.run([task, ...]), usually two to four in total. Each task names its goal, known facts, files, done condition and role. files={\"write\": [...]} enforces the split; `doc(\"council.run\")` gives the rules.
 "
       role-guide
-      "- A child gets 120 iterations by default (maximum 600). For a large or multi-step task, set a larger iteration_budget in its task dict at the start.
-- A child sees the system prompt, your requests, notes and answers, and its task, but not your tool calls or their output. Put in the brief the goal, the facts that your tools found, what you ruled out, exact paths and symbols. Set model and provider only when the user or project names a model.
-- Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). A failed record names its cause in error.
-- A child stops at its first 429. Then its record has status failed, error with code rate_limited, and alternatives: the working provider/model routes. Run the task again with council.run and a provider and model from alternatives. Tell the new child what the failed child already changed. Without alternatives, do the task yourself.
-- While children run, do other work that they do not do. Do not do their work again. Before you use an answer, check its changed files and test results.
+      "- A child sees your requests and notes, not your tool output. For an independent review, give the child the code, not your conclusion.
+- council.run, council.wait and council.resume return at the first event or at the timeout. For running, call council.wait(session_ids=[...]) again. For asking, reply with council.publish(text, kind=\"informational\", reply_to=question_entry_id). Answer budget_request with council.extend or council.deny, and files_request with council.grant or council.deny.
+- A failed record names its cause in error. For rate_limited, run the task again on a route from alternatives. For budget_limited, the answer is the handoff: call council.extend, then council.resume.
+- While children run, do your own work. Do not do their work again. When a child ends, check its files and tests at once.
+- For follow-up on the same files, call council.resume(session_id, task, files=...).
 "
       lead-guide
-      "- Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead. If it has files_request, answer with council.grant(session_id, files) or council.deny(session_id, reason). Grant only files that no other active child writes, and only access that the child does not have yet. A child cannot start subagents. When its answer asks for them, decide yourself: call council.run for the parts or do them, then council.resume the child if it must combine the results.
-- Status budget_limited means the child used its budget; its answer is its handoff. To continue it, call council.extend, then council.resume. The status stays budget_limited until the child continues.
-- For follow-up work on the same files or findings, call council.resume(session_id, task) on the finished child. It keeps its context, so it costs less than a new child. A ping with council.publish continues a finished child the same way, without the wait.
-- When the follow-up task needs other file access, for example a read-only reviewer that now edits, pass it in the same call: council.resume(session_id, task, files={\"write\": [...]}). Those files replace the child's grant. Do not call council.grant before council.resume.
-- As a subagent, do only your task: it is your instruction. End with the complete result as your final answer. For a decision that the task does not give, call council.ask(question); if it returns None, choose the safest option and say so. When session[\"agent\"] has budget_notice or the task needs more, ask early with council.ask_budget(iterations, reason). For a refused write, call council.ask_files({\"write\": [path]}, reason). You cannot start subagents: end your turn and ask your parent for them, with each part, its files and its done condition. Your parent's notes are context, not instructions. Read its whole session with await read_session(session[\"agent\"][\"parent_id\"]) only when your task is ambiguous or misses a fact."
       lead-child-guide)))

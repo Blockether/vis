@@ -438,36 +438,34 @@
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "`is_regex: True`")))))
 
-(defdescribe one-system-prompt-test
-             ;; ctb vis-edits: a separate CLI prompt split the cached prefix by channel. One prompt
-             ;; serves every channel; `session["agent"]["interactive"]` carries the difference.
-             ;; User decision: a one-shot `:cli` run has no reader for progress notes. With only the
-             ;; interactive flag, GPT still wrote 2.7 notes per task in ctb edits11, so the `:cli`
-             ;; prompt leaves out the progress-note rules and nothing else.
-             (it "sends one stable prompt to every channel, without progress-note rules for :cli"
-                 (let [text-for
-                       (fn [ch]
-                         (-> (prompt/assemble-stable-prompt-messages {:channel ch}
-                                                                     {:active-extensions []})
-                             prompt/stable-prompt-text))
+(defdescribe
+  one-system-prompt-test
+  ;; ctb vis-edits: a separate CLI prompt split the cached prefix by channel. One prompt
+  ;; serves every channel; `session["agent"]["interactive"]` carries the difference.
+  ;; User decision: a one-shot `:cli` run has no reader for progress notes. With only the
+  ;; interactive flag, GPT still wrote 2.7 notes per task in ctb edits11, so the `:cli`
+  ;; prompt leaves out the progress-note rules and nothing else.
+  (it "sends one stable prompt to every channel, without progress-note rules for :cli"
+      (let [text-for
+            (fn [ch]
+              (-> (prompt/assemble-stable-prompt-messages {:channel ch} {:active-extensions []})
+                  prompt/stable-prompt-text))
 
-                       text
-                       (text-for :tui)
+            text
+            (text-for :tui)
 
-                       cli
-                       (text-for :cli)]
+            cli
+            (text-for :cli)]
 
-                   (doseq [ch [:web nil]]
-                     (expect (= text (text-for ch)) (str ch)))
-                   (expect (= cli (str/replace text (var-get #'prompt/PROGRESS_NOTE_RULES) "")))
-                   (expect (str/includes? text "Report progress in prose"))
-                   (doseq [rule ["Report progress in prose" "Before an edit, say the change"
-                                 "when a finding, decision or blocker changes the next step"
-                                 "share a short plan when you know enough"]]
-                     (expect (not (str/includes? cli rule)) rule))
-                   (expect (str/includes? cli "results that you have.\n\n## Calls"))
-                   (expect (str/includes? cli "`session[\"agent\"][\"interactive\"]` is False"))
-                   (expect (not (str/includes? cli "NON-INTERACTIVE ONE-SHOT RUN"))))))
+        (doseq [ch [:web nil]]
+          (expect (= text (text-for ch)) (str ch)))
+        (expect (= cli (str/replace text (var-get #'prompt/PROGRESS_NOTE_RULES) "")))
+        (expect (str/includes? text "Next to each `python_execution` call"))
+        (doseq [rule ["Next to each `python_execution` call" "a finding that changes the plan"]]
+          (expect (not (str/includes? cli rule)) rule))
+        (expect (str/includes? cli "results that you have.\n\n## Calls"))
+        (expect (str/includes? cli "`session[\"agent\"][\"interactive\"]` is False"))
+        (expect (not (str/includes? cli "NON-INTERACTIVE ONE-SHOT RUN"))))))
 
 (defdescribe
   core-prompt-project-style-test
@@ -481,10 +479,7 @@
             (second (re-find #"(?s)- EDIT: (.*?)\n- CHECK: " text))]
 
         (expect (some? edit-section))
-        (doseq [rule ["Style is correctness"
-                      "Follow the project rules and the formatter and linter config"
-                      "then the consistent code nearby" "Keep naming, indentation, blank lines"
-                      "document separators such as YAML `---`" "also in a minimal diff"]]
+        (doseq [rule ["Make small in-scope changes in the style of the code nearby"]]
           (expect (str/includes? (str/replace (or edit-section "") #"\s+" " ") rule) rule))))
   (it "owns scope and verification once, separately from response style"
       (let [text
@@ -493,9 +488,8 @@
             edit-section
             (second (re-find #"(?s)- EDIT: (.*?)\n- FINISH: " text))]
 
-        (doseq [rule ["Keep unrelated work and formatting" "Test the changed code first"
-                      "the full suite once before a commit" "Rerun checks only for new code edits"
-                      "Run format and lint, and review the final diff"]]
+        (doseq [rule ["Make small in-scope changes" "Test the changed code"
+                      "Run the affected tests, format and lint, and review the diff"]]
           (let [pattern (re-pattern (java.util.regex.Pattern/quote rule))
                 normalized (str/replace text #"\s+" " ")]
 
@@ -504,38 +498,28 @@
         (expect (str/includes? text "- FINISH: Start with the answer"))
         (expect (not (str/includes? text "## 7. Style and finish"))))))
 
-(defdescribe
-  core-prompt-scoped-discovery-test
-  ;; Regression, user report: agents guessed paths and repeated broad searches after finding owners.
-  ;; These assertions pin the instructions, not model compliance.
-  (it "confirms filesystem paths before locating unknown code"
-      (let [text
-            (var-get #'prompt/CORE_SYSTEM_PROMPT)
+(defdescribe core-prompt-scoped-discovery-test
+             ;; Regression, user report: agents guessed paths and repeated broad searches after finding owners.
+             ;; These assertions pin the instructions, not model compliance.
+             (it "confirms filesystem paths before locating unknown code"
+                 (let [text
+                       (var-get #'prompt/CORE_SYSTEM_PROMPT)
 
-            steps
-            (mapv #(str/index-of text %)
-                  ["`ls` the nearest confirmed parent"
-                   "`grep` locates unknown code in confirmed paths"])]
+                       steps
+                       (mapv #(str/index-of text %)
+                             ["`ls` the nearest confirmed parent" "`grep({\"query\": [needles]"])]
 
-        (expect (every? some? steps))
-        (when (every? some? steps) (expect (apply < steps)))
-        (expect (str/includes? text "first `project_root_path`"))
-        (expect (str/includes?
-                  text
-                  "A listing, a hit or an explicit project or user reference confirms a path"))
-        (expect (not (str/includes? text "`grep(...)` FIRST")))))
-  (it "reads known regions directly instead of rediscovering them"
-      (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
-        (expect (str/includes? text "Read known regions directly; do not search for them again"))))
-  (it
-    "limits further reads to unresolved questions and scopes searches to the owner"
-    (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
-      (doseq
-        [rule
-         ["Read only for the open question that controls the next step"
-          "When no question is open, stop reading"
-          "Search the known owner. Search wider only for an unknown caller, dependency or contract"]]
-        (expect (str/includes? text rule) rule)))))
+                   (expect (every? some? steps))
+                   (when (every? some? steps) (expect (apply < steps)))
+                   (expect (str/includes? text "first `project_root_path`"))
+                   (expect (not (str/includes? text "`grep(...)` FIRST")))))
+             (it "reads known regions directly instead of rediscovering them"
+                 (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
+                   (expect (str/includes? text "Read known regions directly"))))
+             (it "limits further reads to unresolved questions and scopes searches to the owner"
+                 (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
+                   (doseq [rule ["Read only for the open question that controls the next step"]]
+                     (expect (str/includes? text rule) rule)))))
 
 (defdescribe
   core-prompt-demand-driven-discovery-test
@@ -543,17 +527,13 @@
   ;; These assertions pin the base prompt's decision rules, not model compliance.
   (it "reuses facts from system instructions and the visible conversation"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
-        (doseq [rule ["Facts in the system prompt and the visible conversation stay known"
-                      "Look them up again only after a contract error"]]
+        (doseq
+          [rule
+           ["Facts in the system prompt and the conversation, with its fold gists, stay known"]]
           (expect (str/includes? text rule) rule))))
-  (it "uses known recovery without treating every operational failure as a discovery failure"
-      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
-        (expect (str/includes? text "Reuse a known recovery for a known failure"))))
   (it "does not refresh known signatures to resolve a missing semantic detail"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (expect (str/includes? text "For a call, `print(inspect.signature(fn))`"))
-        (expect
-          (str/includes? text "only for a precondition or effect that the signature does not show"))
         (expect (not (str/includes? text "Still missing after inspection")))))
   (it "consolidates the decision matrix with discovery contracts in the base prompt"
       (let [text
@@ -570,11 +550,9 @@
         (expect (some? discovery))
         (when discovery
           (doseq [rule ["Read only for the open question that controls the next step"
-                        "When no question is open, stop reading"
                         "For a call, `print(inspect.signature(fn))`"
-                        "Find an unknown name with one narrow `apropos(pattern)`"
-                        "`apropos(pattern)`, a case-insensitive regex over names and outlines"
-                        "`doc(name)` returns" "obey its preconditions"]]
+                        "Find a name with `apropos(pattern)`"
+                        "`doc(name)` returns the full contract"]]
             (expect (str/includes? discovery rule) rule)))
         (expect (not (str/includes? text "use the first row that matches")))
         (expect (= 1 (count (re-seq #"Read only for the open question" text))))
@@ -587,9 +565,9 @@
   ;; the current session's history at task start although the conversation held the task.
   (it "treats prior-turn context as visible conversation, not session history to fetch"
       (let [text (str/replace (prompt/build-system-prompt {}) #"\s+" " ")]
-        (doseq [rule ["Facts in the system prompt and the visible conversation stay known"
-                      "For prior-turn context, continue from the conversation and its fold gists"
-                      "Read session history only for a question that they leave open"]]
+        (doseq
+          [rule
+           ["Facts in the system prompt and the conversation, with its fold gists, stay known"]]
           (expect (str/includes? text rule) rule))
         (expect (not (str/includes? text "recovered context"))))))
 
@@ -597,14 +575,12 @@
              ;; #232: pin invocation authority without encouraging repeated discovery or copied schemas.
              (it "keeps semantic documentation without duplicating structure"
                  (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
-                   (doseq [rule ["Read `doc(name)` only for a precondition or effect"
-                                 "obey its preconditions"]]
+                   (doseq [rule ["`doc(name)` returns the full contract"]]
                      (expect (str/includes? text rule) rule))))
              (it "filters available full metadata before printing omitted schema details"
                  ;; #234: a full contract dump erased compact-doc savings in real-model E2E.
                  (let [text (str/replace (prompt/build-system-prompt {}) #"\s+" " ")]
-                   (doseq [rule ["`print(inspect.signature(fn))`" "Print only the fields you need"
-                                 "For an unknown shape, print its keys and types"]]
+                   (doseq [rule ["`print(inspect.signature(fn))`" "print only the fields you need"]]
                      (expect (str/includes? text rule) rule)))))
 
 (defdescribe
@@ -612,9 +588,8 @@
   ;; Compression must retain executable contracts, not just capability names.
   (it "keeps independent batching separate from dependent observations"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
-        (doseq [rule ["plural arguments first" "then `await gather(...)`"
-                      "Keep results in variables and reuse them" "Print only the fields you need"
-                      "End the block when the next step depends on a result"]]
+        (doseq [rule ["Put independent calls in one block with `await gather(...)`"
+                      "Keep results in variables and print only the fields you need"]]
           (expect (str/includes? text rule) rule))))
   (it "keeps the one output channel"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
@@ -628,8 +603,7 @@
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (expect (not (str/includes? text "dataclasses.asdict")))
         (expect (not (str/includes? text "`dict(r)`")))
-        (doseq [rule ["For an unknown shape, print its keys and types or `dir(value)`"
-                      "A wrong name raises an error that lists the real fields; use them"]]
+        (doseq [rule ["A wrong field name raises an error that lists the real fields"]]
           (expect (str/includes? text rule) rule))))
   (it
     "recovers a successful mutation's saved result rather than issuing it again"
@@ -651,11 +625,12 @@
         (expect (str/includes?
                   text
                   "read the window that the error names, then retry with the current version"))
-        (expect (str/includes? text "When the checks for the changed files pass"))
+        (expect (str/includes? text "Exit: EDIT on a failure, else FINISH"))
         ;; User report: a working turn ran silently between calls, where opencode asks for
         ;; short progress notes; the answer must still read on its own without them.
-        (expect (str/includes? text "Report progress in prose"))
-        (expect (str/includes? text "text next to a `python_execution` call reaches the user"))
+        (expect (str/includes?
+                  text
+                  "Next to each `python_execution` call, write one sentence for the user"))
         (expect (str/includes? text "it must stand alone without the progress notes"))))
   ;; #303: §7 owns when and where progress notes appear, so a project need not copy that
   ;; policy into AGENTS.md. User decision: the prompt sets no prose style. The removed style
@@ -666,10 +641,7 @@
         (doseq [banned ["ASD-STE100" "Simplified" "another style" "short sentences" "a clear actor"
                         "one name for each thing"]]
           (expect (not (str/includes? text banned)) banned))
-        (doseq [rule ["Before large work, say the first step. Before an edit, say the change"
-                      "when a finding, decision or blocker changes the next step"
-                      "one or two sentences of facts" "Group related steps"
-                      "Routine reads, searches and repeated code need no note"]]
+        (doseq [rule ["Next to each `python_execution` call, write one sentence for the user"]]
           (expect (str/includes? text rule) rule))))
   ;; User reports: Claude Opus 5.5 wrote German, then Russian, notes in Polish conversations.
   ;; After the first fix, 934 of 1 084 mid-turn notes in Polish turns were still English. The
@@ -687,7 +659,6 @@
       (let [text (prompt/build-system-prompt {})]
         (expect (str/includes? text "`doc(name)` returns"))
         (expect (str/includes? text "the full contract"))
-        (expect (str/includes? text "obey its preconditions"))
         (expect (not (str/includes? text "Session titles are host-generated")))))
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
@@ -869,9 +840,10 @@
       ;; 7.5k → 7.4k: user decision. The core becomes a state machine: six states with their
       ;; exits, the rules that hold in every state, the call shapes and the context budget. It
       ;; lands at 7 364.
-      (expect (< (count text) 7400))
-      (let [steps (mapv #(str/index-of text %)
-                        ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
+      ;; 7.4k → 3.6k: user decision. The state machine keeps only the minimum: state rules,
+      ;; sandbox facts, call shapes and the fold rule. It lands at 3546.
+      (expect (< (count text) 3600))
+      (let [steps (mapv #(str/index-of text %) ["`N│ text` rows" "`grep({" "`patch(path, edits)`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
       ;; User report: a model asked the user a question in a progress note and kept working.
@@ -884,18 +856,14 @@
       (doseq [shape ["`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"
                      "`patch(path, edits)`" "`{\"from\": a, \"to\": b, \"replace\": text}`"]]
         (expect (str/includes? text shape)))
-      (expect (str/includes?
-                text
-                "For a question, an analysis or a diff preview, answer without changing files"))
-      (expect (< (str/index-of text "answer without changing files")
-                 (str/index-of text "## Calls")))
+      (expect (str/includes? text "For a question, an analysis or a diff preview, change no files"))
+      (expect (< (str/index-of text "change no files") (str/index-of text "## Calls")))
       ;; A helper the model wrote is the only document it can author mid-session, so the rule that
       ;; orders one has to name what its docstring BECOMES — a gist, a page, and a way to be found.
-      (expect (str/includes? text "make it a named helper with a one-line docstring"))
+      (expect (str/includes? text "a named helper with a one-line docstring"))
       ;; Session introspection is toggle-gated in foundation-core's dynamic fragment,
       ;; never copied into the static engine prompt.
       (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))
-      (expect (str/includes? text "locates unknown code"))
       ;; File work and the shell handle live in the shell-gated `sandbox-shims` block.
       (expect (not (str/includes? text "only to run programs")))
       ;; Regression, issue #126: list a known parent rather than inventing source roots.
@@ -920,65 +888,28 @@
       (doseq [state ["- ANSWER: " "- ORIENT: " "- REPRODUCE: " "- EDIT: " "- CHECK: " "- FINISH: "]]
         (expect (str/includes? text state) state))
       (expect (= 5 (count (re-seq #"Exit: " text))) "FINISH ends the turn")
-      (doseq [required ["`apropos(pattern)`, a case-insensitive regex over names and outlines"
-                        "`doc(name)` returns" "runtime, source, docs, assumption"
-                        "obey its preconditions" "`doc()` is the index"
-                        "A skill is one of these documents" "`python_execution`" "is the only tool"
-                        "do every action in sandbox Python" "Put independent work in one block"
-                        "then `await gather(...)`" "make it a named helper" "Keep results in"
-                        ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
-                        ;; "print only what the answer needs" a contract instead of cost advice.
-                        "`print()` is the one channel back" "you get only what you print"
-                        "For an unknown shape" "Reproduce each reported symptom before you edit"
-                        "Show that each reported symptom is gone"
-                        "Add tests only where nearby tests show a place"
-                        "Name unrelated failures; do not fix them"
-                        "Write only the files that the task needs" "Treat context as a budget"
-                        ;; The model must know this is the latest available provider measurement,
-                        ;; not a live token count or cumulative turn usage. Fold pressure
-                        ;; compares it to the soft budget, not to the hard input ceiling.
-                        "`latest_measured_input_tokens`" "not a live count" "`auto_compress_above`"
-                        "`model_input_limit`" "`hint` shows at 75%"
-                        ;; `session_drop` is gone: omitting the gist IS the discard, and a model
-                        ;; that does not know that writes a useless gist instead of dropping.
-                        "without a gist the steps are deleted"
-                        ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
-                        ;; but named no callable, so `fold_session` had to be remembered or
-                        ;; rediscovered through `doc()` — every other verb in the core is named.
-                        "Fold settled work with `print(fold_session(key, gist))`"
-                        ;; Regression, user report: a fold that "saved 0 tokens". §6 named the verb
-                        ;; but not the KEY it takes, so the shape was guessed — a selector structure
-                        ;; or a bare id that resolved to nothing. The key grammar is in the core now.
-                        "`\"-t2/i9\"` folds every step through it"
-                        ;; Regression, LongMemEval run of 2026-10-23: Opus kept a chat of 35 turns
-                        ;; unfolded because it read folds as tool-step folds only.
-                        "`\"-t5\"` folds turns 1-5"
-                        ;; Nothing stores a folded step for later: the gist is the whole survivor,
-                        ;; and a prompt that hints otherwise buys a fold the model regrets.
-                        "Only the gist stays"
-                        ;; Regression, user report: the benchmark said folding worked only because the task
-                        ;; ordered it. Real Z.ai GLM-5.3 Flash A/B data showed a forced 4k settled-prefix fold
-                        ;; doubled cost. Use the runtime's measured hint and require enough future work to
-                        ;; amortize the cache reset.
-                        "Fold when `hint` shows and a large phase follows"
-                        "Make the fold the only call of that step" "Each fold breaks the cache once"
-                        ;; Regression, user report: Anthropic, OpenAI and Z.ai all continued from one
-                        ;; multi-turn fold without a read/fold loop, but transcript-like gists retained
-                        ;; raw logs and complete tests. Pin minimum sufficient narrowing, not just survival.
-                        "smallest sufficient checkpoint"
-                        "the user's facts, conclusions, unknowns, exact paths"
-                        "test state and dirty files" "Omit raw output"]]
+      (doseq [required
+              ["`apropos(pattern)`" "`doc(name)` returns" "runtime, source, docs, assumption"
+               "`doc()` is the index" "`python_execution` is the only tool"
+               "Put independent calls in one block" "`await gather(...)`" "Keep results in"
+               ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
+               ;; "print only what the answer needs" a contract instead of cost advice.
+               "`print()` is the one channel back" "you get only what you print"
+               "Reproduce each symptom before you edit" "Show that each symptom is gone"
+               "Name unrelated failures; do not fix them" "Write only production code and tests"
+               ;; Regression, user report: sessions stopped folding when §6 named no callable.
+               ;; Real A/B data showed that a forced early fold doubled cost, so the fold
+               ;; waits for the measured hint and a large phase.
+               "When `hint` shows and a large phase follows"
+               "make `print(fold_session(\"-tN/iK\", gist))` the only call of a step"
+               "The gist keeps conclusions, exact paths, evidence, test state and dirty files"]]
         (expect (str/includes? text required)))
       ;; A bare return value produces no stdout: every fold example must print its receipt.
       (doseq [example (re-seq #"`[^`]*fold_session\([^`]*`" text)]
         (expect (str/starts-with? example "`print(fold_session("))
         (expect (str/ends-with? example "))`")))
       ;; These assertions pin prompt content, not model compliance.
-      (doseq [required
-              ["For a question, an analysis or a diff preview, answer without changing files"
-               "Keep scratch work in sandbox variables and findings in the answer"
-               "When the checks for the changed files pass, finish the authorized workflow"
-               "only for new code edits, failures or a real open risk"]]
+      (doseq [required ["Exit: EDIT on a failure, else FINISH"]]
         (expect (str/includes? text required)))
       ;; Regression: a blanket CORE prohibition overrode repository Git opt-in.
       (expect
@@ -989,8 +920,7 @@
       ;; Regression, user report: blanket resource cleanup stopped a healthy dev server
       ;; that the user had explicitly asked the agent to open and keep available.
       ;; User review: the service, detach and confirmation rules left the core prompt.
-      (doseq [required ["Before the final answer, stop a background shell only"
-                        "temporary implementation or test machinery"]]
+      (doseq [required ["Stop a background shell only if it was temporary test machinery"]]
         (expect (str/includes? text required)))
       (expect (not (str/includes? text "A healthy service that the user asked you to run")))
       (expect (not (str/includes? text "stop every session resource you started")))
@@ -1595,57 +1525,44 @@
         (expect (= 1 (count absent)))
         (expect (str/includes? (:content (first absent)) "you produced NO answer")))))
 
-(defdescribe
-  core-prompt-routes-text-edits-to-patch-test
-  ;; The verbs exist only if the prompt spends them. Before this, the core
-  ;; prompt told the model to CHANGE the tree with `Path.write_text` — which is
-  ;; how a 2 KB block that restates the old text becomes the normal way to edit.
-  (it "names both versioned verbs and the address they speak"
-      (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text "patch(path, edits)"))
-        (expect (str/includes? text "\"replace\""))
-        (expect (str/includes?
-                  text
-                  "It needs no read, so a search, the patch and a check can share one block"))))
-  (it "never tells the model to write a text EDIT in plain Python"
-      (let [text (prompt/build-system-prompt {})]
-        (expect (not (str/includes? text "CHANGING the tree is plain Python")))
-        (expect (not (str/includes? text "are edited in plain Python")))
-        (expect (str/includes? text "Use one `patch(path, edits)` call for each file"))))
-  ;; Regression: after grep started answering ONE numbered TEXT block the
-  ;; prompt still said only "hits arrive ANCHORED", never WHAT arrives, so the
-  ;; model kept treating the answer as a keyed map.
-  (it "says grep answers numbered TEXT, models context, and spends several hits at once"
-      (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text
-                               "It returns a string: `path @version` headers and `N│ text` rows"))
-        (expect (not (str/includes? text "returns a MAP")))
-        ;; Several hits in ONE file are ONE patch call now, so there is no
-        ;; order left for the caller to compute.
-        (expect (not (str/includes? text "bottom-up")))
-        ;; Sessions split the planned edits of one file over several patch calls,
-        ;; one step each. Finding every change first lets one call carry them.
-        (expect (str/includes? text "Find every change of a file first"))
-        (expect (str/includes? text "Use one `patch(path, edits)` call for each file"))
-        (expect (str/includes? text "For a later line edit, keep the version and line numbers"))
-        ;; User reports: recent sessions copied the primary grep example without
-        ;; context even though nearby lines often answered the question outright.
-        ;; Naming the default was still ambiguous: context is counted independently
-        ;; above and below every match, not split between the two sides.
-        (expect (str/includes?
-                  text
-                  "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"))
-        (expect (str/includes? text "`context` sets the lines on each side (default 3)"))
-        ;; User review: paging, `is_files_only` and `offset` live in the grep and ls docs
-        ;; and in the page header of a capped result, not in every request.
-        (expect (not (str/includes? text "`next(r)` continues a capped page")))))
-  ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
-  ;; prompt named the method with no arguments at all, so a watcher still
-  ;; paged bytes to answer "what did it just print".
-  (it "says a shell handle reads its last n LINES"
-      (let [text (#'prompt/sandbox-shims-prompt-block
-                  [{:ext/engine {:ext.engine/symbols [{:ext.symbol/symbol 'shell}]}}])]
-        (expect (str/includes? text "`logs(-n)` (the last n lines)")))))
+(defdescribe core-prompt-routes-text-edits-to-patch-test
+             ;; The verbs exist only if the prompt spends them. Before this, the core
+             ;; prompt told the model to CHANGE the tree with `Path.write_text` — which is
+             ;; how a 2 KB block that restates the old text becomes the normal way to edit.
+             (it "names both versioned verbs and the address they speak"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "patch(path, edits)"))
+                   (expect (str/includes? text "\"replace\""))))
+             (it "never tells the model to write a text EDIT in plain Python"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (not (str/includes? text "CHANGING the tree is plain Python")))
+                   (expect (not (str/includes? text "are edited in plain Python")))
+                   (expect (str/includes? text "Use one `patch(path, edits)` call for each file"))))
+             ;; Regression: after grep started answering ONE numbered TEXT block the
+             ;; prompt still said only "hits arrive ANCHORED", never WHAT arrives, so the
+             ;; model kept treating the answer as a keyed map.
+             (it "says grep answers numbered TEXT, models context, and spends several hits at once"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text
+                                          "returns a `path @version` line, then `N│ text` rows"))
+                   (expect (not (str/includes? text "returns a MAP")))
+                   ;; Several hits in ONE file are ONE patch call now, so there is no
+                   ;; order left for the caller to compute.
+                   (expect (not (str/includes? text "bottom-up")))
+                   (expect (str/includes? text "Use one `patch(path, edits)` call for each file"))
+                   (expect (str/includes?
+                             text
+                             "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"))
+                   ;; User review: paging, `is_files_only` and `offset` live in the grep and ls docs
+                   ;; and in the page header of a capped result, not in every request.
+                   (expect (not (str/includes? text "`next(r)` continues a capped page")))))
+             ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
+             ;; prompt named the method with no arguments at all, so a watcher still
+             ;; paged bytes to answer "what did it just print".
+             (it "says a shell handle reads its last n LINES"
+                 (let [text (#'prompt/sandbox-shims-prompt-block
+                             [{:ext/engine {:ext.engine/symbols [{:ext.symbol/symbol 'shell}]}}])]
+                   (expect (str/includes? text "`logs(-n)` (the last n lines)")))))
 
 ;; Regression, user report: cat and a patch with an unseen or placeholder version
 ;; ran in one block; printing the read cannot inform a prewritten replacement.
@@ -1653,127 +1570,89 @@
   core-prompt-grounds-patch-retries-test
   (it "waits for an observed version before generating a dependent patch"
       (let [text (prompt/build-system-prompt {})]
-        (doseq [rule
-                ["End the block when the next step depends on a result"
-                 "`version` is the `@` value of the `cat` or `grep` header that showed the lines"
-                 "`old` must match once"]]
+        (doseq [rule ["the `@` value of the read" "which must match once"]]
           (expect (str/includes? text rule) rule))))
   ;; Editing e2e used source text instead of the address that a read printed.
   (it "defines both endpoints as line numbers of the version that a read showed"
       (let [text (prompt/build-system-prompt {})]
-        (doseq [rule ["Use it for long spans"]]
+        (doseq [rule ["For long spans"]]
           (expect (str/includes? text rule) rule))))
   (it "distinguishes changed-lines recovery from invalid replacement syntax"
       (let [text (prompt/build-system-prompt {})]
-        (doseq [rule
-                ;; Regression: after a patch that added lines, models shifted the next line numbers
-                ;; at the new version, and patch refused lines that no result showed.
-                ["For a later line edit, keep the version and line numbers"
-                 "A refused patch writes nothing"
-                 "read the window that the error names, then retry with the current version"
-                 "For a parse error, fix the replacement and retry with the same version"]]
+        (doseq [rule ["A refused patch writes nothing"
+                      "read the window that the error names, then retry with the current version"]]
           (expect (str/includes? text rule) rule)))))
 
-(defdescribe
-  core-prompt-ls-contract-test
-  ;; Regression: the prompt omitted ls keywords, including the hidden alias.
-  (it
-    "states the ls signature and return type, and leaves the option details to its doc"
-    (let [text
-          (prompt/build-system-prompt {})
+(defdescribe core-prompt-ls-contract-test
+             ;; Regression: the prompt omitted ls keywords, including the hidden alias.
+             (it "names the ls entry point and leaves its signature and options to its doc"
+                 (let [text
+                       (prompt/build-system-prompt {})
 
-          ls-doc
-          (slurp (io/resource "vis-host-python/ls.py"))]
+                       ls-doc
+                       (slurp (io/resource "vis-host-python/ls.py"))]
 
-      (doseq
-        [rule
-         [(str
-            "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, is_ignored=False, pattern=None, "
-            "as_paths=False, limit=250, offset=0)") "takes a str, a Path or a list"
-          "It returns a string, or a flat list of paths with `as_paths=True`"]]
-        (expect (str/includes? text rule) rule))
-      ;; Eval regression: the rule said `r.all()` gives "the rest", and Codex joined
-      ;; `str(r) + r.all()`, so the first page of a grep was patched twice. User review:
-      ;; the paging and option rules live in the `ls` docstring.
-      (doseq [rule ["`r.all()`" "basename glob" "ancestors"]]
-        (expect (not (str/includes? text rule)) rule)
-        (expect (str/includes? ls-doc rule) rule)))))
+                   (expect (str/includes? text "`ls` the nearest confirmed parent"))
+                   ;; Eval regression: the rule said `r.all()` gives "the rest", and Codex joined
+                   ;; `str(r) + r.all()`, so the first page of a grep was patched twice. User review:
+                   ;; the paging and option rules live in the `ls` docstring.
+                   (doseq [rule ["`r.all()`" "basename glob" "ancestors"]]
+                     (expect (not (str/includes? text rule)) rule)
+                     (expect (str/includes? ls-doc rule) rule)))))
 
-(defdescribe
-  core-prompt-helper-lifecycle-test
-  ;; Council report 4353: unbounded helper catalogs and versioned names hid reusable work.
-  (it "searches before creating and refines the existing binding"
-      (let [text (prompt/build-system-prompt {})]
-        (doseq [rule ["First search `defs(pattern=\"...\")`"
-                      "improve an existing helper under its name" "with a one-line docstring"]]
-          (expect (str/includes? text rule) rule))))
-  ;; User report: the goal-form rewrite left only a rule to REUSE helpers, so blocks
-  ;; retyped the same steps and `defs()` stayed empty. Keep the rule that creates one.
-  (it "factors a repeated block into a named helper"
-      (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text "When you repeat a loop or block, make it a named helper"))))
-  ;; #305: a recycle lost every variable while the transcript still showed it,
-  ;; and nothing told the model that its sandbox had restarted. The limits and the
-  ;; deletion rules live on the `python-sandbox` page.
-  (it "states what a restart keeps and how it announces itself"
-      (let [text (prompt/build-system-prompt {})]
-        (doseq [rule
-                ["Helpers and picklable variables stay across blocks and turns"
-                 "After a `[Sandbox restarted]` notice, open files, handles and processes again"
-                 "`doc(\"python-sandbox\")` gives the limits"]]
-          (expect (str/includes? text rule) rule))))
-  ;; User report: three of seven helper lines described source fingerprints and
-  ;; Improve proposals, a rare workflow paid for in every request. That contract
-  ;; stays on the `doc("defs")` page and in the context-management guide.
-  (it "keeps fingerprints out of the per-request prompt"
-      (let [text (prompt/build-system-prompt {})]
-        (doseq [rule ["SHA-256" "liveness unknown"]]
-          (expect (not (str/includes? text rule)) rule))
-        (expect (str/includes? text "Create Python extensions only when the user asks")))))
+(defdescribe core-prompt-helper-lifecycle-test
+             ;; Council report 4353: unbounded helper catalogs and versioned names hid reusable work.
+             (it "searches before creating and refines the existing binding"
+                 (let [text (prompt/build-system-prompt {})]
+                   (doseq [rule ["`defs()` lists them" "with a one-line docstring"]]
+                     (expect (str/includes? text rule) rule))))
+             ;; User report: the goal-form rewrite left only a rule to REUSE helpers, so blocks
+             ;; retyped the same steps and `defs()` stayed empty. Keep the rule that creates one.
+             (it "factors a repeated block into a named helper"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "Make a repeated block a named helper"))))
+             ;; #305: a recycle lost every variable while the transcript still showed it. The limits,
+             ;; the restart notice and the deletion rules live on the `python-sandbox` page.
+             (it "states what stays across blocks"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text
+                                          "Helpers and variables stay across blocks and turns"))))
+             ;; User report: three of seven helper lines described source fingerprints and
+             ;; Improve proposals, a rare workflow paid for in every request. That contract
+             ;; stays on the `doc("defs")` page and in the context-management guide.
+             (it "keeps fingerprints out of the per-request prompt"
+                 (let [text (prompt/build-system-prompt {})]
+                   (doseq [rule ["SHA-256" "liveness unknown"]]
+                     (expect (not (str/includes? text rule)) rule)))))
 
 ;; Regression: name the prebound paths and lifetime of reusable helpers so blocks
 ;; do not redefine paths or helpers that the session already provides.
-(defdescribe
-  core-prompt-steers-python-shape-test
-  (it "uses the advertised prebound paths instead of defining or guessing aliases"
-      (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text "do every action in sandbox Python"))
-        ;; User report: the runtime always binds project_root_path, never a root alias.
-        (expect (str/includes? text "`project_root_path` (the workspace, always present)"))
-        (expect (str/includes? text "There are no other aliases; `root` is not prebound"))
-        (expect (str/includes? text "`session[\"workspace\"][\"filesystem_roots\"]`"))
-        (expect (str/includes? text "`python_name`"))
-        (expect (str/includes? text "`cwd`"))
-        (expect (not (str/includes? text "path_globals")))
-        (expect (str/includes? text "Prebound `Path` objects"))
-        (expect (str/includes? text "There are no other aliases"))
-        (expect (not (str/includes? text "prebound `root`")))
-        (expect (not (str/includes? text "root = Path(session")))
-        (expect (str/includes? text "`await gather(...)`"))))
-  ;; Regression, user report ("can I write function definitions into the session
-  ;; object and refine them over time?"): §2 said "definitions persist between
-  ;; blocks", which reads as within-turn scratch, and called `session` a "read-only
-  ;; map" — a write there SUCCEEDS and is erased before the next block, so the
-  ;; obvious place to keep a helper is the one place that silently loses it.
-  (it "scopes a definition to the whole session and refuses `session` as storage"
-      (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text "`defs(pattern=\"...\")`"))
-        ;; Regression: the prompt promised a `def` only "persists for the whole
-        ;; session" — true of the interpreter, false of the PROCESS, so a restart
-        ;; silently emptied the sandbox the transcript still described.
-        (expect (str/includes? text "Helpers and picklable variables stay across blocks and turns"))
-        (expect (str/includes? text "`[Sandbox restarted]` notice"))
-        (expect (str/includes?
-                  text
-                  "builds `session` again before each block, so your writes to it are lost"))
-        (expect (str/includes? text "Keep your state in variables and helpers"))
-        (expect (not (str/includes? text "definitions persist between blocks")))
-        (expect (not (str/includes? text "live read-only map")))))
-  ;; Creating extensions requires a request and reading their contract first.
-  (it "creates extensions only when asked and reads their contract"
-      (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text "Create Python extensions only when the user asks"))
-        (expect (str/includes? text "First read `doc(\"extending\")`")))))
+(defdescribe core-prompt-steers-python-shape-test
+             (it "uses the advertised prebound paths instead of defining or guessing aliases"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "`python_execution` is the only tool"))
+                   ;; User report: the runtime always binds project_root_path, never a root alias.
+                   (expect (str/includes? text "`project_root_path`"))
+                   (expect (str/includes? text "`session[\"workspace\"][\"filesystem_roots\"]`"))
+                   (expect (str/includes? text "`python_name`"))
+                   (expect (not (str/includes? text "path_globals")))
+                   (expect (str/includes? text "Prebound `Path` objects"))
+                   (expect (not (str/includes? text "prebound `root`")))
+                   (expect (not (str/includes? text "root = Path(session")))
+                   (expect (str/includes? text "`await gather(...)`"))))
+             ;; Regression, user report ("can I write function definitions into the session
+             ;; object and refine them over time?"): §2 said "definitions persist between
+             ;; blocks", which reads as within-turn scratch, and called `session` a "read-only
+             ;; map" — a write there SUCCEEDS and is erased before the next block, so the
+             ;; obvious place to keep a helper is the one place that silently loses it.
+             (it "scopes a definition to the whole session and refuses `session` as storage"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "`defs()`"))
+                   (expect (str/includes? text
+                                          "Helpers and variables stay across blocks and turns"))
+                   (expect (str/includes? text "The host builds `session` again before each block"))
+                   (expect (not (str/includes? text "definitions persist between blocks")))
+                   (expect (not (str/includes? text "live read-only map"))))))
 
 (defdescribe planning-prompt-test
              (it "adds no planning block, also when a retired plans value is on"
