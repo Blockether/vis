@@ -12,7 +12,7 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.toggles :as toggles])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextCharacter]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextCharacter TextColor]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal VirtualTerminalListener]
@@ -266,32 +266,64 @@
                                              (int (+ (long list-top) (long row))))))]
 
       (expect (= 1 (:selected s0)) "The first header is skipped")
-      (expect (= 3 (:selected (step s0 (ks KeyType/ArrowDown)))))
+      (expect (= ["Session" "Rename" "" "Group" "Recolour"] (mapv :label (:filtered geom)))
+              "A blank row parts the sections")
+      (expect (= 4 (:selected (step s0 (ks KeyType/ArrowDown)))))
       (expect (= 1
                  (:selected (-> s0
                                 (step (ks KeyType/ArrowDown))
                                 (step (ks KeyType/ArrowUp))))))
       (expect (= 1 (:selected (step s0 (ks KeyType/Home)))))
       (expect (= 1 (:selected (step s0 (ks KeyType/ArrowUp)))) "Nothing selectable above")
-      (expect (= 1 (:selected (step s0 (press 2)))) "A press on a header selects nothing")
+      (expect (= 1 (:selected (step s0 (press 2)))) "A press on the blank row selects nothing")
+      (expect (= 1 (:selected (step s0 (press 3)))) "A press on a header selects nothing")
       (expect (= :a (:id (done-key (on-key s0 (ks KeyType/Enter) geom)))))))
-  (it "paints a header without a selection bar"
-      (let [capture
-            (cap/capture! {:cols 80
-                           :rows 30
-                           :keys [:esc]
-                           :paint! (fn [{:keys [screen]}]
-                                     (dlg/select-dialog! screen
-                                                         "Menu"
-                                                         [{:id :s :label "Session" :section? true}
-                                                          {:id :a :label "Rename"}]))})
+  (it "keeps a preselected item after the inserted blank rows"
+      (let [{:keys [init]} (dlg/select-modal-component
+                             "Menu"
+                             [{:id :s :label "Session" :section? true} {:id :a :label "Rename"}
+                              {:id :g :label "Group" :section? true} {:id :b :label "Recolour"}]
+                             {:height :content :selected 3})]
+        (expect (= 4 (:selected init)))))
+  (it
+    "paints a header bold in the accent color, without a selection bar"
+    (let [capture
+          (cap/capture! {:cols 80
+                         :rows 30
+                         :keys [:esc]
+                         :paint! (fn [{:keys [screen]}]
+                                   (dlg/select-dialog! screen
+                                                       "Menu"
+                                                       [{:id :s :label "Session" :section? true}
+                                                        {:id :a :label "Rename"}]))})
 
-            lines
-            (str/split-lines (cap/frame-text capture 0))]
+          lines
+          (str/split-lines (cap/frame-text capture 0))]
 
-        (expect (nil? (:error capture)))
-        (expect (some #(re-find #"│ Session +│" %) lines))
-        (expect (some #(re-find #"│ Rename +│" %) lines)))))
+      (expect (nil? (:error capture)))
+      (expect (some #(re-find #"│ Session ─+ +│" %) lines) "A rule marks the header")
+      (expect (some #(re-find #"│ Rename +│" %) lines))
+      (let [frame
+            (last (:frames capture))
+
+            header
+            (first (for [row
+                         frame
+
+                         :let [text
+                               (apply str (map :ch row))
+
+                               start
+                               (str/index-of text "Session")]
+                         :when start]
+
+                     (subvec row start (+ (long start) 7))))]
+
+        (expect (every? :bold header))
+        (expect (every? #(= (let [^TextColor c t/dialog-hint-key]
+                              [(.getRed c) (.getGreen c) (.getBlue c)])
+                            (:fg %))
+                        header))))))
 
 (defn- numbered-items
   "`n` plain list items labelled Item 0, Item 1 and so on."

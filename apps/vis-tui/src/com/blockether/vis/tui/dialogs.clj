@@ -1898,9 +1898,21 @@
         items))))
 
 (defn- section-item?
-  "True for a select-list section header: a dim label that no selection lands on."
+  "True for a select-list section header: a bold label that no selection lands on."
   [item]
   (true? (:section? item)))
+
+(defn- with-section-gaps
+  "`items` with one blank, unselectable row before each section header that does
+   not open the list, so each section stands apart."
+  [items]
+  (into []
+        (comp (map-indexed (fn [i item]
+                             (if (and (pos? (long i)) (section-item? item))
+                               [{:section? true :gap? true :label ""} item]
+                               [item])))
+              cat)
+        items))
 
 (defn- selectable-index
   "The nearest index from `index` in direction `step` (1 or -1) whose item is not a
@@ -1984,8 +1996,17 @@
    they can be exercised in tests WITHOUT a terminal. Only `:paint` touches the
    screen. `items`/opts match `list-dialog!`."
   [title items {:keys [filter? placeholder enter-label height column-offset selected]}]
-  (let [items
-        (vec items)
+  (let [gaps-before
+        (fn [index]
+          (count (filter section-item?
+                         (subvec (vec items) (min 1 (count items)) (inc (long index))))))
+
+        selected
+        (when selected
+          (+ (long selected) (long (gaps-before (min (long selected) (dec (count items)))))))
+
+        items
+        (with-section-gaps items)
 
         content?
         (= height :content)
@@ -2105,14 +2126,19 @@
                          width (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)]
 
                      (if (section-item? item)
-                       (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                           (p/styled g
-                                     [p/BOLD]
-                                     (p/put-str! g
-                                                 (inc (long left))
-                                                 row
-                                                 (ellipsize (str " " (:label item))
-                                                            (max 0 (- (long width) 2))))))
+                       (when-not (:gap? item)
+                         (let [label (ellipsize (str " " (:label item)) (max 0 (- (long width) 2)))
+                               label-w (long (p/display-width label))
+                               rule-w (max 0 (- (long width) 3 label-w))]
+
+                           (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                           (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row label))
+                           (when (pos? rule-w)
+                             (p/set-colors! g t/dialog-border t/dialog-bg)
+                             (p/put-str! g
+                                         (+ (long left) 2 label-w)
+                                         row
+                                         (apply str (repeat rule-w "─"))))))
                        (draw-list-item! g
                                         left
                                         row
@@ -2197,7 +2223,7 @@
    map (the full map, so callers recover `:id`/slash keys), or nil on Esc.
 
    `items` is a vec of maps with at least `:label`. An item with `:section? true` is
-   a dim header that the selection skips. An item's optional `:hint` is
+   a bold accent header that the selection skips. A blank row precedes each later header. An item's optional `:hint` is
    a dim right-aligned chip; its optional `:key` character chooses it directly
    when the list does not filter, and `:ctrl-key` does the same with Ctrl held.
    A click chooses the item it pressed, and hover moves the selection. ↑↓,
