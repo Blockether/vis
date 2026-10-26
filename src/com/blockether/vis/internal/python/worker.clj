@@ -134,11 +134,35 @@
                              "vis_snapshot.py"])
                        engine-sources))))
 
+(defonce ^:private staged-guest-dirs
+  ;; `{guest root path published directory}` for the guest sources of this build.
+  ;; This process claims each directory, so its own sweep never deletes one.
+  (atom {}))
+
 (defn guest-source-dir
-  "Stage Vis-owned Python guest modules in the current home, restoring missing files."
+  "Stage Vis-owned Python guest modules in the current home, restoring missing files.
+
+   The first call in a process compares every module with the shipped source.
+   Each worker start and snapshot calls this again, so a later call checks only
+   that the modules exist and publishes again when one is missing."
   []
-  (materialize-guest-sources! (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")
-                              @guest-sources))
+  (let [root
+        (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")
+
+        k
+        (.getAbsolutePath root)
+
+        staged
+        (get @staged-guest-dirs k)]
+
+    (if (and staged
+             (every? (fn [name]
+                       (.isFile (io/file staged name)))
+                     (keys @guest-sources)))
+      staged
+      (let [dir (materialize-guest-sources! root @guest-sources)]
+        (swap! staged-guest-dirs assoc k dir)
+        dir))))
 
 (def ^:private guest-thread-doors
   "The host doors that a thread of a trusted extension can call. The request door

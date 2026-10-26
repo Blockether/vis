@@ -14,6 +14,11 @@ _ENGINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vis_engine")
 # A native build ships the packages that the SDK engine imports here (#405).
 _PACKAGES = os.path.join(sys.base_prefix, "lib", "vis-sdk-packages")
 
+# The SDK module without a host and the code object that built it. The body takes
+# about 15 ms to execute, and every sandbox session installs the same body. These
+# sessions share `sys.modules`, so they can share this module like any import.
+_SANDBOX = (None, None)
+
 
 def _add_packages():
     """Add the bundled SDK packages last, so packages that the user installs win."""
@@ -35,8 +40,10 @@ class _SandboxHost:
 def install(source, host=None):
     """Load the bundled SDK without replacing other Blockether packages.
 
-    A new `blockether.vis` package also finds the staged SDK engine.
+    A new `blockether.vis` package also finds the staged SDK engine. Without a
+    host, the same source gives the module of the previous call.
     """
+    global _SANDBOX
     _add_packages()
     for name in ("blockether", "blockether.vis"):
         try:
@@ -56,20 +63,30 @@ def install(source, host=None):
         if not hasattr(package, "__path__"):
             raise ImportError(f"{name} must be a package")
 
+    filename = "blockether/vis/extension.py"
+    compiled = vis_code.code(source, filename)
+    if host is None and _SANDBOX[0] is compiled:
+        module = _SANDBOX[1]
+        sys.modules[module.__name__] = module
+        package.extension = module
+        return module
+
     module = ModuleType("blockether.vis.extension")
     module.__package__ = "blockether.vis"
-    module.__file__ = "blockether/vis/extension.py"
+    module.__file__ = filename
     module.__spec__ = importlib.machinery.ModuleSpec(module.__name__, None)
     module.__dict__["_host"] = _SandboxHost() if host is None else host
     previous = sys.modules.get(module.__name__)
     sys.modules[module.__name__] = module
     try:
-        exec(vis_code.code(source, module.__file__), module.__dict__)
+        exec(compiled, module.__dict__)
     except BaseException:
         if previous is None:
             sys.modules.pop(module.__name__, None)
         else:
             sys.modules[module.__name__] = previous
         raise
+    if host is None:
+        _SANDBOX = (compiled, module)
     package.extension = module
     return module

@@ -79,6 +79,22 @@ def test_explicit_extension_host_is_not_reused_by_sandbox(bootstrap):
     assert extension.state["key"] == "trusted key"
 
 
+def test_sandbox_installs_share_one_module_for_one_source(bootstrap):
+    # Each sandbox session installs the SDK. Executing the body each time cost
+    # about 15 ms for each new session.
+    parent = importlib.import_module("blockether.vis")
+    sandbox = bootstrap(SOURCE)
+    hosted = bootstrap(SOURCE, SimpleNamespace())
+
+    again = bootstrap(SOURCE)
+
+    assert hosted is not sandbox
+    assert again is sandbox
+    assert sys.modules["blockether.vis.extension"] is sandbox
+    assert parent.extension is sandbox
+    assert bootstrap(SOURCE + "\n") is not sandbox
+
+
 @pytest.mark.parametrize("previous", [True, False])
 def test_failed_load_restores_previous_module(bootstrap, monkeypatch, previous):
     parent = importlib.import_module("blockether.vis")

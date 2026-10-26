@@ -1362,6 +1362,17 @@ def __vis_bind_ctx__(g, data, fallback, Path=__import__('pathlib').Path, set=set
        (python-string-literal (slurp (io/resource "blockether/vis/extension.py")))
        ")"))
 
+(defn- shim-python
+  "Python that executes the source of `shim` in the session globals. `vis_code`
+   keeps the compiled code for the process, so a new session does not compile the
+   shim again. The resource path names the shim in tracebacks."
+  ^String [shim]
+  (str "exec(__import__('vis_code').code("
+       (python-string-literal (extension/shim-src shim))
+       ", "
+       (python-string-literal (or (:shim/source shim) (str "<shim " (:shim/name shim) ">")))
+       "), globals())"))
+
 (defn- install-shims!
   "Give `session` every registered sandbox shim: its host bindings first, then
    its Python.
@@ -1384,7 +1395,7 @@ def __vis_bind_ctx__(g, data, fallback, Path=__import__('pathlib').Path, set=set
                                            (if-let [k (worker-of sess)]
                                              (pyext/install-sync-tool! k sess nm)
                                              (runtime/install-sync-tool! sess nm)))))
-           (exec! session (extension/shim-src shim)))
+           (exec! session (shim-python shim)))
          (catch Throwable t
            (tel/log! {:level :warn :id ::shim-install-failed :shim (:shim/name shim) :error t})))))
 
