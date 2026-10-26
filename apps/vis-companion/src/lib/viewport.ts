@@ -60,16 +60,42 @@ function isIosBrowser(): boolean {
 type KeyboardOrientation = 'portrait' | 'landscape';
 type KeyboardHeightCache = Record<string, number>;
 
+/**
+ * The keyboard a field raises: the full `text` keyboard or the shorter number `pad`.
+ * Reported on an iPhone: the composer taught the text height, and the one-time code
+ * sheet then pinned for it. The pad rose lower, so the sheet dropped under the finger
+ * and the second tap of a double tap (paste) missed the field.
+ */
+export type KeyboardKind = 'text' | 'pad';
+
+const PAD_INPUT_MODES = new Set(['numeric', 'decimal', 'tel']);
+
+/** The keyboard that a focus on `el` raises. */
+export function keyboardKindOf(el: Element | null): KeyboardKind {
+  if (!(el instanceof HTMLElement)) return 'text';
+  const mode = el.getAttribute('inputmode')?.toLowerCase();
+  if (mode) return PAD_INPUT_MODES.has(mode) ? 'pad' : 'text';
+  return el instanceof HTMLInputElement && el.type === 'tel' ? 'pad' : 'text';
+}
+
+function activeKeyboardKind(): KeyboardKind {
+  return keyboardKindOf(globalThis.document?.activeElement ?? null);
+}
+
 const KEYBOARD_HEIGHT_CACHE_KEY = 'vis.keyboard-heights.v1';
 
 function keyboardOrientation(): KeyboardOrientation {
   return window.innerWidth > window.innerHeight ? 'landscape' : 'portrait';
 }
 
-function keyboardCacheSlot(orientation = keyboardOrientation()): string {
+function keyboardCacheSlot(
+  orientation = keyboardOrientation(),
+  kind: KeyboardKind = activeKeyboardKind(),
+): string {
   const width = Math.round(window.screen.width || window.innerWidth);
   const height = Math.round(window.screen.height || window.innerHeight);
-  return `${Math.min(width, height)}x${Math.max(width, height)}:${orientation}`;
+  const slot = `${Math.min(width, height)}x${Math.max(width, height)}:${orientation}`;
+  return kind === 'text' ? slot : `${slot}:${kind}`;
 }
 
 // Capacitor's event reaches JavaScript after UIKit has already started moving.
@@ -106,8 +132,12 @@ function isPlausibleKeyboardHeight(height: number, fullHeight: number): boolean 
   return Number.isFinite(height) && height >= fullHeight * 0.15 && height <= fullHeight * 0.7;
 }
 
-function keyboardHeightForPrepin(fullHeight: number, orientation = keyboardOrientation()): number {
-  const cached = keyboardHeightCache[keyboardCacheSlot(orientation)];
+function keyboardHeightForPrepin(
+  fullHeight: number,
+  orientation = keyboardOrientation(),
+  kind: KeyboardKind = activeKeyboardKind(),
+): number {
+  const cached = keyboardHeightCache[keyboardCacheSlot(orientation, kind)];
   if (cached && isPlausibleKeyboardHeight(cached, fullHeight)) return cached;
   return Math.round(fullHeight * ESTIMATED_KEYBOARD_HEIGHT_RATIO[orientation]);
 }
@@ -685,12 +715,18 @@ export function useKeyboardInset(): number {
 // already covers. A focus shrinks the shell by that height in the same frame, so a
 // sheet docked to the bottom jumped up under the finger. The second tap of a double
 // tap then missed the field, focus dropped and the keyboard fell again.
-let keyboardReserve = 0;
+// Each keyboard kind has its own band: the pad is shorter than the text keyboard.
+const NO_KEYBOARD_RESERVE: Record<KeyboardKind, number> = { text: 0, pad: 0 };
+let keyboardReserve = NO_KEYBOARD_RESERVE;
 const keyboardReserveListeners = new Set<() => void>();
 
-const setKeyboardReserve = (value: number): void => {
-  const next = Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
-  if (keyboardReserve === next) return;
+const setKeyboardReserve = (value: (kind: KeyboardKind) => number): void => {
+  const band = (kind: KeyboardKind) => {
+    const pixels = value(kind);
+    return Number.isFinite(pixels) ? Math.max(0, Math.round(pixels)) : 0;
+  };
+  const next = { text: band('text'), pad: band('pad') };
+  if (keyboardReserve.text === next.text && keyboardReserve.pad === next.pad) return;
   keyboardReserve = next;
   for (const listener of keyboardReserveListeners) listener();
 };
@@ -706,13 +742,14 @@ const subscribeKeyboardReserve = (listener: () => void): (() => void) => {
  * Pixels a sheet docked to the bottom keeps free for a keyboard that is not up yet.
  *
  * With this band under it, the sheet already stands where the keyboard puts it, so
- * a focus does not move the field. `0` while the keyboard is up, with a hardware
- * keyboard, and on every platform except native iOS.
+ * a focus does not move the field. `kind` is the keyboard that the sheet's field
+ * raises. `0` while the keyboard is up, with a hardware keyboard, and on every
+ * platform except native iOS.
  */
-export function useKeyboardReserve(): number {
+export function useKeyboardReserve(kind: KeyboardKind = 'text'): number {
   return useSyncExternalStore(
     subscribeKeyboardReserve,
-    () => keyboardReserve,
+    () => keyboardReserve[kind],
     () => 0,
   );
 }
@@ -796,9 +833,9 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
           ? layoutHeight(readViewportMetrics()) - next.height - next.top
           : 0;
       setKeyboardInset(inset);
-      setKeyboardReserve(
+      setKeyboardReserve((kind) =>
         nativeKeyboard && !hasHardwarePointer()
-          ? keyboardHeightForPrepin(layoutHeight(readViewportMetrics())) - inset
+          ? keyboardHeightForPrepin(layoutHeight(readViewportMetrics()), keyboardOrientation(), kind) - inset
           : 0,
       );
       if (
@@ -1425,7 +1462,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       disposeKeyboard();
       pinnedShellHeight = null;
       setBox(null);
-      setKeyboardReserve(0);
+      setKeyboardReserve(() => 0);
     };
   }, [shellRef]);
 }

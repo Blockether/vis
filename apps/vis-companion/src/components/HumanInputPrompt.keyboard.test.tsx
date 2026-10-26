@@ -166,6 +166,47 @@ describe('a form with a typed field on the iPhone', () => {
     expect(box).toHaveClass('after:bg-panel', 'after:top-full', 'after:h-[var(--keyboard-reserve,0px)]');
   });
 
+  // Regression, user report: a double tap on the one-time code only made the sheet jump,
+  // and the paste menu never came. The composer had taught the text keyboard height,
+  // the code raised the shorter number pad, and the sheet dropped under the finger.
+  it('keeps the one-time code still after the composer used the taller keyboard', () => {
+    pointing('coarse');
+    const PAD = 260;
+    const TEXT = 336;
+    const raise = (field: HTMLElement, height: number) => {
+      act(() => field.focus());
+      act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: height }));
+    };
+    const lower = (field: HTMLElement) => {
+      act(() => {
+        field.blur();
+        native.keyboard.get('keyboardWillHide')?.({ keyboardHeight: 0 });
+        native.keyboard.get('keyboardDidHide')?.({ keyboardHeight: 0 });
+      });
+    };
+    const answer = () => {
+      const view = render(<SessionWithForm request={HUMAN_INPUT_REQUESTS.otp} />);
+      const code = screen.getByLabelText(/One-time code/);
+      const resting = sheetBottom();
+      raise(code, PAD);
+      const typing = sheetBottom();
+      lower(code);
+      view.unmount();
+      return { resting, typing };
+    };
+
+    answer();
+    const composer = render(<ShellWithSettingsSheet />);
+    const text = screen.getByLabelText('Machine name');
+    raise(text, TEXT);
+    lower(text);
+    composer.unmount();
+
+    const { resting, typing } = answer();
+    expect(resting).toBe(HEIGHT - PAD);
+    expect(typing).toBe(resting);
+  });
+
   it('stays docked to the bottom edge with a hardware keyboard', () => {
     pointing('fine');
     render(<SessionWithForm request={HUMAN_INPUT_REQUESTS.otp} />);

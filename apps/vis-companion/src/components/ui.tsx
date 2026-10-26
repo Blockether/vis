@@ -57,7 +57,12 @@ import viewSchema from '../../../../packages/vis-contract/resources/vis-contract
 import { EDGE_MARGIN, menuPosition } from '../lib/anchored-menu';
 import type { ViewGroupDirection } from '../lib/view';
 import { useBackLayer, useEdgeBack } from '../lib/edge-back';
-import { isKeyboardInputElement, useKeyboardReserve } from '../lib/viewport';
+import {
+  isKeyboardInputElement,
+  keyboardKindOf,
+  useKeyboardReserve,
+  type KeyboardKind,
+} from '../lib/viewport';
 import {
   AlertIcon,
   CheckIcon,
@@ -2754,7 +2759,6 @@ export function Modal({
   children: ReactNode;
 }) {
   const { host: portalHost, position } = within === 'session' ? sessionLayer() : overlayLayer();
-  const keyboardReserve = useKeyboardReserve();
   const dismissOnClick = useRef(false);
   // BACK IS A STROKE IN HERE TOO. A dialog that took the glass is a place the reader
   // arrived at, and a finger drawn in from its left edge is how the phone in their hand
@@ -2782,25 +2786,30 @@ export function Modal({
   // The portal host can change after the first render, and the scrim then mounts again.
   // A ref would leave the observer on the old node, so the element is state.
   const [scrim, setScrim] = useState<HTMLDivElement | null>(null);
-  const [holdsTypedField, setHoldsTypedField] = useState(false);
+  // The band is as tall as the keyboard of the sheet's first typed field: a one-time
+  // code raises the shorter number pad, and a text-height band let the sheet drop.
+  const [typedFieldKind, setTypedFieldKind] = useState<KeyboardKind | null>(null);
+  const keyboardReserve = useKeyboardReserve(typedFieldKind ?? 'text');
   useLayoutEffect(() => {
     const element = scrim;
     if (!watchesFields || element === null) return undefined;
-    const check = () =>
-      setHoldsTypedField(
-        Array.from(element.querySelectorAll('input, textarea, [contenteditable]')).some(isKeyboardInputElement),
+    const check = () => {
+      const field = Array.from(element.querySelectorAll('input, textarea, [contenteditable]')).find(
+        isKeyboardInputElement,
       );
+      setTypedFieldKind(field ? keyboardKindOf(field) : null);
+    };
     check();
     const observer = new MutationObserver(check);
     observer.observe(element, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['type', 'contenteditable'],
+      attributeFilter: ['type', 'contenteditable', 'inputmode'],
     });
     return () => observer.disconnect();
   }, [watchesFields, scrim]);
-  const isReserving = watchesFields && holdsTypedField;
+  const isReserving = watchesFields && typedFieldKind !== null;
   const phoneCeiling = isReserving
     ? 'mt-[env(safe-area-inset-top)] max-h-[calc(100%+var(--keyboard-reserve,0px)-env(safe-area-inset-top))] sm:mt-0 sm:max-h-[calc(100%-env(safe-area-inset-top))]'
     : 'max-h-[calc(100%-env(safe-area-inset-top))]';
