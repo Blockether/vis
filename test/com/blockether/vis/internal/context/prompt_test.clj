@@ -916,7 +916,9 @@
       ;; require it. A reported symptom now stays a bug. It lands at 13 434.
       ;; 13.45k → 13.5k: Vis still timed only non-isomorphic graph pairs, which fail fast, and
       ;; the checker timed isomorphic pairs. Each reading is now measured. It lands at 13 490.
-      (expect (< (count text) 13500))
+      ;; 13.5k → 13.65k: Vis read data files next to a named script, and only the script reached
+      ;; the checker. Each named output file now works alone. It lands at 13 598.
+      (expect (< (count text) 13650))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
         (expect (every? some? steps))
