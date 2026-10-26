@@ -42,7 +42,12 @@ const runningRow = {
 
 function stepTally(): string {
   return [...document.querySelectorAll('*')]
-    .filter((node) => node.children.length === 0 && /cancel|running/i.test(node.textContent ?? ''))
+    // The innermost node with the whole word: a counter splits it for the phone (`1 run` + `ning`).
+    .filter(
+      (node) =>
+        /cancel|running/i.test(node.textContent ?? '') &&
+        ![...node.children].some((child) => /cancel|running/i.test(child.textContent ?? '')),
+    )
     .map((node) => node.textContent)
     .join(' | ');
 }

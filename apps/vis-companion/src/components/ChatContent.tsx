@@ -35,6 +35,7 @@ import {
   ActivityAttachmentContext,
   ActivityTally,
   activityCostParts,
+  activityStatePart,
 } from './ActivityPanel';
 import {
   mergeActivity,
@@ -2884,12 +2885,7 @@ function StepDigest({
     ...activityCostParts(activity),
     ...(['running', 'failed', 'cancelled'] as const).flatMap((state) =>
       counts[state]
-        ? [
-            {
-              text: `${counts[state]} ${state}`,
-              tone: state === 'running' ? '' : 'text-err-ink',
-            },
-          ]
+        ? [activityStatePart(counts[state], state, state === 'running' ? '' : 'text-err-ink')]
         : [],
     ),
   ];

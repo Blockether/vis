@@ -278,7 +278,9 @@ it.each([
   const expand = screen.queryByRole('button', { name: 'Expand Activity' });
   if (expand) fireEvent.click(expand);
 
-  expect(screen.queryByText('1 running')).toBeNull();
-  expect(screen.getByText(`1 ${outcome}`)).toBeVisible();
+  // A counter splits its word for the phone (`1 fail` + `ed`), so match the whole counter.
+  const counter = (text: string) => (_: string, node: Element | null) => node?.textContent === text;
+  expect(screen.queryByText(counter('1 running'))).toBeNull();
+  expect(screen.getByText(counter(`1 ${outcome}`))).toBeVisible();
   expect(screen.queryByLabelText('Running')).toBeNull();
 });

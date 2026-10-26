@@ -5,7 +5,12 @@
 // that is the Live View rail, and it is a different file for that reason.
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ActivityPanel, activityCostParts, activityReceiptText } from './ActivityPanel';
+import {
+  ActivityPanel,
+  activityCostParts,
+  activityReceiptText,
+  activityStatePart,
+} from './ActivityPanel';
 import activityPanelSource from './ActivityPanel.tsx?raw';
 import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import argumentCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json';
@@ -905,6 +910,28 @@ describe('what the iteration cost', () => {
   it('leaves the counters empty when activity is absent or empty', () => {
     expect(activityCostParts()).toEqual([]);
     expect(activityCostParts({ ...activityProjection(), rows: [] })).toEqual([]);
+  });
+
+  it('shortens state counters on a phone and keeps the whole words for a copy', () => {
+    const activity = {
+      ...activityProjection(),
+      state: 'failed' as const,
+      counts: { running: 1, succeeded: 1, failed: 1, cancelled: 1 },
+    };
+    expect(
+      (['running', 'failed', 'cancelled'] as const).map((state) => activityStatePart(1, state)),
+    ).toEqual([
+      { text: '1 running', short: '1 run', tone: '' },
+      { text: '1 failed', short: '1 fail', tone: '' },
+      { text: '1 cancelled', short: '1 canc', tone: '' },
+    ]);
+
+    render(<ActivityPanel activity={activity} />);
+    const band = screen.getByRole('button', { name: 'Expand Activity' });
+    expect(band).toHaveTextContent('1 running · 1 failed · 1 cancelled');
+    const phone = band.cloneNode(true) as HTMLElement;
+    phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
+    expect(phone).toHaveTextContent('1 run · 1 fail · 1 canc');
   });
 
   it('leaves the failures to the marks and the state word', () => {

@@ -180,6 +180,21 @@ export function ActivityTally({
   );
 }
 
+/** The phone's word for each run state, a prefix of the whole word. */
+const STATE_SHORT = { running: 'run', failed: 'fail', cancelled: 'canc' } as const;
+
+/**
+ * One run-state counter (`1 failed`). A narrow band shows `1 fail`, as it shows `3 obs`,
+ * so a band with failures and cancellations keeps its counts on one line.
+ */
+export function activityStatePart(
+  count: number,
+  state: keyof typeof STATE_SHORT,
+  tone = '',
+): ActivityCostPart {
+  return { text: `${count} ${state}`, short: `${count} ${STATE_SHORT[state]}`, tone };
+}
+
 /**
  * WHAT THE STEP CALLED, in the order it called it — the receipt beside the chevron.
  *
@@ -1489,13 +1504,13 @@ export function ActivityPanel({
       activity.history && (activity.history.after > 0 || activity.history.next_after !== null),
   );
   const states = (['running', 'failed', 'cancelled'] as const).flatMap((state) =>
-    activity.counts[state] ? [`${activity.counts[state]} ${state}`] : [],
+    activity.counts[state] ? [activityStatePart(activity.counts[state], state)] : [],
   );
   const tally: readonly ActivityCostPart[] = [
     ...(partial
       ? [{ text: `${total} ${total === 1 ? 'operation' : 'operations'}`, tone: '' }]
       : activityCostParts(activity)),
-    ...states.map((text) => ({ text, tone: '' })),
+    ...states,
   ];
   return (
     <section className="isolate min-w-0" aria-live="off" data-activity-axis>
