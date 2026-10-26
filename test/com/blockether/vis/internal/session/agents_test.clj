@@ -51,7 +51,7 @@
       (expect (document/valid? "agents" agent))
       (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
       (expect (not (document/valid? "agents" (assoc agent "iteration_budget" -1))))
-      (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8192 "x"))}))
+      (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 65536 "x"))}))
       (expect (document/valid-json? "agents"
                                     "spawn"
                                     {"task" "Edit one owner"
@@ -67,7 +67,7 @@
       (expect (not
                 (document/valid-json? "agents" "ask_files" {"files" {"write" ["a"]} "reason" " "})))
       (expect (not
-                (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8193 "x"))}))))))
+                (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 65537 "x"))}))))))
 
 (defn child!
   [db parent opts]
