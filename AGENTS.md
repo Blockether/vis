@@ -162,7 +162,7 @@ Each project has its own build, dependencies and checks. Run its tools from its 
 | `src/`, `resources/`, `deps.edn` | The engine and gateway (Clojure). Internal code is in `src/com/blockether/vis/internal/`. |
 | `apps/vis-tui/` | The terminal client: a separate Clojure project with its own `deps.edn`. It uses the gateway over HTTP and never loads the engine. Code is in `src/com/blockether/vis/tui/`. |
 | `apps/vis-companion/` | The Companion app: one React and Vite bundle in `src/`. Capacitor wraps it for Android and iOS (`native/`), and Pake (Tauri) for desktop. |
-| `apps/vis-companion-relay/` | The push and Council Rooms relay service. |
+| `apps/vis-companion-relay/` | The Push relay service. |
 | `apps/vis-docs/` | The Extension Center Worker and catalog. |
 | `packages/vis-contract/` | The shared contract: JSON Schemas and wire keys for the engine, TUI, Companion and SDK. Change every consumer with it. |
 | `packages/vis-agent/` | The Python SDK and the `vis-agent` CLI. |
@@ -185,7 +185,7 @@ namespace paths start at `src/com/blockether/vis/internal/`.
 | Docs | `resources/vis-docs/` serves the site and `doc()`. `resources/META-INF/vis/apropos/docs.edn` is the catalog; only `resources/vis-docs/site.edn` owns titles and navigation. The `docs/core.clj` namespace docstring defines the page contract that `docs-page-canon-test` enforces. |
 | Extension Center | The catalog is in `apps/vis-docs/`, not `resources/vis-docs/`. `worker.js` owns `/extensions/` and `/api/*` over D1 (`schema.sql`); `web/render.js` renders catalog pages in the Worker and the browser; `web/style.css` adds the catalog layout over the shared `resources/vis-docs/assets/theme.css`. The catalog is on the public site only, never a `doc()` page. |
 | UI | Companion controls: `apps/vis-companion/src/components/ui.tsx`. TUI rendering: `apps/vis-tui/`. |
-| Companion relay | `apps/vis-companion-relay/` hosts Push and Council Rooms. Push holds APNs/FCM keys and seals delivery grants in `src/seal.ts`, without a device-token store. `src/rooms/` uses separate credentials and D1 storage. Neither service accepts OAuth callbacks. `gateway/relay.clj` pushes through a grant; `gateway/push.clj` uses a self-hosted APNs key; `apps/vis-companion/src/lib/relay.ts` registers the grant. |
+| Companion relay | `apps/vis-companion-relay/` hosts Push. It holds APNs/FCM keys and seals delivery grants in `src/seal.ts`, without a device-token store. It accepts no OAuth callbacks. `gateway/relay.clj` pushes through a grant; `gateway/push.clj` uses a self-hosted APNs key; `apps/vis-companion/src/lib/relay.ts` registers the grant. |
 | Licensing | `clojure -M:audit` generates `audit/README.md` (network required); never edit it by hand. `audit_inventory_test` checks the dependency pins against it. |
 
 ## Gateway diagnostics

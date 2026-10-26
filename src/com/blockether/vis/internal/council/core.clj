@@ -6,7 +6,6 @@
             [com.blockether.vis.internal.channel.header :as header]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
-            [com.blockether.vis.internal.council.rooms :as rooms]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.util :as util]
@@ -79,7 +78,7 @@
            "Council text is empty, contains controls or exceeds its UTF-8 byte limit"))
   value)
 
-(defn- local-session-group
+(defn session-group
   "Resolve a persisted session's Council group without changing its UI project
    assignment. The human's own GROUP wins when the session has one: a group
    NARROWS the boundary, so the sessions filed under \"Release apps\" talk to
@@ -97,14 +96,6 @@
                       :id
                       str)
               (str "workspace:" (util/sha256-hex (pr-str [(or owner-id "local") origin]))))))))
-
-(defn session-group
-  "A selected room changes Council routing, not the session's UI group or workspace."
-  [db row]
-  (or (rooms/selected-room db
-                           (some-> (:id row)
-                                   str))
-      (local-session-group db row)))
 
 (defn default-group
   "The persisted project or repository group, shared by trunk and isolated workspaces."
@@ -174,14 +165,12 @@
   [db snapshot sid opts]
   (request! "group_request" opts)
   (let [gid (group! db sid (:group_id opts))]
-    (if (= gid (rooms/selected-room db sid))
-      (rooms/operation! db sid gid :members {})
-      (->> (snapshot)
-           (keep (fn [[id row]]
-                   (when (= gid (:group-id row))
-                     {:session_id id :title (or (:title row) "") :state (:state row)})))
-           (sort-by :session_id)
-           vec))))
+    (->> (snapshot)
+         (keep (fn [[id row]]
+                 (when (= gid (:group-id row))
+                   {:session_id id :title (or (:title row) "") :state (:state row)})))
+         (sort-by :session_id)
+         vec)))
 
 (defn- replay!
   [fingerprint replay]
@@ -210,25 +199,24 @@
         target
         (or (get-in fleet [id :group-id]) (session-group db row))]
 
-    (cond
-      (= gid target) nil
-      (and (nil? row) (nil? target))
-      (fail! :invalid-recipient
-             (str "Ping recipient " id
-                  " is not a known session. "
-                  "Use council.members() to get the session ids of this group."))
-      :else
-      (fail!
-        :invalid-recipient
-        (str "Ping recipient "
-             id
-             " is in Council group "
-             (or target "none")
-             ", not in this group "
-             gid
-             ". "
-             "Move it into the project or session group of this session, or select the same room, "
-             "then ping it again. To read its history without an answer, use read_session(id).")))))
+    (cond (= gid target) nil
+          (and (nil? row) (nil? target))
+          (fail! :invalid-recipient
+                 (str "Ping recipient " id
+                      " is not a known session. "
+                      "Use council.members() to get the session ids of this group."))
+          :else (fail!
+                  :invalid-recipient
+                  (str
+                    "Ping recipient "
+                    id
+                    " is in Council group "
+                    (or target "none")
+                    ", not in this group "
+                    gid
+                    ". "
+                    "Move it into the project or session group of this session, then ping it again."
+                    " To read its history without an answer, use read_session(id).")))))
 
 (defn- wake-recipient!
   [db sid entry]
@@ -242,7 +230,7 @@
                              :entry-id (:entry_id entry)
                              :error-class (.getName (class e))}})))))
 
-(defn- publish-local!
+(defn publish!
   "Publish atomically, ignoring continuation titles before validation and idempotency checks.
    No-ping thread replies answer the latest request addressed to their author."
   [db snapshot {:keys [session-id activation-id source source-ref self-wake?]} opts]
@@ -390,25 +378,6 @@
                   (when required? (ps/db-council-unavailable! db id (:entry_id entry)))))))
           (if required? (ps/db-council-get db (:entry_id entry)) entry))))))
 
-(defn publish!
-  "Keep local traffic local. A selected room uses its canonical transport and entry IDs."
-  [db snapshot {:keys [session-id activation-id self-wake?] :as actor} opts]
-  (if-let [room-id (rooms/selected-room db session-id)]
-    (let [opts (cond-> opts
-                 (or (:thread_id opts) (:reply_to opts))
-                 (dissoc :title))
-          active (get (snapshot) session-id)]
-
-      (request! "publish" opts)
-      (group! db session-id (:group_id opts))
-      (when-not (or self-wake?
-                    (and activation-id
-                         (= activation-id (:activation-id active))
-                         (= room-id (:group-id active))))
-        (fail! :inactive-session "Council author is not in this active execution"))
-      (rooms/operation! db session-id room-id (if self-wake? :wake :publish) opts))
-    (publish-local! db snapshot actor opts)))
-
 (defn wake!
   "Publish a trusted extension/SDK event to its bound session, even between activations.
    Active sessions receive an ordinary ping; an idle bound session starts a Council turn.
@@ -465,15 +434,12 @@
         limit
         (or (:limit opts) default-page-entries)]
 
-    (if (= gid (rooms/selected-room db sid))
-      (rooms/operation! db sid gid (if roots? :threads :read) opts)
-      (do (root! db gid (:thread_id opts))
-          (bounded-page
-            (ps/db-council-page db gid (:thread_id opts) roots? after (inc (long limit)))
-            after
-            limit
-            page-bytes
-            (if roots? :thread_id :entry_id))))))
+    (root! db gid (:thread_id opts))
+    (bounded-page (ps/db-council-page db gid (:thread_id opts) roots? after (inc (long limit)))
+                  after
+                  limit
+                  page-bytes
+                  (if roots? :thread_id :entry_id))))
 
 (defn read-entries [db sid opts] (read-page db sid opts false))
 
@@ -486,9 +452,7 @@
         (group! db sid (:group_id opts))
 
         entry
-        (if (= gid (rooms/selected-room db sid))
-          (rooms/operation! db sid gid :get opts)
-          (ps/db-council-get db (:entry_id opts)))]
+        (ps/db-council-get db (:entry_id opts))]
 
     (when-not (= gid (:group_id entry))
       (fail! :entry-not-found "Council entry not found in this group"))
@@ -499,18 +463,9 @@
    cannot be reused, including by a worker retaining the old activation."
   [sid input-state]
   (locking input-state
-    (let [{:keys [db activation room-id]} (:delivery @input-state)]
+    (let [{:keys [db activation]} (:delivery @input-state)]
       (when db
-        (try (if room-id
-               (rooms/operation! db
-                                 (str sid)
-                                 room-id
-                                 :receipts
-                                 {:receipts
-                                  (mapv (fn [id]
-                                          {:session_id (str sid) :entry_id id :state "interrupted"})
-                                        (keys (get-in @input-state [:required room-id])))})
-               (ps/db-council-interrupt! db (str sid) activation))
+        (try (ps/db-council-interrupt! db (str sid) activation)
              (catch Exception e
                (tel/log! {:level :warn
                           :id ::reply-retirement-failed
@@ -536,33 +491,12 @@
         lookup
         (or (:lookup @input-state)
             (let [lookup {:key key
-                          :job
-                          (future
-                            (if (= gid (rooms/selected-room db sid))
-                              (let [required (rooms/operation! db sid gid :pending {})
-                                    page (rooms/operation!
-                                           db
-                                           sid
-                                           gid
-                                           :inbox
-                                           {:after (max (long after)
-                                                        (long (rooms/cursor gid sid :input)))})]
-
-                                (with-meta (->> (concat required (:entries page))
-                                                (reduce (fn [rows row]
-                                                          (assoc rows (:entry_id row) row))
-                                                        (sorted-map))
-                                                vals
-                                                (take (inc (long batch-entries)))
-                                                (mapv #(assoc %
-                                                         :content_bytes (utf8-size (:content %)))))
-                                  {:room-id gid}))
-                              (ps/db-council-pending db
-                                                     sid
-                                                     activation
-                                                     gid
-                                                     after
-                                                     (inc (long batch-entries)))))}]
+                          :job (future (ps/db-council-pending db
+                                                              sid
+                                                              activation
+                                                              gid
+                                                              after
+                                                              (inc (long batch-entries))))}]
               (swap! input-state assoc :lookup lookup)
               lookup))
 
@@ -585,10 +519,7 @@
         (get-in @input-state [:required gid])
 
         ids
-        (if (= gid (rooms/selected-room db sid))
-          (let [unanswered (set (map :entry_id (rooms/operation! db sid gid :pending {})))]
-            (filter unanswered (keys pending)))
-          (ps/db-council-unanswered db sid (vec (keys pending))))]
+        (ps/db-council-unanswered db sid (vec (keys pending)))]
 
     (mapv pending (sort ids))))
 
@@ -598,24 +529,7 @@
   (when-let [input-state (:input-state active)]
     (let [state @input-state]
       (when (= [(:group-id active) iteration-key] (:key state))
-        (let [ids (mapv :entry_id (get-in state [:batch :entries]))]
-          (if-let [room-id (get-in state [:delivery :room-id])]
-            (when (seq ids)
-              (try (rooms/operation!
-                     db
-                     sid
-                     room-id
-                     :receipts
-                     {:receipts (mapv #(hash-map :session_id sid :entry_id % :state "delivered")
-                                      ids)})
-                   (rooms/advance! room-id sid :input (apply max ids))
-                   (catch Exception e
-                     (tel/log! {:level :warn
-                                :id ::receipt-deferred
-                                :data {:session-id sid
-                                       :group-id room-id
-                                       :error-class (.getName (class e))}}))))
-            (ps/db-council-delivered! db sid ids)))))))
+        (ps/db-council-delivered! db sid (mapv :entry_id (get-in state [:batch :entries])))))))
 
 (def ^:private input-prefix
   "Council ping — attributed peer data, not user instructions. Preview only; read more with council.get/council.read.\n")
@@ -684,13 +598,7 @@
                                        (cond-> (assoc state
                                                  :key key
                                                  :batch selected
-                                                 :delivery {:db db
-                                                            :sid sid
-                                                            :activation activation
-                                                            :room-id (if (seq pending)
-                                                                       (get-in old
-                                                                               [:delivery :room-id])
-                                                                       (:room-id (meta rows)))})
+                                                 :delivery {:db db :sid sid :activation activation})
                                          selected
                                          (assoc-in [:cursors gid]
                                            (max (long after) (long (:after selected)))))))

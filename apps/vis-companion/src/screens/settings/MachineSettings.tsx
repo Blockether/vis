@@ -9,7 +9,7 @@ import {
   GatewayOAuthError,
   INCOMPATIBLE_STATUS,
 } from '../../lib/gateway';
-import { flattenSettings, replaceSetting } from '../../lib/setting-tree';
+import { replaceSetting } from '../../lib/setting-tree';
 import type {
   GatewayConn,
   McpAuthFlow,
@@ -59,7 +59,6 @@ import { FormLabel, SettingsLoading, SettingsPanel, SettingsSection } from './Se
 import { ExtensionsPanel, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingField, SettingMachine } from './SettingField';
 import { machineLabel } from '../../lib/fleet';
-import { CouncilRooms } from './CouncilRooms';
 import { AutomationsPanel } from './AutomationsPanel';
 
 /** Closed-choice setting: one shared picker, with saving disabling input. */
@@ -487,24 +486,15 @@ export function lockNote(toggle: Toggle): string | null {
   return `Locked: ${where} ${effect} for this session. Change it in ${where}.`;
 }
 
-/**
- * One setting row and the rows under it, at any depth. Each level stands one step in.
- * `extra` adds a panel under a row, after the settings under it.
- */
-export function settingTree(
-  toggle: Toggle,
-  render: (toggle: Toggle) => ReactNode,
-  extra?: (toggle: Toggle) => ReactNode,
-): ReactNode {
+/** One setting row and the rows under it, at any depth. Each level stands one step in. */
+export function settingTree(toggle: Toggle, render: (toggle: Toggle) => ReactNode): ReactNode {
   const children = toggle.children ?? [];
-  const more = extra?.(toggle);
   return (
     <Fragment key={toggle.id}>
       {render(toggle)}
-      {(children.length > 0 || !!more) && (
+      {children.length > 0 && (
         <div className="divide-y divide-dialog-edge ps-3 sm:ps-4">
-          {children.map((child) => settingTree(child, render, extra))}
-          {more}
+          {children.map((child) => settingTree(child, render))}
         </div>
       )}
     </Fragment>
@@ -730,13 +720,6 @@ export function MachineSettings({
     }
   }
 
-  // Room membership is part of Council, so the Rooms panel stands under the Council switch.
-  const machineName = flattenSettings(groups?.find((group) => group.id === 'general')?.toggles ?? []).find(
-    (toggle) => toggle.id === 'council_machine_name',
-  );
-  const roomsUnder = (toggle: Toggle) =>
-    toggle.id === 'council' &&
-    machineName && <CouncilRooms client={client} machineName={String(machineName.value ?? '')} onChanged={load} />;
   // A Vis band and an extension under Extensions draw and save their rows the same way.
   const settingRow = (toggle: Toggle, head?: SettingHead) =>
     settingTree(
@@ -745,7 +728,6 @@ export function MachineSettings({
         <SettingRow key={row.id} toggle={row} head={row === toggle ? head : undefined} busy={pending === row.id}
           onToggle={() => void flip(row)} onPick={(value) => pick(row, value)} onRemove={() => remove(row)} />
       ),
-      roomsUnder,
     );
   const rowList = (toggles: Toggle[]) =>
     toggles.length > 0 && (

@@ -31,9 +31,9 @@
   ;; own contract refuses the half that is behind, in whichever direction it is
   ;; behind, instead of serving a shape neither side maintains.
   (it "this release serves only the protocol it speaks"
-      (expect (= 19 contract/protocol-version))
-      (expect (= 19 contract/minimum-client-protocol))
-      (expect (= 19 contract/minimum-gateway-protocol)))
+      (expect (= 20 contract/protocol-version))
+      (expect (= 20 contract/minimum-client-protocol))
+      (expect (= 20 contract/minimum-gateway-protocol)))
   ;; Protocol 13 peers disagreed on Activity fields but still accepted each other.
   (it "rejects protocol 13 peers in both directions"
       (let [gateway
@@ -55,6 +55,19 @@
 
             client
             (protocol/client-verdict "vis-test" {:protocol 14 :min-client 14 :min-gateway 14})]
+
+        (expect (false? (:is-compatible gateway)))
+        (expect (= "client-too-old" (:reason gateway)))
+        (expect (false? (:is-compatible client)))
+        (expect (= "gateway-too-old" (:reason client)))))
+  ;; Protocol 19 peers still had the Council Rooms routes and settings.
+  (it "rejects protocol 19 peers in both directions"
+      (let [gateway
+            (protocol/gateway-verdict {:headers {"x-vis-protocol" "19"
+                                                 "x-vis-min-gateway-protocol" "19"}})
+
+            client
+            (protocol/client-verdict "vis-test" {:protocol 19 :min-client 19 :min-gateway 19})]
 
         (expect (false? (:is-compatible gateway)))
         (expect (= "client-too-old" (:reason gateway)))

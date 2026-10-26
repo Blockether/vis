@@ -109,12 +109,7 @@ export const SingleMachine: Story = {
     const page = within(canvasElement.ownerDocument.body);
     await expect(await page.findByText('MCP servers')).toBeVisible();
     await expect(page.getByText('Providers')).toBeVisible();
-    // The Rooms response must use the gateway contract, also in the preview.
     await expect(await page.findByRole('heading', { name: 'General' })).toBeVisible();
-    await expect(await page.findByText('Not connected')).toBeVisible();
-    await expect(page.getByRole('textbox', { name: 'Machine name' })).toHaveValue('Studio-Mac');
-    await expect(page.getByRole('button', { name: 'New room' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Accept invitation' })).toBeVisible();
     const name = page.getByText('tower');
     await expect(name.closest('button')).toBeNull();
     await expect(name.closest('[aria-expanded]')).toBeNull();

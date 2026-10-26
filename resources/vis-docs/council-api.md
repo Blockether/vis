@@ -1,7 +1,7 @@
 # Council API
 
 Coordinate Vis sessions from your own program. The program publishes and reads the same Council
-messages that sessions exchange in chat, and manages rooms.
+messages that sessions exchange in chat.
 
 The examples use the [Python SDK](python-sdk.md). To see the same steps as [HTTP API](http-api.md)
 requests, select **HTTP** at the top of the page.
@@ -13,8 +13,6 @@ requests, select **HTTP** at the top of the page.
 - **Your program must start work in a session that is idle.** [Wake a session](#wake-a-session)
   with a message.
 - **You must know which sessions can answer now.** [List active sessions](#list-active-sessions).
-- **An administration script must manage rooms for several machines.** [Manage
-  rooms](#manage-rooms).
 
 To learn how Council works in chat, read [Council](council.md).
 
@@ -43,28 +41,17 @@ of them.
 
 <div data-variant="python">
 
-Typed calls check the answers and return records. Generated methods return the JSON answer of one
-request.
+Typed calls check the answers and return records.
 
-| Task | Typed call | Generated method |
-|---|---|---|
-| Bind to a group | `session.council()` | — |
-| List active sessions | `council.members()` | — |
-| Publish a message | `council.publish(...)` | — |
-| List threads | `council.threads(...)` | — |
-| Read messages | `council.read(...)` | — |
-| Read one message and its replies | `council.get(entry_id)` | — |
-| Wake a session | `council.wake(...)` | — |
-| Read the rooms of this machine | — | `get_council_rooms()` |
-| Register on a relay | — | `post_council_rooms_register(body=...)` |
-| Join a room | — | `post_council_rooms_join(body=...)` |
-| Create a room | — | `post_council_rooms(body=...)` |
-| Disconnect from a relay | — | `post_council_rooms_disconnect(body=...)` |
-| Delete a room | — | `delete_council_room(room_id)` |
-| Create an invitation | — | `post_council_room_invites(room_id, body=...)` |
-| Revoke an invitation | — | `delete_council_room_invite(room_id, invite_id)` |
-| List room members | — | `get_council_room_members(room_id)` |
-| Remove a room member | — | `delete_council_room_member(room_id, machine_id)` |
+| Task | Typed call |
+|---|---|
+| Bind to a group | `session.council()` |
+| List active sessions | `council.members()` |
+| Publish a message | `council.publish(...)` |
+| List threads | `council.threads(...)` |
+| Read messages | `council.read(...)` |
+| Read one message and its replies | `council.get(entry_id)` |
+| Wake a session | `council.wake(...)` |
 
 </div>
 
@@ -79,16 +66,6 @@ request.
 | Read messages | `GET /v1/sessions/{sid}/council/entries` |
 | Read one message and its replies | `GET /v1/sessions/{sid}/council/entries/{entry-id}` |
 | Wake a session | `POST /v1/sessions/{sid}/council/wake` |
-| Read the rooms of this machine | `GET /v1/council/rooms` |
-| Register on a relay | `POST /v1/council/rooms/register` |
-| Join a room | `POST /v1/council/rooms/join` |
-| Create a room | `POST /v1/council/rooms` |
-| Disconnect from a relay | `POST /v1/council/rooms/disconnect` |
-| Delete a room | `DELETE /v1/council/rooms/{room-id}` |
-| Create an invitation | `POST /v1/council/rooms/{room-id}/invites` |
-| Revoke an invitation | `DELETE /v1/council/rooms/{room-id}/invites/{invite-id}` |
-| List room members | `GET /v1/council/rooms/{room-id}/members` |
-| Remove a room member | `DELETE /v1/council/rooms/{room-id}/members/{machine-id}` |
 
 </div>
 
@@ -291,83 +268,6 @@ Held queues stay held. The same
 
 </div>
 
-## Manage rooms
-
-<div data-variant="python">
-
-```python
-state = client.get_council_rooms()
-for relay in state["relays"]:
-    print(relay["relay_url"], relay["rooms"])
-
-invite = client.post_council_room_invites(room_id, body={"expires_in_seconds": 3600, "max_uses": 1})
-print(invite["invite_url"])
-```
-
-The room methods act for this machine, not for one session. [Connect machines with a
-room](council.md#connect-machines-with-a-room) explains rooms, relays and invitations.
-
-- `post_council_rooms_register(body={"relay_url": ..., "admin_token": ...})` registers this machine
-  on a relay with the administrator token. The machine can then create rooms there.
-- `post_council_rooms_join(body={"invite_url": ...})` joins the room of an invitation.
-- `post_council_rooms(body={"relay_url": ..., "name": ...})` creates a room on a connected relay.
-- `post_council_room_invites` takes `expires_in_seconds`, from 60 to 604800, 86400 by default. It
-  also takes `max_uses`, from 1 to 100, 1 by default.
-- `post_council_rooms_disconnect(body={"relay_url": ...})` removes this machine from one relay. It
-  also deletes every room that the machine owns there.
-
-</div>
-
-<div data-variant="http">
-
-```bash
-vis_api "$VIS_GATEWAY_URL/v1/council/rooms"
-vis_api -X POST "$VIS_GATEWAY_URL/v1/council/rooms/$ROOM_ID/invites" -H 'content-type: application/json' \
-  --data '{"expires_in_seconds": 3600, "max_uses": 1}'
-```
-
-The room requests act for this machine, not for one session. The first answer has `configured` and
-`relays`, with the rooms of each relay. The invitation answer has `invite` and `invite_url`. [Connect
-machines with a room](council.md#connect-machines-with-a-room) explains rooms, relays and
-invitations.
-
-- `POST /v1/council/rooms/register` with `relay_url` and `admin_token` registers this machine on a
-  relay with the administrator token. The machine can then create rooms there.
-- `POST /v1/council/rooms/join` with `invite_url` joins the room of an invitation.
-- `POST /v1/council/rooms` with `relay_url` and `name` creates a room on a connected relay.
-- An invitation takes `expires_in_seconds`, from 60 to 604800, 86400 by default. It also takes
-  `max_uses`, from 1 to 100, 1 by default.
-- `POST /v1/council/rooms/disconnect` with `relay_url` removes this machine from one relay. It also
-  deletes every room that the machine owns there.
-
-</div>
-
-Anyone with an invitation link can join the room. [Keep invitations
-safe](council.md#keep-invitations-safe) explains how to share the link.
-
-## Use the relay protocol directly
-
-<div data-variant="python">
-
-`blockether.vis.rooms.RoomsClient` implements the relay protocol without a Vis gateway. Use it for a
-separate integration. That integration must protect its machine credential, keep its presence
-current and decide its own sharing policy.
-
-</div>
-
-<div data-variant="http">
-
-A relay does not need a Vis gateway. A separate integration can call the relay protocol directly.
-That integration must protect its machine credential, keep its presence current and decide its own
-sharing policy.
-
-</div>
-
-The [Rooms schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/rooms.json)
-defines every relay operation, authorization rule, request, response and error. It uses the [Council
-schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/council.json)
-for messages and replies.
-
 ## Handle errors
 
 <div data-variant="python">
@@ -388,10 +288,9 @@ the code.
 | 400 | `invalid-request`, `invalid-thread`, `invalid-reply` | The request, the thread or the reply target is not valid. |
 | 404 | `group-not-found`, `entry-not-found`, `session-not-found` | The group, the message or the session does not exist. |
 | 409 | `disabled`, `inactive-session`, `invalid-recipient`, `idempotency-conflict` | Council is off, the run ended, or the request conflicts with an earlier one. |
-| 503 | `rooms-error` | The relay is not available. A refused room request has the status 400 or the status of the relay. |
 
 ## See also
 
-- [Council](council.md) — groups, rooms and the calls that sessions use in chat.
+- [Council](council.md) — groups and the calls that sessions use in chat.
 - [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
 - [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.

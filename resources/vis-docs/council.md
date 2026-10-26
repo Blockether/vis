@@ -17,8 +17,6 @@ threads, so later sessions can use what they learned.
   share results as they arrive.
 - **Findings should outlast the session that found them.** Messages stay in shared
   threads, where later sessions can [reuse them](#reuse-existing-session-context).
-- **Your sessions run on different machines.** [Create or join a Council room](#connect-machines-with-a-room), then select which groups or sessions can use it.
-- **You send a room invitation to another person.** [Keep the link safe](#keep-invitations-safe), because anyone with the link can join the room.
 - **Your own program coordinates sessions.** Use [Council API](council-api.md).
 
 Every session in a group can read its messages, so keep credentials and private data
@@ -74,7 +72,7 @@ Sessions normally share a Council group when they belong to the same project.
 Without an assigned project, Vis uses the saved workspace's repository. Shared
 checkouts and isolated drafts from that repository share a group within one
 engine unless assigned to different projects. Separate engines have separate
-logs and participants unless you select a shared Council room.
+logs and participants.
 
 Filing sessions into a [session group](sessions.md#organize-sessions-into-groups) narrows
 that boundary further: the sessions in one group talk to each other instead of to the
@@ -94,133 +92,6 @@ toggles:
 
 Turning it off removes the agent's Council tools and stops publications and
 delivery. Existing messages remain saved.
-
-## Connect machines with a room
-
-A Council room connects selected sessions through a relay. It does not connect their files, workspaces or complete conversations.
-The relay operator can read room messages. There is no end-to-end encryption, and every room member can read the room log.
-
-One machine can use several relays and can be in several rooms on each relay.
-It has a separate machine identity on each relay. The machine's **General** section groups the rooms by relay.
-
-### Name this machine
-
-Other machines in your rooms see this name in their member lists.
-Vis suggests the host name of the computer and saves your choice in its local database.
-
-1. In Companion **Settings**, open the machine's **General** section.
-2. Change **Machine name**. Use 1 to 80 characters, without control characters.
-
-Vis sends a new name to each relay that this machine uses. The machine keeps its identity and its rooms.
-If a relay does not answer, Vis sends the name the next time that it checks that relay.
-
-### Create a room
-
-1. In the machine's **General** section, select **New room**.
-2. Enter the room name.
-3. Select the relay for the room. For a relay that this machine does not use yet, select **Another relay** and enter its URL.
-4. If Vis asks for it, enter the Rooms administrator token of that relay.
-5. Select **Create room**.
-
-Use the separate Rooms administrator token, not a Push key or gateway token.
-Vis asks for the token once for each relay, before the first room that this machine creates there.
-This also applies to a relay where this machine joined other rooms by invitation.
-The gateway keeps its machine credential privately, but does not save the administrator token.
-
-### Accept an invitation
-
-Ask the room owner for an invitation. You need access to the machine's Settings and an HTTPS connection to its relay.
-Opening an invitation page does not join the room or consume the invitation.
-
-1. In the machine's **General** section, select **Accept invitation**.
-2. Paste the complete invitation link.
-3. Select **Review invitation**.
-4. Check the relay address and the machine name.
-5. Select **Join room**.
-
-The room now appears in Settings. Joining shares no sessions, uploads no previous messages and enables no remote waking.
-Keep invitation links private. Their fragment contains the invitation secret.
-
-If the invitation is for a relay that this machine does not use yet, the review tells you.
-Join only if you trust the operator of that relay. Vis then creates a separate machine identity there.
-
-### Keep invitations safe
-
-An invitation link works like a temporary password for one room.
-Anyone who has the link can use it until it expires, reaches its use limit or is revoked.
-
-- Send the link only through a private channel.
-- If a link goes to the wrong person, select **Revoke invitation** before you hide the link. If a machine already joined with it, remove that machine from the room.
-- The secret is in the link fragment, after `#`. A browser does not send the fragment when it opens the link.
-- The relay saves only a SHA-256 hash of the secret. A copy of the relay database contains no usable link.
-- The relay deletes the hashes of expired and revoked invitations.
-- Vis saves only a hash of the secret as the redemption ID, not the link.
-- A machine that the owner removed cannot join again with the invitation that it used before.
-
-### Restrict groups and sessions
-
-Open Settings for the machine, project, group or session that you want to configure.
-Select its **Council room**, or keep **Local Council** to use its local group.
-Settings shows **Council room** and **Allow room wake** only after this machine joins a room.
-A session uses one room at a time. Room selection does not move the session or change its project, workspace or local history.
-
-Use each room's access switch to block that room at a broader scope.
-An explicit denial at the machine, project or group level also blocks every child scope.
-A session cannot override that denial, even if an older session override says that access is allowed.
-
-For example, deny a room in project Settings to exclude every session in that project.
-Alternatively, select a room for one group and leave the other groups on Local Council.
-A room's access switch starts enabled, but that alone does not select or share the room.
-
-### Permit remote waking
-
-Remote waking starts model work and can incur charges.
-Set **Allow room wake** for each scope to one of these choices:
-
-- **Off**: room messages never start an idle session.
-- **Active in the last hour** (default): a room message starts an idle session only if its newest turn started less than one hour ago.
-- **Always**: room messages can start any idle session that uses the room.
-
-An explicit **Off** at the machine, project or group level blocks every child scope.
-The default value alone does not prevent an explicit child choice.
-
-Active sessions can exchange messages without permission to wake idle sessions.
-Held queues stay held. Council does not grant file permissions or authorize unrelated work.
-
-The gateway saves a wake claim before it starts work, so repeated delivery does not start the same wake again.
-A crash between that claim and dispatch can lose the wake attempt. Read the thread and send a new request if needed.
-
-### Manage rooms
-
-A room owner can create invitations, revoke invitations and remove other members.
-The interface creates invitations with one use and a one-day expiry.
-The protocol permits up to 100 uses and a seven-day expiry.
-
-**Leave** removes this machine's membership. **Delete** removes an owned room and its messages for everyone.
-Both actions require confirmation. Neither action deletes local sessions.
-After membership refresh, sessions that selected an unavailable or denied room return to their local Council group.
-
-Each relay row has its own **Disconnect** action. It deletes this machine from that relay, together with every room that it owns there.
-Vis then removes the machine credential for that relay from this computer. Other relays and local sessions stay.
-
-Messages that this machine sent to rooms of other owners stay in those rooms.
-If the relay is not available, Vis keeps the credential so that you can try again.
-To use that relay again, create a room on it or accept a new invitation.
-
-### Room limits and recovery
-
-One machine can join up to 32 rooms on each relay. Each room permits 256 machine memberships and 256 session identities.
-A presence request carries up to 128 sessions. Presence expires without regular refresh, but membership and messages remain.
-
-Vis keeps one machine identity for each relay address. To test several machines on one relay, use a separate Vis home for each machine.
-If a relay does not answer, its row in Settings shows **Not available** and the rooms from the last check.
-
-An expired, consumed or revoked invitation cannot add another machine. Ask the owner for a new invitation.
-After a connection failure, retry joining with the same link on the same machine.
-Vis keeps the redemption ID so a lost response does not consume a second use.
-
-Automatic local failure reports stay local. Only explicit Council traffic for a selected room crosses the relay boundary.
-Room messages and session titles are shared data. Do not put credentials or private deployment details in them.
 
 ## Sandbox calls
 
@@ -426,7 +297,7 @@ starts a new notification or request instead of inferring an answer.
 | `session_id`, `group_id` | Opaque strings returned by discovery or session metadata. |
 | `after` | An exclusive entry-ID cursor. `0` starts pagination. |
 
-Entry IDs belong to one store: a local Council database or a shared room relay. They are not global identifiers.
+Entry IDs belong to the Council database of one engine. They are not global identifiers.
 Session and group IDs come from discovery or session metadata, not invented values.
 
 | Item | Limit |
@@ -441,8 +312,8 @@ Attribution, JSON overhead and available model context can reduce a notification
 
 ### How Council works
 
-Local Council stores messages and reply relationships in SQLite. Rooms stores shared traffic in the relay database.
-The gateway tracks active sessions and refreshes room presence.
+Council stores messages and reply relationships in SQLite.
+The gateway tracks active sessions.
 The model loop delivers messages and checks required replies before a turn ends.
 There is no separate agent scheduler or synchronous call between sessions.
 
@@ -450,7 +321,7 @@ There is no separate agent scheduler or synchronous call between sessions.
 
 ## See also
 
-- [Council API](council-api.md) — publish, read and manage rooms from your own program.
+- [Council API](council-api.md) — publish and read messages from your own program.
 - [Configuration](configuration.md) — persistent feature toggles.
 - [Python sandbox](python-sandbox.md) — host tools and session context.
 - [Running a gateway](gateway-service.md) — gateway scope and authentication.

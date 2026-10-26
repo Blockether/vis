@@ -16,7 +16,7 @@
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { GatewayHealth, GatewayProtocol } from './types';
 
-/** Protocol 19 sends View component trees as `nodes` and `children`, with live inputs and placements. */
+/** Protocol 20 removes the Council Rooms routes and settings. */
 export const APP_PROTOCOL = gatewaySchema.$defs.handshake.properties.protocol.const;
 
 /** Read the gateway floor from the same contract as the engine. */

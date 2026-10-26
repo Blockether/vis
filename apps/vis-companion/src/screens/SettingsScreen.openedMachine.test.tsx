@@ -18,9 +18,7 @@ const quiet = (input?: RequestInfo | URL) =>
       JSON.stringify(
         input && new URL(String(input), URL_A).pathname === '/v1/settings'
           ? { revision: 'quiet-1', groups: [] }
-          : input && new URL(String(input), URL_A).pathname === '/v1/council/rooms'
-            ? { configured: false, relays: [] }
-            : {},
+          : {},
       ),
       {
         status: 200,

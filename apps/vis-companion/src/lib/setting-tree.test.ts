@@ -5,17 +5,17 @@ import type { Toggle } from './types';
 
 const tree: Toggle[] = [
   {
-    id: 'council',
-    label: 'Council',
+    id: 'feature',
+    label: 'Feature',
     type: 'boolean',
     enabled: true,
     children: [
       {
-        id: 'council_room',
-        label: 'Council room',
+        id: 'feature_mode',
+        label: 'Feature mode',
         type: 'enum',
         value: 'local',
-        children: [{ id: 'council_room_a_access', label: 'Allow A', type: 'boolean', enabled: true }],
+        children: [{ id: 'feature_mode_a', label: 'Allow A', type: 'boolean', enabled: true }],
       },
     ],
   },
@@ -25,28 +25,28 @@ const tree: Toggle[] = [
 describe('setting tree', () => {
   it('lists every row at any depth in display order', () => {
     expect(flattenSettings(tree).map((row) => row.id)).toEqual([
-      'council',
-      'council_room',
-      'council_room_a_access',
+      'feature',
+      'feature_mode',
+      'feature_mode_a',
       'notifier_enabled',
     ]);
   });
 
   it('replaces a nested row and keeps the rows under it', () => {
-    const next = replaceSetting(tree, { id: 'council_room', label: 'Council room', type: 'enum', value: 'a' });
-    const room = next[0].children?.[0];
-    expect(room?.value).toBe('a');
-    expect(room?.children?.map((row) => row.id)).toEqual(['council_room_a_access']);
-    const off = replaceSetting(tree, { id: 'council', label: 'Council', type: 'boolean', enabled: false });
+    const next = replaceSetting(tree, { id: 'feature_mode', label: 'Feature mode', type: 'enum', value: 'a' });
+    const mode = next[0].children?.[0];
+    expect(mode?.value).toBe('a');
+    expect(mode?.children?.map((row) => row.id)).toEqual(['feature_mode_a']);
+    const off = replaceSetting(tree, { id: 'feature', label: 'Feature', type: 'boolean', enabled: false });
     expect(off[0].enabled).toBe(false);
     expect(off[0].children).toHaveLength(1);
     expect(off[1]).toBe(tree[1]);
   });
 
   it('keeps a match with the rows above it', () => {
-    const found = filterSettings(tree, (row) => row.id === 'council_room_a_access');
-    expect(flattenSettings(found).map((row) => row.id)).toEqual(['council', 'council_room', 'council_room_a_access']);
-    expect(flattenSettings(filterSettings(tree, (row) => row.id === 'council'))).toHaveLength(3);
+    const found = filterSettings(tree, (row) => row.id === 'feature_mode_a');
+    expect(flattenSettings(found).map((row) => row.id)).toEqual(['feature', 'feature_mode', 'feature_mode_a']);
+    expect(flattenSettings(filterSettings(tree, (row) => row.id === 'feature'))).toHaveLength(3);
     expect(filterSettings(tree, () => false)).toEqual([]);
   });
 });

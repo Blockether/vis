@@ -8,27 +8,11 @@ import {
   writeDeploymentConfig,
 } from "../scripts/prepare-deploy.mjs";
 
-const databaseId = "00000000-0000-4000-8000-000000000001";
-
-test("D1 migration guards avoid nested CASE blocks", async () => {
-  // The remote D1 migration parser rejects CASE ... END inside trigger blocks.
-  const sql = await readFile(
-    new URL("../migrations/0001_rooms.sql", import.meta.url),
-    "utf8",
-  );
-  const triggers = sql.match(/^CREATE TRIGGER[\s\S]*?^END;/gm) ?? [];
-  assert.ok(triggers.length > 0);
-  for (const trigger of triggers) assert.doesNotMatch(trigger, /\bCASE\b/i);
-});
-
-test("deployment adds private Rooms storage without changing Push configuration", async () => {
+test("deployment keeps the Push configuration and adds no storage", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vis-relay-config-"));
   try {
     const path = join(directory, "config.json");
-    await writeDeploymentConfig(path, {
-      ROOMS_DATABASE_ID: databaseId,
-      ROOMS_ADMIN_TOKEN: "not-a-var",
-    });
+    await writeDeploymentConfig(path, { RELAY_SEAL_KEY: "not-a-var" });
     const config = JSON.parse(await readFile(path, "utf8"));
     assert.equal(config.name, "vis-companion-relay");
     assert.equal(config.vars.MAX_REQUEST_BYTES, "16384");
@@ -36,11 +20,12 @@ test("deployment adds private Rooms storage without changing Push configuration"
     assert.equal("APNS_KEY_ID" in config.vars, false);
     assert.equal("APNS_TEAM_ID" in config.vars, false);
     assert.equal("APNS_TOPIC" in config.vars, false);
-    assert.equal(config.d1_databases[0].binding, "ROOMS_DB");
-    assert.equal(config.d1_databases[0].database_id, databaseId);
+    assert.equal("d1_databases" in config, false);
     assert.ok(isAbsolute(config.main));
-    assert.ok(isAbsolute(config.d1_databases[0].migrations_dir));
-    assert.equal(config.ratelimits.length, 5);
+    assert.deepEqual(
+      config.ratelimits.map((limit) => limit.name),
+      ["MINT_LIMIT", "PUSH_ADDRESS_LIMIT", "PUSH_DEVICE_LIMIT"],
+    );
     assert.equal(JSON.stringify(config).includes("not-a-var"), false);
     if (process.platform !== "win32")
       assert.equal((await stat(path)).mode & 0o777, 0o600);
@@ -52,19 +37,7 @@ test("deployment adds private Rooms storage without changing Push configuration"
 test("explicit public overrides are applied without copying other environment values", () => {
   const config = deploymentConfig(
     { main: "src/index.ts", vars: { APNS_TOPIC: "" } },
-    databaseId,
-    "vis-council-rooms",
-    { APNS_TOPIC: "com.example.app", ROOMS_ADMIN_TOKEN: "not-a-var" },
+    { APNS_TOPIC: "com.example.app", RELAY_SEAL_KEY: "not-a-var" },
   );
   assert.deepEqual(config.vars, { APNS_TOPIC: "com.example.app" });
-});
-
-test("missing or malformed database configuration stops deployment", () => {
-  for (const id of [undefined, "", "not-an-id", `${databaseId}\n`]) {
-    assert.throws(() => deploymentConfig({}, id), /database UUID/);
-  }
-  assert.throws(
-    () => deploymentConfig({}, databaseId, "../other"),
-    /NAME is invalid/,
-  );
 });

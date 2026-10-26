@@ -1,6 +1,6 @@
 # vis-companion-relay
 
-A Cloudflare Worker for Companion push notifications and shared Council rooms.
+A Cloudflare Worker for Companion push notifications.
 The publisher keeps APNs and FCM credentials in the Worker. Each gateway uses
 a delivery grant instead of receiving those credentials.
 
@@ -15,8 +15,8 @@ gateway -> POST /v1/push    Bearer <grant>   => relay authenticates and sends
 
 ## Grant storage
 
-Push has no device-token database. It uses no D1, KV, Durable Object, cron or queue.
-Rooms uses separate D1 tables and authentication. Each Push grant contains the device token, platform, environment and
+The relay has no device-token database. It uses no D1, KV, Durable Object, cron or queue.
+Each grant contains the device token, platform, environment and
 expiry, encrypted with AES-256-GCM using a Worker secret (`src/seal.ts`):
 
 ```
@@ -33,7 +33,7 @@ vg1.<base64url( iv(12) || AES-GCM({device token, platform, environment, expiry})
 
 ## No OAuth callbacks
 
-This service provides Push and Council Rooms, not OAuth callbacks. MCP and model-provider sign-in must not
+This service provides Push only, not OAuth callbacks. MCP and model-provider sign-in must not
 send authorization codes, state, PKCE verifiers or provider tokens through it.
 Callbacks return to the initiating client and go directly to its paired gateway;
 device authorization talks directly to the provider. There is no shared HTTPS
@@ -126,48 +126,6 @@ Gateways also use the publisher's relay by default; `VIS_PUSH_RELAY_URL`
 overrides that choice. A self-hosted relay needs credentials for the app build
 it serves and a matching relay URL in that build.
 
-### Enable Council Rooms
-
-Rooms requires D1 storage, separate rate limits and a separate administrator token.
-The operator can read room messages. Review Cloudflare pricing before provisioning the database.
-Rooms does not reuse Push grants or publish local session history.
-
-1. Create a D1 database with `npx wrangler d1 create vis-council-rooms`.
-2. Keep its UUID in `ROOMS_DATABASE_ID`, outside this checkout.
-3. Set `ROOMS_ADMIN_TOKEN` with `npx wrangler secret put ROOMS_ADMIN_TOKEN` through private input.
-4. Use a random, base64url token containing at least 32 random bytes.
-5. Generate the private configuration and apply migrations before deployment:
-
-```bash
-node scripts/prepare-deploy.mjs .wrangler/rooms-deploy.json
-npx wrangler d1 migrations apply ROOMS_DB --remote --config .wrangler/rooms-deploy.json
-npx wrangler deploy --config .wrangler/rooms-deploy.json
-```
-
-Do not deploy the base configuration over an enabled Rooms deployment. It has no private database binding.
-The helper preserves Push configuration and adds the `ROOMS_DB` binding.
-`ROOMS_DATABASE_NAME` defaults to `vis-council-rooms`. Migrations add only Rooms tables, indexes and triggers.
-
-In Companion Settings, register a creator machine with the relay URL and administrator token.
-Create a room, then share an invitation with another machine.
-See the [Council guide](../../resources/vis-docs/council.md#connect-machines-with-a-room) for scoped access and wake settings.
-
-`rooms.json` is the [canonical protocol](../../packages/vis-contract/resources/vis-contract/schema/rooms.json).
-Its route catalog defines authentication, requests, queries, responses and errors for all 22 operations.
-`npm run contracts` compiles standalone Worker validators and generates database limits from that contract.
-`npm test` rejects stale generated files. Rooms caps JSON bodies at 256 KiB without changing Push's 16 KiB cap.
-
-Opening `/rooms/join#invite=...` does not redeem an invitation. Explicit redemption is atomic and replay-safe.
-The database stores credential and invitation hashes, not their secrets.
-The relay deletes the hashes of expired and revoked invitations.
-
-Presence expires, while membership and messages remain until explicitly removed.
-Deleting a room removes its messages, invitations and memberships in one transaction.
-A machine can delete itself, and the administrator can delete any machine.
-That deletion also removes the rooms that the machine owns.
-Messages that it sent to other rooms keep a machine record without a credential.
-A machine can rename itself without a change to its ID or credential.
-
 `npm run dev` uses `--remote` because local workerd lacks the HTTP/2 support
 required by APNs.
 
@@ -184,13 +142,13 @@ re-register, or immediately to invalidate grants using that key.
 
 ## Continuous deployment
 
-`.github/workflows/relay.yml` runs when relay code, canonical schemas, deployment helpers or the workflow changes.
+`.github/workflows/relay.yml` runs when relay code, deployment helpers or the workflow changes.
 It also supports manual dispatch.
 
-1. **verify** also runs on PRs. It checks types, formatting, lint, generated contracts, Worker behavior and deployment helpers.
+1. **verify** also runs on PRs. It checks types, formatting, lint, Worker behavior and deployment helpers.
 2. **deploy** (main only): skips with a `::notice` unless
    `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are configured.
-   It builds the private configuration, applies Rooms migrations, then runs `wrangler deploy`. When `RELAY_HEALTHCHECK_URL` is configured, it requires an enabled
+   It builds the deployment configuration, then runs `wrangler deploy`. When `RELAY_HEALTHCHECK_URL` is configured, it requires an enabled
    production Custom Domain for this Worker, configures HTTP → HTTPS, then checks exact
    308 redirects (GET and HEAD, preserving path and query) and `/healthz` to confirm grant
    acceptance and credentials for at least one provider. Checks retry during propagation;
@@ -198,8 +156,8 @@ It also supports manual dispatch.
 
 | where | name |
 | --- | --- |
-| secret | `CLOUDFLARE_API_TOKEN` (Workers Scripts:Edit, D1:Edit and the Custom Domain zone’s Single Redirect:Edit), `CLOUDFLARE_ACCOUNT_ID` |
-| variable | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_DEFAULT_ENV`, `GRANT_TTL_DAYS`, `RELAY_HEALTHCHECK_URL`, `ROOMS_DATABASE_ID`, `ROOMS_DATABASE_NAME` |
+| secret | `CLOUDFLARE_API_TOKEN` (Workers Scripts:Edit and the Custom Domain zone’s Single Redirect:Edit), `CLOUDFLARE_ACCOUNT_ID` |
+| variable | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_DEFAULT_ENV`, `GRANT_TTL_DAYS`, `RELAY_HEALTHCHECK_URL` |
 
 Set `RELAY_HEALTHCHECK_URL` to `https://<custom-domain>/healthz`, not a `workers.dev`
 URL. [`scripts/cloudflare-https.mjs`](../../scripts/cloudflare-https.mjs) manages one
@@ -207,8 +165,8 @@ hostname-scoped edge rule before the Worker runs. It preserves unrelated rules a
 change zone-wide HTTPS settings, DNS or certificates. Local development is unaffected.
 
 `wrangler deploy` preserves existing Worker secrets. `RELAY_SEAL_KEY`,
-`APNS_KEY_P8`, `FCM_SERVICE_ACCOUNT` and `ROOMS_ADMIN_TOKEN` remain in Cloudflare, not GitHub CI.
-The private configuration preserves existing public Worker variables when the CI environment does not supply replacements.
+`APNS_KEY_P8` and `FCM_SERVICE_ACCOUNT` remain in Cloudflare, not GitHub CI.
+The deployment configuration preserves existing public Worker variables when the CI environment does not supply replacements.
 
 ## Tests
 
@@ -218,6 +176,4 @@ npm test
 ```
 
 Push tests mock provider requests and rate limiters. WebCrypto verifies ES256/RS256 signatures.
-Rooms tests run real HTTP requests against local workerd and D1, including concurrent invitation redemption and publication retries.
 The suite needs no Cloudflare account or external provider calls.
-The native Rooms suite starts two isolated Vis gateways against the same local Worker.

@@ -87,9 +87,8 @@ rows. A row has `scopes`, `scope`, `source` and `is_override`. A boolean row has
 other rows have `value`. The `revision` is a hash of the saved values of the target.
 
 A row can have `children`: the rows that belong under it, in display order. A child row has
-`parent` with the `id` of its parent row. Rows nest at any depth. For example, the Council room
-rows are children of the `council` row. When you read or write one setting, its row has no
-`children`. Keep the cached children when you replace a row.
+`parent` with the `id` of its parent row. Rows nest at any depth. When you read or write one
+setting, its row has no `children`. Keep the cached children when you replace a row.
 
 Add `context_session_id` to a read to mark the rows that a more specific scope decides for that
 session. Such a row has `overridden_by` with the deciding `scope` and its `enabled` or `value`. An

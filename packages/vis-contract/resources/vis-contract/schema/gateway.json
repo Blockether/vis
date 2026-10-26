@@ -1699,115 +1699,6 @@
     },
     {
       "audience": "sdk",
-      "path": "/v1/council/rooms",
-      "operations": {
-        "get": {
-          "request": "none",
-          "response": "json",
-          "response_schema": "rooms_gateway_status"
-        },
-        "post": {
-          "request": "json",
-          "response": "json",
-          "response_schema": "rooms_room",
-          "request_schema": "rooms_gateway_create"
-        }
-      }
-    },
-    {
-      "audience": "sdk",
-      "path": "/v1/council/rooms/register",
-      "operations": {
-        "post": {
-          "request": "json",
-          "response": "json",
-          "response_schema": "rooms_gateway_status",
-          "request_schema": "rooms_gateway_register"
-        }
-      }
-    },
-    {
-      "audience": "sdk",
-      "path": "/v1/council/rooms/disconnect",
-      "operations": {
-        "post": {
-          "request": "json",
-          "response": "json",
-          "response_schema": "rooms_gateway_status",
-          "request_schema": "rooms_gateway_disconnect"
-        }
-      }
-    },
-    {
-      "audience": "sdk",
-      "path": "/v1/council/rooms/join",
-      "operations": {
-        "post": {
-          "request": "json",
-          "response": "json",
-          "response_schema": "rooms_joined",
-          "request_schema": "rooms_gateway_join"
-        }
-      }
-    },
-    {
-      "audience": "sdk",
-      "path": "/v1/council/rooms/:room-id",
-      "operations": {
-        "delete": {
-          "request": "none",
-          "response": "json",
-          "response_schema": "rooms_ok"
-        }
-      }
-    },
-    {
-      "audience": "sdk",
-      "path": "/v1/council/rooms/:room-id/invites",
-      "operations": {
-        "post": {
-          "request": "json",
-          "response": "json",
-          "response_schema": "rooms_invite_created",
-          "request_schema": "rooms_gateway_invite"
-        }
-      }
-    },
-    {
-      "audience": "sdk",
-      "path": "/v1/council/rooms/:room-id/invites/:invite-id",
-      "operations": {
-        "delete": {
-          "request": "none",
-          "response": "json",
-          "response_schema": "rooms_ok"
-        }
-      }
-    },
-    {
-      "audience": "sdk",
-      "path": "/v1/council/rooms/:room-id/members",
-      "operations": {
-        "get": {
-          "request": "none",
-          "response": "json",
-          "response_schema": "rooms_membership_list"
-        }
-      }
-    },
-    {
-      "audience": "sdk",
-      "path": "/v1/council/rooms/:room-id/members/:machine-id",
-      "operations": {
-        "delete": {
-          "request": "none",
-          "response": "json",
-          "response_schema": "rooms_ok"
-        }
-      }
-    },
-    {
-      "audience": "sdk",
       "path": "/v1/automations",
       "operations": {
         "get": {
@@ -2423,15 +2314,15 @@
       "properties": {
         "protocol": {
           "type": "integer",
-          "const": 19
+          "const": 20
         },
         "min_client": {
           "type": "integer",
-          "const": 19
+          "const": 20
         },
         "min_gateway": {
           "type": "integer",
-          "const": 19
+          "const": 20
         },
         "version": {
           "type": [
@@ -3393,39 +3284,6 @@
           }
         }
       }
-    },
-    "rooms_gateway_status": {
-      "$ref": "rooms.json#/$defs/gateway_status"
-    },
-    "rooms_gateway_create": {
-      "$ref": "rooms.json#/$defs/gateway_create"
-    },
-    "rooms_room": {
-      "$ref": "rooms.json#/$defs/room"
-    },
-    "rooms_gateway_register": {
-      "$ref": "rooms.json#/$defs/gateway_register"
-    },
-    "rooms_gateway_disconnect": {
-      "$ref": "rooms.json#/$defs/gateway_disconnect"
-    },
-    "rooms_gateway_join": {
-      "$ref": "rooms.json#/$defs/gateway_join"
-    },
-    "rooms_joined": {
-      "$ref": "rooms.json#/$defs/joined"
-    },
-    "rooms_ok": {
-      "$ref": "rooms.json#/$defs/ok"
-    },
-    "rooms_gateway_invite": {
-      "$ref": "rooms.json#/$defs/gateway_invite"
-    },
-    "rooms_invite_created": {
-      "$ref": "rooms.json#/$defs/invite_created"
-    },
-    "rooms_membership_list": {
-      "$ref": "rooms.json#/$defs/membership_list"
     },
     "automations_list": {
       "$ref": "automations.json#/$defs/automation_list"

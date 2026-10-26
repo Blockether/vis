@@ -19,7 +19,6 @@
  * because a fixture may paint a backdrop the app itself never would.
  */
 
-import type { RoomsStatus } from '../lib/rooms';
 import type { Automation, AutomationRun } from '../lib/automations';
 import type { AutomationsClient } from '../screens/AutomationsScreen';
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
@@ -2725,17 +2724,6 @@ export function storySettingsFetch(populated = false): typeof fetch {
     source: 'default',
     is_override: false,
   };
-  const machineName = {
-    id: 'council_machine_name',
-    label: 'Machine name',
-    description: 'Other machines in your rooms see this name.',
-    type: 'string',
-    value: 'Studio-Mac',
-    max_length: 80,
-    editor: 'text',
-    source: 'default',
-    is_override: false,
-  };
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(href);
@@ -2744,10 +2732,9 @@ export function storySettingsFetch(populated = false): typeof fetch {
     }
     let body: unknown = {};
     if (url.pathname === '/v1/router') body = { providers: populated ? STORY_PROVIDERS : [] };
-    if (url.pathname === '/v1/council/rooms') body = { configured: false, relays: [] } satisfies RoomsStatus;
     if (url.pathname === '/v1/settings' && init?.method === 'POST') {
       const request = JSON.parse(String(init.body));
-      const text = [agentName, machineName].find((item) => item.id === request.id);
+      const text = [agentName].find((item) => item.id === request.id);
       if (text) {
         text.value = String(request.value);
         body = text;
@@ -2764,7 +2751,7 @@ export function storySettingsFetch(populated = false): typeof fetch {
           {
             id: 'general',
             title: 'General',
-            toggles: [agentName, { ...council[0], children: [{ ...machineName, parent: 'council' }] }, ...features],
+            toggles: [agentName, ...council, ...features],
           },
         ],
       };

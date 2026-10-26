@@ -12,7 +12,6 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.council.rooms :as rooms]
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
@@ -43,20 +42,12 @@
            :own-value (when-not secret? own-value)
            :inherited-value (when-not secret? inherited-value)
            :inherited-source inherited-source
-           :applies
-           (if (or (#{:skills :mcp :engines} group) (rooms/setting? id)) "next_call" "next_turn")}
+           :applies (if (#{:skills :mcp :engines} group) "next_call" "next_turn")}
     parent
     (assoc :parent parent)
 
     (= "restrict" inheritance)
     (assoc :inheritance inheritance)
-
-    (= "council_room" id)
-    (assoc :choice-labels
-      (into {"local" "Local Council"} (map (juxt :room_id :name)) (rooms/known-rooms)))
-
-    (= "council_room_wake" id)
-    (assoc :choice-labels {"off" "Off" "recent" "Active in the last hour" "always" "Always"})
 
     decided-in
     (assoc :decided-in decided-in)
@@ -208,41 +199,6 @@
            (if (= :config/invalid-agent-name (:type (ex-data e)))
              (http/error-response 400 :invalid-setting-value (ex-message e) :id "agent_name")
              (throw e))))))
-
-(defn- machine-name-setting
-  "The name that Council Rooms shows for this machine. One gateway is one machine."
-  []
-  (let [value
-        (rooms/machine-name (lp/db-info))
-
-        default
-        (rooms/default-machine-name)]
-
-    {:id rooms/machine-name-id
-     :label "Machine name"
-     :description "Other machines in your rooms see this name."
-     :type "string"
-     :value value
-     :max-length rooms/machine-name-length
-     :editor "text"
-     :own-value value
-     :is-override (not= value default)
-     :inherited-value default
-     :inherited-source "default"
-     :applies "immediate"
-     :scopes ["global"]
-     :parent "council"}))
-
-(defn- set-machine-name-setting
-  "Save the machine name. The inherit action gives the host name again."
-  [action value]
-  (if-not (#{"value" "inherit"} action)
-    (http/error-response 400
-                         :invalid-setting-action
-                         "Machine name takes the value or inherit action.")
-    (do (rooms/set-machine-name! (lp/db-info)
-                                 (if (= "inherit" action) (rooms/default-machine-name) value))
-        (http/json-response (machine-name-setting)))))
 
 (defn- extension-rows
   "Row id -> `[extension position]` for each extension loaded where `target` runs.
@@ -396,10 +352,7 @@
                      (owners (:id %))
 
                      true)
-                   ;; Room rows stay hidden in every scope while this machine has no room.
-                   (if (rooms/setting? (:id %))
-                     (toggles/toggle-visible? %)
-                     (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %))))
+                   (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
                    (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
                 (map (fn [row]
                        (cond-> row
@@ -448,12 +401,10 @@
                    section-rows
                    (fn [id groups]
                      (case id
-                       ;; The agent name stands first. The machine name follows the Council
-                       ;; switches, above the room actions. Experimental switches stand last.
+                       ;; The agent name stands first. Experimental switches stand last.
                        :general
                        (concat (when-not local? [(assoc (agent-name-setting) :scopes ["global"])])
                                (rows :council)
-                               (when-not local? [(machine-name-setting)])
                                (rows :session)
                                (rows :experimental))
 
@@ -589,8 +540,6 @@
                                                                          (access-settings target))))
           (and (= id "agent_name") (= "global" (:scope target))) (http/json-response
                                                                    (agent-name-setting))
-          (and (= id rooms/machine-name-id) (= "global" (:scope target))) (http/json-response
-                                                                            (machine-name-setting))
           (and spec
                (some #{(:scope target)} (:scopes spec))
                (or (not (#{:skills :mcp} (:group spec))) (resources id)))
@@ -626,10 +575,6 @@
               (if (= "global" (:scope target))
                 (set-agent-name-setting action {:raw (get body "value")})
                 (http/error-response 400 :invalid-setting-scope "Agent name is global"))
-              (= id rooms/machine-name-id)
-              (if (= "global" (:scope target))
-                (set-machine-name-setting action (get body "value"))
-                (http/error-response 400 :invalid-setting-scope "Machine name is global"))
               :else
               (http/json-response
                 (toggle-json

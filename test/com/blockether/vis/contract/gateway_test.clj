@@ -38,11 +38,11 @@
     (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
       (expect (< 0 touch-ms keepalive-ms ttl-ms))
       (expect (< 0 keepalive-timeout-ms keepalive-ms)))
-    (expect (= 170 (count contract/route-table)))
-    (expect (= 207 (count (contract/route-methods))))
-    (expect (= {:none 123 :json 78 :binary 6}
+    (expect (= 161 (count contract/route-table)))
+    (expect (= 197 (count (contract/route-methods))))
+    (expect (= {:none 118 :json 73 :binary 6}
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= {:json 188 :resource 2 :sse 5 :empty 3 :binary 6 :negotiated 1 :html 1 :markdown 1}
+    (expect (= {:json 178 :resource 2 :sse 5 :empty 3 :binary 6 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= 39 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
@@ -110,9 +110,9 @@
       (expect (nil? (contract/match-route "/v1/sessions/s1/unknown")))
       (expect (nil? (contract/match-route nil))))
   (it "owns protocol compatibility without a runtime mirror"
-      (expect (= 19 contract/protocol-version))
-      (expect (= 19 contract/minimum-client-protocol))
-      (expect (= 19 contract/minimum-gateway-protocol))
+      (expect (= 20 contract/protocol-version))
+      (expect (= 20 contract/minimum-client-protocol))
+      (expect (= 20 contract/minimum-gateway-protocol))
       (expect (every? (set (keys (get-in (document/schema-document "gateway")
                                          ["$defs" "http_headers" "properties"])))
                       ["x-vis-protocol" "x-vis-min-gateway-protocol" "x-vis-client"
@@ -130,7 +130,7 @@
                                              :client-min-gateway 1})))))
   (it "builds handshake and error response envelopes"
       (expect (=
-                {:protocol 19 :min-client 19 :min-gateway 19 :version "1.2.3" :build "abc123def456"}
+                {:protocol 20 :min-client 20 :min-gateway 20 :version "1.2.3" :build "abc123def456"}
                 (contract/handshake {:version "1.2.3" :build "abc123def456"})))
       (expect (= {"error" {"type" "invalid-request" "message" "replacement" "session_id" "s1"}}
                  (contract/error-body :mcp/invalid-request

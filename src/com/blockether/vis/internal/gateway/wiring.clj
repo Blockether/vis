@@ -11,7 +11,6 @@
    wiring live."
   (:require [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.council.core :as council]
-            [com.blockether.vis.internal.council.rooms :as rooms]
             [com.blockether.vis.internal.automation.runner :as automation-runner]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.push :as push]
@@ -32,9 +31,6 @@
     ;; through the gateway's turn submission.
     (council/install-runtime! #'state/council-runtime)
     (council/install-waker! #'state/council-wake-eligible? #'state/council-wake!)
-    (rooms/install-runtime! #'state/council-runtime
-                            #'state/council-wake-eligible?
-                            #'state/council-wake!)
     (agents/install-runtime! state/agent-runtime)
     ;; Automations start turns through the gateway and alert through Push. Their
     ;; own alert replaces the ordinary turn alert.

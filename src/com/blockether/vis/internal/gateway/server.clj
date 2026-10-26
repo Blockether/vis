@@ -34,11 +34,9 @@
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
     [com.blockether.vis.internal.gateway.server.council :as council-api]
-    [com.blockether.vis.internal.gateway.server.rooms :as rooms-api]
     [com.blockether.vis.internal.gateway.server.automations :as automations-api]
     [com.blockether.vis.internal.gateway.server.evals :as evals-api]
     [com.blockether.vis.internal.automation.runner :as automation-runner]
-    [com.blockether.vis.internal.council.rooms :as rooms]
     [com.blockether.vis.internal.gateway.server.decisions :as decisions-api]
     [com.blockether.vis.internal.gateway.server.devices :as devices-api]
     [com.blockether.vis.internal.gateway.server.fs :as fs-api]
@@ -1601,8 +1599,8 @@
 (def ^:private route-handlers
   "Every handler map the built-in router binds. Each operation in
    [[gateway-contract/route-table]] belongs to exactly one of them."
-  [server-handlers council-api/handlers rooms-api/handlers automations-api/handlers
-   evals-api/handlers decisions-api/handlers devices-api/handlers fs-api/handlers mcp-api/handlers
+  [server-handlers council-api/handlers automations-api/handlers evals-api/handlers
+   decisions-api/handlers devices-api/handlers fs-api/handlers mcp-api/handlers
    projects-api/handlers providers-api/handlers sessions-api/handlers settings-api/handlers
    speech-api/handlers transcripts-api/handlers turns-api/handlers views-api/handlers web/handlers])
 
@@ -2172,9 +2170,7 @@
      (try (discovery/register-self! db {:port port :host host :secret token})
           (catch Throwable t
             (tel/log! :warn ["gateway: registry self-registration failed" (ex-message t)])))
-     (swap! instance/server-state assoc
-       :stop-rooms! (rooms/start! db)
-       :stop-automations! (automation-runner/start! db))
+     (swap! instance/server-state assoc :stop-automations! (automation-runner/start! db))
      ;; Parked and queued turns of a stopped gateway continue here, after the server is up.
      (try (let [{:keys [resumed queued sessions]} (state/restore-pending-turns!)]
             (when (pos? (+ (long resumed) (long queued)))
@@ -2214,9 +2210,8 @@
 (defn stop!
   "Stop the gateway server if running. Idempotent."
   []
-  (when-let [{:keys [^Server server db stop-rooms! stop-automations!]} @instance/server-state]
+  (when-let [{:keys [^Server server db stop-automations!]} @instance/server-state]
     (when stop-automations! (stop-automations!))
-    (when stop-rooms! (stop-rooms!))
     ;; Release the listening socket FIRST so a successor daemon racing this
     ;; close-then-reopen handoff can bind the port immediately. The slow reap
     ;; below (killing every session's background `shell` children + REPLs) can eat

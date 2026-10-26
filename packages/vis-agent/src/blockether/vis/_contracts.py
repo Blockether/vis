@@ -21,7 +21,6 @@ _SCHEMA_NAMES = (
     "evals",
     "gateway",
     "provider",
-    "rooms",
     "symbol",
     "toggle",
     "view",

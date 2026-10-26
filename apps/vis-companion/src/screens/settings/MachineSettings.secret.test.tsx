@@ -25,7 +25,6 @@ const saved: Toggle = { ...unset, is_set: true, source: 'global', is_override: t
 let row: Toggle = unset;
 beforeEach(() => {
   row = unset;
-  vi.spyOn(GatewayClient.prototype, 'rooms').mockResolvedValue({ configured: false, relays: [] });
   vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
   vi.spyOn(GatewayClient.prototype, 'settings').mockImplementation(async () => ({
     revision: 'secret-1',

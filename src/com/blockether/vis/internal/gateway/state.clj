@@ -23,7 +23,6 @@
     [com.blockether.vis.internal.attachment.core :as attachments]
     [com.blockether.vis.internal.session.cancellation :as cancellation]
     [com.blockether.vis.internal.council.core :as council]
-    [com.blockether.vis.internal.council.rooms :as rooms]
     [com.blockether.vis.internal.content :as content]
     [com.blockether.vis.internal.channel.form :as form]
     [com.blockether.vis.internal.format :as fmt]
@@ -2202,25 +2201,11 @@
    :assistant-prose {:type "content.block.delta" :payload prose-delta-payload}
    :iteration-final {:type "iteration.completed" :payload iteration-final-payload}
    :iteration-error {:type "iteration.error" :payload iteration-error-payload}
-   :provider-retry-reset {:type "provider.retry" :payload provider-retry-payload}})
+   :provider-retry-reset {:
 
-(defn- chunk->event
-  "Translate one phased iteration chunk (progress.clj contract) into a
-   `[type store? payload]` wire event triple. Model text phases
-   (reasoning/content/prose) stream LIVE - the caller coalesces them to sentence
-   granularity - as replayable `content.block.delta` frames; the iteration
-   boundary still ships the complete text on `iteration.completed`, which is what
-   persists."
-  [{:keys [phase iteration] :as chunk}]
-  ;; Every streaming chunk carries its iteration POSITION under `:iteration`.
-  ;; It MUST ride the wire event, or `make-progress-tracker` silently DROPS the
-  ;; chunk (it skips chunks with no iteration) — which is how `block.started` /
-  ;; `block.output` once lost their forms.
-  (or (progress-chunk->event chunk)
-      (form-activity-chunk->event chunk)
-      (let [{:keys [type payload]} (get chunk-events
-                                        phase
-                                        {:type (str unknown-chunk-type-prefix (name phase))
+…[1056 chars omitted]…
+
+x (name phase))
                                          :payload unknown-chunk-payload})]
         ;; Block deltas are replayable: reconnect applies the same ordered event
         ;; sequence instead of reconstructing text from renderer state.
@@ -5265,11 +5250,10 @@
       (let [[kind v paused] @decision]
         (case kind
           :council-active
-          (do (when-not (:remote? council-ping)
-                (persistance/db-council-bind-wake! (:db council-ping)
-                                                   (:entry-id council-ping)
-                                                   (str sid)
-                                                   v))
+          (do (persistance/db-council-bind-wake! (:db council-ping)
+                                                 (:entry-id council-ping)
+                                                 (str sid)
+                                                 v)
               {:council-active? true})
 
           :council-unavailable
@@ -5301,7 +5285,7 @@
 
           :accepted
           (let [turn (get-turn sid tid)]
-            (when (and council-ping (not (:remote? council-ping)))
+            (when council-ping
               (try (persistance/db-council-bind-wake! (:db council-ping)
                                                       (:entry-id council-ping)
                                                       (str sid)
@@ -5350,7 +5334,6 @@
   (when-not (and (council/enabled?)
                  (council-wake-eligible? db sid)
                  (= (:group_id entry) (council/default-group db sid))
-                 (or (nil? (rooms/selected-room db sid)) (rooms/wake-allowed? db sid))
                  (agents/wake-allowed? db (:author_session_id entry) sid))
     (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
   ;; A ping to a finished subagent is a follow-up task, the same step as council.resume.
@@ -5375,12 +5358,7 @@
                                ")."))))
              :display-request (:content entry)
              :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
-             :idempotency-key (when (rooms/selected-room db sid)
-                                (str "room:" (:group_id entry) ":" (:entry_id entry)))
-             :council-ping {:db db
-                            :entry-id (:entry_id entry)
-                            :entry entry
-                            :remote? (boolean (rooms/selected-room db sid))}})
+             :council-ping {:db db :entry-id (:entry_id entry) :entry entry}})
           (catch Throwable t (restore!) (throw t)))]
 
     (when (:error result)

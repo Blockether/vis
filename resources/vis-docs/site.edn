@@ -120,7 +120,7 @@
        :page "drafts-api"
        :title "Drafts API"}
       {:blurb
-       "Publish and read Council messages, wake idle sessions and manage rooms from Python or with HTTP requests."
+       "Publish and read Council messages and wake idle sessions from Python or with HTTP requests."
        :label "Council"
        :page "council-api"
        :title "Council API"}

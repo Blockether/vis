@@ -52,7 +52,6 @@ function extensionsBand(level: number) {
 }
 
 beforeEach(() => {
-  vi.spyOn(GatewayClient.prototype, 'rooms').mockResolvedValue({ configured: false, relays: [] });
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } })),

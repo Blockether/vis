@@ -13,7 +13,6 @@ import {
 } from './activity';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import { unreadTurnCount } from './unread';
-import type { CouncilRoom, RoomInvitation, RoomMember, RoomsStatus } from './rooms';
 import type { PushGateway } from './relay';
 import {
   ATTACHMENT_MEMORY_BUDGET,
@@ -2590,46 +2589,6 @@ export class GatewayClient {
         writeSnapshot(this.settingsKey('setting', target, setting.id), setting);
       }
     }
-  }
-
-  rooms(signal?: AbortSignal): Promise<RoomsStatus> {
-    return this.request('GET', '/v1/council/rooms', undefined, signal);
-  }
-
-  disconnectRooms(relay_url: string): Promise<RoomsStatus> {
-    return this.request('POST', '/v1/council/rooms/disconnect', { relay_url });
-  }
-
-  joinRoom(invite_url: string): Promise<unknown> {
-    return this.request('POST', '/v1/council/rooms/join', { invite_url });
-  }
-
-  registerRooms(relay_url: string, admin_token: string): Promise<RoomsStatus> {
-    return this.request('POST', '/v1/council/rooms/register', { relay_url, admin_token });
-  }
-
-  createRoom(relay_url: string, name: string): Promise<CouncilRoom> {
-    return this.request('POST', '/v1/council/rooms', { relay_url, name });
-  }
-
-  inviteToRoom(roomId: string): Promise<RoomInvitation> {
-    return this.request('POST', `/v1/council/rooms/${encodeURIComponent(roomId)}/invites`, {});
-  }
-
-  revokeRoomInvite(roomId: string, inviteId: string): Promise<unknown> {
-    return this.request('DELETE', `/v1/council/rooms/${encodeURIComponent(roomId)}/invites/${encodeURIComponent(inviteId)}`);
-  }
-
-  roomMembers(roomId: string): Promise<RoomMember[]> {
-    return this.request('GET', `/v1/council/rooms/${encodeURIComponent(roomId)}/members`);
-  }
-
-  removeRoomMember(roomId: string, machineId: string): Promise<unknown> {
-    return this.request('DELETE', `/v1/council/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(machineId)}`);
-  }
-
-  deleteRoom(roomId: string): Promise<unknown> {
-    return this.request('DELETE', `/v1/council/rooms/${encodeURIComponent(roomId)}`);
   }
 
   // ── Automations: prompts that run on a schedule or a webhook ────

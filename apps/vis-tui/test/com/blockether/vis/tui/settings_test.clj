@@ -1239,12 +1239,12 @@
                                 "label" "Council"
                                 "type" "boolean"
                                 "enabled" true
-                                "children" [{"id" "council_room"
-                                             "label" "Council room"
+                                "children" [{"id" "council_scope"
+                                             "label" "Council scope"
                                              "type" "enum"
                                              "value" "local"
                                              "choices" ["local"]
-                                             "children" [{"id" "council_room_a_access"
+                                             "children" [{"id" "council_scope_a"
                                                           "label" "Allow A"
                                                           "type" "boolean"
                                                           "enabled" true}]}]}
@@ -1252,21 +1252,21 @@
                                 "label" "Desktop alerts"
                                 "type" "boolean"
                                 "enabled" false}]}])]
-        (expect (= [[nil nil] ["council" nil] ["council_room" 1] ["council_room_a_access" 2]
+        (expect (= [[nil nil] ["council" nil] ["council_scope" 1] ["council_scope_a" 2]
                     ["notifier_enabled" nil]]
                    (mapv (juxt :toggle-id :depth) rows)))))
   (it "updates a nested row and keeps the rows under it"
       (let [rows [{"id" "council"
                    "enabled" true
-                   "children" [{"id" "council_room"
+                   "children" [{"id" "council_scope"
                                 "value" "local"
-                                "children" [{"id" "council_room_a_access" "enabled" true}]}]}]]
+                                "children" [{"id" "council_scope_a" "enabled" true}]}]}]]
         (expect (= [{"id" "council"
                      "enabled" true
-                     "children" [{"id" "council_room"
-                                  "value" "room-a"
-                                  "children" [{"id" "council_room_a_access" "enabled" true}]}]}]
-                   (#'dlg/merge-setting-row rows {"id" "council_room" "value" "room-a"})))
+                     "children" [{"id" "council_scope"
+                                  "value" "scope-a"
+                                  "children" [{"id" "council_scope_a" "enabled" true}]}]}]
+                   (#'dlg/merge-setting-row rows {"id" "council_scope" "value" "scope-a"})))
         (expect (= false
                    (get-in (#'dlg/merge-setting-row rows {"id" "council" "enabled" false})
                            [0 "enabled"])))

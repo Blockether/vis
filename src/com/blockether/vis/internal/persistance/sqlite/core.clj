@@ -474,10 +474,17 @@
   (jdbc/execute! ds ["DROP TABLE IF EXISTS improve_record"])
   (jdbc/execute! ds ["DROP TABLE IF EXISTS improve"]))
 
+(defn- drop-council-machine-table!
+  "Drop the `council_machine` table of older stores. It held the machine name of the removed
+   Council Rooms."
+  [^DataSource ds]
+  (jdbc/execute! ds ["DROP TABLE IF EXISTS council_machine"]))
+
 (def ^:private store-rewrites
   "One-time data rewrites of older stores, in order. `PRAGMA user_version` counts the
    rewrites that a store has already done. Append new rewrites; never reorder them."
-  [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table! drop-improve-tables!])
+  [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table! drop-improve-tables!
+   drop-council-machine-table!])
 
 (defn- rewrite-older-store!
   "Run each store rewrite that this store has not done yet, and record each one.
@@ -7330,23 +7337,6 @@
                                  :set {:state "unavailable"}
                                  :where [:and [:= :recipient_sid sid] [:= :entry_id id]
                                          [:= :state "pending"]]}))))
-
-(defn db-council-machine-name
-  [db]
-  (when (ds db)
-    (:name (query-one! db {:select [:name] :from [:council_machine] :where [:= :id 1]}))))
-
-(defn db-council-set-machine-name!
-  [db name]
-  (when (ds db)
-    (sqlite-write-tx! db
-                      (fn [tx]
-                        (execute! tx
-                                  {:insert-into :council_machine
-                                   :values [{:id 1 :name name :updated_at (now-ms)}]
-                                   :on-conflict [:id]
-                                   :do-update-set [:name :updated_at]}))))
-  name)
 
 (defn- activity-record
   [aid row]

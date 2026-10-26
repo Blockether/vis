@@ -322,7 +322,7 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 - [Context management API](context-management-api.md) — context budget, usage and cache health from Python or HTTP.
 - [Project instructions API](project-instructions-api.md) — prompt templates, skills and goals from Python or HTTP.
 - [Drafts API](drafts-api.md) — draft settings and draft state from Python or HTTP.
-- [Council API](council-api.md) — Council messages, wakes and rooms from Python or HTTP.
+- [Council API](council-api.md) — Council messages and wakes from Python or HTTP.
 - [Automations API](automations-api.md) — automations, runs, secrets and webhooks from Python or HTTP.
 - [Evaluations API](evals-api.md) — benchmark scores, failure causes and comparisons from Python or HTTP.
 - [Speech API](speech-api.md) — speech, transcription and your own voices from Python or HTTP.

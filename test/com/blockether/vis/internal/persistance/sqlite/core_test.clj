@@ -1405,7 +1405,7 @@
                        ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
         (jdbc/execute! (:datasource s1)
                        ["ALTER TABLE session_state DROP COLUMN prompt_cache_state"])
-        (doseq [table ["council_machine" "council_ping" "council_entry"]]
+        (doseq [table ["council_ping" "council_entry"]]
           (jdbc/execute! (:datasource s1) [(str "DROP TABLE " table)]))
         (doseq [column ["council_input" "council_publications" "user_input"]]
           (jdbc/execute! (:datasource s1)
@@ -1433,7 +1433,6 @@
                             ["council_input" "council_publications" "user_input"]))
             (expect (contains? (table-columns s2 "council_entry") "thread_id"))
             (expect (contains? (table-columns s2 "council_ping") "activation_id"))
-            (expect (contains? (table-columns s2 "council_machine") "name"))
             (expect
               (=
                 3
@@ -1621,7 +1620,7 @@
         (expect (= 0 (user-version s)))
         (rewrite-older-store! (:datasource s))
         (let [[text] (activity-search-texts s)]
-          (expect (= 4 (user-version s)))
+          (expect (= 5 (user-version s)))
           (expect (not= old-text text))
           (expect (str/includes? text "Disk quota reached"))
           (expect (<= (count text) 4096))
@@ -1731,7 +1730,7 @@
                      ["UPDATE session_turn_iteration SET tool_calls = ?" (nippy/freeze older)])
       (jdbc/execute! (:datasource s) ["PRAGMA user_version = 1"])
       (rewrite-older-store! (:datasource s))
-      (expect (= 4 (user-version s)))
+      (expect (= 5 (user-version s)))
       (expect (= [(dissoc snapshot :rows) orphan grouped] (stored-activities s)))
       (expect (= [snapshot orphan grouped]
                  (mapv :activity
@@ -4103,7 +4102,7 @@
         (jdbc/execute! ds ["CREATE INDEX idx_log_created ON log(created_at)"])
         (jdbc/execute! ds ["PRAGMA user_version = 2"])
         (rewrite-older-store! ds)
-        (expect (= 4 (user-version s)))
+        (expect (= 5 (user-version s)))
         (expect (= [] (log-schema-names s))))))
 
 (defn- improve-schema-names
@@ -4132,8 +4131,35 @@
                                         " entry_id INTEGER REFERENCES improve(entry_id))")])
                    (jdbc/execute! ds ["PRAGMA user_version = 3"])
                    (rewrite-older-store! ds)
-                   (expect (= 4 (user-version s)))
+                   (expect (= 5 (user-version s)))
                    (expect (= [] (improve-schema-names s))))))
+
+(defdescribe council-machine-table-drop-test
+             (it "creates no council_machine table in a new store"
+                 (expect (= []
+                            (raw-query (h/store)
+                                       {:select [:name]
+                                        :from :sqlite_master
+                                        :where [:= :tbl_name "council_machine"]}))))
+             (it "drops the council_machine table of the removed Council Rooms"
+                 (let [s
+                       (h/store)
+
+                       ds
+                       (:datasource s)]
+
+                   (jdbc/execute! ds
+                                  [(str "CREATE TABLE council_machine (id INTEGER PRIMARY KEY,"
+                                        " name TEXT NOT NULL, updated_at INTEGER NOT NULL)")])
+                   (jdbc/execute! ds ["INSERT INTO council_machine VALUES (1, 'desk', 0)"])
+                   (jdbc/execute! ds ["PRAGMA user_version = 4"])
+                   (rewrite-older-store! ds)
+                   (expect (= 5 (user-version s)))
+                   (expect (= []
+                              (raw-query s
+                                         {:select [:name]
+                                          :from :sqlite_master
+                                          :where [:= :tbl_name "council_machine"]}))))))
 
 ;; ─── projects (cross-channel) + movable project sessions + ownership (V6/V7) ───
 

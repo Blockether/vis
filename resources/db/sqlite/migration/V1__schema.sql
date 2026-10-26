@@ -978,13 +978,6 @@ CREATE TABLE council_ping (
 
 CREATE INDEX idx_council_ping_entry ON council_ping(entry_id, recipient_sid);
 
--- One row: the name that Council Rooms shows for this machine.
-CREATE TABLE council_machine (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
-  updated_at INTEGER NOT NULL
-);
-
 -- Activity keeps admitted invocation details independently of transcript page budgets.
 CREATE TABLE activity_history (
   id TEXT PRIMARY KEY NOT NULL,
