@@ -96,6 +96,9 @@
       (let [text (agents/prompt {})]
         (doseq [rule ["When in doubt, do the work yourself." "Do the critical-path step yourself"
                       "Do shared work yourself before you split" "usually two to four in total"
+                      ;; In CTB, a leader split one WAL design between itself and a child. The
+                      ;; parts broke a shared invariant, and a hidden live-snapshot check failed.
+                      "Give one coupled design one owner."
                       "give the child the code, not your conclusion" "Do not do their work again."]]
           (expect (str/includes? text rule) rule))
         (expect (not (str/includes? text "Verify answers before you use them"))

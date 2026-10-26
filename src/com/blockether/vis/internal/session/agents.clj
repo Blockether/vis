@@ -1684,6 +1684,7 @@
 - Use subagents only when the user asks or the work has two or more large independent parts. When in doubt, do the work yourself.
 - First make a short plan. Do the critical-path step yourself: the step that your next action waits for.
 - Do shared work yourself before you split, for example a file that every part uses or changes.
+- Give one coupled design one owner. Never split modules that share an invariant, a protocol or a data format between children, or between a child and yourself.
 - Do small tasks, single-file edits, one search or one check yourself. A child costs more time than a few tool calls.
 - Give each large independent part one child, usually two to four in total. Do not split one small task into many children.
 - For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.
