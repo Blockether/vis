@@ -3068,6 +3068,8 @@ export function SessionScreen({
     }, TURN_LIVENESS_PROBE_INTERVAL_MS);
 
     const unsubscribeConnection = subscriptions.subscribeConnection(setConnected);
+    // A bubble seeded from the cache needs every frame after its cursor. A hub built
+    // after it, for example after a machine switch, resumes at a newer device cursor.
     const unsubscribeEvents = subscriptions.subscribeSession(sid, (event) => {
       if (event.type === 'session.deleted') {
         // Do not persist the outgoing composer or flush queued frames after deletion.
@@ -3108,7 +3110,7 @@ export function SessionScreen({
       // holding it for a throttle window paints the previous answer twice.
       const delay = forceFlush ? 0 : RUNNING_TURN_BODY_THROTTLE_MS;
       timerId = window.setTimeout(flushEvents, delay);
-    });
+    }, { from: lastRunningTurnSeqRef.current });
 
     return () => {
       disposed = true;

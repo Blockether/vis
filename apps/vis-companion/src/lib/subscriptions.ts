@@ -68,6 +68,18 @@ export class SessionSubscriptionHub {
   // the frame named none). Absence means "unknown" (e.g. the hub attached mid-turn),
   // which is treated as in-flight.
   private readonly ended = new Map<string, string>();
+  // The cursor after which this hub received every frame of a session: the lowest
+  // `subscription.ready` echo. A hub built later than a cached running-turn bubble
+  // resumes at the device's newer cursor, so the frames between them never arrive.
+  private readonly coveredFrom = new Map<string, number>();
+  // The oldest cached bubble cursor a screen asked for before the first echo came.
+  private readonly wantedFrom = new Map<string, number>();
+  // Sessions resumed below their delivered frames, until the echo of that resume.
+  private readonly replaying = new Set<string>();
+  // The newest frame given to each session's listeners. A replay below it goes only
+  // to the listeners that asked for those frames.
+  private readonly delivered = new Map<string, number>();
+  private readonly listenerFrom = new WeakMap<SessionListener, number>();
   private stopStream: (() => void) | null = null;
   private connected = false;
   private disposed = false;
@@ -119,6 +131,7 @@ export class SessionSubscriptionHub {
       this.cursors.delete(sid);
       this.buffers.delete(sid);
       this.ended.delete(sid);
+      this.forgetCoverage(sid);
       changed = true;
     }
     if (changed) this.restart({ reason: 'watch_changed' });
@@ -151,10 +164,15 @@ export class SessionSubscriptionHub {
     return this.watched;
   }
 
+  /**
+   * Deliver one session's frames to `listener`, with the buffered running turn first.
+   * `from` is the cursor of a cached bubble that the listener already painted: the hub
+   * then also replays every frame after it that this hub never streamed.
+   */
   subscribeSession(
     sid: string,
     listener: SessionListener,
-    { replay = true }: { replay?: boolean } = {},
+    { replay = true, from }: { replay?: boolean; from?: number } = {},
   ): () => void {
     if (this.deleted.has(sid)) {
       listener({ type: 'session.deleted', session_id: sid });
@@ -168,6 +186,12 @@ export class SessionSubscriptionHub {
     listeners.add(listener);
     this.watchSessions([sid]);
 
+    // Check the gap first. A replay drops the buffer, which starts after the gap,
+    // and streams the turn again in order.
+    if (from !== undefined && from >= 0) {
+      this.listenerFrom.set(listener, from);
+      this.requireFrom(sid, from);
+    }
     if (replay) {
       // A copy: a listener may feed the hub while the replay is still running.
       const buffered = [...(this.buffers.get(sid) ?? [])];
@@ -175,11 +199,53 @@ export class SessionSubscriptionHub {
     }
 
     return () => {
+      this.listenerFrom.delete(listener);
       const current = this.sessionListeners.get(sid);
       current?.delete(listener);
       if (current?.size === 0) this.sessionListeners.delete(sid);
       // Deliberately keep sid watched: visited sessions remain subscribed.
     };
+  }
+
+  /** Resume `sid` at `from` when this hub never streamed the frames after it. */
+  private requireFrom(sid: string, from: number): void {
+    const covered = this.coveredFrom.get(sid);
+    if (covered === undefined) {
+      this.wantedFrom.set(sid, Math.min(this.wantedFrom.get(sid) ?? from, from));
+      return;
+    }
+    if (from < covered) this.replayFrom(sid, from);
+  }
+
+  /** Record the cursor that the gateway resumed `sid` from. */
+  private noteCovered(sid: string, cursor: number): void {
+    const covered = Math.min(this.coveredFrom.get(sid) ?? cursor, cursor);
+    this.coveredFrom.set(sid, covered);
+    // A plain resume restarts the count. A replay keeps it, so only its asker gets the frames.
+    if (!this.replaying.delete(sid)) this.delivered.set(sid, cursor);
+    const wanted = this.wantedFrom.get(sid);
+    this.wantedFrom.delete(sid);
+    // The stream stores this echo as its cursor after this frame, so resume after that.
+    if (wanted !== undefined && wanted < covered) queueMicrotask(() => this.replayFrom(sid, wanted));
+  }
+
+  private replayFrom(sid: string, from: number): void {
+    if (this.disposed || !this.watched.has(sid)) return;
+    this.stopStream?.();
+    this.stopStream = null;
+    this.cursors.set(sid, from);
+    this.coveredFrom.set(sid, from);
+    this.replaying.add(sid);
+    // The replay rebuilds the turn's buffer in order. The old buffer starts after the gap.
+    this.buffers.delete(sid);
+    this.restart({ graceful: true, reason: 'resync' });
+  }
+
+  private forgetCoverage(sid: string): void {
+    this.coveredFrom.delete(sid);
+    this.wantedFrom.delete(sid);
+    this.replaying.delete(sid);
+    this.delivered.delete(sid);
   }
 
   /**
@@ -423,6 +489,7 @@ export class SessionSubscriptionHub {
       this.cursors.delete(sid);
       this.buffers.delete(sid);
       this.ended.delete(sid);
+      this.forgetCoverage(sid);
       for (const listener of [...(this.sessionListeners.get(sid) ?? [])]) listener(event);
       this.sessionListeners.delete(sid);
       for (const listener of [...this.fleetListeners]) listener(event);
@@ -436,6 +503,7 @@ export class SessionSubscriptionHub {
     // screen uses it to decide whether the turn it paints is still the daemon's,
     // which is the one thing a reconnect cannot infer from its own cursor.
     if (event.type === 'subscription.ready') {
+      if (typeof event.cursor === 'number') this.noteCovered(sid, event.cursor);
       for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
       return;
     }
@@ -471,6 +539,16 @@ export class SessionSubscriptionHub {
       this.buffers.set(sid, buffered);
     }
 
+    const seq = typeof event.seq === 'number' ? event.seq : null;
+    if (seq !== null && seq <= (this.delivered.get(sid) ?? -1)) {
+      // A frame that `replayFrom` asked for again: only the listeners behind it take it.
+      for (const listener of this.sessionListeners.get(sid) ?? []) {
+        const from = this.listenerFrom.get(listener);
+        if (from !== undefined && seq > from) listener(event);
+      }
+      return;
+    }
+    if (seq !== null) this.delivered.set(sid, seq);
     for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
     for (const listener of this.fleetListeners) listener(event);
   }
