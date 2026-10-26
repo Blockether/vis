@@ -1294,10 +1294,11 @@
     nil))
 
 (defn- row-tools
-  "Paint the plain `+` button of a focused or hovered row. Return the columns that
-   it takes at the row's right edge."
+  "Paint the plain `+` button of a focused or hovered Groups or Sessions row. Return
+   the columns that it takes at the row's right edge. Session and group rows show no
+   button: `g` opens their menu."
   [g entry left width row]
-  (if-let [choice (add-choice entry)]
+  (if-let [choice (when (= :project-set (:kind entry)) (add-choice entry))]
     (do (components/button! g
                             (- (+ (long left) (long width)) 4)
                             row

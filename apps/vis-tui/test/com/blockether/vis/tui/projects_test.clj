@@ -2391,10 +2391,10 @@
 
 (defdescribe
   sidebar-row-buttons-align-and-offer-the-same-add-test
-  ;; User report: a hovered session or set row showed a `⋯` menu button, and a session
-  ;; row gave no way to start a session. Every row now shows the same `+` button.
+  ;; User report: a hovered session row showed a `⋯` and then a `+` button. Session
+  ;; and group rows show no button; `g` opens their menu.
   (it
-    "gives every row one + button in one right-aligned column and no ⋯ button"
+    "gives only Groups and Sessions a + button, and session rows no button"
     (doseq [cols [32 120]]
       (let [db (-> (fixture-db)
                    (assoc-in [:project-sidebar :expanded] #{"a"})
@@ -2430,15 +2430,14 @@
                 :lines lines))]
 
         (expect (every? (comp nil? :error) buttons))
-        (expect (= 3 (count buttons)) "Groups, Sessions and the saved session")
+        (expect (= 2 (count buttons)) "Groups and Sessions; the saved session has none")
         (expect (= 1 (count (distinct (map #(get-in % [:bounds :col]) buttons))))
                 "Every row button shares a right-aligned column")
         (doseq [{:keys [bounds lines]} buttons
                 :let [{:keys [col row width]} bounds]]
 
           (expect (= 3 width))
-          (expect (= " + " (subs (nth lines row) col (+ col width))))
-          (expect (not (str/includes? (nth lines row) "⋯"))))))))
+          (expect (= " + " (subs (nth lines row) col (+ col width)))))))))
 
 (defdescribe
   set-buttons-use-web-bands-and-direct-actions-test
@@ -3120,9 +3119,9 @@
             (expect (= 1 (get-in hit [:bounds :height])))
             (expect (not (str/includes? line "session-")))
             (expect (str/includes? line (subs (get session "title") 0 4)))
-            (expect (= " + " (cell-text capture row (- width 4) (dec width))))
+            (expect (not (re-find #"[+⋯]" (cell-text capture row (- width 4) (dec width)))))
             (if label
-              (expect (str/ends-with? (str/trimr (cell-text capture row 0 (- width 4))) label)
+              (expect (str/ends-with? (str/trimr (cell-text capture row 0 (dec width))) label)
                       (str id " " cols " " label))
               (expect (not (re-find #"(?i)idle" line))))
             (when (and details (>= width 64))
@@ -3673,25 +3672,15 @@
             (first (filter #(= :project-session (:kind %)) entries))
 
             selected
-            (assoc-in db [:project-sidebar :index] (:index session-entry))
+            (assoc-in db [:project-sidebar :index] (:index session-entry))]
 
-            add
-            (do (cap/capture! {:cols 144
-                               :rows 24
-                               :paint!
-                               (fn [{:keys [screen]}]
+        (cap/capture! {:cols 144
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
                                  (projects/paint! (.newTextGraphics screen) selected 144 24))})
-                (first (filter #(= :project-session-add (:kind %)) (.current projects/hit-map))))
-
-            bounds
-            (:bounds add)]
-
-        (expect (= [:menu (assoc session-entry :initial-action :new-session)]
-                   (projects/key-action db
-                                        (MouseAction. MouseActionType/CLICK_DOWN
-                                                      1
-                                                      (TerminalPosition. (int (:col bounds))
-                                                                         (int (:row bounds)))))))
+        (expect (not-any? #(#{:project-session-add :project-group-add} (:kind %))
+                          (.current projects/hit-map))
+                "A focused session row shows no button")
         (expect (= [:details "saved-1"] (projects/key-action selected (cap/key-stroke \d))))
         (expect (= :menu
                    (first (projects/key-action db
