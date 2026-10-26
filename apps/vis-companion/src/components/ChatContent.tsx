@@ -97,6 +97,7 @@ import remarkGfm from 'remark-gfm';
 import { parseUserMessage, type UserMessagePart } from '../lib/paste';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
+import { untilScrollRests } from '../lib/reader-gesture';
 import type {
   ContentBlock,
   GatewayAttachment,
@@ -4469,6 +4470,8 @@ function TurnTrace({
     setHistoryError('');
     try {
       const rows = await props.client.turnTrace(props.sid, turn.turn_id, signal);
+      // The steps land above the reader, so wait until the transcript stops moving.
+      await untilScrollRests(signal);
       if (!signal.aborted) setHistory(rows);
     } catch (cause) {
       if (!signal.aborted) setHistoryError((cause as Error).message);

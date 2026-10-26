@@ -162,9 +162,56 @@ function pressCanScroll(event: Event): boolean {
   return pressScrolls;
 }
 
+/** No scroll event for this long means a stop: momentum sends one in each frame. */
+const REST_MS = 150;
+
+let lastScrollAt = Number.NEGATIVE_INFINITY;
+
+/**
+ * Resolves in the first frame in which no gesture can move a scroller and none moved
+ * for `REST_MS`, or when `signal` aborts. Land content above the reader only then.
+ * iOS WebKit runs momentum outside the page, so a correction in motion starts from a
+ * stale `scrollTop`. Measured on an iOS simulator: an earlier-steps page that landed
+ * mid-flick made the content jump 32 px against the finger, and the flick stopped.
+ * At rest, the correction lands in the frame of the growth and is not visible.
+ */
+export function untilScrollRests(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted || typeof requestAnimationFrame !== 'function') {
+      resolve();
+      return;
+    }
+    let frame = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    };
+    const check = () => {
+      const reach = readerMayBeScrolling() ? lastGestureAt + MOVEMENT_REACH_MS : 0;
+      const wait = Math.max(lastScrollAt + REST_MS, reach) - Date.now();
+      if (!dragging && wait <= 0) {
+        done();
+        return;
+      }
+      timer = setTimeout(
+        () => {
+          frame = requestAnimationFrame(check);
+        },
+        Math.max(wait, REST_MS / 3),
+      );
+    };
+    signal?.addEventListener('abort', done);
+    frame = requestAnimationFrame(check);
+  });
+}
+
 /** A new scroll surface cannot inherit the gesture that owned the previous one. */
 export function releaseReaderScroll(): void {
   lastGestureAt = Number.NEGATIVE_INFINITY;
+  lastScrollAt = Number.NEGATIVE_INFINITY;
   touchesDown = 0;
   pointerHeld = false;
   dragging = false;
@@ -218,6 +265,7 @@ function onPointerUp(event: Event): void {
 }
 
 function onScroll(event: Event): void {
+  lastScrollAt = Date.now();
   if (touchesDown === 0 && !pointerHeld) return;
   // The document scrolls under any press; an element only under one that landed in it.
   if (event.target instanceof Element && !pressed.has(event.target)) return;

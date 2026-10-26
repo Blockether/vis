@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { readerMayBeScrolling, readerOwnsScroll, releaseReaderScroll } from './reader-gesture';
+import {
+  readerMayBeScrolling,
+  readerOwnsScroll,
+  releaseReaderScroll,
+  untilScrollRests,
+} from './reader-gesture';
 
 let now = 1_000_000;
 
@@ -243,5 +248,88 @@ describe('reader gestures', () => {
 
     expect(readerOwnsScroll()).toBe(false);
     expect(readerMayBeScrolling()).toBe(false);
+  });
+});
+
+// Regression, user report: on iOS Safari, a scroll up through a long session jumped by
+// some pixels. An earlier-steps page landed mid-flick, and its correction started from
+// the stale scroll position of the page.
+describe('untilScrollRests', () => {
+  beforeEach(() => {
+    now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'],
+    });
+    releaseReaderScroll();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** Moves the clock and the timers by `ms`, in frames, optionally with a scroll in each. */
+  async function pass(ms: number, scrolling = false) {
+    for (let at = 0; at < ms; at += 16) {
+      if (scrolling) send('scroll');
+      now += 16;
+      await vi.advanceTimersByTimeAsync(16);
+    }
+  }
+
+  function watch(signal?: AbortSignal) {
+    const state = { rested: false };
+    void untilScrollRests(signal).then(() => {
+      state.rested = true;
+    });
+    return state;
+  }
+
+  it('resolves in the next frame when nothing moves', async () => {
+    const state = watch();
+
+    await pass(16);
+
+    expect(state.rested).toBe(true);
+  });
+
+  it('waits while momentum scrolls, then resolves after a short rest', async () => {
+    const state = watch();
+
+    await pass(1_000, true);
+    expect(state.rested).toBe(false);
+
+    await pass(100);
+    expect(state.rested).toBe(false);
+    await pass(100);
+    expect(state.rested).toBe(true);
+  });
+
+  it('waits for the finger to lift and for the reach of the flick', async () => {
+    send('touchstart', { touches: [{}] });
+    send('scroll');
+    const state = watch();
+
+    await pass(2_000);
+    expect(state.rested).toBe(false);
+
+    send('touchend', { touches: [] });
+    await pass(900);
+    expect(state.rested).toBe(false);
+    await pass(200);
+    expect(state.rested).toBe(true);
+  });
+
+  it('resolves when the signal aborts', async () => {
+    const controller = new AbortController();
+    const state = watch(controller.signal);
+    await pass(200, true);
+    expect(state.rested).toBe(false);
+
+    controller.abort();
+    await pass(16);
+
+    expect(state.rested).toBe(true);
   });
 });

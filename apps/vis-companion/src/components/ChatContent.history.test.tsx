@@ -159,8 +159,28 @@ describe('a windowed turn trace', () => {
     markTop = 300;
     near(true);
     await act(async () => resolve([earliest, newest]));
-    expect(screen.getByText('Earlier progress')).toBeVisible();
+    expect(await screen.findByText('Earlier progress')).toBeVisible();
     expect(earlierStepsPendingInView(reader)).toBe(false);
+  });
+
+  // Regression, user report: on iOS Safari, a scroll up through a long session jumped
+  // by some pixels. Earlier steps landed mid-flick, where no correction can hold the line.
+  it('lands earlier steps only when the transcript stops moving', async () => {
+    const near = stubNearness();
+    let resolve!: (rows: typeof newest[]) => void;
+    const turnTrace = vi.fn(() => new Promise<typeof newest[]>((done) => { resolve = done; }));
+    render(<AssistantMessage turn={turn} client={traceClient(turnTrace)} sid="s1" />);
+    near(true);
+    window.dispatchEvent(new Event('scroll'));
+    const flick = window.setInterval(() => window.dispatchEvent(new Event('scroll')), 16);
+    try {
+      await act(async () => resolve([earliest, newest]));
+      await act(() => new Promise((done) => setTimeout(done, 300)));
+      expect(screen.queryByText('Earlier progress')).toBeNull();
+    } finally {
+      window.clearInterval(flick);
+    }
+    expect(await screen.findByText('Earlier progress')).toBeVisible();
   });
 });
 

@@ -330,6 +330,7 @@ type AnchorElement = {
   // the "load earlier" row — whose position says nothing about the reader.
   dataset?: { anchor?: string };
   nextElementSibling?: Element | null;
+  querySelectorAll?(selectors: string): ArrayLike<Element>;
 };
 type AnchorScroller = {
   scrollTop: number;
@@ -404,9 +405,52 @@ function crossingChild(host: AnchorElement, target: number): AnchorElement | nul
     // Reading at the very top means the top-most child IS the "load earlier"
     // row, which is pinned above the history it loads: it measures zero drift
     // while 40 000 px lands underneath it. Take the first real turn instead.
-    if (child.dataset?.anchor !== 'skip') return child;
+    if (child.dataset?.anchor === 'skip' || !isInFlow(child)) continue;
+    // An out-of-flow child can mislead the search, so check the crossing again.
+    if (child.getBoundingClientRect().bottom > target) return child;
   }
   return null;
+}
+
+/**
+ * True for a box in the normal flow: it stacks with its siblings and scrolls with
+ * them. An `absolute`, `fixed` or `sticky` box can do neither. Measured on iOS
+ * WebKit: an absolute `sr-only` label kept its top while the reader scrolled, so
+ * as the anchor it billed each scroll step as growth. The reader jumped 12 px
+ * against the finger, and the flick stopped.
+ */
+function isInFlow(node: AnchorElement): boolean {
+  if (typeof getComputedStyle !== 'function') return true;
+  const position = getComputedStyle(node as unknown as Element).position;
+  return position !== 'absolute' && position !== 'fixed' && position !== 'sticky';
+}
+
+/** The next sibling in the normal flow, or null. */
+function nextInFlow(node: AnchorElement): AnchorElement | null {
+  let next = node.nextElementSibling as unknown as AnchorElement | null | undefined;
+  while (next && !isInFlow(next)) {
+    next = next.nextElementSibling as unknown as AnchorElement | null | undefined;
+  }
+  return next ?? null;
+}
+
+/**
+ * The line that the anchor holds: the fold, or the bottom of a `skip` mark in the upper
+ * half of the view. Content lands under such a mark. Held at the fold, it pushed down the
+ * steps that the reader was reading: measured on iOS, an earlier-steps page replaced the
+ * whole screen under the turn header. Held under the mark, it grows above the line, and
+ * only the band above the mark changes. A mark in the lower half keeps the fold, because
+ * most of what the reader sees is then above it.
+ */
+function anchorLine(view: AnchorRect, container: AnchorElement): number {
+  let line = view.top;
+  const middle = (view.top + view.bottom) / 2;
+  const marks = container.querySelectorAll?.('[data-anchor="skip"]') ?? [];
+  for (let index = 0; index < marks.length; index += 1) {
+    const { top, bottom } = marks[index].getBoundingClientRect();
+    if (top >= view.top && top < middle) line = Math.max(line, bottom);
+  }
+  return line;
 }
 
 /** What the reader is looking at, as an element, its offset from the fold and their own pixel. */
@@ -414,7 +458,9 @@ export function scrollAnchorFor(
   viewport: AnchorScroller,
   container: AnchorElement,
 ): ScrollAnchor | null {
-  const target = viewport.getBoundingClientRect().top;
+  const view = viewport.getBoundingClientRect();
+  const fold = view.top;
+  const target = anchorLine(view, container);
   let node = crossingChild(container, target);
   if (!node) return null;
   const chain = [node];
@@ -426,12 +472,12 @@ export function scrollAnchorFor(
   }
   const below: ScrollAnchor['below'] = [];
   for (let index = chain.length - 1; index >= 0; index -= 1) {
-    const next = chain[index].nextElementSibling as unknown as AnchorElement | null | undefined;
-    if (next) below.push({ el: next, offset: next.getBoundingClientRect().top - target });
+    const next = nextInFlow(chain[index]);
+    if (next) below.push({ el: next, offset: next.getBoundingClientRect().top - fold });
   }
   return {
     el: node,
-    offset: node.getBoundingClientRect().top - target,
+    offset: node.getBoundingClientRect().top - fold,
     top: viewport.scrollTop,
     below,
   };
@@ -453,10 +499,10 @@ function anchorStillMounted(
  */
 export function applyScrollAnchor(viewport: AnchorScroller, anchor: ScrollAnchor | null): boolean {
   const held = anchorStillMounted(anchor);
-  if (!held) return false;
+  if (!anchor || !held) return false;
   const drift =
     held.el.getBoundingClientRect().top - viewport.getBoundingClientRect().top - held.offset;
-  if (Math.abs(drift) > 0.5) seatScroller(viewport, Math.max(0, viewport.scrollTop + drift));
+  if (Math.abs(drift) > 0.5) moveAnchored(viewport, anchor, drift);
   return true;
 }
 
@@ -477,8 +523,19 @@ export function applyScrollAnchorGrowth(
     held.offset +
     viewport.scrollTop -
     anchor.top;
-  if (Math.abs(growth) > 0.5) seatScroller(viewport, Math.max(0, viewport.scrollTop + growth));
+  if (Math.abs(growth) > 0.5) moveAnchored(viewport, anchor, growth);
   return true;
+}
+
+/**
+ * Moves the scroller by `delta` and the anchor's reading pixel with it, so the next
+ * call measures zero. Without the second move, the reader's next scroll billed the
+ * same growth again: an earlier-steps page of 1 351 px moved the reader twice.
+ */
+function moveAnchored(viewport: AnchorScroller, anchor: ScrollAnchor, delta: number): void {
+  const before = viewport.scrollTop;
+  seatScroller(viewport, Math.max(0, before + delta));
+  anchor.top += viewport.scrollTop - before;
 }
 
 /** True while the viewport metrics are mid-rotation and must not be trusted. */

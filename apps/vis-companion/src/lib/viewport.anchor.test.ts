@@ -171,3 +171,107 @@ describe('a correction during iOS momentum', () => {
     expect(writes).toEqual(['']);
   });
 });
+
+/** A box at content `position`, painted at `100 + position - scrollTop` like `scene`. */
+function box(viewport: { scrollTop: number }, position: number, height: number, extra = {}) {
+  const node = {
+    isConnected: true,
+    position,
+    children: [] as Element[],
+    nextElementSibling: null as Element | null,
+    getBoundingClientRect() {
+      const top = 100 + node.position - viewport.scrollTop;
+      return { top, bottom: top + height };
+    },
+    ...extra,
+  };
+  return node;
+}
+
+function column(viewport: { scrollTop: number }, children: object[], marks: object[] = []) {
+  children.forEach((child, index) => {
+    (child as { nextElementSibling: unknown }).nextElementSibling = children[index + 1] ?? null;
+  });
+  return {
+    isConnected: true,
+    children: children as unknown as Element[],
+    getBoundingClientRect: () => ({ top: 100 - viewport.scrollTop, bottom: 9_999 }),
+    querySelectorAll: () => marks as unknown as Element[],
+  };
+}
+
+// Regression, user report: on iOS Safari, a scroll up through a long session jumped by
+// a few pixels at a time. The anchor was an absolute `sr-only` label that kept its top
+// while the transcript scrolled, so each scroll step was billed as growth.
+describe('an out-of-flow box', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('never anchors the reader', () => {
+    vi.stubGlobal('getComputedStyle', (node: { cssPosition?: string }) => ({
+      position: node.cssPosition ?? 'static',
+    }));
+    const viewport = { scrollTop: 1_000, getBoundingClientRect: () => ({ top: 100, bottom: 700 }) };
+    const above = box(viewport, 900, 50);
+    const label = {
+      isConnected: true,
+      cssPosition: 'absolute',
+      children: [] as Element[],
+      getBoundingClientRect: () => ({ top: 4_593, bottom: 4_594 }),
+    };
+    const reading = box(viewport, 1_000, 400);
+    const anchor = scrollAnchorFor(viewport, column(viewport, [above, label, reading]))!;
+
+    expect(anchor.el).toBe(reading);
+    viewport.scrollTop = 988;
+    applyScrollAnchorGrowth(viewport, anchor);
+    expect(viewport.scrollTop).toBe(988);
+  });
+});
+
+// Regression, user report: after an earlier-steps page landed at rest, the next scroll
+// moved the reader by the same page again.
+describe('a correction', () => {
+  it('bills each growth once', () => {
+    const { viewport, line, anchor } = scene(1_000, 1_040);
+    line.position += 1_351;
+
+    expect(applyScrollAnchor(viewport, anchor)).toBe(true);
+    expect(viewport.scrollTop).toBe(2_351);
+
+    viewport.scrollTop = 2_339;
+    applyScrollAnchorGrowth(viewport, anchor);
+    expect(viewport.scrollTop).toBe(2_339);
+  });
+});
+
+// Regression, user report: an earlier-steps page that landed with its mark in view
+// pushed the steps that the reader was reading off the screen.
+describe('a skip mark in view', () => {
+  function turn(markAt: number) {
+    const viewport = { scrollTop: 1_000, getBoundingClientRect: () => ({ top: 100, bottom: 700 }) };
+    const header = box(viewport, 980, markAt - 980);
+    const mark = box(viewport, markAt, 1, { dataset: { anchor: 'skip' } });
+    const steps = box(viewport, markAt + 1, 2_000);
+    const transcript = column(viewport, [header, mark, steps], [mark]);
+    return { viewport, header, steps, anchor: scrollAnchorFor(viewport, transcript)! };
+  }
+
+  it('in the upper half holds the steps below it', () => {
+    const { viewport, steps, anchor } = turn(1_020);
+    expect(anchor.el).toBe(steps);
+
+    steps.position += 1_351;
+    applyScrollAnchor(viewport, anchor);
+
+    expect(viewport.scrollTop).toBe(2_351);
+    expect(steps.getBoundingClientRect().top).toBe(121);
+  });
+
+  it('in the lower half keeps the fold', () => {
+    const { header, anchor } = turn(1_400);
+
+    expect(anchor.el).toBe(header);
+  });
+});
