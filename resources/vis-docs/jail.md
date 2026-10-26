@@ -91,6 +91,11 @@ them through the host JVM, the host `JAVA_HOME` and the first absolute `java` ex
 `PATH`. Detection resolves symlinks and requires a Java installation layout. It does not run
 launchers, scan other versions or grant full toolchain-manager directories.
 
+Vis also gives jailed processes read-only access to the global git configuration, so `git` works
+in a jailed shell. The grant covers `~/.gitconfig`, `~/.config/git/config`, `~/.config/git/ignore`,
+`~/.config/git/attributes` and the files that their `include` sections name. It respects
+`XDG_CONFIG_HOME` and `GIT_CONFIG_GLOBAL`. Git credential files stay closed.
+
 These grants are frozen in the policy snapshot of the session. They appear with descriptions under
 `session["access"]["filesystem"]["process_read_only"]`. Default searches skip them. They do not
 become workspace roots, and they give Python filesystem tools no extra access. Explicit catalog

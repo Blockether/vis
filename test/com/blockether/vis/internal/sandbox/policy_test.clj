@@ -47,7 +47,9 @@
 
 (defn- java-snapshot
   [config roots]
-  (with-redefs-fn {#'policy/java-read-roots (constantly roots)} #(policy/snapshot config)))
+  (with-redefs-fn {#'policy/java-read-roots (constantly roots)
+                   #'policy/git-config-read-paths (constantly [])}
+    #(policy/snapshot config)))
 
 (defdescribe
   java-runtime-discovery-test
@@ -798,3 +800,68 @@
                         (.contains "needs mode")))
         (expect (some-> (grant-refusal home {"path" "/opt/jdk" "mode" "read" "reason" " "})
                         (.contains "needs a reason"))))))
+
+(defdescribe
+  git-config-grant-test
+  ;; Git stops with "unable to access ~/.gitconfig" when the jail denies its global
+  ;; configuration, so every git command failed in a jailed session.
+  (it
+    "grants the global configuration, its includes and XDG files, never credentials"
+    (let [home
+          (.toRealPath (Files/createTempDirectory "vis-git-policy"
+                                                  (make-array java.nio.file.attribute.FileAttribute
+                                                              0))
+                       (make-array java.nio.file.LinkOption 0))
+
+          file
+          (fn [relative text]
+            (let [path (.resolve ^Path home ^String relative)]
+              (Files/createDirectories (.getParent path)
+                                       (make-array java.nio.file.attribute.FileAttribute 0))
+              (spit (.toFile path) text)
+              (str path)))
+
+          dotfile
+          (file "dotfiles/gitconfig"
+                (str "[user]\n\tname = A\n[include]\n\tpath = ~/.gitconfig.local\n"
+                     "[includeIf \"gitdir:~/work/\"]\n\tpath = work.inc\n"
+                     "[core]\n\tpath = not-an-include\n"))
+
+          local
+          (file ".gitconfig.local" "[user]\n\temail = a@example.com\n")
+
+          work
+          (file "dotfiles/work.inc" "[user]\n\temail = b@example.com\n")
+
+          ignore
+          (file ".config/git/ignore" "*.log\n")
+
+          _
+          (file ".config/git/credentials" "secret\n")
+
+          _
+          (file ".git-credentials" "secret\n")
+
+          link
+          (.resolve ^Path home ".gitconfig")]
+
+      (try (Files/createSymbolicLink link
+                                     (.resolve ^Path home "dotfiles/gitconfig")
+                                     (make-array java.nio.file.attribute.FileAttribute 0))
+           (let [paths (#'policy/git-config-read-paths (str home) {})]
+             ;; work.inc is relative, so it resolves next to the real file of the link.
+             (expect (= #{(str link) dotfile local work ignore} (set paths)))
+             (expect (not-any? #(re-find #"credentials" %) paths)))
+           ;; GIT_CONFIG_GLOBAL replaces only the config file; git still reads the XDG ignore.
+           (expect (= #{local ignore}
+                      (set
+                        (#'policy/git-config-read-paths (str home) {"GIT_CONFIG_GLOBAL" local}))))
+           (finally (with-open [paths (Files/walk home (make-array FileVisitOption 0))]
+                      (doseq [^Path path (reverse (iterator-seq (.iterator paths)))]
+                        (Files/deleteIfExists path)))))))
+  (it "grants nothing without a home or configuration"
+      (expect (= nil (#'policy/git-config-read-paths nil {})))
+      (let [home (Files/createTempDirectory "vis-git-empty"
+                                            (make-array java.nio.file.attribute.FileAttribute 0))]
+        (try (expect (= [] (#'policy/git-config-read-paths (str home) {})))
+             (finally (Files/deleteIfExists home))))))

@@ -35,7 +35,22 @@
           (expect (contract/contribution-valid? spec))
           (expect (not (contract/contribution-valid? (assoc spec :experimental? "yes"))))))
       (let [groups
-            (get (json/read-json (:body (#'settings-api/list-settings-handler {}))) "groups")
+            ;; Read the defaults, not the global config of the machine that runs the test.
+            (let [home
+                  (java.nio.file.Files/createTempDirectory
+                    "vis-experimental-home"
+                    (make-array java.nio.file.attribute.FileAttribute 0))
+
+                  previous
+                  (System/getProperty "user.home")]
+
+              (try (System/setProperty "user.home" (str home))
+                   (config/invalidate-config-cache!)
+                   (get (json/read-json (:body (#'settings-api/list-settings-handler {}))) "groups")
+                   (finally (System/setProperty "user.home" previous)
+                            (config/invalidate-config-cache!)
+                            (doseq [^java.io.File file (reverse (file-seq (.toFile home)))]
+                              (.delete file)))))
 
             general
             (get (first (filter #(= "general" (get % "id")) groups)) "toggles")

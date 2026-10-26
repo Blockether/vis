@@ -41,7 +41,7 @@
                        (expect (some #{java-home} (:read-only sent)))
                        (expect (not (some #{java-home} (:read-write sent))))
                        (expect (= [denied] (:deny-read sent)))
-                       (expect (= [java-home] (:deny-write sent))))))))
+                       (expect (= [java-home denied] (:deny-write sent))))))))
 
 (defdescribe
   runtime-policy-value
@@ -54,7 +54,7 @@
                                   :deny-exec ["/usr/bin/curl"]})]
         (expect (= ["/ws" "/ws2" "/cache"] (:read-write p)))
         (expect (= ["/ro"] (:read-only p)))
-        (expect (= ["/ws/protected"] (:deny-write p)))
+        (expect (= ["/ws/protected" "/ws/secret"] (:deny-write p)))
         (expect (= ["/ws/secret"] (:deny-read p)))
         (expect (= ["/usr/bin/curl"] (:deny-exec p)))
         (expect (false? (:keychain? p)))))
@@ -64,7 +64,9 @@
                                   :deny-write ["/ws/vendor"]
                                   :deny-write-rules ["/ws/vendor"]})]
         (expect (= ["/ws/a/.env" "/ws/**/.env"] (:deny-read p)))
-        (expect (= ["/ws/vendor"] (:deny-write p)))))
+        ;; #420: a read rule also closes writes, as the host tools do. Before, a jailed
+        ;; child could append to a file under a read rule.
+        (expect (= ["/ws/vendor" "/ws/a/.env" "/ws/**/.env"] (:deny-write p)))))
   (it "a failing roots-fn grants nothing rather than everything"
       (expect (= [] (:read-write (pj/runtime-policy {:roots-fn #(throw (ex-info "boom" {}))})))))
   (it "egress: the session proxy when one is up, else open or off"

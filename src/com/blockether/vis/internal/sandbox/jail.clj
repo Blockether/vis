@@ -286,7 +286,7 @@
                     (when-let [rule (first (filter #(rule-covers? % canonical)
                                                    (or (get policy rules) (get policy paths))))]
                       (str "Blocked by " setting
-                           " in vis.yml: " rule
+                           ": " rule
                            " " closure
                            " — continue without that file, or ask the operator to change"
                            " the rule."))))
@@ -332,12 +332,17 @@
         (boolean (or write-limited? (seq write-rules)))
 
         expanded
-        (security-policy/jail-deny-paths {:deny-read deny-read-rules :deny-write deny-write-rules})]
+        (security-policy/jail-deny-paths {:deny-read deny-read-rules :deny-write deny-write-rules})
+
+        ;; A read rule closes writing too, as for the host tools: a file that this session
+        ;; may not read is not one that it may write (#420).
+        closed
+        (vec (distinct (concat deny-read (:deny-read expanded) deny-read-rules)))]
 
     {:read-write (vec (if limited? allow-read-write (concat session-roots allow-read-write)))
      :read-only (vec (if limited? (concat allow-read session-roots) allow-read))
-     :deny-write (vec (distinct (concat deny-write (:deny-write expanded) deny-write-rules)))
-     :deny-read (vec (distinct (concat deny-read (:deny-read expanded) deny-read-rules)))
+     :deny-write (vec (distinct (concat deny-write (:deny-write expanded) deny-write-rules closed)))
+     :deny-read closed
      :deny-exec (vec deny-exec)
      :unix-connect (vec unix-connect)
      :network (cond proxy-port {:proxy proxy-port}

@@ -9017,7 +9017,9 @@ vis.register_extension(vis.Extension(
       {"schema_probe.py"
        (slurp
          "e2e/extension-schema-discovery/environment/workspace/.vis/extensions/schema_probe.py")}
-      (fn [result _]
+      (fn [result {:keys [ext-dir]}]
+        ;; The eval harness makes .vis/calls next to .vis/extensions; the mock records there.
+        (.mkdirs (io/file (.getParentFile ^java.io.File ext-dir) "calls"))
         (expect (= 1 (:loaded result)))
         (let [ext
               (registered "schema-probe")

@@ -2916,6 +2916,9 @@
                           #(deref cfg)
 
                           com.blockether.vis.internal.sandbox.policy/java-read-roots
+                          (constantly [])
+
+                          com.blockether.vis.internal.sandbox.policy/git-config-read-paths
                           (constantly [])]
 
               ((ns-resolve 'com.blockether.vis.internal.loop.environment

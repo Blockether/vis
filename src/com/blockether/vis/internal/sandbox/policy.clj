@@ -7,7 +7,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.util :as util])
+            [com.blockether.vis.internal.util :as util]
+            [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file DirectoryStream FileSystems Files LinkOption Path PathMatcher Paths]
            [java.util ArrayList Collection]
@@ -492,11 +493,91 @@
           distinct
           vec))))
 
+(defn- git-include-paths
+  "Existing files that the `[include]` and `[includeIf]` sections of `file` name. Git
+   stops when it cannot read one, so each one needs the same grant."
+  [^Path file home]
+  (try
+    (loop [lines
+           (str/split-lines (slurp (.toFile file)))
+
+           include?
+           false
+
+           found
+           []]
+
+      (if-let [line (first lines)]
+        (let [text (str/trim line)]
+          (cond (str/starts-with? text "[")
+                (recur (rest lines) (boolean (re-find #"(?i)^\[\s*include(if\b|\s*\])" text)) found)
+                include?
+                (if-let [[_ value] (re-find #"(?i)^path\s*=\s*\"?([^\"]+?)\"?\s*$" text)]
+                  ;; A relative path follows the file as git opened it. Also take the
+                  ;; real file's folder when that file is a link, for example a dotfile.
+                  (let [expanded (if (str/starts-with? value "~/") (str home (subs value 1)) value)
+                        folders (distinct [(.getParent file)
+                                           (.getParent (.toRealPath file
+                                                                    (make-array LinkOption 0)))])]
+
+                    (recur (rest lines)
+                           include?
+                           (into found (map #(.resolve ^Path % ^String expanded)) folders)))
+                  (recur (rest lines) include? found))
+                :else (recur (rest lines) include? found)))
+        found))
+    (catch Exception error
+      (tel/log! {:level :warn
+                 :id ::git-include-unreadable
+                 :data {:file (str file) :error (ex-message error)}})
+      [])))
+
+(defn- git-config-read-paths
+  "Snapshot git's global configuration files and their includes. Git stops with an
+   error when a jail denies one, so each existing file is a read-only process grant,
+   by its path and its real path. Credential files are never included."
+  ([] (git-config-read-paths (System/getProperty "user.home") (System/getenv)))
+  ([home environment]
+   (when-not (str/blank? home)
+     (let [xdg
+           (let [value (get environment "XDG_CONFIG_HOME")]
+             (if (str/blank? value) (str home "/.config") value))
+
+           global
+           (get environment "GIT_CONFIG_GLOBAL")
+
+           configs
+           (keep
+             (fn [path]
+               (when-not (str/blank? path)
+                 (try (let [file (Paths/get path (make-array String 0))]
+                        (when (and (.isAbsolute file) (Files/isRegularFile file no-link-options))
+                          file))
+                      (catch Exception _ nil))))
+             (if (str/blank? global) [(str home "/.gitconfig") (str xdg "/git/config")] [global]))
+
+           files
+           (concat configs
+                   (mapcat #(git-include-paths % home) configs)
+                   (keep (fn [name]
+                           (let [file (Paths/get (str xdg "/git/" name) (make-array String 0))]
+                             (when (Files/isRegularFile file no-link-options) file)))
+                         ["ignore" "attributes"]))]
+
+       (->> files
+            (filter #(Files/isRegularFile ^Path % no-link-options))
+            (mapcat (fn [^Path file]
+                      [(str (.normalize (.toAbsolutePath file)))
+                       (str (.toRealPath file (make-array LinkOption 0)))]))
+            distinct
+            vec)))))
+
 (defn snapshot
   "Build the immutable canonical security policy from validated string-keyed
    configuration. Relative and home-relative paths become absolute; symlinks are
-   resolved at this boundary. Recognized host Java installations are process-only
-   read grants, excluded from default searches unless already explicitly granted."
+   resolved at this boundary. Recognized host Java installations and git's global
+   configuration files are process-only read grants, excluded from default searches
+   unless already explicitly granted."
   ([config] (snapshot config {}))
   ([config
     {:keys [base-dir home]
@@ -549,16 +630,21 @@
                (set (concat (:allow-read-write jail) (:allow-read jail)))
 
                roots
-               (when-not (:disabled? jail) (remove explicit (java-read-roots)))]
+               (when-not (:disabled? jail) (remove explicit (java-read-roots)))
+
+               git-files
+               (when-not (:disabled? jail)
+                 (remove explicit (git-config-read-paths home (System/getenv))))]
 
            (-> jail
-               (update :allow-read into roots)
-               (update :no-search into roots)
-               (update :path-descriptions
-                       merge
-                       (zipmap roots
-                               (repeat
-                                 "Java runtime installation (automatic, process read-only).")))))
+               (update :allow-read into (concat roots git-files))
+               (update :no-search into (concat roots git-files))
+               (update
+                 :path-descriptions
+                 merge
+                 (zipmap roots (repeat "Java runtime installation (automatic, process read-only)."))
+                 (zipmap git-files
+                         (repeat "Git global configuration (automatic, process read-only).")))))
 
          ;; Per-root DRAFT isolation policy, keyed by the SAME canonical path the
          ;; filesystem grants use. Independent of `:jail-enabled`: a drafted session
