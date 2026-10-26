@@ -655,7 +655,7 @@
           ;; fallback model (Opus 5 → Opus 4.8). Each switch is collected here and
           ;; surfaced on the routing trace, same as an empty-reply resend.
           refusal-fallback-events (atom [])
-          provider-tools (transcript/model-facing-tools (:sandbox-caps environment))
+          provider-tools (transcript/model-facing-tools)
           ask-opts
           (rt/with-default-ask-code-idle-timeout
             (cond-> {;; ONE tool on the wire: the model takes every action

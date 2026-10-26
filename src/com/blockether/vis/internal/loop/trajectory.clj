@@ -535,7 +535,7 @@
           {:type "function"
            :function
            {:name (:name tool) :description (:description tool) :parameters (:schema tool)}})
-        (transcript/model-facing-tools nil)))
+        (transcript/model-facing-tools)))
 
 (defn build
   "ATIF document of one finished run. `result` is the CLI result map. Options:

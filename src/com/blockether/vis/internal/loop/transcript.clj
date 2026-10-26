@@ -2162,61 +2162,17 @@
 ;; docs have exactly one home and the model never routes between surfaces.
 ;; Replying with plain text and NO tool call ends the turn.
 
-(defn- python-execution-capability-line
-  "Describe confirmed sandbox capabilities without duplicating the detailed,
-   immutable policy exposed in `session[\"access\"]`."
-  [caps]
-  (when caps
-    (let
-      [net
-       (:network caps)
-
-       net-on?
-       (boolean (:enabled? net))
-
-       allowed
-       (seq (remove #(= "*" (str %)) (:allowed-domains net)))
-
-       star?
-       (some #(= "*" (str %)) (:allowed-domains net))
-
-       fs-part
-       (if (:fs? caps)
-         "Files: see `session[\"access\"][\"filesystem\"]` for the roots and modes. Use `ls` and `grep`, not a shell."
-         "Files: not available.")
-
-       net-part
-       (cond (not net-on?) "Network: off."
-             allowed (str "Network: on, only for these hosts: " (str/join ", " allowed) ".")
-             star? "Network: on for all hosts except the blocked defaults."
-             :else "Network: on; see `session[\"access\"][\"network\"]`.")]
-
-      (str fs-part " " net-part))))
-
 (defn- python-execution-tool
   "The engine-level `python_execution` tool schema — the ONLY tool the provider
-   is given. Batched, transformed, filtered, chained and structural workflows all
-   run here, so intermediate data never lands in context. The capability line is
-   built from `caps` so fs/network claims match what the sandbox can actually do."
-  [caps]
+   is given. It states what the tool runs and returns. Working rules live in the
+   core prompt, the shell handle in the `sandbox-shims` block and the access
+   policy in `session[\"access\"]`."
+  []
   {:name "python_execution"
    :description
-   (str
-     "Run Python in the session sandbox. This is the only tool. `print(...)` is the only channel back: "
-     "the block runs as a script, and you get only what it prints. End the block with a print of exactly "
-     "what the answer needs. Batch, filter and chain work in the block; `await gather(...)` runs "
-     "independent calls together. Project packages need a project REPL. "
-     "Errors always show, also when the block printed nothing. "
-     "Each capability is a plain Python name, so a result is a normal value that you keep in a variable. "
-     "Only what you print goes into the transcript. Watch a shell: `sh = await shell(...)`, then a bounded "
-     "loop that calls `sh.logs()` on that handle and stops on what it reads (an error line, a parsed port). "
-     "`sh.wait(secs)` is that loop. No tool waits for you. Vis closes a file or socket that you drop. "
-     "Close what you keep (`with open(...)`, `sh.stop()`). The sandbox refuses an open past its descriptor "
-     "limit (`VIS_PY_MAX_OPEN_FILES`). A full descriptor table stops `shell` from starting processes."
-     (when-let [cap (python-execution-capability-line caps)]
-       (str " " cap)))
+   "Run Python in the session sandbox. The block runs as a script. Each Vis capability is a plain Python name."
    :result
-   "The exact `print(...)` output. A block that printed nothing gives an empty string; an unprinted value does not come back. An evaluation failure is a failed tool result, not a result object."
+   "Only the `print(...)` output; an unprinted value does not come back. An error always shows, as a failed tool result."
    :schema {:type "object"
             :properties {"code" {:type "string" :description "Python source."}}
             :required ["code"]
@@ -2233,8 +2189,8 @@
    cannot reach a provider without saying what it hands back. Nothing is
    advertised `strict`: a per-wire grammar opt-in has no place on a surface that
    must reach every provider."
-  [caps]
-  (let [{:keys [description result] :as tool} (python-execution-tool caps)]
+  []
+  (let [{:keys [description result] :as tool} (python-execution-tool)]
     [(-> tool
          (assoc :description (str description "\n\nRaw result: " result))
          (dissoc :result))]))
@@ -2400,7 +2356,7 @@
                                       ;; There is exactly ONE model-facing tool. Sandbox capabilities alter
                                       ;; this Python schema, so they alter the context id rather than being
                                       ;; mistaken for an append-only provider prefix.
-                                      :tools (model-facing-tools (:sandbox-caps environment))
+                                      :tools (model-facing-tools)
                                       :tool-choice :auto
                                       :prompt-cache-policy (svar/prompt-cache-placement
                                                              (:provider resolved-model))}

@@ -591,11 +591,12 @@
         (doseq [rule ["Put independent calls in one block with `await gather(...)`"
                       "Keep results in variables and print only the fields you need"]]
           (expect (str/includes? text rule) rule))))
-  (it "keeps the one output channel"
+  ;; User decision: the `python_execution` tool contract owns the print channel, so the core
+  ;; prompt does not repeat it.
+  (it "leaves the output channel to the tool contract"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
-        (doseq [rule ["Keep results in variables" "`print()` is the one channel back"
-                      "you get only what you print"]]
-          (expect (str/includes? text rule) rule))))
+        (expect (str/includes? text "Keep results in variables"))
+        (expect (not (str/includes? text "`print()` is the one channel back")))))
   ;; #239: pin type-directed access and recovery without adding another discovery preflight.
   ;; #259: a record's fields come from its model and its errors, never from guessed synonyms.
   ;; User review: the runtime accepts both access spellings and `dict(r)`, so no rule names them.
@@ -890,13 +891,10 @@
       (expect (= 5 (count (re-seq #"Exit: " text))) "FINISH ends the turn")
       (doseq [required
               ["`apropos(pattern)`" "`doc(name)` returns" "runtime, source, docs, assumption"
-               "`doc()` is the index" "`python_execution` is the only tool"
-               "Put independent calls in one block" "`await gather(...)`" "Keep results in"
-               ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
-               ;; "print only what the answer needs" a contract instead of cost advice.
-               "`print()` is the one channel back" "you get only what you print"
-               "Reproduce each symptom before you edit" "Show that each symptom is gone"
-               "Name unrelated failures; do not fix them" "Write only production code and tests"
+               "`doc()` is the index" "Put independent calls in one block" "`await gather(...)`"
+               "Keep results in" "Reproduce each symptom before you edit"
+               "Show that each symptom is gone" "Name unrelated failures; do not fix them"
+               "Write only production code and tests"
                ;; Regression, user report: sessions stopped folding when §6 named no callable.
                ;; Real A/B data showed that a forced early fold doubled cost, so the fold
                ;; waits for the measured hint and a large phase.
@@ -1630,7 +1628,6 @@
 (defdescribe core-prompt-steers-python-shape-test
              (it "uses the advertised prebound paths instead of defining or guessing aliases"
                  (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "`python_execution` is the only tool"))
                    ;; User report: the runtime always binds project_root_path, never a root alias.
                    (expect (str/includes? text "`project_root_path`"))
                    (expect (str/includes? text "`session[\"workspace\"][\"filesystem_roots\"]`"))

@@ -8513,7 +8513,7 @@
              (it
                "advertises exactly one tool, and it is python_execution"
                (let [tools
-                     (@#'transcript/model-facing-tools nil)
+                     (@#'transcript/model-facing-tools)
 
                      tool
                      (first tools)]
@@ -8536,25 +8536,18 @@
                              :required ["code"]
                              :additionalProperties false}
                             (:schema tool)))
-                 (doseq [fact ["Project packages need a project REPL" "plain Python"
-                               "Errors always show"
+                 ;; User decision: the tool states only what it runs and returns. The working rules
+                 ;; live in the core prompt, the shell handle in `sandbox-shims` and the descriptor
+                 ;; limit on the `python-sandbox` page.
+                 (doseq [fact ["Run Python in the session sandbox" "The block runs as a script"
+                               "plain Python name"
                                ;; The sandbox has ONE success channel. The runtime used to hand a
-                               ;; bare trailing expression's value back as a second result, so the
-                               ;; one tool the model is given has to say that print is all there is.
-                               "`print(...)` is the only channel back"
-                               "the block runs as a script, and you get only what it prints"
-                               ;; With no result store left, the description states the one rule that
-                               ;; replaces it: what you print is what the transcript keeps.
-                               "Only what you print goes into the transcript"
-                               ;; The sleep/poll prohibition lives HERE and nowhere else: the core
-                               ;; prompt deliberately dropped its duplicate copy.
-                               "`sh.logs()`" "No tool waits for you"
-                               ;; Dropping a handle closes it — that is the interpreter's job, not
-                               ;; ours. What still bites is what the block HOLDS: the descriptor
-                               ;; table is the whole process's, and filling it stops `shell` from
-                               ;; spawning at all, so the ceiling and its escape hatch are named.
-                               "Close what you keep" "VIS_PY_MAX_OPEN_FILES"]]
-                   (expect (str/includes? (:description tool) fact))))))
+                               ;; bare trailing expression's value back as a second result.
+                               "Only the `print(...)` output"
+                               "an unprinted value does not come back" "An error always shows"]]
+                   (expect (str/includes? (:description tool) fact) fact))
+                 (doseq [gone ["Files:" "Network:" "`sh.logs()`" "VIS_PY_MAX_OPEN_FILES"]]
+                   (expect (not (str/includes? (:description tool) gone)) gone)))))
 
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
 (def ^:private auth-last-refreshed (deref #'auth-health/last-refreshed))

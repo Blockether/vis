@@ -833,11 +833,9 @@
                          :security/filesystem-roots configured-rw-roots
                          :security/no-search-roots (security-policy/no-search-roots security-config)
                          :access-view-fn access-view-fn
-                         ;; What the Python sandbox can ACTUALLY reach this session —
-                         ;; `python-execution-tool` builds its fs/network description
-                         ;; from this so the prompt never claims a capability the
-                         ;; sandbox lacks (no workspace ⇒ no fs; toggle off ⇒ no net).
-                         :sandbox-caps {:fs? (boolean sandbox-roots-fn) :network network-opts}
+                         ;; What the Python sandbox can ACTUALLY reach this session.
+                         ;; `python_exec` applies its network options.
+                         :sandbox-caps {:network network-opts}
                          ;; Live workspace pointer for sandbox confinement. run-turn!
                          ;; refreshes it so `sandbox-roots-fn` tracks the active root.
                          :workspace-atom workspace-atom

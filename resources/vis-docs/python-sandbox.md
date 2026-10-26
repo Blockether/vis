@@ -238,6 +238,7 @@ imported libraries.
 | Raw sockets | guarded at the socket level |
 | Threads | capped per process, and exhaustion raises `RuntimeError` (also without the jail) |
 | Wall-clock time | every block has a timeout, lifted while a live view is open (also without the jail) |
+| Open files and sockets | capped by `VIS_PY_MAX_OPEN_FILES`, and a full table stops `shell` from starting processes (also without the jail) |
 
 Host functions exposed from Clojure always apply their own permission checks. For example,
 `sdk.fs.read(...)` raises `PermissionError` in `python_execution`, with or without the jail. To turn
