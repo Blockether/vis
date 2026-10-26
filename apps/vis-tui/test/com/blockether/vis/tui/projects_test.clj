@@ -2354,9 +2354,6 @@
             group-hit
             (first (filter #(= :project-group-add (:kind %)) group-hits))
 
-            group-menu
-            (first (filter #(and (= :project-set-menu (:kind %)) (= :groups (:set %))) group-hits))
-
             hits
             (hits-at session-entry)
 
@@ -2366,11 +2363,9 @@
         ;; Only the focused or hovered row shows its buttons.
         (expect (not-any? #(= :project-session-add (:kind %)) group-hits))
         (expect (some? group-hit))
-        (expect (some? group-menu))
         (expect (some? session-hit))
         (doseq [[entry hit expected]
                 [[group-entry group-hit [:menu (assoc group-entry :initial-action :new)]]
-                 [group-entry group-menu [:menu group-entry]]
                  [session-entry session-hit
                   [:menu (assoc session-entry :initial-action :new-session)]]]
 
@@ -2385,8 +2380,7 @@
             (hits-at entry)
             (expect (= expected
                        (projects/key-action (assoc-in db [:project-sidebar :focused?] true)
-                                            click)))))
-        (expect (some #(and (= :project-set-menu (:kind %)) (= :sessions (:set %))) hits)))
+                                            click))))))
       (doseq [[entry choice] [[group-entry :new] [session-entry :new-session]]]
         (expect (= [:menu (assoc entry :initial-action choice)]
                    (projects/key-action (assoc-in db [:project-sidebar :index] (:index entry))
@@ -2396,46 +2390,55 @@
                                       (cap/key-stroke \g)))))))
 
 (defdescribe
-  sidebar-overflow-buttons-align-and-use-portable-marker-test
+  sidebar-row-buttons-align-and-offer-the-same-add-test
+  ;; User report: a hovered session or set row showed a `⋯` menu button, and a session
+  ;; row gave no way to start a session. Every row now shows the same `+` button.
   (it
-    "sidebar overflow buttons align and use portable marker"
+    "gives every row one + button in one right-aligned column and no ⋯ button"
     (doseq [cols [32 120]]
       (let [db (-> (fixture-db)
                    (assoc-in [:project-sidebar :expanded] #{"a"})
                    (assoc-in [:project-sidebar :focused?] true)
                    (assoc-in [:project-sidebar :pages "a"]
                              {:sessions [{"id" "saved" "title" "Saved session"}] :grouped []}))
-            buttons (for [entry (projects/sidebar-entries db)
-                          :when (or (= :project-set (:kind entry))
-                                    (= "saved" (get-in entry [:session "id"])))
-                          :let [capture (cap/capture! {:cols cols
-                                                       :rows 24
-                                                       :paint! (fn [{:keys [screen]}]
-                                                                 (projects/paint!
-                                                                   (.newTextGraphics screen)
-                                                                   (assoc-in db
-                                                                     [:project-sidebar :index]
-                                                                     (:index entry))
-                                                                   cols
-                                                                   24))})
-                                lines (str/split-lines (cap/frame-text capture))]
-                          button (vec (filter #(contains? #{:project-set-menu :project-details}
-                                                          (:kind %))
-                                              (.current projects/hit-map)))]
+            buttons
+            (for [entry (projects/sidebar-entries db)
+                  :when (or (= "a" (str (get-in entry [:project "id"])))
+                            (= "saved" (get-in entry [:session "id"])))
+                  :when (or (#{:groups :sessions} (:set entry)) (= :project-session (:kind entry)))
+                  :let [capture (cap/capture! {:cols cols
+                                               :rows 24
+                                               :paint! (fn [{:keys [screen]}]
+                                                         (projects/paint! (.newTextGraphics screen)
+                                                                          (assoc-in db
+                                                                            [:project-sidebar
+                                                                             :index]
+                                                                            (:index entry))
+                                                                          cols
+                                                                          24))})
+                        lines (str/split-lines (cap/frame-text capture))
+                        row (long (some #(when (= (:index entry) (:index %))
+                                           (get-in % [:bounds :row]))
+                                        (.current projects/hit-map)))]
+                  button (vec (filter #(and (contains? #{:project-group-add :project-session-add}
+                                                       (:kind %))
+                                            (= row (get-in % [:bounds :row])))
+                                      (.current projects/hit-map)))]
 
-                      (assoc button
-                        :error (:error capture)
-                        :lines lines))]
+              (assoc button
+                :error (:error capture)
+                :lines lines))]
 
         (expect (every? (comp nil? :error) buttons))
-        (expect (= 3 (count buttons)))
+        (expect (= 3 (count buttons)) "Groups, Sessions and the saved session")
         (expect (= 1 (count (distinct (map #(get-in % [:bounds :col]) buttons))))
-                "Group, Sessions, and saved-session menus share a right-aligned column")
+                "Every row button shares a right-aligned column")
         (doseq [{:keys [bounds lines]} buttons
                 :let [{:keys [col row width]} bounds]]
 
           (expect (= 3 width))
-          (expect (= " ⋯ " (subs (nth lines row) col (+ col width)))))))))
+          (expect (= " + " (subs (nth lines row) col (+ col width))))
+          (expect (not (str/includes? (nth lines row) "⋯"))))))))
 
 (defdescribe
   set-buttons-use-web-bands-and-direct-actions-test
@@ -3117,7 +3120,7 @@
             (expect (= 1 (get-in hit [:bounds :height])))
             (expect (not (str/includes? line "session-")))
             (expect (str/includes? line (subs (get session "title") 0 4)))
-            (expect (= " ⋯ " (cell-text capture row (- width 4) (dec width))))
+            (expect (= " + " (cell-text capture row (- width 4) (dec width))))
             (if label
               (expect (str/ends-with? (str/trimr (cell-text capture row 0 (- width 4))) label)
                       (str id " " cols " " label))
@@ -3617,8 +3620,16 @@
         (reset! choice :new-session)
         (#'screen/sidebar-row-menu! nil loose-entry #(swap! calls conj [:start %1 %2 %3]))
         (#'screen/sidebar-row-menu! nil group-entry #(swap! calls conj [:start %1 %2 %3]))
-        (expect (= [[:start nil "/work/vis" "a"] [:start "g1" "/work/vis" "a"]]
-                   (subvec @calls (- (count @calls) 2))))))))
+        ;; User report: a session row inside a group could not start a session there.
+        (#'screen/sidebar-row-menu!
+         nil
+         {:kind :project-session
+          :project (:project loose-entry)
+          :session {"id" "s9" "group_id" "g1"}}
+         #(swap! calls conj [:start %1 %2 %3]))
+        (expect (= [[:start nil "/work/vis" "a"] [:start "g1" "/work/vis" "a"]
+                    [:start "g1" "/work/vis" "a"]]
+                   (subvec @calls (- (count @calls) 3))))))))
 
 (defdescribe
   saved-project-pagers-and-pointer-test
@@ -3658,23 +3669,24 @@
                                       (MouseAction. MouseActionType/CLICK_DOWN
                                                     1
                                                     (TerminalPosition. (int col) (int row))))))
-      (let [selected
-            (assoc-in db
-              [:project-sidebar :index]
-              (:index (first (filter #(= :project-session (:kind %)) entries))))
+      (let [session-entry
+            (first (filter #(= :project-session (:kind %)) entries))
 
-            detail
+            selected
+            (assoc-in db [:project-sidebar :index] (:index session-entry))
+
+            add
             (do (cap/capture! {:cols 144
                                :rows 24
                                :paint!
                                (fn [{:keys [screen]}]
                                  (projects/paint! (.newTextGraphics screen) selected 144 24))})
-                (first (filter #(= :project-details (:kind %)) (.current projects/hit-map))))
+                (first (filter #(= :project-session-add (:kind %)) (.current projects/hit-map))))
 
             bounds
-            (:bounds detail)]
+            (:bounds add)]
 
-        (expect (= [:details "saved-1"]
+        (expect (= [:menu (assoc session-entry :initial-action :new-session)]
                    (projects/key-action db
                                         (MouseAction. MouseActionType/CLICK_DOWN
                                                       1
@@ -4995,6 +5007,23 @@
                            {:keys [label]} (projects/row-menu-items db entry)]
 
                      (expect (re-find #"^[\p{L}\p{N}]" label) label)))))
+
+(defdescribe
+  session-row-starts-a-session-test
+  ;; User report: on a session row inside a group, the rail gave no way to start a
+  ;; new session. Every row offers the same new-session verb, key and `+`.
+  (it "offers New session here, n and + on loose and grouped session rows"
+      (let [db (every-kind-db)]
+        (doseq [sid ["s1" "s2"]
+                :let [entry (some #(when (= sid (get-in % [:session "id"])) %)
+                                  (projects/sidebar-entries db))
+                      focused (assoc-in db [:project-sidebar :index] (:index entry))
+                      expected [:menu (assoc entry :initial-action :new-session)]]]
+
+          (expect (some? entry) sid)
+          (expect (= [:new-session :new] (take 2 (map :id (projects/row-menu-items db entry)))) sid)
+          (expect (= expected (projects/key-action focused (cap/key-stroke \n))) sid)
+          (expect (= expected (projects/key-action focused (cap/key-stroke \+))) sid)))))
 
 (defdescribe sidebar-row-keys-test
              (it "runs every keyed menu item from its key on the focused row"

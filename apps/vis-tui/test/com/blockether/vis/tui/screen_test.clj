@@ -3079,7 +3079,7 @@ therapy line 2"
          :project-sidebar {:items [{"id" "p1" "workspace_root" "/work/p1"}]}}
 
         resolve
-        (deref #'screen/new-session-project-id)]
+        (deref #'screen/new-session-place)]
 
     (it "files the session in the project of the session it started from"
         (let [calls (atom [])]
@@ -3092,20 +3092,42 @@ therapy line 2"
                         vis/gateway-assign-project! (fn [id pid]
                                                       (swap! calls conj [:assign id pid]))]
 
-            (expect (= {:id "new" :history [] :project-id "p1"}
+            (expect (= {:id "new" :history [] :group-id nil :project-id "p1"}
                        ((deref #'screen/create-tab-session!) {} db nil "source")))
             (expect (= [[:soul "source"] [:create {:root "/work/p1" :group-id nil}]
                         [:assign "new" "p1"]]
                        @calls)))))
+    ;; Regression, this Vis session (paraphrased: C-x n in a session inside a group must
+    ;; start the new session in that same group): the new session was filed loose.
+    (it "starts the session in the group of the session it started from"
+        (let [calls (atom [])]
+          (with-redefs [vis/gateway-soul (fn [sid]
+                                           (swap! calls conj [:soul sid])
+                                           {"id" sid "project_id" "p1" "group_id" "g7"})
+                        chat/make-session (fn [_ opts]
+                                            (swap! calls conj [:create opts])
+                                            {:id "new" :history []})
+                        vis/gateway-assign-project! (fn [id pid]
+                                                      (swap! calls conj [:assign id pid]))]
+
+            (expect (= {:id "new" :history [] :group-id "g7" :project-id nil}
+                       ((deref #'screen/create-tab-session!) {} db nil "source")))
+            (expect (= [[:soul "source"] [:create {:root "/work/source" :group-id "g7"}]] @calls)
+                    "The group carries its project, so nothing assigns one")
+            (reset! calls [])
+            (expect (= {:group-id nil :project-id "x"} (resolve db {:project-id "x"} "source")))
+            (expect (= {:group-id nil :project-id "p1"} (resolve db {:root "/work/p1"} "source")))
+            (expect (= [[:soul "source"]] @calls)
+                    "An explicit project or root starts a loose session"))))
     (it "keeps a group's project, an explicit project and the tab fallback"
         (let [souls (atom [])]
           (with-redefs [vis/gateway-soul (fn [sid]
                                            (swap! souls conj sid)
                                            {"id" sid})]
-            (expect (nil? (resolve db {:group-id "g1"} "source")))
-            (expect (= "x" (resolve db {:project-id "x"} "source")))
+            (expect (= {:group-id "g1" :project-id nil} (resolve db {:group-id "g1"} "source")))
+            (expect (= {:group-id nil :project-id "x"} (resolve db {:project-id "x"} "source")))
             (expect (empty? @souls) "A group or an explicit project needs no lookup")
-            (expect (= "other" (resolve db nil "source"))
+            (expect (= {:group-id nil :project-id "other"} (resolve db nil "source"))
                     "A session without a project keeps the tab's project"))))))
 
 ;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session

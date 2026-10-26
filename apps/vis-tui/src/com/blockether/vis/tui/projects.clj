@@ -282,6 +282,7 @@
                      :label title
                      :selected? (contains? (get-in sidebar [:selected pid] #{}) sid)
                      :favorite? (some? (get session "favorite_rank"))
+                     :in-archived-group? (some? (get group "archived_at"))
                      :status (session-status session
                                              (= sid
                                                 (some-> (get-in db [:session :id])
@@ -1269,42 +1270,42 @@
 
       [[label t/dialog-fg false]])))
 
+(defn- add-choice
+  "The menu item that `+` runs on `entry`: `:new` on the Groups row, `:new-session`
+   on a row where a session can start, else nil. Every such row offers the same `+`."
+  [entry]
+  (case (:kind entry)
+    :project-set
+    (case (:set entry)
+      :groups
+      :new
+
+      :sessions
+      :new-session
+
+      nil)
+
+    :project-group
+    (when-not (get-in entry [:group "archived_at"]) :new-session)
+
+    :project-session
+    (when-not (:in-archived-group? entry) :new-session)
+
+    nil))
+
 (defn- row-tools
-  "Paint the plain `+` and `⋯` buttons of a focused or hovered row. Return the
-   columns that they take at the row's right edge."
+  "Paint the plain `+` button of a focused or hovered row. Return the columns that
+   it takes at the row's right edge."
   [g entry left width row]
-  (let [right (+ (long left) (long width))]
-    (case (:kind entry)
-      :project-session
-      (do (components/button! g
-                              (- right 4)
-                              row
-                              " ⋯ "
-                              :project-details
-                              {:plain? true
-                               :extra {:session (:session entry)
-                                       :action [:details (str (get-in entry [:session "id"]))]}})
-          4)
-
-      :project-set
-      (if-let [set (#{:groups :sessions} (:set entry))]
-        (let [pid (str (get-in entry [:project "id"]))]
-          (components/button! g
-                              (- right 7)
-                              row
-                              " + "
-                              (if (= :groups set) :project-group-add :project-session-add)
-                              {:plain? true :extra {:project-id pid}})
-          (components/button! g
-                              (- right 4)
-                              row
-                              " ⋯ "
-                              :project-set-menu
-                              {:plain? true :extra {:project-id pid :set set}})
-          7)
-        2)
-
-      2)))
+  (if-let [choice (add-choice entry)]
+    (do (components/button! g
+                            (- (+ (long left) (long width)) 4)
+                            row
+                            " + "
+                            (if (= :new choice) :project-group-add :project-session-add)
+                            {:plain? true :extra {:index (:index entry)}})
+        4)
+    2))
 
 (defn- paint-row!
   "Paint one sidebar row: a focus bar, the indented name and the statuses that
@@ -1481,7 +1482,7 @@
         (keymap/sidebar-key-label {:key k})))))
 
 (defn row-menu-items
-  "The ⋯ menu of a sidebar `entry`, each verb with the key that runs it. The keys
+  "The row menu of a sidebar `entry`, each verb with the key that runs it. The keys
    work on the row without the menu: a key acts exactly where the menu lists it."
   [db entry]
   (let [project
@@ -1512,14 +1513,20 @@
 
     (cond
       sid
-      (cond-> [(menu-item :details "Show session details" :details)
+      (cond-> (if (:in-archived-group? entry)
+                [(menu-item :new "New group…" :new-group)]
+                [(menu-item :new-session "New session here" :new-session)
+                 (menu-item :new "New group…" :new-group)])
+        true
+        (into [(menu-item :details "Show session details" :details)
                (menu-item :toggle-session
                           (if (contains? selected sid) "Deselect session" "Select session")
                           :select)
                (menu-item
                  :move-session
                  (if (> moving 1) (str "Move " moving " selected sessions…") "Move to group…")
-                 :move)]
+                 :move)])
+
         (or (> moving 1) (some? (get session "group_id")))
         (conj (menu-item
                 :ungroup-session
@@ -1581,7 +1588,7 @@
              (menu-item :delete-project "Remove project and sessions…" :delete)])))
 
 (def ^:private menu-kinds
-  "Row kinds that own a ⋯ menu."
+  "Row kinds that own a row menu."
   #{:project-select :project-group :project-set :project-session})
 
 (defn- focused-entry
@@ -1619,10 +1626,9 @@
           (is? :select)
           (if session? [:toggle-session (str (get-in entry [:project "id"])) sid] [:noop])
           (is? :details) (if session? [:details sid] [:noop])
-          (is? :add-here)
-          (if (and (= :project-set (:kind entry)) (#{:groups :sessions} (:set entry)))
-            [:menu (assoc entry :initial-action (if (= :groups (:set entry)) :new :new-session))]
-            [:add])
+          (is? :add-here) (if-let [choice (add-choice entry)]
+                            [:menu (assoc entry :initial-action choice)]
+                            [:add])
           ;; `g` opens the row's own menu. Nothing to act on above the first row.
           (is? :menu) (if (menu-kinds (:kind entry)) [:menu entry] [:noop])
           (is? :add-project) [:add]
@@ -1695,9 +1701,9 @@
 (def ^:private rail-kinds
   "Hit kinds that belong to the rail, so a mouse event on them is a sidebar event."
   #{:project-rail :project-select :project-group :project-input :project-unread :project-session
-    :project-details :project-set :project-page :project-group-page :project-state :project-add
-    :project-hide :project-suggest :project-new-folder :project-search-field :project-group-add
-    :project-session-add :project-set-menu :project-footer})
+    :project-set :project-page :project-group-page :project-state :project-add :project-hide
+    :project-suggest :project-new-folder :project-search-field :project-group-add
+    :project-session-add :project-footer})
 
 (defn click-focus
   "Return the sidebar change for a mouse press in the rail, or nil for other events.
@@ -1754,35 +1760,17 @@
               [:menu hit]
               (and (= MouseActionType/CLICK_DOWN (.getActionType mouse)) (= 1 (.getButton mouse)))
               (case (:kind hit)
-                (:project-select :project-group
-                                 :project-input :project-unread
-                                 :project-session :project-details
+                (:project-select :project-group :project-input
+                                 :project-unread :project-session
                                  :project-set :project-page
                                  :project-group-page :project-state)
                 (:action hit)
 
                 (:project-group-add :project-session-add)
-                (when-let [entry (some #(when (and (= :project-set (:kind %))
-                                                   (= (:project-id hit)
-                                                      (str (get-in % [:project "id"])))
-                                                   (= (:set %)
-                                                      (if (= :project-group-add (:kind hit))
-                                                        :groups
-                                                        :sessions)))
-                                          %)
-                                       (sidebar-entries db))]
+                (when-let [entry (some #(when (= (:index hit) (:index %)) %) (sidebar-entries db))]
                   [:menu
                    (assoc entry
                      :initial-action (if (= :project-group-add (:kind hit)) :new :new-session))])
-
-                :project-set-menu
-                (when-let [entry (some #(when (and (= :project-set (:kind %))
-                                                   (= (:project-id hit)
-                                                      (str (get-in % [:project "id"])))
-                                                   (= (:set hit) (:set %)))
-                                          %)
-                                       (sidebar-entries db))]
-                  [:menu entry])
 
                 :project-suggest
                 [:add-commit (:path hit)]

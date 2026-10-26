@@ -5196,32 +5196,50 @@
           :id
           str))
 
-(defn- new-session-project-id
-  "Project id that a new session joins, or nil. A group carries its own project.
-   An explicit `:project-id` wins. Then the gateway project of `source-sid`, the
-   session the user started from, then its tab and then the active project."
-  [db {:keys [group-id project-id]} source-sid]
-  (when-not group-id
-    (or (some-> project-id
-                str
-                not-empty)
-        (some-> (not-empty (str source-sid))
-                (#(try (vis/gateway-soul %) (catch Throwable _ nil)))
-                (get "project_id")
-                str
-                not-empty)
-        (:project-id (some #(when (= (:active-tab-id db) (:id %)) %) (:tabs db)))
-        (:active-project-id db))))
+(defn- source-soul
+  "The gateway soul of `source-sid`, the session the user started from, or nil."
+  [source-sid]
+  (when-let [sid (not-empty (str source-sid))]
+    (try (vis/gateway-soul sid)
+         (catch Throwable e
+           (tel/log! {:level :warn :id ::new-session-source :data {:session-id sid} :error e}
+                     "could not read the source session of a new session")
+           nil))))
+
+(defn- new-session-place
+  "The `{:group-id :project-id}` that a new session joins. An explicit `:group-id`
+   wins, and a group carries its own project. A session started without a group,
+   project or root joins the group of `source-sid`, the session the user started
+   from. Else an explicit `:project-id` wins. Then the project of `source-sid`, its
+   tab and then the active project."
+  [db {:keys [group-id project-id root]} source-sid]
+  (let [soul
+        (delay (source-soul source-sid))
+
+        gid
+        (or group-id
+            (when-not (or project-id root)
+              (some-> (get @soul "group_id")
+                      str
+                      not-empty)))]
+
+    {:group-id gid
+     :project-id (when-not gid
+                   (or (some-> project-id
+                               str
+                               not-empty)
+                       (some-> (get @soul "project_id")
+                               str
+                               not-empty)
+                       (:project-id (some #(when (= (:active-tab-id db) (:id %)) %) (:tabs db)))
+                       (:active-project-id db)))}))
 
 (defn- create-tab-session!
-  "Create the session for a new tab and file it in its project. This blocks, so
-   call it on a worker. Returns `{:id :history :project-id}`."
+  "Create the session for a new tab and file it in its group or project. This
+   blocks, so call it on a worker. Returns `{:id :history :group-id :project-id}`."
   [config db opts source-sid]
-  (let [gid
-        (:group-id opts)
-
-        pid
-        (new-session-project-id db opts source-sid)
+  (let [{gid :group-id pid :project-id}
+        (new-session-place db opts source-sid)
 
         project
         (some #(when (= pid (str (get % "id"))) %) (get-in db [:project-sidebar :items]))
@@ -5233,7 +5251,7 @@
                             :group-id gid})]
 
     (when pid (vis/gateway-assign-project! id pid))
-    {:id id :history history :project-id pid}))
+    {:id id :history history :group-id gid :project-id pid}))
 
 (defn- session-column-offset
   "Left column of the live session pane, so that a picker stays in that pane."
@@ -6604,7 +6622,7 @@
                                                        :ttl-ms copy-success-ttl-ms))))))))))
 
 (defn- sidebar-row-menu!
-  "The rail's ⋯ menu for the row under the cursor, from `projects/row-menu-items`.
+  "The rail's row menu for the row under the cursor, from `projects/row-menu-items`.
    An `:initial-action` on `entry` runs that item without the menu, which is how
    the sidebar keys act. Every verb that changes the gateway refreshes the rail
    from the gateway's own answer. `start-in-group!` is called with a group id, its
@@ -6790,9 +6808,15 @@
       ;; new conversation opens INSIDE the band the cursor stood on (BLO-167). The
       ;; chat takes the keys next, as when a saved session opens: typing a first
       ;; message never runs the rail's single-letter commands.
+      ;; A session row starts the new session in the group that holds that session.
       (when (and pid start-in-group!)
         (state/dispatch [:project-sidebar {:focused? false :adding nil}])
-        (start-in-group! gid (get project "workspace_root") pid))
+        (start-in-group! (or gid
+                             (some-> (get session "group_id")
+                                     str
+                                     not-empty))
+                         (get project "workspace_root")
+                         pid))
 
       :new
       (when pid (create-group! screen pid))
@@ -7747,10 +7771,9 @@
                                       not-empty)
                          db @state/app-db
                          ;; A session STARTED in a group joins it as the gateway mints
-                         ;; it, and the group carries the project with it. Otherwise
-                         ;; the new session joins the project of the session the user
-                         ;; started from.
-                         gid (:group-id opts)
+                         ;; it, and the group carries the project with it. Without a
+                         ;; place, the new session joins the group or the project of
+                         ;; the session the user started from.
                          source-sid (current-session-id)
                          build-id (or (:build-id opts) (str (java.util.UUID/randomUUID)))]
 
@@ -7759,11 +7782,11 @@
                      (vis/worker-future
                        "tui-new-session-bind"
                        (fn []
-                         (try (let [{:keys [id history project-id]}
+                         (try (let [{:keys [id history group-id project-id]}
                                     (create-tab-session! config db opts source-sid)]
                                 (ensure-session-live! id)
                                 (state/dispatch [:bind-built-session build-id
-                                                 {:id id :group-id gid :project-id project-id}
+                                                 {:id id :group-id group-id :project-id project-id}
                                                  history (session-workspace id)])
                                 (persist-tabs!)
                                 (vis/notify! "Opened session"
