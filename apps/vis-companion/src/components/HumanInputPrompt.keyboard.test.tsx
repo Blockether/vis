@@ -199,6 +199,23 @@ describe('the settings sheet on the iPhone', () => {
     await settle();
     expect(reserve()).toBe(0);
   });
+
+  // Regression, user report: Settings with the pairing field open floated above the empty
+  // keyboard band, and the session list showed below it. The band is the sheet's paper.
+  it('paints the reserved band with the sheet paper down to the bottom edge', async () => {
+    pointing('coarse');
+    const { rerender } = render(<ShellWithSettingsSheet />);
+    const box = () => screen.getByRole('dialog', { name: 'Settings' }).parentElement;
+    expect(reserve()).toBeGreaterThan(0);
+    expect(box()).toHaveClass('after:bg-panel', 'after:top-full', 'after:h-[var(--keyboard-reserve,0px)]');
+    expect(box()).toHaveClass('sm:after:hidden');
+
+    act(() => rerender(<ShellWithSettingsSheet hasField={false} />));
+    await act(async () => await Promise.resolve());
+    expect(reserve()).toBe(0);
+    expect(box()).not.toHaveClass('after:bg-panel');
+  });
+
   it('is the sheet that Settings opens', () => {
     expect(settingsSource).toContain('<Modal size="wide" isKeyboardReserved onDismiss={onClose}>');
   });

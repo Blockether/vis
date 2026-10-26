@@ -2813,6 +2813,13 @@ export function Modal({
     ? 'sm:max-w-4xl mouse:max-w-6xl'
     : 'sm:max-w-xl';
   const boxWidth = fillsPane ? 'sm:max-w-none' : desktopWidth;
+  // THE RESERVED BAND IS THE SHEET'S OWN PAPER. Reported on an iPhone: Settings with the
+  // pairing field open floated above the band, and the session list showed under it. The
+  // gap under the sheet is never taller than the band, so paper of that height closes it.
+  // It stands behind the sheet, and the keyboard covers it when it rises.
+  const bandPaper = isReserving
+    ? 'relative after:absolute after:inset-x-0 after:top-full after:-z-10 after:h-[var(--keyboard-reserve,0px)] after:bg-panel sm:after:hidden'
+    : '';
 
   return createPortal(
     <div
@@ -2871,7 +2878,7 @@ export function Modal({
           `ui.conventions.test.ts` holds the layer clear. */}
       <div
         ref={edgeBack}
-        className={`flex w-full flex-col ${boxWidth} ${boxHeight}`}
+        className={`flex w-full flex-col ${boxWidth} ${boxHeight} ${bandPaper}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >
