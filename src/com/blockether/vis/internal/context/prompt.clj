@@ -411,7 +411,7 @@
     "- Write only the files that the task needs: production code and tests. Keep scratch work in sandbox variables "
     "and findings in the answer.\n"
     "- Make each named output file work alone. Assume that only the files that the task names reach the "
-    "checker.\n"
+    "checker, and that it installs no new packages.\n"
     "- Style is correctness. Follow the project rules and the formatter and linter config, then the consistent "
     "code nearby.\n"
     "- Keep naming, indentation, logical grouping, blank lines between definitions and between configuration "
