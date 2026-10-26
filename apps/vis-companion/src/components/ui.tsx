@@ -60,7 +60,7 @@ import { useBackLayer, useEdgeBack } from '../lib/edge-back';
 import {
   isKeyboardInputElement,
   keyboardKindOf,
-  useKeyboardReserve,
+  useKeyboardBand,
   type KeyboardKind,
 } from '../lib/viewport';
 import {
@@ -2789,7 +2789,7 @@ export function Modal({
   // The band is as tall as the keyboard of the sheet's first typed field: a one-time
   // code raises the shorter number pad, and a text-height band let the sheet drop.
   const [typedFieldKind, setTypedFieldKind] = useState<KeyboardKind | null>(null);
-  const keyboardReserve = useKeyboardReserve(typedFieldKind ?? 'text');
+  const keyboardReserve = useKeyboardBand(typedFieldKind);
   useLayoutEffect(() => {
     const element = scrim;
     if (!watchesFields || element === null) return undefined;

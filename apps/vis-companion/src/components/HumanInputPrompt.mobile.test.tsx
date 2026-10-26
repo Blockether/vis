@@ -2,7 +2,7 @@
 // Regression, user report: in a pause on a phone, a double tap on the one-time
 // code could not paste, the keyboard jumped at every digit, and a short trip out
 // of the app erased every answer typed so far.
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -75,6 +75,21 @@ describe('a one-time code on a phone', () => {
     await user.keyboard('{Backspace}');
     expect(input.value).toBe('40');
     expect(document.activeElement).toBe(input);
+  });
+
+  // Regression, user report: a double tap on the code boxes gave no paste menu. WebKit
+  // shows it only for a tap on the caret, which stood at the row's left edge.
+  it('puts the caret under the finger that touches the boxes', () => {
+    render(<OtpSheet />);
+    const input = codeInput();
+    input.getBoundingClientRect = () => new DOMRect(16, 400, 370, 44);
+    fireEvent.pointerDown(input, { pointerType: 'mouse', clientX: 200, clientY: 420 });
+    expect(input.style.paddingRight).toBe('');
+    fireEvent.pointerDown(input, { pointerType: 'touch', clientX: 200, clientY: 420 });
+    expect(input.style.textAlign).toBe('right');
+    expect(input.style.paddingRight).toBe('186px');
+    fireEvent.pointerDown(input, { pointerType: 'touch', clientX: 500, clientY: 420 });
+    expect(input.style.paddingRight).toBe('0px');
   });
 });
 

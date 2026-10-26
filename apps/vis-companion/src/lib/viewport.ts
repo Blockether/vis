@@ -754,6 +754,26 @@ export function useKeyboardReserve(kind: KeyboardKind = 'text'): number {
   );
 }
 
+/**
+ * The band a sheet with a field of `kind` keeps below itself, or `0` without a field.
+ *
+ * The sheet keeps the place of its first prediction until it closes. Reported on an
+ * iPhone: the first one-time code predicted a taller pad than the one that rose, and
+ * the sheet dropped under the finger. Now a shorter keyboard leaves a band of sheet
+ * paper above it. Only a taller keyboard still lifts the sheet.
+ */
+export function useKeyboardBand(kind: KeyboardKind | null): number {
+  const reserve = useKeyboardReserve(kind ?? 'text');
+  const inset = useKeyboardInset();
+  const orientation = useSyncExternalStore(subscribeKeyboardReserve, keyboardOrientation, () => 'portrait');
+  const key = kind === null ? null : `${kind}:${orientation}`;
+  const [held, setHeld] = useState<{ key: string; height: number } | null>(null);
+  // Hold the prediction while the keyboard is down. A new kind or orientation holds again.
+  if (key !== null && inset === 0 && reserve > 0 && held?.key !== key) setHeld({ key, height: reserve });
+  if (key === null) return 0;
+  return held?.key === key ? Math.max(0, held.height - inset) : reserve;
+}
+
 /** The shell's current height in CSS pixels, keyboard pin included. */
 export function shellViewportHeight(): number {
   const metrics = readViewportMetrics();

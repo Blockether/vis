@@ -207,6 +207,29 @@ describe('a form with a typed field on the iPhone', () => {
     expect(typing).toBe(resting);
   });
 
+  // Regression, user report: the first code on a phone predicted a taller pad than the
+  // one that rose, and the sheet dropped under the finger. It keeps its place now.
+  it('keeps the sheet in place when a shorter keyboard rises than predicted', () => {
+    pointing('coarse');
+    render(<SessionWithForm request={HUMAN_INPUT_REQUESTS.otp} />);
+    const code = screen.getByLabelText(/One-time code/);
+    const resting = sheetBottom();
+    const shorter = HEIGHT - resting - 40;
+
+    act(() => code.focus());
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: shorter }));
+    expect(shellHeight()).toBe(HEIGHT - shorter);
+    expect(sheetBottom()).toBe(resting);
+
+    act(() => {
+      code.blur();
+      native.keyboard.get('keyboardWillHide')?.({ keyboardHeight: 0 });
+      native.keyboard.get('keyboardDidHide')?.({ keyboardHeight: 0 });
+    });
+    expect(shellHeight()).toBe(HEIGHT);
+    expect(sheetBottom()).toBe(resting);
+  });
+
   it('stays docked to the bottom edge with a hardware keyboard', () => {
     pointing('fine');
     render(<SessionWithForm request={HUMAN_INPUT_REQUESTS.otp} />);

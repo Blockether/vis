@@ -776,6 +776,11 @@ function OtpBoxes({
   const { min, max } = humanInputOtp(field);
   const digits = humanInputOtpDigits(field, value);
   const [isFocused, setFocused] = useState(false);
+  // Where the last touch landed, as the gap to the input's right edge. The text ends
+  // there, so the caret stands under the finger. Reported on an iPhone: a double tap
+  // on a box gave no paste menu. WebKit shows that menu only for a tap on the caret,
+  // and the caret of the empty, invisible input stood at the left edge of the row.
+  const [touchEdge, setTouchEdge] = useState<number | null>(null);
   // The next digit lands in this box; a full code keeps the last box marked.
   const active = Math.min(digits.length, max - 1);
 
@@ -826,6 +831,12 @@ function OtpBoxes({
           aria-invalid={isInvalid}
           aria-required={field.is_required}
           className="absolute inset-0 size-full cursor-text border-0 bg-transparent p-0 font-mono text-body text-transparent caret-transparent outline-none selection:bg-transparent disabled:cursor-not-allowed"
+          style={touchEdge === null ? undefined : { textAlign: 'right', paddingRight: touchEdge }}
+          onPointerDown={(event) => {
+            if (event.pointerType !== 'touch') return;
+            const box = event.currentTarget.getBoundingClientRect();
+            setTouchEdge(Math.round(Math.max(0, Math.min(box.right - event.clientX, box.width - 1))));
+          }}
           onChange={(event) => onChange(field.id, humanInputOtpDigits(field, event.target.value))}
           // A pasted code REPLACES the code: an operator who pastes again after a
           // wrong paste wants the new code, not the old code with digits added.
