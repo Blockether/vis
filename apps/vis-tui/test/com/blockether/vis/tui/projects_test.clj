@@ -3580,7 +3580,8 @@
                     (fn [_ title items]
                       (if (= title "Group colour")
                         {:id "cyan"}
-                        (do (expect (some #(= :new-session (:id %)) items)) {:id @choice})))
+                        (do (expect (some #(= :new-session (:id %)) items))
+                            (if (map? @choice) @choice {:id @choice}))))
 
                     vis/gateway-create-session-group!
                     (fn [opts]
@@ -3628,7 +3629,18 @@
          #(swap! calls conj [:start %1 %2 %3]))
         (expect (= [[:start nil "/work/vis" "a"] [:start "g1" "/work/vis" "a"]
                     [:start "g1" "/work/vis" "a"]]
-                   (subvec @calls (- (count @calls) 3))))))))
+                   (subvec @calls (- (count @calls) 3))))
+        ;; A group item in a session menu acts on that session's group.
+        (reset! fail? false)
+        (reset! typed "  From session  ")
+        (reset! choice {:id :rename :target group-entry})
+        (#'screen/sidebar-row-menu!
+         nil
+         {:kind :project-session
+          :project (:project loose-entry)
+          :session {"id" "s9" "group_id" "g1"}}
+         nil)
+        (expect (= [[:update "g1" {:name "From session"}] [:refresh]] (take-last 2 @calls)))))))
 
 (defdescribe
   saved-project-pagers-and-pointer-test
@@ -4997,22 +5009,64 @@
 
                      (expect (re-find #"^[\p{L}\p{N}]" label) label)))))
 
-(defdescribe
-  session-row-starts-a-session-test
-  ;; User report: on a session row inside a group, the rail gave no way to start a
-  ;; new session. Every row offers the same new-session verb, key and `+`.
-  (it "offers New session here, n and + on loose and grouped session rows"
-      (let [db (every-kind-db)]
-        (doseq [sid ["s1" "s2"]
-                :let [entry (some #(when (= sid (get-in % [:session "id"])) %)
-                                  (projects/sidebar-entries db))
-                      focused (assoc-in db [:project-sidebar :index] (:index entry))
-                      expected [:menu (assoc entry :initial-action :new-session)]]]
+(defdescribe session-row-starts-a-session-test
+             ;; User report: on a session row inside a group, the rail gave no way to start a
+             ;; new session. Every session row offers the same new-session verb and keys.
+             (it "offers New session here, n and + on loose and grouped session rows"
+                 (let [db (every-kind-db)]
+                   (doseq [sid ["s1" "s2"]
+                           :let [entry (some #(when (= sid (get-in % [:session "id"])) %)
+                                             (projects/sidebar-entries db))
+                                 focused (assoc-in db [:project-sidebar :index] (:index entry))
+                                 expected [:menu (assoc entry :initial-action :new-session)]]]
 
-          (expect (some? entry) sid)
-          (expect (= [:new-session :new] (take 2 (map :id (projects/row-menu-items db entry)))) sid)
-          (expect (= expected (projects/key-action focused (cap/key-stroke \n))) sid)
-          (expect (= expected (projects/key-action focused (cap/key-stroke \+))) sid)))))
+                     (expect (some? entry) sid)
+                     (expect (= :new-session (:id (second (projects/row-menu-items db entry)))) sid)
+                     (expect (= expected (projects/key-action focused (cap/key-stroke \n))) sid)
+                     (expect (= expected (projects/key-action focused (cap/key-stroke \+))) sid)))))
+
+(defdescribe session-menu-sections-test
+             ;; User request, this Vis session (paraphrased: split the `g` menu of a session into
+             ;; its session and its group): a session menu lists its own verbs, then its group's.
+             (it
+               "splits a grouped session's menu into Session and Group sections"
+               (let [db
+                     (every-kind-db)
+
+                     entries
+                     (projects/sidebar-entries db)
+
+                     grouped
+                     (some #(when (= "s2" (get-in % [:session "id"])) %) entries)
+
+                     loose
+                     (some #(when (= "s1" (get-in % [:session "id"])) %) entries)
+
+                     items
+                     (projects/row-menu-items db grouped)
+
+                     sections
+                     (filterv :section? items)
+
+                     group-items
+                     (filterv :target items)]
+
+                 (expect (= ["Session" "Group · Release apps"] (mapv :label sections)))
+                 (expect (:section? (first items)))
+                 (expect (not-any? #(= :new-session (:id %)) group-items)
+                         "The session section already starts a session in the group")
+                 (expect (every? #(= "g1" (get-in % [:target :group "id"])) group-items))
+                 (expect (= #{:new :rename :recolour :settings :archive-group :delete}
+                            (set (map :id group-items))))
+                 (expect (apply distinct? (keep :key items)) "A key runs one item")
+                 (expect (= [:menu (assoc (:target (first group-items)) :initial-action :recolour)]
+                            (projects/key-action
+                              (assoc-in db [:project-sidebar :index] (:index grouped))
+                              (cap/key-stroke \c)))
+                         "A group key on a session row acts on its group")
+                 (expect (= ["Session" "Groups"]
+                            (mapv :label (filter :section? (projects/row-menu-items db loose)))))
+                 (expect (= :new (:id (last (projects/row-menu-items db loose))))))))
 
 (defdescribe sidebar-row-keys-test
              (it "runs every keyed menu item from its key on the focused row"
@@ -5020,7 +5074,7 @@
                    (doseq [entry (projects/sidebar-entries db)
                            :let [focused (assoc-in db [:project-sidebar :index] (:index entry))
                                  sid (get-in entry [:session "id"])]
-                           {:keys [id key hint]} (projects/row-menu-items db entry)
+                           {:keys [id key hint target]} (projects/row-menu-items db entry)
                            :when key]
 
                      (expect (= (if (= \space key) "Space" (str key)) hint))
@@ -5034,7 +5088,7 @@
                                   :refresh
                                   [:refresh]
 
-                                  [:menu (assoc entry :initial-action id)])
+                                  [:menu (assoc (or target entry) :initial-action id)])
                                 (projects/key-action focused (cap/key-stroke key)))))))
              (it "gives every sidebar command its own key and an action on some row"
                  (let [db

@@ -6655,7 +6655,7 @@
         moving
         (when sid (if (contains? selected sid) (sort selected) [sid]))
 
-        pick
+        choice
         (cond (:show-details? entry) {:id :details}
               (:initial-action entry) {:id (:initial-action entry)}
               :else (with-dialog-lock
@@ -6666,7 +6666,17 @@
                                (= :project-set (:kind entry))
                                (str (:label entry) " · " (projects/project-label project))
                                :else (str "Project · " (projects/project-label project)))
-                         (projects/row-menu-items @state/app-db entry))))]
+                         (projects/row-menu-items @state/app-db entry))))
+
+        ;; An item of a session menu's group section acts on the group row.
+        pick
+        (if-let [target (:target choice)]
+          (do (sidebar-row-menu! screen
+                                 (assoc target :initial-action (:id choice))
+                                 start-in-group!
+                                 choose!)
+              nil)
+          choice)]
 
     (case (:id pick)
       :use-project

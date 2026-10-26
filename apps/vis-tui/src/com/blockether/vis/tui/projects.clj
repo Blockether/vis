@@ -283,6 +283,7 @@
                      :selected? (contains? (get-in sidebar [:selected pid] #{}) sid)
                      :favorite? (some? (get session "favorite_rank"))
                      :in-archived-group? (some? (get group "archived_at"))
+                     :session-group group
                      :status (session-status session
                                              (= sid
                                                 (some-> (get-in db [:session :id])
@@ -1482,9 +1483,8 @@
         k :hint
         (keymap/sidebar-key-label {:key k})))))
 
-(defn row-menu-items
-  "The row menu of a sidebar `entry`, each verb with the key that runs it. The keys
-   work on the row without the menu: a key acts exactly where the menu lists it."
+(defn- own-menu-items
+  "The verbs of the sidebar `entry` itself, each with the key that runs it."
   [db entry]
   (let [project
         (:project entry)
@@ -1515,9 +1515,8 @@
     (cond
       sid
       (cond-> (if (:in-archived-group? entry)
-                [(menu-item :new "New group…" :new-group)]
-                [(menu-item :new-session "New session here" :new-session)
-                 (menu-item :new "New group…" :new-group)])
+                []
+                [(menu-item :new-session "New session here" :new-session)])
         true
         (into [(menu-item :details "Show session details" :details)
                (menu-item :toggle-session
@@ -1588,6 +1587,40 @@
              (menu-item :refresh "Refresh projects" :refresh)
              (menu-item :delete-project "Remove project and sessions…" :delete)])))
 
+(defn row-menu-items
+  "The row menu of a sidebar `entry`, each verb with the key that runs it. The keys
+   work on the row without the menu: a key acts exactly where the menu lists it.
+   A session's menu has a Session section and a section for its group. An item of
+   the group section carries the group row as its `:target`. It keeps its key only
+   when no session verb uses that key."
+  [db entry]
+  (let [own (own-menu-items db entry)]
+    (if-not (:session entry)
+      own
+      (let [group (:session-group entry)
+            target (when group
+                     {:kind :project-group
+                      :project (:project entry)
+                      :group group
+                      :label (str (get group "name"))})
+            taken (set (keep :key own))
+            more (if target
+                   (into []
+                         (comp (remove #(= :new-session (:id %)))
+                               (map (fn [item]
+                                      (cond-> (assoc item :target target)
+                                        (taken (:key item))
+                                        (dissoc :key :hint)))))
+                         (own-menu-items db target))
+                   [(menu-item :new "New group…" :new-group)])]
+
+        (-> [{:id ::session-section :label "Session" :section? true}]
+            (into own)
+            (conj {:id ::group-section
+                   :label (if target (str "Group · " (get group "name")) "Groups")
+                   :section? true})
+            (into more))))))
+
 (def ^:private menu-kinds
   "Row kinds that own a row menu."
   #{:project-select :project-group :project-set :project-session})
@@ -1634,7 +1667,7 @@
           (is? :menu) (if (menu-kinds (:kind entry)) [:menu entry] [:noop])
           (is? :add-project) [:add]
           (is? :refresh) [:refresh]
-          item [:menu (assoc entry :initial-action (:id item))]
+          item [:menu (assoc (or (:target item) entry) :initial-action (:id item))]
           ;; Without a row of its own, settings opens the main settings.
           (is? :settings) [:menu (assoc (or entry {}) :initial-action :settings)]
           :else [:noop])))

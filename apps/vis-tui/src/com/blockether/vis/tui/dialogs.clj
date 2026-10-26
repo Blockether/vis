@@ -1889,6 +1889,28 @@
                  (str/includes? (str/lower-case (str (or (:search-text item) (:label item)))) q))
         items))))
 
+(defn- section-item?
+  "True for a select-list section header: a dim label that no selection lands on."
+  [item]
+  (true? (:section? item)))
+
+(defn- selectable-index
+  "The nearest index from `index` in direction `step` (1 or -1) whose item is not a
+   section header. Else the nearest one the other way, else `index`."
+  [items index step]
+  (let [n
+        (count items)
+
+        index
+        (long index)
+
+        ok?
+        #(and (< -1 (long %) n) (not (section-item? (nth items %))))]
+
+    (or (first (filter ok? (range index (if (pos? (long step)) n -1) step)))
+        (first (filter ok? (range index (if (pos? (long step)) -1 n) (- (long step)))))
+        index)))
+
 (defn- list-pointer-index
   "Index of the select-list item under a pointer event, or nil off the list."
   [key {:keys [bounds list-top list-h total column-offset]} scroll]
@@ -1917,7 +1939,8 @@
    item; releasing the button on the item it pressed chooses that item."
   [state key geom]
   (let [index
-        (list-pointer-index key geom (:scroll state))
+        (let [at (list-pointer-index key geom (:scroll state))]
+          (when-not (and at (section-item? (nth (:filtered geom) at nil))) at))
 
         action
         (.getActionType ^MouseAction key)]
@@ -2030,11 +2053,13 @@
           :list-h list-h
           :filter? filter?
           :placeholder placeholder}))
-     :reconcile (fn [state {:keys [total list-h]}]
-                  (let [selected (p/clamp (:selected state) 0 (max 0 (dec (long total))))]
-                    (assoc state
-                      :selected selected
-                      :scroll (visible-window-start selected (:scroll state) list-h total))))
+     :reconcile
+     (fn [state {:keys [total list-h filtered]}]
+       (let [selected
+             (selectable-index filtered (p/clamp (:selected state) 0 (max 0 (dec (long total)))) 1)]
+         (assoc state
+           :selected selected
+           :scroll (visible-window-start selected (:scroll state) list-h total))))
      :paint
      (fn [^TextGraphics graphics {:keys [selected scroll query]}
           {:keys [cols rows title filtered total footer content-w content-h-req bounds content-top
@@ -2068,15 +2093,25 @@
                      row (+ (long list-top) (long i))]
 
                  (when (< (long idx) (long total))
-                   (let [item (nth filtered idx)]
-                     (draw-list-item!
-                       g
-                       left
-                       row
-                       (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)
-                       (= idx selected)
-                       (str " " (:label item))
-                       (:hint item))))))
+                   (let [item (nth filtered idx)
+                         width (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)]
+
+                     (if (section-item? item)
+                       (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                           (p/styled g
+                                     [p/BOLD]
+                                     (p/put-str! g
+                                                 (inc (long left))
+                                                 row
+                                                 (ellipsize (str " " (:label item))
+                                                            (max 0 (- (long width) 2))))))
+                       (draw-list-item! g
+                                        left
+                                        row
+                                        width
+                                        (= idx selected)
+                                        (str " " (:label item))
+                                        (:hint item)))))))
              (when (> (long total) (long list-h))
                (ScrollBar/draw g
                                Direction/VERTICAL
@@ -2094,50 +2129,57 @@
              (when cursor
                (TerminalPosition. (int (frame/screen-column (.getColumn ^TerminalPosition cursor)))
                                   (.getRow ^TerminalPosition cursor)))))))
-     :on-key (fn [{:keys [selected query] :as state} key {:keys [total filtered list-h] :as geom}]
-               (let [clampf
-                     #(p/clamp % 0 (max 0 (dec (long total))))
+     :on-key
+     (fn [{:keys [selected query] :as state} key {:keys [total filtered list-h] :as geom}]
+       ;; A move that lands on a section header goes on past it in the same direction.
+       (let [clampf
+             #(let [to (p/clamp % 0 (max 0 (dec (long total))))] (selectable-index
+                                                                   filtered
+                                                                   to
+                                                                   (if (< (long to) (long selected))
+                                                                     -1
+                                                                     1)))
 
-                     c
-                     (key-character key)
+             c
+             (key-character key)
 
-                     ctrl?
-                     (and (instance? KeyStroke key) (.isCtrlDown ^KeyStroke key))
+             ctrl?
+             (and (instance? KeyStroke key) (.isCtrlDown ^KeyStroke key))
 
-                     accelerator
-                     (when-not filter? (accelerator-item filtered key))]
+             accelerator
+             (when-not filter? (accelerator-item filtered key))]
 
-                 (if-let [wheel (ScrollBar/wheelStep ^KeyStroke key)]
-                   (assoc state :selected (clampf (+ (long selected) (long wheel))))
-                   (cond (instance? MouseAction key) (select-pointer state key geom)
-                         accelerator {::done accelerator}
-                         (and ctrl? (= KeyType/Character (key-type key)) (#{\n \p} c))
-                         (assoc state :selected (clampf ((if (= \n c) inc dec) (long selected))))
-                         :else
-                         (condp = (key-type key)
-                           KeyType/Escape {::done nil}
-                           KeyType/ArrowUp (assoc state :selected (clampf (dec (long selected))))
-                           KeyType/ArrowDown (assoc state :selected (clampf (inc (long selected))))
-                           KeyType/PageUp (assoc state
-                                            :selected (clampf (- (long selected) (long list-h))))
-                           KeyType/PageDown (assoc state
-                                              :selected (clampf (+ (long selected) (long list-h))))
-                           KeyType/Home (assoc state :selected 0)
-                           KeyType/End (assoc state :selected (clampf (dec (long total))))
-                           KeyType/Enter {::done (when (pos? (long total)) (nth filtered selected))}
-                           KeyType/Backspace
-                           (if filter?
-                             (assoc state
-                               :query (if (seq query) (subs query 0 (dec (count query))) query)
-                               :selected 0)
-                             state)
-                           KeyType/Character
-                           (if (and filter? c (not ctrl?) (not (.isAltDown ^KeyStroke key)))
-                             (assoc state
-                               :query (str query c)
-                               :selected 0)
-                             state)
-                           state)))))}))
+         (if-let [wheel (ScrollBar/wheelStep ^KeyStroke key)]
+           (assoc state :selected (clampf (+ (long selected) (long wheel))))
+           (cond (instance? MouseAction key) (select-pointer state key geom)
+                 accelerator {::done accelerator}
+                 (and ctrl? (= KeyType/Character (key-type key)) (#{\n \p} c))
+                 (assoc state :selected (clampf ((if (= \n c) inc dec) (long selected))))
+                 :else
+                 (condp = (key-type key)
+                   KeyType/Escape {::done nil}
+                   KeyType/ArrowUp (assoc state :selected (clampf (dec (long selected))))
+                   KeyType/ArrowDown (assoc state :selected (clampf (inc (long selected))))
+                   KeyType/PageUp (assoc state :selected (clampf (- (long selected) (long list-h))))
+                   KeyType/PageDown (assoc state
+                                      :selected (clampf (+ (long selected) (long list-h))))
+                   KeyType/Home (assoc state :selected (clampf 0))
+                   KeyType/End (assoc state :selected (clampf (dec (long total))))
+                   KeyType/Enter (let [item (when (pos? (long total)) (nth filtered selected))]
+                                   (if (section-item? item) state {::done item}))
+                   KeyType/Backspace (if filter?
+                                       (assoc state
+                                         :query
+                                         (if (seq query) (subs query 0 (dec (count query))) query)
+                                         :selected 0)
+                                       state)
+                   KeyType/Character (if
+                                       (and filter? c (not ctrl?) (not (.isAltDown ^KeyStroke key)))
+                                       (assoc state
+                                         :query (str query c)
+                                         :selected 0)
+                                       state)
+                   state)))))}))
 
 (defn list-dialog!
   "Reusable scrollable, selectable list dialog — the SINGLE implementation
@@ -2146,7 +2188,8 @@
    scroll / key logic and `run-modal!` owns the loop. Returns the chosen item
    map (the full map, so callers recover `:id`/slash keys), or nil on Esc.
 
-   `items` is a vec of maps with at least `:label`. An item's optional `:hint` is
+   `items` is a vec of maps with at least `:label`. An item with `:section? true` is
+   a dim header that the selection skips. An item's optional `:hint` is
    a dim right-aligned chip; its optional `:key` character chooses it directly
    when the list does not filter, and `:ctrl-key` does the same with Ctrl held.
    A click chooses the item it pressed, and hover moves the selection. ↑↓,

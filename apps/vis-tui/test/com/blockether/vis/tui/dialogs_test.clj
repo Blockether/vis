@@ -236,6 +236,63 @@
 
                    (expect (= 5 (:selected (on-key s0 burst geom)))))))
 
+(defdescribe
+  select-modal-sections-test
+  ;; User request, this Vis session (paraphrased: split a row menu into sections):
+  ;; a section header shows in the list, and no selection lands on it.
+  (it
+    "skips section headers with keys, Enter and the pointer"
+    (let [items
+          [{:id :s :label "Session" :section? true} {:id :a :label "Rename"}
+           {:id :g :label "Group" :section? true} {:id :b :label "Recolour"}]
+
+          {:keys [init measure reconcile on-key]}
+          (dlg/select-modal-component "Menu" items {:height :content})
+
+          {:keys [bounds list-top] :as geom}
+          (measure init 80 30)
+
+          s0
+          (reconcile init geom)
+
+          step
+          #(reconcile (on-key %1 %2 geom) geom)
+
+          press
+          (fn [row]
+            (MouseAction. MouseActionType/CLICK_DOWN
+                          1
+                          (TerminalPosition. (int (+ (long (:left bounds)) 3))
+                                             (int (+ (long list-top) (long row))))))]
+
+      (expect (= 1 (:selected s0)) "The first header is skipped")
+      (expect (= 3 (:selected (step s0 (ks KeyType/ArrowDown)))))
+      (expect (= 1
+                 (:selected (-> s0
+                                (step (ks KeyType/ArrowDown))
+                                (step (ks KeyType/ArrowUp))))))
+      (expect (= 1 (:selected (step s0 (ks KeyType/Home)))))
+      (expect (= 1 (:selected (step s0 (ks KeyType/ArrowUp)))) "Nothing selectable above")
+      (expect (= 1 (:selected (step s0 (press 2)))) "A press on a header selects nothing")
+      (expect (= :a (:id (done-key (on-key s0 (ks KeyType/Enter) geom)))))))
+  (it "paints a header without a selection bar"
+      (let [capture
+            (cap/capture! {:cols 80
+                           :rows 30
+                           :keys [:esc]
+                           :paint! (fn [{:keys [screen]}]
+                                     (dlg/select-dialog! screen
+                                                         "Menu"
+                                                         [{:id :s :label "Session" :section? true}
+                                                          {:id :a :label "Rename"}]))})
+
+            lines
+            (str/split-lines (cap/frame-text capture 0))]
+
+        (expect (nil? (:error capture)))
+        (expect (some #(re-find #"│ Session +│" %) lines))
+        (expect (some #(re-find #"│ Rename +│" %) lines)))))
+
 (defn- numbered-items
   "`n` plain list items labelled Item 0, Item 1 and so on."
   [n]
