@@ -224,7 +224,7 @@
              [{:error "Could not load team. Refresh to retry."} "Unavailable"]
              [{:agents [(assoc review-agent "status" "completed")]} "done"]
              [{:agents [(assoc review-agent "status" "budget_limited")]} "out of bu"]
-             [{:agents [(assoc review-agent "pending_input" true)]} "needs you"]]]
+             [{:agents [(assoc review-agent "pending_input" true)]} "running"]]]
 
       (let [rows
             20
@@ -368,7 +368,7 @@
                [[{"status" "completed"}
                  {"status" "running" "iterations_used" 3 "iteration_budget" 20}
                  {"status" "running" "pending_input" true "pending_input_count" 2}
-                 {"status" "queued"}] "Agents: 1 needs you · 1 running · 1 queued"]
+                 {"status" "queued"}] "Agents: 2 running · 1 queued"]
                [[{"status" "running" "role" "verify"} {"status" "running" "question" "Keep it?"}
                  {"status" "running" "role" "research"} {"status" "completed" "role" "implement"}]
                 "Agents: 1 asking · 2 running"]]]
@@ -506,8 +506,8 @@
 
 (defdescribe status-word-test
              (it "names each status in words, without icons"
-                 (expect (= ["queued" "running" "asking" "needs you" "done" "passed" "failed"
-                             "failed" "cancelled" "out of budget"]
+                 (expect (= ["queued" "running" "asking" "running" "done" "passed" "failed" "failed"
+                             "cancelled" "out of budget"]
                             (mapv team/status-word every-state)))))
 
 (defdescribe
@@ -531,7 +531,9 @@
         (expect (str/includes? (nth lines 2) "#3"))
         (expect (str/includes? (nth lines 2) "asking  "))
         (expect (str/includes? (nth lines 2) "Keep the old API?"))
-        (expect (str/includes? (nth lines 3) "needs you"))
+        ;; A form of a subagent opens in the leader session, so its row only runs.
+        (expect (str/includes? (nth lines 3) "running"))
+        (expect (not (str/includes? (nth lines 3) "needs you")))
         (expect (str/includes? (nth lines 4) "Found 3 routes"))
         (expect (str/ends-with? (nth lines 4) "1m 00s") "A finished agent shows its duration")
         (expect (str/includes? (nth lines 5) "passed"))

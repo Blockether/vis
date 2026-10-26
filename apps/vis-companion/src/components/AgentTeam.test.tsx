@@ -34,15 +34,15 @@ const rowTexts = () => screen.getAllByRole('button').map((row) => row.textConten
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('agent rows', () => {
-  it('reads every status as words, with needs you and asking first', () => {
+  it('reads every status as words, with asking first', () => {
     const words = [
       { status: 'queued' }, { status: 'running' }, { question: 'Which branch?' }, { budget_request: { iterations: 8 } },
-      { files_request: { reason: 'Docs' } }, { pending_input: true, question: 'Both?' }, { status: 'completed' },
+      { files_request: { reason: 'Docs' } }, { pending_input: true }, { status: 'completed' },
       { status: 'completed', outcome: 'passed' }, { status: 'completed', outcome: 'failed' }, { status: 'failed' },
       { status: 'cancelled' }, { status: 'budget_limited' },
     ].map((change) => agentStatus({ ...child, ...change } as Subagent).text);
     expect(words).toEqual([
-      'queued', 'running', 'asking', 'asking', 'asking', 'needs you', 'done',
+      'queued', 'running', 'asking', 'asking', 'asking', 'running', 'done',
       'passed', 'failed', 'failed', 'cancelled', 'out of budget',
     ]);
   });
@@ -109,18 +109,20 @@ describe('agent rows', () => {
       { ...child, session_id: 'late', created_at: T0 + 5, pending_input: true },
       { ...child, session_id: 'early', created_at: T0 + 1, status: 'completed' },
     ]} />);
-    expect(rowTexts()).toEqual([expect.stringMatching(/^#1done/), expect.stringMatching(/^#2needs you/)]);
+    expect(rowTexts()).toEqual([expect.stringMatching(/^#1done/), expect.stringMatching(/^#2running/)]);
   });
 
-  // The form itself reaches the person through the form prompt of the leader session.
-  it('opens the timeline for an agent that needs a person, with no control for its requests', () => {
+  // A form of a subagent opens in the form prompt of the leader session, like any
+  // other form. Its row only runs and opens the timeline, never the child session.
+  it('shows an agent with an open form as running, with no control for its requests', () => {
     const onOpen = vi.fn();
     render(<TurnAgents {...props} onOpen={onOpen} agents={[
       { ...child, pending_input: true },
       { ...child, session_id: 'asks', question: 'Keep the old API?', budget_request: { iterations: 8 } },
     ]} />);
+    expect(screen.queryByText('needs you')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^(Answer|Grant|Deny|Later)/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /needs you/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^#1running/ }));
     expect(onOpen).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });

@@ -38,18 +38,19 @@ export const Dock: Story = {
   ),
   play: async ({ canvasElement }) => {
     const dock = within(canvasElement).getByRole('region', { name: 'Subagents of this turn' });
-    for (const word of ['running', 'needs you', 'queued', 'passed']) await expect(within(dock).getByText(word)).toBeVisible();
+    for (const word of ['queued', 'passed']) await expect(within(dock).getByText(word)).toBeVisible();
+    await expect(within(dock).getAllByText('running')[0]).toBeVisible();
+    await expect(within(dock).queryByText('needs you')).toBeNull();
     await expect(within(dock).getAllByText('asking')).toHaveLength(2);
     await expect(dock.querySelector('svg')).toBeNull();
   },
 };
 
-const waiting = STORY_LIVE_TEAM.filter((agent) =>
-  agent.pending_input || agent.question || agent.budget_request || agent.files_request);
+const waiting = STORY_LIVE_TEAM.filter((agent) => agent.question || agent.budget_request || agent.files_request);
 
 /**
- * Agents that wait: on their leader (asking, with the question as the line) or on a
- * form (needs you). The rows only read; the leader answers, the form prompt asks you.
+ * Agents that wait on their leader: asking, with the question as the line. The rows
+ * only read; the leader answers. A form of an agent opens in the form prompt.
  */
 export const AskingRow: Story = {
   render: (args) => (
@@ -58,11 +59,10 @@ export const AskingRow: Story = {
   play: async ({ canvasElement }) => {
     const dock = within(canvasElement).getByRole('region', { name: 'Subagents of this turn' });
     await expect(within(dock).getAllByText('asking').length).toBeGreaterThan(0);
-    await expect(within(dock).getByText('needs you')).toBeVisible();
     for (const control of [/Answer/, /Grant/, /Deny/, /Later/]) {
       await expect(within(dock).queryByRole('button', { name: control })).toBeNull();
     }
-    await userEvent.click(within(dock).getByRole('button', { name: /needs you/ }));
+    await userEvent.click(within(dock).getAllByRole('button', { name: /asking/ })[0]);
     await expect(await within(document.body).findByRole('dialog')).toBeVisible();
   },
 };

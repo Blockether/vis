@@ -7,12 +7,11 @@ import { Button, DialogFrame, Modal } from './ui';
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
 
-/** The agent waits for a person or for its parent: a form, a question or a request. */
-export const isAsking = (agent: Subagent) =>
-  Boolean(agent.pending_input || agent.question || agent.budget_request || agent.files_request);
-
-// The agent asks its parent, not a person: a question, more iterations or files.
-const asksParent = (agent: Subagent) => Boolean(agent.question || agent.budget_request || agent.files_request);
+/**
+ * The agent waits for its parent: a question, more iterations or files. A form of the
+ * agent opens in the form prompt of the leader session, so it is no row state.
+ */
+export const isAsking = (agent: Subagent) => Boolean(agent.question || agent.budget_request || agent.files_request);
 
 export const isLive = (agent: Subagent) => ['queued', 'running'].includes(agent.status);
 
@@ -33,8 +32,7 @@ export function agentLabel(agent: Subagent, agents: readonly Subagent[]): string
 
 /** The status words of an agent, with the theme ink that agrees with them. Text only, no marks. */
 export function agentStatus(agent: Subagent): { text: string; ink: string } {
-  if (agent.pending_input) return { text: 'needs you', ink: 'text-warn' };
-  if (asksParent(agent)) return { text: 'asking', ink: 'text-warn' };
+  if (isAsking(agent)) return { text: 'asking', ink: 'text-warn' };
   switch (agent.status) {
     case 'queued':
       return { text: 'queued', ink: 'text-dialog-hint' };
@@ -81,7 +79,7 @@ export function formatAgentTime(ms: number): string {
 
 /** The second part of a row: the open request, what the agent does now, or its result. */
 export function agentLine(agent: Subagent): string | undefined {
-  if (asksParent(agent)) return agent.question ?? agent.budget_request?.reason ?? agent.files_request?.reason;
+  if (isAsking(agent)) return agent.question ?? agent.budget_request?.reason ?? agent.files_request?.reason;
   return isLive(agent) ? agent.activity : agent.result;
 }
 
@@ -114,8 +112,8 @@ export interface TeamProps {
 
 /**
  * The subagents of one turn: one row each, in spawn order. A row opens the timeline
- * of its agent. The form of an agent that needs you opens in the form prompt of
- * this session: the gateway sends it to every ancestor session.
+ * of its agent. A form of an agent opens in the form prompt of this session, like any
+ * other form: the gateway sends it to every ancestor session.
  */
 export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline, placement = 'transcript' }: TeamProps & {
   /** The dock above the composer while the team works, or the turn of the transcript after. */
@@ -247,7 +245,7 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
             <ol aria-label="Timeline" className="space-y-1">
               {steps.items.map((item, index) => {
                 const end = item.kind === 'finished' && item.status
-                  ? agentStatus({ ...agent, status: item.status, outcome: item.outcome, pending_input: false, question: undefined, budget_request: undefined, files_request: undefined })
+                  ? agentStatus({ ...agent, status: item.status, outcome: item.outcome, question: undefined, budget_request: undefined, files_request: undefined })
                   : null;
                 return (
                   <li key={index} className="grid grid-cols-[8ch_9ch_minmax(0,1fr)] gap-x-3">

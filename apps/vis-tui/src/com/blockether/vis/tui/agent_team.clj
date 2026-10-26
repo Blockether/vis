@@ -36,13 +36,10 @@
   (some #(when (= (get % "const") (get agent "role")) (get % "const")) (roles)))
 
 (defn waiting?
-  "Whether `agent` waits for a person: a form in its own session, or an open question, budget
-   request or file request to its parent."
+  "Whether `agent` waits for its parent: an open question, budget request or file request. A
+   form of the agent opens in the leader session like any other form, so it is no row state."
   [agent]
-  (boolean (or (get agent "pending_input")
-               (get agent "question")
-               (get agent "budget_request")
-               (get agent "files_request"))))
+  (boolean (or (get agent "question") (get agent "budget_request") (get agent "files_request"))))
 
 (defn- active? [agent] (or (waiting? agent) (contains? #{"queued" "running"} (get agent "status"))))
 
@@ -122,9 +119,11 @@
           (nil? checked-at) (str label " ?")
           (> (- (System/currentTimeMillis) (long checked-at)) 10000) (str label " stale")
           :else (str label
-                     " " (count (filter #(contains? #{"queued" "running"} (get % "status")) agents))
-                     " active/" (count agents)
-                     " cached" (when (some #(get % "pending_input") agents) " !")))))
+                     " "
+                     (count (filter #(contains? #{"queued" "running"} (get % "status")) agents))
+                     " active/"
+                     (count agents)
+                     " cached"))))
 
 ;; ── Team rows ───────────────────────────────────────────────────────────────
 
@@ -150,11 +149,10 @@
   (or (not-empty (one-line (get agent "title"))) (str "#" n)))
 
 (defn status-word
-  "The status of `agent` in words: `queued`, `running`, `asking`, `needs you`, `done`,
-   `passed`, `failed`, `cancelled` or `out of budget`."
+  "The status of `agent` in words: `queued`, `running`, `asking`, `done`, `passed`, `failed`,
+   `cancelled` or `out of budget`."
   [agent]
-  (cond (get agent "pending_input") "needs you"
-        (waiting? agent) "asking"
+  (cond (waiting? agent) "asking"
         :else (case (get agent "status")
                 "queued"
                 "queued"
@@ -186,7 +184,7 @@
 (defn- tone
   [word]
   (case word
-    ("asking" "needs you" "out of budget")
+    ("asking" "out of budget")
     :attention
 
     ("done" "passed")
@@ -208,8 +206,7 @@
   (cond (get agent "question") (one-line (get agent "question"))
         (get agent "budget_request")
         (str "Asks for " (get-in agent ["budget_request" "iterations"]) " more iterations")
-        (get agent "files_request") "Asks for file access"
-        (get agent "pending_input") "Waits for your input in its own session"))
+        (get agent "files_request") "Asks for file access"))
 
 (defn- now-text
   "What the agent does now while it works, its request while it waits, else its result."
@@ -243,7 +240,6 @@
      :tone (tone word)
      :now (now-text agent)
      :active? (active? agent)
-     :pending-input? (boolean (get agent "pending_input"))
      :start (start-ms agent)
      :end (when (and (not (active? agent)) (number? (get agent "finished_at")))
             (long (get agent "finished_at")))}))
@@ -416,13 +412,11 @@
       t/dialog-hint)))
 
 (defn- register-row!
-  "A click on a row opens the timeline, or the child session when it needs a person."
+  "A click on a row opens the timeline of its agent."
   [row screen-row left width]
   (when-let [id (:session-id row)]
     (.register interactions/hit-map
-               {:bounds {:row screen-row :col left :width width}
-                :kind (if (:pending-input? row) :switch-session :agent-timeline)
-                :text id})))
+               {:bounds {:row screen-row :col left :width width} :kind :agent-timeline :text id})))
 
 (defn- paint-segments!
   [^TextGraphics g left row width segments tone-key]
@@ -557,7 +551,7 @@
 
 (defn footer-label
   "Team state for the footer chip from the cached snapshot, such as `Agents: 2 running · 1
-   asking`. Nil while no agent works or waits for a person, so a finished team leaves the
+   asking`. Nil while no agent works or waits, so a finished team leaves the
    footer. Never fetches during painting."
   [sid]
   (let [agents (filter #(or (waiting? %) (contains? #{"queued" "running"} (get % "status")))
@@ -565,7 +559,7 @@
     (when (seq agents)
       (str "Agents: "
            (str/join " · "
-                     (for [word ["needs you" "asking" "running" "queued"]
+                     (for [word ["asking" "running" "queued"]
                            :let [n (count (filter #(= word (status-word %)) agents))]
                            :when (pos? n)]
 

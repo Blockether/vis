@@ -43,7 +43,8 @@ export const Running: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const dock = await page.findByRole('region', { name: 'Subagents of this turn' });
-    await expect(within(dock).getByText('needs you')).toBeVisible();
+    await expect(within(dock).getByText('Sign in to the store')).toBeVisible();
+    await expect(within(dock).queryByText('needs you')).toBeNull();
     await expect(page.queryByRole('region', { name: 'Questions' })).toBeNull();
     await expect(within(dock).queryByRole('button', { name: /^(Answer|Grant|Deny|Later)/ })).toBeNull();
     // The finished team of the first turn stands in that turn, not in the dock.
