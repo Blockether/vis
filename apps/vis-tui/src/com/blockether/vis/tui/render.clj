@@ -1840,16 +1840,14 @@
            (= (:view-id target) (:view-id hovered))))))
 
 (defn- image-row-cells
-  "The pictures that one reserved row carries, each as `{:img :img-idx :image-col-offset :view}`.
-   A gallery row holds one cell for each tile; a single picture row holds its own picture."
+  "The picture that one reserved row carries, as `[{:img :img-idx :image-col-offset :view}]`."
   [meta]
   (when (contains? #{:image :image-pad} (:kind meta))
-    (or (:imgs meta)
-        (when-let [img (:img meta)]
-          [{:img img
-            :img-idx (:img-idx meta)
-            :image-col-offset (:image-col-offset meta)
-            :view (:view meta)}]))))
+    (when-let [img (:img meta)]
+      [{:img img
+        :img-idx (:img-idx meta)
+        :image-col-offset (:image-col-offset meta)
+        :view (:view meta)}])))
 
 (defn- ellipsize-middle
   "Fit `s` into `cols` cells. Cut the middle, so the start and the file extension stay."
@@ -1940,34 +1938,78 @@
                  (assoc target :bounds {:row abs-row :col button-col :width button-w})))
     (p/clear-styles! g)))
 
-(defn- draw-gallery-captions!
-  "Paint the numbered captions under one band of gallery tiles. Each caption opens the image
-   viewer at its picture, the same as a click on the picture."
-  [g meta x y abs-row paper]
-  (let [hovered (.hovered interactions/hit-map)]
-    (doseq [{:keys [col width number name view]} (:captions meta)]
-      (let [col (+ (long x) (long col))
-            width (long width)
-            hovered? (and view
-                          (= :image (:kind hovered))
-                          (= (:index view) (:index hovered))
-                          (= (:images view) (:images hovered)))
-            number-label (str number " ")
-            name-w (max 0 (- width (long (p/display-width number-label))))]
+(def ^:private image-table-thumb-cols "Widest thumbnail in the image table." 24)
 
-        (p/set-colors! g t/link-chrome-hover-fg paper)
-        (p/styled g [p/BOLD] (p/put-str! g col y (p/truncate-cols number-label width)))
-        (p/set-colors! g (if hovered? t/text-fg t/footer-fg-muted) paper)
-        (p/put-str! g
-                    (+ col (long (p/display-width number-label)))
-                    y
-                    (ellipsize-middle name name-w))
-        (when view
-          (.register interactions/hit-map
-                     (merge {:bounds {:row abs-row :col col :width width}
-                             :kind :image
-                             :url (get-in view [:images (:index view) :path])}
-                            view)))))))
+(def ^:private image-table-thumb-rows "Tallest thumbnail in the image table." 8)
+
+(def ^:private image-table-open-label " Open externally ")
+
+(defn- draw-image-table-row!
+  "Paint the text of one image table row: a picture's name, type and size and its Open
+   externally button, or the viewer hint."
+  [g meta part x y iw abs-row]
+  (let [x
+        (long x)
+
+        iw
+        (long iw)
+
+        text-col
+        (+ x (long (or (:table-text-col meta) 0)))
+
+        room
+        (max 0 (- (+ x iw) 2 text-col))]
+
+    (case part
+      :image-table-hint
+      (do (p/set-colors! g t/footer-fg-muted t/code-block-bg)
+          (p/put-str! g (+ x 2) y (p/ellipsize (str (:table-hint meta)) (max 0 (- iw 4)))))
+
+      :image-table
+      (let [line
+            (long (:table-line meta))
+
+            target
+            (when-let [doc (:table-target meta)]
+              {:kind :doc :url (:path (:doc doc))})]
+
+        (when (and (zero? line) (not (:table-preview? meta)))
+          (p/set-colors! g t/footer-fg-muted t/code-block-bg)
+          (p/put-str! g (+ x 2) y "No preview"))
+        (case line
+          0
+          (do (p/set-colors! g t/text-fg t/code-block-bg)
+              (p/styled g
+                        [p/BOLD]
+                        (p/put-str! g text-col y (ellipsize-middle (:table-name meta) room))))
+
+          1
+          (do (p/set-colors! g t/footer-fg-muted t/code-block-bg)
+              (p/put-str! g text-col y (p/ellipsize (str (:table-label meta)) room)))
+
+          2
+          (when target
+            (let [hovered
+                  (.hovered interactions/hit-map)
+
+                  hovered?
+                  (and (= :doc (:kind hovered)) (= abs-row (get-in hovered [:bounds :row])))
+
+                  w
+                  (long (p/display-width image-table-open-label))]
+
+              (if hovered?
+                (do (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
+                    (p/styled g [p/BOLD] (p/put-str! g text-col y image-table-open-label)))
+                (do (p/set-colors! g t/button-fg t/button-bg)
+                    (p/put-str! g text-col y image-table-open-label)))
+              (.register interactions/hit-map
+                         (assoc target :bounds {:row abs-row :col text-col :width w}))))
+
+          nil))
+
+      nil)
+    (p/clear-styles! g)))
 
 (defn- draw-attachment-card-row!
   "Paint one attachment card row on card paper: a frame piece, the fold title or a file row.
@@ -1991,21 +2033,14 @@
         part
         (:card-part meta)
 
-        ;; A gallery row has no frame and stays on the message paper.
-        bare?
-        (:card-bare? meta)
-
         paper
-        (if bare? (.getBackgroundColor ^TextGraphics g) t/code-block-bg)]
+        t/code-block-bg]
 
     (p/clear-styles! g)
     (p/set-bg! g paper)
     (p/fill-rect! g x y iw 1)
     (p/set-colors! g t/turn-separator-fg paper)
-    (case (if bare? :bare part)
-      :bare
-      nil
-
+    (case part
       :top
       (p/put-str! g x y (str "┌" (repeat-str \─ inner) "┐"))
 
@@ -2028,7 +2063,8 @@
       (when-let [toggle (:card-toggle meta)]
         (.register interactions/hit-map (assoc toggle :bounds {:row abs-row :col x :width iw}))))
     (when (= :file part) (draw-attachment-file-row! g meta x y iw abs-row))
-    (when (= :captions part) (draw-gallery-captions! g meta x y abs-row paper))
+    (when (#{:image-table :image-table-hint} part)
+      (draw-image-table-row! g meta part x y iw abs-row))
     (p/clear-styles! g)))
 
 (defn- draw-live-button!
@@ -2587,8 +2623,7 @@
                     (p/set-bg! g t/code-block-bg)
                     (p/fill-rect! g bx y bubble-w 1))
                   ;; Record exact screen coordinates for the post-refresh image pass, and
-                  ;; let every painted picture row open the image viewer. A gallery row
-                  ;; carries one cell for each tile.
+                  ;; let every painted picture row open the image viewer.
                   (doseq [{:keys [img img-idx image-col-offset view]} (image-row-cells meta)]
                     (let [row (+ (long viewport-top) (long y))
                           col (+ (long x) (long (or image-col-offset 0)))]
@@ -5090,118 +5125,6 @@
 
     (vec (concat header body))))
 
-(def ^:private image-max-rows
-  "Ceiling on the inline-image box HEIGHT in cells. The box WIDTH is NOT
-   capped: it fills the bubble's content width, so a picture is normalized to
-   the terminal instead of pinned to a fixed strip. This row ceiling is all
-   that keeps a portrait image from reserving an absurd column of transcript;
-   a box that still overflows the viewport is never dropped —
-   `fitting-image-placements` shrinks a bottom-overflowing box
-   (aspect-preserving) to the visible rows, and Kitty source-crops only a
-   picture the user has actually scrolled INTO."
-  40)
-
-(defn image-cell-box
-  "The cell box `{:cols :rows}` the transcript RESERVES for a picture of
-   intrinsic `width`x`height` pixels laid out in `content-w` columns:
-   aspect-preserving, width-filling, capped at [[image-max-rows]] rows.
-
-   The ONE place that geometry is decided. The painter pre-allocates it and
-   the height estimator charges the very same rows for a picture it has not
-   painted yet, so a transcript full of screenshots never GROWS under a reader
-   who is scrolling through it."
-  [width height content-w]
-  (timg/cell-size {:w width :h height} (max 1 (long content-w)) image-max-rows))
-
-(def ^:private gallery-gap "Blank columns between two gallery tiles." 2)
-
-(def ^:private gallery-max-per-row
-  "Most tiles in one gallery row, the same as the widest Companion gallery."
-  4)
-
-(def ^:private gallery-min-tile-cols
-  "Narrowest tile. A narrower terminal puts fewer tiles in each row."
-  14)
-
-(def ^:private gallery-tile-max-cols "Widest miniature in a gallery of three or more pictures." 30)
-
-(def ^:private gallery-tile-max-rows "Tallest miniature in a gallery of three or more pictures." 12)
-
-(def ^:private gallery-pair-max-rows
-  "Tallest picture of a pair. Two pictures sit side by side at half the width each."
-  20)
-
-(defn image-gallery-layout
-  "The cell layout of a gallery of pictures with intrinsic `sizes` (`[{:width :height}]`
-   in pixels) in `content-w` columns.
-
-   Two pictures share the width side by side. Three or more become miniatures, at most
-   [[gallery-max-per-row]] in each row. Each picture fits its tile with its aspect kept,
-   centered across the tile and down its band. Returns `{:tile-w :per-row :band-rows :tiles}`;
-   each tile is `{:index :band :slot-col :col :top :cols :rows}`, with columns from the
-   content start and `:top` the first row of the picture inside its band."
-  [sizes content-w]
-  (let [n
-        (count sizes)
-
-        room
-        (max 1 (long content-w))
-
-        fit
-        (max 1
-             (quot (+ room (long gallery-gap)) (+ (long gallery-min-tile-cols) (long gallery-gap))))
-
-        per-row
-        (max 1 (min (long n) (long gallery-max-per-row) fit))
-
-        slot
-        (max 1 (quot (- room (* (long gallery-gap) (dec per-row))) per-row))
-
-        pair?
-        (= 2 n)
-
-        tile-w
-        (if pair? slot (min slot (long gallery-tile-max-cols)))
-
-        max-rows
-        (if pair? gallery-pair-max-rows gallery-tile-max-rows)
-
-        boxes
-        (mapv (fn [{:keys [width height]}]
-                (timg/cell-size {:w width :h height} tile-w max-rows))
-              sizes)
-
-        band-rows
-        (mapv (fn [band]
-                (long (reduce max 1 (map :rows band))))
-              (partition-all per-row boxes))
-
-        tiles
-        (vec (map-indexed (fn [i {:keys [cols rows]}]
-                            (let [band
-                                  (quot (long i) per-row)
-
-                                  slot-col
-                                  (* (long (mod (long i) per-row)) (+ tile-w (long gallery-gap)))]
-
-                              {:index i
-                               :band band
-                               :slot-col slot-col
-                               :col (+ slot-col (quot (- tile-w (long cols)) 2))
-                               :top (quot (- (long (nth band-rows band)) (long rows)) 2)
-                               :cols cols
-                               :rows rows}))
-                          boxes))]
-
-    {:tile-w tile-w :per-row per-row :band-rows band-rows :tiles tiles}))
-
-(defn image-gallery-rows
-  "Rows a gallery paints for `layout`: for each band its picture rows and a caption row, and
-   one padding row between two bands."
-  ^long [layout]
-  (let [band-rows (:band-rows layout)]
-    (+ (long (reduce + 0 (map #(inc (long %)) band-rows))) (max 0 (dec (count band-rows))))))
-
 (def ^:private vis-image-fence-re
   ;; One whole `vis-image` fence. Its 4th body line is the picture's intrinsic `WxH` (see
   ;; `image-block-parts`); raw markdown is all the height estimator ever has.
@@ -5210,7 +5133,7 @@
 (defn- image-fence-runs
   "The `vis-image` fences of `md` as runs of adjacent fences, each fence as `{:width :height}`
    (nil when its dimensions are missing). Only blank text between two fences keeps them in
-   one run, the same as the markdown blocks that [[image-gallery-entries]] groups."
+   one run, the same as the markdown blocks that [[image-table-entries]] groups."
   [^String md]
   (let [m (re-matcher vis-image-fence-re md)]
     (loop [runs []
@@ -5227,34 +5150,52 @@
                  (.end m)))
         runs))))
 
+(defn- image-table-thumb-w
+  "Thumbnail column width of an image table in `content-w` columns: a third of the card,
+   at most [[image-table-thumb-cols]]."
+  ^long [content-w]
+  (max 8 (min (long image-table-thumb-cols) (quot (- (long content-w) 4) 3))))
+
+(defn- image-table-box
+  "The thumbnail cell box of one picture in a `thumb-w` column, or nil without its pixel size."
+  [{:keys [width height]} thumb-w]
+  (when (and width height) (timg/cell-size {:w width :h height} thumb-w image-table-thumb-rows)))
+
+(defn- image-table-block-rows
+  "Rows of one picture in the image table: its thumbnail, but at least the three text lines."
+  ^long [image graphical? thumb-w]
+  (max 3 (long (or (when graphical? (:rows (image-table-box image thumb-w))) 0))))
+
+(defn image-table-rows
+  "Rows the image table card paints for `images` (`[{:width :height}]`) in `content-w`
+   columns."
+  ^long [images graphical? content-w]
+  (let [n
+        (count images)
+
+        thumb-w
+        (image-table-thumb-w content-w)]
+
+    ;; The top border, the picture blocks and their separators, then a separator, the hint
+    ;; and the bottom border.
+    (+ 1
+       (reduce + 0 (map #(image-table-block-rows % graphical? thumb-w) images))
+       (max 0 (dec n))
+       3)))
+
 (defn image-fence-rows
   "Rows every `vis-image` fence in raw markdown `md` reserves at `content-w`
-   columns - the picture boxes [[image-disclosure-entries]] pre-allocates, and
-   the gallery card [[image-gallery-entries]] paints for adjacent fences,
-   counted without parsing the markdown or reading a single pixel.
+   columns - the image table cards [[image-table-entries]] paints for runs of adjacent
+   fences, counted without parsing the markdown or reading a single pixel.
 
-   0 on a terminal that cannot draw pictures (the fence paints as a text card
-   there, which the prose estimate already covers) and 0 for a fence whose
-   dimensions are missing."
+   0 on a terminal that cannot draw pictures: the card has no thumbnails there, and the
+   prose estimate covers it."
   ^long [md ^long content-w]
   (if (and (string? md) (str/includes? md "````vis-image") (timg/graphical-terminal?))
-    (let [box-w (max 1 (- content-w 4))]
-      (long (reduce (fn [^long acc run]
-                      (+ acc
-                         (long (cond (not-every? #(and (:width %) (:height %)) run) 0
-                                     (< 1 (count run)) (image-gallery-rows
-                                                         (image-gallery-layout run content-w))
-                                     :else
-                                     ;; The card frame adds a separator and two padding rows
-                                     ;; around the box.
-                                     (+ 3
-                                        (long (max 1
-                                                   (long (:rows (image-cell-box (:width (first run))
-                                                                                (:height (first
-                                                                                           run))
-                                                                                box-w))))))))))
-                    0
-                    (image-fence-runs md))))
+    (long (reduce (fn [^long acc run]
+                    (+ acc (image-table-rows run true content-w)))
+                  0
+                  (image-fence-runs md)))
     0))
 
 (defn- attachment-type-label
@@ -5405,231 +5346,114 @@
           (re-seq vis-image-body-re md))
     []))
 
-(defn- image-disclosure-entries
-  "Render one `vis-image` block as an attachment card with its picture box PRE-ALLOCATED.
+(defn- image-table-entries
+  "Render one or more adjacent `vis-image` blocks as one table card.
 
-   The card names the picture: its file name, type, pixel size and byte size, and an Open
-   button. On a graphical terminal the picture's cell box (width x height) is reserved
-   inside the card, below the file row and a padding row, so the virtual layout always
-   accounts for the picture's true size. The FIRST reserved row carries `:kind :image` meta
-   so the screen loop can paint the actual picture (Kitty/iTerm2 graphics) over the box
-   AFTER Lanterna's delta refresh. Every reserved row carries the `:img` map, so a click on
-   the picture opens the file, and `:image-col-offset`, so the picture sits inside the
-   frame. A terminal without inline pictures, or a fence without dimensions, gets the card
-   without the picture."
-  [node content-w {:keys [session-turn-id] :as opts}]
-  (let [{:keys [summary path mime width height size-label]}
-        (image-block-parts node)
-
-        id
-        (or (some-> (re-find #"#(\d+)" summary)
-                    second)
-            "0")
-
-        node-id
-        (detail-node-id {:session-turn-id session-turn-id
-                         :section (:image-section opts :user)
-                         :kind :image
-                         :details-path [id]})
-
-        file-name
-        (image-file-name summary path)
-
-        target
-        (when-not (str/blank? path)
-          {:doc {:path path
-                 :mime mime
-                 :name file-name
-                 :size-label size-label
-                 :title (if (str/blank? summary) "[Image]" summary)}})
-
-        label
-        (str/join " · "
-                  (remove str/blank?
-                    [(attachment-type-label mime file-name)
-                     (when (and width height) (str width "x" height)) size-label
-                     (when-not target "Unavailable")]))
-
-        file
-        {:name file-name :label label :target target}]
-
-    (if (and (timg/graphical-terminal?) width height)
-      (let [box
-            ;; Height ceiling in cells (see `image-max-rows`): large enough that a
-            ;; width-filled portrait fills the width cap, while an over-tall box is
-            ;; clamped to the viewport by `fitting-image-placements`. The frame and
-            ;; its padding take 4 columns.
-            (image-cell-box width height (max 1 (- (long content-w) 4)))
-
-            rows
-            (max 1 (long (:rows box)))
-
-            img
-            {:id (str node-id)
-             :path path
-             :mime mime
-             :cols (:cols box)
-             :rows rows
-             :width width
-             :height height}
-
-            pad
-            (attachment-card-row :pad "" {})
-
-            ;; Every reserved row is tagged (and carries `:img`) so
-            ;; `trim-user-prompt-margin-entries` doesn't mistake the box for trailing
-            ;; margin AND so each painted row registers its own click region.
-            ;; A click on the picture opens it in the image viewer.
-            view
-            (when target {:images [(image-view-entry (image-block-parts node))] :index 0})
-
-            picture
-            (into [(attachment-card-row :image
-                                        ""
-                                        {:kind :image
-                                         :img img
-                                         :img-idx 0
-                                         :node-id (str node-id)
-                                         :image-col-offset 2
-                                         :view view})]
-                  (map (fn [i]
-                         (attachment-card-row :image
-                                              ""
-                                              {:kind :image-pad
-                                               :img img
-                                               :img-idx (inc (long i))
-                                               :image-col-offset 2
-                                               :view view}))
-                       (range (dec rows))))]
-
-        (attachment-card-entries [file]
-                                 {}
-                                 (-> [pad]
-                                     (into picture)
-                                     (conj pad))))
-      (attachment-card-entries [file] {}))))
-
-(defn- image-gallery-entries
-  "Render adjacent `vis-image` blocks as one gallery, like the Companion gallery.
-
-   On a graphical terminal, two pictures sit side by side and three or more become
-   miniatures in rows (see [[image-gallery-layout]]), without a frame or a title. Each band
-   of tiles reserves its rows like a single picture does, with one cell for each tile, and a
-   numbered caption row names the pictures below the band. A click on a tile or its caption opens the image viewer at
-   that picture. A terminal without inline pictures, or a picture without dimensions or a
-   file, gets a numbered table of the pictures where each row opens its file."
+   Each picture gets one row block: a thumbnail on the left, then its name, its type and size,
+   and an Open externally button. The card has no title and no column names. A click on a
+   thumbnail opens the image viewer at that picture, and the footer tells how to open the
+   viewer. A terminal without inline pictures shows the same table without thumbnails."
   [nodes content-w {:keys [session-turn-id] :as opts}]
-  (let [parts
-        (mapv image-block-parts nodes)
+  (let
+    [parts
+     (mapv image-block-parts nodes)
 
-        images
-        (mapv image-view-entry parts)
+     images
+     (mapv image-view-entry parts)
 
-        viewable
-        (filterv :path images)
+     viewable
+     (filterv :path images)
 
-        first-id
-        (or (some-> (re-find #"#(\d+)" (:summary (first parts)))
-                    second)
-            "0")
+     graphical?
+     (timg/graphical-terminal?)
 
-        node-id
-        (str (detail-node-id {:session-turn-id session-turn-id
-                              :section (:image-section opts :user)
-                              :kind :image
-                              :details-path ["gallery" first-id]}))
+     first-id
+     (or (some-> (re-find #"#(\d+)" (:summary (first parts)))
+                 second)
+         "0")
 
-        view-at
-        (fn [i]
-          {:images viewable :index i})]
+     node-id
+     (str (detail-node-id {:session-turn-id session-turn-id
+                           :section (:image-section opts :user)
+                           :kind :image
+                           :details-path ["table" first-id]}))
 
-    (if (and (timg/graphical-terminal?) (every? #(and (:width %) (:height %) (:path %)) images))
-      (let [{:keys [tile-w band-rows tiles]}
-            (image-gallery-layout images (max 1 (long content-w)))
+     separator
+     (attachment-card-row :separator "" {})
 
-            imgs
-            (mapv (fn [{:keys [path mime width height]} {:keys [cols rows]}]
-                    {:id (str node-id "/" path)
-                     :path path
-                     :mime mime
-                     :cols cols
-                     :rows rows
-                     :width width
-                     :height height})
-                  images
-                  tiles)
+     thumb-w
+     (image-table-thumb-w content-w)
 
-            pad
-            (attachment-card-row :pad "" {:card-bare? true})
+     block
+     (fn [i {:keys [path mime width height name label size-label] :as image}]
+       (let [box
+             (when (and graphical? path) (image-table-box image thumb-w))
 
-            band-entries
-            (fn [band height]
-              (let [in-band
-                    (filterv #(= band (:band %)) tiles)
+             img
+             (when box
+               {:id (str node-id "/" path)
+                :path path
+                :mime mime
+                :cols (:cols box)
+                :rows (:rows box)
+                :width width
+                :height height})
 
-                    picture-rows
-                    (mapv (fn [r]
-                            (let [cells (vec (keep (fn [{:keys [index top col rows]}]
-                                                     (let [idx (- (long r) (long top))]
-                                                       (when (< -1 idx (long rows))
-                                                         {:img (nth imgs index)
-                                                          :img-idx idx
-                                                          :image-col-offset (long col)
-                                                          :view (view-at index)})))
-                                                   in-band))]
-                              (attachment-card-row
-                                :image
-                                ""
-                                {:kind
-                                 (if (some #(zero? (long (:img-idx %))) cells) :image :image-pad)
-                                 :imgs cells
-                                 :node-id node-id
-                                 :card-bare? true})))
-                          (range height))
+             view
+             (when path {:images viewable :index (count (filter :path (take i images)))})
 
-                    ;; Each caption sits centered under its own picture, inside its tile.
-                    captions
-                    (mapv (fn [{:keys [index slot-col col cols]}]
-                            (let [number
-                                  (inc (long index))
+             target
+             (when path
+               {:doc {:path path :mime mime :name name :size-label size-label :title name}})
 
-                                  name
-                                  (:name (nth images index))
+             rows
+             (image-table-block-rows image graphical? thumb-w)
 
-                                  width
-                                  (min (long tile-w) (long (p/display-width (str number " " name))))
+             label
+             (if path label (str label " · Unavailable"))
 
-                                  centered
-                                  (- (+ (long col) (quot (long cols) 2)) (quot width 2))]
+             img-col
+             (+ 2 (quot (- (long thumb-w) (long (or (:cols box) 0))) 2))]
 
-                              {:col (p/clamp centered
-                                             (long slot-col)
-                                             (- (+ (long slot-col) (long tile-w)) width))
-                               :width width
-                               :number number
-                               :name name
-                               :view (view-at index)}))
-                          in-band)]
+         (mapv (fn [r]
+                 (attachment-card-row :image-table
+                                      (case (long r)
+                                        0
+                                        name
 
-                (conj picture-rows
-                      (attachment-card-row
-                        :captions
-                        (str/join "  " (map #(str (:number %) " " (:name %)) captions))
-                        {:captions captions :card-bare? true}))))]
+                                        1
+                                        label
 
-        (into [] (comp (interpose [pad]) cat) (map band-entries (range) band-rows)))
-      (attachment-card-entries (mapv (fn [i {:keys [name label path] :as image}]
-                                       {:name (str (inc (long i)) "  " name)
-                                        :label (if path label (str label " · Unavailable"))
-                                        :target (when path
-                                                  {:doc {:path path
-                                                         :mime (:mime image)
-                                                         :name name
-                                                         :size-label (:size-label image)
-                                                         :title name}})})
-                                     (range)
-                                     images)
-                               {:untitled? true :head {:name "#  Image" :label "Type · Size"}}))))
+                                        "")
+                                      (cond-> {:table-line r
+                                               :table-text-col (+ 2 (long thumb-w) 3)
+                                               :table-name name
+                                               :table-label label
+                                               :table-target target
+                                               :table-preview? (some? img)}
+                                        ;; Each row of the thumbnail carries the picture, so it paints and
+                                        ;; opens the image viewer.
+                                        (and img (< (long r) (long (:rows box))))
+                                        (assoc :kind
+                                          (if (zero? (long r)) :image :image-pad) :img
+                                          img :img-idx
+                                          r :image-col-offset
+                                          img-col :view
+                                          view :node-id
+                                          node-id))))
+               (range rows))))
+
+     hint-text
+     (if graphical?
+       "Click a thumbnail or press Ctrl+X I to open the image viewer."
+       "No thumbnails here: kitty, Ghostty, WezTerm, Warp and iTerm2 show them. Ctrl+X I opens the image viewer.")
+
+     hint
+     (attachment-card-row :image-table-hint hint-text {:table-hint hint-text})]
+
+    (-> [(attachment-card-row :top "" {})]
+        (into (comp (interpose [separator]) cat) (map-indexed block images))
+        (conj separator hint (attachment-card-row :bottom "" {})))))
 
 (defn- table-block-parts
   "Parse a `vis-table` node body — the header lines `attach` writes, then the
@@ -6089,24 +5913,22 @@
     (if (not-any? disclosure-code-block? blocks)
       (vec (layout/ast->entries answer content-w opts))
       (->> (partition-by disclosure-code-block? blocks)
-           (mapcat
-             (fn [run]
-               (if (disclosure-code-block? (first run))
-                 ;; Adjacent pictures share one gallery card.
-                 (mapcat (fn [nodes]
-                           (if (and (image-code-block? (first nodes)) (< 1 (count nodes)))
-                             (image-gallery-entries nodes content-w opts)
-                             (mapcat (fn [node]
-                                       (cond (image-code-block? node)
-                                             (image-disclosure-entries node content-w opts)
-                                             (table-code-block? node)
-                                             (table-disclosure-entries node content-w opts)
-                                             (doc-code-block? node)
-                                             (doc-disclosure-entries node content-w opts)
-                                             :else (paste-disclosure-entries node content-w opts)))
-                                     nodes)))
-                         (partition-by image-code-block? run))
-                 (layout/ast->entries (into [:ast {}] run) content-w opts))))
+           (mapcat (fn [run]
+                     (if (disclosure-code-block? (first run))
+                       ;; Adjacent pictures share one image table card.
+                       (mapcat (fn [nodes]
+                                 (if (image-code-block? (first nodes))
+                                   (image-table-entries nodes content-w opts)
+                                   (mapcat (fn [node]
+                                             (cond (table-code-block? node)
+                                                   (table-disclosure-entries node content-w opts)
+                                                   (doc-code-block? node)
+                                                   (doc-disclosure-entries node content-w opts)
+                                                   :else
+                                                   (paste-disclosure-entries node content-w opts)))
+                                           nodes)))
+                               (partition-by image-code-block? run))
+                       (layout/ast->entries (into [:ast {}] run) content-w opts))))
            vec))))
 
 ;;; Inline markdown links and images
@@ -6184,7 +6006,7 @@
    the body — is structural and goes."
   [entries]
   (let [blank?
-        ;; Image-reservation rows (`image-disclosure-entries`) are blank-lined but
+        ;; Image-reservation rows (`image-table-entries`) are blank-lined but
         ;; carry `:kind :image`/`:image-pad` meta — they PRE-ALLOCATE the picture's
         ;; cell box and must survive, or the box collapses and the image overpaints
         ;; the rows below it. Treat only genuine (meta-less) blank rows as padding.
@@ -6237,7 +6059,7 @@
 
 (defn- result-body-entry
   "Move one body row into the RESULT band, under the body indent. An attachment card row
-   keeps its own marker, so its painter draws the frame, the file rows and the captions."
+   keeps its own marker, so its painter draws the frame, the file rows and the pictures."
   [e]
   (if (:card-part (:meta e))
     e

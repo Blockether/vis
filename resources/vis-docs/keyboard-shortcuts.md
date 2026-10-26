@@ -117,12 +117,12 @@ footer.
 
 ## View pictures
 
-If a message has two or more pictures, Vis shows them together, like the desktop and phone app.
-In a terminal that can show pictures, two pictures sit side by side. Three or more pictures become
-small previews with a number and a name under each. kitty, Ghostty, WezTerm, Warp and iTerm2 can
-show pictures. In other terminals, Vis shows a numbered table, and each row has an **Open** button.
+Vis shows the pictures of a message in one table, like a list of attached files. Each row has a
+small preview of the picture, its name, type and size, and an **Open externally** button. That
+button opens the picture in your system's picture app. kitty, Ghostty, WezTerm, Warp and iTerm2 can
+show the previews. Other terminals show the same table without previews.
 
-To see one picture larger, click it or its name. To see every picture in the session, press
+To see one picture larger, click its preview. To see every picture in the session, press
 **Ctrl+X I**. The picture viewer opens and fills most of the window. In a terminal that cannot show
 pictures, the viewer is a numbered list.
 

@@ -3308,11 +3308,10 @@ therapy line 2"
 
           (expect (some? caption-row))
           (expect (= 1 (count painted)))
-          ;; The reserved box opens under the card's file row, its separator and
-          ;; its padding row, as this very tick painted them — not where the
-          ;; last full frame left it.
-          (expect (= (+ 3 (long caption-row)) (long (:row placement))))
-          (expect (= 5 (long (:rows (:img placement)))))
+          ;; The thumbnail opens on the row of its file name, as this very tick painted
+          ;; it, not where the last full frame left it.
+          (expect (= (long caption-row) (long (:row placement))))
+          (expect (pos? (long (:rows (:img placement)))))
           (expect (= "/tmp/shot.png" (:path (:img placement))))))
     (it "a tick that did not shift the transcript leaves the graphics layer alone"
         ;; The cheap live-band path repaints no image row, so an empty

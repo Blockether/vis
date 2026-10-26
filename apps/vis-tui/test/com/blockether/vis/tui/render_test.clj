@@ -6215,61 +6215,10 @@
           (expect (not (str/includes? txt "buy milk")))))))
 
 (defdescribe
-  image-disclosure-render-test
-  ;; A dropped image renders NON-collapsible: the `[Image #N: ...]` token is a
-  ;; plain caption row and the picture's cell box is ALWAYS reserved in the
-  ;; layout (or a text fallback shows on image-incapable terminals) — no
-  ;; expansion state, so the transcript height never jumps and the picture is
-  ;; never painted at a stale position.
-  (let [ast
-        [:ast {}
-         [:code {:lang "vis-image"}
-          "[Image #1: shot.png 1200×800, 245KB]\n/tmp/shot.png\nimage/png\n1200x800\n245KB\n"]]
-
-        sid
-        "s1"
-
-        turn
-        "client-turn-1"
-
-        opts
-        (fn [de]
-          {:session-id sid :session-turn-id turn :detail-expansions de :section :user})]
-
-    (it "graphical terminal: paint-meta row + reserved box are allocated by default"
-        (with-redefs [timg/images-protocol (constantly :kitty)]
-          (let [{:keys [line-meta]} (render/format-answer-markdown-data ast 76 (opts {}))
-                img-rows (filter #(= :image (:kind %)) line-meta)
-                pad-rows (filter #(= :image-pad (:kind %)) line-meta)
-                img (:img (first img-rows))]
-
-            (expect (= 1 (count img-rows)))
-            (expect (= "/tmp/shot.png" (:path img)))
-            (expect (pos? (long (:rows img))))
-            ;; reserved box height = 1 paint row + (rows-1) pad rows
-            (expect (= (dec (long (:rows img))) (count pad-rows)))
-            ;; pads carry the img map too, so every painted row is clickable
-            (expect (every? #(= "/tmp/shot.png" (:path (:img %))) pad-rows)))))
-    (it "plain terminal: one link card opens the picture, no chevron"
-        (with-redefs [timg/images-protocol (constantly nil)]
-          ;; Layouts are cached by text and width, not by terminal kind.
-          (render/invalidate-cache!)
-          (try (let [{:keys [text line-meta]} (render/format-answer-markdown-data ast 76 (opts {}))
-                     links (filter :doc line-meta)]
-
-                 (expect (str/includes? text "shot.png  PNG · 1200x800 · 245KB"))
-                 (expect (not (str/includes? text "system viewer")))
-                 (expect (not (str/includes? text "▸ [Image #1")))
-                 ;; Only the file row of the card opens the picture.
-                 (expect (= 1 (count links)))
-                 (expect (every? #(= "/tmp/shot.png" (:path (:doc %))) links))
-                 (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta)))
-               (finally (render/invalidate-cache!)))))))
-
-(defdescribe
-  image-gallery-render-test
-  ;; Adjacent pictures share one gallery card, like the Companion gallery: two sit side by
-  ;; side, more become miniatures, and a plain terminal gets a numbered table of links.
+  image-table-render-test
+  ;; Every picture message shows one table card: for each picture a thumbnail, its file and
+  ;; an Open externally button, then a footer that names the image viewer key. The card has
+  ;; no title and no column names.
   (let [fence
         (fn [i w h]
           (str "````vis-image\n[Image #"
@@ -6304,63 +6253,80 @@
           (with-redefs [timg/images-protocol (constantly proto)]
             (render/invalidate-cache!)
             (try (render/format-answer-markdown-data (vis/markdown->ast text) 100 opts)
-                 (finally (render/invalidate-cache!)))))]
+                 (finally (render/invalidate-cache!)))))
 
-    (it "two pictures sit side by side, without a frame or a title"
-        (let [{:keys [line-meta]}
-              (data :kitty (md [[1600 900] [1600 900]]))
+        targets
+        (fn [line-meta]
+          (vec (distinct (keep #(get-in % [:table-target :doc :path]) line-meta))))]
 
-              rows
-              (filter :imgs line-meta)
+    (it "one picture gets a thumbnail, its file and an Open externally button"
+        (let [{:keys [text line-meta]}
+              (data :kitty (md [[1600 900]]))
 
-              cells
-              (:imgs (first rows))]
+              img-rows
+              (filter #(= :image (:kind %)) line-meta)
 
+              pad-rows
+              (filter #(= :image-pad (:kind %)) line-meta)
+
+              img
+              (:img (first img-rows))]
+
+          (expect (= 1 (count img-rows)))
+          (expect (= "/tmp/shot-1.png" (:path img)))
+          (expect (<= (long (:cols img)) 24))
+          (expect (<= (long (:rows img)) 8))
+          ;; Every reserved row carries the picture, so each one paints and opens the viewer.
+          (expect (= (dec (long (:rows img))) (count pad-rows)))
+          (expect (every? #(= "/tmp/shot-1.png" (:path (:img %))) pad-rows))
+          (expect (= ["/tmp/shot-1.png"] (targets line-meta)))
           (expect (empty? (keep :card-title line-meta)))
-          (expect (not-any? #{:top :bottom} (map :card-part line-meta)))
-          (expect (every? :card-bare? (filter :card-part line-meta)))
-          (expect (= 2 (count cells)))
-          (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png"] (mapv (comp :path :img) cells)))
-          ;; The second tile starts right of the first one.
-          (expect (< (+ (long (:image-col-offset (first cells)))
-                        (long (:cols (:img (first cells)))))
-                     (long (:image-col-offset (second cells)))))
-          ;; Each tile opens the viewer at its own picture of the pair.
-          (expect (= [0 1] (mapv (comp :index :view) cells)))
-          (expect (= 2 (count (:images (:view (first cells))))))))
-    (it "six pictures become miniatures, four in a row, with numbered captions"
+          (expect (not (str/includes? text "Thumbnail")))
+          (expect (str/includes? text "shot-1.png"))
+          (expect (str/includes? text "PNG · 1600x900 · 1.2 MB"))
+          (expect (str/includes? text
+                                 "Click a thumbnail or press Ctrl+X I to open the image viewer."))))
+    (it "keeps the aspect of a tall picture inside the thumbnail column"
+        (let [img (:img (first (filter #(= :image (:kind %))
+                                       (:line-meta (data :kitty (md [[1206 2622]]))))))]
+          (expect (= 8 (long (:rows img))))
+          (expect (< (long (:cols img)) 24))))
+    (it "several pictures share one card with one row block each"
         (let [{:keys [line-meta]}
-              (data :kitty (md (repeat 6 [1200 900])))
+              (data :kitty (md [[1600 900] [1206 2622] [1200 900]]))
 
-              captions
-              (keep :captions line-meta)]
+              starts
+              (filter #(= :image (:kind %)) line-meta)]
 
-          (expect (= [[1 2 3 4] [5 6]] (mapv #(mapv :number %) captions)))
-          (expect (every? #(<= (long (:cols (:img %))) 30) (mapcat :imgs line-meta)))
-          ;; One placement row starts each picture.
-          (expect (= 6 (count (filter #(zero? (long (:img-idx %))) (mapcat :imgs line-meta)))))))
-    (it "the height estimate covers the painted gallery"
+          (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"]
+                     (mapv (comp :path :img) starts)))
+          ;; Each thumbnail opens the viewer at its own picture.
+          (expect (= [0 1 2] (mapv (comp :index :view) starts)))
+          (expect (every? #(= 3 (count (:images (:view %)))) starts))
+          (expect (= 1 (count (filter #(= :top (:card-part %)) line-meta))))
+          (expect (= 1 (count (filter #(= :bottom (:card-part %)) line-meta))))
+          (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"] (targets line-meta)))))
+    (it "the height estimate matches the painted card"
         (let [text
-              (md (repeat 6 [1200 900]))
+              (md [[1600 900] [1206 2622] [1200 900]])
 
               {:keys [line-meta]}
               (data :kitty text)]
 
           (with-redefs [timg/images-protocol (constantly :kitty)]
-            (expect (>= (render/image-fence-rows text 100)
-                        (count (filter :card-part line-meta)))))))
-    (it "a plain terminal gets a numbered table whose rows open the pictures"
+            (expect (= (render/image-fence-rows text 100) (count (filter :card-part line-meta)))))))
+    (it "a plain terminal shows the same table without thumbnails"
         (let [{:keys [text line-meta]} (data nil (md (repeat 3 [1200 900])))]
-          (expect (not (str/includes? text "3 images")))
-          (expect (str/includes? text "#  Image  Type · Size"))
-          (expect (str/includes? text "2  shot-2.png  PNG · 1200x900 · 1.2 MB"))
-          (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"]
-                     (mapv (comp :path :doc) (filter :doc line-meta))))
+          (expect (str/includes? text "shot-2.png"))
+          (expect (str/includes? text "PNG · 1200x900 · 1.2 MB"))
+          (expect (str/includes? text "No thumbnails here"))
+          (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"] (targets line-meta)))
           (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta))))
     ;; Regression: a card that ended the prompt lost its bottom edge to margin trimming.
-    (it "a gallery that ends the prompt keeps its last row"
-        (doseq [[proto part] [[:kitty :captions] [nil :bottom]]]
-          (expect (= part (:card-part (peek (:line-meta (data proto (md [[1200 900] [640 480]]))))))
+    (it "a card that ends the prompt keeps its last row"
+        (doseq [proto [:kitty nil]]
+          (expect (= :bottom
+                     (:card-part (peek (:line-meta (data proto (md [[1200 900] [640 480]]))))))
                   (str proto))))
     (it "markdown-images lists every picture with a file for the viewer"
         (expect (= [{:path "/tmp/shot-1.png" :name "shot-1.png" :label "PNG · 1200x900 · 1.2 MB"}
@@ -6482,10 +6448,10 @@
                      ;; painted rows must MATCH the height `:img` advertises, or the
                      ;; graphics layer crops the picture to the rows that survived
                      (expect (= (long (:rows img)) rows))))
-               (it "the box is normalized to the terminal width, not a fixed cell cap"
+               (it "the thumbnail stays inside its column"
                    (let [{:keys [rows img]} (painted 1578 444 180)]
                      (expect (= (long (:rows img)) rows))
-                     (expect (< 90 (long (:cols img))))))))
+                     (expect (<= (long (:cols img)) 24))))))
 
 (defdescribe
   iteration-merge-flush-test
@@ -7359,8 +7325,8 @@ h = 8"
     (it "paints the picture below a closed digest"
         (expect (= 1 (count (picture-rows (render-step entry :kitty {:digest-closed? true}))))))
     ;; Regression: the gallery captions under a step lost their card marker in the RESULT
-    ;; band. They painted as one plain line, without the number color, away from the pictures.
-    (it "names each printed picture of a gallery under the picture"
+    ;; band. The pictures of a step now share one table card, and its rows keep the marker.
+    (it "lists each printed picture of a step in one table card"
         (let [fence
               (fn [i]
                 (str "````vis-image\n[Image #"
@@ -7380,18 +7346,13 @@ h = 8"
                            :kitty
                            {})
 
-              caption-row
-              (first (filter #(= :captions (get-in % [:meta :card-part])) entries))
+              card-rows
+              (filter #(get-in % [:meta :card-part]) entries)]
 
-              cells
-              (some #(get-in % [:meta :imgs]) entries)]
-
-          (expect (str/starts-with? (:line caption-row) p/MARKER_ATTACHMENT_CARD))
-          (expect (= [1 2] (mapv :number (get-in caption-row [:meta :captions]))))
-          (doseq [[{:keys [col width]} {:keys [image-col-offset img]}]
-                  (map vector (get-in caption-row [:meta :captions]) cells)]
-            (let [center (+ (long image-col-offset) (quot (long (:cols img)) 2))]
-              (expect (<= (long col) center (+ (long col) (long width))))))))
+          (expect (= ["/tmp/tall-1.png" "/tmp/tall-2.png"]
+                     (mapv #(get-in % [:meta :img :path]) (picture-rows entries))))
+          (expect (= 1 (count (filter #(= :top (get-in % [:meta :card-part])) card-rows))))
+          (expect (every? #(str/starts-with? (:line %) p/MARKER_ATTACHMENT_CARD) card-rows))))
     (it "keeps the other output in RESULT and paints the picture once"
         (let [entries
               (render-step entry
@@ -7409,12 +7370,16 @@ h = 8"
               (render-step entry nil {})
 
               links
-              (filterv #(get-in % [:meta :doc]) entries)]
+              (filterv #(get-in % [:meta :table-target :doc]) entries)
+
+              text
+              (text-of entries)]
 
           (expect (empty? (picture-rows entries)))
           (expect (seq links))
-          (expect (every? #(= "/tmp/chart.png" (get-in % [:meta :doc :path])) links))
-          (expect (str/includes? (text-of entries) "chart.png  PNG · 1200x800 · 245KB"))))
+          (expect (every? #(= "/tmp/chart.png" (get-in % [:meta :table-target :doc :path])) links))
+          (expect (str/includes? text "chart.png"))
+          (expect (str/includes? text "PNG · 1200x800 · 245KB"))))
     (it "shows a printed document without an attachment row as a link"
         (let [entries (render-step
                         {:iteration-id "iteration-1"
