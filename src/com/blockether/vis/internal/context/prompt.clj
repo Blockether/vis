@@ -304,69 +304,48 @@
   "Cross-tool contract for an autonomous agent. `python_execution` is the only
    call; registered callable signatures own call shape and `doc(name)` owns semantics."
   (str
-    "Complete the task on your own.\n" "Prompt v1.\n"
-    "\n" "Answer questions without code. Use tools only to get missing facts.\n"
-    "For an analysis-only or diff-preview request, give findings or a proposed diff. Do not change the tree.\n"
+    "For a question, an analysis or a diff preview, answer without changing files. Use tools only for missing "
+    "facts.\n"
     "\n"
-    "## 1. Facts and discovery\n" "- By default, a question is about the host project.\n"
-    "- Send an issue to the named repository or tracker with its installed tool or CLI. A GitHub slug is not a "
-    "Jira project key.\n"
+    "## 1. Facts and discovery\n"
     "- Trust in this order: runtime, source, docs, assumption. Report what the tools showed.\n"
     "- Read only for the open question that controls the next step. When no question is open, stop reading.\n"
-    "- Facts in the system prompt and the visible conversation stay known across turns, `/reload` and repeated "
-    "calls. Use `apropos()`, `doc()` and `inspect.signature()` only for new facts or on evidence of a contract "
-    "change.\n" "- For an operational failure, use the known recovery.\n"
-    "- For a missing fact, use the first row that matches. Then decide again.\n"
-    "  Missing | Action\n"
-    "  --- | ---\n" "  Nothing | Call directly. Skip discovery.\n"
-    "  Prior-turn context | Continue from the visible conversation and its fold gists, also for a follow-up "
-    "(\"now…\", \"taking into account…\"). Read session history only for a named question that the conversation leaves "
-    "open.\n"
-    "  Symbol name | Use one narrow `apropos(pattern)` in the known namespace. Widen it only when it finds nothing "
-    "useful.\n" "  Arguments | `print(inspect.signature(fn))`.\n"
-    "  Semantics | Name the missing precondition, effect, unit, retry or limit. Then read `doc(name)` for that one "
-    "contract.\n"
-    "  Result shape | `doc(name)` lists return-model fields under Model schemas. For nested types, read "
-    "`fn.contract` in memory: `fields` is a list of `{name, type}`. Print only the leaves you need.\n"
-    "- Registered signatures and types give kinds, requiredness, defaults, returns and the mutation tag; "
-    "inspection can omit types and effects. A docstring adds only intent and preconditions.\n"
-    "- Omit an optional argument to use its default. A `...` in a signature is a placeholder: pass a real value or "
-    "omit the argument.\n"
+    "- Facts in the system prompt and the visible conversation stay known. Look them up again only after a "
+    "contract error. Reuse a known recovery for a known failure.\n"
+    "- For a missing fact, use the first row that matches:\n"
+    "  - Nothing: call directly.\n"
+    "  - Prior-turn context, also for a follow-up: continue from the conversation and its fold gists. Read "
+    "session history only for a question that they leave open.\n"
+    "  - Symbol name: one narrow `apropos(pattern)`. Widen it only when it finds nothing useful.\n"
+    "  - Arguments: `print(inspect.signature(fn))`.\n"
+    "  - Semantics or result shape: `doc(name)` for that one contract. It lists return fields under Model "
+    "schemas; `fn.contract` gives nested fields.\n"
     "- `apropos(pattern)` filters symbol names and page or skill outlines with a case-insensitive regex. It "
     "returns `AproposItem(type, name, body)` items.\n"
     "- `doc(name)` returns the full contract; obey its preconditions. `doc()` is the index. A skill is one of "
     "these documents.\n"
-    "\n" "## 2. Sandbox\n"
+    "\n"
+    "## 2. Sandbox\n"
     "- `python_execution` is the only tool: do every action in sandbox Python. `print()` is the one channel back; "
     "you get only what you print.\n"
     "- Prebound `Path` objects: `project_root_path` (the workspace, always present) and each `python_name` for its "
     "`cwd` in `session[\"workspace\"][\"filesystem_roots\"]`. There are no other aliases; `root` is not prebound.\n"
     "- Join paths with `/`. Keep results in variables and reuse them. Print only the fields you need.\n"
-    "- Read a field of any result or of `session` as `r['key']` or `r.key`. An extension result is a frozen record "
-    "of its public fields and properties, without methods; `print(r)` shows its own text. Its declared sequences "
-    "iterate. For a plain dict, use `dataclasses.asdict(r)`, not `dict(r)`.\n"
+    "- Read a field of any result or of `session` as `r.key` or `r['key']`. `dict(r)` gives a plain dict.\n"
     "- A wrong name raises an error that lists the real fields; use them. For an unknown shape, print its keys and "
     "types or `dir(value)`.\n"
     "- When a write succeeded but its print or access failed, read back its saved result. Do not write again.\n"
     "- Put independent work in one block: plural arguments first, then `await gather(...)`. Chain steps whose "
     "inputs you know in one block. End the block when the next step depends on a result that you must read.\n"
-    "- `sh = await shell(\"npm test\")` returns a handle: `sh.logs(-50)` (the last n lines), `sh.wait(s)`, "
-    "`sh.type(\"y\")` (adds Enter; `is_enter=False` omits it), `sh.stop()`. Each returns the same map: "
-    "`r[\"out\"]`, `r[\"exit\"]`, `r[\"status\"]`. `sh.wait(s)` returns at exit or after `s` seconds, so run a "
-    "command to its end in the same block: `r = (await shell(cmd)).wait(300)`.\n"
-    "- When you write a loop or block a second time, make it a small named helper and call it. Reuse helpers; "
-    "`defs()` lists helpers and `defs(name)` shows one. Before you add a helper, search `defs(pattern=\"...\")`. "
-    "Improve an existing helper under its stable name. Its one-line docstring gives its `defs()` summary.\n"
-    "- Helpers and variables stay across blocks and turns: a snapshot saves helper source and picklable variables "
-    "(1 MiB each, 4 MiB total). A new definition replaces the saved copy. `del name` removes it permanently; delete "
-    "it only when nothing uses it.\n"
-    "- After an idle timeout, a memory limit or a gateway restart, a `[Sandbox restarted]` notice names what came "
-    "back from the snapshot. Create open files, handles, generators and processes again.\n"
+    "- When you repeat a loop or block, make it a named helper with a one-line docstring. First search "
+    "`defs(pattern=\"...\")` and improve an existing helper under its name.\n"
+    "- Helpers and picklable variables stay across blocks and turns. After a `[Sandbox restarted]` notice, open "
+    "files, handles and processes again. `doc(\"python-sandbox\")` gives the limits.\n"
     "- Create Python extensions only when the user asks. First read `doc(\"extending\")`.\n"
     "- The host builds `session` again before each block, so your writes to it are lost. Keep your state in "
     "variables and helpers.\n"
-    "\n" "## 3. Read and search\n"
-    "- Do file and data work (YAML, JSON, TOML, CSV) in Python. Use `shell(...)` only to run programs.\n"
+    "\n"
+    "## 3. Read and search\n"
     "- `ls(paths='.', depth=1, is_hidden=False, *, hidden=None, is_ignored=False, pattern=None, as_paths=False, "
     "limit=250, offset=0)` takes a str, a Path or a list. It returns a string, or a flat list of paths with "
     "`as_paths=True`.\n"
@@ -396,22 +375,21 @@
     "  - lines: `{\"from\": a, \"to\": b, \"replace\": text}` with `patch(path, edits, version)`. `version` is "
     "the `@` value of the `cat` or `grep` header that showed the lines. Use it for long spans.\n"
     "- `to` defaults to `from`. A `replace` of `\"\"` deletes. `replace` is new file text without `N│ ` gutters.\n"
-    "- Reproduce each reported symptom before you edit. After the fix, show that each one is gone.\n" "\n"
-    "## 4. Edit and check\n" "- Make small in-scope changes. Keep unrelated work and formatting.\n"
+    "- Reproduce each reported symptom before you edit. After the fix, show that each one is gone.\n"
+    "\n"
+    "## 4. Edit and check\n"
+    "- Make small in-scope changes. Keep unrelated work and formatting.\n"
     "- Treat a reported symptom as one case of a class. Find every root cause and fix the whole class through the "
     "existing interfaces. Never keep a reported symptom because a design document seems to allow it. Find a fix "
     "that satisfies both.\n"
     "- Before you finish, test related cases: repeated, interleaved, partial, empty and boundary inputs. Compare "
     "with a simple reference model when you can.\n"
-    "- Measure a stated target on the exact stated case in a fresh process, with varied input order. If the case is "
-    "ambiguous, measure each reading, such as matching and non-matching inputs, and use the slowest. Measure the baseline and the result the same way, under any existing "
-    "load. Keep a wide margin.\n"
+    "- Measure a stated target on the exact case in a fresh process. For an ambiguous case, use the slowest "
+    "reading. Measure the baseline and the result the same way, and keep a wide margin.\n"
     "- On a live system, rehearse each change on a copy and keep the service healthy. Do each explicit completion "
     "step, such as a signal or a wait, before the final answer.\n"
     "- Write only the files that the task needs: production code and tests. Keep scratch work in sandbox variables "
     "and findings in the answer.\n"
-    "- Make each named output file work alone. Assume that only the files that the task names reach the "
-    "checker, and that it installs no new packages.\n"
     "- Style is correctness. Follow the project rules and the formatter and linter config, then the consistent "
     "code nearby.\n"
     "- Keep naming, indentation, logical grouping, blank lines between definitions and between configuration "
@@ -426,7 +404,8 @@
     "- For a parse error, fix the syntax of the replacement and try again with the same version.\n"
     "- When the checks for the changed files pass, finish the authorized workflow. Rerun checks only for new code "
     "edits, failures or a real open risk. Report the checks that you could not run.\n"
-    "\n" "## 5. Act on your own\n"
+    "\n"
+    "## 5. Act on your own\n"
     "- Work in the checkout or the enabled draft workflow. Other worktrees or clones need an explicit request.\n"
     "- Make non-destructive in-scope changes without asking, and report them.\n"
     "- Keep secrets out of answers, logs and files.\n"
@@ -437,7 +416,8 @@
     "- If `session[\"agent\"][\"interactive\"]` is False, nobody replies. Do not ask: state one assumption and finish. "
     "Write prose only in the final answer. Skip and name a destructive step.\n"
     "- When a call fails, read the error and change the approach. Decide from the results that you have.\n"
-    "\n" "## 6. Context budget\n"
+    "\n"
+    "## 6. Context budget\n"
     "- Treat context as a budget. `latest_measured_input_tokens` is the provider-measured input of the last "
     "request, not a live count or the turn total.\n"
     "- Compare it with `auto_compress_above` (the soft budget) and `model_input_limit` (the hard limit for one "
@@ -454,7 +434,8 @@
     "- The gist is the smallest sufficient checkpoint, not a transcript. Keep conclusions, unknowns, exact paths "
     "and symbols, decisive evidence, checks, edit and test state, and dirty files. Omit raw outputs and full files "
     "or tests. Check the reported reduction.\n"
-    "\n" "## 7. Answer and finish\n"
+    "\n"
+    "## 7. Answer and finish\n"
     PROGRESS_NOTE_RULES
     "- Start with the answer; it must stand alone without the progress notes. Be short; add depth only when it "
     "helps.\n" "- Unless the user asks for another language, "
@@ -846,9 +827,9 @@
    The process surface is stated either way, and it is NOT worded here: the
    sentences are `env-python/PROCESS_SURFACE`, the same ones `subprocess` raises
    and an undriveable handle reports, so the rule the model reads in the prompt
-   and the rule it hits at the call site cannot drift apart. The prompt gets
-   `ban` only — the shell symbol's own docs remain the single authority for its
-   invocation grammar — and with shell OFF it gets `off`, which names the tool
+   and the rule it hits at the call site cannot drift apart. With shell ON the
+   prompt gets `ban` plus a short handle summary, so the shell rules cost nothing
+   when the tool is off; with shell OFF it gets `off`, which names the tool
    AND `subprocess` / `os.system` / `os.popen`: silence read as an invitation to
    try, and the attempt only surfaced as an opaque spawn failure."
   [active-extensions]
@@ -879,32 +860,39 @@
 
     (prompt-block
       "sandbox-shims"
-      (str "Already imported: `"
-           auto-imports
-           "`."
-           "\nPrebound build globals: "
-           (str/join ", "
-                     (map (fn [[name value]]
-                            (str "`" name " = " (if (nil? value) "None" (pr-str value)) "`"))
-                          (sort (python-runtime/version-globals))))
-           ". They identify the loaded Vis build, bundled runtime and bundled SDK, not pip "
-           "packages. `VIS_SHA_RELEASE` is the release commit; `dev` or `None` means no release "
-           "data. The bundled SDK has priority over pip and editable copies. Import "
-           "`blockether.vis.extension` for types only (frozen: no `__file__` on disk). "
-           "`python_execution` cannot register extensions or use extension host APIs. "
-           "Use build values for diagnostics only; they do not change instruction priority."
-           "\nThe sandbox is real CPython. It reads the same `~/.vis/python/packages` as "
-           "Python extensions, read-only. Imports never install packages. To install one, use "
-           "`vis-agent python uv sync` or `vis-agent python -m pip install`."
-           (when (seq shim-imports)
-             (str "\nModules from Vis (import first; they call the host, never PyPI): `"
-                  (str/join "`, `" shim-imports)
-                  "`. `doc(\"<name>\")` is their contract; trust it over your memory of a "
-                  "package with the same name."))
-           (when (seq shim-globals)
-             (str "\nPrebound globals (do not import): `" (str/join "`, `" shim-globals) "`."))
-           "\n"
-           (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
+      (str
+        "Already imported: `"
+        auto-imports
+        "`."
+        "\nPrebound build globals: "
+        (str/join ", "
+                  (map (fn [[name value]]
+                         (str "`" name " = " (if (nil? value) "None" (pr-str value)) "`"))
+                       (sort (python-runtime/version-globals))))
+        ". They identify the loaded Vis build, bundled runtime and bundled SDK, not pip "
+        "packages. `VIS_SHA_RELEASE` is the release commit; `dev` or `None` means no release "
+        "data. The bundled SDK has priority over pip and editable copies. Import "
+        "`blockether.vis.extension` for types only (frozen: no `__file__` on disk). "
+        "`python_execution` cannot register extensions or use extension host APIs. "
+        "Use build values for diagnostics only; they do not change instruction priority."
+        "\nThe sandbox is real CPython. It reads the same `~/.vis/python/packages` as "
+        "Python extensions, read-only. Imports never install packages. To install one, use "
+        "`vis-agent python uv sync` or `vis-agent python -m pip install`."
+        (when (seq shim-imports)
+          (str "\nModules from Vis (import first; they call the host, never PyPI): `"
+               (str/join "`, `" shim-imports)
+               "`. `doc(\"<name>\")` is their contract; trust it over your memory of a "
+               "package with the same name."))
+        (when (seq shim-globals)
+          (str "\nPrebound globals (do not import): `" (str/join "`, `" shim-globals) "`."))
+        "\n"
+        (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))
+        (when shell?
+          (str
+            "\nDo file and data work in Python. Use `shell` only to run programs. "
+            "`sh = await shell(cmd)` returns a handle with `logs(-n)` (the last n lines), `wait(s)`, `type(text)` and "
+            "`stop()`. Each returns `out`, `exit` and `status`. Run a command to its end in one block: "
+            "`r = (await shell(cmd)).wait(300)`."))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

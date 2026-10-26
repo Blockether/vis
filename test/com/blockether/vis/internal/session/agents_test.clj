@@ -948,9 +948,9 @@
                                (agents/prompt env)))
                 "The child keeps its Council tools, its prompt and its spawn permission")
         (expect (str/includes? (in-turn child #(agents/prompt env))
-                               (str "Only when it is ambiguous or misses a fact that you need, "
-                                    "read your parent's whole session: "
-                                    "await read_session(session[\"agent\"][\"parent_id\"])"))
+                               (str "Read its whole session with "
+                                    "await read_session(session[\"agent\"][\"parent_id\"]) "
+                                    "only when your task is ambiguous or misses a fact"))
                 "A child reads its parent's whole session only on ambiguity")
         (ps/db-set-scoped-setting! db "session" leader "subagents" false)
         (expect (not (in-turn child #(agents/claim-iteration! env)))
