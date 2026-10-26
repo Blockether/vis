@@ -1934,7 +1934,7 @@
            ;; The limit feeds pressure hints and the pre-request budget gate;
            ;; canonical history itself is never trimmed.
            max-context-tokens hooks cancel-atom cancel-token reasoning-default routing extra-body
-           reasoning-effort preferred-reasoning-effort turn-features workspace-overrides]
+           reasoning-effort preferred-reasoning-effort turn-features workspace-overrides resume]
     trace-store ::trace-store}]
   (let [system-prompt
         (str (voice-system-prompt system-prompt turn-features)
@@ -2359,6 +2359,8 @@
      :standing-ctx-atom standing-ctx-atom
      :summaries-at-turn-start summaries-at-turn-start
      :take-user-input (:take-user-input hooks)
+     :park-requested? (:park-requested? hooks)
+     :resume resume
      :trace-store trace-store
      :turn-position turn-position
      :turn-pricing turn-pricing
@@ -2366,8 +2368,10 @@
 
 (defn- start-turn!
   "Publishes the turn-start state and answers the first loop state. Its trailer holds
-   the earlier turns' conversation, then this turn's own request."
-  [{:keys [current-turn-messages environment initial-messages session-turn-id
+   the earlier turns' conversation, then this turn's own request. A resumed parked
+   turn (`resume` is `{:clean? bool}`) also gets its stored steps and continues its
+   step count after them."
+  [{:keys [current-turn-messages environment initial-messages resume session-turn-id
            summaries-at-turn-start turn-position user-request]}]
   ;; Turn-start state.
   ;;
@@ -2406,22 +2410,28 @@
                   :data {:error (ex-message t)}
                   :msg
                   "Earlier turns could not be loaded; the first request carries only this turn"})
-               nil))]
+               nil))
 
-    (merge {:iteration 0 :messages initial-messages :trace []}
+        resumed
+        (when resume
+          (transcript/resumed-turn-steps environment session-turn-id position (:clean? resume)))]
+
+    (merge {:iteration (:iteration resumed 0) :messages initial-messages :trace []}
            FRESH_ITER_CARRY
-           {:trailer-iters (conj (vec prior-turns)
-                                 [(str "t" position "/request")
-                                  {:turn/boundary :request
-                                   :turn/position position
-                                   :turn/current? true
-                                   :turn/messages (vec current-turn-messages)}])})))
+           {:trailer-iters (into (conj (vec prior-turns)
+                                       [(str "t" position "/request")
+                                        {:turn/boundary :request
+                                         :turn/position position
+                                         :turn/current? true
+                                         :turn/messages (vec current-turn-messages)}])
+                                 (:steps resumed))})))
 
 (defn- halted-turn
   "The final result when the turn stops before its next iteration: cancelled, halted
-   by its goal or refused an iteration slot. Answers nil to run the iteration, after
-   publishing its number unless a goal halts the turn."
-  [{:keys [accounting-atom cancel-atom environment goal-at-turn-start turn-pricing]}
+   by its goal, parked for a gateway replacement or refused an iteration slot. Answers
+   nil to run the iteration, after publishing its number unless a goal halts the turn.
+   A parked turn has no answer: a later process resumes it after its stored steps."
+  [{:keys [accounting-atom cancel-atom environment goal-at-turn-start park-requested? turn-pricing]}
    {:keys [iteration trace]}]
   (let [goal-halt (goals/request-halt-result environment goal-at-turn-start)]
     (when-not goal-halt (ctx-loop/set-turn-state! environment :iteration (inc (long iteration))))
@@ -2452,6 +2462,14 @@
                             :trace trace
                             :iteration-count iteration}
                            (accounting/turn-cost @accounting-atom turn-pricing))
+          (when park-requested? (park-requested?))
+          (do (log-stage! :info iteration {:reason :parked})
+              (merge {:status :parked
+                      :status-id (loop-router/status->id :parked)
+                      :park-clean? true
+                      :trace trace
+                      :iteration-count iteration}
+                     (accounting/turn-cost @accounting-atom turn-pricing)))
           (not (agents/claim-iteration! environment))
           ;; The last report of the child stays in the answer, so the parent gets a handoff
           ;; and not only the stop reason.

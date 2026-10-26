@@ -8231,3 +8231,272 @@
                      (let [receipt (state/mark-session-read! "sid-1" {:seen-answers 2})]
                        (expect (= 2 (:seen_answers receipt)))
                        (expect (true? (:is_unread receipt))))))))
+
+;; #419: queued turns survive a gateway restart. The registry writes them to the
+;; store, and the next gateway puts them back in order and starts the head.
+(defn- queued-entry
+  [sid]
+  {:next-seq 0
+   :current-turn "r1"
+   :turns {"r1" {:turn_id "r1" :session_id sid :status "running" :request "busy"}
+           "q1" {:turn_id "q1"
+                 :session_id sid
+                 :status "queued"
+                 :request "hello"
+                 :queued_at 1
+                 :idempotency_key "key-1"
+                 :cancel-token (cancellation/cancellation-token)
+                 :engine-opts {:settings-snapshot {"a" "b"}
+                               :callback (fn []
+                                           nil)}}}
+   :turn-order ["r1" "q1"]
+   :idempotency {"key-1" "q1"}})
+
+(defn- forget-session!
+  "Drop `sid` from the registry like a stopped process: no store write."
+  [sid]
+  (swap! @#'state/registry dissoc sid)
+  (swap! @#'state/persisted-queues dissoc sid))
+
+(defdescribe
+  durable-queue-test
+  (it "stores queued turns and restores them in order after a restart"
+      (let [store
+            (sqlite/db-open! :memory)
+
+            launched
+            (atom [])]
+
+        (try (let [sid (str (h/store-session! store {:channel :api}))]
+               (with-redefs [lp/db-info (constantly store)
+                             lp/by-id (constantly {:id sid})]
+
+                 (#'state/update-session! sid (constantly (queued-entry sid)))
+                 (let [[row] (:turns (persistance/db-list-pending-turns store))]
+                   (expect (= ["q1" "queued" "hello"]
+                              [(:turn-id row) (:kind row) (get-in row [:payload :request])]))
+                   (expect (not (contains? (:payload row) :cancel-token)))
+                   (expect (= {} (get-in row [:payload :engine-opts]))))
+                 (forget-session! sid)
+                 (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                                (swap! launched conj
+                                                                  (vec (take 2 args))))}
+                   #(expect (= {:resumed 0 :queued 1 :sessions 1} (state/restore-pending-turns!))))
+                 (expect (= [[sid "q1"]] @launched))
+                 (expect (= "q1" (get-in (#'state/session-entry sid) [:idempotency "key-1"])))
+                 (expect (empty? (:turns (persistance/db-list-pending-turns store))))
+                 (forget-session! sid)))
+             (finally (sqlite/db-close! store)))))
+  (it "holds a restored queue when the restart interrupted the turn before it"
+      (let [store
+            (sqlite/db-open! :memory)
+
+            launched
+            (atom [])]
+
+        (try (let [sid (str (h/store-session! store {:channel :api}))]
+               (persistance/db-store-session-turn! store
+                                                   {:parent-session-id sid :user-request "busy"})
+               (with-redefs [lp/db-info (constantly store)
+                             lp/by-id (constantly {:id sid})]
+
+                 (#'state/update-session! sid (constantly (queued-entry sid)))
+                 (forget-session! sid)
+                 (expect (= 1 (lp/db-sweep-orphaned-running-turns! store)))
+                 (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                                (swap! launched conj
+                                                                  (vec (take 2 args))))}
+                   #(state/restore-pending-turns!))
+                 (expect (empty? @launched))
+                 (expect (= "turn_interrupted" (:reason (state/queue-paused-info sid))))
+                 (expect (= 1 (count (:turns (persistance/db-list-pending-turns store)))))
+                 (forget-session! sid)))
+             (finally (sqlite/db-close! store)))))
+  (it "leaves the queued turns of a live gateway process with that process"
+      (let [store
+            (sqlite/db-open! :memory)
+
+            parent
+            (.get (.parent (java.lang.ProcessHandle/current)))
+
+            owner
+            {:owner_pid (.pid parent)
+             :owner_started_at (some-> (.orElse (.startInstant (.info parent)) nil)
+                                       .toEpochMilli)}]
+
+        (try (let [sid (str (h/store-session! store {:channel :api}))]
+               (persistance/db-replace-session-queue!
+                 store
+                 sid
+                 {:turns [{:turn-id "q1" :payload {:request "hi"}}] :owner owner})
+               (with-redefs [lp/db-info (constantly store)
+                             lp/by-id (constantly {:id sid})]
+
+                 (expect (= {:resumed 0 :queued 0 :sessions 0} (state/restore-pending-turns!))))
+               (expect (= 1 (count (:turns (persistance/db-list-pending-turns store))))))
+             (finally (sqlite/db-close! store))))))
+
+;; #419: a drain parks the running turns for the next gateway, and that gateway
+;; resumes them.
+(defn- running-entry
+  [sid token]
+  {:next-seq 0
+   :current-turn "r1"
+   :turns {"r1"
+           {:turn_id "r1" :session_id sid :status "running" :request "busy" :cancel-token token}}
+   :turn-order ["r1"]})
+
+(defn- parked-row
+  [store sid tid resumes]
+  (persistance/db-store-parked-turn! store
+                                     sid
+                                     {:turn-id tid
+                                      :payload {:turn {:request "busy" :idempotency_key "k"}
+                                                :launch {:request "busy" :engine-opts {}}
+                                                :clean? true
+                                                :resumes resumes}}
+                                     {:owner_pid 1 :owner_started_at 1}))
+
+(defdescribe
+  drain-test
+  (it
+    "parks a turn that the drain cancels and queues later requests"
+    (let [store
+          (sqlite/db-open! :memory)
+
+          token
+          (cancellation/cancellation-token)]
+
+      (try
+        (let [sid
+              (str (h/store-session! store {:channel :api}))
+
+              other
+              (str (h/store-session! store {:channel :api}))]
+
+          (with-redefs [lp/db-info
+                        (constantly store)
+
+                        lp/by-id
+                        (constantly {:id sid})]
+
+            (#'state/update-session! sid (constantly (running-entry sid token)))
+            ;; The worker parks where the drain cancels it.
+            (cancellation/on-cancel! token
+                                     #(#'state/park-turn!
+                                        sid
+                                        "r1"
+                                        {:request "busy"
+                                         :engine-opts {:settings-snapshot {"k" "v"}}}
+                                        false))
+            (expect (= {:parked 1 :forced 1 :running 0}
+                       (state/drain! {:timeout-ms 0 :grace-ms 2000})))
+            (expect (= :gateway-drain (cancellation/cancel-reason token)))
+            (expect (zero? (long (state/running-turn-count))))
+            (expect (false? (#'state/claim-turn-terminal! sid "r1" token)))
+            (let [[row] (:turns (persistance/db-list-pending-turns store))]
+              (expect (= ["r1" "parked" false 0]
+                         [(:turn-id row) (:kind row) (get-in row [:payload :clean?])
+                          (get-in row [:payload :resumes])]))
+              (expect (= {} (get-in row [:payload :launch :engine-opts]))))
+            (let [tid (get-in (state/submit-turn! other {:request "later"}) [:turn "turn_id"])]
+              (expect (= "queued" (get-in (#'state/session-entry other) [:turns tid :status])))
+              (expect (nil? (:current-turn (#'state/session-entry other)))))
+            (forget-session! sid)
+            (forget-session! other)))
+        (finally (reset! @#'state/drain-state nil) (sqlite/db-close! store)))))
+  (it
+    "resumes a parked turn when the next gateway starts"
+    (let [store
+          (sqlite/db-open! :memory)
+
+          launched
+          (atom [])]
+
+      (try (let [sid
+                 (str (h/store-session! store {:channel :api}))
+
+                 tid
+                 (str (persistance/db-store-session-turn! store
+                                                          {:parent-session-id sid
+                                                           :user-request "busy"}))]
+
+             (parked-row store sid tid 0)
+             (expect
+               (= 0 (lp/db-sweep-orphaned-running-turns! store (#'state/parked-turn-ids store))))
+             (with-redefs [lp/db-info
+                           (constantly store)
+
+                           lp/by-id
+                           (constantly {:id sid})]
+
+               (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                              (swap! launched conj (vec args)))}
+                 #(expect (= {:resumed 1 :queued 0 :sessions 0} (state/restore-pending-turns!))))
+               (let [[[launch-sid launch-tid request opts]] @launched]
+                 (expect (= [sid tid "busy"] [launch-sid launch-tid request]))
+                 (expect (= {:turn-id tid :clean? true} (get-in opts [:engine-opts :resume]))))
+               (expect (= tid (:current-turn (#'state/session-entry sid))))
+               (let [[row] (:turns (persistance/db-list-pending-turns store))]
+                 (expect (= [false 1]
+                            [(get-in row [:payload :clean?]) (get-in row [:payload :resumes])])))
+               (forget-session! sid)))
+           (finally (sqlite/db-close! store)))))
+  (it "lands no terminal for a turn that the engine parks"
+      (let [store
+            (sqlite/db-open! :memory)
+
+            token
+            (cancellation/cancellation-token)
+
+            hooks
+            (atom nil)]
+
+        (try (let [sid (str (h/store-session! store {:channel :api}))]
+               (with-redefs [lp/db-info (constantly store)
+                             lp/by-id (constantly {:id sid})
+                             lp/send! (fn [_ _ opts]
+                                        (reset! hooks (:hooks opts))
+                                        {:status :parked :park-clean? true})]
+
+                 (#'state/update-session! sid (constantly (running-entry sid token)))
+                 (#'state/run-turn! sid "r1" "busy" {:cancel-token token :engine-opts {}})
+                 (expect (fn? (:park-requested? @hooks)))
+                 (expect (= "running" (get-in (#'state/session-entry sid) [:turns "r1" :status])))
+                 (expect (= "r1" (:current-turn (#'state/session-entry sid))))
+                 (expect (zero? (long (state/running-turn-count))))
+                 (let [[row] (:turns (persistance/db-list-pending-turns store))]
+                   (expect (= ["r1" true] [(:turn-id row) (get-in row [:payload :clean?])])))
+                 (forget-session! sid)))
+             (finally (sqlite/db-close! store)))))
+  (it "interrupts a parked turn over the resume limit"
+      (let [store
+            (sqlite/db-open! :memory)
+
+            launched
+            (atom [])]
+
+        (try (let [sid
+                   (str (h/store-session! store {:channel :api}))
+
+                   tid
+                   (str (persistance/db-store-session-turn! store
+                                                            {:parent-session-id sid
+                                                             :user-request "busy"}))]
+
+               (parked-row store sid tid 3)
+               (expect
+                 (= 1 (lp/db-sweep-orphaned-running-turns! store (#'state/parked-turn-ids store))))
+               (with-redefs [lp/db-info
+                             (constantly store)
+
+                             lp/by-id
+                             (constantly {:id sid})]
+
+                 (with-redefs-fn {#'state/launch-turn-worker! (fn [& args]
+                                                                (swap! launched conj (vec args)))}
+                   #(expect (= {:resumed 0 :queued 0 :sessions 0} (state/restore-pending-turns!))))
+                 (expect (empty? @launched))
+                 (expect (empty? (:turns (persistance/db-list-pending-turns store))))
+                 (forget-session! sid)))
+             (finally (sqlite/db-close! store))))))

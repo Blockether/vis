@@ -1301,6 +1301,33 @@
                  (tel/log! :warn ["gateway: explicit stop failed" (ex-message t)]))))
   (http/json-response {:stopping true :status (status-map)}))
 
+(defn- drain-handler
+  "POST /v1/admin/drain. Park the running turns and hold new turns for the next
+   gateway, then answer. Call it before a planned stop or replacement, then stop
+   this gateway. Optional body: `timeout_ms` for the clean phase, `grace_ms` after
+   the forced stop. Blocks for at most their sum."
+  [request]
+  (let [{:strs [timeout_ms grace_ms]}
+        (or (http/body-json request) {})
+
+        valid?
+        (fn [v]
+          (or (nil? v) (and (integer? v) (<= 0 (long v) 3600000))))]
+
+    (if-not (and (valid? timeout_ms) (valid? grace_ms))
+      (http/error-response 400
+                           :bad-request
+                           "timeout_ms and grace_ms must be integers from 0 to 3600000")
+      (do (tel/log! :warn
+                    ["gateway: /v1/admin/drain requested by" (or (:remote-addr request) "?") "-"
+                     (running-turn-count) "turn(s) running"])
+          (http/json-response (state/drain! (cond-> {}
+                                              timeout_ms
+                                              (assoc :timeout-ms timeout_ms)
+
+                                              grace_ms
+                                              (assoc :grace-ms grace_ms))))))))
+
 (defn- seq-handler
   [request]
   (if-let [sid (http/path-sid request)]
@@ -1565,6 +1592,7 @@
    [:delete "/v1/clients/:cid"] client-release-handler
    [:get "/v1/admin/status"] status-handler
    [:post "/v1/admin/stop"] stop-handler
+   [:post "/v1/admin/drain"] drain-handler
    [:get "/v1/sessions/:sid/events-since"] events-since-handler
    [:get "/v1/sessions/:sid/seq"] seq-handler
    [:get "/docs"] docs-handler
@@ -2070,8 +2098,8 @@
          (state/warm-db!)
 
          ;; A dead process can leave durable turn rows marked :running. Clear
-         ;; those stale flags to :interrupted, but NEVER reconstruct or resubmit
-         ;; their requests: queued work is intentionally process-memory only.
+         ;; those stale flags to :interrupted. A parked turn keeps its row: the
+         ;; restore after startup resumes it with its queued successors.
          _
          (try (state/reconcile-orphaned-turns!)
               (catch Throwable t
@@ -2147,6 +2175,14 @@
      (swap! instance/server-state assoc
        :stop-rooms! (rooms/start! db)
        :stop-automations! (automation-runner/start! db))
+     ;; Parked and queued turns of a stopped gateway continue here, after the server is up.
+     (try (let [{:keys [resumed queued sessions]} (state/restore-pending-turns!)]
+            (when (pos? (+ (long resumed) (long queued)))
+              (tel/log! :info
+                        ["gateway: restored turns"
+                         {:resumed resumed :queued queued :sessions sessions}])))
+          (catch Throwable t
+            (tel/log! :warn ["gateway: queued-turn restore failed" (ex-message t)])))
      (when managed? (ensure-idle-reaper!))
      (tel/log! :info
                ["gateway: listening" (str host ":" port)

@@ -1077,3 +1077,24 @@ CREATE TABLE automation_delivery (
   UNIQUE (run_id, event)
 );
 CREATE INDEX idx_automation_delivery_due ON automation_delivery(status, next_attempt_at);
+
+-- Queued and parked gateway turns wait here, so the next gateway process can continue them.
+-- The owner process ID and start time keep the rows of a live gateway with that gateway.
+CREATE TABLE gateway_pending_turn (
+  turn_id TEXT PRIMARY KEY NOT NULL,
+  session_id TEXT NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('queued', 'parked')),
+  position INTEGER NOT NULL,
+  payload BLOB NOT NULL,
+  owner_pid INTEGER,
+  owner_started_at INTEGER,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_gateway_pending_turn_session ON gateway_pending_turn(session_id, kind, position);
+
+-- A held queue stays held after a restart: one row for each held session.
+CREATE TABLE gateway_queue_hold (
+  session_id TEXT PRIMARY KEY NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  payload BLOB NOT NULL,
+  updated_at INTEGER NOT NULL
+);

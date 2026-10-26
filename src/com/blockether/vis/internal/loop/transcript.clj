@@ -1170,6 +1170,68 @@
                                                (get artifacts (str (:iteration-id rec)))))]))
             compacted))))
 
+(def ^:private resume-note
+  "The note that a forced park leaves for the model of the resumed turn."
+  (str "The gateway stopped during your last step and continued this turn in a new process. "
+       "Tool calls of that step can have run in part, and their results are not here. "
+       "Check the current state before you repeat a call that changes something."))
+
+(defn resumed-turn-steps
+  "The stored steps of turn `turn-id` that an earlier gateway process ran before it
+   parked the turn. Answers `{:steps [trailer-entry ...] :iteration n}`: the done
+   steps oldest first, then a note when `clean?` is false (a forced stop cut a
+   step), and `n`, the highest stored step position, where the resumed loop goes on.
+   The entries keep `:turn/resumed? true`, so a carried request prefix never hides
+   them."
+  [environment turn-id turn-position clean?]
+  (let [db
+        (:db-info environment)
+
+        position
+        (or turn-position 1)
+
+        stored
+        (sort-by :position
+                 (get (:iterations (provider-history-metadata db [turn-id])) (str turn-id)))
+
+        recs
+        (into []
+              (comp (filter #(= :done (:status %)))
+                    (map (fn [iteration]
+                           [(str (:id iteration))
+                            {:iteration-id (:id iteration)
+                             :iteration-scope (str "t" position "/i" (:position iteration))
+                             :llm-provider (:provider iteration)
+                             :llm-model (:model iteration)
+                             :preserved-thinking/replay? false
+                             :turn/resumed? true}])))
+              stored)
+
+        ids
+        (map (comp :iteration-id second) recs)
+
+        bodies
+        (persistance/db-list-iterations db ids)
+
+        artifacts
+        (persistance/db-list-iterations-attachments-meta db ids)]
+
+    {:iteration (reduce max 0 (keep :position stored))
+     :steps (cond-> (mapv (fn [[k rec]]
+                            [k
+                             (settled-step rec
+                                           (get bodies (str (:iteration-id rec)))
+                                           (mapv #(assoc % ::attachment-db db)
+                                                 (get artifacts (str (:iteration-id rec)))))])
+                          recs)
+              (not clean?)
+              (conj [(str "t" position "/resume")
+                     {:turn/boundary :resume
+                      :turn/position position
+                      :turn/current? true
+                      :turn/resumed? true
+                      :turn/messages [{:role "user" :content resume-note}]}]))}))
+
 (defn error->display
   "LLM-legible rendering of a form `:error` for the model wire. The human
    `:message` (which may already carry a multi-line babashka-style source
@@ -2781,11 +2843,14 @@
 
 (defn conversation-trailer-for-base
   "Hide what an exact carried request prefix already holds: every prior turn's
-   request, steps and answer, and the current turn's own request."
+   request, steps and answer, and the current turn's own request. The steps of a
+   parked turn that an earlier process ran stay, because no carried prefix holds them."
   [trailer-iters resumed?]
   (if resumed?
     (filterv (fn [[_ iter-rec]]
-               (not (or (false? (:preserved-thinking/replay? iter-rec)) (:turn/boundary iter-rec))))
+               (or (:turn/resumed? iter-rec)
+                   (not (or (false? (:preserved-thinking/replay? iter-rec))
+                            (:turn/boundary iter-rec)))))
       (or trailer-iters []))
     (vec (or trailer-iters []))))
 

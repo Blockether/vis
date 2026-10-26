@@ -81,13 +81,50 @@ vis-agent gateway stop --if-idle  # stop only when nobody is using it
 vis-agent gateway stop            # stop even if clients are connected
 ```
 
-Stopping a busy gateway interrupts its clients and active work.
+Stopping a busy gateway interrupts its clients and active work. To keep the work, first
+[hand it over](#hand-over-work-before-a-planned-stop).
 Without `--if-idle`, a stop can end the process with SIGTERM or SIGKILL. Add `--if-idle` to stop the
 gateway only when no session works.
 For a supervised service, use its service manager to stop it. Otherwise, its restart policy may start it again.
 
 To change the listening address, stop the gateway before starting it with the new address.
 Check for active work before any restart.
+
+### Hand over work before a planned stop
+
+Use a drain when you stop or replace a busy gateway on purpose, for example for an update or a
+new host. A drain keeps the running and queued work for the next gateway. Set up `vis_api` as
+[Authenticate requests](http-api.md#authenticate-requests) shows, then drain the gateway:
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/admin/drain" \
+  -H 'content-type: application/json' --data '{"timeout_ms": 60000, "grace_ms": 10000}'
+```
+
+During the drain, the gateway works as follows:
+
+- It starts no more turns. New messages wait in the queue for the next gateway.
+- Each running turn stops at the end of its current step.
+- After `timeout_ms`, the gateway stops the turns that still run, inside their step.
+- The answer comes when all turns stopped, or at the latest `grace_ms` later.
+
+The answer counts the stopped turns in `parked`. `forced` counts the turns that `timeout_ms`
+stopped, and `running` counts the turns that did not stop in time.
+
+Then stop the gateway and start the next one with the same Vis home directory. The next gateway
+continues each stopped turn with the same turn ID, then runs the queue in its order. You do not
+send a new message.
+
+Know these limits before you rely on a drain:
+
+- A turn stopped inside a step can have run part of a tool call. The model gets a note to check the
+  current state before it repeats a change. Vis does not repeat or undo the tool call itself.
+- A turn in the `running` count ends as interrupted.
+- A turn that stops in three gateways in a row ends as interrupted.
+- You cannot cancel a drain. Stop the gateway after it.
+
+A gateway that ends without a drain keeps its queue too. Its running turns end as interrupted, and
+the queue behind them stays held until you resume it.
 
 ## Connect from another machine
 

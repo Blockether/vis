@@ -86,7 +86,7 @@ To edit a queued message:
 - **Desktop or phone app:** choose the message to edit it, or choose **×** to
   remove it.
 
-The queue is stored in memory and cleared when the gateway restarts.
+The queue stays when the gateway restarts.
 
 ### Send a queued message now
 

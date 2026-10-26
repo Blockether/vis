@@ -266,7 +266,15 @@
   "Queued-turn operations of a persistence backend, with the `Store` dispatch. They
    are a separate protocol for the same JVM method-size limit as `AutomationStore`."
   (db-store-queued-turn-attachments! [db-info session-turn-soul-id queued-turn-id attachments])
-  (db-list-queued-turn-attachments [db-info queued-turn-ids]))
+  (db-list-queued-turn-attachments [db-info queued-turn-ids])
+  (db-replace-session-queue! [db-info session-id queue]
+    "Replace the queued turns and the queue hold of one session.")
+  (db-store-parked-turn! [db-info session-id turn owner]
+    "Insert or replace the row of a turn that a draining gateway parked.")
+  (db-delete-pending-turn! [db-info turn-id]
+    "Delete the queued or parked row of one turn.")
+  (db-list-pending-turns [db-info]
+    "Every queued and parked gateway turn, and every held queue."))
 
 (defprotocol AgentStore
   "Subagent budget operations of a persistence backend, with the `Store` dispatch. They

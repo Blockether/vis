@@ -4081,6 +4081,102 @@
                                               ") ORDER BY rowid ASC")]
                                         ids)))))))
 
+(defn- pending-turn-row
+  [session-id kind position {:keys [turn-id payload]} owner at]
+  {:turn_id (->ref turn-id)
+   :session_id (->ref session-id)
+   :kind kind
+   :position position
+   :payload (->blob (freeze-safe payload))
+   :owner_pid (:owner_pid owner)
+   :owner_started_at (:owner_started_at owner)
+   :updated_at at})
+
+(defn db-replace-session-queue!
+  "Replace the queued turns and the queue hold of session `session-id` in one
+   transaction. `queue` is `{:turns [{:turn-id :payload}] :hold payload-or-nil
+   :owner {:owner_pid :owner_started_at}}`, with `:turns` in queue order. Parked rows
+   of the session stay. Runtime objects in a payload become `{:vis/ref :expr}`."
+  [db-info session-id {:keys [turns hold owner]}]
+  (when (and (ds db-info) session-id)
+    (let [sid
+          (->ref session-id)
+
+          at
+          (now-ms)]
+
+      (sqlite-write-tx!
+        db-info
+        (fn [tx]
+          (execute! tx
+                    {:delete-from :gateway_pending_turn
+                     :where [:and [:= :session_id sid] [:= :kind "queued"]]})
+          (when (seq turns)
+            (execute! tx
+                      {:insert-into :gateway_pending_turn
+                       :values (vec (map-indexed (fn [i turn]
+                                                   (pending-turn-row sid "queued" i turn owner at))
+                                                 turns))
+                       :on-conflict [:turn_id]
+                       :do-update-set [:session_id :kind :position :payload :owner_pid
+                                       :owner_started_at :updated_at]}))
+          (if hold
+            (execute! tx
+                      {:insert-into :gateway_queue_hold
+                       :values
+                       [{:session_id sid :payload (->blob (freeze-safe hold)) :updated_at at}]
+                       :on-conflict [:session_id]
+                       :do-update-set [:payload :updated_at]})
+            (execute! tx {:delete-from :gateway_queue_hold :where [:= :session_id sid]})))))))
+
+(defn db-store-parked-turn!
+  "Insert or replace the parked row of turn `:turn-id` in session `session-id`. A
+   parked turn stopped between two steps and waits for a gateway to resume it."
+  [db-info session-id turn owner]
+  (when (and (ds db-info) session-id (:turn-id turn))
+    (sqlite-write-tx! db-info
+                      (fn [tx]
+                        (execute! tx
+                                  {:insert-into :gateway_pending_turn
+                                   :values
+                                   [(pending-turn-row session-id "parked" 0 turn owner (now-ms))]
+                                   :on-conflict [:turn_id]
+                                   :do-update-set [:session_id :kind :position :payload :owner_pid
+                                                   :owner_started_at :updated_at]})))))
+
+(defn db-delete-pending-turn!
+  "Delete the queued or parked row of turn `turn-id`. A missing row is a no-op."
+  [db-info turn-id]
+  (when (and (ds db-info) turn-id)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx]
+        (execute! tx {:delete-from :gateway_pending_turn :where [:= :turn_id (->ref turn-id)]})))))
+
+(defn db-list-pending-turns
+  "Every pending gateway row: `{:turns [{:turn-id :session-id :kind :position
+   :payload :owner_pid :owner_started_at}] :holds {session-id payload}}`, with
+   `:turns` ordered by session and position. No datasource -> empty."
+  [db-info]
+  (if-not (ds db-info)
+    {:turns [] :holds {}}
+    {:turns (mapv (fn [row]
+                    {:turn-id (:turn_id row)
+                     :session-id (:session_id row)
+                     :kind (:kind row)
+                     :position (:position row)
+                     :payload (<-blob (:payload row))
+                     :owner_pid (:owner_pid row)
+                     :owner_started_at (:owner_started_at row)})
+                  (query! db-info
+                          {:select [:*]
+                           :from :gateway_pending_turn
+                           :order-by [[:session_id :asc] [:kind :asc] [:position :asc]]}))
+     :holds (into {}
+                  (map (fn [row]
+                         [(:session_id row) (<-blob (:payload row))]))
+                  (query! db-info {:select [:*] :from :gateway_queue_hold}))}))
+
 (defn db-list-iteration-attachments
   "Ordered OUTBOUND tool artifacts persisted for ONE `session_turn_iteration`
    (its id, not the soul - the `tool` rail only). Returns `[{:id :source

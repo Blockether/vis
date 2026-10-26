@@ -129,6 +129,16 @@
       "path": "/v1/admin/stop"
     },
     {
+      "audience": "administration",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/admin/drain"
+    },
+    {
       "audience": "sdk",
       "operations": {
         "get": {

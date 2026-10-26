@@ -249,7 +249,7 @@
                         :content [(content/error "history_unavailable"
                                                  "Terminal turn history is unavailable"
                                                  true)]})))
-            (dissoc turn ::archive ::run-key ::archive-error))
+            (dissoc turn ::archive ::run-key ::archive-error ::parked? ::resumes))
      turn)))
 
 (defn- council-state
@@ -282,6 +282,88 @@
                (not (identical? input-state (get-in after [sid :council :input-state]))))
       (council/retire-input! sid input-state))))
 
+(defn- runtime-value?
+  [v]
+  (or (fn? v) (instance? clojure.lang.IDeref v) (instance? java.util.concurrent.Future v)))
+
+(defn- durable-value
+  "`v` without runtime objects. A map drops each entry whose value is a function, a
+   reference or a future, so a restored turn gets fresh runtime state."
+  [v]
+  (cond (runtime-value? v) nil
+        (map? v) (reduce-kv (fn [m k x]
+                              (if (runtime-value? x) (dissoc m k) (assoc m k (durable-value x))))
+                            v
+                            v)
+        (vector? v) (mapv durable-value v)
+        :else v))
+
+(def ^:private MAX_TURN_RESUMES
+  "How many times a gateway start resumes one parked turn. A turn over this limit
+   becomes interrupted, so a turn that stops each gateway cannot loop."
+  3)
+
+;; nil, or `{:started-at ms}` while this gateway drains its turns before a stop.
+(defonce ^:private drain-state (atom nil))
+
+(defn draining?
+  "True while this gateway drains its turns before a stop. A draining gateway
+   starts no turns: new requests queue for the next gateway."
+  []
+  (some? @drain-state))
+
+(defn- turn-payload
+  "The durable part of a turn record or launch map. The settings snapshot can hold
+   secret values, so it stays out. A restored turn reads the current settings."
+  [m]
+  (durable-value (cond-> (dissoc m :cancel-token)
+                   (:engine-opts m)
+                   (update :engine-opts dissoc :settings-snapshot))))
+
+(defn- queue-slice
+  "The durable part of a session record: its queued turns in queue order and its
+   hold marker, or nil when it has neither."
+  [entry]
+  (let [queued
+        (into []
+              (keep (fn [tid]
+                      (let [turn (get-in entry [:turns tid])]
+                        (when (= "queued" (:status turn)) turn))))
+              (distinct (:turn-order entry)))
+
+        hold
+        (:queue-paused entry)]
+
+    (when (or (seq queued) hold) [queued hold])))
+
+;; sid -> the queue slice that the database holds. The lock also orders the writes.
+(defonce ^:private persisted-queues (atom {}))
+
+(defn- persist-queue!
+  "Write the current queue slice of `sid` when it differs from the stored one. The
+   write reads the registry under the lock, so the last write always holds the
+   latest state. A failed write logs and keeps the old stored slice."
+  [sid]
+  (locking persisted-queues
+    (let [slice (queue-slice (get @registry sid))]
+      (when (not= slice (get @persisted-queues sid))
+        (try (persistance/db-replace-session-queue! (lp/db-info)
+                                                    sid
+                                                    {:turns (mapv (fn [turn]
+                                                                    {:turn-id (:turn_id turn)
+                                                                     :payload (turn-payload turn)})
+                                                                  (first slice))
+                                                     :hold (durable-value (second slice))
+                                                     :owner (bus/process-stamp)})
+             (swap! persisted-queues #(if slice (assoc % sid slice) (dissoc % sid)))
+             (catch Throwable t
+               (tel/log! :warn ["gateway: queued turns not persisted" sid (ex-message t)])))))))
+
+(defn- sync-queue!
+  "Persist the queue of `sid` when the registry write changed it."
+  [sid before after]
+  (when (not= (queue-slice (get before sid)) (queue-slice (get after sid))) (persist-queue! sid)))
+
 (defn- update-session!
   "Publish initialized activations atomically; retire removed input after the registry write."
   [sid f]
@@ -298,7 +380,8 @@
                     (fn [old]
                       (council-transition old (f old) fresh)))]
 
-    (retire-council-input! sid before after))
+    (retire-council-input! sid before after)
+    (sync-queue! sid before after))
   nil)
 
 (defn- update-existing-session!
@@ -320,7 +403,8 @@
                                   (council-transition old (f old) fresh)))
                         reg)))]
 
-    (retire-council-input! sid before after))
+    (retire-council-input! sid before after)
+    (sync-queue! sid before after))
   nil)
 
 (defn- update-turn! [sid tid f] (update-session! sid #(update-in % [:turns tid] f)))
@@ -445,6 +529,7 @@
             [before after] (swap-vals! registry dissoc sid)]
 
         (retire-council-input! sid before after)
+        (sync-queue! sid before after)
         (event-store/discard-replaced! (get-in before [sid :events]) [] nil)
         (doseq [turn (vals (get-in before [sid :turns]))]
           (when-let [dispose (::cancel-disposer turn)]
@@ -1232,7 +1317,9 @@
    the client refcount is zero."
   []
   (->> (vals @registry)
-       (keep :current-turn)
+       (keep (fn [entry]
+               (let [tid (:current-turn entry)]
+                 (when (and tid (not (get-in entry [:turns tid ::parked?]))) tid))))
        count))
 
 (defn running-turn-progress
@@ -2258,7 +2345,12 @@
           started-at
           (or (:created_at turn) (:started_at turn) (:queued_at turn))]
 
-      (-> (apply dissoc turn :attachments :id ::archive ::run-key turn-execution-keys)
+      (-> (apply dissoc
+                 turn
+                 :attachments
+                 :id ::archive
+                 ::run-key ::parked?
+                 ::resumes turn-execution-keys)
           ;; Inline uploads carry base64 pixels: a turn LIST must never ship
           ;; them. `:attachment_previews` is the byte-free chip payload.
           (assoc :turn_id turn-id
@@ -4024,6 +4116,50 @@
                         "queue send-now: event publication failed; messages still delivered"})))
       (mapv queued-turn-input @taken))))
 
+(defn- park-turn!
+  "Keep the running turn `tid` for the next gateway process and release its run.
+   The stored row holds the turn record, the `launch` inputs and `clean?`. A clean
+   turn stopped at an iteration boundary. The run gives up its terminal, so no
+   watchdog or backstop lands one. If the row write fails, the turn stays running
+   and the next gateway marks it interrupted."
+  [sid tid launch clean?]
+  (let [turn (turn-record sid tid)]
+    (try
+      (persistance/db-store-parked-turn!
+        (lp/db-info)
+        sid
+        {:turn-id tid
+         :payload {:turn (turn-payload (apply dissoc turn ::resumes turn-execution-keys))
+                   :launch (turn-payload (update launch :engine-opts dissoc :resume :hooks))
+                   :clean? (boolean clean?)
+                   :resumes (long (or (::resumes turn) 0))}}
+        (bus/process-stamp))
+      (tel/log! :info ["gateway: turn parked for the next gateway" tid {:clean? (boolean clean?)}])
+      (catch Throwable t
+        (tel/log! :error
+                  ["gateway: turn not parked; the next gateway interrupts it" tid (ex-message t)])))
+    (update-existing-session!
+      sid
+      (fn [entry]
+        (if (get-in entry [:turns tid])
+          (update-in entry [:turns tid] assoc ::parked? true ::run-key (Object.))
+          entry)))
+    (when-let [dispose (::cancel-disposer turn)]
+      (try (dispose)
+           (catch Throwable t
+             (tel/log! :warn
+                       ["gateway: cancel hook of a parked turn not disposed" tid
+                        (ex-message t)]))))))
+
+(defn- forget-resumed-turn!
+  "Delete the parked row of the resumed turn `tid` once it ends in this process."
+  [sid tid]
+  (when-not (get-in (session-entry sid) [:turns tid ::parked?])
+    (try (persistance/db-delete-pending-turn! (lp/db-info) tid)
+         (catch Throwable t
+           (tel/log! :warn
+                     ["gateway: parked row of a resumed turn not deleted" tid (ex-message t)])))))
+
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
   event log, runs the blocking `lp/send!`, then lands the terminal turn
@@ -4037,6 +4173,19 @@
 
         owns-terminal?
         (volatile! false)
+
+        ;; The inputs that start this turn again in the next gateway, if it parks.
+        launch
+        {:request request
+         :messages messages
+         :provider provider
+         :model model
+         :reasoning-default reasoning-default
+         :extra-body extra-body
+         :turn-features turn-features
+         :engine-opts engine-opts
+         :attachments attachments
+         :display-request display-request}
 
         claim-terminal!
         (fn []
@@ -4177,6 +4326,7 @@
             (cond-> (assoc (or engine-opts {})
                       :hooks {:on-chunk on-chunk
                               :claim-terminal! claim-terminal!
+                              :park-requested? draining?
                               :take-user-input (fn [{:keys [iteration]}]
                                                  (take-marked-queued! sid tid iteration))
                               :prepare-result (fn [result]
@@ -4225,6 +4375,9 @@
 
             result
             (lp/send! sid (or messages request) opts)
+
+            parked?
+            (= :parked (:status result))
 
             answer
             (:answer result)
@@ -4326,143 +4479,149 @@
              :error (when failure-code failure-text)
              :completed_at (util/now-ms)}]
 
-        (when (or @owns-terminal? (claim-terminal!))
-          (finish-turn! sid tid patch)
-          (record-metrics! sid result)
-          (close-blocks! @open-blocks)
-          (append-event! sid
-                         (case status
-                           "failed"
-                           "turn.failed"
-
-                           "cancelled"
-                           "turn.cancelled"
-
-                           "turn.completed")
-                         (turn-terminal-payload sid tid status patch))
-          (emit-context-updated! sid)
-          ;; A user cancel means "stop", not "advance": the backlog queued BEFORE
-          ;; the cancel is DROPPED with it (`drop-cancelled-backlog!`) so nothing
-          ;; can resurrect it later; the channel keeps its own copy and pulls it
-          ;; back into the editor. A message submitted AFTER the cancel fired is
-          ;; the OPPOSITE intent — "stop that, run THIS" — so it survives the drop
-          ;; and drains the moment this worker unwinds.
-          ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
-          ;; is cancelled either way, so distinguish on the stall flag and drain.
-          (after-turn-terminal!
-            sid
-            tid
-            {:failed? (= "failed" status) :cancel-token cancel-token :stalled? stalled?})))
-      (catch Throwable t
-        (let [stalled?
-              (boolean (and stall (:stalled? @stall)))
-
-              ;; A USER CANCEL unwinds this worker by THROWING (the engine aborts on
-              ;; the fired token), and this path used to call that "failed": it wrote
-              ;; `turn.failed`, and `after-turn-terminal!` then saw a failure with a
-              ;; backlog and PAUSED the queue with `provider_error` — a TERMINAL pause
-              ;; with no auto-resume. One Esc therefore wedged the whole session: the
-              ;; next message sat held forever and every channel showed a dead turn
-              ;; whose live panel never closed. Esc is not a provider outage — it is
-              ;; exactly a cancelled token that did not stall and carries the
-              ;; `:cancelling_at` stamp `cancel-turn!` writes.
-              user-cancel?
-              (boolean (and (not stalled?)
-                            (cancellation/cancelled? cancel-token)
-                            (some? (:cancelling_at (turn-record sid tid)))))
-
-              status
-              (if user-cancel? "cancelled" "failed")
-
-              data
-              (ex-data t)
-
-              eval
-              (when (= :vis/unsupported-reasoning-effort (:type data))
-                {:valid? false
-                 :invalid-reasons [{:type :unsupported-reasoning-effort
-                                    :requested (:requested data)
-                                    :provider (some-> (:provider data)
-                                                      name)
-                                    :model (:model data)
-                                    :supported (vec (:supported data))}]
-                 :reasoning-effort {:requested (:requested data) :iterations []}})
-
-              diagnostic-id
-              (when-not user-cancel? (str (random-uuid)))
-
-              exception
-              (when-not user-cancel? (worker-exception-diagnostic t))
-
-              err
-              (cond user-cancel? nil
-                    stalled? (str (stall-failure-text stall) " (force-cancelled)")
-                    :else (let [{:keys [class message]} (first exception)]
-                            (if (str/blank? message) class message)))
-
-              content
-              (cond user-cancel? []
-                    ;; A provider failure that unwound the worker (rate limit, auth
-                    ;; rejection, dead connection) is the SAME failure the in-loop path
-                    ;; renders as a styled card. Emitting the bare `ex-message` here is
-                    ;; why an error Vis formats perfectly elsewhere sometimes landed in
-                    ;; the TUI (and the app) as raw unformatted text.
-                    (and (not stalled?) (provider-error/provider-failure? t))
-                    (provider-error/provider-error-content t)
-                    :else [(content/error diagnostic-id
-                                          "turn_failed"
-                                          (str err " (Diagnostic: " diagnostic-id ")")
-                                          false)])]
-
-          (if user-cancel?
-            (tel/log! :info ["gateway: turn cancelled by user" tid])
-            (tel/log!
-              {:level :error
-               :data
-               {:diagnostic-id diagnostic-id :session-id sid :turn-id tid :exception exception}}
-              ["gateway: turn worker failed" tid err]))
-          (when (claim-terminal!)
-            ;; The worker unwound BEFORE the engine's own terminal write (a throw out
-            ;; of the iteration loop — an interrupted retry backoff, a dead provider
-            ;; connection — escapes `run-normal-turn!` without `persist-turn-outcome!`).
-            ;; The in-memory registry alone forgetting the turn is not enough: the
-            ;; canonical durable row stayed `running` until the next process start
-            ;; swept it, so reopening the session from a fresh client (or after a
-            ;; journal rollover) showed a dead turn still spinning with no failure and
-            ;; no answer (Blockether/vis#211). Settle it here, under the same claim
-            ;; and with the same content the channels see; the compare-and-set from
-            ;; `running` keeps a terminal the engine did land authoritative.
-            (persist-forced-terminal!
-              sid
-              tid
-              (if user-cancel?
-                {:status :interrupted :content [] :prior-outcome :cancelled}
-                (cond-> {:status :error :content content :prior-outcome :error}
-                  (seq content)
-                  (assoc :error (first content)))))
-            (finish-turn! sid
-                          tid
-                          (cond-> {:status status
-                                   :role "assistant"
-                                   :content content
-                                   :completed_at (util/now-ms)}
-                            err
-                            (assoc :error err)
-
-                            eval
-                            (assoc :eval eval)))
-            ;; Close every block still OPEN. Without it a cancelled/failed turn
-            ;; leaves half-open live panels in every channel — the blank screen the
-            ;; TUI showed after Esc.
+        (if parked?
+          (park-turn! sid tid launch (:park-clean? result))
+          (when (or @owns-terminal? (claim-terminal!))
+            (finish-turn! sid tid patch)
+            (record-metrics! sid result)
             (close-blocks! @open-blocks)
             (append-event! sid
-                           (if user-cancel? "turn.cancelled" "turn.failed")
-                           (turn-terminal-payload sid tid status {:content content :error err}))
+                           (case status
+                             "failed"
+                             "turn.failed"
+
+                             "cancelled"
+                             "turn.cancelled"
+
+                             "turn.completed")
+                           (turn-terminal-payload sid tid status patch))
             (emit-context-updated! sid)
+            ;; A user cancel means "stop", not "advance": the backlog queued BEFORE
+            ;; the cancel is DROPPED with it (`drop-cancelled-backlog!`) so nothing
+            ;; can resurrect it later; the channel keeps its own copy and pulls it
+            ;; back into the editor. A message submitted AFTER the cancel fired is
+            ;; the OPPOSITE intent — "stop that, run THIS" — so it survives the drop
+            ;; and drains the moment this worker unwinds.
+            ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
+            ;; is cancelled either way, so distinguish on the stall flag and drain.
             (after-turn-terminal!
               sid
               tid
-              {:failed? (not user-cancel?) :cancel-token cancel-token :stalled? stalled?})))))))
+              {:failed? (= "failed" status) :cancel-token cancel-token :stalled? stalled?}))))
+      (catch Throwable t
+        ;; A drain that ran out of time cancels the turn: keep it for the next gateway.
+        (if (= :gateway-drain (cancellation/cancel-reason cancel-token))
+          (park-turn! sid tid launch false)
+          (let [stalled?
+                (boolean (and stall (:stalled? @stall)))
+
+                ;; A USER CANCEL unwinds this worker by THROWING (the engine aborts on
+                ;; the fired token), and this path used to call that "failed": it wrote
+                ;; `turn.failed`, and `after-turn-terminal!` then saw a failure with a
+                ;; backlog and PAUSED the queue with `provider_error` — a TERMINAL pause
+                ;; with no auto-resume. One Esc therefore wedged the whole session: the
+                ;; next message sat held forever and every channel showed a dead turn
+                ;; whose live panel never closed. Esc is not a provider outage — it is
+                ;; exactly a cancelled token that did not stall and carries the
+                ;; `:cancelling_at` stamp `cancel-turn!` writes.
+                user-cancel?
+                (boolean (and (not stalled?)
+                              (cancellation/cancelled? cancel-token)
+                              (some? (:cancelling_at (turn-record sid tid)))))
+
+                status
+                (if user-cancel? "cancelled" "failed")
+
+                data
+                (ex-data t)
+
+                eval
+                (when (= :vis/unsupported-reasoning-effort (:type data))
+                  {:valid? false
+                   :invalid-reasons [{:type :unsupported-reasoning-effort
+                                      :requested (:requested data)
+                                      :provider (some-> (:provider data)
+                                                        name)
+                                      :model (:model data)
+                                      :supported (vec (:supported data))}]
+                   :reasoning-effort {:requested (:requested data) :iterations []}})
+
+                diagnostic-id
+                (when-not user-cancel? (str (random-uuid)))
+
+                exception
+                (when-not user-cancel? (worker-exception-diagnostic t))
+
+                err
+                (cond user-cancel? nil
+                      stalled? (str (stall-failure-text stall) " (force-cancelled)")
+                      :else (let [{:keys [class message]} (first exception)]
+                              (if (str/blank? message) class message)))
+
+                content
+                (cond user-cancel? []
+                      ;; A provider failure that unwound the worker (rate limit, auth
+                      ;; rejection, dead connection) is the SAME failure the in-loop path
+                      ;; renders as a styled card. Emitting the bare `ex-message` here is
+                      ;; why an error Vis formats perfectly elsewhere sometimes landed in
+                      ;; the TUI (and the app) as raw unformatted text.
+                      (and (not stalled?) (provider-error/provider-failure? t))
+                      (provider-error/provider-error-content t)
+                      :else [(content/error diagnostic-id
+                                            "turn_failed"
+                                            (str err " (Diagnostic: " diagnostic-id ")")
+                                            false)])]
+
+            (if user-cancel?
+              (tel/log! :info ["gateway: turn cancelled by user" tid])
+              (tel/log!
+                {:level :error
+                 :data
+                 {:diagnostic-id diagnostic-id :session-id sid :turn-id tid :exception exception}}
+                ["gateway: turn worker failed" tid err]))
+            (when (claim-terminal!)
+              ;; The worker unwound BEFORE the engine's own terminal write (a throw out
+              ;; of the iteration loop — an interrupted retry backoff, a dead provider
+              ;; connection — escapes `run-normal-turn!` without `persist-turn-outcome!`).
+              ;; The in-memory registry alone forgetting the turn is not enough: the
+              ;; canonical durable row stayed `running` until the next process start
+              ;; swept it, so reopening the session from a fresh client (or after a
+              ;; journal rollover) showed a dead turn still spinning with no failure and
+              ;; no answer (Blockether/vis#211). Settle it here, under the same claim
+              ;; and with the same content the channels see; the compare-and-set from
+              ;; `running` keeps a terminal the engine did land authoritative.
+              (persist-forced-terminal!
+                sid
+                tid
+                (if user-cancel?
+                  {:status :interrupted :content [] :prior-outcome :cancelled}
+                  (cond-> {:status :error :content content :prior-outcome :error}
+                    (seq content)
+                    (assoc :error (first content)))))
+              (finish-turn! sid
+                            tid
+                            (cond-> {:status status
+                                     :role "assistant"
+                                     :content content
+                                     :completed_at (util/now-ms)}
+                              err
+                              (assoc :error err)
+
+                              eval
+                              (assoc :eval eval)))
+              ;; Close every block still OPEN. Without it a cancelled/failed turn
+              ;; leaves half-open live panels in every channel — the blank screen the
+              ;; TUI showed after Esc.
+              (close-blocks! @open-blocks)
+              (append-event! sid
+                             (if user-cancel? "turn.cancelled" "turn.failed")
+                             (turn-terminal-payload sid tid status {:content content :error err}))
+              (emit-context-updated! sid)
+              (after-turn-terminal!
+                sid
+                tid
+                {:failed? (not user-cancel?) :cancel-token cancel-token :stalled? stalled?})))))
+      (finally (when (:resume engine-opts) (forget-resumed-turn! sid tid))))))
 
 (def ^:private WATCHDOG_CANCEL_REASONS
   "Cancel reasons that mean \"nobody ever ran this turn\", never \"the user stopped
@@ -4701,7 +4860,7 @@
      (update-session!
        sid
        (fn [entry]
-         (if (or (nil? entry) (:current-turn entry) (:queue-paused entry))
+         (if (or (nil? entry) (:current-turn entry) (:queue-paused entry) (draining?))
            entry
            (if-let [[tid
                      {:keys [request messages provider model reasoning-default cancel-token
@@ -4983,9 +5142,10 @@
               (and council-ping (:council entry))
               (do (vreset! decision [:council-active (get-in entry [:council :activation-id])])
                   entry)
-              (and council-ping (or (:current-turn entry) (:queue-paused entry)))
+              (and council-ping (or (:current-turn entry) (:queue-paused entry) (draining?)))
               (do (vreset! decision [:council-unavailable]) entry)
-              (:current-turn entry)
+              ;; A draining gateway starts nothing: the next gateway runs the queue.
+              (or (:current-turn entry) (draining?))
               (do
                 (vreset! decision [:queued tid])
                 (let [queued-at (util/now-ms)]
@@ -5229,14 +5389,23 @@
                       {:error (:error result)})))
     result))
 
+(defn- parked-turn-ids
+  "The ids of the parked gateway turns in `db` that a start can still resume."
+  [db]
+  (try (into []
+             (comp (filter #(and (= "parked" (:kind %))
+                                 (< (long (get-in % [:payload :resumes] 0)) MAX_TURN_RESUMES)))
+                   (map :turn-id))
+             (:turns (persistance/db-list-pending-turns db)))
+       (catch Throwable t (tel/log! :warn ["gateway: parked turns unreadable" (ex-message t)]) [])))
+
 (defn reconcile-orphaned-turns!
   "Mark turns left running by a dead process as interrupted, and fail the managed
    children it left queued or running. A turn that [[bus/live-turns]] reports is
    still in flight in a live vis process, so the sweep leaves it to that process.
+   A parked turn also stays running: [[restore-pending-turns!]] resumes it.
 
-   Queued work is deliberately memory-only. Startup never reconstructs or
-   resubmits messages from persisted user requests. Returns the persistence
-   sweep result."
+   Returns the persistence sweep result."
   []
   (try (let [db
              (lp/db-info)
@@ -5247,8 +5416,168 @@
          (try (agents/reconcile-orphans! db (keys live))
               (catch Throwable t
                 (tel/log! :warn ["gateway: orphaned-child reconciliation failed" (ex-message t)])))
-         (lp/db-sweep-orphaned-running-turns! db (vals live)))
+         (lp/db-sweep-orphaned-running-turns! db (concat (vals live) (parked-turn-ids db))))
        (catch Throwable _ nil)))
+
+(defn- restore-session-queue!
+  "Put the persisted queued turns `rows` of `sid` back into the registry, in queue
+   order, with their idempotency keys. A held queue stays held. A crash that
+   interrupted the turn before them holds the queue too, as a failed turn does.
+   Otherwise the head starts. Returns the number of restored turns."
+  [db sid rows hold]
+  (let [present
+        (set (keys (:turns (session-entry sid))))
+
+        rows
+        (remove #(contains? present (:turn-id %)) rows)
+
+        settings
+        (scoped/values db sid)]
+
+    (update-session! sid
+                     (fn [entry]
+                       (reduce (fn [entry {:keys [turn-id payload]}]
+                                 (let [turn
+                                       (-> payload
+                                           (assoc :turn_id turn-id
+                                                  :session_id (str sid)
+                                                  :status "queued")
+                                           (assoc-in [:engine-opts :settings-snapshot] settings))
+
+                                       key
+                                       (:idempotency_key turn)]
+
+                                   (cond-> (-> entry
+                                               (assoc-in [:turns turn-id] turn)
+                                               (update :turn-order (fnil conj []) turn-id))
+                                     key
+                                     (assoc-in [:idempotency key] turn-id))))
+                               (or entry (fresh-entry sid))
+                               rows)))
+    (cond hold (update-session! sid #(assoc % :queue-paused (assoc hold :held (count-queued %))))
+          (:latest-turn-interrupted? (persistance/db-session-turn-stats db sid))
+          (pause-queue! sid {:reason "turn_interrupted"})
+          :else (drain-next-queued! sid))
+    (count rows)))
+
+(defn- resume-parked-turn!
+  "Start the parked turn of `row` again in this process. Rewrite the row first: it
+   names this process, counts the resume and marks the stop unclean. A crash during
+   the resume then continues from the transcript. Delete the row of a missing turn,
+   of a turn that does not run or of a turn over [[MAX_TURN_RESUMES]]. Returns
+   true when the turn started."
+  [db {:keys [turn-id session-id payload]}]
+  (let [{:keys [turn launch clean? resumes]}
+        payload
+
+        resumes
+        (long (or resumes 0))
+
+        stored
+        (when (lp/by-id session-id) (persistance/db-read-session-turn db session-id turn-id))
+
+        drop!
+        (fn [why]
+          (tel/log! :warn ["gateway: parked turn dropped" turn-id why])
+          (persistance/db-delete-pending-turn! db turn-id)
+          false)]
+
+    (cond (nil? stored) (drop! "missing turn")
+          (not= :running (:status stored)) (drop! "turn does not run")
+          (>= resumes (long MAX_TURN_RESUMES)) (drop! "resume limit")
+          :else (let [token
+                      (cancellation/cancellation-token)
+
+                      started?
+                      (volatile! false)
+
+                      now
+                      (util/now-ms)]
+
+                  (update-session! session-id
+                                   (fn [entry]
+                                     (let [entry (or entry (fresh-entry session-id))]
+                                       (if (:current-turn entry)
+                                         entry
+                                         (do (vreset! started? true)
+                                             (-> entry
+                                                 (assoc :current-turn turn-id
+                                                        :last-active now)
+                                                 (assoc-in [:turns turn-id]
+                                                           (assoc turn
+                                                             :turn_id turn-id
+                                                             :session_id (str session-id)
+                                                             :status "running"
+                                                             :cancel-token token
+                                                             ::resumes (inc resumes)))
+                                                 (update :turn-order (fnil conj []) turn-id)))))))
+                  (when @started?
+                    (persistance/db-store-parked-turn! db
+                                                       session-id
+                                                       {:turn-id turn-id
+                                                        :payload (assoc payload
+                                                                   :clean? false
+                                                                   :resumes (inc resumes))}
+                                                       (bus/process-stamp))
+                    (tel/log! :info
+                              ["gateway: parked turn resumed" turn-id
+                               {:clean? (boolean clean?) :resume (inc resumes)}])
+                    (launch-turn-worker! session-id
+                                         turn-id
+                                         (:request launch)
+                                         {:messages (:messages launch)
+                                          :provider (:provider launch)
+                                          :model (:model launch)
+                                          :reasoning-default (:reasoning-default launch)
+                                          :cancel-token token
+                                          :extra-body (:extra-body launch)
+                                          :turn-features (:turn-features launch)
+                                          :engine-opts
+                                          (assoc (:engine-opts launch)
+                                            :settings-snapshot (scoped/values db session-id)
+                                            :resume {:turn-id turn-id :clean? (boolean clean?)})
+                                          :attachments (:attachments launch)
+                                          :display-request (:display-request launch)}))
+                  @started?))))
+
+(defn restore-pending-turns!
+  "Restore the turns that a stopped gateway left in the database. Parked turns
+   resume first, then the queued turns follow. The rows of a gateway process that
+   still runs stay with that process. Rows of a deleted session are dropped.
+   Returns `{:resumed n :queued n :sessions m}`."
+  []
+  (let [db
+        (lp/db-info)
+
+        {:keys [turns holds]}
+        (persistance/db-list-pending-turns db)
+
+        {parked "parked" queued "queued"}
+        (group-by :kind (remove bus/stamp-alive? turns))
+
+        resumed
+        (count (filter (fn [row]
+                         (try (resume-parked-turn! db row)
+                              (catch Throwable t
+                                (tel/log! :error
+                                          ["gateway: parked turn not resumed" (:turn-id row)
+                                           (ex-message t)])
+                                false)))
+                       parked))]
+
+    (reduce (fn [acc [sid rows]]
+              (if (lp/by-id sid)
+                (-> acc
+                    (update :queued + (long (restore-session-queue! db sid rows (get holds sid))))
+                    (update :sessions inc))
+                (do (tel/log! :warn
+                              ["gateway: queued turns of a missing session dropped" sid
+                               (count rows)])
+                    (doseq [{:keys [turn-id]} rows]
+                      (persistance/db-delete-pending-turn! db turn-id))
+                    acc)))
+            {:resumed resumed :queued 0 :sessions 0}
+            (group-by :session-id queued))))
 
 (defn- terminal-event->result
   "Resolve a terminal event against the in-process registry; the shared contract
@@ -5748,17 +6077,86 @@
    RejectedExecutionException surfaced as a bogus \"Provider unavailable\".
    Best-effort; returns the number of turns signalled."
   []
-  (reduce (fn [n sess]
-            (reduce (fn [n turn]
-                      (if (and (= "running" (:status turn)) (:cancel-token turn))
-                        (do (try (cancellation/cancel! (:cancel-token turn) :gateway-shutdown)
-                                 (catch Throwable _ nil))
-                            (inc (long n)))
-                        n))
-                    n
-                    (vals (:turns sess))))
-          0
-          (vals @registry)))
+  (reduce
+    (fn [n sess]
+      (reduce (fn [n turn]
+                (if (and (= "running" (:status turn)) (:cancel-token turn) (not (::parked? turn)))
+                  (do (try (cancellation/cancel! (:cancel-token turn) :gateway-shutdown)
+                           (catch Throwable _ nil))
+                      (inc (long n)))
+                  n))
+              n
+              (vals (:turns sess))))
+    0
+    (vals @registry)))
+
+(defn- unparked-running-turns
+  "`[sid tid cancel-token]` of each running turn of this gateway that is not parked."
+  []
+  (for [[sid entry]
+        @registry
+
+        :let [tid
+              (:current-turn entry)
+
+              turn
+              (get-in entry [:turns tid])]
+        :when (and tid (= "running" (:status turn)) (not (::parked? turn)))]
+
+    [sid tid (:cancel-token turn)]))
+
+(defn- await-unparked-turns
+  "Wait until no turn runs unparked or the clock reaches `deadline-ms`. Returns the
+   turns that still run."
+  [deadline-ms]
+  (loop []
+
+    (let [left (unparked-running-turns)]
+      (if (or (empty? left) (>= (util/now-ms) (long deadline-ms)))
+        (vec left)
+        (do (Thread/sleep 100) (recur))))))
+
+(defn drain!
+  "Prepare this gateway for a stop without losing turns. The gateway starts no
+   more turns, and new requests queue for the next gateway. Each running turn
+   parks at its next iteration boundary. After `timeout-ms`, the drain cancels
+   the turns that still run, and they park where they stop. The drain then waits
+   at most `grace-ms` more. A parked turn continues when the next gateway starts.
+   A drain cannot be undone: stop the gateway after it.
+
+   Returns `{:parked n :forced n :running n}`. `:running` counts the turns that
+   did not park in time, and the next gateway marks them interrupted."
+  [{:keys [timeout-ms grace-ms] :or {timeout-ms 60000 grace-ms 10000}}]
+  (swap! drain-state #(or % {:started-at (util/now-ms)}))
+  (tel/log! :info ["gateway: drain started" {:timeout-ms timeout-ms :grace-ms grace-ms}])
+  (let [forced
+        (await-unparked-turns (+ (util/now-ms) (long timeout-ms)))
+
+        _
+        (doseq [[_ tid token] forced]
+          (try (when token (cancellation/cancel! token :gateway-drain))
+               (catch Throwable t
+                 (tel/log! :warn ["gateway: drain could not cancel a turn" tid (ex-message t)]))))
+
+        running
+        (await-unparked-turns (+ (util/now-ms) (long grace-ms)))
+
+        parked
+        (count (for [entry
+                     (vals @registry)
+
+                     turn
+                     (vals (:turns entry))
+
+                     :when (::parked? turn)]
+
+                 turn))
+
+        result
+        {:parked parked :forced (count forced) :running (count running)}]
+
+    (tel/log! :info ["gateway: drain finished" result])
+    result))
 
 ;; Session lifecycle + souls
 

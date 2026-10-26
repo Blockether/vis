@@ -5357,6 +5357,53 @@
           (finally (loop-env/dispose-environment! environment)))))))
 
 (defdescribe
+  parked-turn-loop-test
+  ;; #419: a draining gateway parks a turn at an iteration boundary, and the next
+  ;; gateway continues it after its stored steps.
+  (it "parks before the next iteration when the gateway asks"
+      (let [environment
+            (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+            tid
+            (persistance/db-store-session-turn! (:db-info environment)
+                                                {:parent-session-id (:session-id environment)
+                                                 :user-request "start"})
+
+            requests
+            (atom [])]
+
+        (try (with-redefs [svar/ask-code! (fn [_ opts]
+                                            (swap! requests conj opts)
+                                            {:stop-reason :end :content "Done."})]
+               (let [result (iteration/iteration-loop
+                              environment
+                              "start"
+                              {:session-turn-id tid :hooks {:park-requested? (constantly true)}})]
+                 (expect (= [:parked true] [(:status result) (:park-clean? result)]))
+                 (expect (empty? @requests))))
+             (finally (loop-env/dispose-environment! environment)))))
+  (doseq [clean? [true false]]
+    (it (if clean? "resumes a clean park without a note" "tells the model about a forced park")
+        (let [environment (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+              tid (persistance/db-store-session-turn! (:db-info environment)
+                                                      {:parent-session-id (:session-id environment)
+                                                       :user-request "start"})
+              requests (atom [])]
+
+          (try (with-redefs [svar/ask-code! (fn [_ opts]
+                                              (swap! requests conj (select-keys opts [:messages]))
+                                              {:stop-reason :end :content "Done."})]
+                 (let [result (iteration/iteration-loop environment
+                                                        "start"
+                                                        {:session-turn-id tid
+                                                         :resume {:turn-id tid :clean? clean?}})]
+                   (expect (not= :parked (:status result)))
+                   (expect (= (not clean?)
+                              (str/includes? (pr-str (:messages (first @requests)))
+                                             "continued this turn in a new process")))))
+               (finally (loop-env/dispose-environment! environment)))))))
+
+(defdescribe
   llm-provider-error-context-test
   ;; Iteration-error-data shape (built by `format-exception`):
   ;;   {:class "..."      — exception class name

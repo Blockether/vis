@@ -260,9 +260,20 @@
    the end-of-turn CTX snapshot, update the turn row with answer +
    tokens. `:hooks :prepare-result`, when supplied, transforms the result before
    terminal ownership and persistence, so the gateway's timeout diagnosis is durable.
-   Called by `run-turn!` for a normal user message."
+   Called by `run-turn!` for a normal user message.
+
+   `:resume {:turn-id :clean?}` continues a parked turn: the turn row, its images
+   and its title already exist. When `:hooks :park-requested?` answers true, a
+   cancelled turn becomes `:parked` with `:park-clean? false`. A parked result
+   writes no outcome: the turn stays running until a later process resumes it."
   [env user-request loop-opts]
-  (let [;; Persist EVERY image the user attached to this turn as durable
+  (let [resume
+        (:resume loop-opts)
+
+        park-requested?
+        (get-in loop-opts [:hooks :park-requested?])
+
+        ;; Persist EVERY image the user attached to this turn as durable
         ;; `session_turn_attachment` BLOB bytes: INLINE uploads (web/API base64,
         ;; carried on `:user/attachments`) AND terminal-drop images (paths pasted
         ;; into the message, sniffed + loaded here via the same magic-byte scan
@@ -270,12 +281,14 @@
         ;; - lets resume + history re-render survive the source file moving or
         ;; being deleted. Best-effort: a scan failure never blocks the turn.
         disk-attachments
-        (try (:attached (attachments/collect-user-images user-request
-                                                         {:workspace-root (:workspace/root env)}))
-             (catch Throwable t
-               (tel/log!
-                 {:level :warn :id ::turn-image-persist-scan-failed :data {:error (ex-message t)}})
-               nil))
+        (when-not resume
+          (try (:attached (attachments/collect-user-images user-request
+                                                           {:workspace-root (:workspace/root env)}))
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::turn-image-persist-scan-failed
+                            :data {:error (ex-message t)}})
+                 nil)))
 
         ;; The transcript of a voice memo is persisted WITH the recording (the same
         ;; content-keyed pass the prompt reads), so the player in every surface can
@@ -284,18 +297,21 @@
         ;; what a composer already made and starts what nobody asked for yet. The
         ;; waiting, if any is left to do, happens once — where the prompt is built.
         turn-attachments
-        (audio-transcribe/request-attachments! (into (vec (:user/attachments env))
-                                                     disk-attachments))
+        (when-not resume
+          (audio-transcribe/request-attachments! (into (vec (:user/attachments env))
+                                                       disk-attachments)))
 
         session-turn-id
-        (persistance/db-store-session-turn!
-          (:db-info env)
-          (cond-> (turn-store-opts env user-request loop-opts)
-            (seq turn-attachments)
-            (assoc :attachments (attachment-storage/offload-attachments turn-attachments))))
+        (if resume
+          (:turn-id resume)
+          (persistance/db-store-session-turn!
+            (:db-info env)
+            (cond-> (turn-store-opts env user-request loop-opts)
+              (seq turn-attachments)
+              (assoc :attachments (attachment-storage/offload-attachments turn-attachments)))))
 
         _
-        (store-transcripts! (:db-info env) session-turn-id turn-attachments)
+        (when-not resume (store-transcripts! (:db-info env) session-turn-id turn-attachments))
 
         turn-position
         (transcript/session-turn-position env session-turn-id)
@@ -310,7 +326,7 @@
                                   :iteration-id nil)
 
         _
-        (titling/maybe-auto-title! env user-request)
+        (when-not resume (titling/maybe-auto-title! env user-request))
 
         goal-at-turn-start
         (let [sid
@@ -319,7 +335,8 @@
               council-wake?
               (get-in (council/runtime (:db-info env) sid) [sid :wake?])]
 
-          (if (or council-wake?
+          (if (or resume
+                  council-wake?
                   (some-> (:cancel-atom loop-opts)
                           deref)
                   (cancellation/cancelled? (:cancel-token loop-opts)))
@@ -327,30 +344,41 @@
             (goals/resume-for-user-turn! env)))
 
         result
-        (try (let [raw
-                   ;; Turn ids in the Telemere context reach the log file and the problem
-                   ;; log, so a provider failure is found by its turn (issue #403).
-                   (tel/with-ctx+ {:session-turn-id session-turn-id :turn (or turn-position 1)}
-                                  (iteration/iteration-loop env
-                                                            user-request
-                                                            (assoc loop-opts
-                                                              :session-turn-id session-turn-id)))
+        (try
+          (let [raw
+                ;; Turn ids in the Telemere context reach the log file and the problem
+                ;; log, so a provider failure is found by its turn (issue #403).
+                (tel/with-ctx+ {:session-turn-id session-turn-id :turn (or turn-position 1)}
+                               (iteration/iteration-loop env
+                                                         user-request
+                                                         (assoc loop-opts
+                                                           :session-turn-id session-turn-id)))
 
-                   result
-                   (if-let [prepare-result (get-in loop-opts [:hooks :prepare-result])]
-                     (let [prepared (prepare-result raw)]
-                       (assoc prepared :status-id (loop-router/status->id (:status prepared))))
-                     raw)]
+                raw
+                (if (and (= :cancelled (:status raw)) park-requested? (park-requested?))
+                  (assoc raw
+                    :status :parked
+                    :status-id (loop-router/status->id :parked)
+                    :park-clean? false)
+                  raw)
 
-               (goals/finish-turn! env
-                                   goal-at-turn-start
-                                   (:status result)
-                                   (some-> (transcript/turn-error-data (:answer result))
-                                           (get "message")))
-               result)
-             (catch Throwable t
-               (goals/finish-turn! env goal-at-turn-start :error (ex-message t))
-               (throw t)))
+                result
+                (if-let [prepare-result (when-not (= :parked (:status raw))
+                                          (get-in loop-opts [:hooks :prepare-result]))]
+                  (let [prepared (prepare-result raw)]
+                    (assoc prepared :status-id (loop-router/status->id (:status prepared))))
+                  raw)]
+
+            (when-not (= :parked (:status result))
+              (goals/finish-turn! env
+                                  goal-at-turn-start
+                                  (:status result)
+                                  (some-> (transcript/turn-error-data (:answer result))
+                                          (get "message"))))
+            result)
+          (catch Throwable t
+            (goals/finish-turn! env goal-at-turn-start :error (ex-message t))
+            (throw t)))
 
         ;; Deferred auto-title: only a successful foreground turn earns a cosmetic
         ;; provider call. Cancellation, failure and a halted, complete or blocked goal
@@ -366,6 +394,9 @@
         ;; halt or an empty-reply give-up ends the loop with `:status :success`, which
         ;; is not an outcome value: stored verbatim it failed every persist stage and
         ;; left the turn row `:running` forever (Blockether/vis#211).
+        parked?
+        (= :parked (:status result))
+
         prior-outcome
         (some-> (:status result)
                 {:cancelled :cancelled :error :error :success :complete})
@@ -402,20 +433,22 @@
         turn-cost
         (cost-with-route (:cost result) (:name root-route) (:provider root-route))
 
+        ;; A parked turn stays running: a later process resumes it and writes its outcome.
         persisted?
-        (transcript/persist-turn-outcome! (:db-info env)
-                                          session-turn-id
-                                          (cond-> {:content turn-content
-                                                   :iteration-count (:iteration-count result)
-                                                   :duration-ms (:duration-ms result)
-                                                   :status (or (:status result) :success)
-                                                   :tokens (:tokens result)
-                                                   :cost turn-cost
-                                                   :prior-outcome prior-outcome
-                                                   :ctx ctx-snapshot}
-                                            turn-error
-                                            (assoc :error turn-error))
-                                          (get-in loop-opts [:hooks :claim-terminal!]))
+        (when-not parked?
+          (transcript/persist-turn-outcome! (:db-info env)
+                                            session-turn-id
+                                            (cond-> {:content turn-content
+                                                     :iteration-count (:iteration-count result)
+                                                     :duration-ms (:duration-ms result)
+                                                     :status (or (:status result) :success)
+                                                     :tokens (:tokens result)
+                                                     :cost turn-cost
+                                                     :prior-outcome prior-outcome
+                                                     :ctx ctx-snapshot}
+                                              turn-error
+                                              (assoc :error turn-error))
+                                            (get-in loop-opts [:hooks :claim-terminal!])))
 
         prompt-cache-completion
         (:prompt-cache-completion result)
@@ -736,42 +769,56 @@
                                " unreachable — demoted to last-resort for this turn.")})))
           env')
 
-        slash-result
-        (extension/with-context
-          {:env env}
-          (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
-               (catch Throwable t
-                 (tel/log! {:level :warn
-                            :id ::slash-dispatch-threw
-                            :data {:user-request user-request :error (ex-message t)}})
-                 {:handled? false})))]
+        resume
+        (:resume loop-opts)
 
-    (if-let [bang (parse-bang user-request)]
-      (run-bang-turn! env user-request bang loop-opts)
-      (if (:handled? slash-result)
-        (if-let [expansion (when (= :unknown (:reason slash-result))
-                             (extension/with-context {:env env}
-                                                     (try (prompt-templates/expand env user-request)
-                                                          (catch Throwable t
-                                                            (tel/log! {:level :warn
-                                                                       :id ::template-expand-threw
-                                                                       :data
-                                                                       {:user-request user-request
-                                                                        :error (ex-message t)}})
-                                                            nil))))]
-          (let [turn-env (if-let [root (:project-root expansion)]
-                           (assoc env
-                             :workspace/root root
-                             :workspace (assoc (:workspace env) :root root))
-                           env)]
-            (extension/with-context {:env turn-env}
-                                    (run-normal-turn! turn-env (:text expansion) loop-opts)))
-          (if (and (= ["goal"] (:path slash-result))
-                   (= :ok (get-in slash-result [:result :slash/status]))
-                   (true? (get-in slash-result [:result :slash/data :goal-run?])))
-            (run-normal-turn! env user-request loop-opts)
-            (run-slash-turn! env user-request slash-result loop-opts)))
-        (run-normal-turn! env user-request loop-opts)))))
+        ;; A resumed parked turn already passed its slash, template and shell dispatch.
+        slash-result
+        (when-not resume
+          (extension/with-context
+            {:env env}
+            (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
+                 (catch Throwable t
+                   (tel/log! {:level :warn
+                              :id ::slash-dispatch-threw
+                              :data {:user-request user-request :error (ex-message t)}})
+                   {:handled? false}))))]
+
+    (cond resume
+          ;; It continues with the request text that its turn row stores.
+          (run-normal-turn! env
+                            (or (:user-request (persistance/db-read-session-turn (:db-info env)
+                                                                                 (:session-id env)
+                                                                                 (:turn-id resume)))
+                                user-request)
+                            loop-opts)
+          :else (if-let [bang (parse-bang user-request)]
+                  (run-bang-turn! env user-request bang loop-opts)
+                  (if (:handled? slash-result)
+                    (if-let [expansion (when (= :unknown (:reason slash-result))
+                                         (extension/with-context
+                                           {:env env}
+                                           (try (prompt-templates/expand env user-request)
+                                                (catch Throwable t
+                                                  (tel/log! {:level :warn
+                                                             :id ::template-expand-threw
+                                                             :data {:user-request user-request
+                                                                    :error (ex-message t)}})
+                                                  nil))))]
+                      (let [turn-env (if-let [root (:project-root expansion)]
+                                       (assoc env
+                                         :workspace/root root
+                                         :workspace (assoc (:workspace env) :root root))
+                                       env)]
+                        (extension/with-context
+                          {:env turn-env}
+                          (run-normal-turn! turn-env (:text expansion) loop-opts)))
+                      (if (and (= ["goal"] (:path slash-result))
+                               (= :ok (get-in slash-result [:result :slash/status]))
+                               (true? (get-in slash-result [:result :slash/data :goal-run?])))
+                        (run-normal-turn! env user-request loop-opts)
+                        (run-slash-turn! env user-request slash-result loop-opts)))
+                    (run-normal-turn! env user-request loop-opts))))))
 
 (defn custom-bindings
   "Current custom sandbox bindings {sym -> value}."

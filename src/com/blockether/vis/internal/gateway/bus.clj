@@ -64,6 +64,16 @@
   "Run the orphan-journal sweep about this often (wall-clock ms)."
   (* 60 1000))
 
+(defn- process-start-ms
+  "The start time of process `h` in epoch milliseconds, or nil when the system does
+   not tell."
+  [^java.lang.ProcessHandle h]
+  (try (when-let [^java.time.Instant at (.orElse (.startInstant (.info h)) nil)]
+         (.toEpochMilli at))
+       (catch Throwable t
+         (tel/log! :debug ["gateway-bus: process start time unavailable" (ex-message t)])
+         nil)))
+
 (defonce ^:private process-identity
   ;; A DELAY, never a value: a native image evaluates every top-level form at
   ;; BUILD time, so an id or a pid computed here was frozen INTO the binary and
@@ -74,8 +84,10 @@
   ;; `live-turns` while their rows still said LIVE. Forced on first use, which
   ;; only ever happens at runtime (`discovery/current-pid` reads the pid the
   ;; same way).
-  (delay {:id (str (java.util.UUID/randomUUID))
-          :pid (try (.pid (java.lang.ProcessHandle/current)) (catch Throwable _ -1))}))
+  (delay (let [h (java.lang.ProcessHandle/current)]
+           {:id (str (java.util.UUID/randomUUID))
+            :pid (try (.pid h) (catch Throwable _ -1))
+            :started-at (process-start-ms h)})))
 
 (defn producer-id
   "Stable per-process id: foreign events carry a different one."
@@ -89,6 +101,25 @@
    a live turn and reaping a dead one."
   []
   (:pid @process-identity))
+
+(defn process-stamp
+  "This process as the owner of durable gateway rows: `{:owner_pid :owner_started_at}`."
+  []
+  {:owner_pid (:pid @process-identity) :owner_started_at (:started-at @process-identity)})
+
+(defn stamp-alive?
+  "True when the process of `stamp` still runs and is not this process. A
+   different start time shows that the system reused the process ID, which a
+   container replacement often does."
+  [{:keys [owner_pid owner_started_at]}]
+  (boolean (when (and owner_pid (not= (long owner_pid) (long (producer-pid))))
+             (when-let [^java.lang.ProcessHandle h
+                        (.orElse (java.lang.ProcessHandle/of (long owner_pid)) nil)]
+               (let [started (process-start-ms h)]
+                 (and (.isAlive h)
+                      (or (nil? owner_started_at)
+                          (nil? started)
+                          (== (long started) (long owner_started_at)))))))))
 
 (defn- producer-alive?
   "True when the OS process that produced a journal event is still running. A

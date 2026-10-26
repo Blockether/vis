@@ -692,8 +692,8 @@ change the queue or stop work:
   queued message.
 - `post_session_drain_queue(sid)` starts the oldest queued message when no turn runs.
 
-A change to a turn that is no longer queued raises `GatewayError` with the status 409. The queue is
-stored in memory, so a gateway restart clears it.
+A change to a turn that is no longer queued raises `GatewayError` with the status 409. The gateway
+stores the queue, so the queue stays after a gateway restart.
 
 </div>
 
@@ -716,8 +716,8 @@ these requests to change the queue or stop work:
   next queued message.
 - `POST /v1/sessions/{sid}/drain-queue` starts the oldest queued message when no turn runs.
 
-A change to a turn that is no longer queued returns 409. The queue is stored in memory, so a gateway
-restart clears it.
+A change to a turn that is no longer queued returns 409. The gateway stores the queue, so the queue
+stays after a gateway restart.
 
 </div>
 
