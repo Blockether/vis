@@ -18,6 +18,8 @@ The view appears in the terminal or Companion app and can be stopped at any time
   when they stop watching.
 - **Your extension needs a view that stays open between tool calls, such as a board.** Open it
   in the [side panel](#choose-a-placement).
+- **People must review a change or answer you after your code returns.** Attach an
+  [app](#apps). They save drafts and send them when they are ready.
 - **The person must fill in values while the work runs.** [Collect input in the
   view](#collect-input-in-a-view).
 - **Your own program must list, read or interrupt live views.** Read [Sessions
@@ -615,6 +617,7 @@ group hierarchy and the current log window.
 | --- | --- | --- |
 | `inline` (default) | In the transcript, under the step that opened it | Closes when its tool call or block ends |
 | `panel` | In the side panel of one session | Stays open until your extension closes it or unloads |
+| `attachment` | In the transcript and the attachments of the session, as an app | Stays until your code closes or archives it, also after a gateway restart |
 
 Only extension code can open a `panel` view. The `python_execution` sandbox refuses it. A panel
 view needs a `key`. Your extension and the key own one view, so a second
@@ -648,6 +651,8 @@ def open_board(session_id):
 - Vis saves the last state of a panel view. After a gateway restart, the view shows that state as
   stale until your extension loads again. Open your views again when your extension loads. If the
   load does not open the same key, Vis closes the stale view.
+
+An `attachment` view is an app. Open it with `vis.attach(vis.ui.app(...))`, as [Apps](#apps) shows.
 
 ## Collect input in a view
 
@@ -706,6 +711,105 @@ People find panel views in these places:
 
 When views of several extensions are in one panel, each extension gets its own tab.
 
+## Apps
+
+An app is a live view that stays in the session after your code returns. People open it from the
+transcript or from the attachments of the session. They comment on a diff, write in a thread or
+fill in inputs. Then they send their work to you. Vis saves the state of the app, also across
+gateway restarts.
+
+```python
+import blockether.vis.extension as vis
+
+app = vis.attach(vis.ui.app(
+    "Review the search change",
+    vis.ui.diff("change", patch, old_revision="abc1234", new_revision="def5678"),
+    vis.ui.thread("general", label="Questions"),
+    key="search-review",
+))
+```
+
+- `vis.ui.app(title, *nodes, description=None, key=None)` declares an app. Its nodes are the
+  [components](components.md) of a live view, plus `vis.ui.diff` and `vis.ui.thread`.
+- `vis.ui.diff(node_id, patch)` shows a unified diff. People comment on one line of it.
+  `old_revision` and `new_revision` name the compared versions.
+- `vis.ui.thread(node_id)` shows one conversation.
+- `vis.attach(...)` opens the app and returns a `vis.LiveAttachment` handle. `app.id` is the id of
+  the app. An app takes no other argument of `vis.attach`.
+- With `key`, `vis.attach` returns the open app of your extension with the same key in the same
+  session. The app keeps its state. Patch it to change it.
+- In the `python_execution` sandbox, import the builders with
+  `from blockether.vis.extension import ui`. Then call `attach(ui.app(...))`.
+
+### Use an app
+
+- **Terminal.** Click the app row in the transcript, or press Ctrl+X i and open the app there.
+  Select a line, press Enter to write a comment and press Ctrl+S to save it. Press s to send.
+  [Use an app](keyboard-shortcuts.md#use-an-app) lists every key.
+- **Companion app.** Tap the app row in the transcript, or open the **Artifacts** sheet from the
+  session header. The sheet lists the apps first.
+
+A saved comment is a draft. Every surface shows the same drafts, so you can start in the terminal
+and send from the Companion app. A Send posts the drafts as messages and sends the values of the
+inputs. Vis gives each Send one receipt, also when a surface tries it again after a network error.
+An app keeps its newest 50 receipts. Vis matches a retry only to a Send in that list.
+
+### Answer a Send
+
+Each Send gives your code one `submit` event. `event.submission_id` names its receipt, and
+`event.comments` holds the messages that it posted. Each comment has `node_id`, `thread_id`,
+`message_id` and `body`. A comment on a diff line also has `anchor`.
+
+```python
+def answer_sends(app):
+    """Answer each Send of `app` in the thread of its first comment."""
+    for event in app.events(timeout=60):
+        if event.type != "submit" or event.submission_id is None:
+            continue
+        app.set_status(event.submission_id, "processing", note="Reading your comments")
+        if not event.comments:
+            app.set_status(event.submission_id, "answered")
+            continue
+        first = event.comments[0]
+        app.reply(first["node_id"], "Thanks. I changed it.",
+                  thread_id=first["thread_id"], submission_id=event.submission_id)
+```
+
+An app that the agent opens in `python_execution` has no code that waits for events. When a
+person sends it, Vis adds one short message to the session of the agent. The message names the
+app, the receipt and the calls that read it, but not the comments. When the agent is busy, the
+message waits in the queue of the session.
+
+People see the stage of each receipt:
+
+| Stage | Meaning |
+| --- | --- |
+| `accepted` | Vis saved the Send. |
+| `delivered` | Your code read the event, or the session of the agent got the message. |
+| `processing` | Your code works on the Send. |
+| `answered` | Your code answered. |
+| `failed` | Your code could not answer. `note` tells people why. |
+
+- `app.reply(node_id, body, *, thread_id=None, anchor=None, submission_id=None)` answers in a
+  thread. On a diff, `anchor` (`{"path", "side", "line"}`) starts a new thread on that line. With
+  `submission_id`, the receipt of that Send moves to `answered`.
+- `app.set_status(submission_id, status, *, note=None)` moves a receipt forward. A receipt never
+  moves back. `note` holds at most 500 characters.
+- `app.submissions(status=None)` returns the receipts, oldest first.
+  `app.submissions(status="accepted")` lists the Sends that your code did not read yet, for
+  example after a gateway restart.
+- `app.submission(submission_id)` returns one receipt. `app.thread(node_id, thread_id=None)`
+  returns one thread.
+
+### Keep and end an app
+
+- `vis.attach(row)` with the app row from `vis.list_attachments()` returns a new handle for the
+  same app. Use it after a gateway restart or in a later `python_execution` block.
+- `app.close()` ends the app. People can still read it, but they cannot comment or send.
+- `app.archive()` ends the app and moves it to the archived list of the session.
+- A program reads apps with `live_views(placement="attachment")` and `live_view(view_id)`, as
+  [Sessions API](sessions-api.md#watch-live-views) shows.
+
 ## Testing a view
 
 Outside Vis, a live view writes its transcript to stderr and maintains the
@@ -733,5 +837,6 @@ output. `vis.testing.assert_tree(actual, expected)` reports nested differences.
 - [Extending Vis](extending.md) — the extension that opens a view.
 - [Forms and user input](human-input.md) — the same components, used for questions.
 - [Components](components.md) — every component and its builder.
+- [Keyboard shortcuts](keyboard-shortcuts.md#use-an-app) — the keys of an app in the terminal.
 - [Sessions API](sessions-api.md#watch-live-views) — list, read and interrupt live views from a
   program.

@@ -802,7 +802,6 @@ CREATE TABLE session_attachment (
   size_bytes                INTEGER NOT NULL CHECK (size_bytes >= 0),
   audience                  TEXT NOT NULL DEFAULT 'both'
                             CHECK (audience IN ('both', 'user', 'model')),
-  commentable               INTEGER NOT NULL DEFAULT 0 CHECK (commentable IN (0, 1)),
 
   -- Stable composer token, such as [IMAGE #3], independent of filename and row order.
   -- NULL for attachments without a composer reference.

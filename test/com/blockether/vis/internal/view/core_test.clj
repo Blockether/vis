@@ -3029,3 +3029,69 @@
                  (hi/flush-owned!)
                  (expect (empty? (live-sink/load-owned))
                          "the closed stale view is not saved again"))))))
+
+(defn- app-seam!
+  "Cross one envelope through the sandbox app seam, inside session `sid`."
+  [sid envelope]
+  (binding [extension/*current-environment* {:session-id sid}]
+    (json/read-json (hi/app-json! (json/write-json-str envelope)) :key-fn identity)))
+
+(defn- sandbox-app
+  [sid]
+  {"op" "open"
+   "view" {"title" "Review"
+           "session_id" sid
+           "placement" "attachment"
+           "nodes" [{"id" "general" "type" "thread" "messages" []}]}})
+
+(defdescribe
+  app-sandbox-seam-test
+  ;; #421: `attach(ui.app(...))` in the python_execution sandbox opens and drives
+  ;; apps through `app-json!`, and only the apps of its own session.
+  (it "opens and drives an app of its own session"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid (sandbox-app sid)) "view_id")]
+
+            (try (expect (string? (get (app-seam! sid
+                                                  {"op" "reply"
+                                                   "view_id" view-id
+                                                   "node_id" "general"
+                                                   "body" "Done."})
+                                       "message_id")))
+                 (expect (= ["Done."]
+                            (mapv #(get % "body")
+                                  (get-in (app-seam! sid {"op" "state" "view_id" view-id})
+                                          ["view" "nodes" 0 "messages"]))))
+                 (finally (hi/close-live! view-id)))))))
+  (it "refuses to open a view that is no app"
+      (let [sid (str (random-uuid))]
+        (expect (str/includes?
+                  (live-refusal
+                    #(app-seam! sid (assoc-in (sandbox-app sid) ["view" "placement"] "inline")))
+                  "opens only apps"))))
+  (it "refuses to drive a live view that is no app"
+      (watching (live-spec {:id "now" :type :status :text "running"})
+                (fn [view]
+                  (expect (str/includes? (live-refusal #(app-seam! (:session-id view)
+                                                                   {"op" "patch"
+                                                                    "view_id" (:id view)
+                                                                    "patch" {"ops" []}}))
+                                         "is no app")))))
+  (it "refuses an app of another session"
+      (recorded (fn []
+                  (let [sid
+                        (str (random-uuid))
+
+                        view-id
+                        (get (app-seam! sid (sandbox-app sid)) "view_id")]
+
+                    (try (expect (str/includes? (live-refusal #(app-seam! (str (random-uuid))
+                                                                          {"op" "state"
+                                                                           "view_id" view-id}))
+                                                "belongs to another session"))
+                         (finally (hi/close-live! view-id))))))))

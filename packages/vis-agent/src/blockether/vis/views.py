@@ -84,6 +84,9 @@ class LiveView(_ViewRecord):
     key: str | None = None
     extension: str | None = None
     is_stale: bool | None = None
+    submissions: tuple[Mapping[str, Any], ...] | None = None
+    is_archived: bool | None = None
+    is_closed: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

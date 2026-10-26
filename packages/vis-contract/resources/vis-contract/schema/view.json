@@ -23,6 +23,18 @@
               "additionalProperties": {
                 "$ref": "#/$defs/input_value"
               }
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            },
+            "base_seq": {
+              "description": "The state version the client edited. A newer write to the same node refuses with `conflict`.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "revision": {
+              "description": "The diff `new_revision` the client reviewed. A changed revision refuses with `stale_revision`.",
+              "$ref": "common.json#/$defs/non_blank_string"
             }
           },
           "required": [
@@ -108,12 +120,54 @@
             },
             "value": {
               "$ref": "#/$defs/input_value"
+            },
+            "base_seq": {
+              "description": "The state version the client edited. A newer write to the same node refuses with `conflict`.",
+              "type": "integer",
+              "minimum": 0
             }
           },
           "required": [
             "action",
             "node_id",
             "value"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "draft"
+            },
+            "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "thread_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "anchor": {
+              "$ref": "#/$defs/anchor"
+            },
+            "body": {
+              "description": "The new draft. Blank text removes the draft, and a new blank thread is not created.",
+              "type": "string",
+              "maxLength": 20000
+            },
+            "base_seq": {
+              "description": "The state version the client edited. A newer write to the same node refuses with `conflict`.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "revision": {
+              "description": "The diff `new_revision` the client reviewed. A changed revision refuses with `stale_revision`.",
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          },
+          "required": [
+            "action",
+            "node_id",
+            "body"
           ]
         }
       ]
@@ -611,6 +665,238 @@
         "target_kind",
         "target"
       ]
+    },
+    "anchor": {
+      "description": "A diff line that a thread belongs to: the file path, the old or new side and the 1-based line on that side.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "side": {
+          "enum": [
+            "old",
+            "new"
+          ]
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "path",
+        "side",
+        "line"
+      ]
+    },
+    "author": {
+      "description": "Who wrote a message. The host sets it from the authenticated caller; a client never sends it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "human",
+            "agent",
+            "extension"
+          ]
+        },
+        "name": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "message": {
+      "description": "One posted message of a thread.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "author": {
+          "$ref": "#/$defs/author"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "submission_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        }
+      },
+      "required": [
+        "id",
+        "author",
+        "body",
+        "created_at"
+      ]
+    },
+    "thread": {
+      "description": "A discussion with stable message ids. `draft` is the saved, unsent text of the human.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/message"
+          },
+          "maxItems": 200
+        },
+        "draft": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "is_resolved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "messages"
+      ]
+    },
+    "submission_status": {
+      "description": "The delivery stage of one Send: stored, handed to the owner, in work, answered or failed.",
+      "enum": [
+        "accepted",
+        "delivered",
+        "processing",
+        "answered",
+        "failed"
+      ]
+    },
+    "submission_comment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "thread_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "message_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        }
+      },
+      "required": [
+        "node_id",
+        "thread_id",
+        "message_id",
+        "body"
+      ]
+    },
+    "submission": {
+      "description": "The host receipt of one Send. The id stays the same for every retry with the same idempotency key.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/idempotency_key"
+        },
+        "node_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "status": {
+          "$ref": "#/$defs/submission_status"
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updated_at": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "values": {
+          "description": "The non-secret values of the inputs that the Send collected.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "node_id": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              },
+              "value": {
+                "$ref": "#/$defs/input_value"
+              }
+            },
+            "required": [
+              "node_id",
+              "value"
+            ]
+          }
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/submission_comment"
+          },
+          "maxItems": 200
+        },
+        "revision": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "id",
+        "idempotency_key",
+        "status",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "idempotency_key": {
+      "description": "A client key that makes a retried Send return the first submission.",
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "app_attachment": {
+      "description": "The attachment row of an app. Its bytes hold the opening picture; the live view holds the current state.",
+      "type": "string",
+      "contentMediaType": "application/vnd.vis.app+json",
+      "contentSchema": {
+        "$ref": "#/$defs/live_view"
+      }
     },
     "component": {
       "oneOf": [
@@ -1161,6 +1447,81 @@
             "id": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
+            "type": {
+              "const": "diff"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "patch": {
+              "type": "string",
+              "maxLength": 1000000
+            },
+            "old_revision": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "new_revision": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "threads": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/thread"
+              },
+              "maxItems": 200
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "patch"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "thread"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "anchor": {
+              "$ref": "#/$defs/anchor"
+            },
+            "messages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/message"
+              },
+              "maxItems": 200
+            },
+            "draft": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "is_resolved": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "messages"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
             "name": {
               "$ref": "common.json#/$defs/non_blank_string"
             },
@@ -1666,9 +2027,11 @@
       "type": "string",
       "enum": [
         "inline",
-        "panel"
+        "panel",
+        "attachment"
       ],
-      "default": "inline"
+      "default": "inline",
+      "description": "Where a live view shows. `attachment` makes a durable app attachment: it outlives the call that opened it and keeps its state after a restart."
     },
     "live_view": {
       "type": "object",
@@ -1710,6 +2073,16 @@
           "type": "boolean",
           "readOnly": true
         },
+        "is_archived": {
+          "description": "True when the owner archived this app. It keeps its state and leaves the default lists.",
+          "type": "boolean",
+          "readOnly": true
+        },
+        "is_closed": {
+          "description": "True when the owner closed this app. It keeps its last state and takes no more actions.",
+          "type": "boolean",
+          "readOnly": true
+        },
         "channel_ids": {
           "type": "array",
           "items": {
@@ -1724,6 +2097,15 @@
             "$ref": "#/$defs/component"
           },
           "minItems": 1
+        },
+        "submissions": {
+          "description": "The newest Send receipts of an app, oldest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/submission"
+          },
+          "maxItems": 50,
+          "readOnly": true
         },
         "timeout_ms": {
           "type": "integer",
@@ -1850,6 +2232,16 @@
             },
             "is_selectable": {
               "type": "boolean"
+            },
+            "patch": {
+              "type": "string",
+              "maxLength": 1000000
+            },
+            "old_revision": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "new_revision": {
+              "$ref": "common.json#/$defs/non_blank_string"
             }
           },
           "required": [
@@ -2025,6 +2417,42 @@
           "required": [
             "op",
             "node_id"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "thread"
+            },
+            "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "thread": {
+              "$ref": "#/$defs/thread"
+            }
+          },
+          "required": [
+            "op",
+            "node_id",
+            "thread"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "submission"
+            },
+            "submission": {
+              "$ref": "#/$defs/submission"
+            }
+          },
+          "required": [
+            "op",
+            "submission"
           ]
         }
       ]

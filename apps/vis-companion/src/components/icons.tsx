@@ -36,7 +36,6 @@ import {
   Image,
   LoaderCircle,
   type LucideIcon,
-  MessageSquare,
   MessageSquareMore,
   Mic,
   MicVocal,
@@ -466,11 +465,6 @@ export function CopyIcon({ className }: { className?: string }) {
 /** Hand a picture to the platform share sheet. */
 export function ShareIcon({ className }: { className?: string }) {
   return <Mark icon={Share2} className={className} />;
-}
-
-/** Leave a remark on a document. */
-export function CommentIcon({ className }: { className?: string }) {
-  return <Mark icon={MessageSquare} className={className} />;
 }
 
 /** DONE. The tick that answers a press — the copy chip's second face. */

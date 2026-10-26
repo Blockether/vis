@@ -24,6 +24,7 @@ const client = {
   attachmentUrl: vi.fn(async () => 'blob:workbook'),
   attachmentBlob: vi.fn(async () => original),
   retainAttachment: () => () => {},
+  appViews: async () => [],
 } as unknown as GatewayClient;
 
 afterEach(() => {

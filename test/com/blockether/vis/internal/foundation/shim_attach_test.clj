@@ -65,29 +65,6 @@
 (defn- ev [c code] (tpc/ev c code))
 
 (defdescribe
-  attachment-comment-capability-test
-  (it "defaults to read-only and explicitly opts each version into review"
-      (let [out
-            (block
-              (ctx-with-root (temp-root))
-              (str
-                "a = attach(b'# Spec', 'PLAN-feature.md')\n"
-                "b = attach(b'# Spec', 'PLAN-feature.md', commentable=True)\n"
-                "c = attach(b'# Report', 'IMPLEMENTATION-feature.md', commentable=False)\n"
-                "assert a['commentable'] is False\n"
-                "assert b['commentable'] is True\n" "assert c['commentable'] is False\n"
-                "assert get_attachment(b)['commentable'] is True\n"
-                "assert [a['commentable'] for a in list_attachments()] == [False, True, False]"))]
-        (expect (nil? (:error out)))
-        (expect (= [false true false] (mapv :commentable (:attachments out))))))
-  (it "rejects non-boolean capability values before capture"
-      (doseq [value ["1" "'true'" "None"]]
-        (let [out (block (ctx-with-root (temp-root))
-                         (str "attach(b'note', 'note.txt', commentable=" value ")"))]
-          (expect (some? (:error out)))
-          (expect (empty? (:attachments out)))))))
-
-(defdescribe
   attach-in-memory-capture-test
   (it "records an in-memory artifact and hands back its descriptor"
       (let [pctx
@@ -1151,3 +1128,43 @@
                                  "documents require audience='user'")))
         (expect (str/includes? (extension-attach {"base64" pdf})
                                "call it from a tool that python_execution runs")))))
+
+(defn- app-block
+  "Run `code` as one block of session `sid`, with view records in a temp root."
+  [sid code]
+  (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                   (constantly (java.io.File. (temp-root) "views"))}
+    #(binding [extension/*current-environment* {:session-id sid}] (block (ctx-with-root (temp-root))
+                                                                         code))))
+
+(defdescribe attach-app-test
+             ;; #421: `attach(ui.app(...))` opens an app of the block's session through the
+             ;; sandbox app door, and answers the handle that drives it.
+             (it "opens an app in the session of the block and drives it"
+                 (let [sid
+                       (str (random-uuid))
+
+                       out
+                       (app-block sid
+                                  (str "from blockether.vis.extension import ui\n"
+                                       "app = attach(ui.app('Review', ui.thread('general')))\n"
+                                       "app.reply('general', 'Done.')\n"
+                                       "print(type(app).__name__, app.state()['session_id'] == '"
+                                       sid
+                                       "')\n"
+                                       "print([m['body'] for m in app['general'].messages])\n"
+                                       "app.close()\n"))]
+
+                   (expect (nil? (:error out)))
+                   (expect (re-find #"LiveAttachment True" (str (:stdout out))))
+                   (expect (re-find #"\['Done\.'\]" (str (:stdout out))))))
+             (it "refuses file arguments for an app"
+                 (let [out (app-block
+                             (str (random-uuid))
+                             (str
+                               "from blockether.vis.extension import ui\n"
+                               "try:\n"
+                               "    attach(ui.app('Review', ui.thread('general')), 'review.json')\n"
+                               "except TypeError as e:\n" "    print('refused:', e)\n"))]
+                   (expect (nil? (:error out)))
+                   (expect (re-find #"refused:" (str (:stdout out)))))))

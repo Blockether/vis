@@ -1594,26 +1594,6 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
-    def post_session_iteration_attachments(
-        self,
-        sid: str,
-        iid: str,
-        *,
-        query: Query | None = None,
-        timeout: float | None = None,
-        body: JSONValue = None,
-    ) -> JSONValue:
-        """POST /v1/sessions/:sid/iterations/:iid/attachments — json response."""
-        response = self._request(
-            "POST",
-            "/v1/sessions/:sid/iterations/:iid/attachments",
-            path={"sid": sid, "iid": iid},
-            query=query,
-            timeout=timeout,
-            body=body,
-        )
-        return response.json()
-
     def get_session_iteration_attachments(
         self,
         sid: str,
@@ -2122,6 +2102,24 @@ class ExecutionLayer(ABC):
             "GET",
             "/v1/sessions/:sid/views/live",
             path={"sid": sid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def get_session_views_live_view(
+        self,
+        sid: str,
+        view_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """GET /v1/sessions/:sid/views/live/:view-id — json response."""
+        response = self._request(
+            "GET",
+            "/v1/sessions/:sid/views/live/:view-id",
+            path={"sid": sid, "view-id": view_id},
             query=query,
             timeout=timeout,
         )
@@ -3444,18 +3442,37 @@ class Session:
         except ValueError:
             raise ProtocolError("invalid input View response") from None
 
-    def live_views(self, placement: str | None = None) -> list[LiveView]:
+    def live_views(
+        self, placement: str | None = None, archived: bool = False
+    ) -> list[LiveView]:
         """Read current live views as typed `blockether.vis.views.LiveView` records.
 
         This fetches a snapshot and does not subscribe to future updates. Use
-        `events` to follow view events. A `placement` (`inline` or `panel`)
-        keeps only those views. Malformed view data raises
-        `ProtocolError`.
+        `events` to follow view events. A `placement` (`inline`, `panel` or
+        `attachment`) keeps only those views. `archived=True` lists only the
+        archived apps. Malformed view data raises `ProtocolError`.
         """
-        query = None if placement is None else {"placement": str(placement)}
-        data = _field(self._call("GET", "/views/live", query=query), "views", list)
+        query = {} if placement is None else {"placement": str(placement)}
+        if archived:
+            query["archived"] = "true"
+        data = _field(
+            self._call("GET", "/views/live", query=query or None), "views", list
+        )
         try:
             return [LiveView.from_wire(item) for item in data]
+        except ValueError:
+            raise ProtocolError("invalid live View response") from None
+
+    def live_view(self, view_id: str) -> LiveView:
+        """Read one live view or app by id, also a closed or restored app.
+
+        This is a snapshot, like `live_views`. Malformed view data raises
+        `ProtocolError`.
+        """
+        answer = self._call("GET", "/views/live/:view-id", path={"view-id": view_id})
+        data = _field(answer, "view", dict)
+        try:
+            return LiveView.from_wire(data)
         except ValueError:
             raise ProtocolError("invalid live View response") from None
 

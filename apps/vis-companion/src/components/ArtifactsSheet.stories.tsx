@@ -15,7 +15,7 @@ const meta = {
   title: 'Components/Artifacts sheet',
   component: ArtifactsSheet,
   args: {
-    client: STORY_INERT_CLIENT,
+    client: { appViews: async () => [] } as unknown as typeof STORY_INERT_CLIENT,
     sid: 'session-story',
     artifacts: STORY_ARTIFACTS,
     onClose: () => {},
@@ -65,6 +65,7 @@ export const OpenedDocument: Story = {
       attachmentBlob: async () =>
         new Blob(['# Plan\n\nRead without a margin.'], { type: 'text/markdown' }),
       retainAttachment: () => () => {},
+      appViews: async () => [],
     } as unknown as typeof STORY_INERT_CLIENT,
     artifacts: [note],
     initialArtifact: note,
@@ -97,6 +98,7 @@ const subtitleClient = {
   attachmentUrl: async () => `data:text/vtt;charset=utf-8,${encodeURIComponent(PODCAST_VTT)}`,
   attachmentBlob: async () => new Blob([PODCAST_VTT], { type: 'text/vtt' }),
   retainAttachment: () => () => {},
+  appViews: async () => [],
 } as unknown as typeof STORY_INERT_CLIENT;
 
 /** A subtitle tile peeks at its first cues, `0:00 Maya: …`, not at timing lines. */

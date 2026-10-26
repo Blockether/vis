@@ -1435,6 +1435,56 @@
   [sid]
   (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/views/live")) "views")))
 
+(defn app-views
+  "The app attachments of session `sid`, oldest first, in canonical wire shape.
+   With `archived?`, archived apps come too."
+  ([sid] (app-views sid false))
+  ([sid archived?]
+   (vec (get (send-json! "GET"
+                         (str "/v1/sessions/" (enc sid)
+                              "/views/live?placement=attachment"
+                              (when archived? "&archived=true")))
+             "views"))))
+
+(defn live-view-state
+  "The current state of view `view-id` of `sid`, also when it is closed, in
+   canonical wire shape. A client reads it again after a gap in patch numbers."
+  [sid view-id]
+  (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/views/live/" (enc view-id))) "view"))
+
+(defn app-action!
+  "Send one app action (`draft`, `submit` or `change`) to view `view-id` of `sid`.
+   Never throws: answers the parsed outcome with `:http-status`, or
+   `{:reason \"offline\"}` when the gateway is out of reach. A save or a send
+   counts only when `:is-accepted` is true."
+  [sid view-id action]
+  (try (let [response
+             (request! :post
+                       (str "/v1/sessions/" (enc sid) "/views/" (enc view-id) "/actions")
+                       {:body (update action :action #(some-> % name))})
+
+             body
+             (wire/->engine (parse-json-body (:body response)))]
+
+         (assoc body
+           :http-status (long (:status response))
+           :is-accepted (and (= 200 (:status response)) (true? (:is-accepted body)))))
+       (catch clojure.lang.ExceptionInfo e
+         (let [offline? (= :gateway/connection-failed (:type (ex-data e)))]
+           (tel/log! {:level :warn
+                      :id ::app-action-failed
+                      :error e
+                      :data {:session-id sid :view-id view-id :action (:action action)}
+                      :msg "App action did not reach the gateway"})
+           {:is-accepted false :reason (if offline? "offline" "failed") :message (ex-message e)}))
+       (catch java.io.IOException e
+         (tel/log! {:level :warn
+                    :id ::app-action-offline
+                    :error e
+                    :data {:session-id sid :view-id view-id :action (:action action)}
+                    :msg "App action transport failed"})
+         {:is-accepted false :reason "offline" :message (ex-message e)})))
+
 (defn live-view-log
   "One page of a retained log, searched literally without case sensitivity.
    `from` counts matches; the wire response includes original line numbers.
@@ -2511,6 +2561,12 @@
 (def gateway-list-turns list-turns)
 
 (def gateway-live-views live-views)
+
+(def gateway-app-views app-views)
+
+(def gateway-live-view-state live-view-state)
+
+(def gateway-app-action! app-action!)
 
 (def gateway-mark-session-read! mark-session-read!)
 

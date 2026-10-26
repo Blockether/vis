@@ -29,6 +29,8 @@
    is only how much a surface holds hot, and the model's own budget always says
    how many lines it left behind."
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.view :as spec]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]))
@@ -71,6 +73,16 @@
                        ": " message)
                   {:type :vis/view-invalid-patch :node-id node-id :reason message})))
 
+(defn- app-rule
+  "Run one app rule of [[com.blockether.vis.contract.app]]. A rule that refuses
+   refuses the patch with its own reason."
+  [node-id f]
+  (try (f)
+       (catch clojure.lang.ExceptionInfo e
+         (if (= :app/invalid (:type (ex-data e)))
+           (invalid-patch! (or (:node-id (ex-data e)) node-id) (:reason (ex-data e)))
+           (throw e)))))
+
 (def ^:private settable-keys
   "Which keys a `set` may carry, per mutable node type, beyond `:label`.
    A `progress` has no text and a `status` has no value: crossing them is refused
@@ -87,7 +99,8 @@
    :steps #{:steps}
    :log #{:window-lines}
    :table #{:order :max-rows :selected-ids}
-   :link #{:links}})
+   :link #{:links}
+   :diff #{:patch :old-revision :new-revision}})
 
 (def ^:private appendable-key
   "The key an `append` carries, per node type — the one axis a `log` and a
@@ -385,14 +398,17 @@
 
 (defn- apply-remove
   "A node without the named items. A node with no keyed collection has nothing
-   to remove and says so. Removing table rows also prunes transient selection."
+   to remove and says so. Removing table rows also prunes transient selection,
+   and a diff drops the named threads."
   [node op]
-  (let [{:keys [key]} (spec/item-bounds (:type node))]
-    (when (nil? key)
-      (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds no removable items")))
-    (cond-> (update node key without-ids (:item-ids op))
-      (= :table (:type node))
-      prune-selected)))
+  (if (= :diff (:type node))
+    (app-rule (:id node) #(app/remove-threads node (:item-ids op)))
+    (let [{:keys [key]} (spec/item-bounds (:type node))]
+      (when (nil? key)
+        (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds no removable items")))
+      (cond-> (update node key without-ids (:item-ids op))
+        (= :table (:type node))
+        prune-selected))))
 
 (defn- apply-clear
   "A node emptied. Clearing a log empties the WINDOW and starts its RECORD over: the
@@ -492,6 +508,9 @@
     :remove-node
     (apply-remove-node view op)
 
+    :submission
+    (app-rule nil #(app/upsert-submission view (:submission op)))
+
     (let [path
           (or (node-path view (:node-id op))
               (invalid-patch! (:node-id op)
@@ -514,6 +533,9 @@
 
             :clear
             (apply-clear node)
+
+            :thread
+            (app-rule (:id node) #(app/upsert-thread node (:thread op)))
 
             :set-value
             (apply-set-value node op))]
@@ -710,6 +732,33 @@
   [{:keys [text language]} _]
   (let [fenced (vec (fenced (str/split text #"\n" -1)))]
     (marked-lines :code (update fenced 0 str (or language "")))))
+
+(defn- tagged-json
+  "One line: `tag`, then `value` as wire JSON. JSON keeps every text exact."
+  [tag value]
+  (str tag
+       " "
+       (wire/json-str (walk/postwalk #(if (map? %) (into (sorted-map) %) %) (wire/->wire value)))))
+
+(defmethod node->markdown :diff
+  [{:keys [patch old-revision new-revision threads]} _]
+  (let [fenced (vec (fenced (str/split patch #"\n" -1)))]
+    (marked-lines :diff
+                  (concat [(tagged-json "revisions"
+                                        (cond-> {}
+                                          old-revision
+                                          (assoc :old-revision old-revision)
+
+                                          new-revision
+                                          (assoc :new-revision new-revision)))]
+                          (update fenced 0 str "diff")
+                          (map #(tagged-json "thread" %) threads)))))
+
+(defmethod node->markdown :thread
+  [node _]
+  (marked-lines :thread
+                [(tagged-json "thread"
+                              (select-keys node [:anchor :messages :draft :is-resolved]))]))
 
 (defmethod node->markdown :spinner
   [{:keys [text is-active]} _]
@@ -1183,7 +1232,8 @@
 
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
-  (into #{:paragraph :heading :divider :code :spinner :button :card} (vals spec/field-types)))
+  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread}
+        (vals spec/field-types)))
 
 (def ^:private presentation-marker
   (re-pattern (str "<!-- vis:(" (str/join "|" (sort (map name marked-types))) ") ([0-9]+) -->")))
@@ -1291,6 +1341,41 @@
     (cond-> {:type :code :text (str/join "\n" (butlast (drop 2 lines)))}
       (seq language)
       (assoc :language language))))
+
+(defn- tagged-value
+  "The value of one [[tagged-json]] line, or a refusal at line `at`."
+  [at tag line]
+  (let [prefix (str tag " ")]
+    (when-not (and (string? line) (str/starts-with? line prefix))
+      (invalid-markdown! at (str "expected a `" tag "` line")))
+    (wire/->engine (wire/parse-json (subs line (count prefix))))))
+
+(defmethod markdown->node :diff
+  [_ {:keys [at lines]}]
+  (let [[head opening & more]
+        (rest lines)
+
+        revisions
+        (tagged-value at "revisions" head)
+
+        [_ fence]
+        (or (when (string? opening) (re-matches #"(`{3,})diff" opening))
+            (invalid-markdown! at "a diff needs a fenced patch"))
+
+        closing
+        (or (first (keep-indexed (fn [i line]
+                                   (when (= fence line) i))
+                                 more))
+            (invalid-markdown! at "a diff patch needs its closing fence"))]
+
+    (cond-> (merge {:type :diff :patch (str/join "\n" (take closing more))}
+                   (select-keys revisions [:old-revision :new-revision]))
+      (< (inc (long closing)) (count more))
+      (assoc :threads (mapv #(tagged-value at "thread" %) (drop (inc (long closing)) more))))))
+
+(defmethod markdown->node :thread
+  [_ {:keys [at lines]}]
+  (merge {:type :thread :messages []} (tagged-value at "thread" (second lines))))
 
 (defmethod markdown->node :spinner
   [_ {:keys [lines]}]

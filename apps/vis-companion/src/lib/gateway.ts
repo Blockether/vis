@@ -54,7 +54,6 @@ import type {
   FileSuggestion,
   FileWindow,
   GatewayStatus,
-  IterationAttachment,
   SessionArtifactRow,
   Session,
   SessionGoal,
@@ -94,10 +93,14 @@ import type {
   ExtensionReload,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
-import { withSavedAttachment } from './artifacts';
 import { inputViewsFromWire, type HumanInputRequest } from './human-input';
 import type { ViewAction, ViewActionOutcome } from './view';
-import { liveViewsFromWire, type LiveLogPage, type LiveView } from './live-view';
+import {
+  liveViewFromWire,
+  liveViewsFromWire,
+  type LiveLogPage,
+  type LiveView,
+} from './live-view';
 import type {
   Automation,
   AutomationInput,
@@ -727,19 +730,6 @@ export interface TranscriptWindow {
  */
 const transcriptWindows = new Map<string, TranscriptWindow>();
 
-/**
- * Screens waiting to hear that an artifact in one session grew a NEW VERSION,
- * keyed by that session's transcript snapshot.
- *
- * A revision is the one transcript change no revalidation can see: it is
- * appended to an iteration that already exists, so the turn count and the meta
- * row are exactly where they were and `transcriptIfMoved` correctly decides
- * nothing moved. The client therefore says so itself, at the moment it files the
- * descriptor — which is why the sheet shows the new cut, and the comments on it,
- * without refetching tens of megabytes of transcript.
- */
-const revisionWatchers = new Map<string, Set<(turns: TranscriptTurn[]) => void>>();
-
 function transcriptStamp(row: Session | null | undefined): string {
   if (!row) return '';
   return `${row.turn_count}\u0000${row.modified_at ?? ''}`;
@@ -878,9 +868,6 @@ registerMemorySource('gateway snapshots', function* (): Iterable<MemoryCell> {
       bytes: approxBytes(value),
       entries: Array.isArray(value) ? value.length : 1,
     };
-  }
-  for (const [key, watchers] of revisionWatchers) {
-    yield { source: 'revision watchers', session: key.split('\u0000')[2], bytes: 0, entries: watchers.size };
   }
 });
 
@@ -5078,94 +5065,6 @@ export class GatewayClient {
     return `${this.base}/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}`;
   }
 
-  /**
-   * A HUMAN'S REVISION OF AN ARTIFACT — `POST
-   * /v1/sessions/:sid/iterations/:iid/attachments`.
-   *
-   * The filename is the identity, so saving an annotated note under the name it
-   * was read as is the NEXT VERSION of that note rather than a second file
-   * beside it. The gateway answers with the descriptor the transcript and the
-   * byte endpoint already speak, so the caller can open the revision through
-   * the paths it already has.
-   */
-  async saveArtifactText(
-    sid: string,
-    iterationId: string,
-    filename: string,
-    mediaType: string,
-    text: string,
-  ): Promise<IterationAttachment> {
-    return this.saveArtifactBytes(
-      sid,
-      iterationId,
-      filename,
-      mediaType,
-      new TextEncoder().encode(text),
-    );
-  }
-
-  /**
-   * The same revision, for an artifact whose content is BYTES rather than text —
-   * a drawn-on picture, a stamped PDF. Same filename, so the gateway files it as
-   * the next version of that artifact rather than as a second file.
-   */
-  async saveArtifactBytes(
-    sid: string,
-    iterationId: string,
-    filename: string,
-    mediaType: string,
-    bytes: Uint8Array,
-  ): Promise<IterationAttachment> {
-    let binary = '';
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    const filed = await this.request<IterationAttachment>(
-      'POST',
-      `/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments`,
-      { filename, media_type: mediaType, base64: btoa(binary) },
-    );
-    // The route is scoped to one iteration, so that IS the cut's home: stamping
-    // it here means the descriptor can be folded into the transcript and opened
-    // through `attachmentUrl` without another round trip.
-    const saved = { ...filed, iteration_id: iterationId };
-    this.noteArtifactRevision(sid, saved);
-    return saved;
-  }
-
-  /**
-   * Hear about a revision saved into `sid` while this screen is mounted; the
-   * returned function stops listening.
-   *
-   * The transcript handed to the watcher is the folded one, so a screen that
-   * derives its artifacts from turns simply adopts it.
-   */
-  onArtifactRevision(sid: string, watcher: (turns: TranscriptTurn[]) => void): () => void {
-    const key = this.snapshotKey('transcript', sid);
-    const held = revisionWatchers.get(key) ?? new Set<typeof watcher>();
-    held.add(watcher);
-    revisionWatchers.set(key, held);
-    return () => {
-      const live = revisionWatchers.get(key);
-      if (!live) return;
-      live.delete(watcher);
-      if (live.size === 0) revisionWatchers.delete(key);
-    };
-  }
-
-  /**
-   * File one saved cut into the transcript this client holds, then tell whoever
-   * is painting it. No snapshot means nothing to correct — the next read of the
-   * session brings the revision with it.
-   */
-  private noteArtifactRevision(sid: string, saved: IterationAttachment): void {
-    const key = this.snapshotKey('transcript', sid);
-    const held = readSnapshot<TranscriptTurn[]>(key);
-    if (!held) return;
-    const next = withSavedAttachment(held, saved);
-    if (next === held) return;
-    writeSnapshot(key, next);
-    for (const watcher of revisionWatchers.get(key) ?? []) watcher(next);
-  }
-
   private static attachmentKey(sid: string, iterationId: string, index: number): string {
     return `${sid}\u0000${iterationId}\u0000${index}`;
   }
@@ -5430,6 +5329,33 @@ export class GatewayClient {
       signal,
     );
     return liveViewsFromWire(response.views);
+  }
+
+  /**
+   * The app attachments of this session, oldest first. An archived app is left
+   * out unless `archived` asks for it.
+   */
+  async appViews(sid: string, archived = false, signal?: AbortSignal): Promise<LiveView[]> {
+    const response = await this.request<{ views: unknown[] }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live?placement=attachment${
+        archived ? '&archived=true' : ''
+      }`,
+      undefined,
+      signal,
+    );
+    return liveViewsFromWire(response.views);
+  }
+
+  /** One live view or app, also a closed app. `null` when the gateway cannot paint it. */
+  async liveView(sid: string, viewId: string, signal?: AbortSignal): Promise<LiveView | null> {
+    const response = await this.request<{ view: unknown }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}`,
+      undefined,
+      signal,
+    );
+    return liveViewFromWire(response.view);
   }
 
   /**

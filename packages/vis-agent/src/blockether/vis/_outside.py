@@ -289,7 +289,6 @@ def attach(options):
             "size": len(data),
             "is_pending": True,
             "audience": options.get("audience") or "both",
-            "commentable": options.get("commentable") is True,
         }
         _ARTIFACTS.append(row)
         _ARTIFACT_BYTES[row["id"]] = data

@@ -1055,6 +1055,8 @@ concurrent read-only polling with fail-fast, Stop and owned cleanup, use the
 - `vis.live(..., placement="panel", key=...)` opens a view in the side panel of a session. [Choose
   a placement](live-views.md#choose-a-placement) explains its lifetime.
 - `on_event=callback` gets each `vis.LiveEvent` of a panel view as an extension callback.
+- `vis.attach(vis.ui.app(title, *nodes))` opens an app: a live view that stays in the session.
+  People save drafts and send them. [Apps](live-views.md#apps) shows how you answer them.
 - `view.values()`, `view.events(timeout=None)` and `view.on_event(callback)` read the inputs and
   the actions of a person. [Collect input in a view](live-views.md#collect-input-in-a-view) shows
   them.
@@ -1357,12 +1359,14 @@ vis.show_attachment(row)                                      # show the image t
 ```
 
 `vis.attach` returns a descriptor dict with `id`, `filename`, `version`, `media_type`, `kind`,
-`size`, `audience` and `commentable`. If you attach again under the same filename, Vis stores the
-next version of that file. Use a new filename only for a different file.
+`size` and `audience`. If you attach again under the same filename, Vis stores the next version
+of that file. Use a new filename only for a different file. An app declaration from
+`vis.ui.app(...)` opens an app instead and returns a `vis.LiveAttachment` handle. [Apps](live-views.md#apps)
+explains it.
 
 Use `audience` to set who sees the file: `both` (the default), `user` or `model`. A PDF or HTML
 document is for the user only. A CSV or TSV table shows as a table, and its rows do not go to
-the model. Set `commentable=True` to let a person comment on this version.
+the model.
 
 If you do not give `media_type`, Vis detects the type from the bytes, then from the filename.
 If both fail, Vis uses `application/octet-stream`.

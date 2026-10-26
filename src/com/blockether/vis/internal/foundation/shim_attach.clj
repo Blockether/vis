@@ -26,6 +26,7 @@
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.view.core :as view]
             [charred.api :as json]
             [clojure.string :as str]))
 
@@ -88,17 +89,18 @@
    its database row will be inserted under; it simply is not in the database
    until this iteration is stored."
   [position att]
-  {:id (:id att)
-   :source "tool"
-   :filename (:filename att)
-   :version (:version att)
-   :media-type (:media-type att)
-   :kind (:kind att)
-   :size (:size att)
-   :position position
-   :is-pending true
-   :audience (attachments/attachment-audience att)
-   :commentable (true? (:commentable att))})
+  (cond-> {:id (:id att)
+           :source "tool"
+           :filename (:filename att)
+           :version (:version att)
+           :media-type (:media-type att)
+           :kind (:kind att)
+           :size (:size att)
+           :position position
+           :is-pending true
+           :audience (attachments/attachment-audience att)}
+    (:view-id att)
+    (assoc :view-id (:view-id att))))
 
 (defn- pending-descriptors
   "Descriptors for everything the RUNNING block has attached so far, in call
@@ -185,10 +187,8 @@
    `record-attachment!` minted — `:id` and `:version` — so `attach` returns a
    HANDLE to what it just stored and every read verb can address it inside the
    same block."
-  [kind media-type b64 filename size audience label commentable]
-  (cond (not (instance? Boolean commentable))
-        (throw (ex-info "attach: commentable must be a boolean" {}))
-        (str/blank? (str b64)) (throw (ex-info "attach: empty payload." {}))
+  [kind media-type b64 filename size audience label]
+  (cond (str/blank? (str b64)) (throw (ex-info "attach: empty payload." {}))
         (str/blank? (str media-type)) (throw (ex-info "attach: missing media type" {}))
         (> (long (or size 0)) mpl-capture/max-capture-bytes)
         (throw (ex-info (str "attach: payload "
@@ -208,7 +208,6 @@
                                :media-type (str media-type)
                                :base64 (str b64)
                                :size (long (or size 0))
-                               :commentable commentable
                                ;; One funnel: a PDF/HTML document is clamped to "user" by
                                ;; `attachment-audience` itself, so no caller can put a
                                ;; document on the wire as an image block.
@@ -246,6 +245,7 @@
    observed-symbol hook and remain catchable host errors in Python."
   []
   {"__vis_record_attachment__" (attachment-tool 'attach :mutation record-attachment-call)
+   "__vis_live_app__" (attachment-tool 'attach :mutation view/app-json!)
    "__vis_list_attachments__"
    (attachment-tool 'list_attachments :observation #(json/write-json-str (attachment-descriptors)))
    "__vis_get_attachment__"
@@ -294,7 +294,7 @@
 (defn- extension-attach-call
   "Body of `vis.attach` for a Python extension. Its one options map holds `base64`
    and the optional `filename`, `media_type`, `media_type_hint`, `kind`,
-   `audience`, `label` and `commentable`. An explicit media type wins, then the
+   `audience` and `label`. An explicit media type wins, then the
    magic-byte sniff, then the hint from the filename. A hint also names the format
    of a generic ZIP sniff. The fallback is
    `application/octet-stream`. The result is the descriptor JSON, without the
@@ -348,8 +348,7 @@
                                 (or (blank->nil (opt "filename")) "artifact")
                                 (alength ^bytes data)
                                 audience
-                                (opt "label")
-                                (true? (opt "commentable")))
+                                (opt "label"))
         (json/read-json)
         (dissoc "display")
         (json/write-json-str))))
@@ -397,15 +396,16 @@
          "`report.png`, because a new name is a different document. `list_attachments(name)` "
          "walks the versions.\n\n"
          "Compose many images into one sheet per call. `audience='both'|'user'|'model'` sets who "
-         "sees it. Human review is opt-in per version with `commentable=True`. The default is "
-         "read-only, whatever the filename.\n\n"
+         "sees it.\n\n"
          "ONE ADDRESSING RULE applies on the read side. `get_attachment(target, version=None)`, "
          "`read_attachment` and `show_attachment` take the FILENAME or an `id` from a "
          "descriptor. A filename means the latest cut, unless you name a version. `attach` "
          "RETURNS that descriptor, and an artifact that this block attached is addressable at "
          "once. `read_attachment` is the only way to get the BYTES. `show_attachment` puts a "
          "stored image back in front of the MODEL for the next request.\n\n"
-         "The shim is native to Vis and uses no upstream library.")
+         "`attach(ui.app(title, *nodes))` opens an app: a live view that stays in the "
+         "session. People use it in the TUI and the Companion app, and the block gets a "
+         "`LiveAttachment` handle.\n\n" "The shim is native to Vis and uses no upstream library.")
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-host-python/attach.py"}]}))
 

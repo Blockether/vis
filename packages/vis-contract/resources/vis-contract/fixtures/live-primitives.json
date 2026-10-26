@@ -353,6 +353,60 @@
           "target_kind": "url"
         }
       ]
+    },
+    {
+      "id": "change",
+      "type": "diff",
+      "label": "Proposed change",
+      "patch": "diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n@@ -1,3 +1,3 @@\n x = 1\n-y = 2\n+y = 3\n z = 4\n",
+      "old_revision": "abc1234",
+      "new_revision": "def5678",
+      "threads": [
+        {
+          "id": "line-2",
+          "anchor": {
+            "path": "src/a.py",
+            "side": "new",
+            "line": 2
+          },
+          "messages": [
+            {
+              "id": "m-1",
+              "author": {
+                "kind": "human",
+                "name": "Ann"
+              },
+              "body": "Why does y change to 3?",
+              "created_at": 1787037267000
+            },
+            {
+              "id": "m-2",
+              "author": {
+                "kind": "agent"
+              },
+              "body": "The spec asks for 3.",
+              "created_at": 1787037268000
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "general",
+      "type": "thread",
+      "label": "General discussion",
+      "messages": [
+        {
+          "id": "m-3",
+          "author": {
+            "kind": "extension",
+            "name": "review"
+          },
+          "body": "The review is ready.",
+          "created_at": 1787037269000
+        }
+      ],
+      "draft": "Thanks, this looks good."
     }
   ],
   "title": "Live view components",

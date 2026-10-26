@@ -191,36 +191,41 @@
                                      (String. (Files/readAllBytes (.toPath file)) "UTF-8")))
                           (finally (.delete file) (.delete (.getParentFile file))))))))
 
+(def ^:private app-artifacts
+  [{"filename" "review.app.json"
+    "media_type" "application/vnd.vis.app+json"
+    "view_id" "view-1"
+    "title" "Review"
+    "version" 1}
+   {"filename" "review.app.json"
+    "media_type" "application/vnd.vis.app+json"
+    "view_id" "view-2"
+    "title" "Second review"
+    "app_status" "stale"
+    "version" 1}])
+
 (defdescribe
-  explicit-comment-capability
-  (it "retains only the latest version's explicit boolean"
-      (let [versions
-            [{"filename" "PLAN-search.md" "version" 1 "commentable" true}
-             {"filename" "PLAN-search.md" "version" 2 "commentable" false}]
-
-            rows
-            (inspector/inspector-rows [] versions)]
-
-        (expect (= 2 (:version (first rows))))
-        (expect (false? (:commentable (first rows)))))
-      (doseq [flag [nil false "true"]]
-        (expect (false? (:commentable (first (inspector/inspector-rows []
-                                                                       [{"filename" "PLAN-search.md"
-                                                                         "commentable" flag}])))))))
-  (it "opens specialized diffs in the terminal for both capabilities"
-      (doseq [flag [true false]]
-        (let [component (inspector/inspector-modal-component []
-                                                             [{"filename" "DIFF-search.json"
-                                                               "media_type"
-                                                               "application/vnd.vis.diff+json"
-                                                               "version" 1
-                                                               "commentable" flag}]
-                                                             nil)
-              action ((:on-key component) (:init component) (KeyStroke. KeyType/Enter) {})]
-
-          (expect (= :annotate (get-in action [:com.blockether.vis.tui.dialogs/done :action])))
-          (expect (= flag
-                     (get-in action [:com.blockether.vis.tui.dialogs/done :row :commentable])))))))
+  app-attachment-rows
+  (it "keeps one row for each app, also when two apps share a file name"
+      (let [rows (inspector/inspector-rows [] app-artifacts)]
+        (expect (= #{"view-1" "view-2"} (set (map :view-id rows))))
+        (expect (= :stale (:app-status (first (filter #(= "view-2" (:view-id %)) rows)))))))
+  (it "shows the app title and its lifecycle state"
+      (let [text (cap/frame-text (paint-component
+                                   (inspector/inspector-modal-component [] app-artifacts nil)))]
+        (expect (str/includes? text "Second review  ·  App  ·  Disconnected"))
+        (expect (str/includes? text "Review  ·  App"))))
+  (it "opens an app on the app surface and other text in its viewer"
+      (let [enter (fn [artifacts]
+                    (let [component (inspector/inspector-modal-component [] artifacts nil)]
+                      (get-in ((:on-key component) (:init component) (KeyStroke. KeyType/Enter) {})
+                              [:com.blockether.vis.tui.dialogs/done :action])))]
+        (expect (= :app (enter [(first app-artifacts)])))
+        (expect (= :open (enter [{"filename" "PLAN.md" "media_type" "text/markdown" "version" 1}])))
+        (expect (= :open
+                   (enter [{"filename" "DIFF.json"
+                            "media_type" "application/vnd.vis.diff+json"
+                            "version" 1}]))))))
 
 (def ^:private pictures
   [{:path "/tmp/a.png"

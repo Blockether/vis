@@ -1,12 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { EDGE_ZONE_PX } from '../lib/edge-back';
-import type { GatewayClient } from '../lib/gateway';
-import { openPdf, stampPdfPage, type PdfPages, type RenderedPage } from '../lib/pdf-annotate';
+import { openPdf, type PdfPages, type RenderedPage } from '../lib/pdf-annotate';
 import { FIT_SCALE, type Transform } from '../lib/zoom-pan';
 import { isKeyboardInputElement } from '../lib/viewport';
 import { useZoomPan, ZOOM_FRAME_CLASS, ZOOMED_CLASS } from '../lib/zoom-surface';
-import { ImageViewer } from './ImageViewer';
 import type { DocumentChrome } from './MarkdownArtifact';
 import { ChevronIcon } from './icons';
 import { BandButton } from './ui';
@@ -24,33 +22,22 @@ export function rasterScale(zoom: number): number {
 const SHARPEN_MS = 200;
 
 /**
- * A PDF PAGE FITTED BY THE APP, WITH THE PAGER AND THE PEN IN ITS OWN BAND.
+ * A PDF PAGE FITTED BY THE APP, WITH THE PAGER IN ITS OWN BAND.
  *
- * The browser's viewer can be neither drawn on nor sized, so a page is rasterised
- * (`lib/pdf-annotate`), fitted to the overlay, and what the pen leaves is stamped
- * back onto that page as the next version of the same filename.
+ * The browser's viewer cannot be sized, so a page is rasterised
+ * (`lib/pdf-annotate`) and fitted to the overlay. The reader is read-only.
  *
  * Like a note, a PDF is always read inside somebody else's chrome, so it hands its
  * cells UP ({@link DocumentChrome}): `actions` are the band's, `note` is what the
  * band reports under the filename, and `body` is the page.
  */
-export const PdfAnnotator = memo(function PdfAnnotator({
-  client,
-  sid,
-  iterationId,
+export const PdfReader = memo(function PdfReader({
   name,
-  mediaType,
   url,
   chrome,
-  commentable = false,
 }: {
-  client: GatewayClient;
-  sid: string;
-  iterationId: string;
   name: string;
-  mediaType: string;
   url: string;
-  commentable?: boolean;
   /** The band and the frame this page is read inside. */
   chrome: DocumentChrome;
 }) {
@@ -58,7 +45,6 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   const [raster, setRaster] = useState(rasterScale(FIT_SCALE));
   const [source, setSource] = useState<ArrayBuffer | null>(null);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
-  const [drawn, setDrawn] = useState<string | null>(null);
   const [status, setStatus] = useState('');
   // The document opened once per file, so a page turn only draws a page.
   const [doc, setDoc] = useState<PdfPages | null>(null);
@@ -130,8 +116,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
     };
   }, [doc, page, raster]);
 
-  // A page turn drops what the band reported about the page being left: `Saved as
-  // v4` belongs to the page it was stamped on.
+  // A page turn drops what the band reported about the page being left.
   const turn = useCallback(
     (by: number) => {
       setStatus('');
@@ -146,10 +131,8 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   // THE ARROW KEYS TURN THE PAGE, AS THE ‹ › OF THE BAND DO.
   //
   // A reader at a keyboard presses ← and → before reaching for a button. A shortcut
-  // with a modifier, a key typed into a field, and the arrows of the drawing viewer
-  // that is open over the page are left to their owners.
+  // with a modifier and a key typed into a field are left to their owners.
   useEffect(() => {
-    if (drawn) return;
     const keyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
       const by = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
@@ -161,7 +144,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
     };
     window.addEventListener('keydown', keyDown);
     return () => window.removeEventListener('keydown', keyDown);
-  }, [drawn, turn]);
+  }, [turn]);
 
   // THE PAGE ZOOMS, PANS AND TURNS LIKE A PICTURE IN THE DRAWING VIEWER.
   //
@@ -216,34 +199,9 @@ export const PdfAnnotator = memo(function PdfAnnotator({
     return () => observer.disconnect();
   }, [viewportRef, aspect]);
 
-  const apply = useCallback(
-    async (edited: Blob) => {
-      if (!source) return;
-      setStatus('');
-      try {
-        const stamped = await stampPdfPage(source, page, await edited.arrayBuffer());
-        const saved = await client.saveArtifactBytes(
-          sid,
-          iterationId,
-          name,
-          mediaType || 'application/pdf',
-          stamped,
-        );
-        // The stamped bytes ARE the document now; re-rastering them is the render
-        // effect's job, so the ink appears on the page it was left on.
-        setSource(stamped.slice().buffer as ArrayBuffer);
-        setDrawn(null);
-        setStatus(saved.version ? `Saved as v${saved.version}` : 'Saved');
-      } catch {
-        setStatus('Could not save this revision.');
-      }
-    },
-    [client, sid, iterationId, name, mediaType, source, page],
-  );
-
   const position = pageCount ? `Page ${page} of ${pageCount}` : `Page ${page}`;
   return chrome({
-    // THE PAGER AND THE PEN ARE CELLS OF THE BAND THAT NAMES THE FILE.
+    // THE PAGER IS A CELL OF THE BAND THAT NAMES THE FILE.
     //
     // They stood in a docked strip under the page instead: three bordered boxes and
     // a counter on a second paper, at the opposite end of the screen from the ✕,
@@ -255,7 +213,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
     // disabled while a page rasterised, so every press dimmed the row it was aimed
     // at — and a disabled button drops the focus it was just handed, leaving a second
     // › to land on nothing. The bounds are the document's own: the first page, the
-    // last page, and whether there is a page to draw on at all.
+    // last page.
     actions: (
       <>
         <BandButton label="Previous page" disabled={page <= 1} onClick={() => turn(-1)}>
@@ -268,16 +226,6 @@ export const PdfAnnotator = memo(function PdfAnnotator({
         >
           <ChevronIcon className="size-3" />
         </BandButton>
-        {commentable ? (
-          <BandButton
-            aria-label={`Annotate page ${page}`}
-            title={`Annotate page ${page}`}
-            disabled={!rendered}
-            onClick={() => rendered && setDrawn(rendered.src)}
-          >
-            Annotate
-          </BandButton>
-        ) : null}
       </>
     ),
     // Where the reader stands in the document, and what just became of it: the two
@@ -312,14 +260,6 @@ export const PdfAnnotator = memo(function PdfAnnotator({
         <span className="sr-only" role="status">
           {status}
         </span>
-        {commentable && drawn ? (
-          <ImageViewer
-            src={drawn}
-            name={`${name} — page ${page}`}
-            onApply={apply}
-            onClose={() => setDrawn(null)}
-          />
-        ) : null}
       </div>
     ),
   });

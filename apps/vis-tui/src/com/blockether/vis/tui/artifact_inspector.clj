@@ -2,14 +2,15 @@
   "The TUI's session-wide attachment inspector. Composer files and durable model
    artifacts remain separate lifecycles, but share one discoverable C-x i surface."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.diff :as diff]
+            [com.blockether.vis.tui.app-model :as app-model]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.paths :as paths]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
-            [com.blockether.vis.tui.format :as fmt])
+            [com.blockether.vis.tui.format :as fmt]
+            [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna.gui2 ScrollBar]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
@@ -17,14 +18,41 @@
 
 (set! *unchecked-math* :warn-on-boxed)
 
+(defn- app-statuses
+  "The lifecycle state of each app of `session-id`, by view id. An app the
+   gateway does not list keeps no state here, and its row says only App."
+  [session-id]
+  (try (into {}
+             (keep (fn [wire]
+                     (when-let [id (get wire "view_id" (get wire "id"))]
+                       [(str id) (app-model/status (vis/wire->engine wire))])))
+             (vis/gateway-app-views session-id true))
+       (catch Throwable e
+         (tel/log!
+           {:level :warn :id ::app-statuses-failed :error e :data {:session-id (str session-id)}})
+         {})))
+
+(defn- wire-view-id
+  "The app view id of artifact index entry `artifact`, which has wire keys, or nil."
+  [artifact]
+  (when (= app-model/media-type (get artifact "media_type"))
+    (some-> (get artifact "view_id")
+            str
+            str/trim
+            not-empty)))
+
 (defn fetch-session-artifacts!
   "Whole-session artifact index through the facade. Returns `{:artifacts [...]}`,
-   or `{:artifacts [] :error string}` when the daemon cannot answer."
+   or `{:artifacts [] :error string}` when the daemon cannot answer. An app row
+   also holds its lifecycle state in \"app_status\"."
   [session-id]
   (if (str/blank? (str session-id))
     {:artifacts []}
     (if-let [artifacts (vis/gateway-session-artifacts session-id)]
-      {:artifacts artifacts}
+      (let [apps (when (some wire-view-id artifacts) (app-statuses session-id))]
+        {:artifacts
+         (mapv #(if-let [status (get apps (wire-view-id %))] (assoc % "app_status" (name status)) %)
+               artifacts)})
       {:artifacts [] :error "Artifact index unavailable"})))
 
 (defn- produced-rows
@@ -33,15 +61,26 @@
   (let [newest
         (reverse (vec artifacts))
 
+        identity-of
+        (fn [artifact]
+          (or (some->> (wire-view-id artifact)
+                       (str "app:"))
+              (str (or (get artifact "filename") "artifact"))))
+
         counts
-        (frequencies (map #(str (or (get % "filename") "artifact")) newest))]
+        (frequencies (map identity-of newest))]
 
     (:rows
       (reduce (fn [{:keys [seen rows] :as acc} artifact]
-                (let [filename (str (or (get artifact "filename") "artifact"))]
-                  (if (contains? seen filename)
+                (let [filename
+                      (str (or (get artifact "filename") "artifact"))
+
+                      key
+                      (identity-of artifact)]
+
+                  (if (contains? seen key)
                     acc
-                    {:seen (conj seen filename)
+                    {:seen (conj seen key)
                      :rows (conj rows
                                  {:source :produced
                                   :filename filename
@@ -49,9 +88,12 @@
                                                        "application/octet-stream"))
                                   :size (get artifact "size")
                                   :version (get artifact "version")
-                                  :commentable (true? (get artifact "commentable"))
-                                  :version-count (get counts filename 1)
+                                  :version-count (get counts key 1)
                                   :iteration-id (str (get artifact "iteration_id"))
+                                  :view-id (wire-view-id artifact)
+                                  :title (get artifact "title")
+                                  :app-status (some-> (get artifact "app_status")
+                                                      keyword)
                                   :index (get artifact "index")
                                   :artifact artifact})})))
               {:seen #{} :rows []}
@@ -73,15 +115,19 @@
 (defn- size-label [size] (when (number? size) (fmt/format-bytes size)))
 
 (defn- row-label
-  [{:keys [source filename media-type size version version-count]}]
-  (str filename
-       (when (= source :produced)
-         (str (when version (str "  v" version))
-              (when (> (long version-count) 1) (str "  ·  " version-count " versions"))))
-       "  ·  "
-       media-type
-       (when-let [label (size-label size)]
-         (str "  ·  " label))))
+  [{:keys [source filename media-type size version version-count title app-status] :as row}]
+  (if (app-model/app-row? row)
+    (str (or (not-empty (str title)) filename)
+         "  ·  App"
+         (when app-status (str "  ·  " (get app-model/status-label app-status))))
+    (str filename
+         (when (= source :produced)
+           (str (when version (str "  v" version))
+                (when (> (long version-count) 1) (str "  ·  " version-count " versions"))))
+         "  ·  "
+         media-type
+         (when-let [label (size-label size)]
+           (str "  ·  " label)))))
 
 (defn- display-rows
   [rows load-error]
@@ -118,7 +164,8 @@
       0)))
 
 (defn inspector-modal-component
-  "Pure attachment inspector. Text opens in the annotator; o keeps the external opener."
+  "Pure attachment inspector. Enter opens an app on its app surface and any other
+   row in its viewer; o keeps the external opener."
   [staged artifacts load-error]
   (let [rows
         (vec (sort-by #(if (= :staged (:source %)) 0 1) (inspector-rows staged artifacts)))
@@ -234,16 +281,12 @@
                               :selected (dlg/page-selected-index display selected list-h 1 :source))
            KeyType/Home (assoc state :selected 0)
            KeyType/End (assoc state :selected (max 0 (dec (long total))))
-           KeyType/Enter
-           {::dlg/done (when selected-row
-                         {:action
-                          (if (and (= :produced (:source selected-row))
-                                   (or (= diff/media-type (:media-type selected-row))
-                                       (#{"text/markdown" "text/plain"} (:media-type selected-row))
-                                       (re-find #"(?i)\.(md|txt|log)$" (:filename selected-row))))
-                            :annotate
-                            :open)
-                          :row selected-row})}
+           KeyType/Enter {::dlg/done (when selected-row
+                                       {:action (if (and (= :produced (:source selected-row))
+                                                         (app-model/app-row? selected-row))
+                                                  :app
+                                                  :open)
+                                        :row selected-row})}
            KeyType/Character (if (and (= \o (.getCharacter key)) selected-row)
                                {::dlg/done {:action :open :row selected-row}}
                                state)

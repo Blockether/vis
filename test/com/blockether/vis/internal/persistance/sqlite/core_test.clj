@@ -5867,7 +5867,7 @@
 (defdescribe
   sqlite-append-iteration-attachment-test
   (it
-    "appends a human revision as the next version of the same filename"
+    "appends a late artifact as the next version of the same filename"
     (let [s
           (h/store)
 
@@ -5896,7 +5896,7 @@
           (persistance/db-append-iteration-attachment! s
                                                        iid
                                                        {:media-type "text/markdown"
-                                                        :base64 (encode "# Note\n\n> a comment\n")
+                                                        :base64 (encode "# Note\n\nLate result.\n")
                                                         :filename "note.md"
                                                         :kind "doc"
                                                         :audience "user"})
@@ -5907,13 +5907,13 @@
       (expect (= 2 (:version stored)))
       (expect (= 2 (count rows)))
       ;; Same NAME, two cuts — that is one artifact with a history, and the
-      ;; revision is a user-visible document rather than model input.
+      ;; late cut is a user-visible document rather than model input.
       (expect (= #{1 2} (set (map :version rows))))
       (let [revision (first (filter #(= 2 (:version %)) rows))]
         (expect (= "note.md" (:filename revision)))
         (expect (= "doc" (:kind revision)))
         (expect (= "user" (name (:audience revision))))
-        (expect (= "# Note\n\n> a comment\n"
+        (expect (= "# Note\n\nLate result.\n"
                    (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 revision))
                             "UTF-8"))))))
   ;; Regression, issue td-65cdf6: the late-settled live receipt lost its

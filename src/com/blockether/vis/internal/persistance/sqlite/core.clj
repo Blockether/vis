@@ -24,7 +24,6 @@
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.contract.diff :as diff]
             [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
@@ -3988,7 +3987,6 @@
              ;; but never a wire image block; "model" is sent and never shown. Normalized
              ;; on read so the send-time gate never sees a legacy or NULL value.
              :audience (attachments/normalize-audience (:audience row))
-             :commentable (= 1 (:commentable row))
              ;; TRANSCRIPTION: what a recording SAYS. Present only for audio, and only when
              ;; something could read it; every other row carries nil rather than "".
              :transcription (not-empty (str (:transcription row)))
@@ -4236,7 +4234,7 @@
    then base64-ENCODES every one of them into a String the caller throws away."
   [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :queued_turn_id :position
    :kind :media_type :filename :reference :view_id :live_invocation_id :live_activity_id :version
-   :audience :commentable :storage_uri :size_bytes :transcription :transcription_segments
+   :audience :storage_uri :size_bytes :transcription :transcription_segments
    [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
@@ -4292,7 +4290,7 @@
             [(str
                "SELECT id, session_turn_soul_id, session_turn_iteration_id, "
                "tool_call_id, position, kind, media_type, filename, view_id, live_invocation_id, live_activity_id, "
-               "version, audience, commentable, storage_uri, size_bytes, transcription, "
+               "version, audience, storage_uri, size_bytes, transcription, "
                "transcription_segments, "
                "CASE WHEN bytes IS NULL THEN 0 ELSE 1 END AS has_bytes "
                "FROM session_attachment WHERE session_turn_iteration_id IN ("
@@ -4364,9 +4362,9 @@
          [:a.media_type :media_type] [:a.filename :filename] [:a.reference :reference]
          [:a.view_id :view_id] [:a.live_invocation_id :live_invocation_id]
          [:a.live_activity_id :live_activity_id] [:a.version :version] [:a.audience :audience]
-         [:a.commentable :commentable] [:a.storage_uri :storage_uri]
-         [:a.transcription :transcription] [:a.transcription_segments :transcription_segments]
-         [:a.size_bytes :size_bytes] [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
+         [:a.storage_uri :storage_uri] [:a.transcription :transcription]
+         [:a.transcription_segments :transcription_segments] [:a.size_bytes :size_bytes]
+         [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
         [[:ts.position :turn_position] [:ts.session_state_id :turn_state_id]]))
 
 (defn db-list-session-attachments-meta
@@ -4754,7 +4752,6 @@
                                       ;; producer was told which cut this is.
                                       :version (or (:version att) (next-version (:filename att)))
                                       :audience (attachments/normalize-audience (:audience att))
-                                      :commentable (if (true? (:commentable att)) 1 0)
                                       :transcription (not-empty (str (:transcription att)))
                                       :transcription_segments (->segments-json
                                                                 (:transcription-segments att))
@@ -4825,58 +4822,14 @@
                                     :where [:= :t.id (->ref session-turn-soul-id)]}]}))
               true)))))))
 
-(defn- human-attachment-revision
-  "Authorize a human revision inside the append transaction, retaining producer capabilities."
-  [tx-info iteration-id att]
-  (let [rows
-        (->> (db-list-session-attachments-meta tx-info (:revision-session-id att))
-             (filter #(and (:iteration-id %) (= (:filename att) (:filename %)))))
-
-        original
-        (last (sort-by :version (filter #(= (str iteration-id) (str (:iteration-id %))) rows)))
-
-        latest
-        (last (sort-by :version rows))]
-
-    (when-not original
-      (throw (ex-info "Unknown artifact in this session and iteration"
-                      {:type :attachment/not-found})))
-    (when-not (and (true? (:commentable original)) (true? (:commentable latest)))
-      (throw (ex-info "This attachment is read-only" {:type :attachment/read-only})))
-    (when-not (= (:media-type latest) (:media-type att))
-      (throw (ex-info "A review cannot change the attachment format"
-                      {:type :attachment/invalid-revision})))
-    (when (= diff/media-type (:media-type latest))
-      (let [read-diff
-            (fn [attachment]
-              (try (diff/parse! (String. (.decode (java.util.Base64/getDecoder)
-                                                  ^String
-                                                  (:base64 (attachment-storage/hydrate attachment)))
-                                         "UTF-8"))
-                   (catch Exception _
-                     (throw (ex-info "Invalid diff attachment"
-                                     {:type :attachment/invalid-revision})))))
-
-            before
-            (read-diff (db-read-attachment tx-info (:id latest)))
-
-            after
-            (read-diff att)]
-
-        (when-not (= (dissoc before "comments") (dissoc after "comments"))
-          (throw (ex-info "Diff reviews may change comments only"
-                          {:type :attachment/invalid-revision})))))
-    (merge (select-keys att [:filename :media-type :base64])
-           (select-keys latest [:kind :audience :commentable]))))
-
 (defn db-append-iteration-attachment!
-  "Append ONE artifact to an EXISTING iteration - a human's own revision of a
-   document the model produced (a markdown note annotated in the companion).
+  "Append ONE artifact to an EXISTING iteration - a late artifact that the engine
+   files after its block ended (a live view that a human stops later).
 
    Same table, same grain and the SAME version rule as
    [[store-iteration-attachments!]]: re-using a `:filename` is the NEXT CUT of
-   that artifact, never a stranger beside it, so an annotated note lands as `v2`
-   of the file it came from and the gallery threads the two. The row joins the
+   that artifact, never a stranger beside it, so the gallery threads the
+   versions. The row joins the
    iteration's `NULL` tool-call group (the one group no tool call owns) at the
    end of it, which keeps the table's `(iteration, tool_call_id, position)`
    UNIQUE constraint.
@@ -4886,9 +4839,7 @@
    the FIRST artifact that iteration ever gets, and reading the soul off a
    sibling row would drop it for having no siblings.
 
-   Human callers supply trusted `:revision-session-id`; capability and ownership are
-   checked in this transaction. Internal late artifact filing omits it.
-   `att` is `{:media-type :base64 :filename? :kind? :audience? :commentable?}`. Returns
+   `att` is `{:media-type :base64 :filename? :kind? :audience?}`. Returns
    `{:id :version :position}` for the stored row, or nil when the iteration is
    unknown or the payload does not decode."
   [db-info iteration-id att]
@@ -4907,11 +4858,6 @@
                                                             [:= :sts.id :it.session_turn_state_id]]
                                                      :where [:= :it.id iter-id-s]
                                                      :limit 1})))
-
-              att
-              (if (contains? att :revision-session-id)
-                (human-attachment-revision tx-info iteration-id att)
-                att)
 
               payload
               (attachment-payload-cols att)]
@@ -4945,7 +4891,6 @@
                                           :media_type (str (:media-type att))
                                           :filename (:filename att)
                                           :version version
-                                          :commentable (if (true? (:commentable att)) 1 0)
                                           :audience (attachments/normalize-audience
                                                       (or (:audience att) "user"))
                                           :created_at (now-ms)}

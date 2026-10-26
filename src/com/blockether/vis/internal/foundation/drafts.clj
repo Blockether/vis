@@ -188,10 +188,10 @@
            "For several repositories, keep the entire checkpoint map; do not omit or replace members."})))))
 
 (defn- diff-attachment
-  "Render one repository's canonical artifact without recording a partial review."
+  "Render one repository's canonical diff artifact."
   [filename repository {:keys [patch source checkpoint]}]
   (let [text
-        (diff/render {"schema_version" 1 "patch" patch "source" source "comments" []})
+        (diff/render {"schema_version" 1 "patch" patch "source" source})
 
         bytes
         (.getBytes ^String text java.nio.charset.StandardCharsets/UTF_8)]
@@ -203,7 +203,6 @@
                   :media-type diff/media-type
                   :filename filename
                   :audience "user"
-                  :commentable true
                   :size (alength bytes)
                   :base64 (.encodeToString (java.util.Base64/getEncoder) bytes)}}))
 

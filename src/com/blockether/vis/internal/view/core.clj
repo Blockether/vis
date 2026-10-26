@@ -31,6 +31,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.view.materializer :as materializer]
             [com.blockether.vis.internal.view.sink :as sink]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.view :as view-spec]
             [com.blockether.vis.internal.view.validation :as validation]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
@@ -956,6 +957,101 @@
       (fail! (str ":max_columns must be a whole number from " lo " to " hi)))
     (long n)))
 
+(def ^:private ^:dynamic *host-patch*
+  "True while the host writes a patch itself. Its messages keep their authors and it
+   may write Send receipts. An owner's patch is never trusted that way."
+  false)
+
+(defn- owner-author
+  "The author of a message that the current owner writes: its extension by name,
+   or the agent of the `python_execution` sandbox."
+  []
+  (if-let [extension-name (:extension *live-owner*)]
+    {:kind "extension" :name extension-name}
+    {:kind "agent"}))
+
+(defn- enum-text
+  "An enum value of an app map as wire text: a keyword reads as its name."
+  [value]
+  (if (keyword? value) (name value) value))
+
+(defn- app-anchor
+  "One diff line that a thread belongs to: `{:path :side :line}`."
+  [fail! anchor]
+  (when-not (map? anchor) (fail! "an :anchor is a map of :path, :side and :line"))
+  (check-keys! "anchor" #{:path :side :line} anchor fail!)
+  {:path (live-text fail! "an anchor's :path" (:path anchor))
+   :side (enum-text (:side anchor))
+   :line (live-long fail! "an anchor's :line" (:line anchor))})
+
+(defn- app-message
+  "One posted message. The host stamps the current owner as its author; only a
+   patch that the host writes itself keeps the author it names."
+  [fail! message]
+  (when-not (map? message) (fail! "a message must be a map"))
+  (check-keys! "message" #{:id :author :body :created-at :submission-id} message fail!)
+  (when-not (and (string? (:body message)) (not (str/blank? (:body message))))
+    (fail! "a message :body must be non-blank text"))
+  (cond-> {:id (or (trimmed (:id message)) (str (random-uuid)))
+           :author (if *host-patch*
+                     (let [author (:author message)]
+                       (cond-> {:kind (enum-text (:kind author))}
+                         (trimmed (:name author))
+                         (assoc :name (trimmed (:name author)))))
+                     (owner-author))
+           :body (:body message)
+           :created-at (if (some? (:created-at message))
+                         (live-long fail! "a message's :created-at" (:created-at message))
+                         (util/now-ms))}
+    (trimmed (:submission-id message))
+    (assoc :submission-id (trimmed (:submission-id message)))))
+
+(defn- app-thread
+  "One thread: a stable id, an optional anchor, its messages and the saved draft
+   of the human. A blank draft is no draft."
+  [fail! thread]
+  (when-not (map? thread) (fail! "a thread must be a map"))
+  (check-keys! "thread" #{:id :anchor :messages :draft :is-resolved} thread fail!)
+  (let [id
+        (or (trimmed (:id thread)) (fail! "a thread needs a non-blank :id"))
+
+        thread-fail!
+        (fn [message]
+          (fail! (str "thread " id ": " message)))
+
+        messages
+        (or (:messages thread) [])
+
+        draft
+        (:draft thread)]
+
+    (when-not (sequential? messages) (thread-fail! ":messages must be a sequence"))
+    (when-not (or (nil? draft) (string? draft)) (thread-fail! "a :draft must be text"))
+    (cond-> {:id id :messages (mapv #(app-message thread-fail! %) messages)}
+      (some? (:anchor thread))
+      (assoc :anchor (app-anchor thread-fail! (:anchor thread)))
+
+      (util/non-blank-string? draft)
+      (assoc :draft draft)
+
+      (some? (:is-resolved thread))
+      (assoc :is-resolved (bool-value thread-fail! ":is-resolved" (:is-resolved thread) false)))))
+
+(defn- app-threads
+  "The threads of a diff: each has an anchor, and no two share an id."
+  [fail! threads]
+  (when-not (sequential? threads) (fail! ":threads must be a sequence of threads"))
+  (let [parsed (mapv #(app-thread fail! %) threads)]
+    (when-let [loose (first (remove :anchor parsed))]
+      (fail! (str "diff thread " (:id loose) " needs an :anchor")))
+    (when-not (or (empty? parsed) (apply distinct? (map :id parsed)))
+      (fail! "diff thread ids must be distinct"))
+    parsed))
+
+(defn- diff-patch
+  [fail! patch]
+  (if (string? patch) patch (fail! "a diff :patch must be unified diff text")))
+
 (defn- live-node
   "One declared component of a form or a live view. `fail!` is the refusal of
    whoever declares it — a view spec, a request, or the `add-node` op that
@@ -1142,7 +1238,26 @@
                  (assoc :selected-ids (text-items node-fail! ":selected-ids" (:selected-ids node))))
 
                :link
-               (assoc base :links (items :links))))))))))
+               (assoc base :links (items :links))
+
+               :diff
+               (cond-> (assoc base :patch (diff-patch node-fail! (:patch node)))
+                 (some? (:old-revision node))
+                 (assoc :old-revision (live-text node-fail! ":old-revision" (:old-revision node)))
+
+                 (some? (:new-revision node))
+                 (assoc :new-revision (live-text node-fail! ":new-revision" (:new-revision node)))
+
+                 (some? (:threads node))
+                 (assoc :threads (app-threads node-fail! (:threads node))))
+
+               :thread
+               (merge base
+                      (dissoc (app-thread
+                                node-fail!
+                                (assoc (select-keys node [:anchor :messages :draft :is-resolved])
+                                  :id id))
+                        :id))))))))))
 
 (defn normalize-live-node
   "Validate one declared live node, so an unknown key or a `:tone` outside the
@@ -1295,15 +1410,20 @@
                    view-spec/placements
                    (or (:placement view) "inline"))
 
+        app?
+        (= app/placement placement)
+
+        ;; A panel view needs its extension and a key. An app takes both when they
+        ;; exist: the sandbox opens apps too, and a key only makes an app adoptable.
         owned?
-        (not= :inline placement)
+        (not (contains? #{:inline app/placement} placement))
 
         extension-name
-        (when owned?
-          (or (trimmed (:extension *live-owner*))
-              (invalid-live-view! (str "only extension code can open a "
-                                       (name placement)
-                                       " view; the python_execution sandbox cannot"))))
+        (cond owned? (or (trimmed (:extension *live-owner*))
+                         (invalid-live-view! (str "only extension code can open a "
+                                                  (name placement)
+                                                  " view; the python_execution sandbox cannot")))
+              app? (trimmed (:extension *live-owner*)))
 
         _
         (when (and owned? (not (trimmed (:key view))))
@@ -1400,6 +1520,16 @@
             (normalize-live-items fail! :steps value))
    :links (fn [fail! value]
             (normalize-live-items fail! :links value))
+   :patch (fn [fail! value]
+            (diff-patch fail! value))
+   :old-revision (fn [fail! value]
+                   (live-text fail! ":old-revision" value))
+   :new-revision (fn [fail! value]
+                   (live-text fail! ":new-revision" value))
+   :thread (fn [fail! value]
+             (app-thread fail! value))
+   :submission (fn [fail! value]
+                 (if (map? value) value (fail! ":submission must be a receipt map")))
    :node-spec (fn [fail! value]
                 (live-node fail! value))})
 
@@ -1800,7 +1930,7 @@
   "The CLOSED table each keyword-valued key takes its value from. A term outside its
    table stays the text it arrived as, so the spec check refuses the frame instead
    of minting a keyword no surface knows how to paint."
-  {:type (assoc view-spec/live-node-types view-spec/group-type-name view-spec/group-type)
+  {:type view-spec/component-types
    :tone view-spec/live-tones
    :line-tones view-spec/live-tones
    :op view-spec/live-ops
@@ -1948,9 +2078,9 @@
   (atom {}))
 
 (defn- owned-key
-  "`[extension key]` of an owned view, or nil for an inline view."
+  "`[extension key]` of an owned panel view, or nil for an inline view or an app."
   [view]
-  (when (:extension view) [(:extension view) (:key view)]))
+  (when (and (:extension view) (not (app/app? view))) [(:extension view) (:key view)]))
 
 (defonce ^:private owned-saver
   (delay (Executors/newSingleThreadScheduledExecutor (util/daemon-thread-factory
@@ -2030,33 +2160,245 @@
         (swap! stale-views assoc (:id view) view)))
     (count @stale-views)))
 
-(defn open-live!
-  "Mount a live view the human WATCHES and return it materialized, `:id` and all.
-   The caller keeps that id: every patch, and the close, name it.
+;; Apps — live views with the `attachment` placement
+;;
+;; An app outlives the block and the extension that opened it. Its record is the
+;; store of truth: a restart replays it, and a closed app stays readable. Each
+;; session lists its apps next to the records, so a key adopts the app again.
 
-   Nothing blocks. A view nobody has mounted a surface for still runs and still
-   ends in the verdict the model reads — the engine says so ONCE, in the log,
-   rather than refusing work whose whole product is the picture at the end. That
-   is the one place a view differs from a request, which answers `undeliverable`
-   at once because a form nobody can see is a thread parked forever."
+(defonce ^:private closed-apps
+  ;; View id -> the last picture of each closed app that this process read.
+  (atom {}))
+
+(defn- app-key
+  "What adopts app `view` again: its session, its extension and its key. nil
+   without a key."
   [view]
-  ;; A person's stop ends the watching of the whole block. Without this, a model loop
-  ;; around a watch tool opened the same view again at once, and the note never
-  ;; reached the model.
-  (when-let [stop (some->> *block-owner*
-                           (get @human-stops)
-                           peek)]
-    (throw (ex-info (str "Vis refused a new live view. " (human-stop-text stop))
-                    {:type :vis/live-stopped-by-human :title (:title stop) :note (:note stop)})))
-  (let [record
-        (-> view
-            normalize-live-view
-            materializer/redact-presentation
-            checked-live-view
-            materializer/record-view)
+  (when-let [k (:key view)]
+    [(:session-id view) (:extension view) k]))
+
+(defn- closed-picture [view] (assoc view :is-closed true))
+
+(defn- patch-node-seqs
+  "Node id -> seq, for each node that `patch` writes."
+  [patch]
+  (into {}
+        (keep #(when-let [node-id (or (:node-id %) (get-in % [:node-spec :id]))] [node-id
+                                                                                  (:seq patch)]))
+        (:ops patch)))
+
+(defn- replay-app
+  "The picture of the app that `file` records, with the seq of the last write to
+   each node. nil when the record holds no app."
+  [file]
+  (sink/fold-lines file
+                   (fn [acc line]
+                     (case (str (:kind line))
+                       "open"
+                       (let [view (materializer/materialize (live<-wire (:view line)))]
+                         (if (app/app? view) {:view view :node-seqs {}} (reduced nil)))
+
+                       "patch"
+                       (let [patch (live<-wire (:patch line))]
+                         (-> acc
+                             (update :view materializer/apply-patch patch)
+                             (update :node-seqs merge (patch-node-seqs patch))))
+
+                       "close"
+                       (update acc :view closed-picture)
+
+                       "archive"
+                       (assoc-in acc [:view :is-archived] true)
+
+                       acc))
+                   nil))
+
+(defn- app-entry
+  "The registry entry of open app `view`, recorded in `file`. `node-seqs` maps
+   each node id to the seq of the last patch that wrote it."
+  [view file node-seqs]
+  {:kind :live
+   :id (:id view)
+   :view (atom view)
+   :events (atom {:cursor 0 :items []})
+   :file file
+   :promise (promise)
+   :session-id (:session-id view)
+   :channel-ids (:channel-ids view)
+   :created-at (:created-at view)
+   :is-app true
+   :app-key (app-key view)
+   :node-seqs (atom node-seqs)
+   ;; The Sends on their way to a listener of this process.
+   :delivering (atom #{})})
+
+(defn- owner-hold
+  "The callback fields of the current owner: its context, its listener, and the
+   agent that runs the listener calls in order."
+  []
+  {:owner-context (:context *live-owner*)
+   :listener (:listener *live-owner*)
+   :listener-agent (when (:listener *live-owner*) (agent nil))})
+
+(defonce ^:private session-sends
+  ;; Offers the Sends of sandbox apps to their sessions in order, away from the app lock.
+  (agent nil :error-mode :continue))
+
+(defn- offer-send!
+  "Offer Send `receipt` of open app `entry` to the session that owns the app. Only
+   an app of the python_execution sandbox needs it: an extension gets its Sends
+   through its listener or its events. The gateway queues one notification turn
+   and marks the receipt delivered. Without a gateway, the receipt stays accepted."
+  [entry receipt]
+  (let [view @(:view entry)]
+    (when (and (nil? (:extension view)) (nil? (:listener entry)))
+      (send-off
+        session-sends
+        (fn [_]
+          (try (publish!
+                 (:channel-ids entry)
+                 (lifecycle-event :view/send entry {:title (:title view) :submission receipt}))
+               (catch Throwable t
+                 (tel/log!
+                   {:level :warn
+                    :id ::send-offer-failed
+                    :data {:view-id (:id entry) :submission-id (:id receipt) :error (ex-message t)}
+                    :msg "Vis could not offer an app Send to its session"})))
+          nil)))))
+
+(defn- offer-sends!
+  "Offer each accepted Send of restored app `entry` to its session again: a Send
+   that a restart cut off before the session took it."
+  [entry]
+  (doseq [receipt
+          (:submissions @(:view entry))
+
+          :when (= "accepted" (:status receipt))]
+
+    (offer-send! entry receipt)))
+
+(defn- replayed-app
+  "[[replay-app]] of `file`, the record of app `view-id` of session `sid`. A record
+   that does not replay is logged with its cause and answers nil, so it never hides
+   the other apps of the session."
+  [sid view-id file]
+  (try (replay-app file)
+       (catch Exception e
+         (tel/log! {:level :warn
+                    :id ::app-record-unreadable
+                    :data {:session-id (str sid)
+                           :view-id (str view-id)
+                           :file (str file)
+                           :error (ex-message e)
+                           :cause (some-> (ex-cause e)
+                                          ex-message)}
+                    :msg "Skipped an app whose record does not replay"})
+         nil)))
+
+(defn- restore-app!
+  "Read app `view-id` of session `sid` back from its record. An open app goes back
+   to the registry without an owner callback, and a closed app to [[closed-apps]].
+   Answers the picture, or nil when the record holds no app of that session. The
+   call that restores an open app offers its accepted Sends to the session again."
+  [sid view-id]
+  (when (and (parse-uuid (str sid)) (parse-uuid (str view-id)))
+    (let [file (sink/view-file sid view-id)]
+      (when-let [{:keys [view node-seqs]} (replayed-app sid view-id file)]
+        (when (= (str sid) (:session-id view))
+          (if (:is-closed view)
+            (get (swap! closed-apps #(cond-> % (not (contains? % view-id)) (assoc view-id view)))
+                 view-id)
+            (let [[before after] (swap-vals! pending
+                                             #(cond-> % (not (contains? % view-id))
+                                                (assoc view-id (app-entry view file node-seqs))))
+                  entry (get after view-id)]
+
+              (when (and entry (not (contains? before view-id))) (offer-sends! entry))
+              (some-> entry
+                      :view
+                      deref))))))))
+
+(defn app-view
+  "App `view-id` of session `sid` as the surfaces paint it, open or closed, or
+   nil. After a restart, the first read replays its record."
+  [sid view-id]
+  (let [sid
+        (str sid)
 
         view-id
+        (str view-id)
+
+        mine
+        (fn [view]
+          (when (and view (app/app? view) (= sid (:session-id view))) view))]
+
+    (or (mine (some-> (live-entry view-id)
+                      :view
+                      deref))
+        (mine (get @closed-apps view-id))
+        (when-not (or (live-entry view-id) (contains? @closed-apps view-id))
+          (restore-app! sid view-id)))))
+
+(defn session-apps
+  "Every app of session `sid`, open or closed, in the order they opened."
+  [sid]
+  (into [] (comp (map :view-id) (distinct) (keep #(app-view sid %))) (sink/app-index (str sid))))
+
+(defn- adoptable-app
+  "The open entry of the app that `record` adopts: the newest app of its session
+   with the same extension and key. nil when that app is closed or missing."
+  [record]
+  (when-let [k (app-key record)]
+    (or (some #(when (= k (:app-key %)) %) (vals @pending))
+        (when-let [newest (->> (sink/app-index (:session-id record))
+                               (filter #(= k [(:session-id record) (:extension %) (:key %)]))
+                               last)]
+          (app-view (:session-id record) (:view-id newest))
+          (live-entry (:view-id newest))))))
+
+(defn- adopt-app!
+  "Give the open app that `record` names by key to the current owner. Answers its
+   picture, or nil when no open app holds that key. The app keeps its state; the
+   owner patches it to change it."
+  [record]
+  (when-let [entry (adoptable-app record)]
+    (some->
+      (swap! pending #(cond-> % (contains? % (:id entry)) (update (:id entry) merge (owner-hold))))
+      (get (:id entry))
+      :view
+      deref)))
+
+(defn- file-app!
+  "List new app `view` in its session and file its attachment row in the block
+   that opened it. An app opened outside a block has no row; its session still
+   lists it."
+  [view]
+  (sink/index-app! (:session-id view)
+                   (cond-> {:view-id (:id view) :created-at (:created-at view)}
+                     (:key view)
+                     (assoc :key (:key view))
+
+                     (:extension view)
+                     (assoc :extension (:extension view))))
+  (let [picture (.getBytes ^String (wire/json-str view) java.nio.charset.StandardCharsets/UTF_8)]
+    (mpl-capture/record-attachment! {:kind "file"
+                                     :media-type app/media-type
+                                     :filename (str (or (materializer/slug (:title view)) "app")
+                                                    ".app.json")
+                                     :base64 (.encodeToString (java.util.Base64/getEncoder) picture)
+                                     :size (alength picture)
+                                     :view-id (:id view)
+                                     :audience "user"})))
+
+(defn- mount-live!
+  "Register `record`, the normalized declaration of a new live view, and tell the
+   surfaces. Answers the materialized view."
+  [record]
+  (let [view-id
         (:id record)
+
+        app?
+        (app/app? record)
 
         owned
         (owned-key record)
@@ -2088,22 +2430,29 @@
          ;; The collector of the block that OPENED the view. A human's stop arrives on a
          ;; gateway thread, which holds no artifacts of its own, and the record still
          ;; belongs to the block whose run produced it.
-         :attachment-sink (when-not owned mpl-capture/*attachment-sink*)
-         :block-owner (when-not owned *block-owner*)
+         :attachment-sink (when-not (or owned app?) mpl-capture/*attachment-sink*)
+         :block-owner (when-not (or owned app?) *block-owner*)
          ;; The eval wall of the block that opened it, LIFTED for as long as the
          ;; view is open. A run SHOWING its work is never billed a deadline: a CI
          ;; run takes fifteen minutes and the Python watchdog around the block
          ;; billed five, killing the watch mid-picture. Released at the close,
          ;; whoever closes it. An owned view outlives every block, so it holds none.
-         :wall-hold (when-not owned (rt/hold-blocking-wall!))
+         :wall-hold (when-not (or owned app?) (rt/hold-blocking-wall!))
          :owned-key owned
          :owner-context (when owned (:context *live-owner*))
          :listener (when owned (:listener *live-owner*))
          ;; Callbacks of one view run in order, one at a time.
-         :listener-agent (when (and owned (:listener *live-owner*)) (agent nil))}]
+         :listener-agent (when (and owned (:listener *live-owner*)) (agent nil))}
+
+        ;; An app also outlives every block, and its owner can hand it on.
+        entry
+        (cond-> entry
+          app?
+          (merge (app-entry view file {}) (owner-hold)))]
 
     (swap! pending assoc view-id entry)
     (when owned (save-owned-soon!))
+    (when app? (file-app! view))
     (tel/log! {:level :debug
                :id ::live-opened
                :data {:view-id view-id :title (:title view) :nodes (mapv :id (:nodes view))}
@@ -2116,6 +2465,67 @@
                  :msg (str "Live view reached no channel — nobody is watching it. It still runs, "
                            "and it still ends in the verdict the model reads")}))
     view))
+
+(defn open-live!
+  "Mount a live view the human WATCHES and return it materialized, `:id` and all.
+   The caller keeps that id: every patch, and the close, name it.
+
+   Nothing blocks. A view nobody has mounted a surface for still runs and still
+   ends in the verdict the model reads — the engine says so ONCE, in the log,
+   rather than refusing work whose whole product is the picture at the end. That
+   is the one place a view differs from a request, which answers `undeliverable`
+   at once because a form nobody can see is a thread parked forever."
+  [view]
+  ;; A person's stop ends the watching of the whole block. Without this, a model loop
+  ;; around a watch tool opened the same view again at once, and the note never
+  ;; reached the model.
+  (when-let [stop (some->> *block-owner*
+                           (get @human-stops)
+                           peek)]
+    (throw (ex-info (str "Vis refused a new live view. " (human-stop-text stop))
+                    {:type :vis/live-stopped-by-human :title (:title stop) :note (:note stop)})))
+  (let [record (-> view
+                   normalize-live-view
+                   materializer/redact-presentation
+                   checked-live-view
+                   materializer/record-view)]
+    (or (when (app/app? record) (adopt-app! record)) (mount-live! record))))
+
+(defn- app-node
+  "Node `node-id` anywhere in `view`, or nil."
+  [view node-id]
+  (letfn [(walk [nodes] (some #(if (= node-id (:id %)) % (walk (:children %))) nodes))]
+    (walk (:nodes view))))
+
+(defn- owner-op
+  "One op of an owner's patch as it lands on `view`. Posted messages and the saved
+   draft of the human stay as the host stored them. Only the host writes a Send
+   receipt."
+  [view op]
+  (case (:op op)
+    :submission
+    (invalid-live-patch! "a Send receipt changes only through the live `submission` op")
+
+    :thread
+    (let [before
+          (some-> (app-node view (:node-id op))
+                  (app/find-thread (:id (:thread op))))
+
+          posted
+          (into {} (map (juxt :id identity)) (:messages before))]
+
+      (update op
+              :thread
+              (fn [thread]
+                (cond-> (-> thread
+                            (update :messages
+                                    (fn [messages]
+                                      (mapv #(get posted (:id %) %) messages)))
+                            (dissoc :draft))
+                  (:draft before)
+                  (assoc :draft (:draft before))))))
+
+    op))
 
 (defn patch-live!
   "Apply `patch` to live view `view-id` and return the view it made.
@@ -2136,6 +2546,11 @@
       (live-entry! view-id)
       (let [applied
             (-> (normalize-patch @cell patch)
+                (cond->
+                  (not *host-patch*)
+                  (update :ops
+                          (fn [ops]
+                            (mapv #(owner-op @cell %) ops))))
                 materializer/redact-presentation
                 checked-live-patch)
 
@@ -2144,6 +2559,8 @@
 
         (reset! cell patched)
         (sink/append! (:file entry) applied)
+        (some-> (:node-seqs entry)
+                (swap! merge (patch-node-seqs applied)))
         (when (:owned-key entry) (save-owned-soon!))
         (publish! (:channel-ids entry) (lifecycle-event :view/patch entry {:patch applied}))
         (.notifyAll ^Object cell)
@@ -2158,6 +2575,48 @@
    refused by the materializer without changing the view."
   [view-id node-id item-ids]
   (patch-live! view-id [{:op :set :node-id node-id :selected-ids item-ids}]))
+
+(defn- receipt-move
+  "Receipt `receipt` moved forward to `status`, with an optional `note`, or nil
+   when it does not move: a receipt never moves back, and a settled one stays."
+  [receipt status note]
+  (let [rank (zipmap app/submission-statuses (range))]
+    (when-not (contains? rank status)
+      (invalid-live-patch! (str "unknown submission status " (pr-str status)
+                                " — use " (str/join ", " app/submission-statuses))))
+    (when-not (or (nil? note) (and (string? note) (<= 1 (count note) (long (:note app/bounds)))))
+      (invalid-live-patch!
+        (str "a submission note is text of 1 to " (:note app/bounds) " characters")))
+    (when (and (not (app/settled-statuses (:status receipt)))
+               (> (long (rank status)) (long (get rank (:status receipt) 0))))
+      (cond-> (assoc receipt
+                :status status
+                :updated-at (max (util/now-ms) (long (:updated-at receipt))))
+        note
+        (assoc :note note)))))
+
+(defn- advance-receipt!
+  "Move Send receipt `submission-id` of open app `view-id` forward to `status`.
+   Answers `{:submission … :seq …}`; a receipt that does not move answers as it is."
+  [view-id submission-id status note]
+  (let [cell (:view (live-entry! view-id))]
+    (locking cell
+      (let [view @cell
+            receipt (or (app/find-submission view submission-id)
+                        (invalid-live-patch! (str "app " view-id
+                                                  " has no submission " submission-id)))]
+
+        (if-let [moved (receipt-move receipt status note)]
+          {:submission moved
+           :seq (:seq (binding [*host-patch* true]
+                        (patch-live! view-id [{:op :submission :submission moved}])))}
+          {:submission receipt :seq (:seq view)})))))
+
+(defn mark-send-delivered!
+  "Mark Send `submission-id` of open app `view-id` delivered: the session that owns
+   the app has it now. A receipt that has moved on stays as it is. Answers it."
+  [view-id submission-id]
+  (:submission (advance-receipt! view-id submission-id "delivered" nil)))
 
 (defn- human-note
   "The comment a human left with their stop: trimmed, and cut to
@@ -2377,8 +2836,11 @@
                surface-verdict (assoc (dissoc verdict :elided)
                                  :view (select-keys @cell view-spec/live-picture-keys))
                ;; No block owns an extension's view, so it files no session artifact.
-               artifact (when-not (:owned-key entry)
+               artifact (when-not (or (:owned-key entry) (:is-app entry))
                           (live-artifact @cell surface-verdict (:file entry)))
+               ;; A closed app stays readable. It is kept BEFORE the registry drops
+               ;; it, so a reader never falls back to a record without its close.
+               _ (when (:is-app entry) (swap! closed-apps assoc view-id (closed-picture @cell)))
                [old _] (swap-vals! pending dissoc view-id)]
 
            (when (contains? old view-id)
@@ -2425,9 +2887,9 @@
                               (assoc :selection-snapshots snapshots)))
                (deliver (:promise entry) model-result)
                (.notifyAll ^Object cell)
-               (when (:owned-key entry)
-                 (swap! ended-owned assoc view-id (:session-id entry))
-                 (save-owned-soon!))
+               (when (or (:owned-key entry) (:is-app entry))
+                 (swap! ended-owned assoc view-id (:session-id entry)))
+               (when (:owned-key entry) (save-owned-soon!))
                (publish! (:channel-ids entry)
                          (lifecycle-event :view/close entry {:result artifact-result}))
                (tel/log! {:level :debug
@@ -2503,7 +2965,7 @@
    The stale pictures of owned views come with them, each with `:is-stale` true."
   []
   (->> (vals @pending)
-       (filter #(= :live (:kind %)))
+       (filter #(and (= :live (:kind %)) (not (:is-app %))))
        (map entry->view)
        (concat (vals @stale-views))
        (sort-by (juxt :created-at :id))
@@ -2543,6 +3005,16 @@
   "Close each owned view that extension context `ctx` opened, because the
    extension unloads. Answers the closed view ids."
   [ctx]
+  ;; An app outlives its extension. It only loses the callback, and its Sends wait
+  ;; as accepted until the extension opens the same key again.
+  (swap! pending (fn [entries]
+                   (into {}
+                         (map (fn [[id entry]]
+                                [id
+                                 (if (and (:is-app entry) (identical? ctx (:owner-context entry)))
+                                   (dissoc entry :owner-context :listener :listener-agent)
+                                   entry)]))
+                         entries)))
   (->> (vals @pending)
        (filter #(and (:owned-key %) (identical? ctx (:owner-context %))))
        (sort-by :created-at)
@@ -2582,6 +3054,7 @@
     (let [eligible?
           (fn [entry]
             (and (= :live (:kind entry))
+                 (not (:is-app entry))
                  (= session-id (:session-id entry))
                  (nil? (:late-home entry))
                  (or (nil? (:block-owner entry)) @(:block-owner entry))))
@@ -2712,15 +3185,36 @@
                                        {:cursor next-cursor
                                         :items (if (pos? extra) (subvec items extra) items)})))]
         (when-let [listener (:listener entry)]
-          (let [recorded (peek items)]
+          (let [recorded (peek items)
+                submission-id (:submission-id recorded)]
+
+            (when submission-id
+              (some-> (:delivering entry)
+                      (swap! conj submission-id)))
             (send-off (:listener-agent entry)
                       (fn [_]
-                        (try (listener recorded (:session-id entry))
-                             (catch Throwable t
-                               (tel/log! {:level :warn
-                                          :id ::live-callback-failed
-                                          :data {:view-id (:id entry) :error (ex-message t)}
-                                          :msg "A live view callback failed"})))
+                        (when (try (listener recorded (:session-id entry))
+                                   true
+                                   (catch Throwable t
+                                     (tel/log! {:level :warn
+                                                :id ::live-callback-failed
+                                                :data {:view-id (:id entry) :error (ex-message t)}
+                                                :msg "A live view callback failed"})
+                                     false))
+                          ;; The owner has the Send now.
+                          (when submission-id
+                            (try (advance-receipt! (:id entry) submission-id "delivered" nil)
+                                 (catch Throwable t
+                                   (tel/log! {:level :warn
+                                              :id ::send-delivery-not-recorded
+                                              :data {:view-id (:id entry)
+                                                     :submission-id submission-id
+                                                     :error (ex-message t)}
+                                              :msg "Vis could not mark a delivered Send"})))))
+                        ;; A failed call leaves the Send accepted for the next owner.
+                        (when submission-id
+                          (some-> (:delivering entry)
+                                  (swap! disj submission-id)))
                         nil)))))
       (.notifyAll ^Object cell))))
 
@@ -2815,6 +3309,228 @@
             (push-live-event! entry {:type :submit :node-id node-id :values (:values outcome)})
             {:is-accepted true :node-id node-id}))))))
 
+(defn- app-locked
+  "Call `f` with the current entry of open app `entry`, under its view lock. An
+   action that loses the race to a close is refused."
+  [entry view-id f]
+  (let [cell (:view entry)]
+    (locking cell
+      (let [current (get @pending view-id)]
+        (if (identical? cell (:view current))
+          (f current)
+          {:is-accepted false :reason (if (contains? @closed-apps view-id) "closed" "unknown")})))))
+
+(defn- app-checked
+  "Call `f`. An app rule that it breaks throws again with `prefix` before its
+   message and `data` with its reason, and the broken rule as the cause."
+  [prefix data f]
+  (try (f)
+       (catch clojure.lang.ExceptionInfo e
+         (if (= :app/invalid (:type (ex-data e)))
+           (throw (ex-info (str prefix (ex-message e)) (assoc data :reason (ex-message e)) e))
+           (throw e)))))
+
+(defn- app-nodes
+  "Every node of the component tree `nodes`, children included."
+  [nodes]
+  (rest (tree-seq #(seq (:children %)) :children {:children nodes})))
+
+(defn- app-refusal
+  "Why an action on the nodes `node-ids` of open app `entry` is too late, or nil.
+   A `:revision` that no diff of `diffs` shows, or else no diff of the app, is a
+   stale revision. A `:base-seq` older than a write to one of the nodes is a
+   conflict."
+  [entry {:keys [base-seq revision]} node-ids diffs]
+  (let [view
+        @(:view entry)
+
+        revised
+        (filter app/revision
+                (or (seq diffs) (filter #(= :diff (:type %)) (app-nodes (:nodes view)))))
+
+        seqs
+        @(:node-seqs entry)]
+
+    (cond (and revision (seq revised) (not-any? #(= revision (app/revision %)) revised))
+          {:is-accepted false
+           :reason "stale_revision"
+           :revision (app/revision (first revised))
+           :seq (:seq view)}
+          base-seq (when-let [node-id (some #(when (> (long (get seqs % 0)) (long base-seq)) %)
+                                            node-ids)]
+                     {:is-accepted false :reason "conflict" :node-id node-id :seq (:seq view)}))))
+
+(defn- send-event
+  "The submit event that gives Send `receipt` to the owner of its app, with the
+   values by node id and the comments that the Send posted."
+  [receipt values comments]
+  (cond-> {:type :submit :submission-id (:id receipt) :values values :comments (vec comments)}
+    (:node-id receipt)
+    (assoc :node-id (:node-id receipt))))
+
+(defn- app-draft!
+  "Save the draft of the human in a thread of node `node-id` of open app `entry`.
+   Answers the seq of the app after the write, or a refusal when the client
+   edited an older state."
+  [entry view-id {:keys [node-id thread-id] :as action}]
+  (app-locked entry
+              view-id
+              (fn [current]
+                (let [view
+                      @(:view current)
+
+                      node
+                      (or (app-node view node-id)
+                          (invalid-view-action! view-id (str "the app has no node " node-id)))]
+
+                  (or (app-refusal current action [node-id] (when (= :diff (:type node)) [node]))
+                      (let [op
+                            (app-checked (str "Invalid View action for " view-id ": ")
+                                         {:type :vis/view-invalid-action :view-id view-id}
+                                         #(app/draft-op node action (str (random-uuid))))
+
+                            thread-id
+                            (or (get-in op [:thread :id]) thread-id)]
+
+                        (cond-> {:is-accepted true
+                                 :node-id node-id
+                                 :seq (if op
+                                        (:seq (binding [*host-patch* true]
+                                                (patch-live! view-id [op])))
+                                        (:seq view))}
+                          thread-id
+                          (assoc :thread-id thread-id))))))))
+
+(defn- app-send
+  "The receipt, the comments and the patch of one new Send. `collected` holds its
+   submit button, the inputs and thread nodes that it collects, and the checked
+   values."
+  [{:keys [node-id idempotency-key revision]} {:keys [button inputs threaded outcome]}]
+  (let [now
+        (util/now-ms)
+
+        submission-id
+        (str (random-uuid))
+
+        posted
+        (app/post-drafts threaded
+                         {:author {:kind "human"}
+                          :at now
+                          :submission-id submission-id
+                          :new-id #(str (random-uuid))})
+
+        shown
+        (remove :is-secret inputs)
+
+        receipt
+        (cond-> {:id submission-id
+                 :idempotency-key (or idempotency-key (str (random-uuid)))
+                 :status "accepted"
+                 :created-at now
+                 :updated-at now
+                 :values (into []
+                               (comp (keep (fn [{:keys [id]}]
+                                             (when-some [value (get (:values outcome) id)]
+                                               {:node-id id :value value})))
+                                     (take (:values app/bounds)))
+                               shown)
+                 :comments (vec (take (:comments app/bounds) (:comments posted)))}
+          node-id
+          (assoc :node-id node-id)
+
+          revision
+          (assoc :revision revision))]
+
+    {:receipt receipt
+     :comments (:comments posted)
+     :patch
+     (-> (if button [{:op :set :node-id node-id :clicks (inc (long (or (:clicks button) 0)))}] [])
+         (into (map (fn [{:keys [id]}]
+                      {:op :set-value :node-id id :value (get (:values outcome) id)}))
+               shown)
+         (into (:ops posted))
+         (conj {:op :submission :submission receipt}))}))
+
+(defn- app-submit!
+  "Send what the human wrote in open app `entry`: the inputs and the thread drafts
+   in the scope of `node-id`, or in the whole app without one. A submit button
+   collects its group, and a diff or a thread node sends only its own drafts. The
+   host writes one receipt and gives the owner one submit event. A retry with the
+   same idempotency key answers the first receipt."
+  [entry view-id {:keys [node-id values idempotency-key] :as action}]
+  (app-locked
+    entry
+    view-id
+    (fn [current]
+      (let [view
+            @(:view current)
+
+            earlier
+            (some->> idempotency-key
+                     (app/submission-for-key view))
+
+            node
+            (when (and node-id (nil? earlier))
+              (or (app-node view node-id)
+                  (invalid-view-action! view-id (str "the app has no node " node-id))))
+
+            button
+            (when (and (= :button (:type node)) (= :submit (:action node))) node)]
+
+        (when (and node (not button) (not (app/thread-types (:type node))))
+          (invalid-view-action! view-id "submit names a submit button, a diff or a thread node"))
+        (cond earlier (cond-> {:is-accepted true :submission earlier :seq (:seq view)}
+                        (:node-id earlier)
+                        (assoc :node-id (:node-id earlier)))
+              (:is-disabled button) {:is-accepted false :reason "disabled"}
+              :else
+              (let [scope
+                    (cond button (submit-scope (:nodes view) node-id)
+                          node [node]
+                          :else (:nodes view))
+
+                    inputs
+                    (if (and node (not button)) [] (input-fields scope))
+
+                    threaded
+                    (filterv (comp app/thread-types :type) (app-nodes scope))
+
+                    stored
+                    (into {}
+                          (keep (fn [field]
+                                  (when (contains? field :value) [(:id field) (:value field)])))
+                          inputs)
+
+                    outcome
+                    (coerce-values inputs (merge stored (select-keys values (map :id inputs))))]
+
+                (or (app-refusal current
+                                 action
+                                 (map :id (concat inputs threaded))
+                                 (filter #(= :diff (:type %)) threaded))
+                    (if-not (:is-accepted outcome)
+                      {:is-accepted false :reason "invalid" :errors (:errors outcome)}
+                      (let [{:keys [receipt comments patch]}
+                            (app-send
+                              action
+                              {:button button :inputs inputs :threaded threaded :outcome outcome})
+
+                            patched
+                            (binding [*host-patch* true]
+                              (patch-live! view-id patch))]
+
+                        (push-live-event! current (send-event receipt (:values outcome) comments))
+                        (offer-send! current receipt)
+                        (cond-> {:is-accepted true :submission receipt :seq (:seq patched)}
+                          node-id
+                          (assoc :node-id node-id)))))))))))
+
+(defn- base-seq
+  [fail! value]
+  (if (and (integer? value) (not (neg? (long value))))
+    (long value)
+    (fail! "base_seq must be a whole number of 0 or more")))
+
 (defn- normalize-view-action
   "Normalize one closed operator action. Its keys are engine keywords: the gateway
    converts a decoded action's keys once, and the `:values` it carries stay keyed
@@ -2830,17 +3546,64 @@
     (check-keys! (str (name action) " action") (get view-action-decl-keys action) raw fail!)
     (case action
       :submit
-      (let [values (:values raw)]
+      (let [values
+            (:values raw)
+
+            k
+            (:idempotency-key raw)]
+
         (when-not (map? values) (fail! "submit values must be an object"))
+        (when (and (some? k) (not (app/idempotency-key? k)))
+          (fail! "submit idempotency_key is not a valid key"))
         (cond-> {:action action :values values}
           (some? (:node-id raw))
-          (assoc :node-id (live-text fail! "submit node_id" (:node-id raw)))))
+          (assoc :node-id (live-text fail! "submit node_id" (:node-id raw)))
+
+          (some? k)
+          (assoc :idempotency-key k)
+
+          (some? (:base-seq raw))
+          (assoc :base-seq (base-seq fail! (:base-seq raw)))
+
+          (some? (:revision raw))
+          (assoc :revision (live-text fail! "submit revision" (:revision raw)))))
 
       :change
       (do (when-not (contains? raw :value) (fail! "change needs a value — null clears the input"))
-          {:action action
-           :node-id (live-text fail! "change node_id" (:node-id raw))
-           :value (:value raw)})
+          (cond-> {:action action
+                   :node-id (live-text fail! "change node_id" (:node-id raw))
+                   :value (:value raw)}
+            (some? (:base-seq raw))
+            (assoc :base-seq (base-seq fail! (:base-seq raw)))))
+
+      :draft
+      (let [body
+            (:body raw)
+
+            anchor
+            (:anchor raw)]
+
+        (when-not (string? body) (fail! "draft body must be text"))
+        (when (> (count body) (long (:body app/bounds)))
+          (fail! (str "a draft holds at most " (:body app/bounds) " characters")))
+        (cond-> {:action action
+                 :node-id (live-text fail! "draft node_id" (:node-id raw))
+                 :body body}
+          (some? (:thread-id raw))
+          (assoc :thread-id (live-text fail! "draft thread_id" (:thread-id raw)))
+
+          (some? anchor)
+          (assoc :anchor
+            (app-anchor fail!
+                        (cond-> anchor
+                          (map? anchor)
+                          (update-keys #(wire/engine-key (name %))))))
+
+          (some? (:base-seq raw))
+          (assoc :base-seq (base-seq fail! (:base-seq raw)))
+
+          (some? (:revision raw))
+          (assoc :revision (live-text fail! "draft revision" (:revision raw)))))
 
       :cancel
       {:action action}
@@ -2878,7 +3641,7 @@
   (let [view-id
         (str view-id)
 
-        {:keys [action values node-id item-ids note value]}
+        {:keys [action values node-id item-ids note value] :as normalized}
         (normalize-view-action view-id raw)
 
         entry
@@ -2887,7 +3650,10 @@
         base
         {:action action :view-id view-id}]
 
-    (cond (and (nil? entry) (contains? @stale-views view-id))
+    (cond (and (nil? entry) (contains? @closed-apps view-id)) (assoc base
+                                                                :is-accepted false
+                                                                :reason "closed")
+          (and (nil? entry) (contains? @stale-views view-id))
           (if (= :interrupt action)
             (assoc base :is-accepted (boolean (dismiss-stale! view-id)))
             (assoc base
@@ -2903,24 +3669,41 @@
                 supported?
                 (case action
                   :submit
-                  (or (= :input kind) (and (= :live kind) (some? node-id)))
+                  (or (= :input kind) (and (= :live kind) (or (:is-app entry) (some? node-id))))
 
                   :cancel
                   (= :input kind)
 
-                  (:select :activate :interrupt :change)
+                  :draft
+                  (boolean (:is-app entry))
+
+                  :interrupt
+                  (and (= :live kind) (not (:is-app entry)))
+
+                  (:select :activate :change)
                   (= :live kind))]
 
             (when-not supported? (unsupported-view-action! view-id kind action))
             (case action
               :submit
               (merge base
-                     (if (= :live kind)
-                       (live-submit! entry view-id node-id values)
-                       (submit! view-id values)))
+                     (cond (:is-app entry) (app-submit! entry view-id normalized)
+                           (= :live kind) (live-submit! entry view-id node-id values)
+                           :else (submit! view-id values)))
+
+              :draft
+              (merge base (app-draft! entry view-id normalized))
 
               :change
-              (merge base (live-change! entry view-id node-id value))
+              (merge base
+                     (if (:is-app entry)
+                       (app-locked entry
+                                   view-id
+                                   (fn [current]
+                                     (or (app-refusal current normalized [node-id] nil)
+                                         (assoc (live-change! current view-id node-id value)
+                                           :seq (:seq @(:view current))))))
+                       (live-change! entry view-id node-id value)))
 
               :cancel
               (if (false? (:is-cancellable entry))
@@ -2984,7 +3767,12 @@
    channel detaches or the session shuts down, so no thread stays parked — this
    one ignores `:is-cancellable`, because nothing is left to answer with."
   ([] (cancel-all! "cancelled"))
-  ([reason] (count (filterv #(force-cancel! % reason) (keys @pending)))))
+  ([reason]
+   ;; An app is no wait: it outlives a detaching channel and a closing session.
+   (count (filterv #(force-cancel! % reason)
+            (keep (fn [[id entry]]
+                    (when-not (:is-app entry) id))
+                  @pending)))))
 
 (defn request!
   "Ask the operator for typed values and BLOCK until they answer.
@@ -3179,7 +3967,9 @@
 
 (def ^:private live-ops
   "Operations implemented by the live view host door."
-  {:default "open" :spawn #{"open"} :handle #{"patch" "state" "events" "close"}})
+  {:default "open"
+   :spawn #{"open"}
+   :handle #{"patch" "state" "events" "close" "reply" "submission" "archive"}})
 
 (defn- live-op-name
   "The op `opts` asks for, refused BY NAME when it is in neither list. An options
@@ -3209,8 +3999,13 @@
    difference between an unattended loop that stops and one that keeps working
    for a screen nobody is watching."
   [view-id]
-  (let [sid
-        (if (contains? @ended-owned view-id) (get @ended-owned view-id) (ambient-session-id))
+  (let [closed
+        (get @closed-apps view-id)
+
+        sid
+        (cond closed (:session-id closed)
+              (contains? @ended-owned view-id) (get @ended-owned view-id)
+              :else (ambient-session-id))
 
         result
         (sink/verdict (sink/view-file sid view-id))]
@@ -3218,7 +4013,10 @@
     (when-not result
       (invalid-live-patch!
         (str "no live view " view-id " is open — it was closed, interrupted, or never opened")))
-    {:view-id view-id :is-open false :result result}))
+    ;; A closed app stays readable: its owner still reads the receipts.
+    (cond-> {:view-id view-id :is-open false :result result}
+      closed
+      (assoc :view closed))))
 
 (defn- live-state
   "Read a snapshot, or wait on its monitor until its sequence changes or it closes.
@@ -3254,6 +4052,170 @@
                     :else (do (.wait ^Object cell (long remaining)) (recur)))))))
       (live-ended view-id))))
 
+(defn- recorded-app!
+  "Read app `view-id` back from its record when this process has not read it yet,
+   so that a handle op after a restart finds it."
+  [view-id]
+  (when-not (or (contains? @pending view-id) (contains? @closed-apps view-id))
+    (let [sid
+          (or (get @ended-owned view-id) (ambient-session-id))
+
+          own
+          (when sid (sink/view-file sid view-id))
+
+          file
+          (if (and own (.isFile ^java.io.File own)) own (sink/find-view-file view-id))]
+
+      (when file (restore-app! (.getName (.getParentFile ^java.io.File file)) view-id)))))
+
+(defn- owned-app
+  "App `view-id` that the current owner drives, open or closed. nil for a view
+   that is no app. The sandbox drives only the apps of its own session."
+  [view-id]
+  (let [app
+        (some #(when (app/app? %) %)
+              [(some-> (live-entry view-id)
+                       :view
+                       deref) (get @closed-apps view-id)])
+
+        sid
+        (when (and app (nil? (:extension app))) (ambient-session-id))]
+
+    (when (and app (not= (:extension app) (:extension *live-owner*)))
+      (invalid-live-patch! (str "app " view-id
+                                " belongs to " (if-let [owner (:extension app)]
+                                                 (str "extension " owner)
+                                                 "the python_execution sandbox"))))
+    (when (and sid (:session-id app) (not= sid (:session-id app)))
+      (invalid-live-patch! (str "app " view-id " belongs to another session")))
+    app))
+
+(defn- app-only!
+  [view-id op]
+  (when-not (owned-app view-id)
+    (invalid-live-patch! (str "a live " op " needs an app — " view-id " is no app"))))
+
+(defn- closed-app!
+  "Refuse `op` on closed app `view-id`. A closed app is read-only, so a write that
+   the owner expects to land fails loudly instead of answering the ended picture."
+  [view-id op]
+  (invalid-live-patch!
+    (str "a live " op " needs an open app — app " view-id " is closed and read-only")))
+
+(defn- owner-checked
+  "Call `f`. An app rule that it breaks refuses the owner's op as an invalid patch."
+  [f]
+  (app-checked "Invalid live-view patch: " {:type :vis/view-invalid-patch} f))
+
+(defn- app-reply!
+  "Post the reply of the owner of open app `view-id` in a thread of node
+   `node_id`. Without `thread_id`, a diff starts a thread at `anchor`. With
+   `submission_id`, the Send that the reply answers moves to `answered`."
+  [view-id opts]
+  (let [node-id
+        (live-text invalid-live-patch! "a reply's node_id" (get opts "node_id"))
+
+        body
+        (get opts "body")
+
+        submission-id
+        (trimmed (get opts "submission_id"))
+
+        cell
+        (:view (live-entry! view-id))]
+
+    (when-not (string? body) (invalid-live-patch! "a reply's body must be text"))
+    (locking cell
+      (live-entry! view-id)
+      (let [view
+            @cell
+
+            node
+            (or (app-node view node-id)
+                (invalid-live-patch! (str "app " view-id " has no node " node-id)))
+
+            receipt
+            (when submission-id
+              (or (app/find-submission view submission-id)
+                  (invalid-live-patch! (str "app " view-id " has no submission " submission-id))))
+
+            message
+            (cond-> {:id (str (random-uuid))
+                     :author (owner-author)
+                     :body body
+                     :created-at (util/now-ms)}
+              submission-id
+              (assoc :submission-id submission-id))
+
+            op
+            (owner-checked #(app/reply-op node
+                                          {:thread-id (trimmed (get opts "thread_id"))
+                                           :anchor (some->> (get opts "anchor")
+                                                            spec<-json
+                                                            (app-anchor invalid-live-patch!))
+                                           :new-thread-id (str (random-uuid))}
+                                          message))
+
+            moved
+            (some-> receipt
+                    (receipt-move "answered" nil))
+
+            patched
+            (binding [*host-patch* true]
+              (patch-live! view-id
+                           (cond-> [op]
+                             moved
+                             (conj {:op :submission :submission moved}))))]
+
+        (cond-> {:view-id view-id
+                 :is-open true
+                 :node-id node-id
+                 :thread-id (get-in op [:thread :id])
+                 :message-id (:id message)
+                 :seq (:seq patched)}
+          receipt
+          (assoc :submission (or moved receipt)))))))
+
+(defn- archive-app!
+  "Close app `view-id` when it is open and mark it archived. An archived app
+   leaves the default list of its session and refuses every action."
+  [view-id]
+  (let [view (owned-app view-id)]
+    (when-not (:is-archived view)
+      (when (live-entry view-id) (close-live! view-id {:summary "The owner archived the app."}))
+      (sink/archive! (sink/view-file (:session-id view) view-id))
+      (swap! closed-apps update view-id #(assoc (or % (closed-picture view)) :is-archived true)))
+    {:view-id view-id :is-open false :is-closed true :is-archived true}))
+
+(defn- redeliver-sends!
+  "Give the listener of open app `view-id` each Send that it did not get yet: a
+   Send from before a restart, or one that came while no listener was there."
+  [view-id]
+  (when-let [cell (:view (live-entry view-id))]
+    (locking cell
+      (let [entry (live-entry view-id)]
+        (when (and (:is-app entry) (:listener entry))
+          (doseq [receipt (:submissions @cell)
+                  :when (and (= "accepted" (:status receipt))
+                             (not (contains? @(:delivering entry) (:id receipt))))]
+
+            (push-live-event! entry
+                              (send-event receipt
+                                          (into {} (map (juxt :node-id :value)) (:values receipt))
+                                          (:comments receipt)))))))))
+
+(defn- read-sends!
+  "Mark each Send in `events` delivered: the owner of app `view-id` without a
+   listener reads its events itself."
+  [view-id events]
+  (doseq [submission-id (keep :submission-id events)]
+    (try (advance-receipt! view-id submission-id "delivered" nil)
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::send-read-not-recorded
+                      :data {:view-id view-id :submission-id submission-id :error (ex-message t)}
+                      :msg "Vis could not mark a Send that its owner read"})))))
+
 (defn live-dispatch
   "One live-view op: an options map with wire keys in, the answer map out. The
    view, patch or ending it carries becomes engine keywords here, once.
@@ -3267,15 +4229,18 @@
   (when-not (map? opts) (invalid-live-view! "a live envelope must be a JSON object"))
   (let [op (live-op-name opts)]
     (when-not (= "open" op)
-      ;; Only its own extension drives an owned view.
+      ;; Only its own extension drives an owned view, and only its owner an app.
       (let [view-id (live-handle-id opts op)
+            _ (recorded-app! view-id)
             owner (first (:owned-key (live-entry view-id)))]
 
         (when (and owner (not= owner (:extension *live-owner*)))
-          (invalid-live-patch! (str "live view " view-id " belongs to extension " owner)))))
+          (invalid-live-patch! (str "live view " view-id " belongs to extension " owner)))
+        (owned-app view-id)))
     (case op
       "open"
       (let [view (supersede-owned! (open-live! (spec<-json (get opts "view"))))]
+        (when (app/app? view) (redeliver-sends! (:id view)))
         {:view-id (:id view) :is-open true :view view})
 
       "patch"
@@ -3307,11 +4272,38 @@
                        (<= 0 (long timeout) 86400000))
           (invalid-live-patch!
             "events after must be a nonnegative integer; timeout_ms must be 0..86400000"))
-        (if (live-entry view-id)
-          (assoc (live-events view-id after timeout) :view-id view-id)
+        (if-let [entry (live-entry view-id)]
+          (let [answer (live-events view-id after timeout)]
+            (when (and (:is-app entry) (nil? (:listener entry)))
+              (read-sends! view-id (:events answer)))
+            (assoc answer :view-id view-id))
           (assoc (live-ended view-id)
             :events []
             :cursor after)))
+
+      "reply"
+      (let [view-id (live-handle-id opts op)]
+        (app-only! view-id op)
+        (if (live-entry view-id) (app-reply! view-id opts) (closed-app! view-id op)))
+
+      "submission"
+      (let [view-id (live-handle-id opts op)]
+        (app-only! view-id op)
+        (if (live-entry view-id)
+          (assoc (advance-receipt! view-id
+                                   (live-text invalid-live-patch!
+                                              "a submission op's submission_id"
+                                              (get opts "submission_id"))
+                                   (get opts "status")
+                                   (get opts "note"))
+            :view-id view-id
+            :is-open true)
+          (closed-app! view-id op)))
+
+      "archive"
+      (let [view-id (live-handle-id opts op)]
+        (app-only! view-id op)
+        (archive-app! view-id))
 
       "close"
       (let [view-id (live-handle-id opts op)]
@@ -3340,3 +4332,23 @@
            (dissoc "channel_id" "channel_ids")
            live-dispatch
            wire/json-str)))))
+
+(defn app-json!
+  "The app seam of the `python_execution` sandbox: [[live-json!]] without an owner.
+   The sandbox opens only apps, and it drives only the apps of its own session."
+  [envelope-json]
+  (let [envelope (json/read-json (str envelope-json) :key-fn identity)]
+    (when-not (map? envelope) (invalid-live-view! "a live envelope must be a JSON object"))
+    (binding [*live-owner* nil]
+      (let [op (live-op-name envelope)]
+        (if (= "open" op)
+          (when-not (= (name app/placement) (get-in envelope ["view" "placement"]))
+            (invalid-live-view!
+              "the python_execution sandbox opens only apps: attach(ui.app(...))"))
+          (let [view-id (live-handle-id envelope op)]
+            (recorded-app! view-id)
+            (app-only! view-id op))))
+      (-> envelope
+          (dissoc "channel_id" "channel_ids")
+          live-dispatch
+          wire/json-str))))

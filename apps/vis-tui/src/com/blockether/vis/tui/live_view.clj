@@ -42,6 +42,7 @@
    hits the newest one first."
   (:require [charred.api :as json]
             [clojure.string :as str]
+            [com.blockether.vis.tui.app-model :as app-model]
             [com.blockether.vis.tui.view-model :as view-model]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.components :as components]
@@ -796,6 +797,25 @@
                          {:kind :code :node-id id :text part})
                        (p/fold-cols line text-w))))
         (str/split text #"\n" -1)))
+
+(defn- app-entries
+  [rows text-w]
+  (mapv (fn [row]
+          (let [{:keys [gutter body]} (app-model/row-parts row)]
+            {:kind :app-row
+             :node-id (:node-id row)
+             :tone (app-model/row-tone row)
+             :text (p/ellipsize (str gutter body) (max 1 (long text-w)))}))
+        rows))
+
+;; An app's diff and thread paint read only here; the app surface owns their keys.
+(defmethod node-rows :diff
+  [node {:keys [text-w]}]
+  (app-entries (app-model/diff-rows node text-w #{}) text-w))
+
+(defmethod node-rows :thread
+  [node {:keys [text-w]}]
+  (app-entries (app-model/thread-rows node text-w {:node-id (:id node)}) text-w))
 
 (defmethod node-rows :spinner
   [{:keys [id text variant is-active]} {:keys [is-interactive]}]
@@ -2239,6 +2259,9 @@
     :code
     (paint-plain! g left row inner-w t/dialog-fg (:text entry))
 
+    :app-row
+    (paint-plain! g left row inner-w (tone-fg (:tone entry)) (:text entry))
+
     :status
     (paint-runs! g left row inner-w (tone-fg (:tone entry)) [p/BOLD] (:runs entry))
 
@@ -2763,6 +2786,12 @@
                                                    (input/input->text (:input search))
                                                    (get-in search [:input :ccol])
                                                    "Literal text (empty shows all)")))))))))))
+
+(defn paint-plan-entry!
+  "Paint ONE entry of [[plan]] at `row`, `inner-w` columns from the rail `left`.
+   The app surface paints the nodes it does not own through this."
+  [g left row inner-w view-id entry]
+  (paint-entry! g left row inner-w view-id entry))
 
 (defn paint!
   "Paint the newest expanded Live View with one empty row above its heading.

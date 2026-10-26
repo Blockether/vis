@@ -118,8 +118,8 @@ original project.
 ## Review changes before approval
 
 Ask Vis to attach the draft's diff, or to include a diff with each completed task's
-implementation report. Open it in Companion or the TUI to read file changes and
-comment on them. Sending a review round does not approve the draft or publish code.
+implementation report. Open it in Companion or the TUI to read the file changes.
+Reading a diff does not approve the draft or publish code.
 
 A diff compares immutable snapshots. Vis takes the first snapshot after it creates the draft. So
 changes copied with `clean=False` are part of the starting point, not new implementation work. Later
@@ -134,9 +134,8 @@ Status distinguishes task review counts from pending Git changes.
 By default the diff covers all changes since the draft began. A checkpoint lets the
 next diff show only the following task, including later edits to the same files.
 The final cumulative diff still uses the original starting point. File contents,
-additions and deletions come from the draft. Comments are saved separately and
-never rewrite the patch. Ignored untracked files and backend bookkeeping are not
-review material.
+additions and deletions come from the draft. Ignored untracked files and backend
+bookkeeping are not review material.
 
 ## Approval
 

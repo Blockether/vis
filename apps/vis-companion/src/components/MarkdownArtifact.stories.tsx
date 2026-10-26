@@ -1,23 +1,16 @@
-import type { ComponentProps } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, waitFor } from 'storybook/test';
+import { expect, waitFor } from 'storybook/test';
 
-import { LOG_TEXT, NOTE_ANNOTATED, NOTE_MARKDOWN } from '../dev/story-data';
-import { type DocumentChrome, MarkdownAnnotator, MarkdownArtifact } from './MarkdownArtifact';
-import { quoteOf, renderAnnotated } from '../lib/markdown-annotations';
+import { LOG_TEXT, NOTE_MARKDOWN } from '../dev/story-data';
+import { type DocumentChrome, MarkdownArtifact } from './MarkdownArtifact';
 
 /**
- * A NOTE, READ AS PROSE AND TALKED BACK TO.
+ * A NOTE, READ AS PROSE.
  *
- * Select a passage, say what you think, and the remark is kept in the note itself
- * under one `## Comments` heading — so a commented document is just a document,
- * and the fixture here is the file's own format.
- *
- * A document is always read inside somebody else's chrome, and the annotator
- * hands its cells UP: `actions` is the band's verb, `note` is what the band
- * should REPORT, `body` is the column that scrolls. The stand-in below is the one
- * `MarkdownArtifact.test.tsx` uses, for the same reason: it is the frame, not the
- * subject.
+ * A document is always read inside somebody else's chrome, and the reader hands
+ * its cells UP: `actions` is the band's verb, `note` is what the band should
+ * REPORT, `body` is the column that scrolls. The stand-in below is the frame, not
+ * the subject.
  */
 const chrome: DocumentChrome = ({ actions, note, body }) => (
   <div className="flex h-[520px] min-h-0 flex-col gap-2">
@@ -32,11 +25,11 @@ const chrome: DocumentChrome = ({ actions, note, body }) => (
 );
 
 const meta = {
-  title: 'Components/Markdown annotator',
-  component: MarkdownAnnotator,
+  title: 'Components/Markdown artifact',
+  component: MarkdownArtifact,
   parameters: { layout: 'padded' },
-  args: { text: NOTE_MARKDOWN, chrome, onSave: fn(async () => 2) },
-} satisfies Meta<typeof MarkdownAnnotator>;
+  args: { source: new Blob([NOTE_MARKDOWN], { type: 'text/markdown' }), chrome },
+} satisfies Meta<typeof MarkdownArtifact>;
 
 export default meta;
 
@@ -44,63 +37,15 @@ type Story = StoryObj<typeof meta>;
 
 /** The note as prose: headings as headings, through the transcript's own renderer. */
 export const Note: Story = {
-  play: async ({ canvas, args }) => {
-    await userEvent.click(canvas.getByRole('button', { name: 'Comment on the whole document' }));
-    await userEvent.type(canvas.getByRole('textbox', { name: 'Comment' }), 'Worth a second pass.');
-    await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
-    await userEvent.click(canvas.getByRole('button', { name: 'Save changes' }));
-    await expect(args.onSave).toHaveBeenCalledTimes(1);
-    await expect(args.onSave).toHaveBeenCalledWith(expect.stringContaining('Worth a second pass.'));
-    await expect(canvas.getByRole('status')).toHaveTextContent('Saved as v2');
+  play: async ({ canvas }) => {
+    await waitFor(() => expect(canvas.getAllByRole('heading').length).toBeGreaterThan(0));
+    await expect(canvas.queryByRole('button', { name: /comment/i })).toBeNull();
   },
 };
 
-/** The same note after two remarks — one about a passage, one about the whole file. */
-export const Commented: Story = {
-  args: { text: NOTE_ANNOTATED },
-};
-
-/** A `.log`: the same annotator, reading the file verbatim instead of rendering it. */
+/** A `.log`: the same reader, showing the file verbatim instead of rendering it. */
 export const Plain: Story = {
-  args: { text: LOG_TEXT, plain: true },
-};
-
-/** Regression: selecting and commenting must not reflow the document. */
-export const StableHighlight: Story = {
-  // Line fitting measures text in real browser layout, which the jsdom story run lacks: open
-  // this story in Storybook to play it.
-  tags: ['!test'],
-  args: {
-    text: '# Delivery plan\n\nThis passage wraps on a phone and must keep exactly the same layout when selected or commented.\n\n- Keep the next step in place.',
-  },
-  play: async ({ canvas, canvasElement }) => {
-    const passage = canvas.getByRole('paragraph');
-    expect(passage).toHaveTextContent(
-      'This passage wraps on a phone and must keep exactly the same layout when selected or commented.',
-    );
-    // Take the baseline after fonts and paragraph composition have settled.
-    await document.fonts.ready;
-    const blocks = [...canvasElement.querySelectorAll('h1, p, li')];
-    const geometry = () =>
-      blocks.map((block) => {
-        const box = block.getBoundingClientRect();
-        return [box.width, box.height];
-      });
-    const before = geometry();
-    const content = passage.innerHTML;
-    const check = () => {
-      expect(geometry()).toEqual(before);
-      expect(passage.innerHTML).toBe(content);
-      expect(getComputedStyle(passage).textDecorationLine).toBe('none');
-      expect(getComputedStyle(passage).boxShadow).toBe('none');
-      expect(passage.style.backgroundColor).not.toBe('');
-    };
-    await userEvent.click(passage);
-    check();
-    await userEvent.type(canvas.getByRole('textbox', { name: 'Comment' }), 'Keep this layout.');
-    await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
-    check();
-  },
+  args: { source: new Blob([LOG_TEXT], { type: 'text/plain' }), plain: true },
 };
 
 const RICH_PARAGRAPH =
@@ -113,9 +58,6 @@ ${RICH_PARAGRAPH}
 
 > A quotation with *emphasis* follows the same paragraph layout rules.`;
 const RICH_SOURCE = new Blob([RICH_TEXT], { type: 'text/markdown' });
-const readerClient = { base: 'http://127.0.0.1:7777' } as ComponentProps<
-  typeof MarkdownArtifact
->['client'];
 
 /** Every line stays inside the column, and no gap outside code opens wider than five spaces. */
 function fittedParagraph(prose: HTMLElement) {
@@ -155,15 +97,7 @@ export const RichReadOnlyArtifact: Story = {
   globals: { theme: 'blockether-dark' },
   render: () => (
     <div data-artifact-column style={{ width: 600, maxWidth: '100%' }}>
-      <MarkdownArtifact
-        client={readerClient}
-        sid="s1"
-        iterationId="i1"
-        name="typography.md"
-        mediaType="text/markdown"
-        source={RICH_SOURCE}
-        chrome={chrome}
-      />
+      <MarkdownArtifact source={RICH_SOURCE} chrome={chrome} />
     </div>
   ),
   play: async ({ canvas, canvasElement }) => {
@@ -207,44 +141,5 @@ export const RichReadOnlyArtifact: Story = {
     expect(prose.textContent).toBe(original);
     await waitFor(() => fittedParagraph(column.querySelector('li')!));
     await waitFor(() => fittedParagraph(column.querySelector('blockquote p')!));
-    expect(canvas.queryByRole('button', { name: 'Comment on the whole document' })).toBeNull();
-  },
-};
-
-/** Formatting and composed line spans remain transparent to artifact comments. */
-export const RichArtifactComments: Story = {
-  // Line fitting measures text in real browser layout, which the jsdom story run lacks: open
-  // this story in Storybook to play it.
-  tags: ['!test'],
-  globals: { theme: 'blockether-dark' },
-  args: { text: RICH_TEXT, onSave: fn(async () => 2) },
-  render: (args) => (
-    <div style={{ width: 420, maxWidth: '100%' }}>
-      <MarkdownAnnotator {...args} />
-    </div>
-  ),
-  play: async ({ canvas, canvasElement, args }) => {
-    await document.fonts.ready;
-    const prose = canvasElement.querySelector('p')!;
-    await waitFor(() => fittedParagraph(prose));
-    const original = prose.textContent;
-    const markup = prose.innerHTML;
-    await userEvent.click(prose.querySelector('strong')!);
-    expect(prose.innerHTML).toBe(markup);
-    const quote = canvasElement.querySelector('textarea[aria-label="Comment"]')!;
-    expect(quote).toBeVisible();
-    await userEvent.type(
-      canvas.getByRole('textbox', { name: 'Comment' }),
-      'Keep these line breaks.',
-    );
-    await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
-    expect(prose.innerHTML).toBe(markup);
-    expect(prose.textContent).toBe(original);
-    await userEvent.click(canvas.getByRole('button', { name: 'Save changes' }));
-    expect(args.onSave).toHaveBeenCalledWith(
-      renderAnnotated(RICH_TEXT, [
-        { quote: quoteOf(original ?? ''), body: 'Keep these line breaks.' },
-      ]),
-    );
   },
 };

@@ -408,52 +408,6 @@
                              :index idx)))
     (http/session-404 (get-in request [:path-params :sid]))))
 
-(defn- append-attachment-handler
-  "POST /v1/sessions/:sid/iterations/:iid/attachments — a HUMAN's revision of an
-   artifact the model produced, stored into the iteration that produced it:
-   `{\"filename\": \"notes.md\", \"media_type\": \"text/markdown\",
-   \"base64\": \"…\"}`.
-
-   The filename is the identity, so re-sending the name is the NEXT VERSION of
-   that artifact and not a second file beside it — the annotated note the
-   companion saves is `v2` of the note it was reading. Answers with the same
-   descriptor shape the transcript and the byte endpoint already speak, so the
-   client re-reads the revision through the paths it already has."
-  [request]
-  (if-let [sid (http/path-sid request)]
-    (let [body (http/body-json request)
-          filename (some-> (get body "filename")
-                           str
-                           str/trim)
-          base64 (get body "base64")]
-
-      (if (or (str/blank? filename) (str/blank? (str base64)))
-        (http/error-response 400 :invalid-attachment "filename and base64 are required")
-        (try (if-let [descriptor (state/revise-iteration-attachment!
-                                   sid
-                                   (path-iid request)
-                                   {:filename filename
-                                    :media-type (or (not-empty (str (get body "media_type")))
-                                                    "application/octet-stream")
-                                    :base64 (str base64)})]
-               (http/json-response 201 descriptor)
-               (http/error-response 404
-                                    :attachment-not-stored "unknown iteration"
-                                    :iteration_id (str (path-iid request))))
-             (catch clojure.lang.ExceptionInfo e
-               (case (:type (ex-data e))
-                 :attachment/not-found
-                 (http/error-response 404 :attachment-not-found (ex-message e))
-
-                 :attachment/read-only
-                 (http/error-response 403 :attachment-read-only (ex-message e))
-
-                 :attachment/invalid-revision
-                 (http/error-response 400 :invalid-attachment (ex-message e))
-
-                 (throw e))))))
-    (http/session-404 (get-in request [:path-params :sid]))))
-
 (defn- turn-attachments-handler
   "GET /v1/sessions/:sid/turns/:tid/attachments — the inline media a USER sent
    with one turn. `?transcription_only=true` omits the large base64 body when a
@@ -497,8 +451,7 @@
 
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
-  {[:post "/v1/sessions/:sid/iterations/:iid/attachments"] append-attachment-handler
-   [:get "/v1/sessions/:sid/iterations/:iid/attachments/:idx"] attachment-bytes-handler
+  {[:get "/v1/sessions/:sid/iterations/:iid/attachments/:idx"] attachment-bytes-handler
    [:post "/v1/sessions/:sid/attachments"] upload-attachment-handler
    [:get "/v1/sessions/:sid/turns"] list-turns-handler
    [:post "/v1/sessions/:sid/turns"] submit-turn-handler

@@ -37,11 +37,47 @@ export function viewMaxColumns(raw: unknown): number | undefined {
     : undefined;
 }
 
-export const VIEW_ACTIONS = ['activate', 'cancel', 'change', 'interrupt', 'select', 'submit'] as const;
+export const VIEW_ACTIONS = [
+  'activate',
+  'cancel',
+  'change',
+  'draft',
+  'interrupt',
+  'select',
+  'submit',
+] as const;
 export type ViewActionName = (typeof VIEW_ACTIONS)[number];
+
+/** A diff line that a thread belongs to: the file, the old or new side and the line. */
+export interface ViewAnchor {
+  path: string;
+  side: 'old' | 'new';
+  line: number;
+}
+
 export type ViewAction =
-  | { action: 'submit'; values: Record<string, unknown>; node_id?: string }
-  | { action: 'change'; node_id: string; value: unknown }
+  | {
+      action: 'submit';
+      values: Record<string, unknown>;
+      node_id?: string;
+      /** One key for each Send. A retry with the same key answers the same receipt. */
+      idempotency_key?: string;
+      /** The state version the client edited. */
+      base_seq?: number;
+      /** The diff `new_revision` the client reviewed. */
+      revision?: string;
+    }
+  | { action: 'change'; node_id: string; value: unknown; base_seq?: number }
+  | {
+      action: 'draft';
+      node_id: string;
+      thread_id?: string;
+      anchor?: ViewAnchor;
+      /** Blank text removes the draft; a blank draft on a new anchor creates nothing. */
+      body: string;
+      base_seq?: number;
+      revision?: string;
+    }
   | { action: 'cancel' }
   | { action: 'activate'; node_id: string }
   | { action: 'select'; node_id: string; item_ids: string[] }
@@ -55,6 +91,14 @@ export type ViewActionOutcome = {
   reason?: string;
   node_id?: string;
   item_ids?: string[];
+  /** The new state version: the Save acknowledgement of an app. */
+  seq?: number;
+  /** The thread that a `draft` saved into. Absent when nothing was created. */
+  thread_id?: string;
+  /** The receipt of a `submit` in an app. */
+  submission?: unknown;
+  /** The current diff revision of a `stale_revision` refusal. */
+  revision?: string;
 };
 
 /** Read the CLOSED capability kind without accepting an arbitrary string. */

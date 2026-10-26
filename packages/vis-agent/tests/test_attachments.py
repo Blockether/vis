@@ -21,14 +21,13 @@ def test_attach_stores_a_path_and_returns_its_descriptor(tmp_path):
     source = tmp_path / "report.csv"
     source.write_text("a,b\n1,2\n", encoding="utf-8")
 
-    row = vis.attach(source, label="Totals", commentable=True)
+    row = vis.attach(source, label="Totals")
 
     assert row["filename"] == "report.csv"
     assert row["version"] == 1
     assert row["media_type"] == "text/csv"
     assert row["kind"] == "file"
     assert row["size"] == 8
-    assert row["commentable"] is True
     assert vis.read_attachment(row) == b"a,b\n1,2\n"
 
 
@@ -76,7 +75,6 @@ def test_attach_sends_one_options_map_to_the_host(monkeypatch):
             "media_type": "text/markdown",
             "media_type_hint": "text/plain",
             "audience": "both",
-            "commentable": False,
         }
     ]
 
@@ -90,8 +88,6 @@ def test_attach_refuses_wrong_sources_and_options(tmp_path):
         vis.attach(tmp_path / "missing.png")
     with pytest.raises(ValueError, match="audience"):
         vis.attach(PNG, "a.png", audience="everyone")
-    with pytest.raises(TypeError, match="commentable"):
-        vis.attach(PNG, "a.png", commentable="yes")
     with pytest.raises(ValueError, match="empty payload"):
         vis.attach(b"", "a.png")
 

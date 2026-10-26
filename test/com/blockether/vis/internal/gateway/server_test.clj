@@ -4913,86 +4913,22 @@
 
                               idx))))))))))
 
-;; Regression: the companion's Save on an annotated artifact answered "Could not
-;; save this revision" — the URL it posts to was served by no route at all, so a
-;; human's comments and drawings could never become the next version.
-(defdescribe the-companions-save-url-routes-to-the-attachment-append-handler
-             (it "the companions save url routes to the attachment append handler"
-                 (let [match-by-path
-                       (requiring-resolve 'reitit.core/match-by-path)
-
-                       router
-                       ((rv 'router) "token" [])
-
-                       sid
-                       (str (random-uuid))
-
-                       iid
-                       (str (random-uuid))
-
-                       path
-                       (str "/v1/sessions/" sid "/iterations/" iid "/attachments")]
-
-                   ;; POST of a revision reaches the append handler
-                   (expect (= @#'turns-api/append-attachment-handler
-                              (get-in (match-by-path router path) [:data :post :handler])))
-                   ;; and the bytes of one version are still read back beside it
-                   (expect (= @#'turns-api/attachment-bytes-handler
-                              (get-in (match-by-path router (str path "/0"))
-                                      [:data :get :handler]))))))
-
-;; Regression, same report: saving an annotated note must file it under its OWN
-;; filename, which is what makes the revision the NEXT VERSION of that artifact
-;; rather than a second file beside it.
 (defdescribe
-  saving-a-revision-stores-it-under-the-artifacts-own-filename
-  (it "saving a revision stores it under the artifacts own filename"
-      (let [seen
-            (atom nil)
+  human-attachment-revision-route-is-removed
+  ;; #421: attachments are read-only; apps replace the human revision route.
+  (it "routes no POST to iteration attachments and still serves their bytes"
+      (let [match-by-path
+            (requiring-resolve 'reitit.core/match-by-path)
 
-            iid
-            (str (random-uuid))
+            router
+            ((rv 'router) "token" [])
 
-            body
-            {"filename" "PLAN.md"
-             "media_type" "text/markdown"
-             "commentable" true
-             "kind" "diff"
-             "base64" (.encodeToString (java.util.Base64/getEncoder)
-                                       (.getBytes "# Release plan\n" "UTF-8"))}]
+            path
+            (str "/v1/sessions/" (random-uuid) "/iterations/" (random-uuid) "/attachments")]
 
-        (with-redefs-fn {#'gw-http/body-json (constantly body)
-                         #'gw-http/path-sid (constantly "session-owner")
-                         #'state/revise-iteration-attachment!
-                         (fn [sid iteration-id attachment]
-                           (expect (= "session-owner" sid))
-                           (reset! seen [iteration-id attachment])
-                           {:index 1 :filename "PLAN.md" :version 2})}
-          (fn []
-            (let [response (#'turns-api/append-attachment-handler {:path-params {:iid iid}})]
-              (expect (= 201 (:status response)))
-              (expect (= 2 (get (wire/parse-json (:body response)) "version")))
-              (let [[iteration-id attachment] @seen]
-                (expect (= iid iteration-id))
-                (expect (= "PLAN.md" (:filename attachment)))
-                (expect (= "text/markdown" (:media-type attachment)))
-                (expect (not (contains? attachment :commentable))))))))))
-
-(defdescribe human-attachment-revision-refusals-have-client-statuses
-             (it "human attachment revision refusals have client statuses"
-                 (doseq [[reason status] [[:attachment/not-found 404] [:attachment/read-only 403]
-                                          [:attachment/invalid-revision 400]]]
-                   (with-redefs-fn {#'gw-http/body-json (constantly {"filename" "note.md"
-                                                                     "media_type" "text/markdown"
-                                                                     "base64" "bm90ZQ=="})
-                                    #'gw-http/path-sid (constantly "session-owner")
-                                    #'state/revise-iteration-attachment!
-                                    (fn [& _]
-                                      (throw (ex-info "Revision refused" {:type reason})))}
-                     (fn []
-                       (expect (= status
-                                  (:status (#'turns-api/append-attachment-handler
-                                            {:path-params {:iid "iteration"}})))))))))
+        (expect (nil? (get-in (match-by-path router path) [:data :post :handler])))
+        (expect (= @#'turns-api/attachment-bytes-handler
+                   (get-in (match-by-path router (str path "/0")) [:data :get :handler]))))))
 
 ;; The session-creation UX picks a workspace root by RECOGNITION, so the gateway
 ;; has to be able to show the machine's own folders. `/v1/fs` is that surface and

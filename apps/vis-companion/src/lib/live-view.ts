@@ -15,6 +15,7 @@ import {
   viewKind,
   viewMaxColumns,
 } from './view';
+import type { ViewAnchor } from './view';
 import {
   HUMAN_INPUT_FIELD_TYPES,
   humanInputFieldFromWire,
@@ -37,6 +38,8 @@ export const LIVE_NODE_TYPES = [
   'button',
   'divider',
   'card',
+  'diff',
+  'thread',
 ] as const;
 
 /** The inputs a live view can hold: the form's own input types. */
@@ -62,10 +65,37 @@ export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
  * and gave it to the form that produced it, so a view no longer carries a
  * projection for a patch to replace.
  */
-export const LIVE_OPS = ['set', 'append', 'remove', 'clear', 'add-node', 'remove-node'] as const;
+export const LIVE_OPS = [
+  'set',
+  'append',
+  'remove',
+  'clear',
+  'add-node',
+  'remove-node',
+  'thread',
+  'submission',
+] as const;
 
-/** Where a view stands (`view.spec/placements`). CLOSED. */
-export const LIVE_PLACEMENTS = ['inline', 'panel'] as const;
+/** Where a view stands (`view.spec/placements`). CLOSED. An `attachment` is an app. */
+export const LIVE_PLACEMENTS = ['inline', 'panel', 'attachment'] as const;
+
+/** The media type of the transcript row that lists an app attachment. */
+export const APP_ATTACHMENT_MEDIA = 'application/vnd.vis.app+json';
+
+/** The delivery stages of one Send, in order (`submission_status`). CLOSED. */
+export const LIVE_SUBMISSION_STATUSES = [
+  'accepted',
+  'delivered',
+  'processing',
+  'answered',
+  'failed',
+] as const;
+
+/** An app holds at most this many receipts (`live_view.submissions.maxItems`). */
+export const LIVE_SUBMISSIONS_MAX = 50;
+
+/** The longest message or draft text (`message.body.maxLength`). */
+export const LIVE_MESSAGE_CHARS = 20000;
 
 /** What a link POINTS AT (`live-link-targets`). CLOSED. */
 export const LIVE_LINK_TARGETS = ['attachment', 'path', 'url'] as const;
@@ -100,6 +130,7 @@ export type LiveLinkTarget = (typeof LIVE_LINK_TARGETS)[number];
 export type LiveAlign = (typeof LIVE_ALIGNS)[number];
 export type LiveSortDir = (typeof LIVE_SORT_DIRS)[number];
 export type LiveGroupDirection = (typeof LIVE_GROUP_DIRECTIONS)[number];
+export type LiveSubmissionStatus = (typeof LIVE_SUBMISSION_STATUSES)[number];
 
 /** `insertion`, `newest-first`, or one DECLARED column, ties kept in insertion order. */
 export type LiveOrder = (typeof LIVE_ORDERS)[number] | { by: string; dir?: LiveSortDir };
@@ -284,6 +315,61 @@ export interface LiveGroupNode extends LiveNodeBase {
   default_expanded?: boolean;
 }
 
+/** Who wrote a message. The host sets it; a client never sends it. */
+export interface LiveAuthor {
+  kind: 'human' | 'agent' | 'extension';
+  name?: string;
+}
+
+/** One posted message of a thread, with a stable id from the host. */
+export interface LiveMessage {
+  id: string;
+  author: LiveAuthor;
+  body: string;
+  created_at: number;
+  submission_id?: string;
+}
+
+/** A discussion. `draft` is the saved, unsent text of the human. */
+export interface LiveThread {
+  id: string;
+  anchor?: ViewAnchor;
+  messages: LiveMessage[];
+  draft?: string;
+  is_resolved?: boolean;
+}
+
+/** A unified diff with its revisions and the threads anchored to its lines. */
+export interface LiveDiffNode extends LiveNodeBase {
+  type: 'diff';
+  patch: string;
+  old_revision?: string;
+  new_revision?: string;
+  threads: LiveThread[];
+}
+
+/** One thread as a node of its own. The node id is the thread id. */
+export interface LiveThreadNode extends LiveNodeBase {
+  type: 'thread';
+  anchor?: ViewAnchor;
+  messages: LiveMessage[];
+  draft?: string;
+  is_resolved?: boolean;
+}
+
+/** The host receipt of one Send. */
+export interface LiveSubmission {
+  id: string;
+  idempotency_key: string;
+  node_id?: string;
+  status: LiveSubmissionStatus;
+  created_at: number;
+  updated_at: number;
+  revision?: string;
+  note?: string;
+  comments?: { node_id: string; thread_id: string; message_id: string; body: string }[];
+}
+
 /** A static thematic break spanning its allocated content width. */
 export interface LiveDividerNode {
   id: string;
@@ -307,7 +393,9 @@ export type LiveLeafNode =
   | LiveButtonNode
   | LiveCardNode
   | LiveInputNode
-  | LiveDividerNode;
+  | LiveDividerNode
+  | LiveDiffNode
+  | LiveThreadNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
@@ -347,8 +435,19 @@ export interface LiveView {
   created_at?: number;
   source?: string;
   owner?: LiveViewOwner;
-  /** `inline` in the transcript, or `panel` beside it. */
+  /** `inline` in the transcript, `panel` beside it, or `attachment` for an app. */
   placement?: LivePlacement;
+  /** The newest Send receipts of an app, oldest first. */
+  submissions?: LiveSubmission[];
+  /** The owner archived this app. It keeps its state. */
+  is_archived?: boolean;
+  /** The owner closed this app. It keeps its last state and takes no actions. */
+  is_closed?: boolean;
+  /**
+   * The host's `is_stale`: the saved picture of an owned view whose extension is
+   * not loaded. It is kept apart from `is_stale`, which asks for a re-read.
+   */
+  is_disconnected?: boolean;
   /** The session that shows the view. */
   session_id?: string;
   /** The extension that owns a panel view. */
@@ -514,6 +613,143 @@ function linkFromWire(raw: Record<string, unknown>): LiveLink | null {
   };
 }
 
+function anchorFromWire(value: unknown): ViewAnchor | undefined {
+  const raw = record(value);
+  const path = raw ? optionalText(raw.path) : undefined;
+  const line = raw ? optionalNumber(raw.line) : undefined;
+  if (!raw || !path || line === undefined || line < 1) return undefined;
+  if (raw.side !== 'old' && raw.side !== 'new') return undefined;
+  return { path, side: raw.side, line: Math.trunc(line) };
+}
+
+function authorFromWire(value: unknown): LiveAuthor {
+  const raw = record(value);
+  const kind = raw?.kind === 'agent' || raw?.kind === 'extension' ? raw.kind : 'human';
+  const name = optionalText(raw?.name);
+  return name ? { kind, name } : { kind };
+}
+
+function messageFromWire(raw: Record<string, unknown>): LiveMessage | null {
+  const id = text(raw.id);
+  const body = text(raw.body);
+  if (id === '' || body === '') return null;
+  const submission = optionalText(raw.submission_id);
+  return {
+    id,
+    author: authorFromWire(raw.author),
+    body,
+    created_at: count(raw.created_at, 0),
+    ...(submission ? { submission_id: submission } : {}),
+  };
+}
+
+/** A saved draft is never blank, so blank text is no draft. */
+function draftFromWire(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+/** The thread fields that a thread node and a diff thread share. */
+function threadPartsFromWire(raw: Record<string, unknown>): Omit<LiveThread, 'id'> {
+  const anchor = anchorFromWire(raw.anchor);
+  const draft = draftFromWire(raw.draft);
+  return {
+    ...(anchor ? { anchor } : {}),
+    messages: keyed(raw.messages, messageFromWire),
+    ...(draft === undefined ? {} : { draft }),
+    ...(raw.is_resolved === undefined ? {} : { is_resolved: raw.is_resolved === true }),
+  };
+}
+
+function threadFromWire(raw: Record<string, unknown>): LiveThread | null {
+  const id = text(raw.id);
+  if (id === '') return null;
+  return { id, ...threadPartsFromWire(raw) };
+}
+
+/** One Send receipt read from the wire, or null when it has no id or no known stage. */
+export function submissionFromWire(raw: Record<string, unknown>): LiveSubmission | null {
+  const id = text(raw.id);
+  const status = text(raw.status);
+  if (id === '' || !(LIVE_SUBMISSION_STATUSES as readonly string[]).includes(status)) return null;
+  const nodeId = optionalText(raw.node_id);
+  const revision = optionalText(raw.revision);
+  const note = optionalText(raw.note);
+  const comments = rows(raw.comments)
+    .map((comment) => ({
+      node_id: text(comment.node_id),
+      thread_id: text(comment.thread_id),
+      message_id: text(comment.message_id),
+      body: text(comment.body),
+    }))
+    .filter((comment) => comment.thread_id !== '' && comment.body !== '');
+  const created = count(raw.created_at, 0);
+  return {
+    id,
+    idempotency_key: text(raw.idempotency_key),
+    status: status as LiveSubmissionStatus,
+    created_at: created,
+    updated_at: count(raw.updated_at, created),
+    ...(nodeId ? { node_id: nodeId } : {}),
+    ...(revision ? { revision } : {}),
+    ...(note ? { note } : {}),
+    ...(comments.length > 0 ? { comments } : {}),
+  };
+}
+
+/**
+ * `submission` folded into the receipts by id (`app/upsert-submission`). Past the
+ * bound the oldest settled receipt goes first, then the oldest receipt.
+ */
+export function upsertSubmission(
+  receipts: readonly LiveSubmission[],
+  submission: LiveSubmission,
+): LiveSubmission[] {
+  const at = receipts.findIndex((one) => one.id === submission.id);
+  const all = receipts.slice();
+  if (at >= 0) all[at] = submission;
+  else all.push(submission);
+  while (all.length > LIVE_SUBMISSIONS_MAX) {
+    const settled = all.findIndex((one) => one.status === 'answered' || one.status === 'failed');
+    all.splice(settled >= 0 ? settled : 0, 1);
+  }
+  return all;
+}
+
+/** The threads a node holds: every thread of a diff, or the thread node itself. */
+export function liveThreads(node: LiveNode): LiveThread[] {
+  if (node.type === 'diff') return node.threads;
+  if (node.type === 'thread') {
+    return [
+      {
+        id: node.id,
+        messages: node.messages,
+        ...(node.anchor ? { anchor: node.anchor } : {}),
+        ...(node.draft === undefined ? {} : { draft: node.draft }),
+        ...(node.is_resolved === undefined ? {} : { is_resolved: node.is_resolved }),
+      },
+    ];
+  }
+  return [];
+}
+
+/** `thread` upserted into a diff by id, or put in place of a thread node's thread. */
+function upsertThread(node: LiveLeafNode, thread: LiveThread): LiveNode {
+  if (node.type === 'diff') {
+    return { ...node, threads: upsert(node.threads, [thread]) };
+  }
+  if (node.type === 'thread' && node.id === thread.id) {
+    const { id: _id, ...parts } = thread;
+    void _id;
+    return {
+      id: node.id,
+      type: 'thread',
+      ...(node.label ? { label: node.label } : {}),
+      ...parts,
+    };
+  }
+  return node;
+}
+
 function keyed<T>(value: unknown, parse: (raw: Record<string, unknown>) => T | null): T[] {
   return rows(value)
     .map(parse)
@@ -668,6 +904,20 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         is_selectable: node.is_selectable === true,
         clicks: count(node.clicks, 0),
       };
+    case 'diff': {
+      const oldRevision = optionalText(node.old_revision);
+      const newRevision = optionalText(node.new_revision);
+      return {
+        ...base,
+        type: 'diff',
+        patch: text(node.patch),
+        ...(oldRevision ? { old_revision: oldRevision } : {}),
+        ...(newRevision ? { new_revision: newRevision } : {}),
+        threads: keyed(node.threads, threadFromWire),
+      };
+    }
+    case 'thread':
+      return { ...base, type: 'thread', ...threadPartsFromWire(node) };
   }
 }
 
@@ -709,6 +959,12 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     session_id: optionalText(view.session_id),
     extension: optionalText(view.extension),
     key: optionalText(view.key),
+    ...(Array.isArray(view.submissions)
+      ? { submissions: keyed(view.submissions, submissionFromWire) }
+      : {}),
+    ...(view.is_archived === true ? { is_archived: true } : {}),
+    ...(view.is_closed === true ? { is_closed: true } : {}),
+    ...(view.is_stale === true ? { is_disconnected: true } : {}),
   };
 }
 
@@ -839,6 +1095,16 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
         label: 'label' in op ? optionalText(op.label) : node.label,
         links: 'links' in op ? keyed(op.links, linkFromWire) : node.links,
       };
+    case 'diff':
+      return {
+        ...node,
+        label: 'label' in op ? optionalText(op.label) : node.label,
+        patch: 'patch' in op ? text(op.patch) : node.patch,
+        old_revision: 'old_revision' in op ? optionalText(op.old_revision) : node.old_revision,
+        new_revision: 'new_revision' in op ? optionalText(op.new_revision) : node.new_revision,
+      };
+    case 'thread':
+      return 'label' in op ? { ...node, label: optionalText(op.label) } : node;
     default:
       if ('field' in node) {
         return {
@@ -922,6 +1188,8 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       return { ...node, steps: withoutIds(node.steps, op.item_ids) };
     case 'link':
       return { ...node, links: withoutIds(node.links, op.item_ids) };
+    case 'diff':
+      return { ...node, threads: withoutIds(node.threads, op.item_ids) };
     default:
       return node;
   }
@@ -947,6 +1215,13 @@ function applyClear(node: LiveLeafNode): LiveNode {
     default:
       return node;
   }
+}
+
+/** `thread` puts one whole thread in place (`app/upsert-thread`). */
+function applyThread(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
+  const raw = record(op.thread);
+  const thread = raw ? threadFromWire(raw) : null;
+  return thread ? upsertThread(node, thread) : node;
 }
 
 /** Every id in the tree, groups included (`live/node-ids`). */
@@ -1021,6 +1296,12 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
   const op = record(raw);
   if (!op) return view;
   const name = text(op.op);
+  if (name === 'submission') {
+    const raw = record(op.submission);
+    const submission = raw ? submissionFromWire(raw) : null;
+    if (!submission) return view;
+    return { ...view, submissions: upsertSubmission(view.submissions ?? [], submission) };
+  }
   if (name === 'add-node') {
     const node = liveNodeFromWire(op.node_spec);
     if (!node) return view;
@@ -1050,7 +1331,9 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
           ? applyRemove(node, op)
           : name === 'clear'
             ? applyClear(node)
-            : node;
+            : name === 'thread'
+              ? applyThread(node, op)
+              : node;
   });
   return nodes === view.nodes ? view : { ...view, nodes };
 }

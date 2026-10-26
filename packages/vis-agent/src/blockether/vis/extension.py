@@ -4172,27 +4172,36 @@ def attach(
     media_type=None,
     label=None,
     audience="both",
-    commentable=False,
 ):
-    """Store an artifact as a durable attachment of the running block.
+    """Store an artifact as a durable attachment of the running block, or open an app.
 
     `source` is a path, bytes, a Matplotlib figure or a Pillow image. The engine
     stores the artifact with the `python_execution` block that called this tool,
     exactly like the sandbox `attach` verb. A second attachment under the same
     `filename` is the next version of that artifact. `audience` is `both`, `user`
-    or `model`; a PDF or HTML document is for the user only. Set
-    `commentable=True` to let a person comment on this version.
+    or `model`; a PDF or HTML document is for the user only.
 
-    Returns the descriptor dict: id, filename, version, media_type, kind, size,
-    audience and commentable. Every read function takes it as its target.
+    Returns the descriptor dict: id, filename, version, media_type, kind, size
+    and audience. Every read function takes it as its target.
+
+    An app declaration from `vis.ui.app(...)` opens an app and answers its
+    `LiveAttachment` handle. The app row from `list_attachments()` answers a handle
+    for that app again. An app takes no other argument.
     """
+    if isinstance(source, Mapping) and (
+        source.get("placement") == "attachment"
+        or source.get("media_type") == _APP_MEDIA_TYPE
+    ):
+        if (filename, kind, media_type, label) != (None,) * 4 or audience != "both":
+            raise TypeError(
+                "vis.attach: an app takes no filename, kind, media_type, label or audience"
+            )
+        return LiveAttachment._from(source)
     data, name = _attachment_source(source, filename)
     if audience not in _ATTACH_AUDIENCES:
         raise ValueError(
             f"vis.attach: audience must be 'both', 'user' or 'model', got {audience!r}"
         )
-    if not isinstance(commentable, bool):
-        raise TypeError("vis.attach: commentable must be a boolean")
     if not data:
         raise ValueError("vis.attach: empty payload.")
     options = {
@@ -4203,7 +4212,6 @@ def attach(
         "kind": kind,
         "audience": audience,
         "label": label,
-        "commentable": commentable,
     }
     payload = _host.attach({k: v for k, v in options.items() if v is not None})
     return _attachment_row(json.loads(payload))
@@ -4338,6 +4346,9 @@ class LiveEvent:
 
     `value` is the new value of a changed input; a secret input gives only
     `is_set`. `values` holds every input that a submit button collected.
+    A Send in an app gives `submission_id`, the id of its receipt, and `comments`:
+    the thread messages that it posted, each with `node_id`, `thread_id`,
+    `message_id`, `body` and the `anchor` of a diff line.
     """
 
     type: str
@@ -4346,6 +4357,8 @@ class LiveEvent:
     value: Any = None
     values: Mapping[str, Any] | None = None
     is_set: bool | None = None
+    submission_id: str | None = None
+    comments: list[Mapping[str, Any]] | None = None
 
     @classmethod
     def _from_wire(cls, raw):
@@ -4356,6 +4369,8 @@ class LiveEvent:
             value=raw.get("value"),
             values=raw.get("values"),
             is_set=raw.get("is_set"),
+            submission_id=raw.get("submission_id"),
+            comments=None if raw.get("comments") is None else list(raw["comments"]),
         )
 
 
@@ -4607,6 +4622,41 @@ class Link(_KeyedNode):
         )
 
 
+class DiffNode(_Node):
+    """A unified diff that people review line by line, with threads on lines."""
+
+    def set(self, patch=None, *, old_revision=None, new_revision=None):
+        """Replace the patch or its revisions. Drafts of an older revision go stale."""
+        return self._op(
+            "set",
+            patch=None if patch is None else str(patch),
+            old_revision=old_revision,
+            new_revision=new_revision,
+        )
+
+    @property
+    def threads(self):
+        """The threads on the lines of this diff, as the surfaces paint them."""
+        return list(self._view._node_state(self.node_id).get("threads") or [])
+
+    def reply(self, body, **where):
+        """Answer in a thread of this diff. See `LiveAttachment.reply`."""
+        return self._view.reply(self.node_id, body, **where)
+
+
+class ThreadNode(_Node):
+    """One conversation between people and the owner of the app."""
+
+    @property
+    def messages(self):
+        """The messages of this thread, oldest first."""
+        return list(self._view._node_state(self.node_id).get("messages") or [])
+
+    def reply(self, body, **where):
+        """Answer in this thread. See `LiveAttachment.reply`."""
+        return self._view.reply(self.node_id, body, **where)
+
+
 _LIVE_NODES = {
     "paragraph": TextNode,
     "heading": TextNode,
@@ -4622,6 +4672,8 @@ _LIVE_NODES = {
     "table": Table,
     "link": Link,
     "card": Card,
+    "diff": DiffNode,
+    "thread": ThreadNode,
     "plaintext": Input,
     "password": Input,
     "multiline": Input,
@@ -4672,6 +4724,20 @@ class LiveView:
     """
 
     def __init__(self, request, flush_ms=None, on_event=None):
+        self._prepare(flush_ms)
+        if on_event is not None:
+            self.on_event(on_event)
+            answer = self._live({"op": "open", "view": request}, self._host_event)
+            view = answer.get("view")
+            placement = view.get("placement") if isinstance(view, dict) else None
+            self._is_pushed = placement not in (None, "inline")
+        else:
+            answer = self._call({"op": "open", "view": request})
+        self.view_id = str(answer.get("view_id") or "")
+        self._settle(answer)
+
+    def _prepare(self, flush_ms):
+        """Set the empty state of a handle before it knows its view."""
         import json
 
         self._json = json
@@ -4694,25 +4760,24 @@ class LiveView:
         self._listeners = []
         # A panel view gets its events from the host, as callbacks.
         self._is_pushed = False
-        if on_event is not None:
-            self.on_event(on_event)
-            answer = self._json.loads(
-                _host.live(
-                    self._json.dumps({"op": "open", "view": request}), self._host_event
-                )
-            )
-            view = answer.get("view")
-            placement = view.get("placement") if isinstance(view, dict) else None
-            self._is_pushed = placement not in (None, "inline")
-        else:
-            answer = self._call({"op": "open", "view": request})
-        self.view_id = str(answer.get("view_id") or "")
-        self._settle(answer)
+        self.view_id = ""
 
     # -- the host seam --------------------------------------------------------
 
+    _door = None
+    # The host function that carries the envelopes of this handle. None is the
+    # extension host. The python_execution sandbox gives its own app door.
+
+    def _live(self, envelope, listener=None):
+        """Cross one envelope to the host and answer the decoded reply."""
+        door = self._door or _host.live
+        text = self._json.dumps(envelope)
+        return self._json.loads(
+            door(text) if listener is None else door(text, listener)
+        )
+
     def _call(self, envelope):
-        return self._json.loads(_host.live(self._json.dumps(envelope)))
+        return self._live(envelope)
 
     def _host_event(self, raw):
         """Give one event that the host pushed to every `on_event` callback."""
@@ -5154,6 +5219,163 @@ class LiveView:
         return f"<vis live view {self.view_id!r} {state}>"
 
 
+_APP_MEDIA_TYPE = "application/vnd.vis.app+json"
+_RECEIPT_STAGES = ("accepted", "delivered", "processing", "answered", "failed")
+# The stages of one Send receipt, in order. The host refuses a step back.
+
+
+class LiveAttachment(LiveView):
+    """An app: a live view that is attached to the session and keeps its state.
+
+    `vis.attach(vis.ui.app(title, *nodes))` opens one and answers this handle. The app
+    stays in the session after the call returns, also across gateway restarts. People
+    use it in the TUI and in the Companion app with the same `vis.ui` components. They
+    save drafts, and each Send gives a receipt in `submissions()`. The owner answers
+    with `reply(...)` and moves a receipt with `set_status(...)`.
+
+    `id` is the app identity. `vis.attach(row)` with the app row from
+    `list_attachments()` answers a new handle for the same app, also after a restart.
+    """
+
+    def __init__(self, request, flush_ms=None, on_event=None, door=None):
+        self._door = door
+        super().__init__(request, flush_ms=flush_ms, on_event=on_event)
+
+    @classmethod
+    def _from(cls, source, door=None):
+        """The handle of app declaration or app attachment row `source`."""
+        if not isinstance(source, Mapping):
+            raise TypeError(
+                "an app is a vis.ui.app(...) declaration or an app attachment row"
+            )
+        if source.get("media_type") == _APP_MEDIA_TYPE:
+            view_id = str(source.get("view_id") or "").strip()
+            if not view_id:
+                raise ValueError("this app attachment row has no view_id")
+            handle = cls.__new__(cls)
+            handle._door = door
+            handle._prepare(None)
+            handle.view_id = view_id
+            handle.state()
+            return handle
+        if source.get("placement") != "attachment":
+            raise TypeError(
+                "an app declaration has placement 'attachment': build it with vis.ui.app(...)"
+            )
+        request = dict(source)
+        flush_ms = request.pop("flush_ms", None)
+        return cls(request, flush_ms=flush_ms, door=door)
+
+    @property
+    def id(self):
+        """The app identity: the view id that every surface and record uses."""
+        return self.view_id
+
+    def _app_call(self, envelope):
+        """Cross one app op. An answer without `is_open` keeps the open state."""
+        self.flush()
+        answer = self._call({k: v for k, v in envelope.items() if v is not None})
+        if "is_open" in answer:
+            self._is_open = bool(answer["is_open"])
+        if answer.get("seq") == self._seq + 1:
+            self._seq = answer["seq"]
+        return answer
+
+    def reply(self, node_id, body, *, thread_id=None, anchor=None, submission_id=None):
+        """Answer people in a thread of node `node_id`, as the owner of the app.
+
+        `thread_id` names an existing thread. On a diff without it, `anchor`
+        (`{"path", "side", "line"}`) starts a thread on that line. `submission_id`
+        names the Send that you answer, and its receipt moves to `answered`. The
+        host sets the author. Answers `thread_id`, `message_id` and the new `seq`.
+        """
+        if not isinstance(body, str):
+            raise TypeError("reply body must be a string")
+        if not body.strip():
+            raise ValueError("reply body must not be blank")
+        return self._app_call(
+            {
+                "op": "reply",
+                "view_id": self.view_id,
+                "node_id": str(node_id),
+                "body": body,
+                "thread_id": None if thread_id is None else str(thread_id),
+                "anchor": anchor,
+                "submission_id": None if submission_id is None else str(submission_id),
+            }
+        )
+
+    def set_status(self, submission_id, status, *, note=None):
+        """Move the receipt of Send `submission_id` to `status`, and answer it.
+
+        `status` is `delivered`, `processing`, `answered` or `failed`. People see the
+        stage, and `note` (at most 500 characters) tells them why.
+        """
+        if status not in _RECEIPT_STAGES:
+            raise ValueError(
+                f"status must be one of {', '.join(_RECEIPT_STAGES)}, got {status!r}"
+            )
+        answer = self._app_call(
+            {
+                "op": "submission",
+                "view_id": self.view_id,
+                "submission_id": str(submission_id),
+                "status": status,
+                "note": note,
+            }
+        )
+        return answer.get("submission")
+
+    def submissions(self, status=None):
+        """The Send receipts of this app, oldest first, as dicts.
+
+        Each has `id`, `idempotency_key`, `status`, `created_at` and `updated_at`,
+        and `node_id`, `values`, `comments`, `revision` or `note` when it has them.
+        With `status`, only the receipts in that stage.
+        """
+        if status is not None and status not in _RECEIPT_STAGES:
+            raise ValueError(
+                f"status must be one of {', '.join(_RECEIPT_STAGES)}, got {status!r}"
+            )
+        receipts = [dict(r) for r in (self.state() or {}).get("submissions") or []]
+        return [r for r in receipts if status is None or r.get("status") == status]
+
+    def submission(self, submission_id):
+        """One Send receipt by id. An unknown id raises KeyError."""
+        wanted = str(submission_id)
+        for receipt in self.submissions():
+            if receipt.get("id") == wanted:
+                return receipt
+        raise KeyError(f"this app has no submission {wanted!r}")
+
+    def thread(self, node_id, thread_id=None):
+        """One thread as a dict: `id`, `anchor`, `messages`, `draft`, `is_resolved`.
+
+        A thread node is its own thread. On a diff, `thread_id` names the thread.
+        """
+        node = self._node_state(str(node_id))
+        if node.get("type") == "thread":
+            keys = ("id", "anchor", "messages", "draft", "is_resolved")
+            return {k: node[k] for k in keys if k in node}
+        for found in node.get("threads") or []:
+            if found.get("id") == thread_id:
+                return dict(found)
+        raise KeyError(f"node {node_id!r} has no thread {thread_id!r}")
+
+    def archive(self):
+        """Close the app and keep it only in the archived list of its session.
+
+        The record stays readable. A second archive changes nothing.
+        """
+        answer = self._app_call({"op": "archive", "view_id": self.view_id})
+        self._is_open = False
+        return answer
+
+    def __repr__(self):
+        state = "open" if self._is_open else "closed"
+        return f"<vis app {self.view_id!r} {state}>"
+
+
 def _merge_append(earlier, op):
     """Fold `op`'s items into `earlier`, or answer False when they do not fold."""
     if earlier.get("tone") != op.get("tone"):
@@ -5183,8 +5405,8 @@ def live(title, nodes, placement=None, key=None, on_event=None, **options):
     `vis.ask` documents. There is no cancellable flag: a human can always stop
     watching, and the verdict says they did (`is_from_human`) and why (`note`).
 
-    `placement` is `inline` (the default) or `panel` (the side panel of one
-    session). Only extension code opens a panel view, and it needs a `key`:
+    `placement` is `inline` (the default), `attachment` (an app, which answers a
+    `LiveAttachment`) or `panel` (the side panel of one session). Only extension code opens a panel view, and it needs a `key`:
     the extension and the key own one view, so opening the same key again
     replaces it. Such a view stays open after the call returns. It
     closes on `close()` or when the extension unloads. `on_event(event)` then
@@ -5207,7 +5429,8 @@ def live(title, nodes, placement=None, key=None, on_event=None, **options):
         request["placement"] = str(placement)
     if key is not None:
         request["key"] = str(key)
-    return LiveView(request, flush_ms=flush_ms, on_event=on_event)
+    handle = LiveAttachment if request.get("placement") == "attachment" else LiveView
+    return handle(request, flush_ms=flush_ms, on_event=on_event)
 
 
 # -- Extension live-view test harness -----------------------------------------
@@ -5928,6 +6151,41 @@ def _ui_link(node_id, links=None, **spec):
     return _live_node("link", node_id, dict(spec, links=links))
 
 
+def _ui_diff(node_id, patch, *, old_revision=None, new_revision=None, **spec):
+    """A unified diff that people review line by line in an app.
+
+    People comment on a line and send their comments. The owner answers in the same
+    thread. `old_revision` and `new_revision` name the compared versions.
+    """
+    return _live_node(
+        "diff",
+        node_id,
+        dict(
+            spec, patch=str(patch), old_revision=old_revision, new_revision=new_revision
+        ),
+    )
+
+
+def _ui_thread(node_id, *, messages=None, **spec):
+    """One conversation in an app: people write and send, the owner replies."""
+    return _live_node("thread", node_id, dict(spec, messages=list(messages or [])))
+
+
+def _ui_app(title, *nodes, description=None, key=None, **options):
+    """An app declaration for `vis.attach`: a live view that stays in the session.
+
+    The nodes are the same components as in `vis.live`, plus `diff` and `thread`.
+    `key` makes the app adoptable: its owner can open the same key again later.
+    """
+    request = {str(k): v for k, v in options.items()}
+    request.update(placement="attachment", title=str(title), nodes=list(nodes))
+    if description is not None:
+        request["description"] = str(description)
+    if key is not None:
+        request["key"] = str(key)
+    return request
+
+
 class _UI:
     """Components for live views and forms.
 
@@ -5974,6 +6232,11 @@ class _UI:
     table_column = staticmethod(_ui_table_column)
     table_row = staticmethod(_ui_table_row)
     table_group = staticmethod(_ui_table_group)
+
+    # Apps
+    app = staticmethod(_ui_app)
+    diff = staticmethod(_ui_diff)
+    thread = staticmethod(_ui_thread)
 
 
 ui = _UI()

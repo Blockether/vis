@@ -139,7 +139,7 @@
    :attachment-focus? :attachment-index :loading? :cancel-token :cancelling? :cancelling-at-ms
    :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress :turn-start-ms
    :detail-expansions :mouse-selection :session-model-pref :human-input :human-input-queue
-   :live-views :live-viewer-id :live-viewer-search
+   :live-views :live-viewer-id :live-viewer-search :app-views
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -195,6 +195,9 @@
    :live-views []
    :live-viewer-id nil
    :live-viewer-search nil
+   ;; App attachments by view id: `{:view v :is-gap bool}`. They never join the
+   ;; live band; the app surface reads them from here.
+   :app-views {}
    ;; Stated HERE on purpose: `restore-tab` only MERGES, so a tab that never armed
    ;; would otherwise inherit the armed tab's flag from the root db.
    :voice-conversation? false})
@@ -4046,6 +4049,40 @@
                                    (mapv #(if (= (:view-id row) (:view-id %)) row %) runs)
                                    (conj runs row)))))))))
 
+(defn- mount-app-view
+  "Keep app attachment `view` for the app surface. A newer copy wins."
+  [workspace view]
+  (update-in workspace
+             [:app-views (:id view)]
+             (fn [held]
+               (if (and held (> (long (or (get-in held [:view :seq]) 0)) (long (or (:seq view) 0))))
+                 held
+                 {:view view :is-gap false}))))
+
+(defn- patch-app-view
+  "Apply `patch` to a held app view. A seq gap marks the copy for a full read."
+  [workspace patch]
+  (if-let [held (get-in workspace [:app-views (:view-id patch)])]
+    (let [current (long (or (get-in held [:view :seq]) 0))
+          next-seq (long (or (:seq patch) 0))]
+
+      (cond (<= next-seq current) workspace
+            (> next-seq (inc current))
+            (assoc-in workspace [:app-views (:view-id patch) :is-gap] true)
+            :else (assoc-in workspace
+                    [:app-views (:view-id patch) :view]
+                    (:view (lv/patched (lv/opened (:view held)) patch)))))
+    workspace))
+
+(defn- close-app-view
+  "Mark app `view-id` closed in every tab that holds it. It stays readable."
+  [db view-id]
+  (across-tabs db
+               (fn [w]
+                 (cond-> w
+                   (get-in w [:app-views view-id])
+                   (assoc-in [:app-views view-id :view :is-closed] true)))))
+
 (defn- mount-live-pane
   [workspace view]
   (if (some #(= (:id view) (lv/view-id %)) (:live-views workspace))
@@ -4061,13 +4098,16 @@
               ;; Never infer ownership from the most recently executing form.
               (fn [db [_ view]]
                 (let [target (session-target-tab db (:session-id view))]
-                  (if (= :not-here target) db (update-tab db target #(mount-live-pane % view))))))
+                  (cond (= :not-here target) db
+                        (= :attachment (:placement view))
+                        (update-tab db target #(mount-app-view % view))
+                        :else (update-tab db target #(mount-live-pane % view))))))
 
 (reg-event-db
   :live-view-patch
   (fn [db [_ patch]]
     (across-tabs
-      db
+      (across-tabs db #(patch-app-view % patch))
       (fn [workspace]
         (if-let [pane (first (filter #(= (:view-id patch) (lv/view-id %)) (:live-views workspace)))]
           (let [next-pane (lv/patched pane patch)]
@@ -4088,7 +4128,7 @@
               ;; is what made a watched log unreachable, and the band keeping one line
               ;; forever is what made a finished run look like it was still going.
               (fn [db [_ view-id result]]
-                (across-tabs db
+                (across-tabs (close-app-view db view-id)
                              (fn [w]
                                ;; A close reaches a tab TWICE whenever the view was opened in
                                ;; this process — the in-process bus and the journalled session
@@ -4111,6 +4151,12 @@
                                            (fn [panes]
                                              (filterv #(not= view-id (lv/view-id %)) panes))))
                                  w)))))
+
+(reg-event-db :app-view-loaded
+              ;; A full read of one app view, after a seq gap or an action ack.
+              (fn [db [_ view]]
+                (let [target (session-target-tab db (:session-id view))]
+                  (if (= :not-here target) db (update-tab db target #(mount-app-view % view))))))
 
 (reg-event-db :live-view-reopen
               ;; Opening a viewer never changes the transcript or the running pane.

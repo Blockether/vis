@@ -11,10 +11,14 @@
    and one kind-independent REST resource; the engine owns the closed action
    vocabulary and capability checks.
 
+   A `:view/send` envelope carries a Send of an app of the python_execution sandbox.
+   It becomes one bounded notification turn of the session that owns the app.
+
    An input View raised in a managed subagent also reaches every ancestor session,
    so the person who watches the leader sees and answers it. Each input View
    carries an `:origin` that names the session which asks and its parent."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.channel.events :as channel-events]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -24,7 +28,8 @@
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as view-spec]
-            [com.blockether.vis.contract.wire :as wire])
+            [com.blockether.vis.contract.wire :as wire]
+            [taoensso.telemere :as tel])
   (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 
 (set! *warn-on-reflection* true)
@@ -124,10 +129,14 @@
    An input View belongs to its session and to each ancestor session; a live View
    belongs only to its session."
   [sid view-id]
-  (when-let [{:keys [kind view] :as descriptor} (view/open-view (str view-id))]
-    (when-let [owner (session-of view)]
-      (when (or (= (str sid) owner) (and (= :input kind) (some #{(str sid)} (ancestors-of owner))))
-        descriptor))))
+  (or (when-let [{:keys [kind view] :as descriptor} (view/open-view (str view-id))]
+        (when-let [owner (session-of view)]
+          (when (or (= (str sid) owner)
+                    (and (= :input kind) (some #{(str sid)} (ancestors-of owner))))
+            descriptor)))
+      ;; A closed app stays readable. After a restart, its record answers.
+      (when-let [app (view/app-view sid view-id)]
+        {:kind :live :view app})))
 
 (defn input-views
   "Input Views session `sid` or one of its subagents is BLOCKED on right now,
@@ -284,21 +293,32 @@
     nil))
 
 (defn live-views
-  "The live views open in session `sid` right now, oldest first — the resync a
-   client reads after joining late, waking up or losing its stream. A
-   `placement` (`inline` or `panel`) keeps only the views it names."
-  ([sid] (live-views sid nil))
-  ([sid placement]
+  "The live views of session `sid`, oldest first — the resync a client reads after
+   joining late, waking up or losing its stream. A `placement` (`inline`, `panel`
+   or `attachment`) keeps only the views it names. An app stays in the list after
+   it closes, until it is archived. With `archived?`, the list holds only the
+   archived apps."
+  ([sid] (live-views sid nil false))
+  ([sid placement] (live-views sid placement false))
+  ([sid placement archived?]
    (let [sid
          (str sid)
 
          placement
          (some-> placement
                  name
-                 keyword)]
+                 keyword)
 
-     (filterv #(and (= sid (session-of %)) (or (nil? placement) (= placement (:placement %))))
-       (view/live-views)))))
+         apps
+         (filter #(= (boolean archived?) (boolean (:is-archived %))) (view/session-apps sid))
+
+         views
+         (when-not archived? (filter #(= sid (session-of %)) (view/live-views)))]
+
+     (->> (concat views apps)
+          (filter #(or (nil? placement) (= placement (:placement %))))
+          (sort-by :created-at)
+          vec))))
 
 (defn live-view-of
   "Live view `view-id` when it belongs to `sid`, else nil. Every REST answer goes
@@ -325,8 +345,96 @@
                   (min (long live-log-page) (max 1 (long (or limit live-log-page))))
                   query))
 
+;; --- App Sends (a person hands work back to the agent) ---
+
+(def ^:private send-title-chars
+  "The most characters of an app title that a Send notification quotes."
+  80)
+
+(defn- counted [n noun] (str n " " noun (when-not (= 1 n) "s")))
+
+(defn- send-summary
+  "The app title and the size of Send `event`, such as `\"Review\": 2 comments, 1 value`."
+  [{:keys [title submission]}]
+  (let [title
+        (str/trim (str title))
+
+        limit
+        (long send-title-chars)]
+
+    (str "\"" (if (> (count title) limit) (str (subs title 0 (dec limit)) "…") title)
+         "\": " (counted (count (:comments submission)) "comment")
+         ", " (counted (count (:values submission)) "value"))))
+
+(defn- send-request
+  "The bounded notification that Send `event` puts into the context of the agent:
+   the app, the receipt and the calls that read and answer it, never the review."
+  [{:keys [view-id submission] :as event}]
+  (let [id (:id submission)]
+    (str "App Send: a person sent the app "
+         (send-summary event)
+         " (view_id "
+         view-id
+         ", receipt "
+         id
+         "). Read it with app = attach({\"view_id\": \""
+         view-id
+         "\", \"media_type\": \""
+         app/media-type
+         "\"}) and app.submission(\""
+         id
+         "\"). Answer with app.reply(node_id, body, submission_id=\""
+         id
+         "\"), or move the receipt with app.set_status(\""
+         id
+         "\", status, note=...).")))
+
+(defn- deliver-send!
+  "Queue one notification turn for Send `event` in the session of its sandbox app,
+   then mark the receipt delivered. The session queue applies: a busy session runs
+   the turn later. Only an accepted receipt is offered, so a Send that the owner
+   already read is not offered twice. A refusal is logged, and the receipt stays
+   accepted for a later offer."
+  [{:keys [view-id submission] :as event}]
+  (let [sid
+        (session-of event)
+
+        submission-id
+        (:id submission)]
+
+    (try (when (and sid
+                    submission-id
+                    (= "accepted"
+                       (some-> (view/app-view sid view-id)
+                               (app/find-submission submission-id)
+                               :status)))
+           (let [result (state/submit-turn!
+                          sid
+                          {:request (send-request event)
+                           :display-request (str "Sent from the app " (send-summary event))
+                           :idempotency-key (str "app-send:" view-id ":" submission-id)})]
+             (if (:turn result)
+               (view/mark-send-delivered! view-id submission-id)
+               (tel/log! {:level :warn
+                          :id ::send-not-delivered
+                          :data {:session-id sid
+                                 :view-id view-id
+                                 :submission-id submission-id
+                                 :error (:error result)
+                                 :message (:message result)}
+                          :msg
+                          "The session did not take an app Send; its receipt stays accepted"}))))
+         (catch Throwable t
+           (tel/log!
+             {:level :warn
+              :id ::send-delivery-failed
+              :data
+              {:session-id sid :view-id view-id :submission-id submission-id :error (ex-message t)}
+              :msg "Vis could not give an app Send to its session"})))))
+
 (defn on-channel-event!
-  "Project one canonical `:app` View event into the session journal."
+  "Project one canonical `:app` View event into the session journal. A Send of a
+   sandbox app becomes a notification turn of its session."
   [event]
   (case (:op event)
     :view/open
@@ -357,6 +465,9 @@
           target
           gateway-contract/view-close-event
           {:kind (:kind event) :view-id (:view-id event) :result (:result event)})))
+
+    :view/send
+    (deliver-send! event)
 
     nil)
   nil)

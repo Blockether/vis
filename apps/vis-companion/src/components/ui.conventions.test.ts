@@ -219,7 +219,7 @@ describe('every control is drawn in the gallery', () => {
     AgentCrumb: './AgentTeam.stories.tsx',
     AgentDock: './AgentTeam.stories.tsx',
     SessionHealth: './SessionStats.stories.tsx',
-    AnnotationLayer: './MarkdownArtifact.stories.tsx',
+    AnnotationLayer: './ImageViewer.stories.tsx',
     ChatContent: './LiveView.stories.tsx',
     HumanInputPrompt: '../dev/humanInput.stories.tsx',
     LiveArtifact: './ChatContent.live.stories.tsx',

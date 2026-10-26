@@ -80,7 +80,6 @@ export function renderSessionScreen({
     rememberRunningTurn: () => {},
     rememberSentAttachments: () => {},
     forgetQueuedTurn: () => {},
-    onArtifactRevision: () => () => {},
     // Retaining an attachment hands back the RELEASE, synchronously.
     retainAttachment: () => () => {},
     attachmentUrl: () => Promise.resolve(null),

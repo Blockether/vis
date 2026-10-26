@@ -99,7 +99,9 @@
       (expect (= #{:multiselect :select} contract/choice-types))
       (expect (= {:min 0 :max 100 :step 1} contract/range-defaults))
       (expect (= {:length 6 :ceiling 12} contract/otp-defaults))
-      (expect (= #{:id :seq :created-at :owner :extension :is-stale} contract/live-view-stamp-keys))
+      (expect (= #{:id :seq :created-at :owner :extension :is-stale :submissions :is-closed
+                   :is-archived}
+                 contract/live-view-stamp-keys))
       (expect (= #{:created-at :origin} contract/request-stamp-keys))
       (expect (= #{:is-secret} contract/derived-keys))
       (doseq [[variant frames] contract/spinner-frames]

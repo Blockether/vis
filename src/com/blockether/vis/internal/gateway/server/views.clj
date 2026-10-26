@@ -3,6 +3,7 @@
    client-extension calls."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.contract.view :as view-spec]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.extension.client :as client-extensions]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
@@ -100,6 +101,10 @@
           :else (try (let [{:keys [is-accepted reason] :as outcome}
                            (gw-view/action! view-id (http/body-json request))]
                        (cond (and (false? is-accepted) (= "unknown" reason)) (view-404 view-id)
+                             ;; The client edited an older state, or the app is closed.
+                             (and (false? is-accepted)
+                                  (#{"conflict" "stale_revision" "closed"} reason))
+                             (http/json-response 409 outcome)
                              (and (false? is-accepted) (= "not_cancellable" reason))
                              (http/error-response 409
                                                   :view-action-refused
@@ -125,17 +130,44 @@
 
 (defn- list-live-views-handler
   "GET /v1/sessions/:sid/views/live — the live views this session is showing
-   right now, oldest first, each as the picture a surface paints.
+   right now, oldest first, each as the picture a surface paints. Its apps stay
+   listed after they close; `archived=true` lists only the archived apps.
 
    The `view.open` / `view.patch` / `view.close` events are the fast path; this is
    what a client that connected later reads to recover the current picture."
   [request]
-  (let [placement (get-in request [:query-params "placement"])]
-    (cond (not (or (nil? placement) (#{"inline" "panel"} placement)))
-          (http/error-response 400 :invalid-request "placement must be inline or panel")
-          (http/path-sid request) (http/json-response
-                                    {:views (gw-view/live-views (http/path-sid request) placement)})
+  (let [placement
+        (get-in request [:query-params "placement"])
+
+        archived
+        (get-in request [:query-params "archived"])]
+
+    (cond (not (or (nil? placement) (contains? view-spec/placements placement)))
+          (http/error-response 400
+                               :invalid-request
+                               (str "placement must be one of "
+                                    (str/join ", " (sort (keys view-spec/placements)))))
+          (not (contains? #{nil "true" "false"} archived))
+          (http/error-response 400 :invalid-request "archived must be true or false")
+          (http/path-sid request)
+          (http/json-response
+            {:views (gw-view/live-views (http/path-sid request) placement (= "true" archived))})
           :else (http/session-404 (get-in request [:path-params :sid])))))
+
+(defn- live-view-handler
+  "GET /v1/sessions/:sid/views/live/:view-id — one live view of this session as
+   the picture a surface paints. A closed app answers too, with `is_closed`."
+  [request]
+  (let [sid
+        (http/path-sid request)
+
+        view
+        (some->> (path-view-id request)
+                 (gw-view/live-view-of sid))]
+
+    (cond (nil? sid) (http/session-404 (get-in request [:path-params :sid]))
+          (nil? view) (view-404 (get-in request [:path-params :view-id]))
+          :else (http/json-response {:view view}))))
 
 (defn- live-view-log-handler
   "GET /v1/sessions/:sid/views/live/:view-id/log?node=… — one bounded page.
@@ -304,5 +336,6 @@
    [:post "/v1/sessions/:sid/client-calls/:call_id/activity"] (client-extension-handler :activity)
    [:get "/v1/sessions/:sid/views/input"] list-input-views-handler
    [:get "/v1/sessions/:sid/views/live"] list-live-views-handler
+   [:get "/v1/sessions/:sid/views/live/:view-id"] live-view-handler
    [:get "/v1/sessions/:sid/views/live/:view-id/log"] live-view-log-handler
    [:post "/v1/sessions/:sid/views/:view-id/actions"] view-action-handler})

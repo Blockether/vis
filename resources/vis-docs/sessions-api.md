@@ -118,6 +118,7 @@ request.
 | Read the manifest of a snapshot | `client.snapshot_info(data)` | — |
 | Restore a snapshot | `client.restore_session(data, ...)` | `post_sessions_import(query=..., content=...)` |
 | List live views | `session.live_views()` | `get_session_views_live(sid)` |
+| Read one live view or app | `session.live_view(view_id)` | `get_session_views_live_view(sid, view_id)` |
 | Read a page of a log node | — | `get_session_views_live_log(sid, view_id, node_id, query=...)` |
 | Read one page of Activity history | — | `get_session_activity(sid, aid, query=...)` |
 | Export the full Activity history | — | `get_session_activity_export(sid, aid, query=...)` |
@@ -164,6 +165,7 @@ request.
 | Save a snapshot | `GET /v1/sessions/{sid}/snapshot` |
 | Restore a snapshot | `POST /v1/sessions/actions/import` |
 | List live views | `GET /v1/sessions/{sid}/views/live` |
+| Read one live view or app | `GET /v1/sessions/{sid}/views/live/{view-id}` |
 | Read a page of a log node | `GET /v1/sessions/{sid}/views/live/{view-id}/log` |
 | Read one page of Activity history | `GET /v1/sessions/{sid}/activity/{aid}` |
 | Export the full Activity history | `GET /v1/sessions/{sid}/activity/{aid}/export` |
@@ -1035,9 +1037,13 @@ for view in client.session(session_id).live_views(placement="panel"):
     print(view.id, view.title, len(view.nodes))
 ```
 
-`live_views()` returns typed `LiveView` records. `placement` keeps only the `inline` or `panel`
-views. Without it, you get every view of the session. `get_session_views_live(session_id)`
-returns the same views as JSON in `views`. A list is a snapshot. It does not follow later updates.
+`live_views()` returns typed `LiveView` records. `placement` keeps only the `inline`, `panel` or
+`attachment` views. Without it, you get every view of the session except the archived apps.
+`archived=True` lists only the archived [apps](live-views.md#apps).
+
+`get_session_views_live(session_id)` returns the same views as JSON in `views`. A list is a
+snapshot. It does not follow later updates. `session.live_view(view_id)` reads one view or app,
+also a closed app.
 
 [Live views](live-views.md#choose-a-placement) explains placements. A panel view has its `key`,
 its `extension` and `is_stale`. `is_stale` is true for the saved state of a view after a gateway
@@ -1049,11 +1055,18 @@ restart, until its extension loads again.
 
 ```bash
 vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/live?placement=panel"
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/live/$VIEW_ID"
 ```
 
-The answer has `views`. Each view has `id`, `title` and `nodes`. The `placement` query parameter
-keeps only the `inline` or `panel` views. Another value returns 400. A list is a snapshot.
-It does not follow later updates.
+The answer has `views`. Each view has `id`, `title` and `nodes`. A list is a snapshot. It does not
+follow later updates.
+
+The `placement` query parameter keeps only the `inline`, `panel` or `attachment` views. Another
+value returns 400. Without it, you get every view except the archived apps. `archived=true` lists
+only the archived [apps](live-views.md#apps).
+
+`GET /v1/sessions/{sid}/views/live/{view-id}` answers one view or app in `view`, also a closed app.
+A view of another session returns 404.
 
 A panel view also has `placement`, `key`, `extension` and `is_stale`. `is_stale` is true for the
 saved state of a view after a gateway restart, until its extension loads again.

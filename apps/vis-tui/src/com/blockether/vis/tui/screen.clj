@@ -3,7 +3,6 @@
     [clojure.string :as str]
     [com.blockether.vis.contract.gateway :as gateway-contract]
     [com.blockether.vis.tui.client :as vis]
-    [com.blockether.vis.tui.annotator :as annotator]
     [com.blockether.vis.tui.artifact-inspector :as artifact-inspector]
     [com.blockether.vis.tui.attachments :as attachments]
     [com.blockether.vis.tui.attachment-intake :as attachment-intake]
@@ -19,6 +18,8 @@
     [com.blockether.vis.tui.frame :as frame]
     [com.blockether.vis.tui.header :as header]
     [com.blockether.vis.tui.agent-team :as agent-team]
+    [com.blockether.vis.tui.app-model :as app-model]
+    [com.blockether.vis.tui.app-surface :as app-surface]
     [com.blockether.vis.tui.human-input :as hi]
     [com.blockether.vis.tui.input :as input]
     [com.blockether.vis.tui.live-view :as lv]
@@ -2699,6 +2700,14 @@
        (catch Throwable _
          (vis/notify! "Artifact could not be opened." :level :warn :ttl-ms status-error-ttl-ms)))))
 
+(defn- open-artifact-hit!
+  "Open a clicked transcript artifact: an app on its app surface, other rows in
+   their viewer."
+  [screen session-id artifact]
+  (if (app-model/app-row? artifact)
+    (with-dialog-lock #(app-surface/show! screen session-id artifact))
+    (open-produced-artifact! session-id artifact)))
+
 (defn- prompt-activity-search!
   "Ask what a whole Activity record is searched for, then read the FIRST window of
    the result. The gateway matches every retained operation of that record, not the
@@ -2746,7 +2755,7 @@
 
     (case (:kind target)
       :artifact
-      (open-produced-artifact! (:session-id target) (:artifact target))
+      (open-artifact-hit! screen (:session-id target) (:artifact target))
 
       :toggle-details
       (state/dispatch [:toggle-detail (:session-id target) (:node-id target) (:collapsed? target)])
@@ -2839,8 +2848,8 @@
             :remove
             (do (state/dispatch [:remove-attachment (get-in row [:attachment :id])]) (recur))
 
-            :annotate
-            (do (with-dialog-lock #(annotator/show! screen session-id row)) (recur))
+            :app
+            (do (with-dialog-lock #(app-surface/show! screen session-id row)) (recur))
 
             :open
             (case (:source row)
@@ -8948,7 +8957,7 @@
                                  (edit-live-input! screen db hit)
 
                                  :artifact
-                                 (open-produced-artifact! (:session-id hit) (:artifact hit))
+                                 (open-artifact-hit! screen (:session-id hit) (:artifact hit))
 
                                  :image
                                  (open-image-hit! screen hit)
@@ -9140,7 +9149,7 @@
                                  (edit-live-input! screen db hit)
 
                                  :artifact
-                                 (open-produced-artifact! (:session-id hit) (:artifact hit))
+                                 (open-artifact-hit! screen (:session-id hit) (:artifact hit))
 
                                  :image
                                  (open-image-hit! screen hit)

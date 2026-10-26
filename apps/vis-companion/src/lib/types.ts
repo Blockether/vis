@@ -845,8 +845,6 @@ export interface IterationAttachment {
   kind?: string;
   media_type?: string;
   filename?: string;
-  /** Only an explicit true permits human comments or annotations. */
-  commentable?: boolean;
   /**
    * Which cut of THIS name it is, 1-based. Re-attaching a filename is the next
    * version of that artifact rather than a second artifact, so a gallery groups

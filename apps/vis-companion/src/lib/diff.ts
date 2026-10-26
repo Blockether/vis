@@ -1,6 +1,6 @@
 import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
-import type { MarkdownComment } from './markdown-annotations';
 
+/** A stored patch snapshot. Older envelopes may also carry `comments`; the reader ignores them. */
 export interface DiffEnvelope {
   schema_version: 1;
   patch: string;
@@ -11,7 +11,6 @@ export interface DiffEnvelope {
     base_revision?: string;
     head_revision?: string;
   };
-  comments: MarkdownComment[];
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -31,12 +30,16 @@ function optionalText(
       (typeof value[key] === 'string' && value[key].length >= (definition.minLength ?? 0)),
   );
 }
-/** Validate the portable envelope before exposing review controls. Never normalize patch text. */
+
+/** Keys an envelope may carry: the schema's own, and `comments` from older snapshots. */
+const ENVELOPE_KEYS = [...Object.keys(schema.$defs.envelope.properties), 'comments'];
+
+/** Validate the portable envelope before it is shown. Never normalize patch text. */
 export function parseDiff(text: string): DiffEnvelope {
   const value: unknown = JSON.parse(text);
   if (
     !object(value) ||
-    !keys(value, Object.keys(schema.$defs.envelope.properties)) ||
+    !keys(value, ENVELOPE_KEYS) ||
     value.schema_version !== schema.$defs.envelope.properties.schema_version.const ||
     typeof value.patch !== 'string' ||
     !object(value.source) ||
@@ -46,26 +49,15 @@ export function parseDiff(text: string): DiffEnvelope {
     (value.source.backend !== undefined &&
       (typeof value.source.backend !== 'string' ||
         !schema.$defs.source.properties.backend.enum.includes(value.source.backend))) ||
-    !optionalText(value.source, schema.$defs.source.properties) ||
-    !Array.isArray(value.comments) ||
-    value.comments.some(
-      (comment: unknown) =>
-        !object(comment) ||
-        !keys(comment, Object.keys(schema.$defs.comment.properties)) ||
-        typeof comment.quote !== 'string' ||
-        typeof comment.body !== 'string' ||
-        comment.body.length < schema.$defs.comment.properties.body.minLength,
-    )
+    !optionalText(value.source, schema.$defs.source.properties)
   ) {
     throw new Error('Invalid diff attachment. Ask for a new snapshot.');
   }
-  return value as unknown as DiffEnvelope;
-}
-
-export function diffReviewRequest(filename: string, version: number): string {
-  if (!filename.trim() || !Number.isSafeInteger(version) || version < 1)
-    throw new Error('Open a saved diff version before sending comments.');
-  return `Read \`${filename}\` v${version} with read_attachment(${JSON.stringify(filename)}, version=${version}).\n${schema.$defs.envelope['x-vis-review-request']}`;
+  return {
+    schema_version: value.schema_version as 1,
+    patch: value.patch,
+    source: value.source as DiffEnvelope['source'],
+  };
 }
 
 export function diffSourceLabel(source: DiffEnvelope['source']): string {

@@ -24,7 +24,12 @@ beforeEach(() => {
   HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as never;
   act(() =>
     root.render(
-      <ImageViewer commentable src="blob:picture" name="chart.png" onClose={() => undefined} />,
+      <ImageViewer
+        src="blob:picture"
+        name="chart.png"
+        onApply={() => undefined}
+        onClose={() => undefined}
+      />,
     ),
   );
 });
@@ -49,22 +54,21 @@ function named(text: string): HTMLButtonElement {
 }
 
 describe('ImageViewer', () => {
-  it("uses the selected gallery picture's capability, not the opener's", () => {
+  it('keeps a gallery picture read-only', () => {
     act(() =>
       root.render(
         <ImageViewer
           src="blob:one"
           name="one.png"
-          commentable
           pictures={[
-            { src: 'blob:one', name: 'one.png', commentable: true },
+            { src: 'blob:one', name: 'one.png' },
             { src: 'blob:two', name: 'two.png' },
           ]}
           onClose={() => undefined}
         />,
       ),
     );
-    expect(document.querySelector('[aria-label="Draw on image"]')).toBeInTheDocument();
+    expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
     act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' })));
     expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
   });
@@ -192,10 +196,9 @@ describe('ImageViewer', () => {
   // A stroke in flight owns the picture: cropping under the pen would flatten
   // half a mark and leave the other half pointing at pixels that are gone.
   it('holds Trim while the pen is out', () => {
+    expect(control('Trim to view').disabled).toBe(false);
     act(() => control('Draw on image').click());
     expect(control('Trim to view').disabled).toBe(true);
-    act(() => control('Finish drawing').click());
-    expect(control('Trim to view').disabled).toBe(false);
   });
 
   it('mounts the shared annotation layer, inert until Draw is pressed', () => {
@@ -205,7 +208,7 @@ describe('ImageViewer', () => {
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
 
     act(() => control('Draw on image').click());
-    expect(control('Finish drawing').getAttribute('aria-pressed')).toBe('true');
+    expect(control('Save changes').getAttribute('aria-pressed')).toBe('true');
     expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
     expect(document.querySelector('canvas')?.getAttribute('data-annotation')).toBe('active');
     // Five inks and two icon verbs sit directly under the title band.
@@ -215,9 +218,6 @@ describe('ImageViewer', () => {
       expect(action.textContent).toBe('');
       expect(action.querySelector('svg')).toBeInTheDocument();
     }
-
-    act(() => control('Finish drawing').click());
-    expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
   });
 
   // Regression, user report: the drawing rail hugged the title instead of sitting
@@ -819,7 +819,6 @@ describe('the grid is the gallery', () => {
                 alt={`pic-${at}.png`}
                 className="size-8"
                 galleryAt={at}
-                commentable={at === 0}
               />
             </MediaTile>
           ))}
@@ -829,7 +828,7 @@ describe('the grid is the gallery', () => {
 
     act(() => control('Open pic-0.png full screen').click());
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('1 of 2');
-    expect(document.querySelector('[aria-label="Draw on image"]')).toBeInTheDocument();
+    expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
     });

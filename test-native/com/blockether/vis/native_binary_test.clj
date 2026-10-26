@@ -854,25 +854,20 @@
           (str
             "report = attach(\n"
             "    b'# Implementation report\\n', filename='IMPLEMENTATION-native.md',\n"
-            "    kind='doc', media_type='text/markdown')\n"
-            "assert report['commentable'] is False\n" "spec = attach(\n"
+            "    kind='doc', media_type='text/markdown')\n" "spec = attach(\n"
             "    b'# Specification\\n', filename='PLAN-native.md', kind='doc',\n"
-            "    media_type='text/markdown', commentable=True)\n"
-            "assert spec['commentable'] is True\n" "payload = {\n"
-            "    'schema_version': 1,\n"
+            "    media_type='text/markdown')\n"
+            "payload = {\n" "    'schema_version': 1,\n"
             "    'patch': '--- a/code.txt\\n+++ b/code.txt\\n@@ -1 +1 @@\\n-old\\n+new\\n',\n"
-            "    'source': {'type': 'workspace', 'label': 'Native fixture'}, 'comments': []}\n"
+            "    'source': {'type': 'workspace', 'label': 'Native fixture'}}\n"
             "change = attach(\n"
             "    json.dumps(payload).encode('utf-8'), filename='DIFF-native.json', kind='diff',\n"
-            "    media_type='application/vnd.vis.diff+json', commentable=True)\n"
-            "assert change['commentable'] is True\n"
-            "assert get_attachment(spec)['commentable'] is True\n"
+            "    media_type='application/vnd.vis.diff+json')\n"
             "assert get_attachment(change)['kind'] == 'diff'\n"
             "assert json.loads(read_attachment(change))['patch'] == payload['patch']\n"
             "assert draft_status()['in_draft'] is True\n"
             "(project_root_path / 'code.txt').write_text('new\\n', encoding='utf-8')\n"
             "draft_change = draft_diff(filename='DIFF-draft-native.json')\n"
-            "assert draft_change['commentable'] is True\n"
             "assert draft_change['empty'] is False\n"
             "draft_body = json.loads(read_attachment(draft_change))\n"
             "assert draft_body['source']['type'] == 'draft'\n"
@@ -907,60 +902,55 @@
                       #(respond false %)]
 
           (let [{:keys [server port]} (start-stub-provider! "Native attachment review complete.")]
-            (try
-              (.mkdirs project)
-              (spit (io/file project "code.txt") "old\n")
-              (spit (io/file project ".gitignore") ".vis/\nrun.log\n")
-              (doseq [argv [["git" "init" "--quiet" "-b" "main"]
-                            ["git" "add" "--" "code.txt" ".gitignore"]
-                            ["git" "-c" "user.name=Native fixture" "-c"
-                             "user.email=native@example.com" "-c" "commit.gpgsign=false" "commit"
-                             "--quiet" "-m" "test: seed native draft"]]]
-                (let [{:keys [finished? exit output]} (run-binary project argv 30)]
-                  (expect finished? output)
-                  (expect (= 0 exit) output)))
-              (overlay! project port)
-              ;; #242: draft review keeps the source checkout confined.
-              (spit (io/file project ".vis/config.yml")
-                    (str "\ntoggles:\n  draft_backend: worktree\n" "\njail:\n  enabled: true\n")
-                    :append
-                    true)
-              (let [database (io/file dir "sessions")
-                    {:keys [finished? exit output]}
-                    (run-binary
-                      project
-                      [(.getAbsolutePath (require-binary))
-                       (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                       (.getAbsolutePath database) "--raw"
-                       "Create a disposable draft; produce a specification, report and diffs"]
-                      180)]
+            (try (.mkdirs project)
+                 (spit (io/file project "code.txt") "old\n")
+                 (spit (io/file project ".gitignore") ".vis/\nrun.log\n")
+                 (doseq [argv [["git" "init" "--quiet" "-b" "main"]
+                               ["git" "add" "--" "code.txt" ".gitignore"]
+                               ["git" "-c" "user.name=Native fixture" "-c"
+                                "user.email=native@example.com" "-c" "commit.gpgsign=false" "commit"
+                                "--quiet" "-m" "test: seed native draft"]]]
+                   (let [{:keys [finished? exit output]} (run-binary project argv 30)]
+                     (expect finished? output)
+                     (expect (= 0 exit) output)))
+                 (overlay! project port)
+                 ;; #242: draft review keeps the source checkout confined.
+                 (spit (io/file project ".vis/config.yml")
+                       (str "\ntoggles:\n  draft_backend: worktree\n" "\njail:\n  enabled: true\n")
+                       :append
+                       true)
+                 (let [database (io/file dir "sessions")
+                       {:keys [finished? exit output]}
+                       (run-binary
+                         project
+                         [(.getAbsolutePath (require-binary))
+                          (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                          (.getAbsolutePath database) "--raw"
+                          "Create a disposable draft; produce a specification, report and diffs"]
+                         180)]
 
-                (expect finished? output)
-                (expect (= 0 exit) output)
-                (expect (= "old\n" (slurp (io/file project "code.txt"))))
-                (let [store (ps/db-create-connection! (.getAbsolutePath database))]
-                  (try
-                    (let [sid (:id (first (ps/db-list-sessions store :all)))
-                          iterations (mapcat #(ps/db-list-session-turn-iterations store (:id %))
-                                             (ps/db-list-session-turns store sid))
-                          rows (mapcat #(ps/db-list-iteration-attachments store (:id %)) iterations)
-                          artifacts (into {} (map (juxt :filename identity)) rows)]
+                   (expect finished? output)
+                   (expect (= 0 exit) output)
+                   (expect (= "old\n" (slurp (io/file project "code.txt"))))
+                   (let [store (ps/db-create-connection! (.getAbsolutePath database))]
+                     (try
+                       (let [sid (:id (first (ps/db-list-sessions store :all)))
+                             iterations (mapcat #(ps/db-list-session-turn-iterations store (:id %))
+                                                (ps/db-list-session-turns store sid))
+                             rows (mapcat #(ps/db-list-iteration-attachments store (:id %))
+                                          iterations)
+                             artifacts (into {} (map (juxt :filename identity)) rows)]
 
-                      (expect (= #{"IMPLEMENTATION-native.md" "PLAN-native.md" "DIFF-native.json"
-                                   "DIFF-draft-native.json" "DIFF-draft-empty-native.json"}
-                                 (set (keys artifacts))))
-                      (expect (false? (:commentable (get artifacts "IMPLEMENTATION-native.md"))))
-                      (expect (true? (:commentable (get artifacts "PLAN-native.md"))))
-                      (expect (true? (:commentable (get artifacts "DIFF-native.json"))))
-                      (expect (= "diff" (:kind (get artifacts "DIFF-native.json"))))
-                      (expect (true? (:commentable (get artifacts "DIFF-draft-native.json"))))
-                      (expect (true? (:commentable (get artifacts "DIFF-draft-empty-native.json"))))
-                      (expect (every? #(nil? (:error %)) (mapcat :forms iterations)))
-                      (expect (some #(str/includes? (str (:stdout %))
-                                                    "Native attachment review verified")
-                                    (mapcat :forms iterations))))
-                    (finally (ps/db-dispose-connection! store)))))
-              (finally (.stop ^HttpServer server 0)))))
+                         (expect (= #{"IMPLEMENTATION-native.md" "PLAN-native.md" "DIFF-native.json"
+                                      "DIFF-draft-native.json" "DIFF-draft-empty-native.json"}
+                                    (set (keys artifacts))))
+                         (expect (= "diff" (:kind (get artifacts "DIFF-native.json"))))
+                         (expect (every? #(nil? (:error %)) (mapcat :forms iterations)))
+                         (expect (some #(str/includes? (str (:stdout %))
+                                                       "Native attachment review verified")
+                                       (mapcat :forms iterations))))
+                       (finally (ps/db-dispose-connection! store)))))
+                 (finally (.stop ^HttpServer server 0)))))
         (finally (delete-tree! dir))))))
 
 (defdescribe native-linked-report-delivery-test

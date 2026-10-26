@@ -31,6 +31,7 @@ import {
 } from './ui';
 import { InlineMarkdown } from './ChatContent';
 import { HumanInputFieldRow } from './HumanInputPrompt';
+import { DiffNodeView, ThreadNodeView, type AppNodeActions } from './AppNodes';
 import { humanInputDefaultValue, type HumanInputValue } from '../lib/human-input';
 import {
   ArrowOutIcon,
@@ -1333,6 +1334,8 @@ type NodePresentation = {
   onCommit?: (id: string) => void;
   /** Send every input of the view with the submit button `id`. */
   onSubmit?: (id: string) => Promise<void> | void;
+  /** The Save and Send actions of an app. Absent, review nodes are read only. */
+  app?: AppNodeActions;
 };
 
 /** Wait this long after the last keystroke before a `change` goes out. */
@@ -1609,6 +1612,8 @@ function NodeCell({
           )}
           {node.type === 'table' && <TableRows node={node} onSelect={onSelect} />}
           {node.type === 'link' && <LinkRows node={node} />}
+          {node.type === 'diff' && <DiffNodeView node={node} actions={presentation.app} />}
+          {node.type === 'thread' && <ThreadNodeView node={node} actions={presentation.app} />}
         </div>
       )}
     </div>
@@ -1669,6 +1674,7 @@ export function LiveViewPanel({
   isSettled = false,
   embedded = false,
   inDialog = false,
+  app,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -1696,6 +1702,8 @@ export function LiveViewPanel({
    * paints no second title and no frame: a box inside the dialog's box.
    */
   inDialog?: boolean;
+  /** The Save and Send actions of an app attachment. */
+  app?: AppNodeActions;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -1732,6 +1740,7 @@ export function LiveViewPanel({
   }, []);
   const presentation: NodePresentation = {
     isSettled,
+    app,
     onActivate,
     values: typed,
     onChange: onChange

@@ -53,6 +53,7 @@ import {
   noteUnreachable,
 } from './lib/reachability';
 import { warm } from './lib/warm';
+import { SessionEventsContext } from './lib/session-events';
 import { SessionSubscriptionHub } from './lib/subscriptions';
 import { parsePairing } from './lib/pairing';
 import { onPairingLink } from './lib/deeplink';
@@ -1499,18 +1500,20 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
               isHeld={!canSplit && shellView === 'sessions'}
             >
               {shellView === 'session' && openTarget && client && subscriptions && (
-                <SessionScreen
-                  key={`${openTarget.conn.url}:${openTarget.sid}`}
-                  client={client}
-                  subscriptions={subscriptions}
-                  sid={openTarget.sid}
-                  fresh={openTarget.fresh}
-                  talk={openTarget.talk}
-                  onBack={leaveSession}
-                  sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
-                  onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
-                  onManageProviders={openProviderSettings}
-                />
+                <SessionEventsContext.Provider value={subscriptions}>
+                  <SessionScreen
+                    key={`${openTarget.conn.url}:${openTarget.sid}`}
+                    client={client}
+                    subscriptions={subscriptions}
+                    sid={openTarget.sid}
+                    fresh={openTarget.fresh}
+                    talk={openTarget.talk}
+                    onBack={leaveSession}
+                    sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
+                    onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
+                    onManageProviders={openProviderSettings}
+                  />
+                </SessionEventsContext.Provider>
               )}
             </SessionPane>
           </main>

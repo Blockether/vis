@@ -22,6 +22,7 @@
             [com.blockether.vis.internal.gateway.view :as gw-hi]
             [com.blockether.vis.internal.view.core :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
+            [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as hi-spec]
             [lazytest.core :refer [defdescribe expect it]]
             [reitit.ring :as ring]
@@ -1354,3 +1355,361 @@
                (expect (nil? (get-in (match (str "/v1/views/" (:id panel) "/actions"))
                                      [:data :post :handler])))
                (finally (hi/close-live! (:id panel)) (hi/flush-owned!))))))))
+
+;; #421: an app is a live view attached to its session. People save drafts and Send
+;; over the shared action route, and the app keeps its state after a restart.
+
+(def ^:private app-patch
+  (str "diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n"
+       "@@ -1,2 +1,2 @@\n x = 1\n-y = 2\n+y = 3\n"))
+
+(def ^:private app-line {"path" "src/a.py" "side" "new" "line" 2})
+
+(defn- app-op!
+  "Cross one owner envelope of the python_execution sandbox through the live seam."
+  [envelope]
+  (wire/parse-json (hi/live-json! (wire/json-str envelope) nil)))
+
+(defn- open-app!
+  "Open an app with a diff and a thread in session `sid`, and answer its view id."
+  [sid]
+  (get (app-op! {"op" "open"
+                 "view" {"title" "Review"
+                         "session_id" sid
+                         "placement" "attachment"
+                         "nodes"
+                         [{"id" "change" "type" "diff" "patch" app-patch "new_revision" "def5678"}
+                          {"id" "general" "type" "thread" "messages" []}]}})
+       "view_id"))
+
+(defn- app-view
+  "The response of the one-view route for app `view-id` of session `sid`."
+  [sid view-id]
+  (#'views-api/live-view-handler {:path-params {:sid sid :view-id view-id}}))
+
+(defn- app-node
+  [response node-id]
+  (some #(when (= node-id (get % "id")) %) (get-in (json-body response) ["view" "nodes"])))
+
+(defn- app-ids
+  "The ids of the apps that session `sid` lists: the archived ones with `archived`."
+  [sid archived]
+  (mapv #(get % "id")
+        (get (json-body (#'views-api/list-live-views-handler
+                         {:path-params {:sid sid}
+                          :query-params {"placement" "attachment" "archived" (str archived)}}))
+             "views")))
+
+(defn- forget-app!
+  "Drop the memory of app `view-id`, as a gateway restart does. Its record stays."
+  [view-id]
+  (swap! @#'hi/pending dissoc view-id)
+  (swap! @#'hi/closed-apps dissoc view-id))
+
+(defdescribe
+  app-attachments-over-http-test
+  (it "acks a saved draft with its seq and restores it after a restart"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (open-app! sid)
+
+                ack
+                (json-body
+                  (view-action-response
+                    sid
+                    view-id
+                    {"action" "draft" "node_id" "change" "anchor" app-line "body" "Rename y"}))
+
+                seq-now
+                #(get-in (json-body (app-view sid view-id)) ["view" "seq"])]
+
+            (expect (true? (get ack "is_accepted")))
+            (expect (string? (get ack "thread_id")))
+            (expect (= (get ack "seq") (seq-now)))
+            (forget-app! view-id)
+            (expect (= "Rename y"
+                       (get-in (app-node (app-view sid view-id) "change") ["threads" 0 "draft"])))
+            (expect (= (get ack "seq") (seq-now)))))))
+  (it "restores the value of each input type after a restart"
+      ;; #421: a replayed record kept the field type as text. A saved value then
+      ;; failed its domain check, and the app list of the session threw.
+      (recorded
+        (fn []
+          (doseq [[node value] [[{"type" "multiline"} "First line\nSecond line"]
+                                [{"type" "plaintext"} "abc"] [{"type" "checkbox"} true]
+                                [{"type" "select"
+                                  "options" [{"value" "a" "label" "A"} {"value" "b" "label" "B"}]}
+                                 "b"]]]
+            (let [sid (str (random-uuid))
+                  view-id (get (app-op! {"op" "open"
+                                         "view" {"title" "Form"
+                                                 "session_id" sid
+                                                 "placement" "attachment"
+                                                 "nodes"
+                                                 [(merge {"id" "in" "label" "In"} node)
+                                                  {"id" "general" "type" "thread" "messages" []}]}})
+                               "view_id")
+                  changed (view-action-response sid
+                                                view-id
+                                                {"action" "change" "node_id" "in" "value" value})]
+
+              (expect (= 200 (:status changed)))
+              (forget-app! view-id)
+              (expect (= value (get (app-node (app-view sid view-id) "in") "value")))
+              (expect (= [view-id] (app-ids sid false))))))))
+  (it "skips an app whose record does not replay and lists the others"
+      ;; #421: one broken record must not break the app list of its session.
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                kept
+                (open-app! sid)
+
+                broken
+                (open-app! sid)]
+
+            ;; No app accepts this write: only an input takes a value.
+            (spit (sink/view-file sid broken)
+                  (str (wire/json-str
+                         {"kind" "patch"
+                          "patch" {"seq" 99
+                                   "ops" [{"op" "set-value" "node_id" "general" "value" "x"}]}})
+                       "\n")
+                  :append
+                  true)
+            (forget-app! kept)
+            (forget-app! broken)
+            (expect (= [kept] (app-ids sid false)))
+            (expect (= 404 (:status (app-view sid broken))))))))
+  (it "refuses a reply and a receipt step on a closed app"
+      ;; #421: a write to a closed app answered the ended picture and wrote nothing.
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (open-app! sid)]
+
+            (app-op! {"op" "close" "view_id" view-id})
+            (doseq [envelope [{"op" "reply" "view_id" view-id "node_id" "general" "body" "Done"}
+                              {"op" "submission"
+                               "view_id" view-id
+                               "submission_id" "send-1"
+                               "status" "answered"}]]
+              (expect (re-find #"closed and read-only"
+                               (try (app-op! envelope)
+                                    "accepted"
+                                    (catch clojure.lang.ExceptionInfo e (ex-message e))))))))))
+  (it "answers one receipt for a retried Send"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (open-app! sid)
+
+                send
+                {"action" "submit" "values" {} "idempotency_key" (str "send-" (random-uuid))}
+
+                receipt-id
+                #(get-in (json-body (view-action-response sid view-id send)) ["submission" "id"])
+
+                first-id
+                (receipt-id)]
+
+            (expect (string? first-id))
+            (expect (= first-id (receipt-id)))
+            (expect (= [first-id]
+                       (mapv #(get % "id")
+                             (get-in (json-body (app-view sid view-id))
+                                     ["view" "submissions"]))))))))
+  (it
+    "gives the owner one Send event with its receipt id and its comments"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (open-app! sid)
+
+              _
+              (view-action-response sid
+                                    view-id
+                                    {"action" "draft" "node_id" "general" "body" "Ship it?"})
+
+              receipt-id
+              (get-in (json-body (view-action-response
+                                   sid
+                                   view-id
+                                   {"action" "submit" "values" {} "idempotency_key" "send-event"}))
+                      ["submission" "id"])
+
+              events
+              (get (app-op! {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0}) "events")]
+
+          (expect (= [receipt-id] (mapv #(get % "submission_id") events)))
+          (expect (= [["general" "Ship it?"]]
+                     (mapv (juxt #(get % "node_id") #(get % "body"))
+                           (get (first events) "comments"))))))))
+  (it "hands a Send of a sandbox app to its session as one bounded turn"
+      ;; #421: nothing told the agent that a person pressed Send in its app.
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (open-app! sid)
+
+                turns
+                (atom [])]
+
+            (with-redefs [state/submit-turn! (fn [turn-sid opts]
+                                               (swap! turns conj [turn-sid opts])
+                                               {:turn {:turn_id (str "turn-" (count @turns))}})]
+              (view-action-response sid
+                                    view-id
+                                    {"action" "draft" "node_id" "general" "body" "Ship it?"})
+              (let [send {"action" "submit" "values" {} "idempotency_key" "send-to-session"}
+                    receipt-id (get-in (json-body (view-action-response sid view-id send))
+                                       ["submission" "id"])
+                    status #(some (fn [receipt]
+                                    (when (= receipt-id (get receipt "id")) (get receipt "status")))
+                                  (get-in (json-body (app-view sid view-id))
+                                          ["view" "submissions"]))]
+
+                (expect (await-true #(= "delivered" (status))))
+                ;; A retried Send answers the first receipt and queues no second turn.
+                (view-action-response sid view-id send)
+                (await @#'hi/session-sends)
+                (expect (= 1 (count @turns)))
+                (let [[turn-sid opts] (first @turns)]
+                  (expect (= sid turn-sid))
+                  (expect (str/includes? (:request opts) receipt-id))
+                  (expect (str/includes? (:request opts) view-id))
+                  (expect (str/includes? (:request opts) "1 comment, 0 values"))
+                  (expect (not (str/includes? (:request opts) "Ship it?")))
+                  (expect (< (count (:request opts)) 1000))
+                  (expect (= (str "app-send:" view-id ":" receipt-id) (:idempotency-key opts)))
+                  (expect (= "Sent from the app \"Review\": 1 comment, 0 values"
+                             (:display-request opts))))))))))
+  (it "keeps a Send accepted when its session does not take the turn"
+      ;; #421: a refused delivery must never show the Send as delivered.
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (open-app! sid)]
+
+            (with-redefs [state/submit-turn! (constantly {:error :session-not-found})]
+              (let [receipt-id (get-in (json-body (view-action-response sid
+                                                                        view-id
+                                                                        {"action" "submit"
+                                                                         "values" {}
+                                                                         "idempotency_key"
+                                                                         "send-refused"}))
+                                       ["submission" "id"])]
+                (await @#'hi/session-sends)
+                (expect (= ["accepted"]
+                           (keep #(when (= receipt-id (get % "id")) (get % "status"))
+                                 (get-in (json-body (app-view sid view-id))
+                                         ["view" "submissions"]))))))))))
+  (it
+    "refuses a stale base_seq and a draft of an older revision"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (open-app! sid)
+
+              draft
+              (fn [body extra]
+                (view-action-response sid
+                                      view-id
+                                      (merge {"action" "draft" "node_id" "general" "body" body}
+                                             extra)))
+
+              seen
+              (get (json-body (draft "one" {})) "seq")
+
+              _
+              (draft "two" {"base_seq" seen})
+
+              stale
+              (draft "three" {"base_seq" seen})]
+
+          (expect (= 409 (:status stale)))
+          (expect (= "conflict" (get (json-body stale) "reason")))
+          (expect (= "two" (get (app-node (app-view sid view-id) "general") "draft")))
+          (app-op! {"op" "patch"
+                    "view_id" view-id
+                    "patch"
+                    {"ops"
+                     [{"op" "set" "node_id" "change" "patch" app-patch "new_revision" "fff0000"}]}})
+          (let [old (view-action-response sid
+                                          view-id
+                                          {"action" "draft"
+                                           "node_id" "change"
+                                           "anchor" app-line
+                                           "body" "x"
+                                           "revision" "def5678"})]
+            (expect (= 409 (:status old)))
+            (expect (= "stale_revision" (get (json-body old) "reason"))))))))
+  (it "hides an app from another session"
+      (recorded (fn []
+                  (let [sid
+                        (str (random-uuid))
+
+                        other
+                        (str (random-uuid))
+
+                        view-id
+                        (open-app! sid)]
+
+                    (expect (= 404 (:status (app-view other view-id))))
+                    (expect (= 404
+                               (:status (view-action-response
+                                          other
+                                          view-id
+                                          {"action" "draft" "node_id" "general" "body" "x"}))))
+                    (expect (= [] (app-ids other false)))))))
+  (it "keeps a closed app readable and read-only, and lists an archived app apart"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                closed
+                (open-app! sid)
+
+                archived
+                (open-app! sid)]
+
+            (view-action-response sid closed {"action" "draft" "node_id" "general" "body" "kept"})
+            (app-op! {"op" "close" "view_id" closed})
+            (expect (true? (get (app-op! {"op" "archive" "view_id" archived}) "is_archived")))
+            (expect (= [closed] (app-ids sid false)))
+            (expect (= [archived] (app-ids sid true)))
+            (let [late (view-action-response sid
+                                             closed
+                                             {"action" "draft" "node_id" "general" "body" "late"})]
+              (expect (= 409 (:status late)))
+              (expect (= "closed" (get (json-body late) "reason"))))
+            (forget-app! closed)
+            (expect (true? (get-in (json-body (app-view sid closed)) ["view" "is_closed"])))
+            (expect (= "kept" (get (app-node (app-view sid closed) "general") "draft"))))))))

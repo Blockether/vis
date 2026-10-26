@@ -785,7 +785,6 @@
    [:post "/v1/sessions/:sid/council/entries"] [:vis.council.publish "Publish to Council" false]
    [:post "/v1/sessions/:sid/council/wake"] [:vis.council.wake "Wake session" false]
    [:post "/v1/sessions/:sid/forks"] [:vis.session.fork "Fork session" false]
-   [:post "/v1/sessions/:sid/iterations/:iid/attachments"] [:vis.session.attach "Attach file" false]
    [:patch "/v1/sessions/:sid/model"] [:vis.session.set-model "Set session model" false]
    [:post "/v1/sessions/:sid/turns"] [:vis.session.run "Run session" false]
    [:patch "/v1/sessions/:sid/turns/:tid"] [:vis.turn.update "Update turn" false]

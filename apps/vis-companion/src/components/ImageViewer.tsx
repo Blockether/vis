@@ -43,7 +43,6 @@ interface ExpandableImageProps {
    * That is what makes a not-yet-sent attachment editable rather than read-only.
    */
   onApply?: (edited: Blob) => void | Promise<void>;
-  commentable?: boolean;
   /**
    * Where this picture sits in the gallery its call site laid out. Given, and
    * inside an {@link ImageGallery}, the viewer it opens can walk to its
@@ -57,7 +56,6 @@ interface ImageViewerProps {
   name: string;
   onClose: () => void;
   onApply?: (edited: Blob) => void | Promise<void>;
-  commentable?: boolean;
   /**
    * What the band's verb says when the picture can go back. "Save" replaces the
    * attachment it came from; a capture of a document has no slot yet, so it says
@@ -86,7 +84,6 @@ export function ExpandableImage({
   onError,
   onApply,
   galleryAt,
-  commentable = false,
 }: ExpandableImageProps) {
   // The picture is identified by its BYTES, not by this instance: when a turn
   // settles, the transcript re-mounts the row that owns this trigger, and a
@@ -104,7 +101,6 @@ export function ExpandableImage({
   const step = useGalleryStep(onApply ? undefined : galleryAt, {
     src,
     name: alt,
-    commentable,
   });
 
   return (
@@ -135,7 +131,6 @@ export function ExpandableImage({
           pictures={step?.pictures}
           at={step?.at}
           onApply={onApply}
-          commentable={commentable}
           onClose={() => setOpen(false)}
         />
       )}
@@ -162,7 +157,6 @@ export function ImageViewer({
   applyLabel = 'Save',
   pictures,
   at,
-  commentable = false,
 }: ImageViewerProps) {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const annotationRef = useRef<AnnotationSurface | null>(null);
@@ -200,8 +194,8 @@ export function ImageViewer({
   useEffect(() => dropTrim, [dropTrim]);
   const found = gallery ? gallery.findIndex((picture) => picture.src === shownSrc) : -1;
   const step = found < 0 ? (at ?? 0) : found;
-  const untrimmed = (found < 0 ? undefined : gallery?.[found]) ?? { src, name, commentable };
-  const editable = untrimmed.commentable === true || onApply !== undefined;
+  const untrimmed = (found < 0 ? undefined : gallery?.[found]) ?? { src, name };
+  const editable = onApply !== undefined;
   const drawing = editable && drawingRequested;
   const shown = trimmed ?? untrimmed;
   const hasEdits = strokeCount > 0 || trimmed !== null;
@@ -498,29 +492,25 @@ export function ImageViewer({
 
           {editable ? (
             <IconButton
-              variant={onApply && hasEdits ? 'primary' : 'secondary'}
+              variant={hasEdits ? 'primary' : 'secondary'}
               label={
-                onApply && (drawing || hasEdits)
+                drawing || hasEdits
                   ? applyLabel === 'Save'
                     ? busy === 'apply'
                       ? 'Saving changes'
                       : 'Save changes'
                     : applyLabel
-                  : drawing
-                    ? 'Finish drawing'
-                    : 'Draw on image'
+                  : 'Draw on image'
               }
               title={
-                onApply && (drawing || hasEdits)
+                drawing || hasEdits
                   ? applyLabel === 'Save'
                     ? 'Save changes'
                     : applyLabel
-                  : drawing
-                    ? 'Finish drawing'
-                    : 'Draw on image'
+                  : 'Draw on image'
               }
               onClick={() => {
-                if (onApply && (drawing || hasEdits)) {
+                if (drawing || hasEdits) {
                   void applyEdit();
                   return;
                 }
@@ -534,7 +524,7 @@ export function ImageViewer({
             >
               {busy === 'apply' ? (
                 <Spinner />
-              ) : drawing || (onApply && hasEdits) ? (
+              ) : drawing || hasEdits ? (
                 <CheckIcon />
               ) : (
                 <DrawIcon />

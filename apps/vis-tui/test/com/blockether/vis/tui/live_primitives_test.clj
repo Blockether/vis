@@ -751,6 +751,83 @@
                                   false
                                   (catch clojure.lang.ExceptionInfo _ true)))))))
 
+(def ^:private app-view
+  {:id "app"
+   :title "Review"
+   :seq 1
+   :placement :attachment
+   :nodes [{:id "d"
+            :type :diff
+            :patch "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
+            :new-revision "r2"
+            :threads [{:id "t1" :anchor {:path "x" :side "new" :line 1} :messages [] :draft "d"}]}
+           {:id "th"
+            :type :thread
+            :label "Notes"
+            :messages [{:id "m" :author {:kind "agent"} :body "hi\nthere" :created-at 1}]}]})
+
+(defdescribe
+  app-ops-test
+  (it "adds and replaces a diff thread by id"
+      (let [thread
+            {:id "t2"
+             :anchor {:path "x" :side "old" :line 1}
+             :messages [{:id "m2" :author {:kind "human"} :body "q" :created-at 2}]}
+
+            added
+            (materializer/apply-patch
+              app-view
+              {:view-id "app" :seq 2 :ops [{:op :thread :node-id "d" :thread thread}]})
+
+            replaced
+            (materializer/apply-patch
+              added
+              {:view-id "app"
+               :seq 3
+               :ops [{:op :thread :node-id "d" :thread (assoc thread :draft "more")}]})]
+
+        (expect (= ["t1" "t2"] (mapv :id (get-in added [:nodes 0 :threads]))))
+        (expect (= "more" (get-in replaced [:nodes 0 :threads 1 :draft])))))
+  (it "removes diff threads by id"
+      (let [removed (materializer/apply-patch
+                      app-view
+                      {:view-id "app" :seq 2 :ops [{:op :remove :node-id "d" :item-ids ["t1"]}]})]
+        (expect (= [] (vec (get-in removed [:nodes 0 :threads]))))))
+  (it "keeps one receipt per submission id with its newest stage"
+      (let [receipt
+            {:id "s" :idempotency-key "tui-12345678" :status "accepted" :created-at 1 :updated-at 1}
+
+            patched
+            (materializer/apply-patch app-view
+                                      {:view-id "app"
+                                       :seq 2
+                                       :ops [{:op :submission :submission receipt}
+                                             {:op :submission
+                                              :submission (assoc receipt
+                                                            :status "answered"
+                                                            :updated-at 2)}]})]
+
+        (expect (= [["s" "answered"]] (mapv (juxt :id :status) (:submissions patched))))))
+  (it "refuses a diff thread without an anchor"
+      (expect (try (materializer/apply-patch
+                     app-view
+                     {:view-id "app"
+                      :seq 2
+                      :ops [{:op :thread :node-id "d" :thread {:id "t9" :messages []}}]})
+                   false
+                   (catch clojure.lang.ExceptionInfo _ true))))
+  (it "reads a diff and a thread back from markdown"
+      (let [markdown
+            (materializer/->markdown app-view)
+
+            parsed
+            (:view (materializer/parse-markdown markdown))]
+
+        (expect (str/includes? markdown "```diff\n--- a/x"))
+        (expect (str/includes? markdown "> agent: hi there"))
+        (expect (= (mapv #(dissoc % :id) (:nodes app-view))
+                   (mapv #(dissoc % :id) (:nodes parsed)))))))
+
 (defdescribe scrollbar-belongs-to-the-open-log-test
              (it "scrollbar belongs to the open log"
                  ;; The band's scrollbar starts on the log's own row — the one carrying Search —

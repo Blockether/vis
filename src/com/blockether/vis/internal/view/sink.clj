@@ -24,7 +24,8 @@
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.view.materializer :as materializer])
+            [com.blockether.vis.internal.view.materializer :as materializer]
+            [taoensso.telemere :as tel])
   (:import (java.io File)
            (java.nio.file Files)
            (java.util Locale)))
@@ -143,6 +144,81 @@
   ^File [^File file result]
   (append-line! file {:kind :close :at (util/now-ms) :result result}))
 
+(def ^:private archive-line
+  "The line that marks an app archived. It follows the close line, and a verdict
+   reader skips it."
+  "{\"kind\":\"archive\"}")
+
+(defn archive!
+  "Mark the app recorded in `file` archived. Call it after the close line."
+  ^File [^File file]
+  (io/make-parents file)
+  (with-open [writer (io/writer file :append true)]
+    (.write writer ^String archive-line)
+    (.write writer "\n"))
+  file)
+
+(defn fold-lines
+  "Fold `f` over each line of the record in `file`, decoded like [[read-range]].
+   One streamed pass; answers `init` for a record that nothing wrote. A line that
+   does not parse, such as a line that a crash cut, is logged and skipped."
+  [^File file f init]
+  (if-not (and file (.isFile file))
+    init
+    (with-open [reader (io/reader file)]
+      (reduce (fn [acc line]
+                (if-let [decoded (try (wire/->engine (json/read-json line))
+                                      (catch Exception e
+                                        (tel/log!
+                                          {:level :warn
+                                           :id ::record-line-unreadable
+                                           :data {:file (str file) :error (ex-message e)}
+                                           :msg "Vis skipped an unreadable line of a view record"})
+                                        nil))]
+                  (f acc decoded)
+                  acc))
+              init
+              (line-seq reader)))))
+
+(defn find-view-file
+  "The record of view `view-id` in any session directory, or nil."
+  ^File [view-id]
+  (when (re-matches record-segment (str view-id))
+    (some (fn [^File dir]
+            (let [file (io/file dir (str view-id ".ndjson"))]
+              (when (.isFile file) file)))
+          (.listFiles (views-dir)))))
+
+(defn- app-index-file
+  "The list of the apps that session `session-id` opened, one NDJSON line each."
+  ^File [session-id]
+  (io/file (views-dir) (str session-id) "apps.ndjson"))
+
+(defn index-app!
+  "Add one app to the list of session `session-id`. `entry` holds `:view-id` and
+   `:created-at`, and `:key` and `:extension` when the app has them."
+  [session-id entry]
+  (append-line! (app-index-file session-id) entry))
+
+(defn app-index
+  "The apps that session `session-id` opened, oldest first. A line that does not
+   parse is logged and skipped."
+  [session-id]
+  (let [file (app-index-file session-id)]
+    (if-not (.isFile file)
+      []
+      (with-open [reader (io/reader file)]
+        (into []
+              (keep (fn [line]
+                      (try (wire/->engine (json/read-json line))
+                           (catch Exception e
+                             (tel/log! {:level :warn
+                                        :id ::app-index-line-unreadable
+                                        :data {:session-id (str session-id) :error (ex-message e)}
+                                        :msg "Vis skipped an unreadable line of an app list"})
+                             nil))))
+              (line-seq reader))))))
+
 (defn- owned-file
   "The last pictures of every extension-owned view, one JSON array."
   ^File []
@@ -225,8 +301,8 @@
   [^File file]
   (when (and file (.isFile file))
     (with-open [reader (io/reader file)]
-      (let [last-line (reduce (fn [_ line]
-                                line)
+      (let [last-line (reduce (fn [kept line]
+                                (if (= archive-line line) kept line))
                               nil
                               (line-seq reader))
             record (some-> last-line

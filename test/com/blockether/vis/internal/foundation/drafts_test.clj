@@ -805,11 +805,10 @@
               (expect (extension/envelope-success? next))
               (expect (= 2 (get-in next [:result "version"])))
               (expect (= "diff" (:kind recorded)))
-              (expect (true? (:commentable recorded)))
               (expect (= diff/media-type (:media-type recorded)))
               (expect (str/includes? (get document "patch") "+changed"))
               (expect (not (contains? (:result next) "base64")))
-              (expect (= [] (get document "comments")))
+              (expect (not (contains? document "comments")))
               (expect (= (get-in next [:result "checkpoint"])
                          (get-in document ["source" "head_revision"])))))))))
   (it "refuses calls without a draft, collector or a safe attachment filename"

@@ -22,6 +22,7 @@ import { ArtifactLinkContext } from '../lib/artifact-links';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunDialog, LiveRunRow, liveRunName } from './LiveArtifact';
+import { AppAttachmentRow } from './AppAttachment';
 import { LiveView } from './LiveView';
 import { MermaidBlock } from './MermaidBlock';
 import { JustifiedProse } from './JustifiedProse';
@@ -54,6 +55,7 @@ import {
   isDocMedia,
   isZipMedia,
   attachmentBytes,
+  attachmentIsApp,
   attachmentIsAudio,
   attachmentIsDoc,
   attachmentIsImage,
@@ -2295,7 +2297,6 @@ const AttachmentTile = memo(function AttachmentTile({
       src={url}
       alt={name}
       galleryAt={galleryAt}
-      commentable={attachment.commentable === true}
       loading="lazy"
       decoding="async"
       frameClassName="h-full w-full"
@@ -2430,8 +2431,6 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
       sizeLabel={attachmentBytes(attachment.size)}
       url={url}
       failed={failed}
-      annotate={{ client, sid, iterationId }}
-      commentable={cut.commentable === true}
       onNeeded={needed}
       versions={versions}
       shownAt={shownAt}
@@ -2502,10 +2501,20 @@ export const AttachmentRail = memo(function AttachmentRail({
   const runs = collapseAttachmentVersions(
     attachments.filter((entry) => attachmentIsLive(entry) && entry.iteration_id),
   ).map((thread) => thread[0]);
+  // An app is one row that opens it, also when the step attached it twice.
+  const apps = attachments.filter(
+    (entry, at) =>
+      attachmentIsApp(entry) &&
+      entry.view_id &&
+      attachments.findIndex((other) => other.view_id === entry.view_id) === at,
+  );
   const files = recordedFiles(
     attachments.filter(
       (entry) =>
-        !attachmentIsPlayable(entry) && !attachmentIsDoc(entry) && !attachmentIsLive(entry),
+        !attachmentIsPlayable(entry) &&
+        !attachmentIsDoc(entry) &&
+        !attachmentIsLive(entry) &&
+        !attachmentIsApp(entry),
     ),
   );
   const total = files.reduce((sum, file) => sum + file.count, 0);
@@ -2563,6 +2572,18 @@ export const AttachmentRail = memo(function AttachmentRail({
           {runs.map((attachment) => (
             <LiveRunRow
               key={`run-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
+              client={client}
+              sid={sid}
+              attachment={attachment}
+            />
+          ))}
+        </DocStack>
+      )}
+      {apps.length > 0 && (
+        <DocStack>
+          {apps.map((attachment) => (
+            <AppAttachmentRow
+              key={`app-${attachment.view_id}`}
               client={client}
               sid={sid}
               attachment={attachment}

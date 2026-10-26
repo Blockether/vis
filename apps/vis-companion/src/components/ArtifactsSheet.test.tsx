@@ -25,6 +25,7 @@ const client = {
         })
       : new Blob(['# Note\n\nA read that works.\n'], { type: 'text/markdown' }),
   retainAttachment: () => () => {},
+  appViews: async () => [],
 } as unknown as GatewayClient;
 
 const artifact = (over: Partial<SessionArtifact>): SessionArtifact => ({
@@ -565,6 +566,7 @@ describe('an opened artifact', () => {
       attachmentBlob: async () =>
         new Blob(['# Plan\n\nAlready downloaded.'], { type: 'text/markdown' }),
       retainAttachment: () => () => {},
+      appViews: async () => [],
     } as unknown as GatewayClient;
     const stalledFetch = vi.fn(() => new Promise<Response>(() => {}));
     vi.stubGlobal('fetch', stalledFetch);
@@ -591,6 +593,7 @@ describe('an opened artifact', () => {
       attachmentUrl: async () => 'blob:zip',
       attachmentBlob: async () => new Blob([buffer], { type: 'application/zip' }),
       retainAttachment: () => () => {},
+      appViews: async () => [],
     } as unknown as GatewayClient;
     const archive = artifact({
       key: 'i9:0',
@@ -640,6 +643,7 @@ describe('an opened artifact', () => {
       attachmentBlob: async () =>
         new Blob(['# Report\n\n[Review diff](DIFF-ungroup-hover-hint.json)']),
       retainAttachment: () => () => {},
+      appViews: async () => [],
     } as unknown as GatewayClient;
     const open = vi.fn();
     render(
@@ -755,32 +759,16 @@ describe('an opened artifact', () => {
     view.unmount();
     vi.unstubAllGlobals();
   });
-  it.each([undefined, false, true])(
-    'honors explicit commentable=%s in the gallery',
-    async (commentable) => {
-      const view = render(
-        <ArtifactsSheet
-          client={client}
-          sid="s1"
-          artifacts={[{ ...note, commentable }]}
-          onClose={() => {}}
-        />,
-      );
-      await userEvent.click(
-        screen.getByRole('button', { name: /^Open vis-issue-115-comment\.md/ }),
-      );
-      await screen.findByText('A read that works.', { selector: 'p' });
-      expect(
-        screen.queryByRole('button', {
-          name: 'Comment on the whole document',
-        }) !== null,
-      ).toBe(commentable === true);
-      expect(screen.queryByRole('button', { name: 'Save changes' }) !== null).toBe(
-        commentable === true,
-      );
-      view.unmount();
-    },
-  );
+  it('opens a note read-only in the gallery', async () => {
+    const view = render(
+      <ArtifactsSheet client={client} sid="s1" artifacts={[note]} onClose={() => {}} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^Open vis-issue-115-comment\.md/ }));
+    await screen.findByText('A read that works.', { selector: 'p' });
+    expect(screen.queryByRole('button', { name: 'Comment on the whole document' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    view.unmount();
+  });
 });
 
 // Regression, issue vis_session_id#83d1d828-d2a1-45b2-bbdc-4a5fea1ec354: a clip's tile

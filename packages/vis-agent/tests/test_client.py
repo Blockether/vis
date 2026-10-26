@@ -975,3 +975,48 @@ def test_live_views_filter_by_placement_on_the_session_route():
         if not path.startswith(("/v1/capabilities", "/v1/clients"))
     ]
     assert sent == [("GET", "/v1/sessions/s1/views/live?placement=panel")]
+
+
+def test_live_view_reads_one_app_and_the_archived_apps():
+    # #421: a closed or archived app stays readable by its id.
+    app = {
+        "id": "app-1",
+        "title": "Review",
+        "nodes": [{"type": "thread", "id": "general", "messages": []}],
+        "timeout_ms": 0,
+        "channel_ids": ["tui"],
+        "seq": 3,
+        "created_at": 1,
+        "placement": "attachment",
+        "submissions": [],
+        "is_archived": True,
+        "is_closed": True,
+    }
+
+    def respond(method, path, body):
+        if path.startswith(("/v1/capabilities", "/v1/clients")):
+            return compatible(method, path, body)
+        if path.startswith("/v1/sessions/s1/views/live/app-1"):
+            return 200, {"view": app}
+        return 200, {"views": [app]}
+
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
+        session = client.session("s1")
+        view = session.live_view("app-1")
+        archived = session.live_views(placement="attachment", archived=True)
+    assert (view.id, view.placement, view.is_archived, view.is_closed) == (
+        "app-1",
+        "attachment",
+        True,
+        True,
+    )
+    assert [item.id for item in archived] == ["app-1"]
+    sent = [
+        (method, path)
+        for method, path, _, _ in calls
+        if not path.startswith(("/v1/capabilities", "/v1/clients"))
+    ]
+    assert sent == [
+        ("GET", "/v1/sessions/s1/views/live/app-1"),
+        ("GET", "/v1/sessions/s1/views/live?placement=attachment&archived=true"),
+    ]

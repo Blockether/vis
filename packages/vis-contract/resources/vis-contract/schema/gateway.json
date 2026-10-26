@@ -986,17 +986,6 @@
     {
       "audience": "sdk",
       "operations": {
-        "post": {
-          "request": "json",
-          "response": "json",
-          "extension": "callback"
-        }
-      },
-      "path": "/v1/sessions/:sid/iterations/:iid/attachments"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
         "get": {
           "request": "none",
           "response": "binary",
@@ -1310,6 +1299,16 @@
         }
       },
       "path": "/v1/sessions/:sid/views/live"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/views/live/:view-id"
     },
     {
       "audience": "sdk",

@@ -431,7 +431,11 @@ describe('an opened document', () => {
       );
       await userEvent.click(screen.getByRole('button', { name: 'Share' }));
       // The status region exists before the share ends, so wait for its text, not for the region.
-      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Artifact shared.'));
+      await waitFor(() =>
+        expect(screen.getAllByRole('status').some((status) => status.textContent === 'Artifact shared.')).toBe(
+          true,
+        ),
+      );
       expect(share.mock.calls[0]?.[0]).toEqual({ files: [expect.any(File)] });
       expect(share.mock.calls[0]?.[0].files?.[0]).toMatchObject({
         name: 'shared.pdf',

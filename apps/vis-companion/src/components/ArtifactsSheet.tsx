@@ -5,8 +5,7 @@
  * tool call happened to make it, so "show me that chart again" is a scroll hunt
  * through forty turns. The session header's `⋯` answers that instead: one row that
  * COUNTS what this session produced, and one surface that opens each one in the
- * viewer that can already zoom it, draw on it and attach the drawing to the next
- * message.
+ * viewer that can already read it.
  *
  * Three rules the design has to keep, and each is falsifiable on screen:
  *
@@ -42,9 +41,7 @@ import {
   SHEET_PAGE,
   type SessionArtifact,
 } from '../lib/artifacts';
-import { useAttachImage } from '../lib/attach-image';
 import { ArtifactLinkContext } from '../lib/artifact-links';
-import { editedFilename } from '../lib/image-file';
 import type { GatewayClient } from '../lib/gateway';
 import { spreadsheetOpenVerb } from '../lib/artifact-open';
 import { useBackLayer } from '../lib/edge-back';
@@ -54,12 +51,14 @@ import { ImageViewer } from './ImageViewer';
 import { MarkdownArtifact } from './MarkdownArtifact';
 import { DiffArtifact } from './DiffArtifact';
 import { ClipVideo, clockTime, MediaRecording, RecordingPlayer, useArtifactShare } from './Media';
-import { PdfAnnotator } from './PdfArtifact';
+import { PdfReader } from './PdfArtifact';
 import { parseSubtitles } from '../lib/subtitles';
 import { readArtifactText, TextFrame } from './TextArtifact';
 import { AlertIcon, DotsIcon, MicIcon, PlayIcon } from './icons';
 import { ZipArchive } from './ZipArchive';
 import { Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
+import { AppListRow, AppSurface, useSessionApps } from './AppAttachment';
+import type { LiveView as LiveViewModel } from '../lib/live-view';
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -842,7 +841,6 @@ function ArtifactDetail({
         artifactLinks.open(attachmentId);
       }
     : undefined;
-  const attach = useAttachImage();
   const { url, blob, failed } = useArtifactSource(client, sid, artifact, true);
 
   if (failed || !url || !blob) {
@@ -855,8 +853,8 @@ function ArtifactDetail({
     );
   }
 
-  // A picture is handed straight to the viewer that already owns zoom, pan, the
-  // pen and the share sheet — the whole point of indexing artifacts is that
+  // A picture is handed straight to the viewer that already owns zoom, pan and
+  // the share sheet — the whole point of indexing artifacts is that
   // reaching one costs nothing extra.
   if (artifact.kind === 'image') {
     return (
@@ -864,26 +862,6 @@ function ArtifactDetail({
         src={url}
         name={artifact.name}
         onClose={onClose}
-        commentable={artifact.commentable === true}
-        // Drawing on a picture is an ANSWER to it, so the ink is saved back
-        // under the same filename — the next version of that artifact, the way
-        // a commented note is — and the drawing is attached to the message too.
-        // Its verb is the band's plain Save, like the note's: what saving MEANS
-        // here belongs to this comment, not to a longer word on a title bar.
-        onApply={
-          artifact.commentable === true
-            ? async (edited: Blob) => {
-                await client.saveArtifactBytes(
-                  sid,
-                  artifact.iterationId,
-                  artifact.name,
-                  artifact.mediaType || 'image/png',
-                  new Uint8Array(await edited.arrayBuffer()),
-                );
-                if (attach) attach(edited, editedFilename(artifact.name));
-              }
-            : undefined
-        }
       />
     );
   }
@@ -976,13 +954,7 @@ function ArtifactDetail({
   if (isDiffMedia(artifact.mediaType)) {
     return (
       <DiffArtifact
-        client={client}
-        sid={sid}
-        iterationId={artifact.iterationId}
-        name={artifact.name}
         source={blob}
-        version={artifact.version}
-        commentable={artifact.commentable === true}
         chrome={({ actions, note, body }) => (
           <DetailOverlay
             name={artifact.name}
@@ -1001,18 +973,9 @@ function ArtifactDetail({
   if (isTextMedia(artifact.mediaType, artifact.name)) {
     return (
       <MarkdownArtifact
-        client={client}
-        sid={sid}
-        iterationId={artifact.iterationId}
-        name={artifact.name}
-        mediaType={artifact.mediaType}
         source={blob}
-        version={artifact.version}
-        commentable={artifact.commentable === true}
         plain={!isMarkdownMedia(artifact.mediaType, artifact.name)}
         onOpenAttachment={openAttachment}
-        // The note's own verb stands in this overlay's band, one cell from the
-        // ✕, and the band reports the version it saved as.
         chrome={({ actions, note, body }) => (
           <DetailOverlay
             name={artifact.name}
@@ -1030,18 +993,12 @@ function ArtifactDetail({
   }
 
   // PDFs are rendered by the app so each page fits this overlay; the band carries the
-  // pager and the pen, and annotating stamps the visible page back into the same
-  // filename as its next version.
+  // pager.
   if (isPdfMedia(artifact.mediaType)) {
     return (
-      <PdfAnnotator
-        client={client}
-        sid={sid}
-        iterationId={artifact.iterationId}
+      <PdfReader
         name={artifact.name}
-        mediaType={artifact.mediaType}
         url={url}
-        commentable={artifact.commentable === true}
         chrome={({ actions, note, body }) => (
           <DetailOverlay
             name={artifact.name}
@@ -1137,6 +1094,8 @@ export function ArtifactsSheet({
   // The version list is its own surface, opened from the tile's dot and layered
   // UNDER the detail: opening a cut from it must return here, not to the grid.
   const [versionsOf, setVersionsOf] = useState<SessionArtifact | null>(null);
+  const apps = useSessionApps(client, sid);
+  const [openedApp, setOpenedApp] = useState<LiveViewModel | null>(null);
   // A thumbnail is a DOWNLOAD, so a session with two hundred artifacts in it is
   // two hundred requests the moment this sheet opens. One page at a time, by
   // count AND by weight, and a new filter starts its own first page.
@@ -1156,6 +1115,10 @@ export function ArtifactsSheet({
   // from, then the sheet itself. A keyboard says that with Escape and a phone says it
   // with its own back button, so both walk the same ladder.
   const dismiss = useCallback(() => {
+    if (openedApp) {
+      setOpenedApp(null);
+      return;
+    }
     if (opened) {
       setOpened(null);
       return;
@@ -1165,7 +1128,7 @@ export function ArtifactsSheet({
       return;
     }
     onClose();
-  }, [onClose, opened, versionsOf]);
+  }, [onClose, opened, openedApp, versionsOf]);
   useBackLayer(dismiss);
 
   useEffect(() => {
@@ -1205,6 +1168,15 @@ export function ArtifactsSheet({
       {/* The sheet is the whole box, composer included, so the bottom safe area is
           this scroller's own: the last row of tiles must clear the home indicator. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4 sm:pt-4">
+        {filter === 'All' && apps.length > 0 && (
+          <ul aria-label="Apps" className="mb-3 border border-edge">
+            {apps.map((view) => (
+              <li key={view.id}>
+                <AppListRow view={view} onOpen={setOpenedApp} />
+              </li>
+            ))}
+          </ul>
+        )}
         {shown.length ? (
           <>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 mouse:grid-cols-5">
@@ -1229,9 +1201,11 @@ export function ArtifactsSheet({
             )}
           </>
         ) : (
-          <p className="font-mono text-meta text-dialog-hint">
-            Nothing of that kind in this session.
-          </p>
+          !(filter === 'All' && apps.length > 0) && (
+            <p className="font-mono text-meta text-dialog-hint">
+              Nothing of that kind in this session.
+            </p>
+          )
         )}
       </div>
       {versionsOf && (
@@ -1247,6 +1221,15 @@ export function ArtifactsSheet({
           sid={sid}
           artifact={opened}
           onClose={() => setOpened(null)}
+        />
+      )}
+      {openedApp && (
+        <AppSurface
+          client={client}
+          sid={sid}
+          viewId={openedApp.id}
+          fallbackTitle={openedApp.title}
+          onClose={() => setOpenedApp(null)}
         />
       )}
       {voiceControl && (

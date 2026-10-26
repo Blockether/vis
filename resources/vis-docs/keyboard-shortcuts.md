@@ -20,6 +20,7 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
   explains each task.
 - **You want to dictate a message, or voice recording fails.** See [Use voice input](#use-voice-input).
 - **You want to see the pictures in a message larger.** See [View pictures](#view-pictures).
+- **You want to comment on a change in an app.** See [Use an app](#use-an-app).
 - **You want to send an earlier message again from the desktop or phone app.** See [In the
   desktop or phone app](#in-the-desktop-or-phone-app).
 - **You want to know what cancelling or quitting does to your queued messages.** Read
@@ -109,7 +110,7 @@ footer.
 |---|---|
 | Ctrl+X f | Search in the session |
 | Ctrl+X a | Attach a file |
-| Ctrl+X i | Review your attached files and the files this session produced |
+| Ctrl+X i | Review your attached files, the files this session produced and its apps. Enter opens the selected app |
 | Ctrl+X I (Shift+I) | Show the pictures in this session one at a time. Only terminals that show pictures have this key. See [View pictures](#view-pictures) |
 | Ctrl+X O (Shift+O) | Open the newest picture of this session in the picture app of your computer |
 | Ctrl+X v | Start or stop a voice recording |
@@ -145,6 +146,27 @@ or use the arrow keys to move it. Press **0** to see the whole picture again.
 | 0 | Show the whole picture |
 | Enter or o | Open the picture in the image viewer of your computer |
 | Esc or q | Close the picture viewer |
+
+## Use an app
+
+An app is a screen that the agent or an extension attaches to a session, for example a diff to
+review. Click its row in the transcript, or press **Ctrl+X i**, select the app and press Enter. You
+write comments on lines and in threads, save them as drafts and send them together.
+
+| Keys | What they do |
+|---|---|
+| ↑ or ↓ | Select the previous or the next line. PgUp, PgDn, Home and End move further |
+| ← or → | Fold or unfold the selected file |
+| < or > | Scroll long lines to the side |
+| Enter | Write a comment on the selected line or thread. On a file row, fold or unfold the file |
+| Ctrl+S | In the comment editor, save the comment as a draft |
+| s | Send every saved draft and the values of the inputs |
+| r | Load the app again |
+| Esc | In the comment editor, cancel the comment. Else close the app |
+
+After Ctrl+S, the app shows `Saved · state N` when the gateway has saved your draft. After s, it
+shows `Sent` and the id of the receipt. A closed or archived app is read only. There, Enter and s
+show `Closed: read only`. [Live views](live-views.md#apps) explains apps for developers.
 
 ## Use voice input
 

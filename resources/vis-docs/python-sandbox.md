@@ -297,20 +297,17 @@ file and returns its descriptor. Use `list_attachments()`, `get_attachment(...)`
 `read_attachment(...)` and `show_attachment(...)` to retrieve attachments by
 filename or id. Saving another file with the same name creates a new version.
 
-Attachments are read-only by default. Pass `commentable=True` when you want people
-to review an attachment in Companion or the TUI. This is a property of each version,
-not something inferred from its filename. For example, a specification allows
-comments, while its implementation report does not:
+For example, store a Markdown report that you produced as `report`:
 
 ```python
-attach(specification.encode("utf-8"), filename="PLAN-search.md", kind="doc",
-       media_type="text/markdown", commentable=True)
 attach(report.encode("utf-8"), filename="IMPLEMENTATION-search.md", kind="doc",
-       media_type="text/markdown", commentable=False)
+       media_type="text/markdown")
 ```
 
-Here `specification` and `report` are the Markdown strings you produced. Read-only stops
-comments from people. It does not stop a new version under the same filename.
+`attach(...)` also opens an app: a live view that people use after your block ends. Import the
+builders with `from blockether.vis.extension import ui`, then call `attach(ui.app(...))`.
+[Apps](live-views.md#apps) shows the components and how you answer a Send.
+
 See [draft diffs](drafts.md) for reviewable patches from an isolated working copy.
 
 ## Runtime locations

@@ -37,7 +37,6 @@ import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import liveViewWire from '../lib/live-view.fixture.json';
 import livePrimitivesWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
 import { createComposerPaste, type ComposerPaste } from '../lib/paste';
-import { COMMENTS_HEADING } from '../lib/markdown-annotations';
 import type {
   ContentBlock,
   FileSuggestion,
@@ -1226,16 +1225,6 @@ export const STORY_DOC_HTML = [
 
 export const STORY_DOC_URL = `data:text/html;charset=utf-8,${encodeURIComponent(STORY_DOC_HTML)}`;
 
-/** The same note after two remarks, in the format the file itself carries. */
-export const NOTE_ANNOTATED = [
-  NOTE_MARKDOWN,
-  '',
-  COMMENTS_HEADING,
-  '',
-  '- **“the strip reads left to right”** — Say WHY, not what: the left half never starts a turn.',
-  '- **Whole document** — Worth a screenshot in the gallery once the stop slot lands.',
-].join('\n');
-
 /** A client-shaped value for views whose shown state performs no gateway operation. */
 export const STORY_INERT_CLIENT = {} as GatewayClient;
 
@@ -1649,7 +1638,6 @@ const composerStoryAnswers: Record<string, unknown> = {
   voiceModel: async () => null,
   queuedTurns: async () => ({ turns: [], paused: null }),
   turnTrace: async () => null,
-  onArtifactRevision: () => composerStoryNoop,
   retainAttachment: () => composerStoryNoop,
 };
 export const STORY_COMPOSER_CLIENT = new Proxy(composerStoryAnswers, {

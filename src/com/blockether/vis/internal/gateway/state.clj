@@ -1918,7 +1918,7 @@
         (map-indexed
           (fn [idx
                {:keys [id tool-call-id kind media-type filename size audience version transcription
-                       transcription-segments transcription-status view-id owner commentable]}]
+                       transcription-segments transcription-status view-id owner]}]
             (cond-> {:index idx
                      :iteration_id (str iteration-id)
                      :tool_call_id tool-call-id
@@ -1930,8 +1930,7 @@
                      ;; shows the newest version with its history behind it.
                      :version (long (or version 1))
                      :audience (attachments/normalize-audience audience)
-                     :size (long (or size 0))
-                     :commentable (true? commentable)}
+                     :size (long (or size 0))}
               id
               (assoc :attachment_id (str id))
 
@@ -1973,14 +1972,13 @@
   (attachment-descriptors iteration-id (user-iteration-attachments iteration-id)))
 
 (defn append-iteration-attachment!
-  "Store a produced artifact or authorized revision and return its wire descriptor.
+  "Store a late produced artifact and return its wire descriptor.
 
    The version rule is the engine's own and lives in the writer: re-using the
-   filename is the next CUT of that artifact, so a note the human annotated in
-   the companion becomes `v2` of that note rather than a second file with the
-   same name. Everything a client already knows how to do with an artifact -
-   list it, thread it by name, fetch its bytes by index - then works on the
-   revision unchanged.
+   filename is the next CUT of that artifact, not a second file with the same
+   name. Everything a client already knows how to do with an artifact - list
+   it, thread it by name, fetch its bytes by index - then works on the new cut
+   unchanged.
 
    `att` is `{:filename :media-type :base64}`. nil when the iteration is unknown
    or the payload could not be stored."
@@ -1999,11 +1997,6 @@
        (catch Throwable t
          (tel/log! :warn ["gateway: append-iteration-attachment! failed" (str iid) (ex-message t)])
          nil)))
-
-(defn revise-iteration-attachment!
-  "Save a human review only when its session-owned artifact explicitly allows comments."
-  [sid iid att]
-  (append-iteration-attachment! iid (assoc att :revision-session-id sid)))
 
 (def ^:private turn-progress-phases
   "Coarse 'Vis is doing X' phases surfaced to the live ticker but never pinned

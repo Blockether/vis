@@ -1,7 +1,6 @@
 import { memo, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import type { GatewayClient } from '../lib/gateway';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import {
   attachmentBytes,
@@ -14,29 +13,16 @@ import {
   isDiffMedia,
 } from '../lib/artifacts';
 import { openExternalUrl } from '../lib/desktop';
-import { parseAnnotated } from '../lib/markdown-annotations';
 import type { IterationAttachment } from '../lib/types';
 import { type DocumentChrome, MarkdownArtifact } from './MarkdownArtifact';
 import { DiffArtifact } from './DiffArtifact';
-import { PdfAnnotator } from './PdfArtifact';
-import { readArtifactText, TextFrame } from './TextArtifact';
+import { PdfReader } from './PdfArtifact';
+import { TextFrame } from './TextArtifact';
 import { ChevronIcon } from './icons';
 import { useArtifactShare } from './Media';
 import { BandButton, DialogHeader, ListRow, overlayLayer } from './ui';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 import { useBackLayer } from '../lib/edge-back';
-
-/**
- * What an OPENED artifact needs in order to be marked up: which session and
- * iteration own it, and a client to save the revision through. Given this, a
- * note opened from the transcript is annotatable and a PDF can be drawn on —
- * both saving under the same filename, which is the next version.
- */
-export type AnnotateContext = {
-  client: GatewayClient;
-  sid: string;
-  iterationId: string;
-};
 
 /**
  * AN OPENED DOCUMENT IS THE WHOLE SCREEN, and there is one of it.
@@ -108,7 +94,7 @@ export function OverlayScreen({
 // THE DOCUMENT APPEARS ONCE. The fence and the attachment rail describe the same
 // artifact, so painting a card for the fence AND a tile for the attachment put
 // two boxes for one file in the turn. The attachment tile is the one that can
-// open and annotate the bytes, so it is the only one: `ChatContent` renders
+// open the bytes, so it is the only one: `ChatContent` renders
 // nothing for the fence itself.
 
 /**
@@ -457,8 +443,6 @@ export const DocOverlay = memo(function DocOverlay({
   sizeLabel,
   url,
   failed,
-  annotate,
-  commentable = false,
   versions,
   shownAt = 0,
   onPick,
@@ -469,9 +453,6 @@ export const DocOverlay = memo(function DocOverlay({
   sizeLabel?: string;
   url: string | null;
   failed: boolean;
-  /** Present when the human may mark this artifact up. */
-  annotate?: AnnotateContext;
-  commentable?: boolean;
   /** Every cut of this name, newest first and the head included. */
   versions?: IterationAttachment[];
   /** Which cut is being read, an index into `versions`. */
@@ -491,14 +472,13 @@ export const DocOverlay = memo(function DocOverlay({
   //
   // A revised document is ONE row in the step (`collapseAttachmentVersions`), so
   // the thread behind it needs a door — and it is a cell of the band that already
-  // names the document, one hairline from the way out and beside Save. `v2 of 2`
+  // names the document, one hairline from the way out. `v2 of 2`
   // opens the cuts and closes them again, so the transcript keeps its single row
   // and the chevron that has always opened it. A file written once has no thread
   // and no cell.
   const [isHistory, setHistory] = useState(false);
   const cuts = versions ?? [];
   const shown = cuts[shownAt];
-  const canComment = shown ? shown.commentable === true : commentable === true;
   const shownLabel = shown ? attachmentBytes(shown.size) : sizeLabel;
   const versionCell =
     cuts.length > 1 ? (
@@ -578,31 +558,13 @@ export const DocOverlay = memo(function DocOverlay({
       ),
     });
 
-  if (annotate && url && !failed && isDiffMedia(mime)) {
-    return (
-      <DiffArtifact
-        client={annotate.client}
-        sid={annotate.sid}
-        iterationId={annotate.iterationId}
-        name={name}
-        source={url}
-        version={shown?.version}
-        commentable={canComment}
-        chrome={chrome}
-      />
-    );
+  if (url && !failed && isDiffMedia(mime)) {
+    return <DiffArtifact source={url} chrome={chrome} />;
   }
-  if (annotate && url && !failed && isTextMedia(mime, name)) {
+  if (url && !failed && isTextMedia(mime, name)) {
     return (
       <MarkdownArtifact
-        client={annotate.client}
-        sid={annotate.sid}
-        iterationId={annotate.iterationId}
-        name={name}
-        mediaType={mime}
         source={url}
-        version={shown?.version}
-        commentable={canComment}
         plain={!isMarkdownMedia(mime, name)}
         chrome={chrome}
         onOpenAttachment={openAttachment}
@@ -611,20 +573,9 @@ export const DocOverlay = memo(function DocOverlay({
   }
 
   // A PDF is read the same way: the app rasterises the page so it fits, and the
-  // band it hands up carries the pager and the pen.
-  if (annotate && url && !failed && isPdfMedia(mime)) {
-    return (
-      <PdfAnnotator
-        client={annotate.client}
-        sid={annotate.sid}
-        iterationId={annotate.iterationId}
-        name={name}
-        mediaType={mime}
-        url={url}
-        commentable={canComment}
-        chrome={chrome}
-      />
-    );
+  // band it hands up carries the pager.
+  if (url && !failed && isPdfMedia(mime)) {
+    return <PdfReader name={name} url={url} chrome={chrome} />;
   }
 
   return chrome({
@@ -653,8 +604,6 @@ export const DocPreview = memo(function DocPreview({
   sizeLabel,
   url,
   failed,
-  annotate,
-  commentable = false,
   versions,
   shownAt = 0,
   onPick,
@@ -666,9 +615,6 @@ export const DocPreview = memo(function DocPreview({
   /** The artifact's object URL, or null while it is still being fetched. */
   url: string | null;
   failed: boolean;
-  /** Present when the opened artifact may be marked up. */
-  annotate?: AnnotateContext;
-  commentable?: boolean;
   /** Every cut of this name, newest first — one entry for a file written once. */
   versions?: IterationAttachment[];
   /** Which cut the opened document is reading, an index into `versions`. */
@@ -682,18 +628,8 @@ export const DocPreview = memo(function DocPreview({
   // under a different subtree, and an opened document must stay opened.
   const [opened, setOpened] = useStickyOverlay(`doc:${name}`);
 
-  // WHAT THE NEW VERSION IS, IN THE ROW THE DOCUMENT ALREADY HAD.
-  //
-  // Reported: "I commented on it and saved, and now there are two". A revision
-  // does not deserve a row — it deserves a LINE. `v2 · 3 comments` under the name
-  // says the thing the second row was accidentally saying, and costs no height:
-  // the row's box is its own minimum either way.
-  //
-  // The comments are not metadata beside the file, they are IN it, under one
-  // `## Comments` heading (`lib/markdown-annotations`) — so the count is read
-  // from the bytes this row already holds, and only for a note that was actually
-  // revised and is showing its newest cut.
-  const [comments, setComments] = useState(0);
+  // A revised document stays ONE row; its newest version is a line under the
+  // name, not a second row.
   const latest = versions?.[0];
   const revision = latest && (latest.version ?? 1) > 1 ? (latest.version ?? 1) : 0;
 
@@ -701,27 +637,10 @@ export const DocPreview = memo(function DocPreview({
     onNeeded();
   }, [onNeeded]);
 
-  useEffect(() => {
-    if (!revision || shownAt !== 0 || !url || !isTextMedia(mime, name)) return;
-    let alive = true;
-    readArtifactText(url)
-      .then((text) => {
-        if (alive) setComments(parseAnnotated(text).comments.length);
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, [revision, shownAt, url, mime, name]);
-
   const close = useCallback(() => setOpened(false), [setOpened]);
   const open = useCallback(() => setOpened(true), [setOpened]);
 
-  const revisionLine = revision
-    ? [`v${revision}`, comments > 0 ? `${comments} ${comments === 1 ? 'comment' : 'comments'}` : '']
-        .filter(Boolean)
-        .join(' · ')
-    : '';
+  const revisionLine = revision ? `v${revision}` : '';
 
   return (
     <>
@@ -745,8 +664,8 @@ export const DocPreview = memo(function DocPreview({
       {/* The opened document is a SCREEN, not a part of the transcript: it is
           portalled out of the turn, so the composer strip the session screen pins
           to the bottom cannot paint on top of it — into the viewport-pinned shell
-          (`overlayLayer`), so a keyboard raised over it does not bury the
-          annotator's own field. */}
+          (`overlayLayer`), so a keyboard raised over it does not bury a field
+          at its bottom edge. */}
       {opened &&
         createPortal(
           <DocOverlay
@@ -755,8 +674,6 @@ export const DocPreview = memo(function DocPreview({
             sizeLabel={sizeLabel}
             url={url}
             failed={failed}
-            annotate={annotate}
-            commentable={commentable}
             versions={versions}
             shownAt={shownAt}
             onPick={onPick}

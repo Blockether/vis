@@ -19,12 +19,19 @@
   #{:type :direction :tone :variant :target-kind :status :state :action :kind :mode :align :op
     :placement})
 
+(def ^:private app-data-keys
+  "App data keeps its enum values as strings, as `contract.app` reads them: receipt
+   status, author kind and anchor side."
+  #{:submissions :submission :threads :thread :messages})
+
 (defn- restore-values
   [x]
   (cond (map? x) (persistent! (reduce-kv (fn [out k v]
                                            (assoc! out
                                                    k
-                                                   (cond (and (= :line-tones k) (sequential? v))
+                                                   (cond (app-data-keys k)
+                                                         v
+                                                         (and (= :line-tones k) (sequential? v))
                                                          (mapv #(get view-spec/live-tones % %) v)
                                                          (and (keyword-value-keys k) (string? v))
                                                          (keyword v)

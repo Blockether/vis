@@ -255,7 +255,6 @@
            :version (:version a)
            :media-type (:media-type a)
            :kind (:kind a)
-           :commentable (true? (:commentable a))
            :size (:size a)
            :position (:position a)
            :turn-id (:turn-soul-id a)
@@ -264,7 +263,10 @@
     (= :tool (:source a))
     (assoc :iteration-id
       (:iteration-id a) :tool-call-id
-      (:tool-call-id a))))
+      (:tool-call-id a))
+
+    (:view-id a)
+    (assoc :view-id (:view-id a))))
 
 (defn- envelope-with-settled-views
   "Fold the semantic live views a Python block ABANDONED onto its envelope.

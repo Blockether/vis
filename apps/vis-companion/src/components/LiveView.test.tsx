@@ -700,7 +700,7 @@ describe('stopping the run from the phone', () => {
     const view = opened();
     paint({ view: { ...view, nodes: view.nodes.slice(1) }, onInterrupt: vi.fn(), inDialog: true });
     const button = screen.getByRole('button', { name: 'Interrupt' });
-    expect(button.closest('header')).not.toBeNull();
+    expect(button.closest('header')).toContainElement(button);
   });
 });
 

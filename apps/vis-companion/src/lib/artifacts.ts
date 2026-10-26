@@ -18,6 +18,7 @@
  */
 
 import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
+import { APP_ATTACHMENT_MEDIA } from './live-view';
 import type {
   IterationAttachment,
   SessionArtifactRow,
@@ -191,6 +192,7 @@ export function attachmentIsAudio(attachment: IterationAttachment): boolean {
 // `audience: "user"`, so its bytes never reach the model and the app owes the
 // human a reader for them instead of one more line in the recorded-files row.
 export function attachmentIsDoc(attachment: IterationAttachment): boolean {
+  if (attachmentIsApp(attachment)) return false;
   if (isXlsxMedia(attachment.media_type, attachment.filename)) return false;
   return (
     isDocMedia(attachment.media_type, attachment.filename) ||
@@ -221,7 +223,12 @@ export function attachmentIsLive(attachment: Partial<IterationAttachment>): bool
  * PRODUCED; what the turn DID stays in the transcript.
  */
 export function attachmentIsArtifact(attachment: Partial<IterationAttachment>): boolean {
-  return !attachmentIsLive(attachment);
+  return !attachmentIsLive(attachment) && !attachmentIsApp(attachment);
+}
+
+/** An app attachment: its row opens the live app, not a file (`APP_ATTACHMENT_MEDIA`). */
+export function attachmentIsApp(attachment: Partial<IterationAttachment>): boolean {
+  return baseMedia(attachment.media_type) === APP_ATTACHMENT_MEDIA;
 }
 
 // A still, a clip and a recording belong to the SAME rail: each is something the
@@ -291,8 +298,6 @@ export interface SessionArtifact {
   index: number;
   /** Which cut of this NAME it is, 1-based; 1 when the row carries no version. */
   version: number;
-  /** Human review is opt-in for each version. */
-  commentable?: boolean;
   /**
    * What a RECORDING says, when the gateway's speech engine could read it. Carried
    * on the row so the sheet can offer the words under the player without fetching a
@@ -344,7 +349,6 @@ function toArtifact(
     iterationId: where.iterationId,
     index,
     version: attachment.version ?? 1,
-    commentable: attachment.commentable === true,
     transcription: attachment.transcription,
     transcriptionStatus: attachment.transcription_status,
     transcriptionSegments: attachment.transcription_segments,
@@ -469,55 +473,6 @@ export function collapseAttachmentVersions(list: IterationAttachment[]): Iterati
   return [...threads.values()].map((thread) =>
     [...thread].sort((a, b) => (b.version ?? 1) - (a.version ?? 1)),
   );
-}
-
-/**
- * A HUMAN'S REVISION, FOLDED BACK INTO THE TRANSCRIPT IT CAME FROM.
- *
- * Saving an annotated note (or an inked PDF, or a drawn-on picture) POSTs the
- * whole document under the SAME filename, and the gateway answers with the
- * descriptor of the cut it filed. The transcript the app holds was read before
- * that, and a revision is appended to AN ITERATION THAT ALREADY EXISTS: it moves
- * neither the turn count nor the transcript stamp, so the revalidation that
- * keeps a session current is a no-op and the new cut never arrives. The sheet is
- * derived from those very turns, so it keeps listing the old version — the
- * comments the human just wrote are on the gateway and nowhere on screen.
- *
- * The descriptor is therefore folded in at the seam it belongs to: the one
- * iteration that owns it. Every other turn keeps its identity, so React repaints
- * the row that changed and nothing else, and an iteration outside the window we
- * hold returns `turns` untouched rather than inventing a home for it.
- */
-export function withSavedAttachment(
-  turns: TranscriptTurn[],
-  saved: IterationAttachment,
-): TranscriptTurn[] {
-  const owner = saved.iteration_id ?? '';
-  if (!owner) return turns;
-  let landed = false;
-  const next = turns.map((turn) => {
-    const iterations = turn.iterations ?? [];
-    if (!iterations.some((iteration) => iteration.id === owner)) return turn;
-    landed = true;
-    return {
-      ...turn,
-      iterations: iterations.map((iteration) => {
-        if (iteration.id !== owner) return iteration;
-        const held = iteration.attachments ?? [];
-        // The index IS the identity at the byte endpoint, so a descriptor that
-        // names one we already hold REPLACES it instead of doubling the tile.
-        const at = held.findIndex((entry) => entry.index === saved.index);
-        return {
-          ...iteration,
-          attachments:
-            at < 0
-              ? [...held, saved]
-              : held.map((entry, position) => (position === at ? saved : entry)),
-        };
-      }),
-    };
-  });
-  return landed ? next : turns;
 }
 
 /**

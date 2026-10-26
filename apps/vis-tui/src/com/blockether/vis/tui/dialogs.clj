@@ -3499,9 +3499,9 @@
 
 (defn- mirror-setting-value!
   "Mirror ONE catalog row's value onto the process registry when this binary
-   registers that id itself, so local reads (`plans` in the annotator,
-   `codex_fast_mode` in the footer) honour what the daemon holds. Ids only the
-   daemon knows stay OUT of the registry: their rows render from the catalog."
+   registers that id itself, so local reads (`codex_fast_mode` in the footer)
+   honour what the daemon holds. Ids only the daemon knows stay OUT of the
+   registry: their rows render from the catalog."
   [row]
   (let [id
         (get row "id")

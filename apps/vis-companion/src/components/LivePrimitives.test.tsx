@@ -19,10 +19,9 @@ const all = (nodes: LiveNode[]): LiveNode[] =>
 
 describe('the complete live vocabulary', () => {
   it('decodes every declared primitive and exposes every heading level', () => {
-    const v = view();
     expect(
       new Set(
-        all(v.nodes)
+        all(view().nodes)
           .filter((n) => n.type !== 'group')
           .map((n) => n.type),
       ),
@@ -33,9 +32,9 @@ describe('the complete live vocabulary', () => {
           .filter((type) => type !== 'group'),
       ),
     );
-    render(<LiveViewPanel view={v} onActivate={vi.fn()} />);
+    render(<LiveViewPanel view={view()} onActivate={vi.fn()} />);
     for (let level = 1; level <= 6; level++)
-      expect(screen.getByRole('heading', { level })).toBeVisible();
+      expect(screen.getByRole('heading', { level, name: `Heading level ${level}` })).toBeVisible();
     expect(document.querySelector('pre code')?.textContent).toBe(
       fixture.nodes.find((n) => n.id === 'code')!.text,
     );

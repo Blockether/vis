@@ -133,8 +133,7 @@
    backend, or `:none`) without carrying them."
   [att]
   (-> (select-keys att
-                   [:id :source :tool-call-id :position :kind :media-type :filename :version :size
-                    :commentable])
+                   [:id :source :tool-call-id :position :kind :media-type :filename :version :size])
       (assoc :stored (cond (or (:has-bytes att) (:base64 att)) :inline
                            (:storage-uri att) :external
                            :else :none))))

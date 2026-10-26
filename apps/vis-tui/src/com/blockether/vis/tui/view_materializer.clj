@@ -30,6 +30,7 @@
    bound and the node, and the model's own budget always says how many lines it left
    behind."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.view :as spec]
             [com.blockether.vis.contract.wire :as wire]))
 
@@ -60,7 +61,8 @@
    :steps #{:steps}
    :log #{:window-lines}
    :table #{:order :max-rows :selected-ids}
-   :link #{:links}})
+   :link #{:links}
+   :diff #{:patch :old-revision :new-revision}})
 
 (def ^:private appendable-key
   "The key an `append` carries, per node type — the one axis a `log` and a
@@ -290,16 +292,28 @@
       (update node :selected-ids #(filterv row-ids %)))
     node))
 
+(defn- app-rule
+  "Run one shared app rule from `contract.app`. Its refusal becomes a patch refusal."
+  [node-id f]
+  (try (f)
+       (catch clojure.lang.ExceptionInfo e
+         (if (= :app/invalid (:type (ex-data e)))
+           (invalid-patch! node-id (:reason (ex-data e)))
+           (throw e)))))
+
 (defn- apply-remove
   "A node without the named items. A node with no keyed collection has nothing
-   to remove and says so. Removing table rows also prunes transient selection."
+   to remove and says so. Removing table rows also prunes transient selection.
+   A diff removes threads by id through the shared app rule."
   [node op]
-  (let [{:keys [key]} (spec/item-bounds (:type node))]
-    (when (nil? key)
-      (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds no removable items")))
-    (cond-> (update node key without-ids (:item-ids op))
-      (= :table (:type node))
-      prune-selected)))
+  (if (= :diff (:type node))
+    (app-rule (:id node) #(app/remove-threads node (:item-ids op)))
+    (let [{:keys [key]} (spec/item-bounds (:type node))]
+      (when (nil? key)
+        (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds no removable items")))
+      (cond-> (update node key without-ids (:item-ids op))
+        (= :table (:type node))
+        prune-selected))))
 
 (defn- apply-clear
   "A node emptied. Clearing a log empties the WINDOW and starts its RECORD over: the
@@ -399,6 +413,10 @@
     :remove-node
     (apply-remove-node view op)
 
+    ;; A Send receipt belongs to the view, not to one node.
+    :submission
+    (app/upsert-submission view (:submission op))
+
     (let [path
           (or (node-path view (:node-id op))
               (invalid-patch! (:node-id op)
@@ -423,7 +441,10 @@
             (apply-clear node)
 
             :set-value
-            (apply-set-value node op))]
+            (apply-set-value node op)
+
+            :thread
+            (app-rule (:id node) #(app/upsert-thread node (:thread op))))]
 
       (assoc-in view path patched))))
 
@@ -656,6 +677,58 @@
 (defmethod node->markdown :button
   [{:keys [label clicks]} _]
   (marked-lines :button [(str label " (button; " (long (or clicks 0)) " activations)")]))
+
+(defn- data-line
+  "Carry the fields a page cannot show as one JSON comment line inside a counted block."
+  [data]
+  (when (seq data)
+    (str "<!-- vis:data " (str/replace (wire/json-str data) "-->" "--\\u003e") " -->")))
+
+(defn- message-lines
+  "One readable quote line for each thread message."
+  [messages]
+  (map (fn [{:keys [author body]}]
+         (str "> " (or (:name author) (some-> (:kind author) name) "unknown") ": "
+              (str/replace (str body) #"\n" " ")))
+       messages))
+
+(defmethod node->markdown :diff
+  [{:keys [patch old-revision new-revision threads]} _]
+  (marked-lines :diff
+                (concat (keep identity
+                              [(data-line (cond-> {}
+                                            old-revision
+                                            (assoc :old-revision old-revision)
+
+                                            new-revision
+                                            (assoc :new-revision new-revision)
+
+                                            (seq threads)
+                                            (assoc :threads threads)))])
+                        (let [fenced (vec (fenced (str/split (str patch) #"\n" -1)))]
+                          (update fenced 0 str "diff"))
+                        (mapcat (fn [{:keys [anchor messages]}]
+                                  (message-lines (map #(update % :body
+                                                               (fn [body]
+                                                                 (str (:path anchor) ":"
+                                                                      (:line anchor) " " body)))
+                                                      messages)))
+                                threads))))
+
+(defmethod node->markdown :thread
+  [{:keys [anchor messages draft is-resolved]} _]
+  (marked-lines :thread
+                (concat [(or (data-line (cond-> {:messages (vec messages)}
+                                          anchor
+                                          (assoc :anchor anchor)
+
+                                          (seq draft)
+                                          (assoc :draft draft)
+
+                                          is-resolved
+                                          (assoc :is-resolved true)))
+                             "")]
+                        (if (seq messages) (message-lines messages) ["_No messages_"]))))
 
 (defmethod node->markdown :card
   [{:keys [title text tone meta]} _]
@@ -1037,7 +1110,8 @@
 
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
-  (into #{:paragraph :heading :divider :code :spinner :button :card} (vals spec/field-types)))
+  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread}
+        (vals spec/field-types)))
 
 (def ^:private presentation-marker
   (re-pattern (str "<!-- vis:(" (str/join "|" (sort (map name marked-types))) ") ([0-9]+) -->")))
@@ -1158,6 +1232,58 @@
      :text (if working (second working) text)
      :is-active (boolean working)
      :variant :braille}))
+
+(defn- read-data
+  "The fields a counted block carried in its `vis:data` line, or nil."
+  [at line]
+  (when-let [[_ json] (re-matches #"<!-- vis:data (.*) -->" (str line))]
+    (let [data (wire/parse-json json)]
+      (when-not (map? data) (invalid-markdown! at "a `vis:data` line needs a JSON object"))
+      (wire/->engine data))))
+
+(defmethod markdown->node :diff
+  [_ {:keys [at lines]}]
+  (let [body
+        (vec (rest lines))
+
+        data
+        (read-data at (first body))
+
+        code
+        (vec (if (str/starts-with? (str (first body)) "<!-- vis:data ") (rest body) body))
+
+        [_ fence]
+        (or (re-matches #"(`{3,})diff" (str (first code)))
+            (invalid-markdown! at "a diff needs a ```diff fence"))
+
+        closing
+        (or (some (fn [i]
+                    (when (= fence (nth code i)) i))
+                  (range 1 (count code)))
+            (invalid-markdown! at "a diff needs its closing fence"))]
+
+    (cond-> {:type :diff :patch (str/join "\n" (subvec code 1 closing))}
+      (:old-revision data)
+      (assoc :old-revision (:old-revision data))
+
+      (:new-revision data)
+      (assoc :new-revision (:new-revision data))
+
+      (seq (:threads data))
+      (assoc :threads (vec (:threads data))))))
+
+(defmethod markdown->node :thread
+  [_ {:keys [at lines]}]
+  (let [data (or (read-data at (second lines)) {:messages []})]
+    (cond-> {:type :thread :messages (vec (:messages data))}
+      (:anchor data)
+      (assoc :anchor (:anchor data))
+
+      (seq (:draft data))
+      (assoc :draft (:draft data))
+
+      (:is-resolved data)
+      (assoc :is-resolved true))))
 
 (defmethod markdown->node :card
   [_ {:keys [at lines]}]

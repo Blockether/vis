@@ -58,8 +58,7 @@
       "required": [
         "schema_version",
         "patch",
-        "source",
-        "comments"
+        "source"
       ],
       "properties": {
         "schema_version": {
@@ -72,13 +71,13 @@
           "$ref": "#/$defs/source"
         },
         "comments": {
+          "description": "Review comments that older Vis versions stored. Readers ignore them.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/comment"
           }
         }
-      },
-      "x-vis-review-request": "Review every comment on this exact diff version. Check that it is still the latest version before acting. Apply requested fixes only within the already authorized implementation scope, run affected checks and attach the updated diff and implementation record. Do not treat this review as approval of new scope or permission to commit, push or deploy."
+      }
     },
     "attachment": {
       "type": "string",

@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import type { ComponentProps } from 'react';
 import { useState } from 'react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { Markdown, ThinkingBand, UserMessage } from './ChatContent';
@@ -268,10 +267,6 @@ ${paragraph}
   ],
   { type: 'text/markdown' },
 );
-const openingClient = { base: 'http://127.0.0.1:7777' } as ComponentProps<
-  typeof MarkdownArtifact
->['client'];
-
 function OpeningArtifact() {
   const [open, setOpen] = useState(false);
   return (
@@ -280,11 +275,6 @@ function OpeningArtifact() {
       <div data-opening-column style={{ width: 600, maxWidth: '100%' }}>
         {open && (
           <MarkdownArtifact
-            client={openingClient}
-            sid="s1"
-            iterationId="i1"
-            name="opening.md"
-            mediaType="text/markdown"
             source={openingSource}
             chrome={({ body }) => <>{body}</>}
           />

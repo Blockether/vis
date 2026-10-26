@@ -284,7 +284,7 @@ def __vis_install_attach__():
                 % (call, type(payload).__name__, exc, text)
             ) from exc
 
-    def __vis_attach_data(data, name, kind, media_type, label, audience, commentable):
+    def __vis_attach_data(data, name, kind, media_type, label, audience):
         mt = media_type or __vis_guess_media_type(name, data)
         knd = kind or __vis_kind_for(mt)
         cap = __vis_caption(label)
@@ -293,7 +293,7 @@ def __vis_install_attach__():
         rec = globals().get("__vis_record_attachment__")
         if rec is None:
             raise RuntimeError("attach: capture bridge not bound in this sandbox")
-        payload = rec(knd, mt, b64, name, len(data), aud, cap, commentable)
+        payload = rec(knd, mt, b64, name, len(data), aud, cap)
 
         # The stored artifact's own DESCRIPTOR: its id and version exist from
         # this moment, so the caller holds a handle to what it just made instead
@@ -369,7 +369,6 @@ def __vis_install_attach__():
         "media_type",
         "label",
         "audience",
-        "commentable",
     )
 
     __vis_attach_kwarg_aliases = {
@@ -396,11 +395,8 @@ def __vis_install_attach__():
         media_type=None,
         label=None,
         audience="both",
-        commentable=False,
         **aliases,
     ):
-        if type(commentable) is not bool:
-            raise TypeError("attach: commentable must be a boolean")
         if aliases:
             given = {
                 "source": source,
@@ -443,6 +439,24 @@ def __vis_install_attach__():
                 "attach: source is required - a confined path, bytes, an image "
                 "or a figure object (path=/file= reach it too)."
             )
+        # An app is a live view that stays in the session. It uses the same
+        # `ui` components and the same handle as an app of an extension.
+        if isinstance(source, dict) and (
+            source.get("placement") == "attachment"
+            or source.get("media_type") == "application/vnd.vis.app+json"
+        ):
+            if (filename, kind, media_type, label) != (None,) * 4 or audience != "both":
+                raise TypeError(
+                    "attach: an app takes no filename, kind, media_type, label "
+                    "or audience."
+                )
+            door = globals().get("__vis_live_app__")
+            if door is None:
+                raise RuntimeError("attach: app bridge not bound in this sandbox")
+            import importlib
+
+            sdk = importlib.import_module("blockether.vis.extension")
+            return sdk.LiveAttachment._from(source, door=door)
         # ONE attach verb, four shapes of source: a confined PATH, in-memory
         # BYTES (a str is a path, so encode text you produced), anything with
         # `savefig` - the matplotlib idiom `attach(fig, 'plot.png')` - and a PIL
@@ -455,7 +469,6 @@ def __vis_install_attach__():
                 media_type,
                 label,
                 audience,
-                commentable,
             )
         if hasattr(source, "savefig"):
             import io
@@ -469,7 +482,6 @@ def __vis_install_attach__():
                 media_type,
                 label,
                 audience,
-                commentable,
             )
         if __vis_is_pil_image(source):
             name = str(filename) if filename else "image.png"
@@ -480,7 +492,6 @@ def __vis_install_attach__():
                 media_type,
                 label,
                 audience,
-                commentable,
             )
         # Everything left has to be a PATH. An object that is neither one nor a
         # producer we know is REFUSED by name here: str()-ing it would report a
@@ -505,9 +516,7 @@ def __vis_install_attach__():
         except FileNotFoundError:
             raise FileNotFoundError("attach: no such file: " + path) from None
         name = filename or _os.path.basename(path) or "artifact"
-        return __vis_attach_data(
-            data, str(name), kind, media_type, label, audience, commentable
-        )
+        return __vis_attach_data(data, str(name), kind, media_type, label, audience)
 
     def __vis_attachment_rows():
         lst = globals().get("__vis_list_attachments__")
@@ -592,12 +601,11 @@ def __vis_install_attach__():
     __vis_pages = (
         (
             attach,
-            "Keys: source (REQUIRED — path, bytes, PIL image, figure)"
+            "Keys: source (REQUIRED — path, bytes, PIL image, figure, ui.app, app row)"
             " · filename (same name stores the next version)"
             " · kind · media_type (overrides what the bytes sniff as)"
             " · label (one-line caption)"
-            " · audience ('both', 'user' or 'model')"
-            " · commentable (boolean, default False)",
+            " · audience ('both', 'user' or 'model')",
             "Store a produced artifact as a durable attachment that survives restarts. "
             "source is a confined PATH, in-memory BYTES (name them with filename), or "
             "an in-memory image or figure object. SAME DOCUMENT, SAME NAME: "
@@ -605,9 +613,7 @@ def __vis_install_attach__():
             "put report_v2.png beside report.png, because a new name is a different "
             "document. Attach one or two artifacts per turn, and compose many images "
             "into ONE sheet."
-            "\n\nSet commentable=True to allow human review. Otherwise the attachment "
-            "is read-only. The capability is explicit for each version and never comes "
-            "from the name. audience routes it: 'both' (default), 'user' (human only) "
+            "\n\naudience routes it: 'both' (default), 'user' (human only) "
             "or 'model' (context only). A CSV/TSV becomes a transcript table whose "
             "rows stay out of the model's context. A *.pdf/*.html is a human-only "
             "document and refuses audience='model'."
@@ -618,8 +624,18 @@ def __vis_install_attach__():
             "label, mime/mime_type/content_type -> media_type and type -> kind. Naming "
             "one idea twice, the main name and an alias in the same call, is refused."
             "\n\nRaw result: the DESCRIPTOR dict of that artifact, with id, filename, "
-            "version, media_type, kind, size, audience and commentable. Every read "
-            "verb here takes it as its target, also in this same block.",
+            "version, media_type, kind, size and audience. Every read "
+            "verb here takes it as its target, also in this same block."
+            "\n\nAPPS: attach(ui.app(title, *nodes)) opens an app, after "
+            "`from blockether.vis.extension import ui`. An app is a live view that "
+            "stays in this session. It uses the same ui components, plus ui.diff and "
+            "ui.thread. People save drafts and send comments in the TUI and the "
+            "Companion app.\n\nattach returns a LiveAttachment handle. Its submissions() "
+            "reads the Send receipts, and reply(node_id, body, thread_id=, anchor=, "
+            "submission_id=) answers them. set_status(submission_id, status) moves a "
+            "receipt, and archive() or close() ends the app. A Send reaches this "
+            "session as a new turn that names the app and its receipt. attach(row) "
+            "with the app row from list_attachments() gives the handle again.",
         ),
         (
             list_attachments,
