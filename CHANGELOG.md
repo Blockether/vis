@@ -7,11 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.3.4] - 2026-10-26
+
+### Added
+- Speech: the local `qwen3-tts-local` engine speaks and clones voices. Its models are in the assets pack.
+- Python SDK and extensions: `vis.speech` lists voices, speaks, transcribes and manages custom voices (`add_voice`, `update_voice`, `remove_voice`).
+- Live views: components, grid and wrap layouts, fast live tables, and panel views with header pins in the TUI and the Companion. The components are under `vis.ui`.
+- Subagents: roles with marks, an agent team card in the TUI and a team dock in the Companion. People can answer subagent questions in a questions inbox and see their live work.
+- Tools: allow and deny lists for each tool (#416).
+- Settings: extensions can declare text and secret settings.
+- TUI: attached pictures show as a gallery. The image viewer can zoom and move a picture.
+- Companion: subtitles show as a timed transcript. You can edit an automation from its row.
+- Evals: decision margins in comparisons, and an import of OpenAI MRCR as long multi-turn tasks.
+
+### Changed
+- Gateway: queued and running turns survive a gateway restart. A drain parks the running turns, and the next gateway resumes them (#419).
+- Sandbox: sessions reuse the host Python, so each block starts faster.
+- TUI: the project sidebar has one-line rows with bullets under nested groups. A session row menu has a session section and a group section. The search scope is beside the query.
+- Companion: Live Views are readable dashboards (#417).
+- Agents reproduce a reported symptom before a fix, fix the whole class of a bug and run the full test suite once, before a commit.
+
 ### Removed
 - The experimental Improve feature is gone. This includes the Improve register and its review, the `improve` and `improve_mode` settings, the `/v1/improve` routes and their SDK calls.
 - The TUI and the Companion no longer have Improve screens or the C-x e command.
 - A failed `python_execution` no longer creates an automatic Council complaint.
 - At its first start, Vis drops the Improve tables of an older store. If your configuration still has an `improve` section, delete it.
+
+### Fixed
+- Speech: transcriptions and syntheses can run at the same time.
+- Context: an overflow folds whole turns and keeps the earlier gists. Fold hints name the turn key of a chat turn.
+- Python: a block global with the name of a builtin no longer breaks the sandbox.
+- Python SDK: `LocalEngine` exchanges are safe from more than one thread.
+- Extensions: extension panels stay alive and can be driven from threads.
+- Settings: they load from the merged configuration.
+- Workspace: `/cd` keeps the project of a session with its root.
+- Search: the hidden and ignored flags of `grep` work independently.
+- Companion: a blank page shows a recovery surface and recovers without a manual reload. HTML pages that read storage run and show their errors (#418). The scroll position holds during iOS momentum.
 
 ## [v0.3.3] - 2026-10-23
 
