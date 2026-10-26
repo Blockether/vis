@@ -512,7 +512,6 @@
             "failed",
             "cancelled",
             "budget_limited",
-            "lost",
             "unknown"
           ]
         },
@@ -636,12 +635,14 @@
           "type": "string"
         },
         "error": {
-          "description": "Why a failed child stopped. Code rate_limited means a 429 from its provider.",
+          "description": "Why a failed child stopped. Code rate_limited means a 429 from its provider. Code not_started means that its turn never started. Code interrupted means that its turn stopped before its end.",
           "type": "object",
           "properties": {
             "code": {
               "enum": [
-                "rate_limited"
+                "rate_limited",
+                "not_started",
+                "interrupted"
               ]
             },
             "message": {

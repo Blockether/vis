@@ -628,7 +628,7 @@
     (let [projection
           (result-fixture
             [[:council.run "" [{:session_id "child" :status "asking" :question "Which file?"}] nil]
-             [:council.wait "" [{:session_id "child" :status "lost"}] nil]
+             [:council.wait "" [{:session_id "child" :status "failed"}] nil]
              [:council.cancel "" [{:session_id "child" :status "cancelled"}] nil]
              [:council.ask "" "Use the parser file." nil] [:council.ask "" nil nil]
              [:council.extend ""
@@ -655,7 +655,7 @@
              [:council.ask_files "" {:granted false :missing ["/b"] :reply nil} nil]])]
       (expect (contract/valid-projection? projection))
       (let [views (mapv #(get % "presentation") (get projection "rows"))]
-        (expect (= ["1 asking" "1 lost" "Cancelled" "Parent replied" "No reply"
+        (expect (= ["1 asking" "1 failed" "Cancelled" "Parent replied" "No reply"
                     "Budget now 20 iterations" "1 asking" "Granted 10 iterations"
                     "No iterations granted" "No reply" "Grant now write 1 rule" "Files granted"
                     "2 files not granted" "1 file not granted" "No reply"]

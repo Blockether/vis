@@ -5413,7 +5413,15 @@
              live
              (bus/live-turns)]
 
-         (try (agents/reconcile-orphans! db (keys live))
+         ;; A child with a queued or parked turn is not an orphan: the gateway resumes that turn.
+         (try (agents/reconcile-orphans!
+                db
+                (concat (keys live)
+                        (keep #(when-not (and (= "parked" (:kind %))
+                                              (>= (long (get-in % [:payload :resumes] 0))
+                                                  MAX_TURN_RESUMES))
+                                 (:session-id %))
+                              (:turns (persistance/db-list-pending-turns db)))))
               (catch Throwable t
                 (tel/log! :warn ["gateway: orphaned-child reconciliation failed" (ex-message t)])))
          (lp/db-sweep-orphaned-running-turns! db (concat (vals live) (parked-turn-ids db))))

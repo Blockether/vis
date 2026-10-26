@@ -499,6 +499,40 @@
         (:model turn)
         (assoc :model (str (:model turn)))))))
 
+(def ^:private open-turn-statuses
+  "Stored turn statuses of a turn that has not ended."
+  #{"running" "streaming" "queued" "pending"})
+
+(defn- task-turn-status
+  "The stored status name of the last turn of child `row` for its current task, or nil when that
+   task has no turn yet. After council.resume, only a turn of the follow-up task counts."
+  [db row]
+  (some-> (drop (long (or (:resumed_turns row) 0)) (ps/db-list-session-turns db (:session_id row)))
+          last
+          :status
+          name))
+
+(defn- stop-failure
+  "Why failed child `row` stopped without a finished turn, as {:code :message}, or nil."
+  [db row]
+  (let [status (task-turn-status db row)]
+    (cond (nil? status) {:code "not_started"
+                         :message "The child turn never started. Run the task again."}
+          (open-turn-statuses status)
+          {:code "interrupted"
+           :message
+           "The child turn stopped before its end. Resume the child or run the task again."})))
+
+(defn- settle!
+  "Store the end of open child `row` that has no live turn, and return the stored row. A finished
+   last turn gives its status. A missing or unfinished turn fails the child."
+  [db row]
+  (let [status (task-turn-status db row)]
+    (finish! db
+             (:session_id row)
+             (if (or (nil? status) (open-turn-statuses status)) "failed" status))
+    (or (info db (:session_id row)) row)))
+
 (defn- cooled-providers
   "Provider names that a new subagent must not use now: a recent 429 or an auth cooldown."
   []
@@ -591,7 +625,7 @@
 
 (defn- result [op value] (extension/success {:op op :result (wire/->wire value)}))
 
-(def ^:private terminal-statuses #{"completed" "failed" "cancelled" "budget_limited" "lost"})
+(def ^:private terminal-statuses #{"completed" "failed" "cancelled" "budget_limited"})
 
 ;; Open child questions by child session id: {:question text :entry_id id}, plus
 ;; `:budget {:iterations n :reason text}` for a budget request or `:files {:files grant :reason
@@ -628,27 +662,25 @@
                not-empty))))
 
 (defn- record
-  "One wait record. A queued or running child without a live turn after 30 s is lost. A queued
+  "One wait record. A queued or running child without a live turn after 30 s settles from its
+   last turn: see [[settle!]]. A queued
    child whose queue a human holds is held. A child that a 429 stopped gets error and the working
    routes of `router` in alternatives."
   [db router live? held? now row]
   (let [sid
         (str (:session_id row))
 
-        status
-        (:status row)
-
-        open?
-        (contains? #{"queued" "running"} status)
-
-        status
-        (if (and open?
+        row
+        (if (and (contains? #{"queued" "running"} (:status row))
                  (> (- (long now)
                        (max (long (or (:created_at row) now)) (long (or (:resumed_at row) 0))))
                     30000)
                  (not (live? sid)))
-          "lost"
-          status)
+          (settle! db row)
+          row)
+
+        status
+        (:status row)
 
         open?
         (contains? #{"queued" "running"} status)
@@ -657,7 +689,7 @@
         (when open? (get @questions sid))
 
         failure
-        (when (= "failed" status) (rate-limit-failure db row))]
+        (when (= "failed" status) (or (rate-limit-failure db row) (stop-failure db row)))]
 
     (cond-> {:session_id sid
              :status (cond question "asking"
@@ -1018,7 +1050,7 @@
 
    Records have session_id, status, answer and question. More than 16 tasks start as earlier ones
    finish. timeout_secs defaults to 240 (max 1800). If a status is still running, call
-   council.wait. lost means the child stopped without an answer.
+   council.wait. A failed record can have error with its code and message.
 
    The call also returns when the first child ends, asks or publishes a message. A running
    child's record then also has activity, notes, messages, step_secs, elapsed_secs and alerts.
@@ -1689,13 +1721,13 @@
 - Do small tasks, single-file edits, one search or one check yourself. A child costs more time than a few tool calls.
 - Give each large independent part one child, usually two to four in total. Do not split one small task into many children.
 - For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.
-- To enforce that split, give a task dict files, for example files={\"write\": [\"src/a/**\"]}. Add read_only or deny only when you need them: deny wins over read_only, and read_only wins over write. With write rules, the child writes only there. Rules are paths or globs, also for files that do not exist yet. With the jail off, only host file tools follow all rules, and shell commands follow none.
+- To enforce that split, give a task dict files, for example files={\"write\": [\"src/a/**\"]}. `doc(\"council.run\")` gives the rules.
 - Write each task as a brief for a peer: the goal, what you already know or ruled out, and the output that you need. For an independent review, give the child the code, not your conclusion.
 "
       role-guide
       "- A child gets 120 iterations by default (maximum 600). For a large or multi-step task, set a larger iteration_budget in its task dict at the start.
-- A child sees the system prompt, your requests, notes and answers, and its task, but not your tool calls or their output. Give it sufficient context in the brief: the goal, the facts that your tools found, what you ruled out, exact paths and symbols. A child reads your whole session only when its brief is ambiguous, so do not rely on that. Set model and provider only when the user or project names a model for that work.
-- Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). Status lost means the child stopped without an answer.
+- A child sees the system prompt, your requests, notes and answers, and its task, but not your tool calls or their output. Put in the brief the goal, the facts that your tools found, what you ruled out, exact paths and symbols. Set model and provider only when the user or project names a model.
+- Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). A failed record names its cause in error.
 - A child stops at its first 429. Then its record has status failed, error with code rate_limited, and alternatives: the working provider/model routes. Run the task again with council.run and a provider and model from alternatives. Tell the new child what the failed child already changed. Without alternatives, do the task yourself.
 - While children run, do other work that they do not do. Do not do their work again. Before you use an answer, check its changed files and test results.
 "

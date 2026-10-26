@@ -1385,6 +1385,86 @@
       (expect (= 0 (agents/reconcile-orphans! db [live other-leader]))
               "A second sweep finds nothing"))))
 
+;; User review: a wait record never says lost. A child without a live turn settles from the
+;; last turn of its task, and a failure names why the child stopped.
+(defdescribe
+  child-without-live-turn-test
+  (it
+    "settles from the last task turn and names why the child stopped"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          later
+          (+ (System/currentTimeMillis) 60000)
+
+          rec
+          (fn [sid turns]
+            (with-redefs [ps/db-list-session-turns (fn [_ id]
+                                                     (if (= sid (str id)) turns []))]
+              (#'agents/record
+               db
+               nil
+               (constantly false)
+               (constantly false)
+               later
+               (agents/info db sid))))]
+
+      (let [done
+            (child! db leader {})
+
+            r
+            (rec done [{:id "t" :status :success :content [{"type" "prose" "markdown" "Done"}]}])]
+
+        (expect (= "completed" (:status r)))
+        (expect (= "Done" (:answer r)))
+        (expect (= "completed" (:status (agents/info db done))) "The store keeps the end"))
+      (let [never
+            (child! db leader {})
+
+            r
+            (rec never [])]
+
+        (expect (= "failed" (:status r)))
+        (expect (= "not_started" (get-in r [:error :code])))
+        (expect (document/valid-json? "agents"
+                                      "record"
+                                      (walk/stringify-keys (into {} (remove (comp nil? val)) r)))))
+      (let [cut
+            (child! db leader {})
+
+            r
+            (rec cut [{:id "t" :status :running}])]
+
+        (expect (= "failed" (:status r)))
+        (expect (= "interrupted" (get-in r [:error :code]))))
+      (let [young
+            (child! db leader {})
+
+            r
+            (#'agents/record
+             db
+             nil
+             (constantly false)
+             (constantly false)
+             (System/currentTimeMillis)
+             (agents/info db young))]
+
+        (expect (= "queued" (:status r)) "A new child waits for its first turn"))
+      (let [real (child! db leader {})]
+        (expect (= "not_started"
+                   (get-in (#'agents/record
+                            db
+                            nil
+                            (constantly false)
+                            (constantly false)
+                            later
+                            (agents/info db real))
+                           [:error :code]))
+                "A new child has no turn of its own")))))
+
 (defdescribe
   stopping-a-parent-arms-its-backstop-before-stopping-children-test
   (it
