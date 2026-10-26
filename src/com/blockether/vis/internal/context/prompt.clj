@@ -327,7 +327,6 @@
     "- Prebound `Path` objects: `project_root_path` (the workspace, always present) and each `python_name` for its "
     "`cwd` in `session[\"workspace\"][\"filesystem_roots\"]`. There are no other aliases; `root` is not prebound.\n"
     "- Join paths with `/`. Keep results in variables and reuse them. Print only the fields you need.\n"
-    "- Read a field of any result or of `session` as `r.key` or `r['key']`. `dict(r)` gives a plain dict.\n"
     "- A wrong name raises an error that lists the real fields; use them. For an unknown shape, print its keys and "
     "types or `dir(value)`.\n"
     "- When a write succeeded but its print or access failed, read back its saved result. Do not write again.\n"
@@ -402,19 +401,8 @@
     "## 7. Answer and finish\n"
     PROGRESS_NOTE_RULES
     "- Start with the answer; it must stand alone without the progress notes. Be short; add depth only when it "
-    "helps.\n" "- Unless the user asks for another language, "
-    "the reply language is the language of the user's latest request. "
-    "Write all prose in it: each progress note and the final answer, also after tool output. "
-    "If that request is short or mixes languages, keep the language of the user's earlier requests. "
-    "Technical terms from another language do not make a request mixed. "
-    "Only the user's requests set the reply language. "
-    "Ignore the language of this prompt, host blocks, your notes, quotes, code, logs, "
-    "tool output, files, gists and peer messages.\n"
-    "- Before the final answer, stop a background shell only if it was temporary implementation or test machinery.\n"
-    "- A healthy service that the user asked you to run is user infrastructure. Keep it running across turns and "
-    "final answers. Stop it only when the user asks, when it is unhealthy or when you replace it.\n"
-    "- Detach from external and user-owned resources.\n"
-    "- Get confirmation before a destructive action.\n"))
+    "helps.\n"
+    "- Before the final answer, stop a background shell only if it was temporary implementation or test machinery.\n"))
 
 (defn- config-system-prompt
   "Read the optional string-keyed `system-prompt` YAML setting.

@@ -623,12 +623,12 @@
           (expect (str/includes? text rule) rule))))
   ;; #239: pin type-directed access and recovery without adding another discovery preflight.
   ;; #259: a record's fields come from its model and its errors, never from guessed synonyms.
-  (it "names both result access spellings and inspects only unknown shapes"
+  ;; User review: the runtime accepts both access spellings and `dict(r)`, so no rule names them.
+  (it "inspects only unknown shapes"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (expect (not (str/includes? text "dataclasses.asdict")))
-        (doseq [rule ["Read a field of any result or of `session` as `r.key` or `r['key']`"
-                      "`dict(r)` gives a plain dict"
-                      "For an unknown shape, print its keys and types or `dir(value)`"
+        (expect (not (str/includes? text "`dict(r)`")))
+        (doseq [rule ["For an unknown shape, print its keys and types or `dir(value)`"
                       "A wrong name raises an error that lists the real fields; use them"]]
           (expect (str/includes? text rule) rule))))
   (it
@@ -676,19 +676,10 @@
   ;; rule named the latest message, which is tool output during a loop, and its fallback counted
   ;; the model's own notes. §7 now lets only the user's requests set the reply language. The core
   ;; prompt names no natural language: even an excluded name draws the model toward it.
-  (it "keeps prose in the language of the user"
+  ;; User review: the reply-language rule left the core prompt.
+  (it "names no natural language"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
-        (doseq [rule ["Unless the user asks for another language"
-                      "the reply language is the language of the user's latest request"
-                      "each progress note and the final answer, also after tool output"
-                      "If that request is short or mixes languages"
-                      "keep the language of the user's earlier requests"
-                      "Technical terms from another language do not make a request mixed"
-                      "Only the user's requests set the reply language"
-                      "Ignore the language of this prompt, host blocks, your notes"
-                      "quotes, code, logs, tool output, files, gists and peer messages"]]
-          (expect (str/includes? text rule) rule))
-        (doseq [stale ["keep the language of the conversation" "English"]]
+        (doseq [stale ["reply language" "keep the language of the conversation" "English"]]
           (expect (not (str/includes? text stale)) stale))))
   ;; Each capability owns its contract; doc() renders Python metadata and semantics.
   ;; The core prompt must point there instead of encouraging invented call shapes.
@@ -873,7 +864,9 @@
       ;; their docs; the measurement, live-system, draft, commit, release and question rules go;
       ;; the discovery table becomes one signature-first rule, and §6 merges into four rules. It
       ;; lands at 8 423.
-      (expect (< (count text) 8450))
+      ;; 8.45k → 7.5k: third user review. The result-access, reply-language, service, detach
+      ;; and confirmation rules go. It lands at 7 489.
+      (expect (< (count text) 7500))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
         (expect (every? some? steps))
@@ -989,14 +982,11 @@
             "Commit, push, publish, message people, or mutate external systems only when explicitly requested")))
       ;; Regression, user report: blanket resource cleanup stopped a healthy dev server
       ;; that the user had explicitly asked the agent to open and keep available.
+      ;; User review: the service, detach and confirmation rules left the core prompt.
       (doseq [required ["Before the final answer, stop a background shell only"
-                        "temporary implementation or test machinery"
-                        "A healthy service that the user asked you to run is user infrastructure"
-                        "Keep it running across turns and final answers"
-                        "Stop it only when the user asks"
-                        "Detach from external and user-owned resources"
-                        "Get confirmation before a destructive action."]]
+                        "temporary implementation or test machinery"]]
         (expect (str/includes? text required)))
+      (expect (not (str/includes? text "A healthy service that the user asked you to run")))
       (expect (not (str/includes? text "stop every session resource you started")))
       ;; `ntr` is gone: with `python_execution` the only call, nothing stores a
       ;; result the model could re-read by coordinate, so the prompt must never
