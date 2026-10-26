@@ -465,7 +465,7 @@
                                  "when a finding, decision or blocker changes the next step"
                                  "share a short plan when you know enough"]]
                      (expect (not (str/includes? cli rule)) rule))
-                   (expect (str/includes? cli "## 7. Answer and finish\n- Start with the answer"))
+                   (expect (str/includes? cli "results that you have.\n\n## Calls"))
                    (expect (str/includes? cli "`session[\"agent\"][\"interactive\"]` is False"))
                    (expect (not (str/includes? cli "NON-INTERACTIVE ONE-SHOT RUN"))))))
 
@@ -478,7 +478,7 @@
             (var-get #'prompt/CORE_SYSTEM_PROMPT)
 
             edit-section
-            (second (re-find #"(?s)## 4\. Edit and check\n(.*?)\n## 5\." text))]
+            (second (re-find #"(?s)- EDIT: (.*?)\n- CHECK: " text))]
 
         (expect (some? edit-section))
         (doseq [rule ["Style is correctness"
@@ -491,7 +491,7 @@
             (var-get #'prompt/CORE_SYSTEM_PROMPT)
 
             edit-section
-            (second (re-find #"(?s)## 4\. Edit and check\n(.*?)\n## 5\." text))]
+            (second (re-find #"(?s)- EDIT: (.*?)\n- FINISH: " text))]
 
         (doseq [rule ["Keep unrelated work and formatting" "Test the changed code first"
                       "the full suite once before a commit" "Rerun checks only for new code edits"
@@ -501,7 +501,7 @@
 
             (expect (= 1 (count (re-seq pattern normalized))) rule)
             (expect (str/includes? (str/replace (or edit-section "") #"\s+" " ") rule) rule)))
-        (expect (str/includes? text "## 7. Answer and finish"))
+        (expect (str/includes? text "- FINISH: Start with the answer"))
         (expect (not (str/includes? text "## 7. Style and finish"))))))
 
 (defdescribe
@@ -560,11 +560,11 @@
             (prompt/build-system-prompt {})
 
             section
-            (second (str/split text #"## 1\. Facts and discovery" 2))
+            (second (str/split text #"## States" 2))
 
             discovery
             (some-> section
-                    (str/split #"## 2\. Sandbox" 2)
+                    (str/split #"## Calls" 2)
                     first)]
 
         (expect (some? discovery))
@@ -573,8 +573,8 @@
                         "When no question is open, stop reading"
                         "For a call, `print(inspect.signature(fn))`"
                         "Find an unknown name with one narrow `apropos(pattern)`"
-                        "`apropos(pattern)` filters symbol names" "`doc(name)` returns"
-                        "obey its preconditions"]]
+                        "`apropos(pattern)`, a case-insensitive regex over names and outlines"
+                        "`doc(name)` returns" "obey its preconditions"]]
             (expect (str/includes? discovery rule) rule)))
         (expect (not (str/includes? text "use the first row that matches")))
         (expect (= 1 (count (re-seq #"Read only for the open question" text))))
@@ -866,7 +866,10 @@
       ;; lands at 8 423.
       ;; 8.45k → 7.5k: third user review. The result-access, reply-language, service, detach
       ;; and confirmation rules go. It lands at 7 489.
-      (expect (< (count text) 7500))
+      ;; 7.5k → 7.4k: user decision. The core becomes a state machine: six states with their
+      ;; exits, the rules that hold in every state, the call shapes and the context budget. It
+      ;; lands at 7 364.
+      (expect (< (count text) 7400))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
         (expect (every? some? steps))
@@ -885,7 +888,7 @@
                 text
                 "For a question, an analysis or a diff preview, answer without changing files"))
       (expect (< (str/index-of text "answer without changing files")
-                 (str/index-of text "## 3. Read and search")))
+                 (str/index-of text "## Calls")))
       ;; A helper the model wrote is the only document it can author mid-session, so the rule that
       ;; orders one has to name what its docstring BECOMES — a gist, a page, and a way to be found.
       (expect (str/includes? text "make it a named helper with a one-line docstring"))
@@ -911,57 +914,60 @@
       ;; an ADDRESSED edit — create, move, delete — is still plain Python.
       (expect (str/includes? text "Create, move and delete files with plain Python"))
       (expect (not (str/includes? text "returns a handle")))
-      (doseq [heading ["## 1. Facts and discovery" "## 2. Sandbox" "## 3. Read and search"
-                       "## 4. Edit and check" "## 5. Act on your own" "## 6. Context budget"
-                       "## 7. Answer and finish"]]
+      ;; User decision: the core prompt is a state machine. Each state names its rules and exit.
+      (doseq [heading ["## States" "## Always" "## Calls" "## Context"]]
         (expect (str/includes? text heading)))
-      (doseq [required
-              ["`apropos(pattern)` filters symbol names" "`doc(name)` returns"
-               "runtime, source, docs, assumption" "obey its preconditions" "`doc()` is the index"
-               "A skill is one of these documents" "`python_execution`" "is the only tool"
-               "do every action in sandbox Python" "Put independent work in one block"
-               "then `await gather(...)`" "make it a named helper" "Keep results in"
-               ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
-               ;; "print only what the answer needs" a contract instead of cost advice.
-               "`print()` is the one channel back" "you get only what you print"
-               "For an unknown shape" "Reproduce each reported symptom before you edit"
-               "show that each one is gone" "Add tests only where nearby tests show a place"
-               "Name unrelated failures; do not fix them" "Write only the files that the task needs"
-               "Treat context as a budget"
-               ;; The model must know this is the latest available provider measurement,
-               ;; not a live token count or cumulative turn usage. Fold pressure
-               ;; compares it to the soft budget, not to the hard input ceiling.
-               "`latest_measured_input_tokens`" "not a live count" "`auto_compress_above`"
-               "`model_input_limit`" "`hint` shows at 75%"
-               ;; `session_drop` is gone: omitting the gist IS the discard, and a model
-               ;; that does not know that writes a useless gist instead of dropping.
-               "without a gist the steps are deleted"
-               ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
-               ;; but named no callable, so `fold_session` had to be remembered or
-               ;; rediscovered through `doc()` — every other verb in the core is named.
-               "Fold settled work with `print(fold_session(key, gist))`"
-               ;; Regression, user report: a fold that "saved 0 tokens". §6 named the verb
-               ;; but not the KEY it takes, so the shape was guessed — a selector structure
-               ;; or a bare id that resolved to nothing. The key grammar is in the core now.
-               "`\"-t2/i9\"` folds every step through it"
-               ;; Regression, LongMemEval run of 2026-10-23: Opus kept a chat of 35 turns
-               ;; unfolded because it read folds as tool-step folds only.
-               "`\"-t5\"` folds turns 1-5"
-               ;; Nothing stores a folded step for later: the gist is the whole survivor,
-               ;; and a prompt that hints otherwise buys a fold the model regrets.
-               "Only the gist stays"
-               ;; Regression, user report: the benchmark said folding worked only because the task
-               ;; ordered it. Real Z.ai GLM-5.3 Flash A/B data showed a forced 4k settled-prefix fold
-               ;; doubled cost. Use the runtime's measured hint and require enough future work to
-               ;; amortize the cache reset.
-               "Fold when `hint` shows and a large phase follows"
-               "Make the fold the only call of that step" "Each fold breaks the cache once"
-               ;; Regression, user report: Anthropic, OpenAI and Z.ai all continued from one
-               ;; multi-turn fold without a read/fold loop, but transcript-like gists retained
-               ;; raw logs and complete tests. Pin minimum sufficient narrowing, not just survival.
-               "smallest sufficient checkpoint"
-               "the user's facts, conclusions, unknowns, exact paths" "test state and dirty files"
-               "Omit raw output"]]
+      (doseq [state ["- ANSWER: " "- ORIENT: " "- REPRODUCE: " "- EDIT: " "- CHECK: " "- FINISH: "]]
+        (expect (str/includes? text state) state))
+      (expect (= 5 (count (re-seq #"Exit: " text))) "FINISH ends the turn")
+      (doseq [required ["`apropos(pattern)`, a case-insensitive regex over names and outlines"
+                        "`doc(name)` returns" "runtime, source, docs, assumption"
+                        "obey its preconditions" "`doc()` is the index"
+                        "A skill is one of these documents" "`python_execution`" "is the only tool"
+                        "do every action in sandbox Python" "Put independent work in one block"
+                        "then `await gather(...)`" "make it a named helper" "Keep results in"
+                        ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
+                        ;; "print only what the answer needs" a contract instead of cost advice.
+                        "`print()` is the one channel back" "you get only what you print"
+                        "For an unknown shape" "Reproduce each reported symptom before you edit"
+                        "Show that each reported symptom is gone"
+                        "Add tests only where nearby tests show a place"
+                        "Name unrelated failures; do not fix them"
+                        "Write only the files that the task needs" "Treat context as a budget"
+                        ;; The model must know this is the latest available provider measurement,
+                        ;; not a live token count or cumulative turn usage. Fold pressure
+                        ;; compares it to the soft budget, not to the hard input ceiling.
+                        "`latest_measured_input_tokens`" "not a live count" "`auto_compress_above`"
+                        "`model_input_limit`" "`hint` shows at 75%"
+                        ;; `session_drop` is gone: omitting the gist IS the discard, and a model
+                        ;; that does not know that writes a useless gist instead of dropping.
+                        "without a gist the steps are deleted"
+                        ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
+                        ;; but named no callable, so `fold_session` had to be remembered or
+                        ;; rediscovered through `doc()` — every other verb in the core is named.
+                        "Fold settled work with `print(fold_session(key, gist))`"
+                        ;; Regression, user report: a fold that "saved 0 tokens". §6 named the verb
+                        ;; but not the KEY it takes, so the shape was guessed — a selector structure
+                        ;; or a bare id that resolved to nothing. The key grammar is in the core now.
+                        "`\"-t2/i9\"` folds every step through it"
+                        ;; Regression, LongMemEval run of 2026-10-23: Opus kept a chat of 35 turns
+                        ;; unfolded because it read folds as tool-step folds only.
+                        "`\"-t5\"` folds turns 1-5"
+                        ;; Nothing stores a folded step for later: the gist is the whole survivor,
+                        ;; and a prompt that hints otherwise buys a fold the model regrets.
+                        "Only the gist stays"
+                        ;; Regression, user report: the benchmark said folding worked only because the task
+                        ;; ordered it. Real Z.ai GLM-5.3 Flash A/B data showed a forced 4k settled-prefix fold
+                        ;; doubled cost. Use the runtime's measured hint and require enough future work to
+                        ;; amortize the cache reset.
+                        "Fold when `hint` shows and a large phase follows"
+                        "Make the fold the only call of that step" "Each fold breaks the cache once"
+                        ;; Regression, user report: Anthropic, OpenAI and Z.ai all continued from one
+                        ;; multi-turn fold without a read/fold loop, but transcript-like gists retained
+                        ;; raw logs and complete tests. Pin minimum sufficient narrowing, not just survival.
+                        "smallest sufficient checkpoint"
+                        "the user's facts, conclusions, unknowns, exact paths"
+                        "test state and dirty files" "Omit raw output"]]
         (expect (str/includes? text required)))
       ;; A bare return value produces no stdout: every fold example must print its receipt.
       (doseq [example (re-seq #"`[^`]*fold_session\([^`]*`" text)]

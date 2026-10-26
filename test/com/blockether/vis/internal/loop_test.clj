@@ -2695,7 +2695,7 @@
                  (reset! session-id (:session-id first-env))
                  (reset! persisted-entry entry)
                  (reset! first-stable stable)
-                 (expect (some #(str/includes? (:content %) "## 7. Answer and finish") stable))
+                 (expect (some #(str/includes? (:content %) "## States") stable))
                  (persistance/db-set-session-prompt-cache-state!
                    (:db-info first-env)
                    (:session/state-id first-env)
