@@ -101,6 +101,7 @@ jobs:
           Blockether/vis-decisions -
           Blockether/vis-optmem -
           Blockether/vis-graphify -
+          Blockether/vis-podcaster -
           FIRST_PARTY
           fi
           cat "$RUNNER_TEMP/targets"
