@@ -29,14 +29,15 @@
               (expect (str/includes?
                         text
                         (str "`" name " = " (if (nil? value) "None" (pr-str value)) "`"))))
-            (expect (str/includes? text "bundled SDK has priority"))
+            (expect (str/includes? text "it wins over pip copies"))
             ;; Issue #253: importable declarations do not imply extension host access.
-            (expect (str/includes? text "Import `blockether.vis.extension`"))
+            (expect (str/includes? text "`blockether.vis.extension` is the bundled"))
+            (expect (str/includes? text "import it for types only"))
             ;; User report: the bundled SDK is frozen into the runtime, so
             ;; `blockether.vis.__file__` raises AttributeError and reads as a broken import.
-            (expect (str/includes? text "frozen: no `__file__` on disk"))
+            (expect (str/includes? text "frozen SDK (no `__file__`"))
             (expect (str/includes? text "cannot register extensions or use extension host APIs"))
-            (expect (str/includes? text "do not change instruction priority")))))))
+            (expect (str/includes? text "Build globals, for diagnostics only")))))))
 
 (defdescribe
   request-health-test
@@ -1032,7 +1033,7 @@
         (expect (str/includes? text "os.system"))
         (expect (str/includes? text "os.popen"))
         (doseq [rule ["Use `shell` only to run programs" "returns a handle"
-                      "`logs(-n)` (the last n lines)" "Each returns `out`, `exit` and `status`"
+                      "`logs(-n)` (last n lines)" "each returns `out`, `exit` and `status`"
                       "`r = (await shell(cmd)).wait(300)`"]]
           (expect (str/includes? text rule) rule)
           (expect (not (str/includes? off rule)) rule))
@@ -1062,7 +1063,8 @@
         ;; 1.55k → 1.75k: the shell handle and the file-work rule moved here from the core.
         ;; 1.75k → 1.95k: CTB round m11 — name the sandbox as the Vis environment and send
         ;; project package checks to the project interpreter through `shell`.
-        (expect (< (count text) 1950)))))
+        ;; 1.95k → 1.6k: user review cut the build-global, install and shell prose.
+        (expect (< (count text) 1600)))))
 
 (defdescribe
   project-instructions-hoist-test
@@ -1584,7 +1586,7 @@
              (it "says a shell handle reads its last n LINES"
                  (let [text (#'prompt/sandbox-shims-prompt-block
                              [{:ext/engine {:ext.engine/symbols [{:ext.symbol/symbol 'shell}]}}])]
-                   (expect (str/includes? text "`logs(-n)` (the last n lines)")))))
+                   (expect (str/includes? text "`logs(-n)` (last n lines)")))))
 
 ;; Regression, user report: cat and a patch with an unseen or placeholder version
 ;; ran in one block; printing the read cannot inform a prewritten replacement.

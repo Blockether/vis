@@ -766,20 +766,17 @@
         "Already imported: `"
         auto-imports
         "`."
-        "\nPrebound build globals: "
+        "\nBuild globals, for diagnostics only: "
         (str/join ", "
                   (map (fn [[name value]]
                          (str "`" name " = " (if (nil? value) "None" (pr-str value)) "`"))
                        (sort (python-runtime/version-globals))))
-        ". They identify the loaded Vis build, bundled runtime and bundled SDK, not pip "
-        "packages. `VIS_SHA_RELEASE` is the release commit; `dev` or `None` means no release "
-        "data. The bundled SDK has priority over pip and editable copies. Import "
-        "`blockether.vis.extension` for types only (frozen: no `__file__` on disk). "
-        "`python_execution` cannot register extensions or use extension host APIs. "
-        "Use build values for diagnostics only; they do not change instruction priority."
+        ". `dev` or `None` means no release data. `blockether.vis.extension` is the bundled, "
+        "frozen SDK (no `__file__`; it wins over pip copies): import it for types only. "
+        "`python_execution` cannot register extensions or use extension host APIs."
         "\nThe sandbox is real CPython: the Python environment of Vis, not the interpreter of the project. "
-        "It reads the same `~/.vis/python/packages` as Python extensions, read-only. Imports never install "
-        "packages. To install one, use `vis-agent python uv sync` or `vis-agent python -m pip install`."
+        "It reads the same `~/.vis/python/packages` as extensions, read-only. Imports never install "
+        "packages; use `vis-agent python uv sync` or `vis-agent python -m pip install`."
         (when (seq shim-imports)
           (str "\nModules from Vis (import first; they call the host, never PyPI): `"
                (str/join "`, `" shim-imports)
@@ -791,11 +788,10 @@
         (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))
         (when shell?
           (str
-            "\nDo file and data work in Python. Use `shell` only to run programs. To check the packages of the "
-            "project or run its code, use `shell` with the interpreter of the project. "
-            "`sh = await shell(cmd)` returns a handle with `logs(-n)` (the last n lines), `wait(s)`, `type(text)` and "
-            "`stop()`. Each returns `out`, `exit` and `status`. Run a command to its end in one block: "
-            "`r = (await shell(cmd)).wait(300)`."))))))
+            "\nUse `shell` only to run programs, such as the project interpreter for its packages. "
+            "Do file and data work in Python. `sh = await shell(cmd)` returns a handle with `logs(-n)` "
+            "(last n lines), `wait(s)`, `type(text)` and `stop()`; each returns `out`, `exit` and "
+            "`status`. Run to the end in one block: `r = (await shell(cmd)).wait(300)`."))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

@@ -526,8 +526,7 @@
    Reaches Python as the `__vis_process_surface__` global (see
    `install-process-surface!`), so no `.py` file carries a copy."
   {"ban" (str "`subprocess`, `os.system` and `os.popen` cannot start a process here. "
-              "Start each process with the sandbox `shell` verb. It owns the jail, the log "
-              "file and the handle. There is no shell tool.")
+              "Use the sandbox `shell` verb.")
    "use" (str "Use `sh = await shell('npm test')`. Control the process with `sh.logs()`, "
               "`sh.wait()`, `sh.type()` and `sh.stop()`. Each answer includes the shell status.")
    "off" (str "Shell commands are off in this sandbox. `shell` is not bound, and you cannot "
