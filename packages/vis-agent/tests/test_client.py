@@ -4,8 +4,10 @@ import hashlib
 import io
 import json
 import threading
+import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -49,10 +51,13 @@ def endpoint(respond):
             result = respond(self.command, self.path, body)
             status, value = result[:2]
             kind = result[2] if len(result) > 2 else "application/json"
+            extra = result[3] if len(result) > 3 else {}
             data = value if isinstance(value, bytes) else json.dumps(value).encode()
             self.send_response(status)
             self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(data)))
+            for name, text in extra.items():
+                self.send_header(name, text)
             self.end_headers()
             try:
                 self.wfile.write(data)
@@ -266,6 +271,30 @@ def test_form_and_live_actions_use_one_route():
         assert session.live_views()[0].id == "live-one"
         assert session.answer("input-one", {"name": "Ada"})["values"] == {"name": "Ada"}
         assert session.view_action("live-one", "interrupt", note="stop")["is_accepted"]
+
+
+def test_a_refused_view_action_raises_its_reason_as_the_code():
+    # A stale or closed app answers 409 with its action outcome, not the error envelope.
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if json.loads(body)["action"] == "activate":
+            return 409, {
+                "is_accepted": False,
+                "reason": "disconnected",
+                "node_id": "ship",
+            }
+        return 409, {"is_accepted": False, "reason": "Free text, not a token"}
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        session = client.session("session-one")
+        with pytest.raises(GatewayError) as error:
+            session.view_action("app-one", "activate", node_id="ship")
+        assert (error.value.status, error.value.code) == (409, "disconnected")
+        with pytest.raises(GatewayError) as error:
+            session.view_action("app-one", "interrupt", note="stop")
+        assert (error.value.status, error.value.code) == (409, "http_error")
+        assert "Free text" not in str(error.value)
 
 
 def frame(value):
@@ -825,7 +854,7 @@ def test_lease_is_renewed_while_idle_and_thread_stops(monkeypatch):
         assert len([c for c in calls if c[:2] == ("POST", "/v1/clients")]) == 1
 
 
-def test_failed_keepalive_is_surfaced_without_retrying_a_mutation(monkeypatch):
+def test_a_refused_keepalive_is_surfaced_without_sending_a_mutation(monkeypatch):
     monkeypatch.setitem(_LEASE_POLICY, "keepalive_ms", 20)
     caps = 0
 
@@ -834,7 +863,7 @@ def test_failed_keepalive_is_surfaced_without_retrying_a_mutation(monkeypatch):
         if path == "/v1/capabilities":
             caps += 1
             if caps > 1:
-                return 503, {"error": {"type": "unavailable"}}
+                return 401, {"error": {"type": "unauthorized"}}
         return compatible(method, path, body) or (201, {"id": "unexpected"})
 
     with endpoint(respond) as (url, calls):
@@ -845,6 +874,137 @@ def test_failed_keepalive_is_surfaced_without_retrying_a_mutation(monkeypatch):
             with pytest.raises(TransportError, match="lease"):
                 client.connect()
         assert not any(c[1] == "/v1/sessions" for c in calls)
+
+
+def _eventually(predicate, seconds=2.0):
+    deadline = time.monotonic() + seconds
+    while not predicate():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.005)
+    return True
+
+
+def _lease_of(call):
+    return {name.lower(): value for name, value in call[2].items()}.get(
+        "x-vis-client-id"
+    )
+
+
+def test_a_short_outage_keeps_the_lease(monkeypatch):
+    # #8683: a keepalive in a gateway restart must not end a long-lived client.
+    monkeypatch.setitem(_LEASE_POLICY, "keepalive_ms", 20)
+    monkeypatch.setitem(_LEASE_POLICY, "touch_ms", 10)
+    caps = 0
+
+    def respond(method, path, body):
+        nonlocal caps
+        if path == "/v1/capabilities":
+            caps += 1
+            if 1 < caps <= 4:
+                return 503, {"error": {"type": "unavailable"}}
+        return compatible(method, path, body) or (200, {"id": "a1"})
+
+    with endpoint(respond) as (url, calls):
+        with GatewayClient(url) as client:
+            assert _eventually(lambda: caps > 6), "the keepalive goes on"
+            assert client._heartbeat.is_alive()
+            assert client.post_automation_run("a1") == {"id": "a1"}
+            run = next(c for c in calls if c[1] == "/v1/automations/a1/run")
+            assert _lease_of(run) == "sdk-lease"
+        assert len([c for c in calls if c[:2] == ("POST", "/v1/clients")]) == 1
+
+
+def test_a_lease_that_the_gateway_lost_is_taken_again(monkeypatch):
+    # #8683: a restarted gateway names the old lease, so the client takes a new one.
+    monkeypatch.setitem(_LEASE_POLICY, "keepalive_ms", 20)
+    unknown = _LEASE_POLICY["unknown_header"]
+    leases = iter(["sdk-lease", "sdk-lease-2"])
+    restarted = threading.Event()
+
+    def respond(method, path, body):
+        if path == "/v1/clients":
+            result = 201, {"client_id": next(leases, "sdk-lease-3")}
+        else:
+            result = compatible(method, path, body) or (200, {"id": "a1"})
+        if restarted.is_set():
+            # The answer names the old lease, also to a request with the new one.
+            return (*result, "application/json", {unknown: "sdk-lease"})
+        return result
+
+    with endpoint(respond) as (url, calls):
+        client = GatewayClient(url).connect()
+        try:
+            restarted.set()
+            assert _eventually(lambda: client._lease == "sdk-lease-2")
+            assert client.post_automation_run("a1") == {"id": "a1"}
+            run = next(c for c in calls if c[1] == "/v1/automations/a1/run")
+            assert _lease_of(run) == "sdk-lease-2"
+            time.sleep(0.1)
+            assert client._lease == "sdk-lease-2", "a name of another lease is ignored"
+            assert client._heartbeat.is_alive()
+        finally:
+            client.close()
+        assert calls[-1][:2] == ("DELETE", "/v1/clients/sdk-lease-2")
+        assert len([c for c in calls if c[:2] == ("POST", "/v1/clients")]) == 2
+
+
+def test_a_lease_past_its_ttl_is_taken_again_when_the_gateway_answers(monkeypatch):
+    # #8683: after a long outage the reaper retired the lease.
+    monkeypatch.setitem(_LEASE_POLICY, "keepalive_ms", 20)
+    monkeypatch.setitem(_LEASE_POLICY, "touch_ms", 10)
+    monkeypatch.setitem(_LEASE_POLICY, "ttl_ms", 150)
+    issued = []
+    outage = threading.Event()
+
+    def respond(method, path, body):
+        if outage.is_set():
+            return 503, {"error": {"type": "unavailable"}}
+        if path == "/v1/clients":
+            issued.append(f"sdk-lease-{len(issued) + 1}")
+            return 201, {"client_id": issued[-1]}
+        return compatible(method, path, body) or (200, {"id": "a1"})
+
+    with endpoint(respond) as (url, calls):
+        client = GatewayClient(url).connect()
+        try:
+            first = client._lease
+            outage.set()
+            time.sleep(0.4)
+            outage.clear()
+            assert _eventually(lambda: client._lease != first)
+            assert client._lease == issued[-1]
+            assert client.post_automation_run("a1") == {"id": "a1"}
+        finally:
+            client.close()
+
+
+def test_a_lost_lease_with_application_extensions_is_surfaced(monkeypatch):
+    # #8683: their registration belonged to the lost lease, so the client stops.
+    monkeypatch.setitem(_LEASE_POLICY, "keepalive_ms", 20)
+    unknown = _LEASE_POLICY["unknown_header"]
+    restarted = threading.Event()
+
+    def respond(method, path, body):
+        result = compatible(method, path, body) or (201, {"id": "unexpected"})
+        if restarted.is_set():
+            return (*result, "application/json", {unknown: "sdk-lease"})
+        return result
+
+    with endpoint(respond) as (url, calls):
+        with GatewayClient(url) as client:
+            client._client_extensions["s-1"] = SimpleNamespace(
+                manifest=[{"name": "lookup"}], clear=lambda: None
+            )
+            restarted.set()
+            client._heartbeat.join(2)
+            assert not client._heartbeat.is_alive()
+            with pytest.raises(TransportError, match="lease lost"):
+                client.create_session(title="must not be sent")
+            with pytest.raises(TransportError, match="lease lost"):
+                client.connect()
+        assert not any(c[1] == "/v1/sessions" for c in calls)
+        assert len([c for c in calls if c[:2] == ("POST", "/v1/clients")]) == 1
 
 
 @pytest.mark.parametrize(

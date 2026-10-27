@@ -1,6 +1,7 @@
 (ns com.blockether.vis.contract.view
   "View vocabulary and JSON Schema validation."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]))
 
@@ -624,8 +625,14 @@
             (map :id nodes)]
 
         (or (some live-node-error nodes)
-            (cond (> (count nodes) (long (:max-nodes view-defaults))) "live view has too many nodes"
-                  (not= (count ids) (count (set ids))) "live node ids must be unique")))))
+            (cond (> (count nodes) (long (:max-nodes view-defaults)))
+                  (str "live view has "
+                       (count nodes)
+                       " nodes; the maximum is "
+                       (:max-nodes view-defaults)
+                       ". Put a collection in a table: rows do not count as nodes.")
+                  (not= (count ids) (count (set ids))) "live node ids must be unique")
+            (app/shortcuts-error view)))))
 
 (defn live-patch-error
   "nil when `patch` has a valid live patch shape, otherwise a reason."

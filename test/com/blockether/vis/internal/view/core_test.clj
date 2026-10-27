@@ -2987,6 +2987,30 @@
           (expect (= #{second-id other-id} (set (hi/close-owned-by! ctx))))
           (expect (false? (hi/owner-context-open? ctx)))
           (expect (every? nil? (map hi/live-view [second-id other-id])))))))
+  (it "keeps the sandbox of an extension that holds an app until the extension unloads"
+      ;; Live apps: the idle sandbox reaper asks owner-context-open?. Without the
+      ;; app, five idle minutes disconnected every app of the extension.
+      (owned
+        (fn []
+          (let [ctx
+                (Object.)
+
+                view-id
+                (get (owned-open! {:extension "forge" :context ctx}
+                                  {"title" "Board"
+                                   "placement" "attachment"
+                                   "session_id" "forge-session"
+                                   "key" "board"
+                                   "nodes" [{"id" "go" "type" "button" "label" "Go"}]})
+                     "view_id")]
+
+            (try (expect (true? (hi/owner-context-open? ctx)) "the idle reaper keeps this context")
+                 (expect (false? (hi/owner-context-open? (Object.))))
+                 (hi/close-owned-by! ctx)
+                 (expect (false? (hi/owner-context-open? ctx)))
+                 (expect (true? (:is-stale (hi/app-view "forge-session" view-id)))
+                         "the unloaded extension leaves its app disconnected")
+                 (finally (hi/close-live! view-id)))))))
   (it "brings the saved picture back as a stale view that only a dismiss removes"
       (owned
         (fn []
@@ -3095,3 +3119,547 @@
                                                                            "view_id" view-id}))
                                                 "belongs to another session"))
                          (finally (hi/close-live! view-id))))))))
+
+(defn- shortcut-app
+  [sid shortcuts]
+  {"op" "open"
+   "view" {"title" "Board"
+           "session_id" sid
+           "placement" "attachment"
+           "nodes" [{"id" "go" "type" "button" "label" "Go"}]
+           "shortcuts" shortcuts}})
+
+(defdescribe
+  app-shortcut-test
+  ;; Live apps C1: an app declares keyboard shortcuts; an action shortcut sends
+  ;; one owner event, and a node shortcut presses its node.
+  (it "keeps the shortcuts in the view state"
+      (recorded (fn []
+                  (let [sid
+                        (str (random-uuid))
+
+                        shortcuts
+                        [{"key" "r" "action" "refresh" "label" "Refresh"}
+                         {"key" "Enter" "node_id" "go"}]
+
+                        view-id
+                        (get (app-seam! sid (shortcut-app sid shortcuts)) "view_id")]
+
+                    (try (expect (= shortcuts
+                                    (get-in (app-seam! sid {"op" "state" "view_id" view-id})
+                                            ["view" "shortcuts"])))
+                         (finally (hi/close-live! view-id)))))))
+  (it
+    "pushes one owner event for an action shortcut"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (get (app-seam! sid (shortcut-app sid [{"key" "r" "action" "refresh"}])) "view_id")]
+
+          (try
+            (expect
+              (= {:action :shortcut :view-id view-id :is-accepted true :key "r" :shortcut "refresh"}
+                 (hi/action! view-id {:action :shortcut :key "r"})))
+            (expect (= [{"type" "shortcut" "action" "refresh" "key" "r"}]
+                       (mapv #(select-keys % ["type" "action" "key"])
+                             (get (app-seam!
+                                    sid
+                                    {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0})
+                                  "events"))))
+            (finally (hi/close-live! view-id)))))))
+  (it
+    "answers unbound only for a free key"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (get (app-seam! sid (shortcut-app sid [{"key" "Enter" "node_id" "go"}])) "view_id")]
+
+          (try (expect (= "unbound" (:reason (hi/action! view-id {:action :shortcut :key "x"}))))
+               (finally (hi/close-live! view-id)))))))
+  ;; Live apps D5: a client cannot tell a node shortcut from a free key, so the
+  ;; engine presses the node itself, as a surface does.
+  (it
+    "presses the node of a node shortcut with one click and one activate event"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (get (app-seam!
+                     sid
+                     (-> (shortcut-app sid
+                                       [{"key" "Enter" "node_id" "go"} {"key" "c" "node_id" "card"}
+                                        {"key" "d" "node_id" "off"}])
+                         (update-in
+                           ["view" "nodes"]
+                           into
+                           [{"id" "card" "type" "card" "title" "C" "is_selectable" true}
+                            {"id" "off" "type" "button" "label" "Off" "is_disabled" true}])))
+                   "view_id")]
+
+          (try
+            (expect
+              (= {:action :shortcut :view-id view-id :is-accepted true :key "Enter" :node-id "go"}
+                 (hi/action! view-id {:action :shortcut :key "Enter"})))
+            (expect
+              (= {:action :shortcut :view-id view-id :is-accepted true :key "c" :node-id "card"}
+                 (hi/action! view-id {:action :shortcut :key "c"})))
+            (expect
+              (= {:action :shortcut :view-id view-id :is-accepted false :key "d" :reason "disabled"}
+                 (hi/action! view-id {:action :shortcut :key "d"})))
+            (expect (= [{"type" "activate" "node_id" "go"} {"type" "activate" "node_id" "card"}]
+                       (mapv #(select-keys % ["type" "node_id"])
+                             (get (app-seam!
+                                    sid
+                                    {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0})
+                                  "events"))))
+            (expect (= {"go" 1 "card" 1 "off" 0}
+                       (into {}
+                             (map (juxt #(get % "id") #(get % "clicks")))
+                             (get-in (app-seam! sid {"op" "state" "view_id" view-id})
+                                     ["view" "nodes"]))))
+            (finally (hi/close-live! view-id)))))))
+  ;; Live apps D3: the owner hears an accepted selection.
+  (it "pushes one select event with the selected row ids"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid
+                                (assoc-in (shortcut-app sid [])
+                                  ["view" "nodes"]
+                                  [{"id" "t"
+                                    "type" "table"
+                                    "is_selectable" true
+                                    "columns" [{"id" "n" "label" "N"}]
+                                    "rows" [{"id" "r1" "cells" ["1"]} {"id" "r2" "cells" ["2"]}]}]))
+                     "view_id")]
+
+            (try (expect (:is-accepted
+                           (hi/action! view-id {:action :select :node-id "t" :item-ids ["r2"]})))
+                 (expect (= [{"type" "select" "node_id" "t" "item_ids" ["r2"]}]
+                            (mapv #(select-keys % ["type" "node_id" "item_ids"])
+                                  (get (app-seam!
+                                         sid
+                                         {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0})
+                                       "events"))))
+                 (finally (hi/close-live! view-id)))))))
+  ;; Live apps D2: the refusal names the count, the maximum and the remedy.
+  (it "refuses 65 nodes with the count, the maximum 64 and a table remedy"
+      (let [sid
+            (str (random-uuid))
+
+            fields
+            (fn [n]
+              (mapv #(hash-map "id" (str "f" %) "type" "plaintext" "label" "F") (range n)))
+
+            reason
+            (live-refusal
+              #(app-seam! sid (assoc-in (shortcut-app sid []) ["view" "nodes"] (fields 65))))]
+
+        (expect (str/includes?
+                  reason
+                  "live view has 65 nodes; the maximum is 64. Put a collection in a table")
+                reason)))
+  (it
+    "refuses a key that is not valid and lists the valid keys"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (get (app-seam! sid (shortcut-app sid [{"key" "r" "action" "refresh"}])) "view_id")]
+
+          (try (expect (str/includes? (live-refusal #(hi/action! view-id
+                                                                 {:action :shortcut :key "Escape"}))
+                                      "ArrowUp"))
+               (finally (hi/close-live! view-id)))))))
+  (it "refuses duplicate keys and a node that cannot run"
+      (let [sid (str (random-uuid))]
+        (expect (str/includes? (live-refusal #(app-seam! sid
+                                                         (shortcut-app sid
+                                                                       [{"key" "r" "action" "a"}
+                                                                        {"key" "r" "action" "b"}])))
+                               "r"))
+        (expect (some? (live-refusal
+                         #(app-seam! sid (shortcut-app sid [{"key" "r" "node_id" "missing"}])))))))
+  (it "replaces the shortcuts with a patch and removes them with an empty list"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid (shortcut-app sid [{"key" "r" "action" "refresh"}])) "view_id")
+
+                shortcuts!
+                (fn [shortcuts]
+                  (app-seam! sid
+                             {"op" "patch"
+                              "view_id" view-id
+                              "patch" {"ops" [{"op" "shortcuts" "shortcuts" shortcuts}]}})
+                  (get-in (app-seam! sid {"op" "state" "view_id" view-id}) ["view" "shortcuts"]))]
+
+            (try (expect (= [{"key" "n" "action" "next"}]
+                            (shortcuts! [{"key" "n" "action" "next"}])))
+                 (expect (nil? (shortcuts! [])))
+                 (expect (= "unbound" (:reason (hi/action! view-id {:action :shortcut :key "n"}))))
+                 (finally (hi/close-live! view-id)))))))
+  (it "refuses to remove a node that a shortcut uses"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid (shortcut-app sid [{"key" "g" "node_id" "go"}])) "view_id")]
+
+            (try (expect (some? (live-refusal #(app-seam! sid
+                                                          {"op" "patch"
+                                                           "view_id" view-id
+                                                           "patch" {"ops" [{"op" "remove-node"
+                                                                            "node_id" "go"}]}}))))
+                 (finally (hi/close-live! view-id))))))))
+
+(defn- judge-next!
+  "Answer the next `validate` question of app `view-id` with `errors`, or answer
+   nothing for `:silent`. Answers the question."
+  [sid view-id errors]
+  (future
+    (loop [after
+           0
+
+           tries
+           0]
+
+      (let [answer
+            (app-seam! sid {"op" "events" "view_id" view-id "after" after "timeout_ms" 2000})
+
+            question
+            (first (filter #(= "validate" (get % "type")) (get answer "events")))]
+
+        (cond question (do (when-not (= :silent errors)
+                             (app-seam! sid
+                                        {"op" "validated"
+                                         "view_id" view-id
+                                         "request_id" (get question "request_id")
+                                         "errors" errors}))
+                           question)
+              (< tries 5) (recur (get answer "cursor") (inc tries)))))))
+
+(defdescribe
+  app-validate-test
+  ;; Live apps D4: the owner judges the inputs that it gave validators before the
+  ;; host accepts a submit. A function never crosses as JSON.
+  (it
+    "refuses with the owner's errors, accepts a clean answer and drops the question"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (get (app-seam! sid
+                              {"op" "open"
+                               "validators" ["port"]
+                               "view"
+                               {"title" "Ports"
+                                "session_id" sid
+                                "placement" "attachment"
+                                "nodes"
+                                [{"id" "port" "type" "plaintext" "label" "Port"}
+                                 {"id" "send" "type" "button" "label" "Send" "action" "submit"}]}})
+                   "view_id")]
+
+          (try (let [judged
+                     (judge-next! sid view-id {"port" "must be digits" "other" "ignored"})
+
+                     refused
+                     (hi/action! view-id
+                                 {:action :submit
+                                  :node-id "send"
+                                  :values {"port" "abc"}
+                                  :idempotency-key "key-0001"})]
+
+                 (expect (= {"port" "must be digits"} (:errors refused)))
+                 (expect (= "invalid" (:reason refused)))
+                 (expect (= {"port" "abc"} (get @judged "values"))))
+               (let [_
+                     (judge-next! sid view-id {})
+
+                     accepted
+                     (hi/action! view-id
+                                 {:action :submit
+                                  :node-id "send"
+                                  :values {"port" "80"}
+                                  :idempotency-key "key-0002"})]
+
+                 (expect (true? (:is-accepted accepted))))
+               (expect (= ["submit"]
+                          (mapv #(get % "type")
+                                (get (app-seam!
+                                       sid
+                                       {"op" "events" "view_id" view-id "after" 0 "timeout_ms" 0})
+                                     "events"))))
+               (finally (hi/close-live! view-id)))))))
+  (it
+    "refuses a submit that the owner does not judge in time"
+    (recorded
+      (fn []
+        ;; The host drops an unanswered question at the deadline, so the silent
+        ;; judge needs time to read it first, also on a loaded machine.
+        (with-redefs [hi/validate-wait-ms 1500]
+          (let [sid (str (random-uuid))
+                view-id (get (app-seam!
+                               sid
+                               {"op" "open"
+                                "validators" ["port"]
+                                "view"
+                                {"title" "Ports"
+                                 "session_id" sid
+                                 "placement" "attachment"
+                                 "nodes"
+                                 [{"id" "port" "type" "plaintext" "label" "Port"}
+                                  {"id" "send" "type" "button" "label" "Send" "action" "submit"}]}})
+                             "view_id")]
+
+            (try (let [question (judge-next! sid view-id :silent)
+                       refused (hi/action! view-id
+                                           {:action :submit
+                                            :node-id "send"
+                                            :values {"port" "80"}
+                                            :idempotency-key "key-0003"})]
+
+                   (expect (= {"send" "The app did not answer. Try again."} (:errors refused)))
+                   (expect (false? (get (app-seam! sid
+                                                   {"op" "validated"
+                                                    "view_id" view-id
+                                                    "request_id" (get @question "request_id")
+                                                    "errors" {}})
+                                        "is_accepted"))
+                           "a late answer changes nothing"))
+                 (finally (hi/close-live! view-id))))))))
+  ;; Live apps D4b: validators follow the node tree on every door.
+  (it
+    "declares a validated input that a patch adds and drops it with its node"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (get (app-seam! sid
+                              {"op" "open"
+                               "view"
+                               {"title" "Ports"
+                                "session_id" sid
+                                "placement" "attachment"
+                                "nodes"
+                                [{"id" "send" "type" "button" "label" "Send" "action" "submit"}]}})
+                   "view_id")
+
+              patch!
+              (fn [ops & [validators]]
+                (app-seam! sid
+                           (cond-> {"op" "patch" "view_id" view-id "patch" {"ops" ops}}
+                             validators
+                             (assoc "validators" validators))))]
+
+          (try (patch! [{"op" "add-node"
+                         "node_spec" {"id" "port" "type" "plaintext" "label" "Port"}}]
+                       ["port" "typo"])
+               (expect (= #{"port"} (get @(var-get #'hi/validator-ids) view-id))
+                       "an id that names no node is dropped")
+               (let [_
+                     (judge-next! sid view-id {"port" "must be digits"})
+
+                     refused
+                     (hi/action! view-id
+                                 {:action :submit
+                                  :node-id "send"
+                                  :values {"port" "abc"}
+                                  :idempotency-key "key-0101"})]
+
+                 (expect (= {"port" "must be digits"} (:errors refused))))
+               (patch! [{"op" "remove-node" "node_id" "port"}])
+               (expect (nil? (get @(var-get #'hi/validator-ids) view-id)))
+               (expect (true? (:is-accepted (hi/action! view-id
+                                                        {:action :submit
+                                                         :node-id "send"
+                                                         :values {}
+                                                         :idempotency-key "key-0102"}))))
+               (finally (hi/close-live! view-id)))))))
+  (it "refuses validators that name no node of the view"
+      (expect (str/includes? (live-refusal #(app-seam! (str (random-uuid))
+                                                       {"op" "open"
+                                                        "validators" ["nope"]
+                                                        "view" {"title" "Ports"
+                                                                "placement" "attachment"
+                                                                "nodes" [{"id" "port"
+                                                                          "type" "plaintext"
+                                                                          "label" "Port"}]}}))
+                             "nope"))))
+
+(defn- sdk-door!
+  "Cross one envelope through the gateway app door of SDK owner `owner`."
+  [sid owner envelope]
+  (json/read-json (hi/owner-app-json! sid owner (json/write-json-str envelope)) :key-fn identity))
+
+(defn- keyed-app
+  [sid]
+  {"op" "open"
+   "view" {"title" "Board"
+           "session_id" sid
+           "placement" "attachment"
+           "key" "board"
+           "nodes" [{"id" "go" "type" "button" "label" "Go"}
+                    {"id" "note" "type" "plaintext" "label" "Note"}]}})
+
+(defn- restart-app!
+  "Forget open app `view-id` as a gateway restart does: only its record stays."
+  [view-id]
+  (swap! (var-get #'hi/pending) dissoc view-id))
+
+(defn- event-types
+  [sid view-id after]
+  (mapv #(get % "type")
+        (get (sdk-door! sid "demo" {"op" "events" "view_id" view-id "after" after "timeout_ms" 0})
+             "events")))
+
+(defdescribe
+  app-restart-test
+  ;; Live apps D6 and D8: a restored app waits for its owner, and an owner that
+  ;; opens it again reads only the events that come after its open.
+  (it "starts an adopting owner at the current events cursor"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                opened
+                (sdk-door! sid "demo" (keyed-app sid))
+
+                view-id
+                (get opened "view_id")]
+
+            (try (expect (= 0 (get opened "events_cursor")))
+                 (dotimes [_ 3]
+                   (hi/action! view-id {:action :activate :node-id "go"}))
+                 (let [adopted
+                       (sdk-door! sid "demo" (keyed-app sid))
+
+                       cursor
+                       (get adopted "events_cursor")]
+
+                   (expect (= view-id (get adopted "view_id")))
+                   (expect (= 3 cursor))
+                   (expect (= [] (event-types sid view-id cursor)) "no old event comes again")
+                   (hi/action! view-id {:action :activate :node-id "go"})
+                   (expect (= ["activate"] (event-types sid view-id cursor))))
+                 (finally (hi/close-live! view-id)))))))
+  (it
+    "judges an input that names itself with name alone"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (get (sdk-door! sid
+                              "demo"
+                              {"op" "open"
+                               "validators" ["port"]
+                               "view"
+                               {"title" "Ports"
+                                "session_id" sid
+                                "placement" "attachment"
+                                "nodes"
+                                [{"name" "port" "type" "plaintext" "label" "Port"}
+                                 {"id" "send" "type" "button" "label" "Send" "action" "submit"}]}})
+                   "view_id")]
+
+          (try (expect (= #{"port"} (get @(var-get #'hi/validator-ids) view-id)))
+               (let [_
+                     (future
+                       (loop [tries 0]
+                         (let [question (->> (get (sdk-door! sid
+                                                             "demo"
+                                                             {"op" "events"
+                                                              "view_id" view-id
+                                                              "after" 0
+                                                              "timeout_ms" 1000})
+                                                  "events")
+                                             (filter #(= "validate" (get % "type")))
+                                             first)]
+                           (cond question (sdk-door! sid
+                                                     "demo"
+                                                     {"op" "validated"
+                                                      "view_id" view-id
+                                                      "request_id" (get question "request_id")
+                                                      "errors" {"port" "must be digits"}})
+                                 (< tries 5) (recur (inc tries))))))
+
+                     refused
+                     (hi/action! view-id
+                                 {:action :submit
+                                  :node-id "send"
+                                  :values {"port" "abc"}
+                                  :idempotency-key "key-0201"})]
+
+                 (expect (= {"port" "must be digits"} (:errors refused))))
+               (finally (hi/close-live! view-id)))))))
+  (it
+    "refuses presses as disconnected until the owner opens the app again"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (get (sdk-door! sid "demo" (keyed-app sid)) "view_id")]
+
+          (try
+            (hi/action! view-id {:action :activate :node-id "go"})
+            (restart-app! view-id)
+            (expect (true? (:is-stale (hi/app-view sid view-id))))
+            (expect (= [true] (mapv :is-stale (hi/session-apps sid))))
+            (doseq [action
+                    [{:action :activate :node-id "go"} {:action :select :node-id "go" :item-ids []}
+                     {:action :change :node-id "note" :value "x"} {:action :shortcut :key "r"}]]
+              (expect (= "disconnected" (:reason (hi/action! view-id action))) (str action)))
+            (expect (= 1 (get-in (hi/app-view sid view-id) [:nodes 0 :clicks]))
+                    "a refused press changes nothing")
+            (expect
+              (= {"is_stale" true "events" []}
+                 (select-keys
+                   (sdk-door! sid "demo" {"op" "events" "view_id" view-id "after" 7 "timeout_ms" 0})
+                   ["is_stale" "events"]))
+              "the door learns that it must open the app again")
+            (expect (true? (:is-accepted (hi/action! view-id
+                                                     {:action :submit
+                                                      :values {"note" "ship it"}
+                                                      :idempotency-key "send-0001"})))
+                    "a Send waits for the owner")
+            (let [adopted
+                  (sdk-door! sid "demo" (keyed-app sid))
+
+                  cursor
+                  (get adopted "events_cursor")]
+
+              (expect (nil? (get-in adopted ["view" "is_stale"])))
+              (expect (nil? (:is-stale (hi/app-view sid view-id))))
+              (expect (= ["submit"] (event-types sid view-id cursor))
+                      "only the waiting Send comes, no press from before the restart")
+              (expect (true? (:is-accepted (hi/action! view-id
+                                                       {:action :activate :node-id "go"})))))
+            (finally (hi/close-live! view-id))))))))

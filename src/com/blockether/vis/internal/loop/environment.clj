@@ -1306,7 +1306,8 @@
 
 (defn- drives-owned-view?
   "True when an extension namespace of `environment`'s sandbox drives an open
-   panel or header. Disposal would close that view while its work continues."
+   panel or header, or holds an open app. Disposal would close that view, or
+   disconnect that app, while its work continues."
   [environment]
   (boolean (some-> (env/python-context-if-built environment)
                    python-extensions/drives-owned-view?)))

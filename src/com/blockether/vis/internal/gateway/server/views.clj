@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.view :as view-spec]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.extension.client :as client-extensions]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
@@ -15,7 +16,8 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gw-view]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.speech.core :as speech]))
+            [com.blockether.vis.internal.speech.core :as speech]
+            [com.blockether.vis.internal.view.core :as live-view]))
 
 (defn- client-extension-handler
   [operation]
@@ -103,7 +105,7 @@
                        (cond (and (false? is-accepted) (= "unknown" reason)) (view-404 view-id)
                              ;; The client edited an older state, or the app is closed.
                              (and (false? is-accepted)
-                                  (#{"conflict" "stale_revision" "closed"} reason))
+                                  (#{"conflict" "stale_revision" "closed" "disconnected"} reason))
                              (http/json-response 409 outcome)
                              (and (false? is-accepted) (= "not_cancellable" reason))
                              (http/error-response 409
@@ -120,6 +122,35 @@
                                               :view_id view-id
                                               :action (some-> action
                                                               name))))))))
+
+(defn- app-door-handler
+  "POST /v1/sessions/:sid/apps — the app door of an SDK program.
+
+   The body is `{\"owner\": name, \"envelope\": <live envelope>}`. The answer is the
+   live seam answer. The door opens only apps of this session, and it drives only
+   the apps of that owner in this session."
+  [request]
+  (let [sid
+        (http/path-sid request)
+
+        body
+        (http/body-json request)]
+
+    (cond (not (and sid (state/soul sid))) (http/session-404 (get-in request [:path-params :sid]))
+          (not (and (map? body) (map? (get body "envelope"))))
+          (http/error-response 400
+                               :invalid-request
+                               "the body must be {\"owner\": name, \"envelope\": {...}}")
+          :else (try {:status 200
+                      :headers {"Content-Type" "application/json"}
+                      :body (live-view/owner-app-json! (str sid)
+                                                       (get body "owner")
+                                                       (wire/json-str (get body "envelope")))}
+                     (catch clojure.lang.ExceptionInfo e
+                       (let [{:keys [status type]} (ex-data e)]
+                         (http/error-response (or status 400)
+                                              (or type :vis/view-invalid-live-view)
+                                              (ex-message e))))))))
 
 (defn- path-view-id
   "The live view id in a file-backed resource path, only when it could BE one."
@@ -338,4 +369,5 @@
    [:get "/v1/sessions/:sid/views/live"] list-live-views-handler
    [:get "/v1/sessions/:sid/views/live/:view-id"] live-view-handler
    [:get "/v1/sessions/:sid/views/live/:view-id/log"] live-view-log-handler
+   [:post "/v1/sessions/:sid/apps"] app-door-handler
    [:post "/v1/sessions/:sid/views/:view-id/actions"] view-action-handler})

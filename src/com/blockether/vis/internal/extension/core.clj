@@ -527,6 +527,12 @@
        (optional-field? x :slash/availability-fn ifn?)
        (optional-field? x :slash/subcommands #(vector-of? non-blank-string? %))))
 
+(defn- keybinding?
+  "True when `x` is one valid TUI key binding: the gateway `keybinding` shape
+   without its `extension` key, which the catalog adds."
+  [x]
+  (and (map? x) (not (contains? x :extension)) (contract-document/valid? "gateway" "keybinding" x)))
+
 (defn slash-path
   "Canonical full path vector of a slash declaration."
   [slash-spec]
@@ -666,6 +672,7 @@
        (optional-field? x :ext/attachment-storage #(vector-of? map? %))
        (optional-field? x :ext/channel-contributions channel-contributions?)
        (optional-field? x :ext/slash-commands #(vector-of? slash? %))
+       (optional-field? x :ext/keybindings #(vector-of? keybinding? %))
        (optional-field? x :ext/sandbox-shims #(vector-of? sandbox-shim? %))
        (optional-field? x :ext/engine engine?)
        (optional-field? x :ext/source-scope workspace/config-sources)
@@ -1211,6 +1218,15 @@
   (let [ext (cond-> ext
               (contains? ext :ext/prompt-fn)
               (update :ext/prompt-fn normalize-prompt))]
+    (when-let [binding (first (remove keybinding? (:ext/keybindings ext)))]
+      (throw (ex-info
+               (str
+                 "Invalid key binding "
+                 (pr-str binding)
+                 " of extension '"
+                 (:ext/name ext)
+                 "': give one key from ! to ~ and exactly one of command (with label) and action")
+               {:type :extension/invalid-keybinding :name (:ext/name ext) :keybinding binding})))
     (when-not (extension? ext)
       (throw (ex-info (str "Invalid extension '" (:ext/name ext) "'")
                       {:type :extension/invalid-declaration :name (:ext/name ext) :extension ext})))
@@ -3036,6 +3052,20 @@
 
      (into (into [] (comp (keep registry) (remove #(local-names (:ext/name %)))) @extension-order)
            local))))
+
+(defn keybindings
+  "The TUI key bindings of the registered extensions: each `:ext/keybindings`
+   entry with its `:extension` name, in extension order, then declaration order.
+   A command binding without a `:group` gets the `Extensions` group."
+  ([] (keybindings (workspace/cwd-root)))
+  ([root]
+   (into []
+         (mapcat (fn [ext]
+                   (map #(cond-> (assoc % :extension (:ext/name ext)) (and (:command %)
+                                                                           (not (:group %)))
+                           (assoc :group "Extensions"))
+                        (:ext/keybindings ext))))
+         (registered-extensions root))))
 
 (defn current-extension-grants
   "Filesystem grants of the extension that runs the current callback, or nil.

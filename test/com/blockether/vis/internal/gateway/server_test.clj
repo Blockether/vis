@@ -57,6 +57,8 @@
     [com.blockether.vis.internal.loop.environment :as loop-env]
     [com.blockether.vis.internal.loop.router :as loop-router]
     [com.blockether.vis.internal.util :as util]
+    [com.blockether.vis.internal.view.core :as live-view]
+    [com.blockether.vis.internal.view.sink :as live-sink]
     [reitit.ring :as rr]
     [ring.adapter.jetty9 :as jetty]
     [ring.core.protocols :as ring-protocols]
@@ -1233,6 +1235,31 @@
                                         "a busy client must not cost a swap! per request")))))))
 
 (defdescribe
+  a-request-gets-back-the-id-of-a-lease-this-daemon-does-not-hold
+  (it "names a lost lease in the unknown-lease header, and only a lost one"
+      ;; #8683: a restart lost every lease, so a long-lived SDK client must learn it.
+      (let [header
+            (:unknown-header gateway-contract/client-lease)
+
+            handler
+            ((rv 'wrap-client-lease)
+              (constantly {:status 200 :headers {"Content-Type" "text/plain"}}))]
+
+        (expect (= "x-vis-client-lease-unknown" header))
+        (with-server-state!
+          {:clients {"c1" {:pid nil :last-seen-at (System/currentTimeMillis)}}}
+          (fn []
+            (expect (= "gone"
+                       (get-in (handler {:headers {"x-vis-client-id" "gone"}}) [:headers header])))
+            (expect (nil? (get-in (handler {:headers {"x-vis-client-id" "c1"}}) [:headers header])))
+            (expect (nil? (get-in (handler {:headers {}}) [:headers header])))
+            (expect (= "text/plain"
+                       (get-in (handler {:headers {"x-vis-client-id" "gone"}})
+                               [:headers "Content-Type"])))
+            (expect (empty? (dissoc (:clients @(server-state)) "c1"))
+                    "an unknown id still creates no lease"))))))
+
+(defdescribe
   registering-a-pid-upserts-its-single-process-lease
   (it "re-registration replaces the old opaque id but preserves other processes and browsers"
       (let [register
@@ -2107,6 +2134,115 @@
                      (expect (= 404
                                 (:status (#'sessions-api/slashes-handler
                                           {:path-params {:sid (str sid)}}))))))))
+
+(defdescribe
+  keybindings-route-test
+  ;; Live apps C3: the TUI reads the key bindings of the session's extensions.
+  (it
+    "lists the bindings in extension order, then declaration order"
+    (let [sid
+          (java.util.UUID/randomUUID)
+
+          loads
+          (atom 0)]
+
+      (with-redefs [state/session-workspace-info
+                    (constantly {"root" "/tmp/vis-keys-project"})
+
+                    python-extensions/ensure-python-extensions-loaded!
+                    (fn []
+                      (swap! loads inc)
+                      {:loaded 0 :failed 0 :changed? false})
+
+                    extension/registered-extensions
+                    (constantly [{:ext/name "forge"
+                                  :ext/keybindings [{:key "t" :command "/test" :label "Test"}
+                                                    {:key "N" :action "new-session"}]}
+                                 {:ext/name "plain"}
+                                 {:ext/name "lab"
+                                  :ext/keybindings
+                                  [{:key "l" :command "/lab run" :label "Lab" :group "Lab"}]}])]
+
+        (let [response (#'sessions-api/keybindings-handler {:path-params {:sid (str sid)}})]
+          (expect (= 200 (:status response)))
+          (expect (= 1 @loads) "the route loads Python extensions first")
+          (expect
+            (= {"keybindings"
+                [{"key" "t"
+                  "command" "/test"
+                  "label" "Test"
+                  "group" "Extensions"
+                  "extension" "forge"} {"key" "N" "action" "new-session" "extension" "forge"}
+                 {"key" "l" "command" "/lab run" "label" "Lab" "group" "Lab" "extension" "lab"}]}
+               (wire/parse-json (:body response))))))))
+  (it "refuses an unknown session"
+      (with-redefs [state/session-workspace-info (constantly nil)]
+        (expect (= 404
+                   (:status (#'sessions-api/keybindings-handler
+                             {:path-params {:sid (str (java.util.UUID/randomUUID))}})))))))
+
+(defdescribe
+  app-door-route-test
+  ;; Live apps C2: an SDK program opens and drives its apps over POST /v1/sessions/:sid/apps.
+  (it
+    "opens an app, drives it and maps each refusal to its status"
+    (let [sid
+          (java.util.UUID/randomUUID)
+
+          dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-app-door"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          door
+          (fn [body]
+            (let [response (#'views-api/app-door-handler
+                            (merge {:request-method :post :path-params {:sid (str sid)}}
+                                   (json-body body)))]
+              [(:status response) (wire/parse-json (:body response))]))
+
+          board
+          {"op" "open"
+           "view" {"title" "Board"
+                   "placement" "attachment"
+                   "key" "main"
+                   "nodes" [{"id" "go" "type" "button" "label" "Go"}]}}]
+
+      (with-redefs [state/soul
+                    (fn [id]
+                      (when (= sid id) {"id" (str sid)}))
+
+                    live-sink/views-dir
+                    (constantly dir)]
+
+        (let [[status opened]
+              (door {"owner" "board" "envelope" board})
+
+              view-id
+              (get opened "view_id")]
+
+          (try
+            (expect (= 200 status))
+            (expect (= (str sid) (get-in opened ["view" "session_id"])))
+            (expect (= "sdk/board" (get-in opened ["view" "extension"])))
+            (expect (= [200 true]
+                       (let [[status answer] (door {"owner" "board"
+                                                    "envelope" {"op" "state" "view_id" view-id}})]
+                         [status (get answer "is_open")])))
+            (expect
+              (= 403 (first (door {"owner" "other" "envelope" {"op" "state" "view_id" view-id}}))))
+            (expect (= 400
+                       (first (door {"owner" "board"
+                                     "envelope"
+                                     {"op" "events" "view_id" view-id "timeout_ms" 30001}}))))
+            (expect (= 400 (first (door {"owner" "Board" "envelope" board}))))
+            (expect (= 400
+                       (first (door {"owner" "board"
+                                     "envelope" (assoc-in board ["view" "placement"] "inline")}))))
+            (expect (= 400 (first (door {"owner" "board"}))))
+            (finally (live-view/close-live! view-id)))))
+      (with-redefs [state/soul (constantly nil)]
+        (expect (= 404 (first (door {"owner" "board" "envelope" board}))))))))
 
 (defdescribe wrap-auth-accepts-gateway-secret-header
              (it "a token-gated gateway authenticates the internal client's X-Vis-Gateway-Secret"

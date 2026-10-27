@@ -320,6 +320,12 @@ lease and closes its streams. Neither action stops the gateway or deletes the
 saved conversation. A running turn may continue, but it cannot call application
 functions after their Agent closes.
 
+A `GatewayClient` continues to work when the gateway restarts. A short outage does
+not end its client lease. When the gateway no longer holds the lease, the client
+takes a new lease. Application extensions cannot move to a new lease, so a client
+with an Agent that has extensions raises `TransportError` for each request. Then
+create a new client and a new Agent.
+
 The session uses the `app` channel, so it is visible in the app on that gateway.
 Keep the printed session ID: to resume it later, open a
 `GatewayClient(url, token=...)` context and use `client.session(session_id)`.

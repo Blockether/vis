@@ -14,9 +14,11 @@ import builtins
 import inspect
 import io
 import json
+import logging
 import math
 import mimetypes
 import os
+import re
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -1246,6 +1248,7 @@ class Extension:
         activation: Optional host activation callback.
         prompt: Instructions as text or a host callback.
         slash_commands: `SlashCommand` declarations.
+        keybindings: `Keybinding` declarations: TUI keys after C-x.
         op_hooks: `OpHook` declarations for host lifecycle operations.
         ctx: Optional host context callback.
         providers: `Provider` declarations.
@@ -1276,6 +1279,7 @@ class Extension:
     symbols: Sequence[Symbol] = ()
     prompt: str | Callable[..., Any] | None = None
     slash_commands: Sequence[SlashCommand] = ()
+    keybindings: Sequence[Keybinding] = ()
     op_hooks: Sequence[OpHook] = ()
     ctx: Callable[..., Any] | None = None
     providers: Sequence[Provider] = ()
@@ -1310,6 +1314,7 @@ class Extension:
         for name, cls in (
             ("symbols", Symbol),
             ("slash_commands", SlashCommand),
+            ("keybindings", Keybinding),
             ("op_hooks", OpHook),
             ("providers", Provider),
             ("network_filters", NetworkFilter),
@@ -1344,6 +1349,7 @@ class Extension:
         children = {
             "symbols",
             "slash_commands",
+            "keybindings",
             "op_hooks",
             "providers",
             "network_filters",
@@ -2788,6 +2794,94 @@ class SlashCommand:
         }
 
 
+def _keybinding_rules():
+    from blockether.vis import _contracts
+
+    return _contracts.definition("gateway", "keybinding")["properties"]
+
+
+@dataclass(frozen=True, slots=True)
+class Keybinding:
+    """A TUI key binding: the key after C-x runs a slash command or a TUI verb.
+
+    Args:
+        key: One printable ASCII character from `!` to `~`.
+        command: A slash command line that starts with `/`. The TUI runs it as if
+            the person typed it and pressed Enter. Give it with `label`.
+        action: A built-in TUI verb id in kebab case, such as `new-session`. The
+            verb moves to `key`.
+        label: The hydra and palette label. Required with `command`.
+        group: The hydra heading. A command binding uses `Extensions` by default.
+
+    Give exactly one of `command` and `action`.
+
+    Raises:
+        ValueError: A field breaks these rules.
+    """
+
+    key: str
+    command: str | None = None
+    action: str | None = None
+    label: str | None = None
+    group: str | None = None
+
+    def __post_init__(self):
+        rules = _keybinding_rules()
+        if not isinstance(self.key, str) or not re.fullmatch(
+            rules["key"]["pattern"], self.key
+        ):
+            raise ValueError(
+                "vis.Keybinding key must be one printable ASCII character from ! to ~"
+            )
+        if (self.command is None) == (self.action is None):
+            raise ValueError(
+                "vis.Keybinding requires exactly one of command=... and action=..."
+            )
+        if self.command is not None:
+            limit = rules["command"]["maxLength"]
+            if (
+                not isinstance(self.command, str)
+                or not re.match(rules["command"]["pattern"], self.command)
+                or len(self.command) < rules["command"]["minLength"]
+                or len(self.command) > limit
+            ):
+                raise ValueError(
+                    "vis.Keybinding command must be a slash command line that starts "
+                    f"with '/', at most {limit} characters"
+                )
+            if self.label is None:
+                raise ValueError("vis.Keybinding requires label=... with command=...")
+        if self.action is not None and (
+            not isinstance(self.action, str)
+            or not re.fullmatch(rules["action"]["pattern"], self.action)
+            or len(self.action) > rules["action"]["maxLength"]
+        ):
+            raise ValueError(
+                "vis.Keybinding action must be a TUI verb id in kebab case, "
+                "such as new-session"
+            )
+        for name in ("label", "group"):
+            value = getattr(self, name)
+            limit = rules[name]["maxLength"]
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > limit
+            ):
+                raise ValueError(
+                    f"vis.Keybinding {name} must be nonblank text of at most "
+                    f"{limit} characters"
+                )
+
+    def _spec(self):
+        return {
+            "marker": "keybinding",
+            **{
+                name: getattr(self, name)
+                for name in ("key", "command", "action", "label", "group")
+                if getattr(self, name) is not None
+            },
+        }
+
+
 GATE_OPS = ("fs_access",)
 
 
@@ -3760,6 +3854,92 @@ def _validator_arity(fn):
     return 2 if positional >= 2 else 1
 
 
+def _validator_list(checks):
+    # The `validate` of one input as a list of functions, checked at declaration.
+    if callable(checks):
+        checks = [checks]
+    if (
+        not isinstance(checks, (list, tuple))
+        or not checks
+        or not all(callable(c) for c in checks)
+    ):
+        raise TypeError(
+            "validate is a function, or a list of functions, taking the "
+            "value (and optionally every value) and answering None or a "
+            "message string"
+        )
+    for c in checks:
+        if _validator_arity(c) is None:
+            raise TypeError(
+                "a validate function takes the value, or the value and "
+                "every value - this one takes neither"
+            )
+    return list(checks)
+
+
+def _live_validators(request):
+    # A live declaration without its `validate` functions, and those functions by
+    # input id. A function is not JSON: the host learns only which inputs have one
+    # and asks this process to judge them when the human submits.
+    validators = {}
+
+    def one(node):
+        if not isinstance(node, Mapping):
+            return node
+        spec = dict(node)
+        checks = spec.pop("validate", None)
+        if checks is not None:
+            node_id = str(spec.get("id") or spec.get("name") or "").strip()
+            if not node_id:
+                raise TypeError("an input with validate needs an id")
+            validators[node_id] = _validator_list(checks)
+        children = spec.get("children")
+        if isinstance(children, (list, tuple)):
+            spec["children"] = [one(child) for child in children]
+        return spec
+
+    nodes = request.get("nodes") if isinstance(request, Mapping) else None
+    if not isinstance(nodes, (list, tuple)):
+        return request, validators
+    cleaned = dict(request)
+    cleaned["nodes"] = [one(node) for node in nodes]
+    return cleaned, validators
+
+
+def _verdict(check, value, values):
+    # One validator verdict as a message, or None when the value is fine. The
+    # wording is the host's: a raise must not accept the value it was meant to judge.
+    try:
+        if _validator_arity(check) == 2:
+            verdict = check(value, dict(values))
+        else:
+            verdict = check(value)
+    except Exception as error:
+        _log.warning("vis: a validate function raised", exc_info=True)
+        return f"could not be validated: {error}"
+    if verdict is None or verdict is True:
+        return None
+    if verdict is False:
+        return "is not valid"
+    return str(verdict).strip() or None
+
+
+def _judged(validators, values):
+    # The field errors of `values`: the first message of each judged input. A blank
+    # value is never judged; that is the job of is_required.
+    errors = {}
+    for node_id, checks in validators.items():
+        value = values.get(node_id)
+        if node_id not in values or value in (None, "", []):
+            continue
+        for check in checks:
+            message = _verdict(check, value, values)
+            if message is not None:
+                errors[node_id] = message
+                break
+    return errors
+
+
 def _field_specs(nodes, validators):
     # Canonicalize a component TREE to snake_case string keys and pull the
     # `validate` callables out of it.
@@ -3778,28 +3958,10 @@ def _field_specs(nodes, validators):
         spec = {str(k): v for k, v in f.items()}
         checks = spec.pop("validate", None)
         if checks is not None:
-            if callable(checks):
-                checks = [checks]
-            if (
-                not isinstance(checks, (list, tuple))
-                or not checks
-                or not all(callable(c) for c in checks)
-            ):
-                raise TypeError(
-                    "validate is a function, or a list of functions, taking the "
-                    "value (and optionally every value) and answering None or a "
-                    "message string"
-                )
-            for c in checks:
-                if _validator_arity(c) is None:
-                    raise TypeError(
-                        "a validate function takes the value, or the value and "
-                        "every value - this one takes neither"
-                    )
             name = str(spec.get("name") or spec.get("id") or "").strip()
             if not name:
                 raise TypeError("a field with validate needs a name")
-            validators[name] = list(checks)
+            validators[name] = _validator_list(checks)
         children = spec.get("children")
         if isinstance(children, (list, tuple)):
             spec["children"] = [one(c) for c in children]
@@ -4172,6 +4334,7 @@ def attach(
     media_type=None,
     label=None,
     audience="both",
+    on_event=None,
 ):
     """Store an artifact as a durable attachment of the running block, or open an app.
 
@@ -4186,7 +4349,8 @@ def attach(
 
     An app declaration from `vis.ui.app(...)` opens an app and answers its
     `LiveAttachment` handle. The app row from `list_attachments()` answers a handle
-    for that app again. An app takes no other argument.
+    for that app again. An app takes only `on_event(event)`, which then runs for
+    each human change, submit, activate or shortcut, as with `vis.live`.
     """
     if isinstance(source, Mapping) and (
         source.get("placement") == "attachment"
@@ -4196,7 +4360,9 @@ def attach(
             raise TypeError(
                 "vis.attach: an app takes no filename, kind, media_type, label or audience"
             )
-        return LiveAttachment._from(source)
+        return LiveAttachment._from(source, on_event=on_event)
+    if on_event is not None:
+        raise TypeError("vis.attach: on_event is only for an app")
     data, name = _attachment_source(source, filename)
     if audience not in _ATTACH_AUDIENCES:
         raise ValueError(
@@ -4342,13 +4508,17 @@ class Interrupted(Exception):
 
 @dataclass(frozen=True)
 class LiveEvent:
-    """One human action on a live view: `change`, `submit` or `activate`.
+    """One human action on a live view: `change`, `submit`, `activate`, `select` or `shortcut`.
 
     `value` is the new value of a changed input; a secret input gives only
     `is_set`. `values` holds every input that a submit button collected.
     A Send in an app gives `submission_id`, the id of its receipt, and `comments`:
     the thread messages that it posted, each with `node_id`, `thread_id`,
     `message_id`, `body` and the `anchor` of a diff line.
+    A pressed app shortcut gives `action`, the id that the shortcut sends, and
+    `key`, the key that the person pressed. A shortcut that names a node gives an
+    `activate` event of that node instead.
+    A selection in a selectable table gives `item_ids`, the selected row ids.
     """
 
     type: str
@@ -4359,6 +4529,9 @@ class LiveEvent:
     is_set: bool | None = None
     submission_id: str | None = None
     comments: list[Mapping[str, Any]] | None = None
+    action: str | None = None
+    key: str | None = None
+    item_ids: list[str] | None = None
 
     @classmethod
     def _from_wire(cls, raw):
@@ -4371,6 +4544,9 @@ class LiveEvent:
             is_set=raw.get("is_set"),
             submission_id=raw.get("submission_id"),
             comments=None if raw.get("comments") is None else list(raw["comments"]),
+            action=raw.get("action"),
+            key=raw.get("key"),
+            item_ids=None if raw.get("item_ids") is None else list(raw["item_ids"]),
         )
 
 
@@ -4725,14 +4901,25 @@ class LiveView:
 
     def __init__(self, request, flush_ms=None, on_event=None):
         self._prepare(flush_ms)
-        if on_event is not None:
-            self.on_event(on_event)
-            answer = self._live({"op": "open", "view": request}, self._host_event)
+        request, self._validators = _live_validators(request)
+        envelope = {"op": "open", "view": request}
+        if self._validators:
+            envelope["validators"] = sorted(self._validators)
+        # Validators need an event route: the extension host and the SDK app door
+        # push events. The sandbox door does not; there `events` and `run` judge.
+        door = self._door
+        is_routed = on_event is not None or (
+            bool(self._validators) and (door is None or hasattr(door, "follow"))
+        )
+        if is_routed:
+            if on_event is not None:
+                self.on_event(on_event)
+            answer = self._live(envelope, self._host_event)
             view = answer.get("view")
             placement = view.get("placement") if isinstance(view, dict) else None
             self._is_pushed = placement not in (None, "inline")
         else:
-            answer = self._call({"op": "open", "view": request})
+            answer = self._call(envelope)
         self.view_id = str(answer.get("view_id") or "")
         self._settle(answer)
 
@@ -4746,6 +4933,7 @@ class LiveView:
         self._batch_depth = 0
         self._nodes = {}
         self._order = []
+        self._parents = {}
         self._is_open = False
         self._result = None
         # None is NEVER, and never is longer than any window: the first push and the
@@ -4758,6 +4946,8 @@ class LiveView:
         self._seq = 0
         self._cursor = 0
         self._listeners = []
+        self._validators = {}
+        self._is_declaring = False
         # A panel view gets its events from the host, as callbacks.
         self._is_pushed = False
         self.view_id = ""
@@ -4779,8 +4969,23 @@ class LiveView:
     def _call(self, envelope):
         return self._live(envelope)
 
+    def _judge(self, raw):
+        """Answer one `validate` question of the host with the field errors."""
+        values = raw.get("values") if isinstance(raw.get("values"), Mapping) else {}
+        self._live(
+            {
+                "op": "validated",
+                "view_id": self.view_id,
+                "request_id": str(raw.get("request_id") or ""),
+                "errors": _judged(self._validators, values),
+            }
+        )
+
     def _host_event(self, raw):
         """Give one event that the host pushed to every `on_event` callback."""
+        if raw.get("type") == "validate":
+            self._judge(raw)
+            return
         event = LiveEvent._from_wire(raw)
         for callback in list(self._listeners):
             callback(event)
@@ -4803,18 +5008,21 @@ class LiveView:
             return
         self._nodes = {}
         self._order = []
+        self._parents = {}
         self._index(nodes)
 
-    def _index(self, nodes):
+    def _index(self, nodes, parent=None):
         # A group is LAYOUT: it holds no items and takes no op, so a row lends its
         # place in the order to the nodes it arranges and never answers itself.
+        # Every id keeps its group, so a dropped group also drops what it holds.
         for node in nodes:
             node_id = isinstance(node, dict) and (node.get("id") or node.get("name"))
             if not node_id:
                 continue
+            self._parents[str(node_id)] = parent
             children = node.get("children")
             if isinstance(children, list):
-                self._index(children)
+                self._index(children, str(node_id))
             else:
                 self._nodes[str(node_id)] = str(node.get("type") or "plaintext")
                 self._order.append(str(node_id))
@@ -4894,9 +5102,13 @@ class LiveView:
         ops, self._buffer = self._buffer, []
         if not self._is_open:
             self._refuse_closed()
-        answer = self._settle(
-            self._call({"op": "patch", "view_id": self.view_id, "patch": {"ops": ops}})
-        )
+        envelope = {"op": "patch", "view_id": self.view_id, "patch": {"ops": ops}}
+        if self._is_declaring:
+            # The inputs with a validator, after this patch. The host keeps only
+            # the ids of nodes that the view still has.
+            envelope["validators"] = sorted(self._validators)
+            self._is_declaring = False
+        answer = self._settle(self._call(envelope))
         self._last_flush = time.monotonic()
         if not self._is_open:
             self._refuse_closed()
@@ -5041,7 +5253,14 @@ class LiveView:
         if not answer.get("is_open", True):
             self._settle(answer)
         self._cursor = int(answer.get("cursor") or self._cursor)
-        fresh = [LiveEvent._from_wire(raw) for raw in answer.get("events") or []]
+        fresh = []
+        for raw in answer.get("events") or []:
+            # A validate question is for this process, never for a callback.
+            if raw.get("type") == "validate":
+                if not self._is_pushed:
+                    self._judge(raw)
+                continue
+            fresh.append(LiveEvent._from_wire(raw))
         if not self._is_pushed:
             for event in fresh:
                 for callback in list(self._listeners):
@@ -5131,24 +5350,49 @@ class LiveView:
     def add(self, node, after=None):
         """Add a whole node to a running view — a scan that discovers a seventh
         device should not have to have declared it."""
+        cleaned, found = _live_validators({"nodes": [node]})
+        node = cleaned["nodes"][0]
+        if found:
+            # A validated input declares itself with the patch that adds it.
+            self._validators.update(found)
+            self._is_declaring = True
         op = {"op": "add-node", "node_spec": node}
         if after is not None:
             op["after"] = str(after)
         self._push(op)
         self._flush_shape_change()
-        self._index([node])
+        # `after` makes the node a sibling, in the group of the named node.
+        self._index([node], None if after is None else self._parents.get(str(after)))
         node_id = str(node.get("id"))
         # Adding a ROW hands back the view: layout takes no op, and the nodes it
         # arranged are addressable by their own ids.
         return self.node(node_id) if node_id in self._nodes else self
 
     def drop(self, node_id):
-        """Drop a whole node, its items with it."""
+        """Drop a whole node, its items with it. A group drops its nodes too."""
+        gone = self._inside(str(node_id))
+        if [i for i in gone if self._validators.pop(i, None) is not None]:
+            self._is_declaring = True
         self._push({"op": "remove-node", "node_id": str(node_id)})
         self._flush_shape_change()
-        self._nodes.pop(str(node_id), None)
-        self._order = [i for i in self._order if i != str(node_id)]
+        for i in gone:
+            self._nodes.pop(i, None)
+            self._parents.pop(i, None)
+        self._order = [i for i in self._order if i not in gone]
         return self
+
+    def _inside(self, node_id):
+        """`node_id` and the id of every node in it, at any depth."""
+        inside = {node_id}
+        for other in self._parents:
+            parent, seen = self._parents.get(other), set()
+            while parent is not None and parent not in seen:
+                if parent == node_id:
+                    inside.add(other)
+                    break
+                seen.add(parent)
+                parent = self._parents.get(parent)
+        return inside
 
     # -- ending ---------------------------------------------------------------
 
@@ -5220,6 +5464,225 @@ class LiveView:
 
 
 _APP_MEDIA_TYPE = "application/vnd.vis.app+json"
+# One events wait of `LiveAttachment.run`, below the 30 s cap of the SDK door.
+_RUN_WAIT_S = 25.0
+_DOOR_WAIT_MS = 25000
+_DOOR_RETRIES = 5
+_OWNER_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+# The app door of a client extension callback: the HTTP door of its session.
+_app_door: _ContextVar[Any] = _ContextVar("vis_app_door", default=None)
+_log = logging.getLogger("blockether.vis")
+
+
+def _is_unreachable(error):
+    """True when `error` says that the gateway did not answer at all."""
+    try:
+        from blockether.vis.engine._client import TransportError
+    except ImportError:
+        return isinstance(error, (ConnectionError, TimeoutError))
+    return isinstance(error, (TransportError, ConnectionError, TimeoutError))
+
+
+def _has_ended(session):
+    """True when the client of `session` can never send a request again."""
+    client = getattr(session, "client", None)
+    return bool(
+        getattr(client, "_closed", False) or getattr(client, "_lease_error", None)
+    )
+
+
+class _AppDoor:
+    """Carry the app envelopes of one owner program over POST /v1/sessions/:sid/apps.
+
+    `session` is a `blockether.vis.engine.Session`. `owner` names the program:
+    the engine records the app owner as `sdk/<owner>`. A listener given at open
+    starts a daemon thread that long-polls the events of that app.
+    """
+
+    def __init__(self, session, owner):
+        import threading
+
+        if not isinstance(owner, str) or not _OWNER_PATTERN.fullmatch(owner):
+            raise ValueError(
+                "owner must be 1 to 64 characters of a-z, 0-9, '.', '_' or '-' "
+                f"and start with a letter or digit, got {owner!r}"
+            )
+        self._session = session
+        self.owner = owner
+        self._stopped = set()
+        # The open envelope of each app, so that a restart can open it again.
+        self._declared = {}
+        self._guard = threading.Lock()
+
+    def _post(self, envelope, wait_ms=0):
+        answer = self._session._call(
+            "POST",
+            "/apps",
+            body={"owner": self.owner, "envelope": envelope},
+            timeout=None if wait_ms <= 0 else wait_ms / 1000 + 30,
+        )
+        return answer if isinstance(answer, dict) else {}
+
+    def __call__(self, text, listener=None):
+        envelope = json.loads(text)
+        op = envelope.get("op")
+        if op == "events":
+            answer = self._events(envelope)
+        else:
+            answer = self._post(envelope)
+        if op == "patch" and "validators" in envelope:
+            # A restart opens the app again with the validators that it has now.
+            with self._guard:
+                declared = self._declared.get(str(envelope.get("view_id") or ""))
+                if declared is not None:
+                    declared["validators"] = list(envelope["validators"])
+        if op in ("close", "archive"):
+            with self._guard:
+                self._stopped.add(str(envelope.get("view_id") or ""))
+        if op == "open" and answer.get("view_id"):
+            view_id = str(answer["view_id"])
+            with self._guard:
+                self._declared[view_id] = envelope
+            if listener is not None:
+                self.follow(view_id, listener, int(answer.get("events_cursor") or 0))
+        return json.dumps(answer)
+
+    def _events(self, envelope):
+        """Wait in parts of at most 25 s: the SDK door caps one wait at 30 s."""
+        left = int(envelope.get("timeout_ms") or 0)
+        deadline = time.monotonic() + left / 1000
+        while True:
+            wait = max(0, min(left, _DOOR_WAIT_MS))
+            answer = self._post(dict(envelope, timeout_ms=wait), wait)
+            left = int((deadline - time.monotonic()) * 1000)
+            if answer.get("events") or not answer.get("is_open", True) or left <= 0:
+                return answer
+
+    def follow(self, view_id, listener, cursor=0):
+        """Give each event of app `view_id` after `cursor` to `listener` on a daemon thread."""
+        import threading
+
+        thread = threading.Thread(
+            target=self._poll,
+            args=(view_id, listener, cursor),
+            name=f"vis-app-{view_id}",
+            daemon=True,
+        )
+        thread.start()
+        return thread
+
+    def _is_stopped(self, view_id):
+        with self._guard:
+            return view_id in self._stopped
+
+    def _poll(self, view_id, listener, cursor=0):
+        failures, lost = 0, 0
+        while not self._is_stopped(view_id):
+            envelope = {"op": "events", "view_id": view_id, "after": cursor}
+            try:
+                answer = self._post(
+                    dict(envelope, timeout_ms=_DOOR_WAIT_MS), _DOOR_WAIT_MS
+                )
+            except Exception as error:
+                if _has_ended(self._session):
+                    _log.error(
+                        "vis app %s: the event poll stopped, its client ended: %s",
+                        view_id,
+                        error,
+                    )
+                    return
+                if not _is_unreachable(error):
+                    failures += 1
+                    if self._gives_up(view_id, error, failures):
+                        return
+                    time.sleep(min(5.0, 0.5 * failures))
+                    continue
+                # The gateway is away, for example while it restarts: wait for it.
+                lost += 1
+                if lost == 1 or lost % 10 == 0:
+                    _log.warning(
+                        "vis app %s: the gateway is not reachable (%d tries), "
+                        "retrying: %s",
+                        view_id,
+                        lost,
+                        error,
+                    )
+                time.sleep(min(5.0, 0.5 * lost))
+                continue
+            failures, lost = 0, 0
+            if answer.get("is_stale"):
+                # A restart dropped this owner: open the app again by its key.
+                cursor = self._adopt(view_id)
+                if cursor is None:
+                    return
+                continue
+            # An events cursor never goes back, except after a restart.
+            cursor = int(answer.get("cursor") or 0)
+            for raw in answer.get("events") or []:
+                try:
+                    listener(raw)
+                except Exception:
+                    _log.exception("vis app %s: an on_event callback failed", view_id)
+            if not answer.get("is_open", True):
+                return
+
+    @staticmethod
+    def _gives_up(view_id, error, failures):
+        """Log one failed poll. True when the poll must stop."""
+        if (
+            getattr(error, "status", None) in (400, 403, 404)
+            or failures >= _DOOR_RETRIES
+        ):
+            _log.error(
+                "vis app %s: the event poll stopped after %d failures: %s",
+                view_id,
+                failures,
+                error,
+                exc_info=True,
+            )
+            return True
+        _log.warning("vis app %s: an event poll failed, retrying: %s", view_id, error)
+        return False
+
+    def _adopt(self, view_id):
+        """Open app `view_id` again with its declaration after a gateway restart.
+
+        Answers the events cursor to read from, or None when the app cannot come
+        back: only a declaration with a key finds its app again.
+        """
+        with self._guard:
+            envelope = self._declared.get(view_id)
+        if not envelope or not (envelope.get("view") or {}).get("key"):
+            _log.error(
+                "vis app %s: the gateway restarted and the app has no key, so this "
+                "program cannot open it again; the event poll stopped. Give "
+                "vis.ui.app(..., key=...) a key to keep an app across restarts.",
+                view_id,
+            )
+            return None
+        try:
+            answer = self._post(envelope)
+        except Exception as error:
+            _log.error(
+                "vis app %s: the app could not be opened again after a gateway "
+                "restart; the event poll stopped: %s",
+                view_id,
+                error,
+                exc_info=True,
+            )
+            return None
+        if str(answer.get("view_id") or "") != view_id:
+            _log.error(
+                "vis app %s: opening the key again gave app %s, not this app; the "
+                "event poll stopped",
+                view_id,
+                answer.get("view_id"),
+            )
+            return None
+        _log.info("vis app %s: opened again after a gateway restart", view_id)
+        return int(answer.get("events_cursor") or 0)
+
+
 _RECEIPT_STAGES = ("accepted", "delivered", "processing", "answered", "failed")
 # The stages of one Send receipt, in order. The host refuses a step back.
 
@@ -5238,12 +5701,18 @@ class LiveAttachment(LiveView):
     """
 
     def __init__(self, request, flush_ms=None, on_event=None, door=None):
-        self._door = door
+        import threading
+
+        # A client extension callback binds the HTTP door of its session.
+        self._door = door if door is not None else _app_door.get()
+        self._lock = threading.RLock()
         super().__init__(request, flush_ms=flush_ms, on_event=on_event)
 
     @classmethod
-    def _from(cls, source, door=None):
+    def _from(cls, source, door=None, on_event=None):
         """The handle of app declaration or app attachment row `source`."""
+        import threading
+
         if not isinstance(source, Mapping):
             raise TypeError(
                 "an app is a vis.ui.app(...) declaration or an app attachment row"
@@ -5253,10 +5722,21 @@ class LiveAttachment(LiveView):
             if not view_id:
                 raise ValueError("this app attachment row has no view_id")
             handle = cls.__new__(cls)
-            handle._door = door
+            handle._door = door if door is not None else _app_door.get()
+            handle._lock = threading.RLock()
             handle._prepare(None)
             handle.view_id = view_id
             handle.state()
+            if on_event is not None:
+                follow = getattr(handle._door, "follow", None)
+                if follow is None:
+                    raise TypeError(
+                        "on_event with an app row needs an SDK app door: open the "
+                        "declaration with its key again to get events"
+                    )
+                handle.on_event(on_event)
+                handle._is_pushed = True
+                follow(view_id, handle._host_event)
             return handle
         if source.get("placement") != "attachment":
             raise TypeError(
@@ -5264,7 +5744,17 @@ class LiveAttachment(LiveView):
             )
         request = dict(source)
         flush_ms = request.pop("flush_ms", None)
-        return cls(request, flush_ms=flush_ms, door=door)
+        return cls(request, flush_ms=flush_ms, on_event=on_event, door=door)
+
+    def _push(self, op):
+        # An event callback can patch the app from the poller thread.
+        with self._lock:
+            return super()._push(op)
+
+    def flush(self):
+        """Send everything buffered. Called for you before any read or close."""
+        with self._lock:
+            return super().flush()
 
     @property
     def id(self):
@@ -5362,6 +5852,51 @@ class LiveAttachment(LiveView):
                 return dict(found)
         raise KeyError(f"node {node_id!r} has no thread {thread_id!r}")
 
+    def set_shortcuts(self, shortcuts):
+        """Replace the shortcuts of this app with `vis.ui.shortcut(...)` values.
+
+        An empty list removes every shortcut. Answers the new `seq`.
+        """
+        shortcuts = _shortcut_list(shortcuts)
+        return self._app_call(
+            {
+                "op": "patch",
+                "view_id": self.view_id,
+                "patch": {"ops": [{"op": "shortcuts", "shortcuts": shortcuts}]},
+            }
+        )
+
+    def run(self, callback, *, timeout=None):
+        """Serve the events of this app with `callback(event)` and block.
+
+        It returns when the app closes, when `callback` returns `False`, after
+        `timeout` seconds or on KeyboardInterrupt. Answers the number of events
+        that it served. Callbacks of `on_event` still get each event too.
+        """
+        if not callable(callback):
+            raise TypeError("run takes a function of one LiveEvent")
+        deadline = None
+        if timeout is not None:
+            seconds = float(timeout)
+            if not math.isfinite(seconds) or seconds < 0:
+                raise ValueError("timeout must be a finite number of seconds")
+            deadline = time.monotonic() + seconds
+        served = 0
+        try:
+            while self._is_open:
+                wait = _RUN_WAIT_S
+                if deadline is not None:
+                    wait = min(wait, deadline - time.monotonic())
+                    if wait <= 0:
+                        return served
+                for event in self.events(timeout=wait):
+                    served += 1
+                    if callback(event) is False:
+                        return served
+        except KeyboardInterrupt:
+            return served
+        return served
+
     def archive(self):
         """Close the app and keep it only in the archived list of its session.
 
@@ -5429,6 +5964,8 @@ def live(title, nodes, placement=None, key=None, on_event=None, **options):
         request["placement"] = str(placement)
     if key is not None:
         request["key"] = str(key)
+    if request.get("shortcuts") is not None:
+        request["shortcuts"] = _shortcut_list(request["shortcuts"])
     handle = LiveAttachment if request.get("placement") == "attachment" else LiveView
     return handle(request, flush_ms=flush_ms, on_event=on_event)
 
@@ -5564,6 +6101,13 @@ class _LiveRecorder:
             )
             siblings.insert(at + (1 if found is not None else 0), node)
             return
+        if action == "shortcuts":
+            view = self._open_view()
+            if op.get("shortcuts"):
+                view["shortcuts"] = self._copy(op["shortcuts"])
+            else:
+                view.pop("shortcuts", None)
+            return
         if action == "remove-node":
             found = self._parent(op["node_id"])
             if found is None:
@@ -5678,15 +6222,29 @@ class _LiveRecorder:
         action = envelope.get("op")
         if action == "open":
             self._view = self._materialize(envelope["view"])
+            self._declared = set(envelope.get("validators") or [])
+            self._verdicts = {}
             self._result = None
             self._seq = 0
             self._view["seq"] = self._seq
-            answer = {"view_id": self.view_id, "is_open": True, "view": self._view}
+            answer = {
+                "view_id": self.view_id,
+                "is_open": True,
+                "view": self._view,
+                "events_cursor": self._cursor,
+            }
         elif self._result is not None:
             answer = {"view_id": self.view_id, "is_open": False, "result": self._result}
         elif action == "patch":
             for op in (envelope.get("patch") or {}).get("ops") or []:
                 self._apply(op)
+            if "validators" in envelope:
+                self._declared = set(envelope["validators"] or [])
+            # As the host does: a validator stays only while its input is in the view.
+            self._declared &= {
+                str(node.get("id") or node.get("name"))
+                for node in self._nodes(self._open_view().get("nodes"))
+            }
             self._seq += 1
             self._open_view()["seq"] = self._seq
             answer = {"view_id": self.view_id, "is_open": True, "seq": self._seq}
@@ -5699,6 +6257,18 @@ class _LiveRecorder:
                 "is_open": True,
                 "cursor": self._cursor,
                 "events": [e for e in self._events if e["seq"] > after],
+            }
+        elif action == "validated":
+            request_id = str(envelope.get("request_id") or "")
+            is_waiting = (
+                request_id in self._verdicts and self._verdicts[request_id] is None
+            )
+            if is_waiting:
+                self._verdicts[request_id] = dict(envelope.get("errors") or {})
+            answer = {
+                "view_id": self.view_id,
+                "is_open": True,
+                "is_accepted": is_waiting,
             }
         elif action == "close":
             ending = envelope.get("ending") or {}
@@ -5776,6 +6346,68 @@ class _LiveRecorder:
             self._event("activate", node_id)
             return answer
 
+    def press_shortcut(self, key):
+        """Simulate a press of app shortcut `key`, as a surface sends it.
+
+        An `action` shortcut queues a `shortcut` event with `action` and `key`. A
+        `node_id` shortcut presses that button or selectable card and answers its
+        `node_id`; a disabled button answers `reason` `disabled`. An unbound key
+        answers `reason` `unbound`; a closed app answers `closed`.
+        """
+        with self._condition:
+            if self._result is not None:
+                return {"is_accepted": False, "reason": "closed", "key": key}
+            bound = next(
+                (
+                    s
+                    for s in self._open_view().get("shortcuts") or []
+                    if s.get("key") == key
+                ),
+                None,
+            )
+            if bound is None:
+                return {"is_accepted": False, "reason": "unbound", "key": key}
+            if bound.get("node_id") is not None:
+                node_id = bound["node_id"]
+                if self.node(node_id).get("is_disabled"):
+                    return {"is_accepted": False, "reason": "disabled", "key": key}
+                self.activate(node_id)
+                return {"is_accepted": True, "key": key, "node_id": node_id}
+            self._cursor += 1
+            event = {
+                "type": "shortcut",
+                "action": bound["action"],
+                "key": key,
+                "seq": self._cursor,
+            }
+            self._events.append(event)
+            if self._listener is not None:
+                self._listener(self._copy(event))
+            self._condition.notify_all()
+            return {"is_accepted": True, "key": key, "shortcut": bound["action"]}
+
+    def _ask_owner(self, node_id, judged, values):
+        """Ask the owner to judge a submit, as the host does, and answer the errors.
+
+        The owner hears the `validate` question through its listener. Without an
+        answer the submit is refused, as the host refuses it after its wait.
+        """
+        request_id = f"test-validate-{len(self._verdicts) + 1}"
+        self._verdicts[request_id] = None
+        question = {
+            "type": "validate",
+            "request_id": request_id,
+            "node_id": node_id,
+            "values": self._copy(values),
+        }
+        placement = (self._view or {}).get("placement", "inline")
+        if self._listener is not None and placement != "inline":
+            self._listener(self._copy(question))
+        errors = self._verdicts.pop(request_id)
+        if errors is None:
+            return {node_id: "The app did not answer. Try again."}
+        return {k: v for k, v in errors.items() if k in judged and isinstance(v, str)}
+
     def _event(self, kind, node_id, **payload):
         self._cursor += 1
         event = {"type": kind, "node_id": str(node_id), "seq": self._cursor, **payload}
@@ -5849,6 +6481,14 @@ class _LiveRecorder:
                     collected[node_id_] = self._copy(value)
             if errors:
                 return {"is_accepted": False, "reason": "invalid", "errors": errors}
+            judged = {
+                n["id"] for n in scope if n["id"] in getattr(self, "_declared", ())
+            }
+            if judged:
+                plain = {n["id"]: given.get(n["id"], n.get("value")) for n in scope}
+                errors = self._ask_owner(str(node_id), judged, plain)
+                if errors:
+                    return {"is_accepted": False, "reason": "invalid", "errors": errors}
             self._patch_ops(
                 [
                     {
@@ -5889,10 +6529,13 @@ class _LiveRecorder:
         return walk(nodes, nodes) or []
 
     def select(self, node_id, selected_ids):
-        """Simulate a surface selecting rows without recording extension output."""
+        """Simulate a surface selecting rows without recording extension output.
+
+        An accepted selection queues a `select` event with `node_id` and `item_ids`.
+        """
         import json
 
-        return json.loads(
+        answer = json.loads(
             self.host_live(
                 json.dumps(
                     {
@@ -5911,6 +6554,13 @@ class _LiveRecorder:
                 )
             )
         )
+        if not answer.get("error"):
+            with self._condition:
+                self._event(
+                    "select", node_id, item_ids=[str(one) for one in selected_ids]
+                )
+                self._condition.notify_all()
+        return answer
 
     def close(self, reason="interrupted", **ending):
         """Simulate an external close and return its terminal result."""
@@ -6171,11 +6821,12 @@ def _ui_thread(node_id, *, messages=None, **spec):
     return _live_node("thread", node_id, dict(spec, messages=list(messages or [])))
 
 
-def _ui_app(title, *nodes, description=None, key=None, **options):
+def _ui_app(title, *nodes, description=None, key=None, shortcuts=None, **options):
     """An app declaration for `vis.attach`: a live view that stays in the session.
 
     The nodes are the same components as in `vis.live`, plus `diff` and `thread`.
     `key` makes the app adoptable: its owner can open the same key again later.
+    `shortcuts` is a list of `vis.ui.shortcut(...)` values, at most 32.
     """
     request = {str(k): v for k, v in options.items()}
     request.update(placement="attachment", title=str(title), nodes=list(nodes))
@@ -6183,7 +6834,87 @@ def _ui_app(title, *nodes, description=None, key=None, **options):
         request["description"] = str(description)
     if key is not None:
         request["key"] = str(key)
+    if shortcuts is not None:
+        request["shortcuts"] = _shortcut_list(shortcuts)
     return request
+
+
+def _shortcut_rules():
+    from blockether.vis import _contracts
+
+    key = _contracts.definition("view", "shortcut_key")["oneOf"]
+    return {
+        "pattern": next(b["pattern"] for b in key if "pattern" in b),
+        "names": tuple(next(b["enum"] for b in key if "enum" in b)),
+        "properties": _contracts.definition("view", "shortcut")["properties"],
+    }
+
+
+def _ui_shortcut(key, action=None, *, node_id=None, label=None):
+    """One app shortcut: `key` sends `action` to the owner, or presses `node_id`.
+
+    `key` is one printable ASCII character from `!` to `~` (case-sensitive) or
+    one named key, such as `Enter` or `ArrowUp`. Give exactly one of `action`
+    (the id of a `shortcut` event) and `node_id` (a button or selectable card).
+    `label` is the short legend text.
+    """
+    rules = _shortcut_rules()
+    if not isinstance(key, str) or not (
+        re.fullmatch(rules["pattern"], key) or key in rules["names"]
+    ):
+        raise ValueError(
+            "vis.ui.shortcut key must be one printable ASCII character from ! to ~ "
+            f"or one of {', '.join(rules['names'])}, got {key!r}"
+        )
+    if (action is None) == (node_id is None):
+        raise ValueError("vis.ui.shortcut requires exactly one of action and node_id")
+    shortcut = {"key": key}
+    for name, value in (("action", action), ("node_id", node_id), ("label", label)):
+        if value is None:
+            continue
+        limit = rules["properties"][name].get("maxLength")
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or (limit is not None and len(value) > limit)
+        ):
+            bound = f" of at most {limit} characters" if limit else ""
+            raise ValueError(f"vis.ui.shortcut {name} must be nonblank text{bound}")
+        shortcut[name] = value
+    return shortcut
+
+
+def _shortcut_list(shortcuts):
+    """Check a list of `vis.ui.shortcut(...)` values before the host sees it."""
+    from blockether.vis import _contracts
+
+    if isinstance(shortcuts, (str, Mapping)) or not isinstance(
+        shortcuts, (list, tuple)
+    ):
+        raise TypeError("shortcuts must be a list of vis.ui.shortcut(...) values")
+    limit = _contracts.definition("view", "live_view")["properties"]["shortcuts"].get(
+        "maxItems"
+    )
+    if limit is not None and len(shortcuts) > limit:
+        raise ValueError(f"an app has at most {limit} shortcuts, got {len(shortcuts)}")
+    checked, keys = [], set()
+    for shortcut in shortcuts:
+        if not isinstance(shortcut, Mapping):
+            raise TypeError("each shortcut must be a vis.ui.shortcut(...) value")
+        unknown = set(shortcut) - {"key", "action", "node_id", "label"}
+        if unknown:
+            raise ValueError(f"a shortcut has no field {sorted(unknown)[0]!r}")
+        one = _ui_shortcut(
+            shortcut.get("key"),
+            shortcut.get("action"),
+            node_id=shortcut.get("node_id"),
+            label=shortcut.get("label"),
+        )
+        if one["key"] in keys:
+            raise ValueError(f"the shortcut key {one['key']!r} is given twice")
+        keys.add(one["key"])
+        checked.append(one)
+    return checked
 
 
 class _UI:
@@ -6235,6 +6966,7 @@ class _UI:
 
     # Apps
     app = staticmethod(_ui_app)
+    shortcut = staticmethod(_ui_shortcut)
     diff = staticmethod(_ui_diff)
     thread = staticmethod(_ui_thread)
 

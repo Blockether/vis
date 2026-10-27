@@ -26,6 +26,8 @@ requests, select **HTTP** at the top of the page.
 - **A turn waits for a person.** [Answer a form](#answer-a-form).
 - **A session must stop using some tools, or use them again.** [Change the tools of a
   session](#change-the-tools-of-a-session).
+- **Your terminal client must know the keys that extensions add.** [Read the key
+  bindings](#read-the-key-bindings).
 - **A session must use a cheaper or stronger model.** [Choose the model of a
   session](#choose-the-model-of-a-session).
 - **Your program must stop work or change waiting messages.** [Queue and cancel
@@ -39,6 +41,8 @@ requests, select **HTTP** at the top of the page.
   Activity history](#read-activity-history).
 - **A session must move to another gateway, or you need a full backup.** [Save and restore a session
   snapshot](#save-and-restore-a-session-snapshot).
+- **Your program must own an app that people use in the session.** [Run an app from a
+  program](#run-an-app-from-a-program).
 
 To learn what a session is and how to use it in the terminal or the app, read
 [Sessions](sessions.md).
@@ -317,6 +321,36 @@ Resumed sessions keep the new list. To turn every tool on again, send `["*"]`.
 
 An unknown tool, a list that mixes the two forms or a value that is not a list returns 400, and the
 old list stays. An archived session returns 409.
+
+</div>
+
+### Read the key bindings
+
+The extensions of a session can give terminal keys to slash commands and terminal verbs. [Key
+bindings](extension-api.md#key-bindings) explains how an extension declares them.
+
+<div data-variant="python">
+
+```python
+for binding in client.session(session_id).keybindings():
+    print(binding["key"], binding.get("command") or binding["action"], binding["extension"])
+```
+
+`keybindings()` returns dicts in extension order, then declaration order. Each has `key` and
+`extension`, and `command` with `label` and `group`, or `action`. A `command` binding without a
+`group` has the group `Extensions`. `get_session_keybindings(session_id)` returns the same JSON.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/keybindings"
+```
+
+`GET /v1/sessions/{sid}/keybindings` answers `keybindings`, in extension order, then declaration
+order. Each has `key` and `extension`, and `command` with `label` and `group`, or `action`. An
+unknown session returns 404.
 
 </div>
 
@@ -1090,6 +1124,12 @@ session.view_action(view_id, "submit", node_id="deploy", values={"env": "staging
 `change` sets the `value` of one input. `activate` presses a button or a selectable card. `submit`
 presses a submit button, with the `values` of the inputs in its group.
 
+`session.view_action(app_id, "shortcut", key="n")` presses an `action` shortcut of an
+[app](live-views.md#add-shortcuts-to-an-app). An accepted press answers the `shortcut` id. A key
+without a shortcut answers `is_accepted` false and `reason` `unbound`. For a `node_id` shortcut,
+send `activate` for that node. A closed or disconnected app raises `GatewayError` with `status` 409,
+and `code` names the reason: `closed` or `disconnected`.
+
 </div>
 
 <div data-variant="http">
@@ -1103,6 +1143,64 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/$VIEW_ID/actions
 
 `change` sets the `value` of one input. `activate` presses a button or a selectable card. `submit`
 sends `node_id` and `values`.
+
+`{"action": "shortcut", "key": "n"}` presses an `action` shortcut of an
+[app](live-views.md#add-shortcuts-to-an-app). An accepted press answers the `shortcut` id. A key
+without a shortcut answers `is_accepted` false and `reason` `unbound`. A closed app returns 409
+with `reason` `closed`. An invalid key returns 400.
+
+</div>
+
+### Run an app from a program
+
+Your program can own an [app](live-views.md#run-an-app-from-your-own-program) in a session. It
+opens the app, patches it and reads its events. Only the owner that opened an app can change it.
+
+<div data-variant="python">
+
+```python
+import blockether.vis.extension as vis
+
+session = client.session(session_id)
+app = session.attach(
+    vis.ui.app("Release checklist", vis.ui.button("ship", label="Ship"), key="release"),
+    owner="release-bot",
+)
+app.run(lambda event: print(event.type, event.node_id))
+```
+
+`session.attach(app, *, owner, on_event=None)` returns a `LiveAttachment`. `owner` has 1 to 64
+characters of `a-z`, `0-9`, `.`, `_` and `-`. With `key`, a second call returns the open app of
+the same owner and key. `on_event=callback` reads the events on a background thread until the app
+closes. `post_session_apps(session_id, body=...)` sends one raw envelope.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/apps" \
+  -H 'content-type: application/json' \
+  --data '{"owner": "release-bot", "envelope": {"op": "open", "view": {"title": "Release checklist", "placement": "attachment", "key": "release", "nodes": [{"type": "button", "id": "ship", "label": "Ship"}]}}}'
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/apps" \
+  -H 'content-type: application/json' \
+  --data '{"owner": "release-bot", "envelope": {"op": "events", "view_id": "'"$APP_ID"'", "after": 0, "timeout_ms": 25000}}'
+```
+
+`POST /v1/sessions/{sid}/apps` takes `owner` and one `envelope`. The `open` envelope answers
+`view_id`, `is_open` and `view`. Use `view_id` in the `patch`, `state`, `events`, `close` and `archive` envelopes.
+
+- Vis records the owner as `sdk/<owner>`. An app of another owner or session returns 403.
+- Only `placement` `attachment` opens. An unknown session returns 404, and a malformed body
+  returns 400.
+- An `events` envelope waits at most 30000 ms in `timeout_ms`. It answers `cursor` and `events`.
+  Send the `cursor` as `after` in the next poll.
+- An `open` envelope answers `events_cursor`. Send it as `after` in your first poll, so that you get
+  no event from before your open.
+- After a gateway restart, an `events` envelope answers `is_stale` true and no events. Send your
+  `open` envelope again with the same `key`, and poll from its new `events_cursor`.
+- While the app is stale, a press, a selection, an input change or a shortcut answers 409 with
+  `reason` `disconnected`.
 
 </div>
 

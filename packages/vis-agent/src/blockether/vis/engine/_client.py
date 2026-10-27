@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 import json
 import math
+import re
 import threading
 import time
 import uuid
@@ -69,6 +70,8 @@ class GatewayError(RuntimeError):
 
     Decision input-limit errors also expose ``input_tokens`` and ``max_input_tokens``.
     These are ``None`` when the gateway does not supply valid numeric diagnostics.
+    A refused view action, such as a press on a disconnected app, has its
+    ``reason`` token as ``code``.
     """
 
     def __init__(
@@ -104,6 +107,9 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+_REFUSAL_REASON = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
 def _gateway_error(
     status: int, content: bytes, token: str | None = None
 ) -> GatewayError:
@@ -111,7 +117,8 @@ def _gateway_error(
     code = "http_error"
     counts = {}
     try:
-        error = json.loads(content).get("error")
+        body = json.loads(content)
+        error = body.get("error")
         if isinstance(error, dict) and isinstance(error.get("type"), str):
             code = error["type"]
             if token and token in code:
@@ -123,6 +130,12 @@ def _gateway_error(
                     for key in ("input_tokens", "max_input_tokens")
                     if key in error and not (token and token in str(int(error[key])))
                 }
+        elif body.get("is_accepted") is False:
+            # A refused view action answers its outcome. Its reason is a closed token.
+            reason = body.get("reason")
+            if isinstance(reason, str) and _REFUSAL_REASON.fullmatch(reason):
+                if not (token and token in reason):
+                    code = reason
     except (ValueError, AttributeError):
         pass
     return GatewayError(status, code, **counts)
@@ -1768,6 +1781,19 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def get_session_keybindings(
+        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/sessions/:sid/keybindings — json response."""
+        response = self._request(
+            "GET",
+            "/v1/sessions/:sid/keybindings",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
     def get_session_snapshot(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
     ) -> Response:
@@ -2145,6 +2171,25 @@ class ExecutionLayer(ABC):
             path={"sid": sid, "view-id": view_id},
             query={"node": node_id, **(query or {})},
             timeout=timeout,
+        )
+        return response.json()
+
+    def post_session_apps(
+        self,
+        sid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/sessions/:sid/apps — json response."""
+        response = self._request(
+            "POST",
+            "/v1/sessions/:sid/apps",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
         )
         return response.json()
 
@@ -3003,7 +3048,12 @@ class GatewayClient(ExecutionLayer):
         super().__init__(timeout=timeout)
         self._heartbeat_stop = threading.Event()
         self._heartbeat = None
-        self._lease_error = False
+        # Wakes the keepalive at once, for example when an answer names a lost lease.
+        self._lease_wake = threading.Event()
+        # Why this client cannot send requests anymore, or None.
+        self._lease_error: str | None = None
+        # The lease that an answer named as unknown, until a new lease replaces it.
+        self._lease_lost: str | None = None
         self._lease_seen = 0.0
         self._opener = build_opener(_NoRedirect())
 
@@ -3022,7 +3072,8 @@ class GatewayClient(ExecutionLayer):
         if self._closed:
             raise TransportError("client is closed")
         if self._lease_error:
-            raise TransportError("client lease keepalive failed; reconnect explicitly")
+            raise TransportError(self._lease_error)
+        lease = self._lease
         headers = {
             "x-vis-protocol": str(_PROTOCOL),
             "x-vis-min-gateway-protocol": str(_MIN_GATEWAY),
@@ -3031,8 +3082,8 @@ class GatewayClient(ExecutionLayer):
         }
         if self._token:
             headers["Authorization"] = "Bearer " + self._token
-        if self._lease:
-            headers["x-vis-client-id"] = self._lease
+        if lease:
+            headers["x-vis-client-id"] = lease
         if body is not None:
             if content is not None:
                 raise ValueError("body and content are mutually exclusive")
@@ -3048,12 +3099,13 @@ class GatewayClient(ExecutionLayer):
             headers["X-Content-SHA256"] = upload_sha256
         url = self._url + route + ("?" + urlencode(query) if query else "")
         try:
-            return self._opener.open(
+            raw = self._opener.open(
                 Request(url, data=content, headers=headers, method=method),
                 timeout=_duration(self.timeout if timeout is None else timeout),
             )
         except HTTPError as exc:
             with exc:
+                self._note_lease(lease, exc, is_answered=False)
                 raise _gateway_error(exc.code, exc.read(65536), self._token) from None
         except TimeoutError:
             raise VisTimeout("gateway request timed out") from None
@@ -3061,6 +3113,19 @@ class GatewayClient(ExecutionLayer):
             if isinstance(getattr(exc, "reason", None), TimeoutError):
                 raise VisTimeout("gateway request timed out") from None
             raise TransportError("gateway connection failed") from None
+        self._note_lease(lease, raw, is_answered=True)
+        return raw
+
+    def _note_lease(self, sent, answer, *, is_answered):
+        """Record what one gateway answer says about the lease that it carried."""
+        headers = getattr(answer, "headers", None)
+        if not sent or headers is None:
+            return
+        if headers.get(_LEASE_POLICY["unknown_header"]) == sent:
+            self._lease_lost = sent
+            self._lease_wake.set()
+        elif is_answered:
+            self._lease_seen = time.monotonic()
 
     def post_decision_model(
         self,
@@ -3085,11 +3150,16 @@ class GatewayClient(ExecutionLayer):
 
         Return this client. Repeated calls reuse its lease. An incompatible
         gateway raises `ProtocolError`. Authentication and other HTTP failures
-        raise `GatewayError`. After a failed keepalive, create a new client. The
-        client does not silently resume work under a different lease.
+        raise `GatewayError`.
+
+        A short outage of the gateway does not end the lease. When the gateway
+        no longer holds the lease, for example after a restart, the client takes
+        a new lease. A client with registered application extensions cannot move
+        them to a new lease. It then raises `TransportError` for each request:
+        create a new client. A refused keepalive has the same result.
         """
         if self._lease_error:
-            raise TransportError("client lease keepalive failed; create a new client")
+            raise TransportError(self._lease_error)
         if self._lease:
             return self
         caps = self._request("GET", "/v1/capabilities").json()
@@ -3115,20 +3185,52 @@ class GatewayClient(ExecutionLayer):
     def _keepalive(self):
         policy = _LEASE_POLICY
         interval = policy["keepalive_ms"] / 1000
-        while not self._heartbeat_stop.wait(interval):
-            try:
-                if time.monotonic() - self._lease_seen >= policy["ttl_ms"] / 1000:
-                    raise TransportError("client lease expired")
-                with self._open(
-                    "GET",
-                    policy["keepalive_route"],
-                    timeout=min(self.timeout, policy["keepalive_timeout_ms"] / 1000),
-                ) as raw:
-                    raw.read(65536)
-                self._lease_seen = time.monotonic()
-            except (TransportError, GatewayError, OSError):
-                self._lease_error = True
+        # While the gateway does not answer, try again at the refresh granularity.
+        retry = policy["touch_ms"] / 1000
+        ttl = policy["ttl_ms"] / 1000
+        wait = interval
+        while True:
+            self._lease_wake.wait(wait)
+            self._lease_wake.clear()
+            if self._heartbeat_stop.is_set():
                 return
+            try:
+                lost = self._lease_lost is not None and self._lease_lost == self._lease
+                if lost or time.monotonic() - self._lease_seen >= ttl:
+                    # A restart lost the lease, or the reaper retired it in an outage.
+                    if not self._renew_lease():
+                        return
+                else:
+                    with self._open(
+                        "GET",
+                        policy["keepalive_route"],
+                        timeout=min(
+                            self.timeout, policy["keepalive_timeout_ms"] / 1000
+                        ),
+                    ) as raw:
+                        raw.read(65536)
+                wait = interval
+            except GatewayError as exc:
+                if exc.status < 500 and exc.status not in (408, 429):
+                    self._lease_error = (
+                        "client lease keepalive failed; create a new client"
+                    )
+                    return
+                wait = retry
+            except (TransportError, OSError):
+                wait = retry
+
+    def _renew_lease(self) -> bool:
+        """Take a new lease after the gateway lost this one. False when it must stop."""
+        if any(extensions.manifest for extensions in self._client_extensions.values()):
+            # The registration of these extensions belonged to the lost lease.
+            self._lease_error = "client lease lost; create a new client"
+            return False
+        lease = self._request("POST", "/v1/clients", body={"kind": "python-sdk"}).json()
+        self._lease = _field(lease, "client_id", str)
+        self._lease_lost = None
+        self._lease_seen = time.monotonic()
+        return True
 
     def close(self) -> None:
         """Close streams and release this client's lease without stopping the gateway.
@@ -3140,9 +3242,10 @@ class GatewayClient(ExecutionLayer):
         if self._closed:
             return
         self._heartbeat_stop.set()
+        self._lease_wake.set()
         if self._heartbeat is not None:
             self._heartbeat.join()
-        self._lease_error = False
+        self._lease_error = None
         try:
             for stream in tuple(self._streams):
                 stream.close()
@@ -3481,7 +3584,9 @@ class Session:
 
         `values` supplies the action-specific fields of the operator action
         schema. The request is validated before submission. For the common case
-        of submitting input values, use `answer`.
+        of submitting input values, use `answer`. A refused action of a closed,
+        disconnected or changed app raises `GatewayError` with status 409 and the
+        refusal `reason` as `code`, for example `disconnected`.
         """
         body = {**values, "action": action}
         validate("view", "operator_action", body)
@@ -3491,6 +3596,33 @@ class Session:
             path={"view-id": view_id},
             body=body,
         )
+
+    def attach(self, app, *, owner, on_event=None):
+        """Open or adopt an app in this session as owner program `owner`.
+
+        `app` is a `vis.ui.app(...)` declaration or an app attachment row. The
+        engine records the owner as `sdk/<owner>`; `owner` uses 1 to 64 characters
+        of `a-z`, `0-9`, `.`, `_` and `-`. A declaration with a `key` adopts the
+        open app of the same owner and key, so a restarted program gets its app
+        back. Answers the same `LiveAttachment` handle that extensions use.
+
+        `on_event(event)` runs on a daemon thread that long-polls the app events,
+        until the app closes. A callback error is logged and polling goes on. To
+        serve events on the calling thread, use `LiveAttachment.run` instead.
+        """
+        from blockether.vis.extension import LiveAttachment, _AppDoor
+
+        return LiveAttachment._from(app, door=_AppDoor(self, owner), on_event=on_event)
+
+    def keybindings(self) -> list[dict[str, Any]]:
+        """Read the TUI key bindings that the extensions of this session declare.
+
+        Each binding has `key`, `extension` and `command` with `label` and
+        `group`, or `action`. The list is in extension order, then declaration
+        order.
+        """
+        answer = self._call("GET", "/keybindings")
+        return list(_field(answer, "keybindings", list))
 
     def answer(self, view_id, values):
         """Submit input values to a view, returning the engine's response.
@@ -3736,10 +3868,8 @@ class _EventStream:
                 except (ProtocolError, GatewayError):
                     raise
                 except (OSError, TransportError):
-                    if self.client._lease_error:
-                        raise TransportError(
-                            "client lease keepalive failed; reconnect explicitly"
-                        ) from None
+                    if reason := getattr(self.client, "_lease_error", None):
+                        raise TransportError(reason) from None
                 finally:
                     self._raw = None
             raise TransportError("event reconnect budget exhausted")

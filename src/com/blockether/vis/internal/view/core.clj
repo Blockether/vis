@@ -1364,6 +1364,17 @@
                                                str/lower-case))))))
                  nodes)))
 
+(defn- live-shortcuts
+  "The shortcuts of an app spec or a `shortcuts` op, refused by shape here. Whether
+   each key is unique and each `node_id` is a button of the app is the answer of
+   the view they land on."
+  [fail! value]
+  (when-not (sequential? value) (fail! ":shortcuts must be a list"))
+  (let [shortcuts (vec value)]
+    (some-> (some app/shortcut-shape-error shortcuts)
+            fail!)
+    shortcuts))
+
 (defn normalize-live-view
   "Validate a live-view spec and return the view the materializer holds. Throws
    `ex-info` with `:type :vis/view-invalid-live-view` on a bad spec, so a
@@ -1430,7 +1441,16 @@
           (invalid-live-view! (str "a " (name placement) " view needs a :key that names it")))
 
         session-id
-        (or (trimmed (:session-id view)) (ambient-session-id))]
+        (or (trimmed (:session-id view)) (ambient-session-id))
+
+        shortcuts
+        (when (contains? view :shortcuts) (live-shortcuts invalid-live-view! (:shortcuts view)))
+
+        _
+        (some-> (app/shortcuts-error (cond-> {:placement placement :nodes nodes}
+                                       shortcuts
+                                       (assoc :shortcuts shortcuts)))
+                invalid-live-view!)]
 
     (checked-live-view
       (cond-> {:id (str (random-uuid))
@@ -1460,7 +1480,10 @@
         (assoc :source (trimmed (:source view)))
 
         (trimmed (:key view))
-        (assoc :key (trimmed (:key view)))))))
+        (assoc :key (trimmed (:key view)))
+
+        (seq shortcuts)
+        (assoc :shortcuts shortcuts)))))
 
 (def ^:private live-op-value
   "How ONE key of a patch operation is normalized, by key. A table rather than a
@@ -1530,6 +1553,8 @@
              (app-thread fail! value))
    :submission (fn [fail! value]
                  (if (map? value) value (fail! ":submission must be a receipt map")))
+   :shortcuts (fn [fail! value]
+                (live-shortcuts fail! value))
    :node-spec (fn [fail! value]
                 (live-node fail! value))})
 
@@ -2238,7 +2263,25 @@
   []
   {:owner-context (:context *live-owner*)
    :listener (:listener *live-owner*)
-   :listener-agent (when (:listener *live-owner*) (agent nil))})
+   :listener-agent (when (:listener *live-owner*) (agent nil))
+   ;; An app that its owner opened or adopted in this process.
+   :is-held true})
+
+(defn- app-stale?
+  "True for open app `entry` of an extension or an SDK program that no owner of
+   this process holds yet: an app that a restart read back from its record."
+  [entry]
+  (boolean (and (:is-app entry) (not (:is-held entry)) (:extension @(:view entry)))))
+
+(defn- app-picture
+  "The picture of live `entry` as the surfaces paint it: an app that waits for its
+   owner says `:is-stale` true."
+  [entry]
+  (some-> (:view entry)
+          deref
+          (cond->
+            (app-stale? entry)
+            (assoc :is-stale true))))
 
 (defonce ^:private session-sends
   ;; Offers the Sends of sandbox apps to their sessions in order, away from the app lock.
@@ -2313,10 +2356,14 @@
                                                 (assoc view-id (app-entry view file node-seqs))))
                   entry (get after view-id)]
 
-              (when (and entry (not (contains? before view-id))) (offer-sends! entry))
+              (when (and entry (not (contains? before view-id)))
+                (offer-sends! entry)
+                ;; The surfaces learn that the app waits for its owner.
+                (when (app-stale? entry)
+                  (publish! (:channel-ids entry)
+                            (lifecycle-event :view/open entry {:view (app-picture entry)}))))
               (some-> entry
-                      :view
-                      deref))))))))
+                      app-picture))))))))
 
 (defn app-view
   "App `view-id` of session `sid` as the surfaces paint it, open or closed, or
@@ -2333,8 +2380,7 @@
           (when (and view (app/app? view) (= sid (:session-id view))) view))]
 
     (or (mine (some-> (live-entry view-id)
-                      :view
-                      deref))
+                      app-picture))
         (mine (get @closed-apps view-id))
         (when-not (or (live-entry view-id) (contains? @closed-apps view-id))
           (restore-app! sid view-id)))))
@@ -2362,11 +2408,19 @@
    owner patches it to change it."
   [record]
   (when-let [entry (adoptable-app record)]
-    (some->
-      (swap! pending #(cond-> % (contains? % (:id entry)) (update (:id entry) merge (owner-hold))))
-      (get (:id entry))
-      :view
-      deref)))
+    (let [[before after]
+          (swap-vals! pending
+                      #(cond-> % (contains? % (:id entry)) (update (:id entry) merge (owner-hold))))
+          adopted (get after (:id entry))]
+
+      ;; The surfaces learn that a disconnected app has its owner again.
+      (when (and adopted
+                 (some-> (get before (:id entry))
+                         app-stale?))
+        (publish! (:channel-ids adopted)
+                  (lifecycle-event :view/open adopted {:view (app-picture adopted)})))
+      (some-> adopted
+              app-picture))))
 
 (defn- file-app!
   "List new app `view` in its session and file its attachment row in the block
@@ -2927,10 +2981,7 @@
   "One pending entry as the surfaces see it, by kind: a request loses its promise
    and its validators, a live view IS its materialized state."
   [entry]
-  (if (= :live (:kind entry))
-    (some-> (:view entry)
-            deref)
-    (request->view entry)))
+  (if (= :live (:kind entry)) (app-picture entry) (request->view entry)))
 
 (defn open-view
   "The open View `view-id` as `{:kind … :view …}`, or nil. The descriptor is for
@@ -3007,14 +3058,30 @@
   [ctx]
   ;; An app outlives its extension. It only loses the callback, and its Sends wait
   ;; as accepted until the extension opens the same key again.
-  (swap! pending (fn [entries]
-                   (into {}
-                         (map (fn [[id entry]]
+  (let [released?
+        #(and (:is-app %) (identical? ctx (:owner-context %)))
+
+        [before after]
+        (swap-vals! pending
+                    (fn [entries]
+                      (into {}
+                            (map
+                              (fn [[id entry]]
                                 [id
-                                 (if (and (:is-app entry) (identical? ctx (:owner-context entry)))
-                                   (dissoc entry :owner-context :listener :listener-agent)
+                                 (if (released? entry)
+                                   (dissoc entry :owner-context :listener :listener-agent :is-held)
                                    entry)]))
-                         entries)))
+                            entries)))]
+
+    ;; The surfaces show each released app as disconnected.
+    (doseq [[id entry]
+            before
+
+            :let [now
+                  (get after id)]
+            :when (and (released? entry) now (app-stale? now))]
+
+      (publish! (:channel-ids now) (lifecycle-event :view/open now {:view (app-picture now)}))))
   (->> (vals @pending)
        (filter #(and (:owned-key %) (identical? ctx (:owner-context %))))
        (sort-by :created-at)
@@ -3023,11 +3090,13 @@
        vec))
 
 (defn owner-context-open?
-  "True when extension context `ctx` drives an open owned view. Disposal of that
-   context closes the view, so the idle sandbox reaper keeps its session."
+  "True when extension context `ctx` drives an open owned view or holds an open
+   app. Disposal of that context closes the view or disconnects the app, so the
+   idle sandbox reaper keeps its session."
   [ctx]
   (boolean (and ctx
-                (some #(and (:owned-key %) (identical? ctx (:owner-context %))) (vals @pending)))))
+                (some #(and (or (:owned-key %) (:is-app %)) (identical? ctx (:owner-context %)))
+                      (vals @pending)))))
 
 (defn- supersede-owned!
   "Close every other view of the key that the new owned `view` holds, open or
@@ -3611,6 +3680,12 @@
       :activate
       {:action action :node-id (live-text fail! "activate node_id" (:node-id raw))}
 
+      :shortcut
+      (let [k (:key raw)]
+        (when-not (app/shortcut-key? k)
+          (fail! (str "shortcut key " (pr-str k) " is not valid — use " app/shortcut-key-text)))
+        {:action action :key k})
+
       :select
       (let [node-id
             (live-text fail! "select node_id" (:node-id raw))
@@ -3629,6 +3704,194 @@
         (cond-> {:action action}
           (some? note)
           (assoc :note note))))))
+
+(def ^:private validate-wait-ms "How long a submit waits for the owner to judge its inputs." 5000)
+
+(defonce ^:private validator-ids
+  ;; Open view id -> the input ids whose validators the owner runs. Code does not
+  ;; persist, so every open and adoption declares them again.
+  (atom {}))
+
+(defonce ^:private validations
+  ;; Request id -> {:view-id :answer promise :ids}: one submit that waits for its owner.
+  (atom {}))
+
+(defn- declared-validators
+  "The input ids that the `validators` of open or patch envelope `opts` names, or
+   nil. A keyless open names only nodes of its own view; a keyed open can adopt an
+   app that has more nodes, so [[declare-validators!]] checks it after the open."
+  [opts]
+  (let [ids (get opts "validators")]
+    (when (some? ids)
+      (when-not (and (sequential? ids) (<= (count ids) 64) (every? util/non-blank-string? ids))
+        (invalid-live-view! "validators must be a list of at most 64 input ids"))
+      (when (and (= "open" (get opts "op")) (nil? (get-in opts ["view" "key"])))
+        (let [named (into #{}
+                          (comp (mapcat #(tree-seq map?
+                                                   (fn [node]
+                                                     (get node "children"))
+                                                   %))
+                                (keep #(or (get % "id") (get % "name"))))
+                          (get-in opts ["view" "nodes"]))]
+          (when-let [missing (first (remove named ids))]
+            (invalid-live-view!
+              (str "validators names " missing ", which is no node of the view")))))
+      (set ids))))
+
+(defn- node-key
+  "The id of live `node`: an input can name itself with `:name` alone."
+  [node]
+  (or (:id node) (:name node)))
+
+(defn- declare-validators!
+  "Keep the validator `ids` of open view `view-id` that name a node of `nodes`.
+   nil ids keep the declared ids that still name a node: a removed input loses
+   its validator."
+  [view-id ids nodes]
+  (let [named
+        (into #{} (comp (mapcat #(tree-seq map? :children %)) (keep node-key)) nodes)
+
+        ids
+        (or ids (get @validator-ids view-id) #{})
+
+        kept
+        (into #{} (filter named) ids)]
+
+    (when-let [missing (seq (remove named ids))]
+      (tel/log! {:level :warn
+                 :id ::validator-without-node
+                 :data {:view-id view-id :input-ids (vec missing)}
+                 :msg "Vis dropped validators that name no node of the live view"}))
+    (if (seq kept) (swap! validator-ids assoc view-id kept) (swap! validator-ids dissoc view-id))))
+
+(defn- validated-inputs
+  "The inputs that a submit of `node-id` in live `entry` collects."
+  [entry node-id]
+  (let [nodes
+        (:nodes @(:view entry))
+
+        node
+        (when node-id (view-node nodes node-id))]
+
+    (cond (nil? node-id) (if (:is-app entry) (input-fields nodes) [])
+          (and (= :button (:type node)) (= :submit (:action node))) (input-fields
+                                                                      (submit-scope nodes node-id))
+          :else [])))
+
+(defn- owner-check
+  "nil when the owner of live `entry` accepts the submit of `node-id`, else the
+   refusal with field errors. The owner judges the inputs that it gave validators:
+   the host queues one `validate` event and waits for the `validated` answer. It
+   waits outside the view lock, so the owner can read and patch the view."
+  [entry view-id node-id values]
+  (let [ids
+        (get @validator-ids view-id)
+
+        inputs
+        (when (seq ids) (validated-inputs entry node-id))
+
+        checked
+        (filterv #(contains? ids (node-key %)) inputs)]
+
+    (when (seq checked)
+      (let [stored
+            (into {}
+                  (keep (fn [field]
+                          (when (contains? field :value) [(:id field) (:value field)])))
+                  inputs)
+
+            outcome
+            (validate-values inputs (merge stored (select-keys values (map :id inputs))))]
+
+        ;; A value that its type refuses is refused by the submit itself.
+        (when (:is-accepted outcome)
+          (let [request-id
+                (str (random-uuid))
+
+                answer
+                (promise)]
+
+            (swap! validations assoc
+              request-id
+              {:view-id view-id :answer answer :ids (set (map node-key checked))})
+            (try (push-live-event!
+                   entry
+                   (cond-> {:type :validate :request-id request-id :values (:values outcome)}
+                     node-id
+                     (assoc :node-id node-id)))
+                 (let [errors (deref answer validate-wait-ms ::no-answer)]
+                   (cond (= ::no-answer errors)
+                         (do (tel/log! {:level :warn
+                                        :id ::owner-validation-timeout
+                                        :data {:view-id view-id :node-id node-id}
+                                        :msg
+                                        "The owner of a live view did not judge a submit in time"})
+                             {:is-accepted false
+                              :reason "invalid"
+                              :errors {(or node-id (node-key (first checked)))
+                                       "The app did not answer. Try again."}})
+                         (seq errors) {:is-accepted false :reason "invalid" :errors errors}))
+                 (finally (swap! validations dissoc request-id)
+                          ;; The question is answered; later readers do not see it.
+                          (swap! (:events entry) update
+                            :items
+                            (fn [items]
+                              (filterv #(not= request-id (:request-id %)) items)))))))))))
+
+(defn- validated!
+  "Deliver the owner's answer `opts` to its waiting submit. Answers whether a
+   submit took it: a late or repeated answer changes nothing."
+  [view-id opts]
+  (let [request-id
+        (live-text invalid-live-patch! "a validated op's request_id" (get opts "request_id"))
+
+        errors
+        (get opts "errors")
+
+        {:keys [answer ids] :as waiting}
+        (get @validations request-id)]
+
+    (when-not (or (nil? errors) (map? errors))
+      (invalid-live-patch! "validated errors must be an object of input id to message"))
+    {:view-id view-id
+     :is-open (some? (live-entry view-id))
+     :is-accepted (boolean (and waiting
+                                (= view-id (:view-id waiting))
+                                (deliver answer
+                                         (into {}
+                                               (keep (fn [[k v]]
+                                                       (when (and (contains? ids (str k))
+                                                                  (string? v)
+                                                                  (not (str/blank? v)))
+                                                         [(str k) (subs v 0 (min 500 (count v)))])))
+                                               errors))))}))
+
+(defn- press-node!
+  "Press button or selectable card `node-id` of live `entry`, as a surface does:
+   one more click and one owner `activate` event. `base` starts the answer."
+  [entry view-id node-id base]
+  (let [cell (:view entry)]
+    (locking cell
+      (if-not (identical? entry (get @pending view-id))
+        (assoc base
+          :is-accepted false
+          :reason "unknown")
+        (let [node (first (filter
+                            #(= node-id (:id %))
+                            (tree-seq #(seq (:children %)) :children {:children (:nodes @cell)})))]
+          (when-not (or (= :button (:type node)) (and (= :card (:type node)) (:is-selectable node)))
+            (invalid-view-action! view-id "activate requires a button or a selectable card node"))
+          (if (:is-disabled node)
+            (assoc base
+              :is-accepted false
+              :reason "disabled")
+            (do (patch-live!
+                  view-id
+                  [{:op :set :node-id node-id :clicks (inc (long (or (:clicks node) 0)))}])
+                (push-live-event! entry {:type :activate :node-id node-id})
+                (assoc base
+                  :is-accepted true
+                  :node-id node-id))))))))
 
 (defn action!
   "Apply one operator action to open View `view-id` through the shared action seam.
@@ -3650,117 +3913,137 @@
         base
         {:action action :view-id view-id}]
 
-    (cond (and (nil? entry) (contains? @closed-apps view-id)) (assoc base
-                                                                :is-accepted false
-                                                                :reason "closed")
-          (and (nil? entry) (contains? @stale-views view-id))
-          (if (= :interrupt action)
-            (assoc base :is-accepted (boolean (dismiss-stale! view-id)))
-            (assoc base
-              :is-accepted false
-              :reason "stale"))
-          (nil? entry) (assoc base
-                         :is-accepted false
-                         :reason "unknown")
-          :else
-          (let [kind
-                (:kind entry)
+    (cond
+      (and (nil? entry) (contains? @closed-apps view-id)) (assoc base
+                                                            :is-accepted false
+                                                            :reason "closed")
+      (and (nil? entry) (contains? @stale-views view-id))
+      (if (= :interrupt action)
+        (assoc base :is-accepted (boolean (dismiss-stale! view-id)))
+        (assoc base
+          :is-accepted false
+          :reason "stale"))
+      (nil? entry) (assoc base
+                     :is-accepted false
+                     :reason "unknown")
+      ;; Nobody hears a press until the owner of a restored app opens it again.
+      (and (app-stale? entry) (#{:activate :select :change :shortcut} action))
+      (cond-> (assoc base
+                :is-accepted false
+                :reason "disconnected")
+        node-id
+        (assoc :node-id node-id))
+      :else
+      (let [kind
+            (:kind entry)
 
-                supported?
-                (case action
-                  :submit
-                  (or (= :input kind) (and (= :live kind) (or (:is-app entry) (some? node-id))))
-
-                  :cancel
-                  (= :input kind)
-
-                  :draft
-                  (boolean (:is-app entry))
-
-                  :interrupt
-                  (and (= :live kind) (not (:is-app entry)))
-
-                  (:select :activate :change)
-                  (= :live kind))]
-
-            (when-not supported? (unsupported-view-action! view-id kind action))
+            supported?
             (case action
               :submit
-              (merge base
-                     (cond (:is-app entry) (app-submit! entry view-id normalized)
-                           (= :live kind) (live-submit! entry view-id node-id values)
-                           :else (submit! view-id values)))
-
-              :draft
-              (merge base (app-draft! entry view-id normalized))
-
-              :change
-              (merge base
-                     (if (:is-app entry)
-                       (app-locked entry
-                                   view-id
-                                   (fn [current]
-                                     (or (app-refusal current normalized [node-id] nil)
-                                         (assoc (live-change! current view-id node-id value)
-                                           :seq (:seq @(:view current))))))
-                       (live-change! entry view-id node-id value)))
+              (or (= :input kind) (and (= :live kind) (or (:is-app entry) (some? node-id))))
 
               :cancel
-              (if (false? (:is-cancellable entry))
-                (assoc base
-                  :is-accepted false
-                  :reason "not_cancellable")
-                (let [accepted? (boolean (cancel! view-id))]
-                  (cond-> (assoc base :is-accepted accepted?)
-                    (not accepted?)
-                    (assoc :reason "unknown"))))
+              (= :input kind)
 
-              :activate
-              (let [cell (:view entry)]
-                (locking cell
-                  (if-not (identical? entry (get @pending view-id))
-                    (assoc base
-                      :is-accepted false
-                      :reason "unknown")
-                    (let [node (first (filter #(= node-id (:id %))
-                                              (tree-seq #(seq (:children %))
-                                                        :children
-                                                        {:children (:nodes @cell)})))]
-                      (when-not (or (= :button (:type node))
-                                    (and (= :card (:type node)) (:is-selectable node)))
-                        (invalid-view-action!
-                          view-id
-                          "activate requires a button or a selectable card node"))
-                      (if (:is-disabled node)
-                        (assoc base
-                          :is-accepted false
-                          :reason "disabled")
-                        (do (patch-live! view-id
-                                         [{:op :set
-                                           :node-id node-id
-                                           :clicks (inc (long (or (:clicks node) 0)))}])
-                            (push-live-event! entry {:type :activate :node-id node-id})
-                            (assoc base
-                              :is-accepted true
-                              :node-id node-id)))))))
-
-              :select
-              (let [patched
-                    (select-live! view-id node-id item-ids)
-
-                    node
-                    (first (filter #(= node-id (:id %)) (:nodes patched)))]
-
-                (assoc base
-                  :is-accepted true
-                  :node-id node-id
-                  :item-ids (vec (:selected-ids node))))
+              (:draft :shortcut)
+              (boolean (:is-app entry))
 
               :interrupt
-              (let [accepted? (some? (interrupt-live! view-id note))]
-                (cond-> (assoc base :is-accepted accepted?)
-                  (not accepted?)
-                  (assoc :reason "unknown"))))))))
+              (and (= :live kind) (not (:is-app entry)))
+
+              (:select :activate :change)
+              (= :live kind))]
+
+        (when-not supported? (unsupported-view-action! view-id kind action))
+        (case action
+          :submit
+          (merge base
+                 (or (when (and (= :live kind)
+                                (not (and (:is-app entry)
+                                          (:idempotency-key normalized)
+                                          (app/submission-for-key @(:view entry)
+                                                                  (:idempotency-key normalized)))))
+                       (owner-check entry view-id node-id values))
+                     (cond (:is-app entry) (app-submit! entry view-id normalized)
+                           (= :live kind) (live-submit! entry view-id node-id values)
+                           :else (submit! view-id values))))
+
+          :draft
+          (merge base (app-draft! entry view-id normalized))
+
+          :change
+          (merge base
+                 (if (:is-app entry)
+                   (app-locked entry
+                               view-id
+                               (fn [current]
+                                 (or (app-refusal current normalized [node-id] nil)
+                                     (assoc (live-change! current view-id node-id value)
+                                       :seq (:seq @(:view current))))))
+                   (live-change! entry view-id node-id value)))
+
+          :cancel
+          (if (false? (:is-cancellable entry))
+            (assoc base
+              :is-accepted false
+              :reason "not_cancellable")
+            (let [accepted? (boolean (cancel! view-id))]
+              (cond-> (assoc base :is-accepted accepted?)
+                (not accepted?)
+                (assoc :reason "unknown"))))
+
+          :activate
+          (press-node! entry view-id node-id base)
+
+          :shortcut
+          (let [cell
+                (:view entry)
+
+                k
+                (:key normalized)]
+
+            (locking cell
+              (let [shortcut (app/find-shortcut @cell k)]
+                (cond (not (identical? entry (get @pending view-id))) (assoc base
+                                                                        :is-accepted false
+                                                                        :reason "closed")
+                      (nil? shortcut) (assoc base
+                                        :is-accepted false
+                                        :reason "unbound"
+                                        :key k)
+                      ;; A node shortcut presses its node, as a surface does.
+                      (:node-id shortcut)
+                      (assoc (press-node! entry view-id (:node-id shortcut) base) :key k)
+                      :else (do (push-live-event!
+                                  entry
+                                  {:type :shortcut :action (:action shortcut) :key k})
+                                (assoc base
+                                  :is-accepted true
+                                  :key k
+                                  :shortcut (:action shortcut)))))))
+
+          :select
+          (let [patched
+                (select-live! view-id node-id item-ids)
+
+                selected
+                (vec (:selected-ids (first (filter #(= node-id (:id %))
+                                                   (tree-seq #(seq (:children %))
+                                                             :children
+                                                             {:children (:nodes patched)})))))]
+
+            ;; The owner hears each accepted selection, as it hears a press.
+            (push-live-event! entry {:type :select :node-id node-id :item-ids selected})
+            (assoc base
+              :is-accepted true
+              :node-id node-id
+              :item-ids selected))
+
+          :interrupt
+          (let [accepted? (some? (interrupt-live! view-id note))]
+            (cond-> (assoc base :is-accepted accepted?)
+              (not accepted?)
+              (assoc :reason "unknown"))))))))
 
 (defn cancel-all!
   "Cancel every pending request. Returns how many were released. Used when a
@@ -3969,7 +4252,7 @@
   "Operations implemented by the live view host door."
   {:default "open"
    :spawn #{"open"}
-   :handle #{"patch" "state" "events" "close" "reply" "submission" "archive"}})
+   :handle #{"patch" "state" "events" "close" "reply" "submission" "archive" "validated"}})
 
 (defn- live-op-name
   "The op `opts` asks for, refused BY NAME when it is in neither list. An options
@@ -4188,13 +4471,14 @@
     {:view-id view-id :is-open false :is-closed true :is-archived true}))
 
 (defn- redeliver-sends!
-  "Give the listener of open app `view-id` each Send that it did not get yet: a
-   Send from before a restart, or one that came while no listener was there."
+  "Give the owner of open app `view-id` each Send that it did not get yet: a Send
+   from before a restart, or one that came while no owner was there. An owner
+   without a listener reads them after the events cursor of its open."
   [view-id]
   (when-let [cell (:view (live-entry view-id))]
     (locking cell
       (let [entry (live-entry view-id)]
-        (when (and (:is-app entry) (:listener entry))
+        (when (and (:is-app entry) (or (:listener entry) (:extension @cell)))
           (doseq [receipt (:submissions @cell)
                   :when (and (= "accepted" (:status receipt))
                              (not (contains? @(:delivering entry) (:id receipt))))]
@@ -4239,22 +4523,36 @@
         (owned-app view-id)))
     (case op
       "open"
-      (let [view (supersede-owned! (open-live! (spec<-json (get opts "view"))))]
-        (when (app/app? view) (redeliver-sends! (:id view)))
-        {:view-id (:id view) :is-open true :view view})
+      (let [ids (declared-validators opts)
+            view (supersede-owned! (open-live! (spec<-json (get opts "view"))))]
+
+        (swap! validator-ids dissoc (:id view))
+        (declare-validators! (:id view) (or ids #{}) (:nodes view))
+        ;; The owner reads from here: older events are not its own, and the Sends
+        ;; that it still owes come after this cursor.
+        (let [cursor (or (some-> (live-entry (:id view))
+                                 :events
+                                 deref
+                                 :cursor)
+                         0)]
+          (when (app/app? view) (redeliver-sends! (:id view)))
+          {:view-id (:id view) :is-open true :view view :events-cursor cursor}))
 
       "patch"
       ;; Asked BEFORE patching rather than catching the refusal after: a patch
       ;; the human's interrupt raced is not a spec problem, and an author must
       ;; not have to tell those two apart by reading a message.
-      (let [view-id (live-handle-id opts op)]
+      (let [view-id (live-handle-id opts op)
+            ids (declared-validators opts)]
+
         (if-let [entry (live-entry view-id)]
           (let [cell (:view entry)]
             (locking cell
               (if (live-entry view-id)
-                {:view-id view-id
-                 :is-open true
-                 :seq (:seq (patch-live! view-id (spec<-json (get opts "patch"))))}
+                (let [patched (patch-live! view-id (spec<-json (get opts "patch")))]
+                  ;; Validators follow the node tree: a patch declares new ones.
+                  (declare-validators! view-id ids (:nodes patched))
+                  {:view-id view-id :is-open true :seq (:seq patched)})
                 (live-ended view-id))))
           (live-ended view-id)))
 
@@ -4273,10 +4571,13 @@
           (invalid-live-patch!
             "events after must be a nonnegative integer; timeout_ms must be 0..86400000"))
         (if-let [entry (live-entry view-id)]
-          (let [answer (live-events view-id after timeout)]
-            (when (and (:is-app entry) (nil? (:listener entry)))
-              (read-sends! view-id (:events answer)))
-            (assoc answer :view-id view-id))
+          (if (app-stale? entry)
+            ;; A restart dropped the owner: it opens the app again with its key.
+            {:view-id view-id :is-open true :is-stale true :events [] :cursor 0}
+            (let [answer (live-events view-id after timeout)]
+              (when (and (:is-app entry) (nil? (:listener entry)))
+                (read-sends! view-id (:events answer)))
+              (assoc answer :view-id view-id)))
           (assoc (live-ended view-id)
             :events []
             :cursor after)))
@@ -4304,6 +4605,9 @@
       (let [view-id (live-handle-id opts op)]
         (app-only! view-id op)
         (archive-app! view-id))
+
+      "validated"
+      (validated! (live-handle-id opts op) opts)
 
       "close"
       (let [view-id (live-handle-id opts op)]
@@ -4350,5 +4654,83 @@
             (app-only! view-id op))))
       (-> envelope
           (dissoc "channel_id" "channel_ids")
+          live-dispatch
+          wire/json-str))))
+
+(def ^:private sdk-owner-pattern
+  "The owner name that an SDK program gives the gateway app door."
+  #"[a-z0-9][a-z0-9._-]{0,63}")
+
+(def ^:private sdk-events-wait-ms
+  "The longest `events` wait of the gateway app door, so that one HTTP request
+   never holds a connection for minutes."
+  30000)
+
+(defn- sdk-refusal!
+  [status message]
+  (throw (ex-info message {:type :vis/view-app-door-refused :status status :reason message})))
+
+(defn owner-app-json!
+  "The gateway app door of an SDK program: [[live-json!]] for owner `owner` in
+   session `sid`. The owner is bound as extension `sdk/<owner>`.
+
+   The door opens only apps of session `sid`, and it drives only the apps of that
+   owner in that session. A refusal of the owner throws `ex-info` with `:status`
+   403; every other refusal is the normal seam refusal."
+  [sid owner envelope-json]
+  (when-not (and (string? owner) (re-matches sdk-owner-pattern owner))
+    (sdk-refusal! 400
+                  (str "owner must match "
+                       sdk-owner-pattern
+                       ": a lowercase letter or digit, then up to 63 of a-z 0-9 . _ -")))
+  (let [envelope
+        (json/read-json (str envelope-json) :key-fn identity)
+
+        extension-name
+        (str "sdk/" owner)]
+
+    (when-not (map? envelope) (invalid-live-view! "a live envelope must be a JSON object"))
+    (binding [*live-owner*
+              {:extension extension-name}
+
+              extension/*current-environment*
+              {:session-id sid}]
+
+      (let [op (live-op-name envelope)]
+        (if (= "open" op)
+          (let [view (get envelope "view")]
+            (when-not (and (map? view) (= (name app/placement) (get view "placement")))
+              (invalid-live-view! "the gateway app door opens only apps: placement \"attachment\""))
+            (when-not (contains? #{nil sid} (trimmed (get view "session_id")))
+              (sdk-refusal! 403 (str "the gateway app door opens apps only in session " sid))))
+          (let [view-id (live-handle-id envelope op)
+                _ (recorded-app! view-id)
+                app (some #(when (app/app? %) %)
+                          [(some-> (live-entry view-id)
+                                   :view
+                                   deref) (get @closed-apps view-id)])]
+
+            (when-not app
+              (invalid-live-patch! (str "a live " op " needs an app — " view-id " is no app")))
+            (when-not (= sid (:session-id app))
+              (sdk-refusal! 403 (str "app " view-id " belongs to another session")))
+            (when-not (= extension-name (:extension app))
+              (sdk-refusal! 403
+                            (str "app " view-id
+                                 " belongs to " (if-let [other (:extension app)]
+                                                  (str "extension " other)
+                                                  "the python_execution sandbox"))))
+            (when (and (= "events" op)
+                       (let [timeout (get envelope "timeout_ms" 0)]
+                         (and (integer? timeout) (< sdk-events-wait-ms (long timeout)))))
+              (sdk-refusal! 400
+                            (str "events timeout_ms must be at most "
+                                 sdk-events-wait-ms
+                                 " on the gateway app door"))))))
+      (-> envelope
+          (dissoc "channel_id" "channel_ids")
+          (cond->
+            (= "open" (live-op-name envelope))
+            (assoc-in ["view" "session_id"] sid))
           live-dispatch
           wire/json-str))))

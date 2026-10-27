@@ -1096,6 +1096,16 @@
       "operations": {
         "get": {
           "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/keybindings"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
           "response": "binary",
           "extension": "background"
         }
@@ -1319,6 +1329,16 @@
         }
       },
       "path": "/v1/sessions/:sid/views/live/:view-id/log"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/apps"
     },
     {
       "audience": "sdk",
@@ -1880,7 +1900,8 @@
     "touch_ms": 5000,
     "keepalive_ms": 30000,
     "keepalive_timeout_ms": 5000,
-    "keepalive_route": "/v1/capabilities"
+    "keepalive_route": "/v1/capabilities",
+    "unknown_header": "x-vis-client-lease-unknown"
   },
   "$defs": {
     "web_launch": {
@@ -2317,6 +2338,90 @@
       "required": [
         "calls"
       ]
+    },
+    "keybinding": {
+      "type": "object",
+      "description": "One TUI key binding that an extension declares: the key after C-x runs a slash command or a built-in TUI verb.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[!-~]$",
+          "description": "One printable ASCII character from ! to ~, the key after C-x."
+        },
+        "command": {
+          "type": "string",
+          "pattern": "^/",
+          "minLength": 2,
+          "maxLength": 200,
+          "description": "A slash command line. The TUI runs it as if the person typed it and pressed Enter."
+        },
+        "action": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "maxLength": 64,
+          "description": "A built-in TUI verb id in kebab case, such as new-session. The verb moves to this key."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "The hydra and palette label. Required with command."
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "description": "The hydra heading. A command binding uses Extensions when it gives none."
+        },
+        "extension": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name of the extension that declares the binding."
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "command",
+            "label"
+          ],
+          "not": {
+            "required": [
+              "action"
+            ]
+          }
+        },
+        {
+          "required": [
+            "action"
+          ],
+          "not": {
+            "required": [
+              "command"
+            ]
+          }
+        }
+      ]
+    },
+    "keybinding_list": {
+      "type": "object",
+      "description": "The TUI key bindings of the extensions of one session, in extension order, then declaration order.",
+      "properties": {
+        "keybindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/keybinding"
+          }
+        }
+      },
+      "required": [
+        "keybindings"
+      ],
+      "additionalProperties": false
     },
     "handshake": {
       "type": "object",

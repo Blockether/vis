@@ -1160,7 +1160,10 @@ def _check_view(view):
             return complaint
     # The bound counts the TREE: a row holding twenty nodes is twenty nodes.
     if len(seen) > _MAX_NODES:
-        return f"a live view holds at most {_MAX_NODES} nodes"
+        return (
+            f"live view has {len(seen)} nodes; the maximum is {_MAX_NODES}. "
+            "Put a collection in a table: rows do not count as nodes."
+        )
     return None
 
 
@@ -1254,6 +1257,16 @@ def _live_apply(view, op):
     if name not in _LIVE_OPS:
         names = ", ".join(_LIVE_OPS)
         raise Refused(f"a live op is one of {names}, got {name!r}")
+    if name == "shortcuts":
+        # No person presses a key outside Vis: the list only replaces the old one.
+        shortcuts = op.get("shortcuts")
+        if not isinstance(shortcuts, list):
+            raise Refused("a shortcuts op carries a list of shortcuts")
+        if shortcuts:
+            view["shortcuts"] = json.loads(json.dumps(shortcuts))
+        else:
+            view.pop("shortcuts", None)
+        return f"shortcuts: {len(shortcuts)}"
     if name == "add-node":
         spec = op.get("node_spec")
         complaint = _live_check_node(spec, _live_ids(view["nodes"]))

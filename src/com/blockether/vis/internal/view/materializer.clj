@@ -464,9 +464,11 @@
         (invalid-patch! id "a node with this id is already in the view; an id is an address")))
     (when (> (+ (count (node-ids view)) (count minted)) max-nodes)
       (invalid-patch! (:id node)
-                      (str "a view holds at most "
+                      (str "the view would have "
+                           (+ (count (node-ids view)) (count minted))
+                           " nodes; the maximum is "
                            max-nodes
-                           " nodes; 200 devices are 200 ROWS in one table, not 200 panes")))
+                           ". Put a collection in a table: rows do not count as nodes.")))
     (if-let [path (when after
                     (or (node-path view after)
                         (invalid-patch!
@@ -510,6 +512,9 @@
 
     :submission
     (app-rule nil #(app/upsert-submission view (:submission op)))
+
+    :shortcuts
+    (app-rule nil #(app/set-shortcuts view (:shortcuts op)))
 
     (let [path
           (or (node-path view (:node-id op))
@@ -558,7 +563,11 @@
   (when-not (> (long (:seq patch)) (long (:seq view)))
     (invalid-patch! nil
                     (str "patch seq " (:seq patch) " does not advance the view's " (:seq view))))
-  (assoc (reduce apply-op view (:ops patch)) :seq (:seq patch)))
+  ;; Checked after every op: a removed node or button takes its shortcut along
+  ;; only when the same patch replaces the shortcuts.
+  (let [patched (reduce apply-op view (:ops patch))]
+    (app-rule nil #(app/check-shortcuts patched))
+    (assoc patched :seq (:seq patch))))
 
 ;; The model's surface
 

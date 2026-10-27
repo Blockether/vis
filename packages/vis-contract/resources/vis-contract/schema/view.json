@@ -169,6 +169,22 @@
             "node_id",
             "body"
           ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "shortcut"
+            },
+            "key": {
+              "$ref": "#/$defs/shortcut_key"
+            }
+          },
+          "required": [
+            "action",
+            "key"
+          ]
         }
       ]
     },
@@ -897,6 +913,74 @@
       "contentSchema": {
         "$ref": "#/$defs/live_view"
       }
+    },
+    "shortcut_key": {
+      "description": "One key that an app shortcut binds: one printable ASCII character from `!` to `~` (case-sensitive, so `A` is Shift+a) or one named key. Modifiers are never bindable. `Escape` and `Tab` stay with the surface.",
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[!-~]$"
+        },
+        {
+          "enum": [
+            "Enter",
+            "Space",
+            "Backspace",
+            "Delete",
+            "ArrowUp",
+            "ArrowDown",
+            "ArrowLeft",
+            "ArrowRight",
+            "Home",
+            "End",
+            "PageUp",
+            "PageDown"
+          ]
+        }
+      ]
+    },
+    "shortcut": {
+      "description": "One app shortcut. It sends the `action` id to the owner code, or presses the button or selectable card `node_id` like a click.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/shortcut_key"
+        },
+        "label": {
+          "description": "The short text that a surface shows in its shortcut legend.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "pattern": "\\S"
+        },
+        "action": {
+          "description": "The id that the owner code receives in a `shortcut` event.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "\\S"
+        },
+        "node_id": {
+          "description": "A button or a selectable card of the app. A surface presses it as a click.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "required": [
+            "node_id"
+          ]
+        }
+      ]
     },
     "component": {
       "oneOf": [
@@ -2098,6 +2182,14 @@
           },
           "minItems": 1
         },
+        "shortcuts": {
+          "description": "The keyboard shortcuts of an app, with unique keys. Only an app takes shortcuts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shortcut"
+          },
+          "maxItems": 32
+        },
         "submissions": {
           "description": "The newest Send receipts of an app, oldest first.",
           "type": "array",
@@ -2453,6 +2545,27 @@
           "required": [
             "op",
             "submission"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "shortcuts"
+            },
+            "shortcuts": {
+              "description": "The new shortcut list. It replaces the old list, and an empty list removes every shortcut.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/shortcut"
+              },
+              "maxItems": 32
+            }
+          },
+          "required": [
+            "op",
+            "shortcuts"
           ]
         }
       ]

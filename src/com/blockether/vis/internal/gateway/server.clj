@@ -114,6 +114,12 @@
    written again, so a busy client costs no `swap!` per request."
   (:touch-ms gateway-contract/client-lease))
 
+(def ^:private CLIENT_LEASE_UNKNOWN_HEADER
+  "The response header that names a lease this daemon does not hold. A restart
+   loses every lease, and the reaper retires a silent one. The client reads this
+   header and takes a new lease instead of working without one."
+  (:unknown-header gateway-contract/client-lease))
+
 ;; Delivered by `stop!`; `serve-main!` parks on it so a stopped daemon process
 ;; EXITS instead of idling forever. In-process callers (tests, REPL) deliver
 ;; harmlessly — nothing is parked on the latch there.
@@ -1750,11 +1756,25 @@
    could look up - and it is what lets `CLIENT_LEASE_TTL_MS` retire a phone or a
    `--gateway` CLI that vanished mid-flight instead of counting it as a client
    forever. Innermost wrapper on purpose: an unauthenticated or protocol-refused
-   request never reaches it, so no stranger can keep a lease warm."
+   request never reaches it, so no stranger can keep a lease warm.
+
+   A request that names a lease this daemon does not hold gets that id back in
+   `CLIENT_LEASE_UNKNOWN_HEADER`. The check runs before the handler, so a release
+   of the lease does not mark its own answer."
   [handler]
   (fn [request]
-    (touch-client-lease! (get-in request [:headers "x-vis-client-id"]) (util/now-ms))
-    (handler request)))
+    (let [client-id
+          (get-in request [:headers "x-vis-client-id"])
+
+          held?
+          (or (not (seq (str client-id))) (contains? (:clients @instance/server-state) client-id))
+
+          response
+          (do (touch-client-lease! client-id (util/now-ms)) (handler request))]
+
+      (if (and (not held?) (map? response))
+        (assoc-in response [:headers CLIENT_LEASE_UNKNOWN_HEADER] (str client-id))
+        response))))
 
 (defn- app
   [^String token contribs]

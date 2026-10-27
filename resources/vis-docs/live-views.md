@@ -20,6 +20,9 @@ The view appears in the terminal or Companion app and can be stopped at any time
   in the [side panel](#choose-a-placement).
 - **People must review a change or answer you after your code returns.** Attach an
   [app](#apps). They save drafts and send them when they are ready.
+- **People must act in an app with single keys.** Add [shortcuts](#add-shortcuts-to-an-app).
+- **Your own program, not an extension, must own an app.** [Run it from your
+  program](#run-an-app-from-your-own-program).
 - **The person must fill in values while the work runs.** [Collect input in the
   view](#collect-input-in-a-view).
 - **Your own program must list, read or interrupt live views.** Read [Sessions
@@ -552,6 +555,11 @@ Log lines and code blocks are never executed. Terminal controls in logs show as 
 Other text stays literal. There is no general Markdown node. Each node type has its own Markdown
 output.
 
+Vis redacts text that looks like a labeled credential in every view, also in your own text. When a
+word that contains `token`, `password`, `secret`, `cookie` or `otp` comes before `:` or `=`, the
+value after it shows as `[REDACTED]`. For example, `Tokens: 5` shows as `Tokens: [REDACTED]`. To
+show such a value, word the label differently, for example `5 tokens left`.
+
 ## Updating
 
 - `view.sleep(seconds)` blocks in the host until the view changes, closes or the
@@ -684,6 +692,7 @@ A person action becomes a `vis.LiveEvent`:
 | `change` | A person changes an input | `node_id` and `value`. A secret input gives only `is_set`. |
 | `activate` | A person presses a button or a selectable card | `node_id` |
 | `submit` | A person presses a button with `action="submit"` | `node_id` and `values` of the inputs in the group of the button |
+| `select` | A person selects rows in a selectable table | `node_id` and `item_ids`, the selected row ids |
 
 - `view.values()` returns the current value of each input by id. Secret inputs are left out.
 - `view.events(timeout=None)` returns the events since the last call. With `timeout`, it waits up to
@@ -697,6 +706,28 @@ A person action becomes a `vis.LiveEvent`:
 A submit checks each required input and each validator of the group first. A bad value shows an
 error at its input, and the view stays open. A `password` or `otp` value never reaches the
 transcript, the saved view or a log. The `submit` event gives a `vis-secret:` handle for it.
+
+Give an input `validate=` to check it with your own code, as in `vis.ask`:
+
+```python
+vis.ui.plaintext("port", label="Port",
+                 validate=lambda v: None if v.isdigit() else "Use digits only.")
+```
+
+- The function gets the value, or the value and every value of the group. It answers None when the
+  value is good, or the error message.
+- Your code runs the function when the person submits, before Vis accepts the submit. The
+  function never leaves your process.
+- An extension and an SDK program get the question from the host. In the `python_execution`
+  sandbox, your code answers it while it reads events with `events`, `sleep` or `run`.
+- When your code does not answer in 5 seconds, the submit is refused with "The app did not
+  answer. Try again." at the submit button.
+- A validator lives only in the process that declared it. After a restart, open the view again
+  with the same key to give it back.
+- An input that `view.add(...)` adds with `validate=` gets its validator too. `view.drop(...)`
+  removes the validator with the input.
+- When you open a view without `on_event` and without a validated input, an extension answers
+  later validators only while it reads events.
 
 ## Side panel
 
@@ -801,12 +832,114 @@ People see the stage of each receipt:
 - `app.submission(submission_id)` returns one receipt. `app.thread(node_id, thread_id=None)`
   returns one thread.
 
+### Add shortcuts to an app
+
+A shortcut gives one key of an app a job. People press it in the terminal or on a hardware
+keyboard in the Companion app, and the surface shows the shortcut legend.
+
+```python
+import blockether.vis.extension as vis
+
+app = vis.attach(vis.ui.app(
+    "Triage the failures",
+    vis.ui.table("failures", columns=["Test", "Error"]),
+    vis.ui.button("rerun", label="Run again"),
+    key="triage",
+    shortcuts=[
+        vis.ui.shortcut("r", node_id="rerun", label="Run again"),
+        vis.ui.shortcut("n", "next-failure", label="Next failure"),
+    ],
+))
+```
+
+- `vis.ui.shortcut(key, action=None, *, node_id=None, label=None)` declares one shortcut. Give
+  exactly one of `action` and `node_id`.
+- With `node_id`, the key presses that button or selectable card, like a click. Your code gets an
+  `activate` event for that node.
+- With `action`, the key sends a `shortcut` event to your code. `event.action` is the id, and
+  `event.key` is the key.
+- `key` is one printable character from `!` to `~` or one named key. The named keys are
+  `Enter`, `Space`, `Backspace`, `Delete`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`,
+  `Home`, `End`, `PageUp` and `PageDown`. A letter is case-sensitive, so `R` is Shift+r. Esc and
+  Tab stay with the surface.
+- An app holds at most 32 shortcuts, each with its own key. `label` holds at most 40 characters.
+- `app.set_shortcuts([...])` replaces the list. `app.set_shortcuts([])` removes it.
+- Before you remove a node that a shortcut presses, remove that shortcut in the same patch.
+
+[Use an app](keyboard-shortcuts.md#use-an-app) lists the keys that the terminal keeps for itself.
+
+### Get the events of an app
+
+An app gets its events in one of three ways:
+
+- `vis.attach(app_declaration, on_event=callback)` runs `callback(event)` for each change, submit,
+  activate, select or shortcut, as `vis.live(..., on_event=...)` does. In an extension, each call runs
+  with the session of the app bound, also after your tool returns.
+- `app.events(timeout=60)` returns the events that arrived since the last call.
+- `app.run(callback, *, timeout=None)` serves events and blocks. It returns when the app closes,
+  when `callback` returns `False`, after `timeout` seconds or on Ctrl+C. It returns the number of
+  events that it served.
+
+```python
+def on_key(event):
+    """Show the next failure for each press of n."""
+    if event.type == "shortcut" and event.action == "next-failure":
+        show_next_failure(app)
+
+app.run(on_key)
+```
+
+### Run an app from your own program
+
+Your own program can own an app in a session through the Python SDK. It uses the same
+`vis.ui` components and the same `LiveAttachment` handle as an extension.
+
+```python
+import blockether.vis.extension as vis
+from blockether.vis.engine import Agent
+
+agent = Agent()
+session = agent.session
+app = session.attach(
+    vis.ui.app("Release checklist", vis.ui.steps("plan", steps=[...]), key="release"),
+    owner="release-bot",
+)
+app.run(handle_event)
+```
+
+- `owner` names your program, with 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`. Only
+  this owner can change the app.
+- With `key`, a restarted program gets its open app back with the same state.
+- `on_event=callback` runs the callback on a background thread until the app closes. Vis logs an
+  error of the callback and continues.
+- Inside a tool of `Agent(extensions=[...])`, `vis.attach(vis.ui.app(...))` opens the app in the
+  session of that call. The name of the extension is the owner.
+- [Sessions API](sessions-api.md#run-an-app-from-a-program) shows the same steps over HTTP.
+
+### After a gateway restart
+
+The surfaces show an app of an extension or a program as disconnected after a gateway restart. The
+app keeps its state, but its owner does not listen yet.
+
+- While an app is disconnected, Vis refuses presses, selections, input changes and shortcuts with
+  the reason `disconnected`. Nothing in the app changes.
+- People can still save comments and send their work. A Send waits for the owner.
+- Open the app again with the same `key` and the same owner. The app is then connected again, and
+  the owner gets each Send that waited.
+- An extension has no separate start hook. Open your apps again with their keys when your extension
+  loads.
+- A program with `on_event` waits for the gateway and opens a keyed app again by itself. An app
+  without a key cannot come back to its program: Vis logs an error and stops the events of that app.
+- An owner that opens an app again gets only the events that come after that open.
+
 ### Keep and end an app
 
 - `vis.attach(row)` with the app row from `vis.list_attachments()` returns a new handle for the
   same app. Use it after a gateway restart or in a later `python_execution` block.
 - `app.close()` ends the app. People can still read it, but they cannot comment or send.
 - `app.archive()` ends the app and moves it to the archived list of the session.
+- While an app of an extension is open, Vis keeps that extension running in the session, also when
+  the session is idle. Close or archive an app that you no longer use.
 - A program reads apps with `live_views(placement="attachment")` and `live_view(view_id)`, as
   [Sessions API](sessions-api.md#watch-live-views) shows.
 
@@ -824,6 +957,7 @@ monkeypatch.setattr(vis, "_host", recorder)
 
 run_extension()
 recorder.select("jobs", ["macos"])       # a human action
+recorder.press_shortcut("n")             # an app shortcut
 assert recorder.node("jobs")["selected_ids"] == ["macos"]
 assert recorder.patched()                # ops the extension emitted
 result = recorder.close(reason="interrupted")

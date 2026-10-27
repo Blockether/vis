@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 import math
+import re
 import threading
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
@@ -18,6 +19,12 @@ from ._client import GatewayError, ProtocolError
 _MAX_BYTES = 1024 * 1024
 _MAX_CALLS = 4096
 _MAX_RECEIPT_BYTES = 16 * 1024 * 1024
+
+
+def _owner_slug(name):
+    """The app owner of a client extension: its name as an SDK owner slug."""
+    slug = re.sub(r"[^a-z0-9._-]+", "-", name.strip().lower()).strip("._-")
+    return slug[:64].rstrip("._-") or "extension"
 
 
 def _json_value(value, *, depth=0):
@@ -68,6 +75,7 @@ class ClientExtensions:
         self.declarations = tuple(declarations)
         self.manifest = []
         self._functions = {}
+        self._owners = {}
         self._completed = {}
         self._receipt_bytes = 0
         self._thread = threading.get_ident()
@@ -87,6 +95,7 @@ class ClientExtensions:
                     "op_hooks",
                     "network_filters",
                     "slash_commands",
+                    "keybindings",
                     "settings",
                     "grants",
                 )
@@ -131,6 +140,7 @@ class ClientExtensions:
                             f"client symbol {name} requires an explicit Activity"
                         )
                     self._functions[name] = item["fn"]
+                    self._owners[name] = _owner_slug(extension.name)
                     symbols.append(
                         {
                             key: value
@@ -159,7 +169,8 @@ class ClientExtensions:
         if threading.get_ident() != self._thread:
             raise RuntimeError("client extensions must run on their SDK calling thread")
 
-    def dispatch(self, call, publish):
+    def dispatch(self, call, publish, session=None):
+        """Run one client call. With `session`, its apps use that session's HTTP door."""
         self._check_thread()
         if (
             not isinstance(call, dict)
@@ -188,6 +199,9 @@ class ClientExtensions:
                 RuntimeError("Agent client callback limit reached; create a new Agent")
             )
         token = vis._activity_publisher.set(publish)
+        door = None
+        if session is not None and call["name"] in self._owners:
+            door = vis._app_door.set(vis._AppDoor(session, self._owners[call["name"]]))
         try:
             try:
                 fn = self._functions.get(call["name"])
@@ -224,6 +238,8 @@ class ClientExtensions:
             self._receipt_bytes += len(_json_text(result))
             return result
         finally:
+            if door is not None:
+                vis._app_door.reset(door)
             vis._activity_publisher.reset(token)
 
     def drain(self, client, session_id):
@@ -251,7 +267,7 @@ class ClientExtensions:
                     )
                     return True
 
-                result = self.dispatch(call, publish)
+                result = self.dispatch(call, publish, client.session(session_id))
                 try:
                     client.post_session_client_call_result(
                         session_id, call["id"], body=result

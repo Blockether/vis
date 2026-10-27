@@ -17,6 +17,8 @@ callbacks and host operations.
   tool](#call-other-session-tools) or [other sessions](#find-and-read-sessions).
 - **Your extension must start work in new sessions.** [Create and control
   sessions](#create-and-control-sessions).
+- **People must start your command with one key in the terminal.** Declare [key
+  bindings](#key-bindings).
 - **Your own program must read or export Activity history.** Read [Sessions
   API](sessions-api.md#read-activity-history).
 - **Your editor or type checker reports errors for code that runs in Vis.**
@@ -110,6 +112,7 @@ of the corresponding SDK declarations and are stored as tuples, not mutable regi
 | `prompt: str` or callable | `None` | Model instructions. A callable receives the env dict each turn and returns text or `None` |
 | `activation` | `None` | Optional `(env) -> bool`. `False` hides the extension for that turn |
 | `slash_commands` | `()` | `vis.SlashCommand` declarations for user commands |
+| `keybindings` | `()` | `vis.Keybinding` declarations for terminal keys (see [key bindings](#key-bindings)) |
 | `op_hooks` | `()` | `vis.OpHook` guards or observers |
 | `network_filters` | `()` | `vis.NetworkFilter` request/response policy (see [network filters](jail.md#project-network-filters)) |
 | `providers` | `()` | `vis.Provider` declarations |
@@ -936,6 +939,10 @@ and returns
 `vis.ok(title, body=None, data=None)`, `vis.err(title, body=None, data=None)`
 or a plain string, which counts as an ok title. `body` is Markdown.
 
+`args` is the list of words after the command. Vis splits the text at spaces. Quotes do not group
+words. `raw` is the full text of the command, with its `/`. For example, `/deploy staging now`
+gives the `args` `["staging", "now"]`.
+
 Vis runs `run` in the session that sent the command, as it does for a tool call.
 In `run`, [`vis.workspace_root()`](#workspace-root) returns the working copy of that
 session, including its draft.
@@ -945,6 +952,42 @@ want to run again, such as a goal. The terminal then keeps the full command in i
 prompt history, so **↑** recalls it. The default is `False`. Vis does not save
 control commands, such as `/reload`, unless their definition sets the flag. The
 built-in `/goal` command is saveable.
+
+## Key bindings
+
+```python
+vis.Keybinding(key, command=None, action=None, label=None, group=None)
+```
+
+A key binding gives your extension a key in the terminal. The person presses Ctrl+X, then the
+key. Declare the bindings in `vis.Extension(keybindings=[...])`.
+
+```python
+vis.Extension(
+    name="release",
+    description="Release tools.",
+    slash_commands=[vis.SlashCommand("release", run_release)],
+    keybindings=[
+        vis.Keybinding("R", command="/release", label="Start a release"),
+        vis.Keybinding("N", action="new-session"),
+    ],
+)
+```
+
+- `key` is one printable ASCII character from `!` to `~`. A letter is case-sensitive.
+- Give exactly one of `command` and `action`.
+- `command` is a slash command line that starts with `/`, at most 200 characters. The terminal
+  runs it as if the person typed it and pressed Enter. Give it with `label`.
+- `action` moves a built-in terminal verb to `key`, for example `new-session`. [Keys from
+  extensions](keyboard-shortcuts.md#keys-from-extensions) lists the verb ids.
+- `label` holds at most 40 characters and shows in the key menu and the command palette.
+- `group` holds at most 24 characters and names the heading in the key menu. A `command` binding
+  uses `Extensions` by default.
+
+The terminal refuses a binding whose key is taken or reserved, and shows one notice. An
+[`Agent` extension](python-sdk.md) of your own program cannot declare key bindings.
+`session.keybindings()` returns the bindings of a session, as [Sessions
+API](sessions-api.md#read-the-key-bindings) describes.
 
 ## Op hooks
 
@@ -1057,6 +1100,9 @@ concurrent read-only polling with fail-fast, Stop and owned cleanup, use the
 - `on_event=callback` gets each `vis.LiveEvent` of a panel view as an extension callback.
 - `vis.attach(vis.ui.app(title, *nodes))` opens an app: a live view that stays in the session.
   People save drafts and send them. [Apps](live-views.md#apps) shows how you answer them.
+- `vis.ui.app(..., shortcuts=[vis.ui.shortcut("n", "next")])` gives an app single-key shortcuts.
+  `vis.attach(app, on_event=callback)` and `app.run(callback)` handle its events. [Add shortcuts
+  to an app](live-views.md#add-shortcuts-to-an-app) shows them.
 - `view.values()`, `view.events(timeout=None)` and `view.on_event(callback)` read the inputs and
   the actions of a person. [Collect input in a view](live-views.md#collect-input-in-a-view) shows
   them.

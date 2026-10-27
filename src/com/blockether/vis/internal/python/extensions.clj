@@ -2512,6 +2512,15 @@
         slashes
         (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
 
+        keybindings
+        (mapv (fn [binding]
+                (into {}
+                      (keep (fn [k]
+                              (when-some [v (get binding k)]
+                                [(keyword k) v])))
+                      ["key" "command" "action" "label" "group"]))
+              (get reg "keybindings"))
+
         op-hooks
         (vec (mapcat #(->op-hook-entries ext-name ctx %) (get reg "op_hooks")))
 
@@ -2576,6 +2585,9 @@
 
       (seq slashes)
       (assoc :ext/slash-commands slashes)
+
+      (seq keybindings)
+      (assoc :ext/keybindings keybindings)
 
       (seq op-hooks)
       (assoc :ext/op-hooks op-hooks)
@@ -3444,7 +3456,8 @@
 
 (defn ^:no-doc drives-owned-view?
   "True when an extension namespace of sandbox `worker` drives an open owned live
-   view. [[close-session-contexts!]] would close that view."
+   view or holds an open app. [[close-session-contexts!]] would close that view or
+   disconnect that app."
   [worker]
   (boolean (some (fn [[[k _] row]]
                    (and (= worker k) (view/owner-context-open? (:context row))))

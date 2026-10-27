@@ -54,6 +54,20 @@
       (http/session-404 (get-in request [:path-params :sid])))
     (http/session-404 (get-in request [:path-params :sid]))))
 
+(defn- keybindings-handler
+  "GET /v1/sessions/:sid/keybindings — load Python extensions in the gateway on
+   first demand, then list the TUI key bindings of the extensions of the session
+   workspace, in extension order, then declaration order."
+  [request]
+  (if-let [sid (http/path-sid request)]
+    (if-let [info (state/session-workspace-info sid)]
+      (let [root (get info "root")]
+        (extension/with-context {:env {:session-id sid :workspace/root root}}
+                                (python-extensions/ensure-python-extensions-loaded!)
+                                (http/json-response {:keybindings (extension/keybindings)})))
+      (http/session-404 (get-in request [:path-params :sid])))
+    (http/session-404 (get-in request [:path-params :sid]))))
+
 (defn- trimmed
   "The trimmed text of `value`, or nil when it is blank."
   [value]
@@ -942,6 +956,7 @@
    [:delete "/v1/sessions/:sid"] delete-session-handler
    [:put "/v1/sessions/:sid/read"] mark-session-read-handler
    [:get "/v1/sessions/:sid/slashes"] slashes-handler
+   [:get "/v1/sessions/:sid/keybindings"] keybindings-handler
    [:post "/v1/sessions/:sid/release"] release-session-handler
    [:get "/v1/sessions/:sid/alert"] session-alert-handler
    [:get "/v1/sessions/:sid/context"] context-handler
