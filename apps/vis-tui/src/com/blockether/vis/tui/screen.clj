@@ -2038,7 +2038,8 @@
 (defn- visible-slice
   "`img` cut to the rows `crop-top` to `crop-top` + `visible` of its full box, at the same
    scale. Kitty cuts with its source rectangle; another protocol gets the slice as a
-   source `:view` in pixels, the same way the image viewer shows a zoomed part. Returns
+   source `:view` in pixels, the same way the image viewer shows a zoomed part. A picture
+   that already shows a `:view`, such as a cropped thumbnail, is cut inside it. Returns
    nil when the size of the picture is unknown."
   [img crop-top visible kitty?]
   (let [full-rows
@@ -2054,16 +2055,18 @@
       (assoc img
         :crop-top crop-top
         :crop-bottom (max 0 (- full-rows crop-top visible)))
-      (when-let [[width height] (and (:width img) (:height img) [(:width img) (:height img)])]
-        (let [height (long height)
-              y (min (dec height) (Math/round (/ (* (double height) crop-top) full-rows)))
-              h (max 1 (min (- height y) (Math/round (/ (* (double height) visible) full-rows))))]
+      (when-let [{:keys [x y w h]} (or (:view img)
+                                       (when (and (:width img) (:height img))
+                                         {:x 0 :y 0 :w (:width img) :h (:height img)}))]
+        (let [height (long h)
+              dy (min (dec height) (Math/round (/ (* (double height) crop-top) full-rows)))
+              dh (max 1 (min (- height dy) (Math/round (/ (* (double height) visible) full-rows))))]
 
           (assoc img
             :id (str (or (:id img) (:path img)) "#rows " crop-top "+" visible)
             :rows visible
-            :height h
-            :view {:x 0 :y y :w (long width) :h h}))))))
+            :height dh
+            :view {:x (long x) :y (+ (long y) dy) :w (long w) :h dh}))))))
 
 (defn- fitting-image-placements
   "Keep every inline-image placement that INTERSECTS the transcript viewport

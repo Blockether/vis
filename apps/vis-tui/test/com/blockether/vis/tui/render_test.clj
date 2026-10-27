@@ -6286,11 +6286,18 @@
           (expect (str/includes? text "PNG · 1600x900 · 1.2 MB"))
           (expect (str/includes? text
                                  "Click a thumbnail or press Ctrl+X Shift+I to view pictures."))))
-    (it "keeps the aspect of a tall picture inside the thumbnail column"
-        (let [img (:img (first (filter #(= :image (:kind %))
-                                       (:line-meta (data :kitty (md [[1206 2622]]))))))]
-          (expect (= 8 (long (:rows img))))
-          (expect (< (long (:cols img)) 24))))
+    (it "gives a wide and a tall picture one thumbnail size, each cut to its shape"
+        (let [[wide tall] (map :img
+                               (filter #(= :image (:kind %))
+                                       (:line-meta (data :kitty (md [[1600 900] [1206 2622]])))))]
+          (expect (= [(:cols wide) (:rows wide)] [(:cols tall) (:rows tall)]))
+          (expect (= 24 (long (:cols tall))))
+          ;; The tall picture keeps its width and loses rows at the top and the bottom.
+          (expect (= 1206 (long (get-in tall [:view :w]))))
+          (expect (< (long (get-in tall [:view :h])) 2622))
+          (expect (= (quot (- 2622 (long (get-in tall [:view :h]))) 2)
+                     (long (get-in tall [:view :y]))))
+          (expect (= 900 (long (get-in wide [:view :h]))))))
     (it "keeps a blank line above the Open externally button"
         (let [rows (filter #(= :image-table (:card-part %))
                            (:line-meta (data nil (md [[1600 900]]))))]

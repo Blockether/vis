@@ -225,20 +225,22 @@
     [first-line last-line]))
 
 (defn- thumbnail-region
-  "The terminal picture of attachment `row` at screen `row-top`, or nil without one."
+  "The terminal picture of attachment `row` at screen `row-top`, or nil without one. Every
+   picture fills the whole thumbnail cell and is cut to its shape, so all thumbnails have
+   one size."
   [thumbnail row left row-top]
   (let [{:keys [path mime width height] :as picture} (when thumbnail (thumbnail row))]
     (when (and (map? picture) path width height)
-      (let [{:keys [cols rows]} (timg/cell-size {:w width :h height} thumb-cols block-h)]
-        {:row (+ (long row-top) (quot (- (long block-h) (long rows)) 2))
-         :col (+ (long left) 2 (quot (- (long thumb-cols) (long cols)) 2))
-         :img {:id (str "attachment-table/" path)
-               :path path
-               :mime mime
-               :cols cols
-               :rows rows
-               :width width
-               :height height}}))))
+      {:row (long row-top)
+       :col (+ (long left) 2)
+       :img {:id (str "attachment-table/" path)
+             :path path
+             :mime mime
+             :cols thumb-cols
+             :rows block-h
+             :width width
+             :height height
+             :view (timg/cover-view width height thumb-cols block-h (timg/cell-pixels))}})))
 
 (defn- paint-table-line!
   "Paint one line of the attachment table."

@@ -3191,6 +3191,11 @@ therapy line 2"
             (expect (= [10 40 {:x 0 :y 0 :w 800 :h 200}] ((juxt :rows :cols :view) bottom)))
             (expect (= [20 40 {:x 0 :y 400 :w 800 :h 400}] ((juxt :rows :cols :view) scrolled)))
             (expect (not= (:id bottom) (:id scrolled)) "each slice is its own upload"))))
+    (it "iterm2: cuts a cropped thumbnail inside its own view"
+        (with-redefs [timg/images-protocol (constantly :iterm2)]
+          (let [cropped (assoc img :view {:x 100 :y 0 :w 600 :h 800})]
+            (expect (= {:x 100 :y 200 :w 600 :h 200}
+                       (:view (:img (first (fit (band 10 10 0 cropped) 0 10)))))))))
     (it "drops a cut picture of unknown size until it is whole on screen"
         (with-redefs [timg/images-protocol (constantly :iterm2)]
           (expect (empty? (fit (band 10 0 5 (dissoc img :width :height)) 0 15)))))))

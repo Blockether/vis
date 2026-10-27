@@ -1940,8 +1940,6 @@
 
 (def ^:private image-table-thumb-cols "Widest thumbnail in the image table." 24)
 
-(def ^:private image-table-thumb-rows "Tallest thumbnail in the image table." 8)
-
 (def ^:private image-table-open-label " Open externally ")
 
 (defn- draw-image-table-row!
@@ -5175,15 +5173,27 @@
   ^long [content-w]
   (max 8 (min (long image-table-thumb-cols) (quot (- (long content-w) 4) 3))))
 
+(defn- image-table-thumb-rows
+  "Thumbnail rows of an image table with a `thumb-w` column: about 16:9 for 1:2 cells, but at
+   least the four text lines."
+  ^long [thumb-w]
+  (max 4 (Math/round (/ (* 9.0 (long thumb-w)) 32.0))))
+
 (defn- image-table-box
-  "The thumbnail cell box of one picture in a `thumb-w` column, or nil without its pixel size."
+  "The thumbnail cell box of one picture in a `thumb-w` column, or nil without its pixel size.
+   Every picture gets the same box and is cut to its shape, so all thumbnails of a table have
+   one size. `:view` is the shown source rectangle."
   [{:keys [width height]} thumb-w]
-  (when (and width height) (timg/cell-size {:w width :h height} thumb-w image-table-thumb-rows)))
+  (when (and width height)
+    (let [rows (image-table-thumb-rows thumb-w)]
+      {:cols (long thumb-w)
+       :rows rows
+       :view (timg/cover-view width height thumb-w rows (timg/cell-pixels))})))
 
 (defn- image-table-block-rows
   "Rows of one picture in the image table: its thumbnail, but at least the four text lines."
-  ^long [image graphical? thumb-w]
-  (max 4 (long (or (when graphical? (:rows (image-table-box image thumb-w))) 0))))
+  ^long [{:keys [width height]} graphical? thumb-w]
+  (if (and graphical? width height) (image-table-thumb-rows thumb-w) 4))
 
 (defn image-table-rows
   "Rows the image table card paints for `images` (`[{:width :height}]`) in `content-w`
@@ -5420,7 +5430,8 @@
                 :cols (:cols box)
                 :rows (:rows box)
                 :width width
-                :height height})
+                :height height
+                :view (:view box)})
 
              view
              (when path {:images viewable :index (count (filter :path (take i images)))})

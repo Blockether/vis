@@ -132,6 +132,29 @@
                                   (when max-rows (Integer/valueOf (int max-rows))))]
     {:cols (aget ^ints r 0) :rows (aget ^ints r 1)}))
 
+(defn cover-view
+  "The centered source rectangle `{:x :y :w :h}` of a `width`x`height` px picture that
+   fills a `cols`x`rows` cell box at `[cell-w cell-h]` px cells. The picture is cut to the
+   shape of the box, so every box of the same size shows a picture of the same size."
+  [width height cols rows [cell-w cell-h]]
+  (let [iw
+        (double width)
+
+        ih
+        (double height)
+
+        box
+        (/ (* (double cols) (double (max 1 (long cell-w))))
+           (* (double rows) (double (max 1 (long cell-h)))))
+
+        w
+        (max 1 (min (long iw) (Math/round (* ih box))))
+
+        h
+        (max 1 (min (long ih) (Math/round (/ iw box))))]
+
+    {:x (quot (- (long iw) w) 2) :y (quot (- (long ih) h) 2) :w w :h h}))
+
 (defn box-pixels
   "Long-edge PIXEL ceiling of a `cols`x`rows` cell box — what to ask a decoder
    for when the result will be drawn into that box.
@@ -206,6 +229,26 @@
    `:data` being the raw PNG bytes."
   (atom {}))
 
+(def ^:private view-cache-limit
+  "Cropped PNGs kept in [[view-png-cache]]: enough for the thumbnails on screen."
+  64)
+
+(def ^:private view-png-cache
+  "Cropped PNGs by [abs-path mtime size cols rows view], oldest first in `:order`. A
+   thumbnail crop repeats on every scroll frame; the zoom steps of the image viewer
+   push older entries out."
+  (atom {:entries {} :order []}))
+
+(defn- remember-view-png
+  [cache key png]
+  (let [order
+        (conj (:order cache) key)
+
+        [gone kept]
+        (split-at (max 0 (- (count order) (long view-cache-limit))) order)]
+
+    {:entries (apply dissoc (assoc (:entries cache) key png) gone) :order (vec kept)}))
+
 (defn- fit->png
   "Encode `src` as PNG `{:data :w :h}`, scaled down to fit `target-w`x`target-h` px."
   [src ^long target-w ^long target-h]
@@ -229,6 +272,31 @@
           {:data (img/encode scaled :png) :w (int sw) :h (int sh)}))
       {:data (img/encode src :png) :w (int iw) :h (int ih)})))
 
+(defn- crop->png
+  "PNG `{:data :w :h}` of the `view` part (`{:x :y :w :h}` in pixels) of `src`, fitted to
+   `target-w`x`target-h` px."
+  [src view ^long target-w ^long target-h]
+  (let [iw
+        (long (img/width src))
+
+        ih
+        (long (img/height src))
+
+        x
+        (max 0 (min (dec iw) (long (:x view))))
+
+        y
+        (max 0 (min (dec ih) (long (:y view))))
+
+        w
+        (max 1 (min (- iw x) (long (:w view))))
+
+        h
+        (max 1 (min (- ih y) (long (:h view))))]
+
+    (with-open [part (img/crop src x y w h)]
+      (fit->png part target-w target-h))))
+
 (defn- still->png
   "Box-fitted PNG `{:data :w :h}` for a STILL image file, or nil. `:data` is the
    RAW PNG bytes: the escape encoders base64 them as they chunk, so encoding one
@@ -241,28 +309,34 @@
          (let [target-w (* (long cols) (long (TerminalImage/cellWidth)))
                target-h (* (long rows) (long (TerminalImage/cellHeight)))]
 
-           (if view
-             (let [iw (long (img/width src))
-                   ih (long (img/height src))
-                   x (max 0 (min (dec iw) (long (:x view))))
-                   y (max 0 (min (dec ih) (long (:y view))))
-                   w (max 1 (min (- iw x) (long (:w view))))
-                   h (max 1 (min (- ih y) (long (:h view))))]
-
-               (with-open [part (img/crop src x y w h)]
-                 (fit->png part target-w target-h)))
-             (fit->png src target-w target-h))))
+           (if view (crop->png src view target-w target-h) (fit->png src target-w target-h))))
        (catch Throwable _ nil)))
 
 (defn- video->png
   "Box-fitted PNG `{:data :w :h}` of a clip's FIRST frame — the still a terminal
    draws for a video. The decoder stops after one picture AND scales while it
    converts, so the cost is one keyframe at cell-box size however long the clip
-   runs; the cache above then makes every re-emit free."
-  [^java.io.File f {:keys [cols rows]}]
+   runs; the cache above then makes every re-emit free.
+
+   A `view` in source pixels of a `width`x`height` clip cuts the poster the same way
+   as a still, so a cropped thumbnail of a clip has the shape of its box."
+  [^java.io.File f {:keys [cols rows view width height]}]
   (when-let [poster @v-poster]
-    (try (when-let [{:keys [png width height]} (poster f {:max-dimension (box-pixels cols rows)})]
-           {:data png :w (int width) :h (int height)})
+    (try (when-let [{:keys [png] pw :width ph :height}
+                    (poster f {:max-dimension (box-pixels cols rows)})]
+           (if (and view width height (pos? (long width)) (pos? (long height)))
+             (with-open [src (img/decode png)]
+               (let [sx (/ (double pw) (double width))
+                     sy (/ (double ph) (double height))]
+
+                 (crop->png src
+                            {:x (Math/round (* sx (double (:x view))))
+                             :y (Math/round (* sy (double (:y view))))
+                             :w (Math/round (* sx (double (:w view))))
+                             :h (Math/round (* sy (double (:h view))))}
+                            (* (long cols) (long (TerminalImage/cellWidth)))
+                            (* (long rows) (long (TerminalImage/cellHeight))))))
+             {:data png :w (int pw) :h (int ph)}))
          (catch Throwable _ nil))))
 
 (defn- transcode->png
@@ -273,8 +347,8 @@
 
    Decoding and re-encoding a multi-megapixel JPEG (or pulling a frame out of an
    MP4) is expensive, so the box-sized PNG is cached by path+mtime+size+box: a
-   scroll that re-emits the image never re-decodes. A cropped `:view` is not
-   cached: each zoom or pan step of the image viewer shows a new part once."
+   scroll that re-emits the image never re-decodes. A cropped `:view` goes to a small
+   cache of its own, because each zoom or pan step of the image viewer is a new part."
   [path {:keys [cols rows view] :as box}]
   (let [f
         (io/file (str path))
@@ -282,11 +356,18 @@
         key
         [(.getAbsolutePath f) (.lastModified f) (.length f) cols rows]]
 
-    (cond (video-source? f nil) (or (get @png-transcode-cache key)
-                                    (when-let [r (video->png f box)]
-                                      (swap! png-transcode-cache assoc key r)
-                                      r))
-          view (still->png f box)
+    (cond (video-source? f nil) (let [key (cond-> key
+                                            view
+                                            (conj view))]
+                                  (or (get @png-transcode-cache key)
+                                      (when-let [r (video->png f box)]
+                                        (swap! png-transcode-cache assoc key r)
+                                        r)))
+          view (let [key (conj key view)]
+                 (or (get-in @view-png-cache [:entries key])
+                     (when-let [r (still->png f box)]
+                       (swap! view-png-cache remember-view-png key r)
+                       r)))
           :else (or (get @png-transcode-cache key)
                     (when-let [r (still->png f box)]
                       (swap! png-transcode-cache assoc key r)

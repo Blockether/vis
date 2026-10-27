@@ -52,6 +52,15 @@
                    ;; landscape image: width hits the cap before height
                    (expect (= 60 cols)))))
 
+(defdescribe cover-view-test
+             (it "cuts a tall picture to the shape of its box around the center"
+                 ;; 20x5 cells of 10x20 px are a 2:1 box.
+                 (expect (= {:x 0 :y 150 :w 400 :h 200} (timg/cover-view 400 500 20 5 [10 20]))))
+             (it "cuts a wide picture at the left and the right"
+                 (expect (= {:x 300 :y 0 :w 400 :h 200} (timg/cover-view 1000 200 20 5 [10 20]))))
+             (it "keeps a picture that already has the shape of its box"
+                 (expect (= {:x 0 :y 0 :w 800 :h 400} (timg/cover-view 800 400 20 5 [10 20])))))
+
 (defdescribe png-transcode-test
              ;; Kitty's f=100 is PNG-only, so a JPEG drop must be re-encoded to PNG.
              (it "transcodes a JPEG file into a downscaled PNG base64 payload"
