@@ -1711,6 +1711,55 @@ print(worker_value)"))))
                    (expect (not (identical? spare @(get @spares (:packages key))))))
                  (finally (worker/keep-spares! nil nil) (worker/stop-worker! key))))))))
 
+(defdescribe
+  stop-all-workers-test
+  ;; Regression: a gateway stop left the children of a trusted extension worker
+  ;; running. The worker exited on EOF alone, so nothing killed its process group.
+  (it
+    "kills each worker's process group and every spare, and installs the exit hook"
+    (let [key
+          (worker/extension-worker-key (str (java.util.UUID/randomUUID)))
+
+          alive?
+          (fn [pid]
+            (.orElse (.map (java.lang.ProcessHandle/of (long pid))
+                           (reify
+                             java.util.function.Function
+                               (apply [_ handle] (.isAlive ^java.lang.ProcessHandle handle))))
+                     false))
+
+          gone?
+          (fn [pids]
+            (loop [attempt 0]
+              (cond (not-any? alive? pids) true
+                    (< attempt 500) (do (Thread/sleep 10) (recur (inc attempt)))
+                    :else false)))]
+
+      (worker/keep-spares! nil nil)
+      (try (worker/exec! key
+                         com.blockether.vis-python-runtime/default-session
+                         "import subprocess\n__vis_child__ = subprocess.Popen(['sleep', '600'])\n")
+           (worker/keep-spares! "pass\n" [nil])
+           (let [^Process process
+                 (:process (get @@#'worker/workers key))
+
+                 children
+                 (with-open [stream (.descendants (.toHandle process))]
+                   (mapv #(.pid ^java.lang.ProcessHandle %) (iterator-seq (.iterator stream))))
+
+                 ^Process spare
+                 (:process @(get @@#'worker/spares nil))]
+
+             (expect (seq children))
+             (expect (realized? @#'worker/stop-on-exit))
+             (worker/stop!)
+             (expect (gone? (into [(.pid process) (.pid spare)] children)))
+             (expect (empty? @@#'worker/spares))
+             (expect (not (contains? @@#'worker/workers key)))
+             ;; A second stop finds nothing and still ends cleanly.
+             (expect (nil? (worker/stop!))))
+           (finally (worker/keep-spares! nil nil) (worker/stop-worker! key))))))
+
 (defdescribe trusted-worker-missing-packages-test
              (it "never creates a missing project packages directory"
                  ;; #377: a created site-packages left an invalid .venv that uv rejected.

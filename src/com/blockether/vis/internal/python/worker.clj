@@ -457,10 +457,24 @@
          (catch ExecutionException _ {:status :failed :reason :control-failed})
          (finally (future-cancel control)))))
 
+(declare stop!)
+
+(defonce ^:private stop-on-exit
+  ;; One JVM hook for every host. A worker that outlives this process only sees EOF
+  ;; and exits alone, so the children in its process group keep running. `stop!`
+  ;; kills each worker's whole group. A hook added during shutdown is refused.
+  (delay (try (.addShutdownHook (Runtime/getRuntime)
+                                (Thread. ^Runnable
+                                         (fn []
+                                           (stop!))
+                                         "vis-python-workers-stop"))
+              (catch IllegalStateException _ nil))))
+
 (defn- start!
   "Start `k` behind its live session policy and answer it connected. The parent
    binds first; the run directory is the worker's only host-owned writable grant."
   [k]
+  @stop-on-exit
   (let [stamp
         (str (discovery/current-pid)
              "-" (util/now-ms)
@@ -1016,12 +1030,37 @@
   (swap! retired-workers dissoc k)
   nil)
 
+(def ^:private STOP_ALL_MS
+  "Maximum wait of `stop!` for all workers and spares, so a worker that is still
+   starting cannot hold up the exit of this process."
+  10000)
+
 (defn stop!
-  "Stop every worker. Idempotent; each process is a daemon of this one's
-   lifetime, so an unclean exit leaves nothing behind."
+  "Stop every worker and every spare, in parallel. Idempotent. A worker that
+   outlives this process exits on EOF alone and leaves the children of its process
+   group running, so a JVM shutdown hook calls this for every host."
   []
-  (doseq [k (keys @workers)]
-    (stop-worker! k))
+  (let [spare-futures
+        (locking spares
+          (reset! spare-warmup nil)
+          (let [[old _] (reset-vals! spares {})]
+            (vals old)))
+
+        deadline
+        (+ (long (util/now-ms)) (long STOP_ALL_MS))
+
+        stops
+        (doall (concat (map (fn [k]
+                              (future (stop-worker! k)))
+                            (keys @workers))
+                       (map (fn [spare]
+                              (future (when-let [state (try (deref spare STOP_ALL_MS nil)
+                                                            (catch Throwable _ nil))]
+                                        (stop-state! state))))
+                            spare-futures)))]
+
+    (doseq [stop stops]
+      (try (deref stop (max 0 (- deadline (long (util/now-ms)))) nil) (catch Throwable _ nil))))
   (reset! worker-policy-fns {})
   (reset! retired-workers {})
   nil)
