@@ -74,8 +74,7 @@
    Fires when the transport itself goes silent — not one byte, not even an
    SSE keepalive comment. 300s = CODEX PARITY with
    `DEFAULT_STREAM_IDLE_TIMEOUT_MS`. Model-progress silence while keepalives
-   continue is different and does not time out by default; see
-   `ASK_CODE_SEMANTIC_TIMEOUT_MS`.
+   continue is different; see `ASK_CODE_SEMANTIC_TIMEOUT_MS`.
 
    The FIRST byte has its own svar watchdog. Provider-scoped policy may widen
    that prefill window independently; this 300s default governs gaps after the
@@ -90,8 +89,9 @@
    liveness. This exceeds Anthropic's documented ~185-second worst observed
    extended-thinking silence while bounding a live-but-unproductive stream.
 
-   Explicit nil disables it per call. OpenAI Responses sessions intentionally
-   ignore this setting and retain their transport-specific idle policy."
+   Explicit nil disables it per call. Both Svar stream transports enforce it,
+   also an OpenAI Responses session on a WebSocket. After output, it is the
+   deadline that the gateway stall backstop waits past."
   240000)
 
 (def ^:private ask-code-runtime-network-defaults

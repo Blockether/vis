@@ -12683,12 +12683,19 @@
                               :first-byte-timeout-ms 240000
                               :idle-timeout-ms 120000
                               :semantic-timeout-ms 300000})))
-                 ;; Vis defaults: a 200s header wait plus the 300s idle watchdog.
-                 (expect (= {:first-output-timeout-ms 530000 :stall-timeout-ms 330000}
+                 ;; Vis defaults: a 200s header wait plus the 300s idle watchdog. After
+                 ;; output, Svar's 240s semantic watchdog fires first on the gateway clock:
+                 ;; Svar reports each progress event, also one without text.
+                 (expect (= {:first-output-timeout-ms 530000 :stall-timeout-ms 270000}
                             (#'loop-router/provider-watchdog-timeouts nil)))
                  ;; A whole-request cap bounds both phases.
-                 (expect (= {:first-output-timeout-ms 430000 :stall-timeout-ms 330000}
+                 (expect (= {:first-output-timeout-ms 430000 :stall-timeout-ms 270000}
                             (#'loop-router/provider-watchdog-timeouts {:timeout-ms 400000})))
+                 ;; With the semantic watchdog off, only the idle watchdog stays.
+                 (expect (= 75000
+                            (:stall-timeout-ms (#'loop-router/provider-watchdog-timeouts
+                                                {:idle-timeout-ms 45000
+                                                 :semantic-timeout-ms nil}))))
                  (expect (= {:first-output-timeout-ms 700 :stall-timeout-ms 600}
                             (select-keys (#'transcript/provider-call-chunk
                                           1

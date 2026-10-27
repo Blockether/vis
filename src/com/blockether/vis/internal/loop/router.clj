@@ -170,7 +170,9 @@
 
 (def ^:private PROVIDER_BACKSTOP_MARGIN_MS
   "Room the gateway backstop leaves above Svar's deadlines for one provider
-   attempt: Svar's own abort, its announced re-send wait and the engine unwind."
+   attempt: Svar's own abort, its announced re-send wait and the engine unwind.
+   Svar announces a re-send before it waits: 1 s and 3 s for the router, at most
+   4 s on a WebSocket reconnect."
   30000)
 
 (defn provider-watchdog-timeouts
@@ -178,9 +180,14 @@
    enforces for it, so Svar always names and recovers a silent request first.
    `:first-output-timeout-ms` covers an attempt with no output yet: the response
    header wait plus the longest body watchdog. `:stall-timeout-ms` covers a quiet
-   stream after output: the longer of the idle and semantic watchdogs. A
+   stream after output: the semantic watchdog, else the idle watchdog. A
    whole-request `:timeout-ms` caps both. Svar announces each re-send, and the
-   gateway starts a new attempt window there."
+   gateway starts a new attempt window there.
+
+   Svar sends every model-progress event to `:on-chunk`, also one without text,
+   and each one moves the gateway stall clock. The semantic deadline therefore
+   fires first on the gateway clock. The idle deadline counts from the last
+   frame, so it fires later or not at all while keepalives flow."
   [provider-network]
   (let [limits
         (provider-resend-limits provider-network)
@@ -211,7 +218,9 @@
 
     {:first-output-timeout-ms (backstop
                                 (if (and (pos? ttft-ms) (pos? body-ms)) (+ ttft-ms body-ms) 0))
-     :stall-timeout-ms (backstop (longest-ms [:idle-timeout-ms :semantic-timeout-ms]))}))
+     :stall-timeout-ms (backstop
+                         (let [semantic-ms (limit-ms :semantic-timeout-ms)]
+                           (if (pos? semantic-ms) semantic-ms (limit-ms :idle-timeout-ms))))}))
 
 (defn- with-provider-network-defaults
   [router opts]
