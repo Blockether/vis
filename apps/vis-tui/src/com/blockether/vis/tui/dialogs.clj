@@ -7643,10 +7643,10 @@
         (long inner-w)
 
         body-top
-        (+ (long content-top) 3)
+        (+ (long content-top) 2)
 
         avail
-        (max 1 (- (long content-h) 3))
+        (max 1 (- (long content-h) 2))
 
         list-inner
         (long (p/clamp (max (quot (* 60 inner-w) 100)
@@ -8397,7 +8397,7 @@
                                        rows-n
                                        "Sessions"
                                        (- cols 4)
-                                       (max (long navigator-min-height) (+ (long desired-lines) 4)))
+                                       (max (long navigator-min-height) (+ (long desired-lines) 3)))
 
                   {:keys [left right inner-w]}
                   bounds
@@ -8509,10 +8509,10 @@
                                                        (count @query))]
                 (draw-navigator-scope-controls! g scope-x query-row scope-controls)
                 (p/set-colors! g t/dialog-border t/dialog-bg)
-                (p/draw-separator! g left right (+ (long content-top) 2))
+                (p/draw-separator! g left right (inc (long content-top)))
                 (when (and page-status (pos? total))
                   (p/set-colors! g t/dialog-hint t/dialog-bg)
-                  (p/put-str! g body-x (+ (long content-top) 2) (ellipsize page-status body-w)))
+                  (p/put-str! g body-x (inc (long content-top)) (ellipsize page-status body-w)))
                 (if (zero? total)
                   (let [hidden-count (count (filter empty-untitled-session? @loaded-sessions))
                         message (cond page-status page-status
@@ -8539,7 +8539,7 @@
                                                (= idx @selected))
                       (recur (rest remaining) (inc (long row))))))
                 ;; The list and the selected session's messages always stay side by side.
-                (draw-navigator-divider! g divider (inc (long content-top)) (dec (long content-h)))
+                (draw-navigator-divider! g divider content-top content-h)
                 (draw-navigator-preview!
                   g
                   preview-x

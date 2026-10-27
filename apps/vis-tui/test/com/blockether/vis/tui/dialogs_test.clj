@@ -928,7 +928,8 @@
               (expect (= :side mode))
               (expect (< (+ body-x body-w) scrollbar-col divider preview-x))
               (expect (= (dec (:right bounds)) (+ preview-x preview-w)))
-              (expect (= [8 17 17] [preview-top preview-h list-budget]))))))
+              ;; Only the query row and its separator sit above the panes: no blank row.
+              (expect (= [7 18 18] [preview-top preview-h list-budget]))))))
     (it "the message pane lists each match: author and time over the snippet, query marked"
         (let [lines (var-get #'dlg/navigator-preview-lines)
               entry {:title "Search redesign"
