@@ -1842,7 +1842,8 @@
         (if (pos? index) (or (:action (nth (sidebar-entries db) (dec index) nil)) [:noop]) [:noop])
         (:search sidebar) (search-field-action (:search sidebar) key)
         (= KeyType/Escape (.getKeyType key)) [:blur]
-        (= KeyType/Tab (.getKeyType key)) [:blur]
+        (= KeyType/Tab (.getKeyType key)) [:focus-next]
+        (= KeyType/ReverseTab (.getKeyType key)) [:focus-previous]
         (= KeyType/ArrowUp (.getKeyType key)) [:move -1]
         (= KeyType/ArrowDown (.getKeyType key)) [:move 1]
         (= KeyType/PageUp (.getKeyType key)) [:move (- (long (page-size db)))]

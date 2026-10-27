@@ -15,6 +15,8 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
   its name, or look it up in [Run a command](#run-a-command).
 - **You want to read an earlier part of a long session.** Use the keys in [Move
   through a session](#move-through-a-session) to scroll, jump and fold.
+- **You do not know which area your keys go to, or you want to go to Projects quickly.**
+  See [Move between areas](#move-between-areas).
 - **You want to fork a session, go back to an earlier turn or move a session to a
   group.** Use the keys under [Sessions](#sessions) and [In Projects](#in-projects). The [Sessions guide](sessions.md)
   explains each task.
@@ -284,6 +286,18 @@ You can also click **↓ messages** when it appears to jump to the latest messag
 On macOS, Alt is the Option key. Many macOS terminals need a setting before Option
 works as Alt, such as **Use Option as Meta key** in Terminal.
 
+## Move between areas
+
+When **Projects** or the side panel is open, the screen has more than one area. Only one area
+gets your keys. Vis shows the other areas with faded colors.
+
+| Keys | What they do |
+|---|---|
+| Tab | Go to the next area: Projects, then the chat, then the side panel |
+| Shift+Tab | Go to the previous area |
+
+When only the chat is open, Tab does nothing in the chat.
+
 ## In Projects
 
 Press **Ctrl+X w** to open **Projects**. While it has focus, these keys act on the selected row.
@@ -307,7 +321,8 @@ Press **?** to see them in Vis.
 | v | Show or hide archived rows |
 | D (Shift+D) | Delete the row. Vis asks you to confirm first |
 | / | Search sessions |
-| Esc or Tab | Return to the chat |
+| Esc | Return to the chat |
+| Tab or Shift+Tab | Go to the next or previous area |
 
 ## Edit your message
 

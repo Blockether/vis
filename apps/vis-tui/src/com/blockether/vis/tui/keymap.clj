@@ -402,7 +402,8 @@
    {:id :add-here :key \+ :label "Add a group, session or project here"}
    {:id :search :key \/ :label "Search sessions"} {:id :refresh :key \r :label "Reload projects"}
    {:id :help :key sidebar-help-alias-key :keys sidebar-help-hint :label "Show these keys"}
-   {:id :back :keys "Esc · Tab" :label "Return to the chat"}
+   {:id :back :keys "Esc" :label "Return to the chat"}
+   {:id :areas :keys "Tab · S-Tab" :label "Move to the next or previous area"}
    {:id :hide :keys (label-for :switch-project) :label "Hide the sidebar"}
    {:id :rows :keys "↑ ↓ · C-p C-n" :label "Move between rows"}
    {:id :fold :keys "← →" :label "Fold or unfold the row"}

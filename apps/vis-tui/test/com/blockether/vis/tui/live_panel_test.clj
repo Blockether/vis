@@ -199,3 +199,120 @@
                        (expect (= 90 (:cols layout)))
                        (expect (= \│ (nth (nth lines (inc top)) 50)))
                        (expect (not= \│ (nth (nth lines 1) 50))))))))
+
+(defn- areas-db
+  "The frame fixture with the project sidebar open next to the focused side panel."
+  []
+  (assoc (frame-db) :project-sidebar {:open? true :focused? false :index 0 :items []}))
+
+(defn- focus-of [db] (#'screen/focused-area db))
+
+(defdescribe focus-area-test
+             (it "Tab gives the keyboard to the next open area and Shift+Tab to the previous one"
+                 (with-redefs [state/app-db (atom
+                                              (assoc-in (areas-db) [:live-panel :focused?] false))]
+                   (expect (= :chat (focus-of @state/app-db)))
+                   (expect (true? (#'screen/cycle-focus! @state/app-db 1)))
+                   (expect (= :panel (focus-of @state/app-db)))
+                   (expect (#'screen/cycle-focus! @state/app-db 1))
+                   (expect (= :sidebar (focus-of @state/app-db)))
+                   (expect (false? (get-in @state/app-db [:live-panel :focused?])))
+                   (expect (#'screen/cycle-focus! @state/app-db 1))
+                   (expect (= :chat (focus-of @state/app-db)))
+                   (expect (#'screen/cycle-focus! @state/app-db -1))
+                   (expect (= :sidebar (focus-of @state/app-db)))))
+             (it "leaves Tab to the composer while the chat is the only open area"
+                 (with-redefs [state/app-db (atom (dissoc (frame-db) :live-panel))]
+                   (expect (nil? (#'screen/cycle-focus! @state/app-db 1)))
+                   (expect (= :chat (focus-of @state/app-db)))))
+             (it "keeps one focused area when the sidebar or the panel takes the focus"
+                 (with-db (fn []
+                            (swap! state/app-db merge (areas-db))
+                            (state/dispatch [:project-sidebar {:focused? true}])
+                            (expect (false? (get-in @state/app-db [:live-panel :focused?])))
+                            (state/dispatch [:live-panel-focus])
+                            (expect (true? (get-in @state/app-db [:live-panel :focused?])))
+                            (expect (false? (get-in @state/app-db [:project-sidebar :focused?]))))))
+             (it "in the focused panel, ] shows the next owner and Tab moves the focus"
+                 (with-redefs [state/app-db (atom (assoc (areas-db)
+                                                    :live-views
+                                                    (mapv lv/opened
+                                                          [(view "a" "Deploy board" "deploy" :panel)
+                                                           (view "b" "Job queue" "jobs" :panel)])))]
+                   (expect (#'screen/live-panel-key! nil @state/app-db (cap/key-stroke \])))
+                   (expect (= "jobs" (get-in @state/app-db [:live-panel :tab])))
+                   (expect (= :panel (focus-of @state/app-db)))
+                   (expect (#'screen/live-panel-key! nil @state/app-db (cap/key-stroke :tab)))
+                   (expect (= :sidebar (focus-of @state/app-db))))))
+
+(defn- ink-at
+  "The text colour of the first cell of `text` in a frame painted from `db`."
+  [cols db text]
+  (with-open [terminal
+              (DefaultVirtualTerminal. (TerminalSize. cols 40))
+
+              ts
+              (doto (TerminalScreen. terminal) (.startScreen))]
+
+    (with-redefs [timg/images-protocol
+                  (constantly nil)
+
+                  client/get-router
+                  (constantly nil)]
+
+      (#'screen/render-frame! ts cols 40 db 1000)
+      (.refresh ts)
+      (let [lines
+            (mapv (fn [row]
+                    (apply str
+                      (map #(.getCharacterString (.getCharacter terminal (TerminalPosition. % row)))
+                           (range cols))))
+                  (range 40))
+
+            row
+            (first (keep-indexed #(when (str/includes? %2 text) %1) lines))]
+
+        (str (.getForegroundColor
+               (.getCharacter terminal
+                              (TerminalPosition. (str/index-of (nth lines row) text) row))))))))
+
+(defdescribe
+  unfocused-fade-test
+  (it "fades the area without the keyboard, and nothing while only the chat is open"
+      (binding [interactions/hit-map (interactions/create-hit-map)]
+        (let [panel-focused (frame-db)
+              chat-focused (assoc-in (frame-db) [:live-panel :focused?] false)
+              chat-only (dissoc (frame-db) :live-panel)
+              ink (ink-at 160 chat-only "deploy is running")]
+
+          (expect (not= ink (ink-at 160 panel-focused "deploy is running")))
+          (expect (= ink (ink-at 160 chat-focused "deploy is running")))
+          (expect (not= (ink-at 160 panel-focused "Deploy board")
+                        (ink-at 160 chat-focused "Deploy board"))))))
+  (it "does not fade a cell twice when no paint replaced it"
+      (with-open [terminal
+                  (DefaultVirtualTerminal. (TerminalSize. 20 4))
+
+                  ts
+                  (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (.putString (.newTextGraphics ts) 0 0 "chat text")
+        (let [db
+              (frame-db)
+
+              fade!
+              #(#'screen/fade-unfocused-areas! ts db 20 4 0 {:col 12 :row 0 :width 8 :height 4})
+
+              painted
+              (.getBackCharacter ts 0 0)
+
+              _
+              (fade!)
+
+              once
+              (.getBackCharacter ts 0 0)]
+
+          (expect (= "c" (.getCharacterString once)))
+          (expect (not= (.getForegroundColor painted) (.getForegroundColor once)))
+          (fade!)
+          (expect (identical? once (.getBackCharacter ts 0 0)))))))

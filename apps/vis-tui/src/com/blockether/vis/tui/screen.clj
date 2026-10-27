@@ -760,6 +760,138 @@
     (when-let [panes (seq (lv/panel-panes (:live-views db)))]
       (assoc (lv/panel-geometry cols) :panes (vec panes)))))
 
+(defn- focus-areas
+  "The areas that can hold the keyboard, from left to right: `:sidebar` while the
+   project sidebar is open, `:chat`, and `:panel` while the side panel shows a view."
+  [db]
+  (cond-> []
+    (get-in db [:project-sidebar :open?])
+    (conj :sidebar)
+
+    true
+    (conj :chat)
+
+    (and (get-in db [:live-panel :open?]) (seq (lv/panel-panes (:live-views db))))
+    (conj :panel)))
+
+(defn- focused-area
+  "The open area that holds the keyboard: the sidebar or the side panel with the
+   focus, else the chat."
+  [db]
+  (let [areas (set (focus-areas db))]
+    (cond (and (areas :sidebar) (get-in db [:project-sidebar :focused?])) :sidebar
+          (and (areas :panel) (get-in db [:live-panel :focused?])) :panel
+          :else :chat)))
+
+(defn- cycle-focus!
+  "Tab (`step` 1) and Shift+Tab (`step` -1): give the keyboard to the next or the
+   previous open area, and wrap at the ends. Returns true when the focus moved, or
+   nil while the chat is the only open area."
+  [db step]
+  (let [areas (focus-areas db)]
+    (when (< 1 (count areas))
+      (let [at (.indexOf ^java.util.List areas (focused-area db))]
+        (state/dispatch [:focus-area (nth areas (mod (+ at (long step)) (count areas)))])
+        (state/dispatch [:bump-render-version])
+        true))))
+
+(def ^:private ^:const unfocused-ink-fade
+  "How far the text of an area without the keyboard moves toward its background."
+  0.45)
+
+(def ^:private ^:const unfocused-paper-fade
+  "How far the background of an area without the keyboard moves toward the terminal
+   background."
+  0.25)
+
+(defonce ^:private faded-cells
+  ;; The cells of the last faded frame, by screen index. A cell that no later paint
+  ;; replaced is still the same object, so a repeated pass does not fade it again.
+  (atom nil))
+
+(defn- cell-rgb
+  "`color` as RGB. The terminal default colour becomes `default`."
+  ^com.googlecode.lanterna.TextColor$RGB
+  [^com.googlecode.lanterna.TextColor color ^com.googlecode.lanterna.TextColor$RGB default]
+  (cond (instance? com.googlecode.lanterna.TextColor$RGB color) color
+        (or (nil? color) (= com.googlecode.lanterna.TextColor$ANSI/DEFAULT color)) default
+        :else (com.googlecode.lanterna.TextColor$RGB. (.getRed color)
+                                                      (.getGreen color)
+                                                      (.getBlue color))))
+
+(defn- faded-cell
+  "`cell` with its text moved toward its background, and its background moved toward
+   the terminal background."
+  ^com.googlecode.lanterna.TextCharacter [^com.googlecode.lanterna.TextCharacter cell]
+  (let [bg
+        (cell-rgb (.getBackgroundColor cell) t/terminal-bg)
+
+        fg
+        (cell-rgb (.getForegroundColor cell) t/text-fg)]
+
+    (-> cell
+        (.withForegroundColor (t/mix-color fg bg unfocused-ink-fade))
+        (.withBackgroundColor (t/mix-color bg t/terminal-bg unfocused-paper-fade)))))
+
+(defn- fade-unfocused-areas!
+  "Fade every screen cell outside the area that holds the keyboard. `sidebar-width`
+   is the rail's screen columns, 0 while it is closed. `panel` is the side panel's
+   screen box `{:col :row :width :height}`, or nil. Nothing fades while the chat is
+   the only open area."
+  [^TerminalScreen screen db screen-cols rows sidebar-width panel]
+  (let [cols
+        (long screen-cols)
+
+        rows
+        (long rows)
+
+        sidebar-width
+        (long sidebar-width)
+
+        focus
+        (focused-area db)
+
+        previous
+        ^objects @faded-cells
+
+        previous
+        (when (and previous (= (* cols rows) (alength previous))) previous)
+
+        faded
+        (object-array (* cols rows))
+
+        {:keys [col row width height]}
+        panel
+
+        area
+        (fn [^long c ^long r]
+          (cond (< c sidebar-width) :sidebar
+                (and panel
+                     (<= (long col) c)
+                     (< c (+ (long col) (long width)))
+                     (<= (long row) r)
+                     (< r (+ (long row) (long height))))
+                :panel
+                :else :chat))]
+
+    (when (< 1 (count (focus-areas db)))
+      (dotimes [r rows]
+        (loop [c 0]
+          (when (< c cols)
+            (let [i (+ (* r cols) c)
+                  cell (.getBackCharacter screen (int c) (int r))
+                  wide? (and cell (.isDoubleWidth cell))]
+
+              (when (and cell (not= focus (area c r)))
+                (if (and previous (identical? cell (aget previous i)))
+                  (aset faded i cell)
+                  (let [cell (faded-cell cell)]
+                    (.setCharacter screen (int c) (int r) cell)
+                    (aset faded i cell))))
+              ;; A wide character owns the next cell too; that cell is not faded again.
+              (recur (if wide? (+ c 2) (inc c))))))))
+    (reset! faded-cells faded)))
+
 (defn- live-pane
   "The mounted view `view-id` of this session."
   [db view-id]
@@ -2503,8 +2635,9 @@
 
 (defn- live-panel-key!
   "Keys of the focused side panel. ↑ and ↓ select a view, ← folds it, → unfolds it,
-   Enter lists its controls, Tab shows the next owner and Esc closes the panel.
-   Returns true when the panel used the key."
+   Enter lists its controls, ] and [ show the next and the previous owner, Tab and
+   Shift+Tab move the focus to the next area and Esc closes the panel. Returns true
+   when the panel used the key."
   [screen db ^KeyStroke key]
   (when-let [panes (seq (lv/panel-panes (:live-views db)))]
     (let [{:keys [tab selected]} (:live-panel db)
@@ -2514,35 +2647,46 @@
           selected (lv/panel-selected shown selected)
           idx (long (or (first (keep-indexed #(when (= selected %2) %1) ids)) 0))
           select! #(state/dispatch [:live-panel-select (get ids (max 0 (min (dec (count ids)) %)))])
-          handled?
-          (case (some-> key
-                        .getKeyType
-                        .name)
-            "ArrowUp"
-            (do (select! (dec idx)) true)
+          owner! (fn [step]
+                   (when (> (count tabs) 1)
+                     (let [at (long (or (first (keep-indexed #(when (= tab %2) %1) tabs)) 0))]
+                       (state/dispatch [:live-panel-tab
+                                        (get tabs (mod (+ at (long step)) (count tabs)))]))))
+          handled? (case (some-> key
+                                 .getKeyType
+                                 .name)
+                     "ArrowUp"
+                     (do (select! (dec idx)) true)
 
-            "ArrowDown"
-            (do (select! (inc idx)) true)
+                     "ArrowDown"
+                     (do (select! (inc idx)) true)
 
-            "ArrowLeft"
-            (do (state/dispatch [:live-panel-fold selected true]) true)
+                     "ArrowLeft"
+                     (do (state/dispatch [:live-panel-fold selected true]) true)
 
-            "ArrowRight"
-            (do (state/dispatch [:live-panel-fold selected false]) true)
+                     "ArrowRight"
+                     (do (state/dispatch [:live-panel-fold selected false]) true)
 
-            "Tab"
-            (do (when (> (count tabs) 1)
-                  (let [at (long (or (first (keep-indexed #(when (= tab %2) %1) tabs)) 0))]
-                    (state/dispatch [:live-panel-tab (get tabs (mod (inc at) (count tabs)))])))
-                true)
+                     "Tab"
+                     (boolean (cycle-focus! db 1))
 
-            "Escape"
-            (do (state/dispatch [:live-panel-close]) true)
+                     "ReverseTab"
+                     (boolean (cycle-focus! db -1))
 
-            "Enter"
-            (do (live-controls! screen db (filter #(= selected (lv/view-id %)) shown)) true)
+                     "Character"
+                     (if-let [step (when-not (or (.isCtrlDown key) (.isAltDown key))
+                                     ({\] 1 \[ -1} (.getCharacter key)))]
+                       (do (owner! step) true)
+                       false)
 
-            false)]
+                     "Escape"
+                     (do (state/dispatch [:live-panel-close]) true)
+
+                     "Enter"
+                     (do (live-controls! screen db (filter #(= selected (lv/view-id %)) shown))
+                         true)
+
+                     false)]
 
       (when handled? (state/dispatch [:bump-render-version]))
       handled?)))
@@ -3652,40 +3796,53 @@
           (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom)))))
       ;; The side panel spans the whole height when docked; an overlay covers only
       ;; the transcript rows, so the composer stays usable.
-      (when-let [{:keys [left width is-docked panes]} live-panel]
-        (let [left (if is-docked cols left)
-              top (if is-docked 0 messages-top)
-              height (if is-docked rows (- (long messages-bottom) (long messages-top)))
-              geom (lv/paint-panel!
-                     (frame/surface-graphics screen (+ (long left) (long width)) rows)
-                     left
-                     top
-                     width
-                     height
-                     panes
-                     (:live-panel db)
-                     now-ms)]
+      (let [panel-box
+            (when-let [{:keys [left width is-docked panes]} live-panel]
+              (let [left (if is-docked cols left)
+                    top (if is-docked 0 messages-top)
+                    height (if is-docked rows (- (long messages-bottom) (long messages-top)))
+                    geom (lv/paint-panel!
+                           (frame/surface-graphics screen (+ (long left) (long width)) rows)
+                           left
+                           top
+                           width
+                           height
+                           panes
+                           (:live-panel db)
+                           now-ms)]
 
-          (when (not= (:selected geom) (get-in db [:live-panel :selected]))
-            (state/dispatch [:live-panel-select (:selected geom)]))))
-      (let [rail-cursor (binding [frame/*column-offset* 0]
-                          (projects/paint! (frame/surface-graphics screen screen-cols rows)
-                                           (if (project-sidebar-locked? db screen-cols)
-                                             (assoc-in db [:project-sidebar :open?] false)
-                                             db)
-                                           screen-cols
-                                           rows))]
-        (when-not (project-sidebar-locked? db screen-cols)
-          (when-let [{:keys [width]} (projects/geometry db screen-cols rows)]
-            ;; The rail's inline add field owns the caret while it is open; otherwise
-            ;; the rail hides a chat cursor it would paint over.
-            (if rail-cursor
-              (binding [frame/*column-offset* 0]
-                (frame/set-cursor! screen rail-cursor))
-              (when-let [^TerminalPosition cursor (.getCursorPosition screen)]
-                (when (or (get-in db [:project-sidebar :focused?])
-                          (< (.getColumn cursor) (long width)))
-                  (.setCursorPosition screen nil)))))))
+                (when (not= (:selected geom) (get-in db [:live-panel :selected]))
+                  (state/dispatch [:live-panel-select (:selected geom)]))
+                {:col (frame/screen-column left) :row top :width width :height height}))]
+        (let [rail-cursor (binding [frame/*column-offset* 0]
+                            (projects/paint! (frame/surface-graphics screen screen-cols rows)
+                                             (if (project-sidebar-locked? db screen-cols)
+                                               (assoc-in db [:project-sidebar :open?] false)
+                                               db)
+                                             screen-cols
+                                             rows))]
+          (when-not (project-sidebar-locked? db screen-cols)
+            (when-let [{:keys [width]} (projects/geometry db screen-cols rows)]
+              ;; The rail's inline add field owns the caret while it is open; otherwise
+              ;; the rail hides a chat cursor it would paint over.
+              (if rail-cursor
+                (binding [frame/*column-offset* 0]
+                  (frame/set-cursor! screen rail-cursor))
+                (when-let [^TerminalPosition cursor (.getCursorPosition screen)]
+                  (when (or (get-in db [:project-sidebar :focused?])
+                            (< (.getColumn cursor) (long width)))
+                    (.setCursorPosition screen nil)))))))
+        ;; The areas without the keyboard fade, so the focused area stands out. A modal
+        ;; card owns the screen and keeps its colours.
+        (when-not (overlay-locked? db)
+          (fade-unfocused-areas! screen
+                                 db
+                                 screen-cols
+                                 rows
+                                 (if (project-sidebar-locked? db screen-cols)
+                                   0
+                                   (long (or (:width (projects/geometry db screen-cols rows)) 0)))
+                                 panel-box)))
       (.commitFrame interactions/hit-map)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
       ;; the commit so `interactions/hit-map` holds this frame's fresh toggle regions and
@@ -4866,6 +5023,10 @@
 
         path
         (if (and live-panel (not= path :input) (not sidebar?)) :full path)
+
+        ;; The focused side panel fades the chat; only a full frame fades it again.
+        path
+        (if (= :panel (focused-area db)) :full path)
 
         rail-cols
         chat-cols
@@ -7271,6 +7432,13 @@
       (:blur :blur-pass)
       (state/dispatch [:project-sidebar {:focused? false :adding nil}])
 
+      ;; Tab and Shift+Tab give the keyboard to the next or the previous open area.
+      :focus-next
+      (cycle-focus! @state/app-db 1)
+
+      :focus-previous
+      (cycle-focus! @state/app-db -1)
+
       :focus
       (state/dispatch [:project-sidebar {:focused? true}])
 
@@ -9429,6 +9597,16 @@
                    ;; label keys never reach the draft or the app-verb dispatch.
                    (and (instance? KeyStroke key) (:detail-labels-active? db))
                    (do (activate-detail-label! screen db key) (recur))
+                   ;; Tab and Shift+Tab give the keyboard to the next or the previous open
+                   ;; area. With only the chat open, the composer keeps them, and C-x TAB
+                   ;; still folds every disclosure.
+                   (and (instance? KeyStroke key)
+                        (not (:prefix (:input db)))
+                        (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType ^KeyStroke key))
+                        (not (.isCtrlDown ^KeyStroke key))
+                        (not (.isAltDown ^KeyStroke key))
+                        (cycle-focus! db (if (= KeyType/Tab (.getKeyType ^KeyStroke key)) 1 -1)))
+                   (recur)
                    :else
                    (let [escaped-char (and (:loading? db) (input/escaped-typing-character key))
                          {:keys [action state character queue-index keybinding]}

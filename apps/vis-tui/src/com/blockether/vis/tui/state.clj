@@ -3152,8 +3152,12 @@
                                    %)))))
 
 (reg-event-db :project-sidebar
+              ;; One area holds the keyboard: a sidebar that takes the focus takes it
+              ;; from the side panel.
               (fn [db [_ changes]]
-                (update db :project-sidebar merge changes)))
+                (cond-> (update db :project-sidebar merge changes)
+                  (and (:focused? changes) (:live-panel db))
+                  (assoc-in [:live-panel :focused?] false))))
 
 (reg-event-db
   :project-search-open
@@ -4176,8 +4180,28 @@
               ;; C-x V: open the panel with the focus, then move the focus between the
               ;; panel and the transcript.
               (fn [db _]
-                (let [{:keys [open? focused?]} (:live-panel db)]
-                  (update db :live-panel assoc :open? true :focused? (not (and open? focused?))))))
+                (let [{:keys [open? focused?]}
+                      (:live-panel db)
+
+                      focused?
+                      (not (and open? focused?))]
+
+                  (cond-> (update db :live-panel assoc :open? true :focused? focused?)
+                    (and focused? (:project-sidebar db))
+                    (assoc-in [:project-sidebar :focused?] false)))))
+
+(reg-event-db :focus-area
+              ;; Tab and Shift+Tab move the keyboard between the open areas: `:sidebar`,
+              ;; `:chat` or `:panel`. This event sets both focus flags together.
+              (fn [db [_ area]]
+                (cond-> db
+                  (:project-sidebar db)
+                  (update :project-sidebar assoc
+                          :focused? (= :sidebar area)
+                          :adding (when (= :sidebar area) (get-in db [:project-sidebar :adding])))
+
+                  (:live-panel db)
+                  (assoc-in [:live-panel :focused?] (= :panel area)))))
 
 (reg-event-db :live-panel-close
               (fn [db _]
