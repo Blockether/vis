@@ -138,8 +138,9 @@
    :queue-paused :pastes :paste-counter :image-counter :attachments :attachment-feedback
    :attachment-focus? :attachment-index :loading? :cancel-token :cancelling? :cancelling-at-ms
    :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress :turn-start-ms
-   :detail-expansions :mouse-selection :session-model-pref :human-input :human-input-queue
-   :live-views :live-viewer-id :live-viewer-search :app-views
+   :liveness-probed-at-ms :gateway-resynced-at-ms :detail-expansions :mouse-selection
+   :session-model-pref :human-input :human-input-queue :live-views :live-viewer-id
+   :live-viewer-search :app-views
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -183,6 +184,9 @@
    :live-turn-client-id nil
    :progress nil
    :turn-start-ms nil
+   ;; Probe stamps throttle gateway checks for each tab's turn.
+   :liveness-probed-at-ms nil
+   :gateway-resynced-at-ms nil
    :detail-expansions {}
    :mouse-selection nil
    :session-model-pref nil
@@ -6486,8 +6490,9 @@
 
                       due
                       (filterv (fn [tab-id]
-                                 (and (turn-liveness-probe-due? (db-for-tab db tab-id) now)
-                                      (some? (get-in (db-for-tab db tab-id) [:session :id]))))
+                                 (let [tab (db-for-tab db tab-id)]
+                                   (and (turn-liveness-probe-due? tab now)
+                                        (some? (get-in tab [:session :id])))))
                         (loading-tab-ids db))]
 
                   (if (empty? due)

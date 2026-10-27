@@ -5145,6 +5145,29 @@
                (state/dispatch [:turn-liveness-tick 101000])
                (state/dispatch [:turn-liveness-tick 106000])))
         (expect (= 2 @calls))))
+  (it "throttles repeat probes of a background tab"
+      ;; The tab snapshot dropped `:liveness-probed-at-ms`, so a background turn
+      ;; probed the gateway again on every render tick.
+      (reset! state/app-db {:active-tab-id "a"
+                            :session {:id "sa"}
+                            :loading? false
+                            :render-version 0
+                            :tabs [{:id "a"} {:id "s1"}]
+                            :tab-locals
+                            {"s1" (dissoc (terminal-test-db) :active-tab-id :render-version)}})
+      (let [calls (atom 0)]
+        (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
+                                                    (swap! calls inc)
+                                                    [])
+                         #'vis/worker-future (fn [_ _]
+                                               (future nil))
+                         #'state/gateway-queue-io! (fn [f]
+                                                     (f)
+                                                     nil)}
+          #(do (state/dispatch [:turn-liveness-tick 100000])
+               (state/dispatch [:turn-liveness-tick 101000])
+               (state/dispatch [:turn-liveness-tick 106000])))
+        (expect (= 2 @calls))))
   (it "defers to the cancel self-heal while a cancel is pending"
       (reset! state/app-db (terminal-test-db {:cancelling? true :cancelling-at-ms 10}))
       (liveness-tick! [{"turn_id" "t1" "status" "completed"}] 100000)
