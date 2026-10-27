@@ -173,13 +173,13 @@
      (str "App" (when app-status (str " · " (get app-model/status-label app-status))))]
     (if (= :sent source)
       [filename (not-empty (str label))]
-      [filename (str/join " · " (remove nil? [(kind-badge row) (size-label size)]))
-       (when (= source :produced)
-         (not-empty (str/join " · "
-                              (remove nil?
-                                [(when version (str "v" version))
-                                 (when (and version-count (> (long version-count) 1))
-                                   (str version-count " versions"))]))))])))
+      [filename
+       (str/join " · "
+                 (remove nil?
+                   [(kind-badge row) (size-label size)
+                    (when (and (= source :produced) version) (str "v" version))
+                    (when (and (= source :produced) version-count (> (long version-count) 1))
+                      (str version-count " versions"))]))])))
 
 (defn- table-lines
   "The painted lines of the attachment table. Each section has a heading and a ruled

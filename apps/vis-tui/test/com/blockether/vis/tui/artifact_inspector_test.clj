@@ -67,7 +67,7 @@
         (expect (str/includes? text "diagram.png"))
         (expect (str/includes? text "Produced in this session"))
         (expect (str/includes? text "decision.html"))
-        (expect (str/includes? text "v2 · 2 versions"))
+        (expect (str/includes? text "HTML · 300B · v2 · 2 versions"))
         (expect (str/includes? text "notes.pdf"))))
   (it "lists a PLAN file from an old session with the other artifacts"
       (let [artifacts
