@@ -159,6 +159,7 @@
 
                (expect (= "ss-1" (get block "session_state_id")))
                (expect (= "soul-1" (get block "session_id")))
-               (expect (= "Auth refactor" (get block "session_title")))
+               ;; The title is for people; the model has the conversation itself.
+               (expect (not (contains? block "session_title")))
                (expect (= {"soul" "soul-1" "parent_state" "ss-0"} (get block "session_fork_of"))))
              (finally (delete-tree! base))))))

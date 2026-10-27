@@ -79,8 +79,13 @@
      (get view "session_council")
      (assoc "council" (get view "session_council"))
 
+     ;; `session_id` repeats the top-level `id`; a leader is its own `leader_id`.
      (get view "session_agent")
-     (assoc "agent" (get view "session_agent"))
+     (assoc "agent"
+       (let [agent (dissoc (get view "session_agent") "session_id")]
+         (cond-> agent
+           (= (str (get agent "leader_id")) (str (get view "session_id")))
+           (dissoc "leader_id"))))
 
      (get view "session_env")
      (assoc "env" (get view "session_env"))

@@ -194,6 +194,14 @@
         (expect (= ["~/vis/.env"] (get-in m ["access" "filesystem" "deny_read"])))
         (expect (= "reload" (get-in m ["access" "changes_require"])))
         (expect (not (contains? m "session_access")))))
+  (it "does not repeat the session id in the agent block"
+      ;; User review: `id`, `agent.session_id` and a leader's `agent.leader_id` held one UUID.
+      (let [agent #(get (cr/ctx-static-map {:ctx (assoc base-ctx "session_agent" %)}) "agent")]
+        (expect (= {"role" "leader" "interactive" true}
+                   (agent {"role" "leader" "session_id" "s1" "leader_id" "s1" "interactive" true})))
+        (expect
+          (= {"role" "subagent" "leader_id" "lead" "parent_id" "lead"}
+             (agent {"role" "subagent" "session_id" "s1" "leader_id" "lead" "parent_id" "lead"})))))
   ;; Regression, issue #ctx-resources: the live shell/REPL registry used to be
   ;; re-rendered into `session["resources"]` on every turn boundary, so one working
   ;; session accumulated 74 finished shells — 12k chars of `exit 0` on every request.

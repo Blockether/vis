@@ -333,7 +333,7 @@ keychain databases. On Linux it exposes the session D-Bus so the Secret Service
 
 1. Inspect `session["access"]`. Do not infer access from the YAML file alone.
    `session["access"]["filesystem"]["deny_read"]` and `["deny_write"]` list the effective deny
-   rules.
+   rules. An empty rule list and a default network setting are left out.
 2. Run `/reload` after a config edit, then send a message in each session that must
    adopt it.
 3. Use `/net-probe METHOD URL` or `/net-probe host:port` for egress decisions.

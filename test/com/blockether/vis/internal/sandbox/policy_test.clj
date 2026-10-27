@@ -291,7 +291,9 @@
                   {"cwd" (in-home "read-only") "mode" "read" "draft" "not-allowed"}]
                  (one-list snapshot (.getPath project))))
       ;; The access block keeps only the rules.
-      (expect (= {"deny_read" [] "deny_write" []} (get view "filesystem")))
+      ;; Empty rule lists and default network settings are left out.
+      (expect (not (contains? view "filesystem")))
+      (expect (= {"allowed_domains" ["example.com"] "inbound_ports" [5273]} (get view "network")))
       (expect (= {(.getCanonicalPath sibling) :copy-and-apply
                   (.getCanonicalPath (java.io.File. home "read-only")) :not-allowed}
                  (policy/draft-policies snapshot)))
@@ -364,9 +366,9 @@
         (expect (= (vec (distinct (concat catalog host-roots))) (policy/read-write-roots snapshot)))
         (expect (= (vec (distinct (concat [vis-home] host-roots)))
                    (policy/no-search-roots snapshot)))
-        (expect (= (vec (distinct (concat catalog host-roots)))
-                   (mapv #(get % "cwd") (one-list snapshot base))))
-        (expect (= (vec (distinct (concat [vis-home] host-roots)))
+        ;; `"is_jailed": false` already grants the host roots, so the list does not repeat them.
+        (expect (= catalog (mapv #(get % "cwd") (one-list snapshot base))))
+        (expect (= [vis-home]
                    (keep #(when (get % "no_search") (get % "cwd")) (one-list snapshot base))))
         (expect (= (into (mapv (fn [root]
                                  (cond-> {:trunk root :clone root :draft :shared}
@@ -415,7 +417,7 @@
 
         (expect (= (vec (distinct (concat [cache vis-home] host-roots)))
                    (policy/no-search-roots snapshot)))
-        (expect (= (vec (distinct (concat [cache vis-home] host-roots)))
+        (expect (= [cache vis-home]
                    (keep #(when (get % "no_search") (get % "cwd")) (one-list snapshot base))))
         (expect (true? (:no-search? (first (filter #(= cache (:trunk %)) entries)))))))
   (it

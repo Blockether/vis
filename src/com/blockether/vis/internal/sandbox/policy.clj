@@ -789,7 +789,9 @@
    holds only the RULES: the paths, their modes, descriptions, search and draft
    settings are in the one `session[\"workspace\"][\"filesystem_roots\"]` list. A
    subagent file grant adds its `\"write_rules\"`: outside them, every root is
-   read only. Paths under HOME render as `~/…` without changing enforcement."
+   read only. A rule list that is empty and a default network setting are left
+   out, so `\"filesystem\"` and `\"network\"` appear only when they hold a rule.
+   Paths under HOME render as `~/…` without changing enforcement."
   [policy]
   (let [home
         (:home policy)
@@ -800,27 +802,48 @@
         network
         (:network policy)
 
-        write-rules
-        (some->> (seq (:write-rules jail))
-                 (mapv #(home-relative % home)))
+        shown
+        #(not-empty (mapv (fn [path]
+                            (home-relative path home))
+                          %))
 
-        deny-read
-        (mapv #(home-relative % home) (or (:deny-read-rules jail) (:deny-read jail)))
+        filesystem
+        (cond-> {}
+          (shown (or (:deny-read-rules jail) (:deny-read jail)))
+          (assoc "deny_read" (shown (or (:deny-read-rules jail) (:deny-read jail))))
 
-        deny-write
-        (mapv #(home-relative % home) (or (:deny-write-rules jail) (:deny-write jail)))]
+          (shown (or (:deny-write-rules jail) (:deny-write jail)))
+          (assoc "deny_write" (shown (or (:deny-write-rules jail) (:deny-write jail))))
 
-    (cond-> {"generation" (:generation policy)
-             "is_jailed" (boolean (:jail-enabled policy))
-             "filesystem" (cond-> {"deny_read" deny-read "deny_write" deny-write}
-                            write-rules
-                            (assoc "write_rules" write-rules))
-             "network" {"enabled" true
-                        "allowed_domains" (vec (:allowed-domains network))
-                        "denied_domains" (vec (:denied-domains network))
-                        "exclude_domains" (vec (:exclude-domains network))
-                        "allow_private" (boolean (:allow-private network))
-                        "inbound_ports" (vec (:inbound-ports jail))}
-             "changes_require" "reload"}
+          (shown (:write-rules jail))
+          (assoc "write_rules" (shown (:write-rules jail))))
+
+        network-rules
+        (cond-> {}
+          (seq (:allowed-domains network))
+          (assoc "allowed_domains" (vec (:allowed-domains network)))
+
+          (seq (:denied-domains network))
+          (assoc "denied_domains" (vec (:denied-domains network)))
+
+          (seq (:exclude-domains network))
+          (assoc "exclude_domains" (vec (:exclude-domains network)))
+
+          (:allow-private network)
+          (assoc "allow_private" true)
+
+          (seq (:inbound-ports jail))
+          (assoc "inbound_ports" (vec (:inbound-ports jail))))]
+
+    (cond-> {"generation" (:generation policy) "is_jailed" (boolean (:jail-enabled policy))}
+      (seq filesystem)
+      (assoc "filesystem" filesystem)
+
+      (seq network-rules)
+      (assoc "network" network-rules)
+
+      true
+      (assoc "changes_require" "reload")
+
       (:config-error policy)
       (assoc "config_error" (:config-error policy)))))

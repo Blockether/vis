@@ -93,8 +93,17 @@
         registered
         (into #{} (map :trunk) projects)
 
+        ;; A disabled jail grants every host root (`/`). `\"is_jailed\": false` already
+        ;; says so, and default searches skip them, so the list does not repeat them.
+        host-root?
+        (fn [{:keys [trunk]}]
+          (and (false? (:jail-enabled policy)) trunk (nil? (.getParent (io/file trunk)))))
+
         catalog
-        (remove #(or (:primary? %) (contains? own (:trunk %)) (contains? registered (:trunk %)))
+        (remove #(or (:primary? %)
+                     (host-root? %)
+                     (contains? own (:trunk %))
+                     (contains? registered (:trunk %)))
           filesystem-roots)
 
         jail
@@ -169,7 +178,7 @@
        root stays in `\"root\"`/`\"isolated\"` and binds `project_root_path`, never a
        duplicate filesystem-roots row. `session[\"access\"]` keeps only the rules.
    `\"changed\"` / `\"changed_paths\"` — since-fork edits
-   session linkage — `\"session_state_id\"` `\"session_id\"` `\"session_title\"`
+   session linkage — `\"session_state_id\"` `\"session_id\"` (the title is for people only)
      `\"session_fork_of\"` (foreign namespaces stay folded)"
   [{:keys [workspace session-state filesystem-roots project-paths policy]}]
   (let [root
@@ -213,8 +222,6 @@
         (vec (take max-changed (sort changed))))
 
       session-state
-      (merge {"session_state_id" (:id session-state)
-              "session_id" (:session-soul-id session-state)
-              "session_title" (or (:title session-state) "Untitled")}
+      (merge {"session_state_id" (:id session-state) "session_id" (:session-soul-id session-state)}
              (when-let [pid (:parent-state-id session-state)]
                {"session_fork_of" {"soul" (:session-soul-id session-state) "parent_state" pid}})))))
