@@ -188,9 +188,8 @@ class Council:
                 thread continuation answers only the latest addressed entry, and only
                 if that entry is an unanswered request. It never falls back to older
                 requests.
-            files: File grant for the follow-up task of the one pinged idle subagent.
-                It replaces the grant of that subagent. A ping from a parent to its
-                idle subagent gives it a follow-up task. Then call `wait` for its answer.
+            files: File rules for the follow-up task of the one pinged idle child
+                session. They replace the file grant of that child.
 
         Returns:
             `CouncilEntry` with its entry/thread IDs and per-recipient `replies`.
