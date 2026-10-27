@@ -9129,7 +9129,11 @@
                                     (into [(line-entry (str user-input-marker ""))])))
                                 (range)
                                 texts))
-                  (conj {:line (str user-input-marker "") :meta {:user-input-pad? true}})
+                  ;; On a theme where the user paper matches the terminal, the bottom pad
+                  ;; and the gap read as two empty rows. Keep only the gap then.
+                  (cond->
+                    (not= t/user-bubble-bg t/terminal-bg)
+                    (conj {:line (str user-input-marker "") :meta {:user-input-pad? true}}))
                   (conj (line-entry ""))))))
 
         header-lines

@@ -12696,7 +12696,24 @@ print(paths)"
         (expect (= [(str p/MARKER_USER_INPUT "") (str p/MARKER_USER_INPUT "ship it")
                     (str p/MARKER_USER_INPUT "") (str p/MARKER_USER_INPUT "🖼 shot.png look")
                     (str p/MARKER_USER_INPUT "")]
-                   (filterv #(str/starts-with? % p/MARKER_USER_INPUT) lines))))
+                   (with-redefs [t/user-bubble-bg (com.googlecode.lanterna.TextColor$RGB. 1 2 3)]
+                     (filterv #(str/starts-with? % p/MARKER_USER_INPUT)
+                       (format-iteration-entry entry 60 2))))))
+    ;; User report: on a theme where the user paper matches the terminal, the bottom pad
+    ;; and the gap read as two empty rows after the message.
+    (it "ends with one empty row when the user paper matches the terminal"
+        (let [entry
+              (assoc entry :assistant-prose "Done.")
+
+              lines
+              (with-redefs [t/user-bubble-bg t/terminal-bg]
+                (:lines (render/format-answer-with-thinking-data* "" [entry] 80 {} nil false {})))
+
+              last-word
+              (.lastIndexOf ^java.util.List lines (str p/MARKER_USER_INPUT "🖼 shot.png look"))]
+
+          (expect (<= 0 last-word))
+          (expect (= ["" "Done."] (subvec (vec lines) (inc last-word) (+ 3 last-word))))))
     (it "drops the queue rail and border"
         (expect (not-any? #(str/starts-with? % p/MARKER_QUEUE_HDR) lines))
         (expect (not-any? #(str/starts-with? % p/MARKER_QUEUE_BORDER) lines)))
