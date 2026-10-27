@@ -38,12 +38,12 @@ Each tool print goes to the model again on every later request of the session.
 
 ## Authorization
 
-Simple, clear change requests, including regression fixes, have standing authorization: verify,
-commit only the task's changes and push to `main` without asking again. The required checks must
-pass, and the task's changes must separate safely from other work. An analysis-only, diff-preview,
-local-only or no-commit/push request cancels this default. It never covers unrelated changes,
-releases, deployments, live service restarts or history rewrites. For other tasks, commit and push
-only when the user asks.
+Every request that changes files has standing authorization, including a proposal that you implement.
+Verify, then commit only the task's changes and push to `main` at once. Do not ask for permission
+to commit or push. The required checks must pass, and the task's changes must separate safely from
+other work. Only an explicit analysis-only, diff-preview, local-only or no-commit/push request
+cancels this default. It never covers unrelated changes, releases, deployments, live service
+restarts or history rewrites.
 
 A task requested end to end is authorized to completion. This includes commits and pushes in every
 repository that it touches. It also includes the `deps.edn` pin bump for a changed sibling repository,
