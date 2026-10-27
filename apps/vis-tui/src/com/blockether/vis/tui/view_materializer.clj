@@ -698,8 +698,11 @@
   "One readable quote line for each thread message."
   [messages]
   (map (fn [{:keys [author body]}]
-         (str "> " (or (:name author) (some-> (:kind author) name) "unknown") ": "
-              (str/replace (str body) #"\n" " ")))
+         (str "> " (or (:name author)
+                       (some-> (:kind author)
+                               name)
+                       "unknown")
+              ": " (str/replace (str body) #"\n" " ")))
        messages))
 
 (defmethod node->markdown :diff
@@ -718,10 +721,12 @@
                         (let [fenced (vec (fenced (str/split (str patch) #"\n" -1)))]
                           (update fenced 0 str "diff"))
                         (mapcat (fn [{:keys [anchor messages]}]
-                                  (message-lines (map #(update % :body
+                                  (message-lines (map #(update %
+                                                               :body
                                                                (fn [body]
-                                                                 (str (:path anchor) ":"
-                                                                      (:line anchor) " " body)))
+                                                                 (str (:path anchor)
+                                                                      ":" (:line anchor)
+                                                                      " " body)))
                                                       messages)))
                                 threads))))
 
