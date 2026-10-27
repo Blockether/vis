@@ -167,6 +167,7 @@ class Council:
         idempotency_key: str | None = None,
         reply_required: bool = False,
         reply_to: int | None = None,
+        files: dict[str, list[str]] | None = None,
     ) -> CouncilEntry:
         """Publish a message, optionally requesting replies from selected sessions.
 
@@ -187,6 +188,9 @@ class Council:
                 thread continuation answers only the latest addressed entry, and only
                 if that entry is an unanswered request. It never falls back to older
                 requests.
+            files: File grant for the follow-up task of the one pinged idle subagent.
+                It replaces the grant of that subagent. A ping from a parent to its
+                idle subagent gives it a follow-up task. Then call `wait` for its answer.
 
         Returns:
             `CouncilEntry` with its entry/thread IDs and per-recipient `replies`.
@@ -218,6 +222,7 @@ class Council:
                     if reply_required is not False
                     else None,
                     "reply_to": reply_to,
+                    "files": files,
                 }.items()
                 if value is not None
             }
@@ -334,32 +339,6 @@ class Council:
     def cancel(self, session_id: str) -> SubagentRecord:
         """Cancel an owned child and its descendants, including queued work."""
         return self._records("/cancel", {"session_id": session_id}, "cancel")[0]
-
-    def resume(
-        self,
-        session_id: str,
-        task: str,
-        *,
-        files: dict[str, list[str]] | None = None,
-        timeout_secs: int = 240,
-    ) -> SubagentRecord:
-        """Give a finished or cancelled subagent a follow-up task, then wait for it.
-
-        The parent must be active, as for ``spawn``: an idle parent gets
-        ``inactive-session``. The child keeps its whole context in its own session.
-        A stop of the parent's turn cancels its children. The next turn of the parent
-        can resume them. A child without iterations left needs ``extend`` first.
-        A running child needs ``wait``.
-        ``files`` replaces the file grant of the child for the follow-up task.
-        """
-        body: dict[str, Any] = {
-            "session_id": session_id,
-            "task": task,
-            "timeout_secs": timeout_secs,
-        }
-        if files is not None:
-            body["files"] = files
-        return self._records("/resume", body, "resume", timeout_secs)[0]
 
     def extend(self, session_id: str, iterations: int) -> SubagentRecord:
         """Give a subagent more model iterations; the budget stays at most 600.

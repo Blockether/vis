@@ -4,6 +4,7 @@
             [clojure.walk :as walk]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.channel.header :as header]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
@@ -355,9 +356,9 @@
       (and child (>= (long (:iterations_used child)) (long (:iteration_budget child))))
       (str "Subagent stopped: it used its full iteration budget of " (:iteration_budget child)
            " and its handoff iteration. Its parent can add iterations with council.extend and "
-           "continue it with council.resume.")
-      :else (str "Subagent stopped: its iteration budget ended. Its parent can continue it with "
-                 "council.resume or a Council ping."))))
+           "continue it with a Council ping.")
+      :else
+      "Subagent stopped: its iteration budget ended. Its parent can continue it with a Council ping.")))
 
 (defn refusal-answer
   "The answer of a child turn that `claim-iteration!` stopped: the stop reason, then the last
@@ -372,7 +373,7 @@
               "\")."))))
 
 (defn- final-answer
-  "The prose answer of the last turn of child `row`, or nil. After council.resume, only a turn
+  "The prose answer of the last turn of child `row`, or nil. After a follow-up ping, only a turn
    of the follow-up task counts: `resumed_turns` in the row is the turn count before it."
   [db row]
   (let [turns (ps/db-list-session-turns db (:session_id row))]
@@ -400,7 +401,7 @@
 (defn finish!
   "Store the status of a finished child turn. A child that ended its turn in its handoff
    iteration becomes `budget_limited`, so its parent knows that it needs council.extend before
-   council.resume. A child that answered within its budget is `completed`. The first end of a task
+   a follow-up ping. A child that answered within its budget is `completed`. The first end of a task
    stores `finished_at`, and a task without council.result gets the first line of its answer."
   [db sid status]
   (let [handoff? (contains? (first (swap-vals! handoffs disj (str sid))) (str sid))]
@@ -554,7 +555,7 @@
 
 (defn- task-turn-status
   "The stored status name of the last turn of child `row` for its current task, or nil when that
-   task has no turn yet. After council.resume, only a turn of the follow-up task counts."
+   task has no turn yet. After a follow-up ping, only a turn of the follow-up task counts."
   [db row]
   (some-> (drop (long (or (:resumed_turns row) 0)) (ps/db-list-session-turns db (:session_id row)))
           last
@@ -639,7 +640,7 @@
   [env operation opts]
   (let [opts (walk/keywordize-keys opts)]
     ;; Reads and cancellation remain available for previously created teams.
-    (when (or (contains? #{:spawn :resume} operation)
+    (when (or (= :spawn operation)
               (and (= :route operation)
                    (:session_id opts)
                    (not= (str (:session-id env)) (:session_id opts))))
@@ -1182,8 +1183,8 @@
    child's record then also has activity, notes, messages, step_secs, elapsed_secs and alerts.
 
    asking with budget_request needs council.extend or council.deny. asking with files_request
-   needs council.grant or council.deny. budget_limited needs council.extend before council.resume,
-   and it stays budget_limited until council.resume."
+   needs council.grant or council.deny. budget_limited needs council.extend before a follow-up ping,
+   and it stays budget_limited until that ping."
   ([env tasks] (run env tasks {}))
   ([env tasks opts] (result :council.run (run-records env tasks opts))))
 
@@ -1425,7 +1426,7 @@
 
 (defn extend-agent
   "Give a subagent more model iterations. Use it to answer a budget request (status asking with
-   budget_request), or before council.resume of a budget_limited child. A budget stays at most
+   budget_request), or before a follow-up ping to a budget_limited child. A budget stays at most
    600. Returns the record."
   [env session-id iterations]
   (result :council.extend (extend-records env session-id iterations)))
@@ -1548,7 +1549,7 @@
 
 (defn grant-files
   "Add file rules to the grant of a subagent. Use it to answer a file request (status asking with
-   files_request). For a follow-up task with other files, pass files to council.resume instead.
+   files_request). For a follow-up task with other files, pass files to council.publish instead.
 
    files holds write, read_only and deny rules, like a task dict. Give at least one rule. deny wins
    over read_only, and read_only wins over write.
@@ -1564,7 +1565,7 @@
   (result :council.grant (grant-records env session-id files)))
 
 (defn queue-turn!
-  "Queue subagent `sid` for a follow-up turn. A Council ping and council.resume both use it, so
+  "Queue subagent `sid` for a follow-up turn. A Council ping from its parent uses it, so
    council.wait reports only the answer of the new turn. A follow-up can pass the active cap; only
    a new spawn counts against it. Answers a function that undoes the change, or nil when the child
    has no iterations left, or is cancelled while its leader runs no turn. A child that already runs
@@ -1609,101 +1610,73 @@
            "End your turn with the complete result as your final answer. Your parent reads that "
            "answer, so a short acknowledgement such as \"Done.\" loses your work."))))
 
-(defn- resume-records
-  "Queue a follow-up task for a finished subagent, wait for it and answer its records."
-  [env session-id task opts]
-  (let [opts
-        (walk/keywordize-keys opts)
+(defn follow-up-refusal
+  "The refusal of a ping from `author-id` to its idle child `target-id`, as `[error message]`, or
+   nil. A ping from the parent or the leader gives an idle child a follow-up task. The child
+   needs iterations left. A cancelled child also needs a running turn of its leader. So a late
+   ping cannot restart a child that the user stopped."
+  [db author-id target-id]
+  (let [child (info db target-id)]
+    (when (and child
+               (some #{(str author-id)} [(str (:parent_id child)) (str (:leader_id child))])
+               (not (contains? #{"queued" "running"} (:status child))))
+      (cond
+        (and (= "cancelled" (:status child)) (not (leader-active? (:leader_id child))))
+        [:invalid-recipient
+         "A cancelled subagent takes a follow-up task only during a running turn of its leader"]
+        (>= (long (:iterations_used child)) (long (:iteration_budget child)))
+        [:budget-exceeded
+         "The subagent has no iterations left. Call council.extend(session_id, iterations) first."]))))
 
-        {:keys [session_id task files]}
-        (checked env
-                 :resume
-                 (cond-> {:session_id session-id :task task}
-                   (contains? opts :files)
-                   (assoc :files (:files opts))))
+(defn publish-with-files!
+  "Publish Council entry `opts` with `publish!`, a function of the opts. With `:files`, the one
+   ping recipient must be an idle subagent of the caller. Its grant then changes before the wake,
+   so its follow-up task starts in that scope (#414). A failed publication or an unavailable reply
+   restores the old grant."
+  [env opts publish!]
+  (if-not (contains? opts :files)
+    (publish! opts)
+    (let [db
+          (:db-info env)
 
-        timeout
-        (wait-timeout opts 240)
+          ping
+          (:ping opts)
 
-        db
-        (:db-info env)
+          id
+          (when (and (sequential? ping) (= 1 (count ping)))
+            (str (header/unmark-session-id (first ping))))
 
-        live?
-        (runtime-fn :live?)
+          child
+          (info db id)
 
-        refuse!
-        (fn [child]
-          (cond (or (live? session_id) (contains? #{"queued" "running"} (:status child)))
-                (fail! :invalid-request "The subagent still runs. Call council.wait.")
-                (= "cancelled" (:status child))
-                (fail! :invalid-request
-                       "A cancelled subagent resumes only during a running turn of its leader")
-                (>= (long (:iterations_used child)) (long (:iteration_budget child)))
-                (fail! :budget-exceeded
-                       (str "The subagent has no iterations left. Call "
-                            "council.extend(session_id, iterations) first."))
-                :else (fail! :invalid-request "The subagent cannot resume now")))
+          _
+          (when-not (and child (= (str (:session-id env)) (str (:parent_id child))))
+            (fail! :invalid-request
+                   "files needs exactly one ping recipient: an idle subagent of this session"))
 
-        child
-        (info db session_id)]
+          _
+          (when (or ((runtime-fn :live?) id) (contains? #{"queued" "running"} (:status child)))
+            (fail! :invalid-request
+                   "The subagent still runs. Give it more files with council.grant."))
 
-    (when (= (str (:session-id env)) session_id)
-      (fail! :not-owner "A subagent cannot resume itself"))
-    (when (or (live? session_id) (contains? #{"queued" "running"} (:status child))) (refuse! child))
-    ;; The store checks the status and the budget and marks the child queued in one
-    ;; transaction. A Council ping wake uses the same step.
-    (let [queued
-          (or (queue-turn! db session_id) (refuse! (info db session_id)))
-
-          ;; New files replace the grant before the task reaches the child, so its first block
-          ;; already has the scope of the follow-up task (#414).
           scope!
           (fn [rules]
-            ((runtime-fn :grant) env {:session_id session_id :files rules :replace true}))
+            ((runtime-fn :grant) env {:session_id id :files rules :replace true}))
 
           before
           (:files child)
 
-          restore!
-          (fn []
-            (queued)
-            (when files (scope! before)))
-
           entry
-          (try (when files (scope! files))
-               ((runtime-fn :publish)
-                 env
-                 {:kind "coordination"
-                  :title "Follow-up task"
-                  :content task
-                  :ping [session_id]
-                  :reply_required true})
-               (catch Throwable t (restore!) (throw t)))]
+          (do (scope! (walk/keywordize-keys (:files opts)))
+              (try (publish! opts) (catch Throwable t (scope! before) (throw t))))]
 
-      (when (= "unavailable" (get-in entry [:replies 0 :state]))
-        (restore!)
-        (fail! :unavailable "The subagent could not start its follow-up task")))
-    (wait-records env [session_id] timeout)))
-
-(defn resume-agent
-  "Give a finished or cancelled subagent a follow-up task in its own session, with its whole
-   context. Then wait like council.run and return the records. timeout_secs defaults to 240
-   (max 1800).
-
-   A stop of the leader's turn cancels its children. The next turn of the leader can continue
-   them. A Council ping continues the child the same way, without the wait. A child without
-   iterations left needs council.extend first. A running child needs council.wait.
-
-   files gives the follow-up task its own write, read_only and deny rules, like a task dict. They
-   replace the grant of the child in the same call, so a read-only reviewer can then edit its
-   files. Omit files to keep the grant."
-  ([env session-id task] (resume-agent env session-id task {}))
-  ([env session-id task opts] (result :council.resume (resume-records env session-id task opts))))
+      (when (some #(= "unavailable" (:state %)) (:replies entry)) (scope! before))
+      entry)))
 
 (defn operation!
   "Run one managed-subagent operation for the calling session and answer its plain result.
    Gateway routes and extensions call this entry point; model tools call the same functions.
-   `operation` is :spawn, :list, :route, :run, :wait, :cancel, :resume, :extend, :deny, :answer,
+   `operation` is :spawn, :list, :route, :run, :wait, :cancel, :extend, :deny, :answer,
    :grant or :timeline. Records answer in their wire form."
   [env operation opts]
   (let [opts
@@ -1725,12 +1698,6 @@
 
           :cancel
           (cancel-records env (:session_id opts))
-
-          :resume
-          (resume-records env
-                          (:session_id opts)
-                          (:task opts)
-                          (select-keys opts [:timeout_secs :files]))
 
           :extend
           (extend-records env (:session_id opts) (:iterations opts))
@@ -1773,8 +1740,6 @@
       [[#'run 'council.run {:pos ["tasks"] :rest :always} ["timeout_secs"] records]
        [#'wait-agents 'council.wait {:opt-pos ["session_ids"] :rest :always} ["timeout_secs"]
         records] [#'cancel-agent 'council.cancel {:pos ["session_id"]} [] records]
-       [#'resume-agent 'council.resume {:pos ["session_id" "task"] :rest :always}
-        ["timeout_secs" "files"] records]
        [#'extend-agent 'council.extend {:pos ["session_id" "iterations"]} [] records]
        [#'deny-agent 'council.deny {:pos ["session_id" "reason"]} [] records]
        [#'grant-files 'council.grant {:pos ["session_id" "files"]} [] records]
@@ -1826,7 +1791,7 @@
 
 (def ^:private lead-guide
   "The leader rules for subagents: an independent verifier and its checks."
-  "- Start one verifier early with role verify. Give it the request and its acceptance criteria, not your design. When your work is ready, run its checks and fix each failure. Then council.resume it on the final files.
+  "- Start one verifier early with role verify. Give it the request and its acceptance criteria, not your design. When your work is ready, run its checks and fix each failure. Then ping it to check the final files.
 - Before your final answer, run every failing case that a child reported.
 ")
 
@@ -1846,10 +1811,10 @@
 "
       role-guide
       "- A child sees your requests and notes, not your tool output. For an independent review, give the child the code, not your conclusion.
-- council.run, council.wait and council.resume return at the first event or at the timeout. For running, call council.wait(session_ids=[...]) again. For asking, reply with council.publish(text, kind=\"informational\", reply_to=question_entry_id). Answer budget_request with council.extend or council.deny, and files_request with council.grant or council.deny.
-- A failed record names its cause in error. For rate_limited, run the task again on a route from alternatives. For budget_limited, the answer is the handoff: call council.extend, then council.resume.
+- council.run and council.wait return at the first event or at the timeout. For running, call council.wait(session_ids=[...]) again. For asking, reply with council.publish(text, kind=\"informational\", reply_to=question_entry_id). Answer budget_request with council.extend or council.deny, and files_request with council.grant or council.deny.
+- A failed record names its cause in error. For rate_limited, run the task again on a route from alternatives. For budget_limited, the answer is the handoff: call council.extend, then ping the child.
 - While children run, do your own work. Do not do their work again. When a child ends, check its files and tests at once.
-- For follow-up on the same files, call council.resume(session_id, task, files=...).
+- For a follow-up task, ping the child: council.publish(task, kind=\"coordination\", ping=[session_id]). Add files={...} for other files. Then call council.wait(session_ids=[session_id]).
 "
       lead-guide
       lead-child-guide)))

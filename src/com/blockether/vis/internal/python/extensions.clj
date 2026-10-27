@@ -780,7 +780,6 @@
    [:post "/v1/sessions/:sid/agents/deny"] [:vis.council.deny "Deny subagent request" false]
    [:post "/v1/sessions/:sid/agents/extend"] [:vis.council.extend "Extend subagent budget" false]
    [:post "/v1/sessions/:sid/agents/grant"] [:vis.council.grant "Grant files to subagent" false]
-   [:post "/v1/sessions/:sid/agents/resume"] [:vis.council.resume "Resume subagent" false]
    [:post "/v1/sessions/:sid/agents/route"] [:vis.council.route "Route subagent message" false]
    [:post "/v1/sessions/:sid/council/entries"] [:vis.council.publish "Publish to Council" false]
    [:post "/v1/sessions/:sid/council/wake"] [:vis.council.wake "Wake session" false]

@@ -33,43 +33,44 @@
 
 (defdescribe
   canonical-agent-routes-and-validation-test
-  (it
-    "canonical agent routes and validation"
-    (doseq [[path methods]
-            [["/v1/sessions/:sid/agents" [:get :post]] ["/v1/sessions/:sid/agents/answer" [:post]]
-             ["/v1/sessions/:sid/agents/cancel" [:post]] ["/v1/sessions/:sid/agents/deny" [:post]]
-             ["/v1/sessions/:sid/agents/extend" [:post]] ["/v1/sessions/:sid/agents/grant" [:post]]
-             ["/v1/sessions/:sid/agents/resume" [:post]] ["/v1/sessions/:sid/agents/route" [:post]]
-             ["/v1/sessions/:sid/agents/run" [:post]] ["/v1/sessions/:sid/agents/wait" [:post]]
-             ["/v1/sessions/:sid/agents/:child-id/timeline" [:get]]]
+  (it "canonical agent routes and validation"
+      (doseq [[path methods]
+              [["/v1/sessions/:sid/agents" [:get :post]] ["/v1/sessions/:sid/agents/answer" [:post]]
+               ["/v1/sessions/:sid/agents/cancel" [:post]] ["/v1/sessions/:sid/agents/deny" [:post]]
+               ["/v1/sessions/:sid/agents/extend" [:post]]
+               ["/v1/sessions/:sid/agents/grant" [:post]] ["/v1/sessions/:sid/agents/route" [:post]]
+               ["/v1/sessions/:sid/agents/run" [:post]] ["/v1/sessions/:sid/agents/wait" [:post]]
+               ["/v1/sessions/:sid/agents/:child-id/timeline" [:get]]]
 
-            method
-            methods]
+              method
+              methods]
 
-      (expect (some? (contract/operation method path))))
-    (let [db
-          (h/store)
+        (expect (some? (contract/operation method path))))
+      ;; A follow-up task is a Council ping now, so the contract has no resume route.
+      (expect (nil? (contract/operation :post "/v1/sessions/:sid/agents/resume")))
+      (let [db
+            (h/store)
 
-          leader
-          (str (h/store-session! db {:channel :api}))
+            leader
+            (str (h/store-session! db {:channel :api}))
 
-          path
-          (str "/v1/sessions/" leader "/agents")]
+            path
+            (str "/v1/sessions/" leader "/agents")]
 
-      (with-redefs [lp/db-info
-                    (constantly db)
+        (with-redefs [lp/db-info
+                      (constantly db)
 
-                    lp/env-for
-                    (fn [_]
-                      (expect false "Listing a team must not bootstrap a session"))]
+                      lp/env-for
+                      (fn [_]
+                        (expect false "Listing a team must not bootstrap a session"))]
 
-        (expect (= [] (json/read-json (:body (request :get path nil)))))
-        (doseq [body ["[]" "not json" "{}" (json/write-json-str {:task " "})
-                      "{\"task\":\"Work\",\"iteration_budget\":0}"]]
-          (expect (= 400 (:status (request :post path body))) body))
-        (expect (= 404 (:status (request :get "/v1/sessions/unknown/agents" nil))))
-        (expect (= 404 (:status (request :get (str path "/missing/timeline") nil)))
-                "A timeline needs a subagent of the session")))))
+          (expect (= [] (json/read-json (:body (request :get path nil)))))
+          (doseq [body ["[]" "not json" "{}" (json/write-json-str {:task " "})
+                        "{\"task\":\"Work\",\"iteration_budget\":0}"]]
+            (expect (= 400 (:status (request :post path body))) body))
+          (expect (= 404 (:status (request :get "/v1/sessions/unknown/agents" nil))))
+          (expect (= 404 (:status (request :get (str path "/missing/timeline") nil)))
+                  "A timeline needs a subagent of the session")))))
 
 ;; Regression for #405: every managed-child operation has a gateway route.
 (defdescribe
@@ -90,16 +91,15 @@
             (request :post (str "/v1/sessions/" leader "/agents/" operation) body))]
 
       (with-redefs [lp/db-info (constantly db)]
-        (doseq [[operation body]
-                [["run" "{}"] ["run" "{\"tasks\":[]}"]
-                 ["run" "{\"tasks\":[\"Work\"],\"timeout_secs\":0}"]
-                 ["wait" "{\"session_ids\":\"x\"}"] ["wait" "{\"timeout_secs\":1801}"]
-                 ["resume" "{\"session_id\":\"x\"}"] ["extend" "{\"session_id\":\"x\"}"]
-                 ["deny" "{}"] ["grant" "{\"session_id\":\"x\"}"] ["wait" "not json"]]]
-          (expect (= 400 (:status (post operation body))) [operation body]))
+        (doseq [[operation body] [["run" "{}"] ["run" "{\"tasks\":[]}"]
+                                  ["run" "{\"tasks\":[\"Work\"],\"timeout_secs\":0}"]
+                                  ["wait" "{\"session_ids\":\"x\"}"]
+                                  ["wait" "{\"timeout_secs\":1801}"]
+                                  ["extend" "{\"session_id\":\"x\"}"] ["deny" "{}"]
+                                  ["grant" "{\"session_id\":\"x\"}"] ["wait" "not json"]]]
+          (expect (= 400 (:status (post operation body))) (pr-str [operation body])))
         (doseq [[operation body] [["extend" {:session_id other :iterations 5}]
                                   ["deny" {:session_id other :reason "No"}]
-                                  ["resume" {:session_id other :task "More"}]
                                   ["grant" {:session_id other :files {:read_only ["/tmp/x"]}}]]]
           (let [response (post operation (json/write-json-str body))]
             (expect (= 409 (:status response)) operation)

@@ -229,7 +229,7 @@
       (let [{:keys [db sid entry]} (fixture "coordination")]
         (expect (nil? (agents/task-request db sid entry)) "An independent session gets no task"))))
 
-;; A ping to a finished subagent is a follow-up task, the same store step as council.resume.
+;; A ping from its parent to a finished subagent is its follow-up task, the same store step for each.
 (defdescribe
   council-wake-continues-a-finished-subagent-like-resume
   (it "queues the child with its turn count and restores it when the turn cannot start"
@@ -262,6 +262,55 @@
               (expect (= before
                          (select-keys (agents/info db sid) [:status :resumed_turns :resumed_at]))
                       "A failed start leaves the child as it was")))))))
+
+;; council.resume is gone: council.publish refuses a follow-up ping that cannot start, before the
+;; entry exists, so the parent sees the cause at once.
+(defdescribe
+  council-publish-refuses-a-follow-up-that-cannot-start
+  (it
+    "refuses a ping to an exhausted or stopped child and stores a ping that can start"
+    (let [{:keys [db sid]}
+          (managed-fixture "coordination")
+
+          leader
+          (str (:parent_id (agents/info db sid)))
+
+          gid
+          (str (:project-id (ps/db-get-session db leader)))
+
+          activation
+          (str (random-uuid))
+
+          saved
+          @@#'agents/runtime
+
+          ping!
+          (fn []
+            (try (some? (:entry_id (council/publish!
+                                     db
+                                     (constantly {leader {:activation-id activation
+                                                          :group-id gid
+                                                          :state "running"}})
+                                     {:session-id leader :activation-id activation :source "sdk"}
+                                     {:kind "coordination" :content "Next task" :ping [sid]})))
+                 (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))]
+
+      (with-redefs-fn {#'toggles/enabled? (constantly true)
+                       #'state/council-wake-eligible? (constantly false)}
+        (fn []
+          (try (swap! @#'agents/runtime dissoc :leader-active?)
+               (dotimes [_ 4]
+                 (ps/db-agent-claim-iteration! db sid))
+               (ps/db-agent-update! db sid {:status "budget_limited"})
+               (expect (= :budget-exceeded (ping!)) "An exhausted child needs council.extend")
+               (expect (some? (ps/db-agent-extend-budget! db sid 2)))
+               (expect (true? (ping!)) "An extended child takes the ping")
+               (ps/db-agent-update! db sid {:status "cancelled"})
+               (expect (= :invalid-recipient (ping!))
+                       "A stopped child stays stopped without a running leader turn")
+               (swap! @#'agents/runtime assoc :leader-active? #(= leader %))
+               (expect (true? (ping!)) "A running leader turn continues a stopped child")
+               (finally (reset! @#'agents/runtime saved))))))))
 
 (defdescribe request-provenance-is-enforced-by-sqlite
              (it "request provenance is enforced by sqlite"

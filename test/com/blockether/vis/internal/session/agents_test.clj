@@ -288,7 +288,7 @@
       (expect (= "budget_limited" (:status (agents/info db child))))
       (expect
         (=
-          "Subagent stopped: it used its full iteration budget of 1 and its handoff iteration. Its parent can add iterations with council.extend and continue it with council.resume."
+          "Subagent stopped: it used its full iteration budget of 1 and its handoff iteration. Its parent can add iterations with council.extend and continue it with a Council ping."
           (agents/stop-reason env)))
       (expect (not (agents/wake-allowed? db leader child)))
       (expect (agents/wake-allowed? db child leader)
@@ -522,9 +522,8 @@
           (expect (= {"status" "budget_limited" "iteration_budget" 6 "iterations_used" 1}
                      (select-keys (first (outcome #(agents/extend-agent env child 5)))
                                   ["status" "iteration_budget" "iterations_used"])))
-          (expect (agents/wake-allowed? db leader child)
-                  "A ping continues an extended child, like council.resume")
-          ;; council.resume runs the child again.
+          (expect (agents/wake-allowed? db leader child) "A ping continues an extended child")
+          ;; The follow-up ping runs the child again.
           (ps/db-agent-update! db child {:status "running"})
           (expect (= :budget-exceeded (outcome #(agents/extend-agent env child 595))))
           (expect (= :invalid-request (outcome #(agents/extend-agent env child 0))))
@@ -748,7 +747,7 @@
             (expect (not (agents/claim-iteration! child-env)) "Only one renewal in a turn")
             (expect (= "budget_limited" (:status (agents/info db child))))))))
   (it
-    "resumes a finished child with a follow-up task and never returns its old answer"
+    "gives a finished child a follow-up task through a ping and never returns its old answer"
     (let [db
           (h/store)
 
@@ -757,9 +756,6 @@
 
           child
           (child! db leader {:iteration_budget 4})
-
-          live
-          (atom #{})
 
           env
           {:db-info db :session-id leader}
@@ -770,36 +766,18 @@
       (with-fake-runtime
         db
         leader
-        live
-        (fn [entries]
+        (atom #{})
+        (fn [_]
           (with-redefs [ps/db-list-session-turns (fn [_ sid]
                                                    (if (= child (str sid)) @turns []))]
             (agents/finish! db child "completed")
             (expect (= "Old answer"
                        (get (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))
                             "answer")))
-            (swap! live conj child)
-            (expect (= :invalid-request (outcome #(agents/resume-agent env child "Next")))
-                    "A running child needs council.wait")
-            (swap! live disj child)
-            (expect (= :not-owner
-                       (outcome
-                         #(agents/resume-agent {:db-info db :session-id child} child "Next"))))
-            (let [records
-                  (outcome
-                    #(agents/resume-agent env child "Fix the parser test too" {:timeout_secs 1}))]
-              (expect (= "queued" (get (first records) "status")))
-              (expect (= 1 (:resumed_turns (agents/info db child)))
-                      "The stale-answer guard is stored with the child, so a restart keeps it")
-              (expect (= :invalid-request (outcome #(agents/resume-agent env child "Again")))
-                      "A queued follow-up task blocks a second resume")
-              (expect (= {:kind "coordination"
-                          :title "Follow-up task"
-                          :content "Fix the parser test too"
-                          :ping [child]
-                          :reply_required true
-                          :author leader}
-                         (get @entries (count @entries)))))
+            ;; The wake of a ping from the parent queues the child, as state/council-wake! does.
+            (expect (fn? (agents/queue-turn! db child)))
+            (expect (= 1 (:resumed_turns (agents/info db child)))
+                    "The stale-answer guard is stored with the child, so a restart keeps it")
             ;; The gateway stores the status before the turn, so the old turn is still the last.
             (agents/finish! db child "completed")
             (expect (nil? (get (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))
@@ -807,38 +785,129 @@
             (swap! turns conj {:id "new" :content [{"type" "prose" "markdown" "New answer"}]})
             (expect (= "New answer"
                        (get (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))
-                            "answer"))))
-          (agents/claim-iteration! {:db-info db :session-id child})
-          (dotimes [_ 3]
-            (agents/claim-iteration! {:db-info db :session-id child}))
-          (agents/finish! db child "completed")
-          (expect (= :budget-exceeded (outcome #(agents/resume-agent env child "More")))
-                  "Extend first")
-          (ps/db-agent-update! db child {:status "budget_limited"})
-          (outcome #(agents/extend-agent env child 2))
-          (expect (= "budget_limited" (:status (agents/info db child))))
-          (expect (= "queued"
-                     (get (first (outcome #(agents/resume-agent env
-                                                                child
-                                                                "More"
-                                                                {:timeout_secs 1
-                                                                 :files {:write ["out.txt"]}})))
-                          "status"))
-                  "An extended budget_limited child resumes")
-          ;; #414: files on council.resume replace the grant of the follow-up task in one call.
-          (expect (= {:write ["out.txt"]} (:files (agents/info db child))))
-          (ps/db-agent-update! db child {:status "cancelled"})
-          (expect (= :invalid-request (outcome #(agents/resume-agent env child "More")))
-                  "Without a running leader turn, a stopped child stays stopped")
-          (swap! @#'agents/runtime assoc :leader-active? #(= leader %))
-          (expect (= "queued"
-                     (get (first (outcome
-                                   #(agents/resume-agent env child "Again" {:timeout_secs 1})))
-                          "status"))
-                  "A running leader turn continues a cancelled child")))))
-  ;; A Council ping and council.resume are one follow-up step, so both pass the active cap.
+                            "answer"))))))))
+  ;; council.resume is gone: a ping is the one follow-up verb, so it refuses a task that cannot start.
   (it
-    "queues a pinged child like council.resume, past the active cap, and undoes it on demand"
+    "refuses a follow-up ping to an exhausted or stopped child and lets other pings through"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          other
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:iteration_budget 2})
+
+          saved
+          @@#'agents/runtime]
+
+      (try (swap! @#'agents/runtime dissoc :leader-active?)
+           (agents/finish! db child "completed")
+           (expect (nil? (agents/follow-up-refusal db leader child))
+                   "A finished child with iterations left takes the task")
+           (dotimes [_ 2]
+             (ps/db-agent-claim-iteration! db child))
+           (ps/db-agent-update! db child {:status "budget_limited"})
+           (expect (= :budget-exceeded (first (agents/follow-up-refusal db leader child))))
+           (expect (str/includes? (second (agents/follow-up-refusal db leader child))
+                                  "council.extend")
+                   "The refusal names the next call")
+           (expect (nil? (agents/follow-up-refusal db other child))
+                   "Only the parent or the leader gives a follow-up task")
+           (expect (nil? (agents/follow-up-refusal db child leader))
+                   "A ping to the leader is no follow-up task")
+           (expect (some? (ps/db-agent-extend-budget! db child 2)))
+           (expect (nil? (agents/follow-up-refusal db leader child)))
+           (ps/db-agent-update! db child {:status "running"})
+           (expect (nil? (agents/follow-up-refusal db leader child))
+                   "A running child reads the ping inside its turn")
+           (ps/db-agent-update! db child {:status "cancelled"})
+           (expect (= :invalid-recipient (first (agents/follow-up-refusal db leader child)))
+                   "A late ping cannot restart a child that a stop cancelled")
+           (swap! @#'agents/runtime assoc :leader-active? #(= leader %))
+           (expect (nil? (agents/follow-up-refusal db leader child))
+                   "A running leader turn continues a cancelled child")
+           (finally (reset! @#'agents/runtime saved)))))
+  ;; #414: files on a follow-up ping replace the grant before the wake, so the task starts in scope.
+  (it
+    "replaces the grant of a pinged child before its wake and restores it when the ping fails"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {})
+
+          env
+          {:db-info db :session-id leader}
+
+          live
+          (atom #{})
+
+          ping
+          {:kind "coordination" :content "Next task" :ping [child]}
+
+          refused
+          (fn [opts publish!]
+            (try (agents/publish-with-files! env opts publish!)
+                 nil
+                 (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))]
+
+      (with-fake-runtime
+        db
+        leader
+        live
+        (fn [_]
+          (agents/finish! db child "completed")
+          (ps/db-agent-update! db child {:files {:read_only ["docs"]}})
+          (let [seen
+                (atom nil)
+
+                entry
+                (agents/publish-with-files! env
+                                            (assoc ping :files {"write" ["out.txt"]})
+                                            (fn [opts]
+                                              (reset! seen (:files (agents/info db child)))
+                                              {:entry_id 1 :opts opts}))]
+
+            (expect (= {:write ["out.txt"]} @seen) "The child has the new grant at its wake")
+            (expect (= 1 (:entry_id entry))))
+          (expect (= {:write ["out.txt"]} (:files (agents/info db child))))
+          (expect (= :boom
+                     (refused (assoc ping :files {:write ["b.txt"]})
+                              (fn [_]
+                                (throw (ex-info "No entry" {:error :boom}))))))
+          (expect (= {:write ["out.txt"]} (:files (agents/info db child)))
+                  "A failed publication restores the grant")
+          (agents/publish-with-files! env
+                                      (assoc ping
+                                        :reply_required true
+                                        :files {:write ["c.txt"]})
+                                      (fn [_]
+                                        {:entry_id 2 :replies [{:state "unavailable"}]}))
+          (expect (= {:write ["out.txt"]} (:files (agents/info db child)))
+                  "A child that cannot start keeps its grant")
+          (expect (= ping (agents/publish-with-files! env ping identity))
+                  "Without files, the ping passes unchanged")
+          (doseq [target [[child leader] "all" [leader]]]
+            (expect (= :invalid-request
+                       (refused (assoc ping
+                                  :ping target
+                                  :files {:write ["d.txt"]})
+                                identity))
+                    (pr-str target)))
+          (swap! live conj child)
+          (expect (= :invalid-request (refused (assoc ping :files {:write ["d.txt"]}) identity))
+                  "A running child gets more files with council.grant")
+          (expect (= {:write ["out.txt"]} (:files (agents/info db child))))))))
+  ;; A follow-up ping passes the active cap: only a new spawn counts against it.
+  (it
+    "queues a pinged child past the active cap and undoes it on demand"
     (let [db
           (h/store)
 
@@ -871,7 +940,7 @@
         (expect (nil? (agents/queue-turn! db child)) "A child without iterations stays idle")
         (expect (some? (ps/db-agent-extend-budget! db child 2)))
         (expect (agents/wake-allowed? db leader child)
-                "A ping continues an extended budget_limited child, like council.resume")
+                "A ping continues an extended budget_limited child")
         (expect (fn? (agents/queue-turn! db child)))
         (expect (= "queued" (:status (agents/info db child))))
         (ps/db-agent-update! db child {:status "cancelled"})
@@ -885,33 +954,7 @@
                        "A ping from a running leader continues a cancelled child")
                (expect (fn? (agents/queue-turn! db child)))
                (expect (= "queued" (:status (agents/info db child))))
-               (finally (reset! @#'agents/runtime saved)))))))
-  (it "continues a resume past the active cap"
-      (let [db
-            (h/store)
-
-            leader
-            (str (h/store-session! db {:channel :api}))
-
-            child
-            (child! db leader {})
-
-            env
-            {:db-info db :session-id leader}]
-
-        (with-fake-runtime
-          db
-          leader
-          (atom #{})
-          (fn [_]
-            (agents/finish! db child "completed")
-            (dotimes [_ agents/max-active-children]
-              (child! db leader {}))
-            (expect (= "queued"
-                       (get (first (outcome
-                                     #(agents/resume-agent env child "More" {:timeout_secs 1})))
-                            "status")))
-            (expect (= "queued" (:status (agents/info db child)))))))))
+               (finally (reset! @#'agents/runtime saved))))))))
 
 ;; Regression: Subagents was on only in the leader's session settings. A child starts without
 ;; those overrides, so its turn snapshot read the default and refused its first iteration.
@@ -1126,7 +1169,8 @@
                                      (catch clojure.lang.ExceptionInfo e (ex-message e)))]
 
                     (expect (str/includes? refusal "/docs/a.md (read_only "))
-                    (expect (str/includes? refusal "council.resume(session_id, task, files="))
+                    (expect (str/includes? refusal
+                                           "council.publish(task, ping=[session_id], files="))
                     (expect (not (str/includes? refusal "every file"))))
                   ;; Only the parent grants: a child cannot widen its own access.
                   (expect (= :not-owner
@@ -1866,25 +1910,27 @@
                      (expect (str/includes? text "call council.result(text)"))
                      (expect (not (str/includes? text "orchestration is on")))))))
 
-;; Regression for #405: only a finished child with iterations left can resume.
+;; Regression for #405: only a finished child with iterations left takes a follow-up task.
 (defdescribe
-  resume-of-a-running-or-cancelled-child-test
-  (it "refuses a running child, and a cancelled child without a running leader turn"
+  follow-up-of-a-running-or-cancelled-child-test
+  (it "lets a running child read the ping, and refuses a cancelled child without a leader turn"
       (let [db
             (h/store)
 
             leader
             (str (h/store-session! db {:channel :api}))
 
-            env
-            {:db-info db :session-id leader}]
+            saved
+            @@#'agents/runtime]
 
-        (doseq [status ["running" "cancelled"]]
-          (let [child (child! db leader {:status status})]
-            (expect (= :invalid-request (outcome #(agents/resume-agent env child "Next"))) status)
-            (expect (= {:status status :resumed_turns 0}
-                       (select-keys (agents/info db child) [:status :resumed_turns]))
-                    status))))))
+        (try (swap! @#'agents/runtime dissoc :leader-active?)
+             (doseq [[status refusal] [["running" nil] ["cancelled" :invalid-recipient]]]
+               (let [child (child! db leader {:status status})]
+                 (expect (= refusal (first (agents/follow-up-refusal db leader child))) status)
+                 (expect (= {:status status :resumed_turns 0}
+                            (select-keys (agents/info db child) [:status :resumed_turns]))
+                         status)))
+             (finally (reset! @#'agents/runtime saved))))))
 
 ;; Regression for Council complaint #7930: council.run spawned four children, then refused the
 ;; fifth task for empty file rule lists. The error named no field, so the model guessed again.

@@ -70,7 +70,9 @@
                    (:group-not-found :entry-not-found)
                    404
 
-                   (:disabled :inactive-session :invalid-recipient :idempotency-conflict)
+                   (:disabled :inactive-session
+                              :invalid-recipient :idempotency-conflict
+                              :budget-exceeded :not-owner)
                    409
 
                    (:invalid-request :invalid-thread :invalid-reply)
@@ -89,7 +91,6 @@
    [:post "/v1/sessions/:sid/agents/deny"] (agents-handler :deny)
    [:post "/v1/sessions/:sid/agents/extend"] (agents-handler :extend)
    [:post "/v1/sessions/:sid/agents/grant"] (agents-handler :grant)
-   [:post "/v1/sessions/:sid/agents/resume"] (agents-handler :resume)
    [:post "/v1/sessions/:sid/agents/route"] (agents-handler :route)
    [:post "/v1/sessions/:sid/agents/run"] (agents-handler :run)
    [:post "/v1/sessions/:sid/agents/wait"] (agents-handler :wait)

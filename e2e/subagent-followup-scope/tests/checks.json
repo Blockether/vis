@@ -15,7 +15,7 @@
   ],
   "want_tools": [
     "council.run",
-    "council.resume"
+    "council.publish"
   ],
   "forbid_tools": [
     "patch",
@@ -23,6 +23,6 @@
   ],
   "want_activity_sequence": [
     "council.run",
-    "council.resume"
+    "council.publish"
   ]
 }

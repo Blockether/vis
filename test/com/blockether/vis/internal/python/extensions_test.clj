@@ -1018,57 +1018,58 @@
                   (expect (= (str value "/" value "\n" (if (= value "B") "True" "False"))
                              (str/trim (:stdout out))))))]
 
-          (try (doseq [[root value] (map vector roots ["A" "B"])]
-                 (write-project-package! (io/file root) value))
-               (with-redefs [config/config-dir
-                             (constantly (str home))
+          (try
+            (doseq [[root value] (map vector roots ["A" "B"])]
+              (write-project-package! (io/file root) value))
+            (with-redefs [config/config-dir
+                          (constantly (str home))
 
-                             config/resolve-db-spec
-                             (constantly db-path)
+                          config/resolve-db-spec
+                          (constantly db-path)
 
-                             loop-router/get-router
-                             (fn []
-                               (swap! router-roots conj (.getCanonicalPath (workspace/cwd)))
-                               {:providers []})]
+                          loop-router/get-router
+                          (fn []
+                            (swap! router-roots conj (.getCanonicalPath (workspace/cwd)))
+                            {:providers []})]
 
-                 (pyx/reload-python-extensions! {:dirs []})
-                 (doseq [root roots]
-                   ;; This is the API called by the gateway's project-add route. Adding a
-                   ;; project only saves it; its first session prepares the extensions (#407).
-                   (let [project (try (lp/ensure-project-for-root! root)
-                                      (catch clojure.lang.ExceptionInfo error
-                                        (throw (ex-info (pr-str (ex-data error)) {} error))))]
-                     (expect (:id project)))
-                   (binding [workspace/*workspace-root* root]
-                     (expect (nil? (registered "vis-project-fixture"))))
-                   (let [ws (workspace/create-trunk-at! db root)]
-                     (swap! opened conj (loop-env/open-env! nil {:workspace-id (:id ws)})))
-                   (binding [workspace/*workspace-root* root]
-                     (expect (registered "vis-project-fixture"))))
-                 (expect (= roots @router-roots))
-                 ;; Calls overlap across independently imported versions of the same package.
-                 (doseq [worker (mapv (fn [[environment value]]
-                                        (future (check! environment value)))
-                                      (map vector @opened ["A" "B"]))]
-                   @worker)
-                 (let [sid
-                       (:session-id (first @opened))
+              (pyx/reload-python-extensions! {:dirs []})
+              (doseq [root roots]
+                ;; This is the API called by the gateway's project-add route. Adding a
+                ;; project only saves it; its first session prepares the extensions (#407).
+                (let [project (try (lp/ensure-project-for-root! root)
+                                   (catch clojure.lang.ExceptionInfo error
+                                     (throw (ex-info (pr-str (ex-data error)) {} error))))]
+                  (expect (:id project)))
+                (binding [workspace/*workspace-root* root]
+                  (expect (nil? (registered "vis-project-fixture"))))
+                (let [ws (workspace/create-trunk-at! db root)]
+                  (swap! opened conj (loop-env/open-env! nil {:workspace-id (:id ws)})))
+                (binding [workspace/*workspace-root* root]
+                  (expect (registered "vis-project-fixture"))))
+              (expect (= roots @router-roots))
+              ;; Calls overlap across independently imported versions of the same package.
+              (doseq [worker (mapv (fn [[environment value]]
+                                     (future (check! environment value)))
+                                   (map vector @opened ["A" "B"]))]
+                @worker)
+              (let [sid
+                    (:session-id (first @opened))
 
-                       resumed
-                       (loop-env/open-env! sid {})]
+                    resumed
+                    (loop-env/open-env! sid {})]
 
-                   (swap! opened conj resumed)
-                   (check! resumed "A")
-                   (expect (= (first roots) (last @router-roots))))
-                 (binding [workspace/*workspace-root* (first roots)]
-                   (expect (zero? (:failed (pyx/reload-python-extensions!)))))
-                 (check! (second @opened) "B"))
-               (finally (doseq [environment @opened]
-                          (loop-env/dispose-environment! environment))
-                        (doseq [root roots]
-                          (pyx/reload-python-extensions! {:dirs [] :project-root root}))
-                        (pyx/reload-python-extensions! {:dirs []})
-                        (config/invalidate-config-cache!))))))))
+                (swap! opened conj resumed)
+                (check! resumed "A")
+                (expect (= (first roots) (last @router-roots))))
+              (binding [workspace/*workspace-root* (first roots)]
+                (expect (zero? (:failed (pyx/reload-python-extensions!)))))
+              (check! (second @opened) "B"))
+            (finally (doseq [environment @opened]
+                       (loop-env/dispose-environment! environment))
+                     (doseq [root roots]
+                       (pyx/reload-python-extensions! {:dirs [] :project-root root}))
+                     (pyx/reload-python-extensions! {:dirs []})
+                     (config/invalidate-config-cache!))))))))
 
 (defdescribe fresh-load-workspace-test
              ;; Package skill discovery must not index the mutable checkout outside its fixture.
@@ -2926,7 +2927,6 @@ def _calls():
         ('council.spawn', lambda: council.spawn('Check')),
         ('council.run', lambda: council.run(['Check'])),
         ('council.wait', lambda: council.wait()),
-        ('council.resume', lambda: council.resume('C', 'Again')),
         ('council.cancel', lambda: council.cancel('C')),
         ('council.deny', lambda: council.deny('C', 'No')),
         ('council.answer', lambda: council.answer('C', 'Yes')),
@@ -3024,7 +3024,6 @@ vis.register_extension(vis.Extension(
                      "council.spawn" ["POST" "/agents"]
                      "council.run" ["POST" "/agents/run"]
                      "council.wait" ["POST" "/agents/wait"]
-                     "council.resume" ["POST" "/agents/resume"]
                      "council.cancel" ["POST" "/agents/cancel"]
                      "council.deny" ["POST" "/agents/deny"]
                      "council.answer" ["POST" "/agents/answer"]

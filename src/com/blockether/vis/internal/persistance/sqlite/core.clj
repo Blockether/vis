@@ -5430,8 +5430,8 @@
 (def ^:private max-active-children (long (get agent-schema "x-vis-max-active-children")))
 
 (defn db-agent-claim-iteration!
-  "Reserve one child model iteration atomically. A follow-up from a Council ping or council.resume
-   can pass the active cap; only a new spawn counts against it."
+  "Reserve one child model iteration atomically. A follow-up from a Council ping can pass
+   the active cap; only a new spawn counts against it."
   [db sid]
   (pos? (long (or (:next.jdbc/update-count
                     (first (execute! db
@@ -5445,7 +5445,7 @@
 
 (defn db-agent-extend-budget!
   "Add `iterations` to one child budget atomically, within the schema maximum. The status stays:
-   a `budget_limited` or `cancelled` child stays idle until council.resume. Answers the new row, or
+   a `budget_limited` or `cancelled` child stays idle until a follow-up ping. Answers the new row, or
    nil when the child is missing or the budget would pass the maximum."
   [db sid iterations]
   (let [max-budget
@@ -5464,7 +5464,7 @@
       (db-agent-info db sid))))
 
 (defn db-agent-resume!
-  "Queue one idle child for a follow-up task from council.resume or a Council ping. One write
+  "Queue one idle child for a follow-up task from a Council ping of its parent. One write
    transaction checks that the child is idle and has iterations left. A cancelled child resumes too:
    the caller checks that its leader runs a turn. A follow-up
    can pass the active cap. `turns` is the turn count before the task. Answers the new row, or nil

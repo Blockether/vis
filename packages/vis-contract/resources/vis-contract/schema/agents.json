@@ -288,30 +288,6 @@
       ],
       "additionalProperties": false
     },
-    "resume": {
-      "type": "object",
-      "properties": {
-        "session_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "task": {
-          "$ref": "#/$defs/spawn/properties/task"
-        },
-        "files": {
-          "$comment": "Replace the grant of the child for the follow-up task.",
-          "$ref": "#/$defs/files"
-        },
-        "timeout_secs": {
-          "$ref": "#/$defs/wait/properties/timeout_secs"
-        }
-      },
-      "required": [
-        "session_id",
-        "task"
-      ],
-      "additionalProperties": false
-    },
     "route": {
       "type": "object",
       "properties": {
@@ -532,7 +508,7 @@
           "minimum": 0
         },
         "resumed_at": {
-          "$comment": "Epoch ms of the last council.resume or Council ping.",
+          "$comment": "Epoch ms of the last follow-up Council ping.",
           "type": [
             "integer",
             "null"

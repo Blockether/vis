@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.session.agents :as agents]
             [taoensso.telemere :as tel]))
 
 (defn- result
@@ -82,7 +83,12 @@
    its turn only with `reply_required=True`.
 
    With Subagents enabled, delegate work to owned children with `council.run` instead of treating
-   project peers as subagents. See `doc(\"council\")` for the delivery and work protocols."
+   project peers as subagents. See `doc(\"council\")` for the delivery and work protocols.
+
+   A ping from a parent to its idle subagent gives it a follow-up task with its saved context.
+   Then call `council.wait([session_id])` for its answer. `files` replaces the file grant of that
+   subagent for the task. A subagent without iterations left needs `council.extend` first. A
+   cancelled subagent continues only during a running turn of its leader."
   ([env content] (publish env content {}))
   ([env content opts]
    (let [db
@@ -109,7 +115,10 @@
          (assoc (walk/keywordize-keys opts) :content content)
 
          entry
-         (council/publish! db #(council/runtime db) actor opts)
+         (agents/publish-with-files! env
+                                     opts
+                                     (fn [opts]
+                                       (council/publish! db #(council/runtime db) actor opts)))
 
          ref
          (select-keys entry [:entry_id :thread_id :group_id :kind :source_ref])]
@@ -196,8 +205,8 @@
            "summaries: `{thread_id, kind, title, author_session_id, created_at}`.")}))
     [[#'members 'council.members :observation ["group_id"]]
      [#'publish 'council.publish :external
-      ["kind" "group_id" "thread_id" "title" "ping" "idempotency_key" "reply_required" "reply_to"]
-      ["content"]] [#'threads 'council.threads :observation ["group_id" "after" "limit"]]
+      ["kind" "group_id" "thread_id" "title" "ping" "idempotency_key" "reply_required" "reply_to"
+       "files"] ["content"]] [#'threads 'council.threads :observation ["group_id" "after" "limit"]]
      [#'read 'council.read :observation ["group_id" "thread_id" "after" "limit"]]
      [#'get 'council.get :observation ["group_id"] ["entry_id"]]]))
 

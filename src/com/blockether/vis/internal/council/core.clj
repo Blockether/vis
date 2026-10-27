@@ -325,6 +325,11 @@
           (fail! :invalid-recipient "Too many Council ping recipients"))
         (doseq [id targets]
           (recipient! db fleet gid session-id self-wake? id))
+        ;; A ping to an idle child is its follow-up task. Refuse it before the entry exists.
+        (when-not reply-to
+          (doseq [id (remove #(get fleet %) targets)]
+            (when-let [[kind message] (agents/follow-up-refusal db session-id id)]
+              (fail! kind message))))
         (root! db gid thread)
         (let [inserted
               (ps/db-council-insert!

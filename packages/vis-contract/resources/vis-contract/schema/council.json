@@ -70,6 +70,10 @@
         },
         "kind": {
           "$ref": "#/$defs/kind"
+        },
+        "files": {
+          "$comment": "Replace the file grant of the one pinged idle subagent for its follow-up task.",
+          "$ref": "agents.json#/$defs/files"
         }
       },
       "required": [

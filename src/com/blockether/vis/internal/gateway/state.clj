@@ -5343,7 +5343,7 @@
                  (= (:group_id entry) (council/default-group db sid))
                  (agents/wake-allowed? db (:author_session_id entry) sid))
     (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
-  ;; A ping to a finished subagent is a follow-up task, the same step as council.resume.
+  ;; A ping from its parent to a finished subagent is its follow-up task.
   (let [restore!
         (or (agents/queue-turn! db sid)
             (throw (ex-info "Subagent cannot take a follow-up turn" {:error :invalid-recipient})))
@@ -6764,9 +6764,9 @@
             (agents/fail! :invalid-request
                           (str "files.write cannot open " (str/join ", " blocked)
                                ": deny wins over read_only, and read_only wins over write. To "
-                               "give the subagent other files for a new task, call "
-                               "council.resume(session_id, task, files={...}): those files "
-                               "replace its grant.")))
+                               "give the subagent other files for a new task, ping it with "
+                               "council.publish(task, ping=[session_id], files={...}): those "
+                               "files replace its grant.")))
 
           ;; Without write rules, a child already writes where its parent writes (#414). A write
           ;; grant would narrow that access, so it adds nothing.
@@ -7005,16 +7005,15 @@
       (agents/fail! :session-not-found "Unknown session"))
     (when (contains? #{:spawn :run} operation) (agents/require-enabled! db sid))
     ;; Reads and controls need durable state, not a newly bootstrapped interpreter.
-    ;; Spawn consumes the running parent's safe model checkpoint, resume publishes in its
-    ;; active execution, and spawn and grant check its security policy. Extend, deny and
-    ;; answer reply to an open child request with a Council reply in that execution too.
-    (agents/operation! (assoc (when (contains? #{:spawn :run :grant :resume :extend :deny :answer}
-                                               operation)
-                                (live-env sid))
-                         :db-info db
-                         :session-id sid)
-                       operation
-                       opts)))
+    ;; Spawn consumes the running parent's safe model checkpoint, and spawn and grant check its
+    ;; security policy. Extend, deny and answer reply to an open child request with a Council
+    ;; reply in that execution too.
+    (agents/operation!
+      (assoc (when (contains? #{:spawn :run :grant :extend :deny :answer} operation) (live-env sid))
+        :db-info db
+        :session-id sid)
+      operation
+      opts)))
 
 (defn fork-session!
   "Fork `sid` into a NEW INDEPENDENT session holding a deep copy of every turn
@@ -8537,8 +8536,15 @@
             (when (:council (ctx-loop/read-turn-state environment))
               (council/source-ref environment))]
 
-        (council/publish!
-          db
-          #(council/runtime db)
-          {:session-id sid :activation-id (:activation_id opts) :source "sdk" :source-ref source}
-          opts)))))
+        (agents/publish-with-files! (assoc environment
+                                      :db-info db
+                                      :session-id sid)
+                                    opts
+                                    (fn [opts]
+                                      (council/publish! db
+                                                        #(council/runtime db)
+                                                        {:session-id sid
+                                                         :activation-id (:activation_id opts)
+                                                         :source "sdk"
+                                                         :source-ref source}
+                                                        opts)))))))

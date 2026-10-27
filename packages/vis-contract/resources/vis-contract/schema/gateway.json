@@ -810,17 +810,6 @@
           "extension": "callback"
         }
       },
-      "path": "/v1/sessions/:sid/agents/resume"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
-        "post": {
-          "request": "json",
-          "response": "json",
-          "extension": "callback"
-        }
-      },
       "path": "/v1/sessions/:sid/agents/route"
     },
     {

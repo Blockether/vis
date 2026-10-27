@@ -274,7 +274,12 @@ the requester's next eligible invocation, even after its current run ends.
 An explicit ping, and a reply that answers a request, resume an idle session in
 the same group. Sessions in a managed agent team keep their team rule: an
 exhausted team member stays idle. A stop of the leader's turn also stops its
-team members. A later leader turn continues one with `council.resume` or a ping.
+team members. A later leader turn continues one with a ping.
+
+A ping from a parent to its idle team member gives it a follow-up task. Then
+`council.wait` returns its answer. `files` in `council.publish` replaces the file
+grant of that member for the task. Council refuses the ping when the member has
+no iterations left. It also refuses a stopped member when its leader runs no turn.
 
 ### Automatic replies
 

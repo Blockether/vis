@@ -40,6 +40,7 @@ def test_council_is_the_only_public_team_api():
     assert not hasattr(engine.Session, "agents")
     assert not hasattr(Council, "publish_spawn")
     assert not hasattr(Council, "list")
+    assert not hasattr(Council, "resume")
     assert all(
         callable(getattr(Council, operation))
         for operation in (
@@ -48,7 +49,6 @@ def test_council_is_the_only_public_team_api():
             "run",
             "wait",
             "cancel",
-            "resume",
             "extend",
             "deny",
             "grant",
@@ -147,12 +147,11 @@ def test_child_controls_answer_records_and_wait_longer_than_the_gateway():
         assert records[0].files_request["reason"] == "Docs"
         assert team.wait(["child"], timeout_secs=5)[0].status == "asking"
         assert team.wait()[0].question_entry_id == 7
-        assert team.resume("child", "More", timeout_secs=60).session_id == "child"
         assert isinstance(team.extend("child", 5), SubagentRecord)
         assert team.deny("child", "Not now").status == "asking"
         assert team.answer("child", "Use docs/").session_id == "child"
         assert team.grant("child", {"write": ["docs/**"]}).iterations_used == 2
-        assert timeouts == [270, 35, 270, 90, None, None, None, None]
+        assert timeouts == [270, 35, 270, None, None, None, None]
         requests = [
             (path.removeprefix("/v1/sessions/leader/agents"), json.loads(body))
             for method, path, _, body in calls
@@ -171,7 +170,6 @@ def test_child_controls_answer_records_and_wait_longer_than_the_gateway():
             ),
             ("/wait", {"session_ids": ["child"], "timeout_secs": 5}),
             ("/wait", {"timeout_secs": 240}),
-            ("/resume", {"session_id": "child", "task": "More", "timeout_secs": 60}),
             ("/extend", {"session_id": "child", "iterations": 5}),
             ("/deny", {"session_id": "child", "reason": "Not now"}),
             ("/answer", {"session_id": "child", "text": "Use docs/"}),
@@ -326,7 +324,6 @@ def test_team_and_child_fields_are_frozen():
         ("run", {"tasks": [{"task": "x", "key": "k"}]}),
         ("wait", {"session_ids": ["a", "a"]}),
         ("wait", {"timeout_secs": 1801}),
-        ("resume", {"session_id": "child", "task": " "}),
         ("extend", {"session_id": "child", "iterations": 0}),
         ("extend", {"session_id": "child", "iterations": 601}),
         ("deny", {"session_id": "child", "reason": ""}),
