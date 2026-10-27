@@ -1313,7 +1313,10 @@
   "Built-in team inspection is also reachable without a pointer."
   []
   (if (agent-team/enabled? (get-in @state/app-db [:session :id]))
-    [{:id :agent-team :label "Agent team" :description "Inspect tasks, budgets and subagents"}]
+    [{:id :agent-team
+      :group "Session"
+      :label "Agent team"
+      :description "Inspect tasks, budgets and subagents"}]
     []))
 
 (defn- menu-commands

@@ -1838,6 +1838,46 @@
         (expect (some #{"Switch Session"} (match "session")))
         (expect (= [] (match "zzz-no-such-command"))))))
 
+(defdescribe
+  palette-sections-test
+  ;; User request, this Vis session (paraphrased: make the command palette wider and
+  ;; describe each command): rows sit in sections, with a description and a keybind.
+  (it "groups commands in sections and puts extra commands in their group"
+      (let [items (dlg/palette-items
+                    [{:id :new-session :group "Session" :label "New Session" :description "Start"}
+                     {:id :settings :group "Settings" :label "Settings" :description "Open"}]
+                    [{:id :agent-team :group "Session" :label "Agent team" :description "Inspect"}
+                     {:id :custom :label "Custom"}])]
+        (expect (= [["Session" true] ["New Session" nil] ["Agent team" nil] ["Settings" true]
+                    ["Settings" nil] ["More" true] ["Custom" nil]]
+                   (mapv (juxt :label :section?) items)))
+        (expect (= "C-x n" (:hint (second items))))
+        (expect (str/includes? (:search-text (second items)) "Start"))))
+  (it "gives every built-in command a group and a description"
+      (expect (every? #(and (seq (:group %)) (seq (:description %))) dlg/palette-commands)))
+  (it "filters on the description and keeps only sections with a match"
+      (let [items
+            (dlg/palette-items
+              [{:id :a :group "Session" :label "New Session" :description "Start an empty one"}
+               {:id :b :group "Settings" :label "Providers" :description "Add model providers"}]
+              [])]
+        (expect (= ["Settings" "Providers"] (mapv :label (dlg/filter-select-items items "model"))))
+        (expect (= [] (dlg/filter-select-items items "zzz")))
+        (expect (= items (dlg/filter-select-items items "")))))
+  (it "widens the box to fit the label and the whole description"
+      (let [description
+            (apply str (repeat 14 "word "))
+
+            {:keys [init measure]}
+            (dlg/select-modal-component "P"
+                                        [{:label "New Session" :description description}
+                                         {:label "Settings"}]
+                                        {:height :content})]
+
+        ;; Label, a gap of four columns, the description, and the row padding.
+        (expect (<= (+ (count "New Session") 4 (count description))
+                    (long (:content-w (measure init 160 40))))))))
+
 (defdescribe fork-turn-items-test
              (it "builds filterable palette rows: message label, tN hint, turn-id, truncation"
                  (let [turns

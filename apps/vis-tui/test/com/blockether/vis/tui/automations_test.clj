@@ -220,4 +220,4 @@
 
 (defdescribe palette-test
              (it "lists Automations in the command palette"
-                 (expect (some #{{:id :automations :label "Automations"}} dlg/palette-commands))))
+                 (expect (some #(= [:automations "Automations"] [(:id %) (:label %)]) dlg/palette-commands))))

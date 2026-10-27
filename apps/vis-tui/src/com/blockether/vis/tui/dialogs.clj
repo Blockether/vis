@@ -650,9 +650,12 @@
   ;; Selected rows use bold, reversed colors across the label, hints and padding.
   ([g left row inner-w selected? label] (draw-list-item! g left row inner-w selected? label nil))
   ([g left row inner-w selected? label hint]
+   (draw-list-item! g left row inner-w selected? label hint nil nil))
+  ([g left row inner-w selected? label hint description label-col]
    ;; `hint` (optional) is a dim, right-aligned chip — e.g. a command's keybind
    ;; — drawn opposite the label (opencode's justify-between rows). The label is
-   ;; truncated so it never collides with the hint.
+   ;; truncated so it never collides with the hint. An optional dim `description`
+   ;; starts at column `label-col` and gives way to the label and the hint.
    (let [hint
          (some-> hint
                  str
@@ -661,16 +664,29 @@
          hint-w
          (if hint (+ 2 (p/display-width hint)) 0)
 
+         text-w
+         (max 0 (- (long inner-w) 2 (long hint-w)))
+
          draw-text
-         (ellipsize label (max 0 (- (long inner-w) 2 (long hint-w))))]
+         (ellipsize label text-w)
+
+         description
+         (when (and description label-col)
+           (let [desc-w (- (long text-w) (long label-col))]
+             (when (and (pos? desc-w) (< (long (p/display-width draw-text)) (long label-col)))
+               (not-empty (ellipsize (str description) desc-w)))))]
 
      (p/set-colors! g t/dialog-fg t/dialog-bg)
      (p/styled g
                (p/selection-styles selected?)
                (p/fill-rect! g (inc (long left)) row inner-w 1)
                (p/put-str! g (inc (long left)) row draw-text)
+               ;; A selected row is reversed: dim ink there would get its own band.
+               (when description
+                 (p/set-colors! g (if selected? t/dialog-fg t/dialog-hint) t/dialog-bg)
+                 (p/put-str! g (+ (long left) 1 (long label-col)) row description)
+                 (p/set-colors! g t/dialog-fg t/dialog-bg))
                (when hint
-                 ;; A selected row is reversed: a hint in its own ink would get its own band.
                  (p/set-colors! g (if selected? t/dialog-fg t/dialog-hint) t/dialog-bg)
                  (p/put-str! g (- (+ (long left) (long inner-w)) (p/display-width hint)) row hint)
                  (p/set-colors! g t/dialog-fg t/dialog-bg))))))
@@ -1885,22 +1901,34 @@
                     (or (not-empty (str (:title tbl))) (not-empty (str (:name tbl))) "Table")
                     grid)))))
 
-(defn filter-select-items
-  "Apply the shared picker filter: case-insensitive substring matching, preserving
-   source order. Items may provide `:search-text` to include metadata beyond the
-   visible label; otherwise `:label` is the haystack. A blank query shows all."
-  [items query]
-  (let [q (str/lower-case (str query))]
-    (if (str/blank? q)
-      (vec items)
-      (filterv (fn [item]
-                 (str/includes? (str/lower-case (str (or (:search-text item) (:label item)))) q))
-        items))))
-
 (defn- section-item?
   "True for a select-list section header: a bold label that no selection lands on."
   [item]
   (true? (:section? item)))
+
+(defn filter-select-items
+  "Apply the shared picker filter: case-insensitive substring matching, preserving
+   source order. Items may provide `:search-text` to include metadata beyond the
+   visible label; otherwise `:label` is the haystack. A section header stays only
+   when one of its items matches. A blank query shows all."
+  [items query]
+  (let [q (str/lower-case (str query))]
+    (if (str/blank? q)
+      (vec items)
+      (:out (reduce (fn [{:keys [header] :as acc} item]
+                      (cond (section-item? item) (assoc acc :header item)
+                            (str/includes? (str/lower-case (str (or (:search-text item)
+                                                                    (:label item))))
+                                           q)
+                            {:out (-> (:out acc)
+                                      (cond->
+                                        header
+                                        (conj header))
+                                      (conj item))
+                             :header nil}
+                            :else acc))
+                    {:out [] :header nil}
+                    items)))))
 
 (defn- with-section-gaps
   "`items` with one blank, unselectable row before each section header that does
@@ -1995,8 +2023,11 @@
    (navigation / filtering / select) are plain functions of immutable state, so
    they can be exercised in tests WITHOUT a terminal. Only `:paint` touches the
    screen. `items`/opts match `list-dialog!`."
-  [title items {:keys [filter? placeholder enter-label height column-offset selected]}]
-  (let [gaps-before
+  [title items {:keys [filter? placeholder enter-label height column-offset selected max-rows]}]
+  (let [raw
+        (vec items)
+
+        gaps-before
         (fn [index]
           (count (filter section-item?
                          (subvec (vec items) (min 1 (count items)) (inc (long index))))))
@@ -2006,7 +2037,15 @@
           (+ (long selected) (long (gaps-before (min (long selected) (dec (count items)))))))
 
         items
-        (with-section-gaps items)
+        (with-section-gaps raw)
+
+        ;; Descriptions line up in one column after the widest label.
+        choices
+        (remove section-item? raw)
+
+        label-col
+        (when (some :description choices)
+          (+ 4 (long (reduce max 0 (map #(p/display-width (str (:label %))) choices)))))
 
         content?
         (= height :content)
@@ -2024,7 +2063,7 @@
              (- (long cols) (long offset))
 
              filtered
-             (if filter? (filter-select-items items query) items)
+             (if filter? (with-section-gaps (filter-select-items raw query)) items)
 
              total
              (count filtered)
@@ -2043,7 +2082,10 @@
                 (long (reduce max
                               0
                               (map (fn [it]
-                                     (+ (p/display-width (str (:label it)))
+                                     (+ (long (or label-col (p/display-width (str (:label it)))))
+                                        (if (:description it)
+                                          (p/display-width (str (:description it)))
+                                          0)
                                         (if (:hint it) (+ 2 (p/display-width (str (:hint it)))) 0)))
                                    items))))
 
@@ -2051,7 +2093,9 @@
              (footer-content-width cols footer item-w)
 
              content-h-req
-             (if content? (+ head-rows (min (count items) 24) 1) (adaptive-content-height rows nil))
+             (if content?
+               (+ head-rows (min (count items) (long (or max-rows 24))) 1)
+               (adaptive-content-height rows nil))
 
              bounds
              (dialog-bounds cols rows content-w content-h-req)
@@ -2145,7 +2189,9 @@
                                         width
                                         (= idx selected)
                                         (str " " (:label item))
-                                        (:hint item)))))))
+                                        (:hint item)
+                                        (when label-col (:description item))
+                                        label-col))))))
              (when (> (long total) (long list-h))
                (ScrollBar/draw g
                                Direction/VERTICAL
@@ -2223,16 +2269,19 @@
    map (the full map, so callers recover `:id`/slash keys), or nil on Esc.
 
    `items` is a vec of maps with at least `:label`. An item with `:section? true` is
-   a bold accent header that the selection skips. A blank row precedes each later header. An item's optional `:hint` is
-   a dim right-aligned chip; its optional `:key` character chooses it directly
-   when the list does not filter, and `:ctrl-key` does the same with Ctrl held.
+   a bold accent header that the selection skips. A blank row precedes each later header.
+   An item's optional `:description` is dim text in one column after the widest label,
+   which also widens the box. An item's optional `:hint` is a dim right-aligned chip;
+   its optional `:key` character chooses it directly when the list does not filter,
+   and `:ctrl-key` does the same with Ctrl held.
    A click chooses the item it pressed, and hover moves the selection. ↑↓,
    C-p/C-n, PgUp/PgDn and Home/End move. opts:
      :filter?      type-to-filter on `:label`, case-insensitive (default false)
      :placeholder  query placeholder shown while the filter is empty
      :enter-label  hint-bar verb for Enter (default \"select\")
      :height       `:content` sizes the box to the item count (+ the query
-                    field), capped; nil uses the shared (tall) footprint, or
+                    field), capped at `:max-rows` rows (default 24); nil uses
+                    the shared (tall) footprint, or
                     `:content` inside a `*dialog-region*` band.
      :column-offset (fn [cols rows] -> left) scopes the dialog to columns from
                     `left` to the terminal edge. Recomputed for each paint.
@@ -8802,32 +8851,98 @@
                             (read-chord-key! screen))))
 
 (def palette-commands
-  "Command palette entries. Each is {:id keyword :label str}. The `:id` is the
-   action the screen's `run-command!` executes. Quit is intentionally NOT here
-   — use Ctrl+C to quit.
+  "Command palette entries. Each is {:id keyword :label str :group str :description str}.
+   The `:id` is the action the screen's `run-command!` executes. `:group` names the
+   palette section and `:description` the short dim text next to the label. Quit is
+   intentionally NOT here — use Ctrl+C to quit.
 
    The palette is THE discoverable entry point for every app verb: opened with
    C-x p (reliable on every terminal, unlike Alt/Option chords on macOS) and
    filtered by typing."
   ;; Whole-session Markdown copy lives in the header as an icon.
-  [{:id :search-open :label "Search in Session"} {:id :show-sessions :label "Switch Session"}
-   {:id :session-metrics :label "Session Metrics"} {:id :pick-file :label "Attach File"}
-   {:id :toggle-voice-recording :label "Voice Recording"} {:id :new-session :label "New Session"}
+  [{:id :show-sessions :group "Session" :label "Switch Session" :description "Open another session"}
+   {:id :new-session :group "Session" :label "New Session" :description "Start an empty session"}
    ;; Both fork verbs are `:has-turns`-gated: a session with no turns has
    ;; nothing to fork, so the palette must not even offer them.
-   {:id :fork-session :label "Fork Session" :show-when :has-turns}
-   {:id :fork-at-turn :label "Fork Session at Turn…" :show-when :has-turns}
-   {:id :delete-session :label "Delete Session"} {:id :archive-session :label "Archive Session"}
-   {:id :close-tab :label "Close Tab"} {:id :providers :label "Providers"}
-   {:id :mcp :label "MCP Servers"} {:id :settings :label "Settings"}
-   {:id :session-settings :label "Session settings"} {:id :group-settings :label "Group settings"}
-   {:id :project-settings :label "Project settings"} {:id :automations :label "Automations"}
+   {:id :fork-session
+    :group "Session"
+    :label "Fork Session"
+    :description "Copy this session into a new one"
+    :show-when :has-turns}
+   {:id :fork-at-turn
+    :group "Session"
+    :label "Fork Session at Turn…"
+    :description "Copy this session up to a turn that you choose"
+    :show-when :has-turns}
+   {:id :session-metrics
+    :group "Session"
+    :label "Session Metrics"
+    :description "Show the token use and budgets of this session"}
+   {:id :archive-session
+    :group "Session"
+    :label "Archive Session"
+    :description "Archive this session, or restore it"}
+   {:id :delete-session
+    :group "Session"
+    :label "Delete Session"
+    :description "Delete this session after you confirm"}
+   {:id :close-tab
+    :group "Session"
+    :label "Close Tab"
+    :description "Close this tab and keep the session"}
+   {:id :search-open
+    :group "Conversation"
+    :label "Search in Session"
+    :description "Find text in this conversation"}
+   {:id :pick-file
+    :group "Conversation"
+    :label "Attach File"
+    :description "Add files to the next message"}
+   {:id :toggle-voice-recording
+    :group "Conversation"
+    :label "Voice Recording"
+    :description "Start or stop voice input"}
    ;; Only Claude adaptive thinking can show or omit its summary. C-x x and the
    ;; footer chip also toggle it, and the chip shows the state.
-   {:id :toggle-thinking-summary :label "Thinking Summary" :show-when :thinking-summary}
-   {:id :toggle-all-details :label "Fold / Unfold All"}
-   {:id :toggle-detail-labels :label "Label Folds — jump to one"}
-   {:id :toggle-help :label "Keyboard Shortcuts"}])
+   {:id :toggle-thinking-summary
+    :group "Conversation"
+    :label "Thinking Summary"
+    :description "Show or hide the summary of model thinking"
+    :show-when :thinking-summary}
+   {:id :toggle-all-details
+    :group "Conversation"
+    :label "Fold / Unfold All"
+    :description "Open or close every fold"}
+   {:id :toggle-detail-labels
+    :group "Conversation"
+    :label "Label Folds — jump to one"
+    :description "Put a key on each fold, then press it to jump"}
+   {:id :settings :group "Settings" :label "Settings" :description "Open all settings"}
+   {:id :session-settings
+    :group "Settings"
+    :label "Session settings"
+    :description "Settings for this session only"}
+   {:id :group-settings
+    :group "Settings"
+    :label "Group settings"
+    :description "Settings for this session group"}
+   {:id :project-settings
+    :group "Settings"
+    :label "Project settings"
+    :description "Settings for this project"}
+   {:id :providers
+    :group "Settings"
+    :label "Providers"
+    :description "Add model providers and sign in"}
+   {:id :mcp :group "Settings" :label "MCP Servers" :description "Add, start and stop MCP servers"}
+   {:id :automations
+    :group "Settings"
+    :label "Automations"
+    :description "Run prompts on a schedule or a webhook"}
+   {:id :toggle-help
+    :group "Help"
+    :label "Keyboard Shortcuts"
+    :description "Show every key binding"}])
 
 (defn fork-turn-items
   "Rows for the fork-at-turn palette (`searchable-select!`), one per turn of the
@@ -8899,11 +9014,39 @@
                true))
     palette-commands))
 
+(defn palette-items
+  "Rows of the command palette: `commands` and then `extra-commands`, grouped under one
+   section header for each `:group`, in the order that the groups first appear. A
+   command without `:group` goes under \"More\". Each command gets its direct keybind
+   as `:hint` and a `:search-text` of its label, description and group, so a typed
+   query also finds a command by what it does."
+  [commands extra-commands]
+  (let [rows
+        (mapv (fn [{:keys [id label description group] :as c}]
+                (let [group (or group "More")]
+                  (cond-> (assoc c
+                            :group group
+                            :search-text (str/join " " (remove nil? [label description group])))
+                    (keyword? id)
+                    (assoc :hint (keymap/label-for id)))))
+              (concat commands extra-commands))
+
+        groups
+        (distinct (map :group rows))
+
+        by-group
+        (group-by :group rows)]
+
+    (into []
+          (mapcat (fn [group]
+                    (cons {:section? true :label group} (get by-group group))))
+          groups)))
+
 (defn command-palette!
   "Show the searchable command palette. Returns the FULL chosen command map
    (so the caller's `run-command!` can read `:id` and any slash keys), or nil
-   on Esc. `extra-commands` are the engine slash roots appended after the
-   built-ins. Opened with C-x C-p (Emacs C-x prefix + Ctrl+P).
+   on Esc. `extra-commands` are appended to their `:group` section, or under
+   \"More\". Opened with C-x p.
 
    `ctx` (`{:has-turns? bool}`) gates context-only verbs via
    [[palette-commands-for]] — without turns the Fork Session entries are not
@@ -8911,13 +9054,17 @@
   ([^TerminalScreen screen] (command-palette! screen [] nil))
   ([^TerminalScreen screen extra-commands] (command-palette! screen extra-commands nil))
   ([^TerminalScreen screen extra-commands ctx]
-   ;; Each built-in carries its direct keybind as a dim right-aligned `:hint`
-   ;; (opencode-style), so the palette doubles as a live keymap reference;
-   ;; palette-only verbs and slash roots have no chord, so no hint.
-   (let [with-hints (mapv (fn [c]
-                            (assoc c :hint (keymap/label-for (:id c))))
-                          (palette-commands-for ctx))]
-     (searchable-select! screen "Command Palette" (vec (concat with-hints extra-commands))))))
+   ;; Each row shows its description in a dim middle column and its direct
+   ;; keybind as a dim right-aligned `:hint`, so the palette doubles as a live
+   ;; keymap reference; palette-only verbs have no chord, so no hint.
+   (list-dialog! screen
+                 "Command Palette"
+                 (palette-items (palette-commands-for ctx) extra-commands)
+                 {:filter? true
+                  :placeholder "Type to search commands…"
+                  :enter-label "run"
+                  :height :content
+                  :max-rows 40})))
 
 (defn model-picker!
   "Searchable per-session model picker — TUI parity with the web footer
