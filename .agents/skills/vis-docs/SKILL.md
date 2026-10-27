@@ -36,4 +36,3 @@ Keep the modules of `resources/vis-docs/site.edn` in this order:
 - On the public site, show the Extension Center link at the end of the **Extensions** module.
 - In the README, call the introduction `Rationale` and list the manual in module order.
 - `docs-modules-test` and `packages/vis-agent/tests/test_api_guides.py` check these rules.
-- Use the same terms in extension guides and executable examples.
