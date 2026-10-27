@@ -1990,7 +1990,8 @@
           (do (p/set-colors! g t/footer-fg-muted t/code-block-bg)
               (p/put-str! g text-col y (p/ellipsize (str (:table-label meta)) room)))
 
-          2
+          ;; A blank line keeps the button apart from the type and size.
+          3
           (when target
             (let [hovered
                   (.hovered interactions/hit-map)
@@ -5180,9 +5181,9 @@
   (when (and width height) (timg/cell-size {:w width :h height} thumb-w image-table-thumb-rows)))
 
 (defn- image-table-block-rows
-  "Rows of one picture in the image table: its thumbnail, but at least the three text lines."
+  "Rows of one picture in the image table: its thumbnail, but at least the four text lines."
   ^long [image graphical? thumb-w]
-  (max 3 (long (or (when graphical? (:rows (image-table-box image thumb-w))) 0))))
+  (max 4 (long (or (when graphical? (:rows (image-table-box image thumb-w))) 0))))
 
 (defn image-table-rows
   "Rows the image table card paints for `images` (`[{:width :height}]`) in `content-w`

@@ -6291,6 +6291,10 @@
                                        (:line-meta (data :kitty (md [[1206 2622]]))))))]
           (expect (= 8 (long (:rows img))))
           (expect (< (long (:cols img)) 24))))
+    (it "keeps a blank line above the Open externally button"
+        (let [rows (filter #(= :image-table (:card-part %))
+                           (:line-meta (data nil (md [[1600 900]]))))]
+          (expect (= [0 1 2 3] (mapv :table-line rows)))))
     (it "rules the thumbnail column off from the text column"
         (let [{:keys [line-meta]}
               (data :kitty (md [[1600 900] [1206 2622]]))
