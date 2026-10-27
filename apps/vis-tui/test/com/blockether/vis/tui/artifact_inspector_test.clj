@@ -38,22 +38,20 @@
     "index" 2}])
 
 (defn- paint-component
-  [component]
-  (cap/capture! {:cols 96
-                 :rows 24
-                 :paint! (fn [{:keys [g]}]
-                           (let [state
-                                 (:init component)
+  ([component] (paint-component component (:init component)))
+  ([component state]
+   (cap/capture! {:cols 96
+                  :rows 40
+                  :paint! (fn [{:keys [g]}]
+                            (let [geom
+                                  ((:measure component) state 96 40)
 
-                                 geom
-                                 ((:measure component) state 96 24)
+                                  state
+                                  (if-let [reconcile (:reconcile component)]
+                                    (reconcile state geom)
+                                    state)]
 
-                                 state
-                                 (if-let [reconcile (:reconcile component)]
-                                   (reconcile state geom)
-                                   state)]
-
-                             ((:paint component) g state geom)))}))
+                              ((:paint component) g state geom)))})))
 
 ;; Regression, td-848743: C-x i had no surface when only model output existed.
 (defdescribe
@@ -68,7 +66,8 @@
         (expect (str/includes? text "Ready to send"))
         (expect (str/includes? text "diagram.png"))
         (expect (str/includes? text "Produced in this session"))
-        (expect (str/includes? text "decision.html  v2  ·  2 versions"))
+        (expect (str/includes? text "decision.html"))
+        (expect (str/includes? text "v2 · 2 versions"))
         (expect (str/includes? text "notes.pdf"))))
   (it "lists a PLAN file from an old session with the other artifacts"
       (let [artifacts
@@ -163,7 +162,7 @@
 (defdescribe
   artifact-inspector-paging
   (it
-    "pages across attachment headings while keeping a selectable row focused"
+    "pages by whole table rows and keeps the selected row on screen"
     (let [attachments
           (mapv (fn [idx]
                   {"filename" (str "note-" idx ".txt") "version" 1})
@@ -197,8 +196,114 @@
           up
           (step down KeyType/PageUp)]
 
-      (expect (<= (dec (:list-h geom)) (:selected down)))
+      (expect (< 0 (:selected down) (:list-h geom)))
+      (expect (str/includes? (cap/frame-text (paint-component component down))
+                             (str "note-" (- 49 (long (:selected down))) ".txt")))
       (expect (= 0 (:selected up))))))
+
+(defn- png-head
+  "The first bytes of a PNG file of `w`x`h` pixels: enough to read its size."
+  [w h]
+  (let [buf (java.nio.ByteBuffer/allocate 33)]
+    (.put buf (byte-array (map unchecked-byte [0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A])))
+    (.putInt buf 13)
+    (.put buf (.getBytes "IHDR" "US-ASCII"))
+    (.putInt buf (int w))
+    (.putInt buf (int h))
+    (.put buf (byte-array [8 6 0 0 0]))
+    (.array buf)))
+
+(defdescribe
+  artifact-inspector-table
+  (let [sent
+        [{:path "/tmp/table-shot.png"
+          :mime "image/png"
+          :name "table-shot.png"
+          :width 800
+          :height 400
+          :label "PNG · 800x400"}]
+
+        thumbnail
+        (fn [row]
+          (when (= :sent (:source row))
+            {:path "/tmp/table-shot.png" :mime "image/png" :width 800 :height 400}))]
+
+    (it "draws each attachment as a ruled table row with a type badge in the thumbnail cell"
+        (let [text (cap/frame-text (paint-component
+                                     (inspector/inspector-modal-component staged [] produced nil)))]
+          (expect (str/includes? text "┬"))
+          (expect (str/includes? text "┼"))
+          (expect (str/includes? text "┴"))
+          (expect (str/includes? text "│ notes.pdf"))
+          (expect (str/includes? text "PDF"))
+          (expect (str/includes? text "PDF · 200B"))))
+    (it "places each visible thumbnail inside its cell"
+        (let [painted
+              (atom nil)
+
+              component
+              (inspector/inspector-modal-component []
+                                                   sent
+                                                   produced
+                                                   nil
+                                                   {:thumbnail thumbnail
+                                                    :paint-images! #(reset! painted %)})
+
+              geom
+              ((:measure component) (:init component) 96 24)
+
+              state
+              ((:reconcile component) (:init component) geom)
+
+              _
+              ((:after-refresh component) state geom)
+
+              [{:keys [row col img]}]
+              @painted]
+
+          (expect (= 1 (count @painted)))
+          (expect (= "/tmp/table-shot.png" (:path img)))
+          (expect (<= 1 (:cols img) 12))
+          (expect (<= 1 (:rows img) 3))
+          (expect (< (long (get-in geom [:bounds :left])) (long col)))
+          (expect (<= (long (:content-top geom)) (long row)))))
+    (it "paints no thumbnails without a picture source"
+        (expect (nil? (:after-refresh (inspector/inspector-modal-component [] sent [] nil)))))
+    (it
+      "loads a produced picture once in the background and keeps local pictures as they are"
+      (let [calls
+            (atom 0)
+
+            gate
+            (promise)
+
+            row
+            {:source :produced
+             :filename "chart.png"
+             :media-type "image/png"
+             :iteration-id (str (random-uuid))
+             :index 0}]
+
+        (with-redefs [vis/gateway-iteration-attachment-bytes (fn [& _]
+                                                               (swap! calls inc)
+                                                               @gate
+                                                               (png-head 640 480))]
+          (let [load (inspector/thumbnail-loader "session-1")
+                first-answer (load row)
+                _ (deliver gate true)
+                done
+                (loop [n 0]
+                  (let [v (load row)]
+                    (if (and (= :loading v) (< n 200)) (do (Thread/sleep 10) (recur (inc n))) v)))]
+
+            (expect (= :loading first-answer))
+            (expect (= {:mime "image/png" :width 640 :height 480}
+                       (select-keys done [:mime :width :height])))
+            (expect (= 1 @calls))
+            (expect
+              (nil? (load {:source :produced :filename "notes.pdf" :media-type "application/pdf"})))
+            (expect (= {:path "/tmp/table-shot.png" :mime "image/png" :width 800 :height 400}
+                       (load (first (inspector/inspector-rows [] sent [])))))))))))
 
 (defdescribe
   artifact-inspector-gateway
@@ -284,8 +389,9 @@
   (it "shows the app title and its lifecycle state"
       (let [text (cap/frame-text (paint-component
                                    (inspector/inspector-modal-component [] [] app-artifacts nil)))]
-        (expect (str/includes? text "Second review  ·  App  ·  Disconnected"))
-        (expect (str/includes? text "Review  ·  App"))))
+        (expect (str/includes? text "Second review"))
+        (expect (str/includes? text "App · Disconnected"))
+        (expect (str/includes? text "│ Review"))))
   (it "opens an app on the app surface and other text in its viewer"
       (let [enter (fn [artifacts]
                     (let [component (inspector/inspector-modal-component [] [] artifacts nil)]

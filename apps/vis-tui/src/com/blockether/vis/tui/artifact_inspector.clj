@@ -146,201 +146,348 @@
 
 (defn- size-label [size] (when (number? size) (fmt/format-bytes size)))
 
-(defn- row-label
-  [{:keys [source filename media-type size version version-count title app-status label] :as row}]
-  (cond (app-model/app-row? row) (str (or (not-empty (str title)) filename)
-                                      "  ·  App"
-                                      (when app-status
-                                        (str "  ·  " (get app-model/status-label app-status))))
-        (and (= :sent source) (not (str/blank? label))) (str filename "  ·  " label)
-        :else (str filename
-                   (when (= source :produced)
-                     (str (when version (str "  v" version))
-                          (when (> (long version-count) 1)
-                            (str "  ·  " version-count " versions"))))
-                   "  ·  "
-                   media-type
-                   (when-let [label (size-label size)]
-                     (str "  ·  " label)))))
+(def ^:private thumb-cols "Thumbnail column width of the attachment table." 12)
 
-(defn- display-rows
+(def ^:private block-h "Rows of one attachment in the table: its thumbnail and its text." 3)
+
+(defn- image-row?
+  [{:keys [media-type] :as row}]
+  (and (not (app-model/app-row? row)) (str/starts-with? (str media-type) "image/")))
+
+(defn- kind-badge
+  "The short type name that the thumbnail cell shows for a row without a picture."
+  [{:keys [filename media-type] :as row}]
+  (if (app-model/app-row? row)
+    "App"
+    (or (some-> (or (re-find #"\.([A-Za-z0-9]{1,5})$" (str filename))
+                    (re-find #"/([A-Za-z0-9]{1,5})$" (str media-type)))
+                second
+                str/upper-case)
+        "File")))
+
+(defn- row-lines
+  "The text lines of one attachment row: its name, then its details."
+  [{:keys [source filename size version version-count title app-status label] :as row}]
+  (if (app-model/app-row? row)
+    [(or (not-empty (str title)) filename)
+     (str "App" (when app-status (str " · " (get app-model/status-label app-status))))]
+    (if (= :sent source)
+      [filename (not-empty (str label))]
+      [filename (str/join " · " (remove nil? [(kind-badge row) (size-label size)]))
+       (when (= source :produced)
+         (not-empty (str/join " · "
+                              (remove nil?
+                                [(when version (str "v" version))
+                                 (when (and version-count (> (long version-count) 1))
+                                   (str version-count " versions"))]))))])))
+
+(defn- table-lines
+  "The painted lines of the attachment table. Each section has a heading and a ruled
+   table. An attachment owns [[block-h]] lines `{:block index :line n}`, where `index`
+   is its place in `rows`."
   [rows load-error]
-  (let [staged
-        (filterv #(= :staged (:source %)) rows)
-
-        sent
-        (filterv #(= :sent (:source %)) rows)
-
-        produced
-        (filterv #(= :produced (:source %)) rows)]
-
-    (cond-> []
-      (seq staged)
-      (into (cons {:header "Ready to send"} staged))
-
-      (seq sent)
-      (into (cons {:header "Sent in this session"} sent))
-
-      (seq produced)
-      (into (cons {:header "Produced in this session"} produced))
-
+  (let [section (fn [heading source]
+                  (when-let [items (seq (keep-indexed #(when (= source (:source %2)) %1) rows))]
+                    (-> [{:header heading} {:rule "┬"}]
+                        (into (comp (map (fn [i]
+                                           (mapv #(hash-map :block i :line %) (range block-h))))
+                                    (interpose [{:rule "┼"}])
+                                    cat)
+                              items)
+                        (conj {:rule "┴"}))))]
+    (cond-> (into []
+                  cat
+                  [(section "Ready to send" :staged) (section "Sent in this session" :sent)
+                   (section "Produced in this session" :produced)])
       (and (empty? rows) load-error)
       (conj {:empty load-error})
 
       (and (empty? rows) (nil? load-error))
       (conj {:empty "No attachments in this session"}))))
 
-(defn- selected-display-index
-  ^long [display selected]
-  (loop [idx
-         0
+(defn- block-span
+  "The first and last line of attachment `selected` in `lines`, with the heading and
+   rules around it, so that a scroll shows the whole table row."
+  [lines selected]
+  (let [start
+        (long (or (first (keep-indexed
+                           #(when (and (= selected (:block %2)) (zero? (long (:line %2)))) %1)
+                           lines))
+                  0))
 
-         selectable
-         -1]
+        first-line
+        (loop [k start]
+          (if (and (pos? k) (not (:block (nth lines (dec k))))) (recur (dec k)) k))
 
-    (if-let [row (nth display idx nil)]
-      (let [selectable (if (:source row) (inc selectable) selectable)]
-        (if (= selectable selected) idx (recur (inc idx) selectable)))
-      0)))
+        last-line
+        (min (dec (count lines)) (+ start (long block-h)))]
+
+    [first-line last-line]))
+
+(defn- thumbnail-region
+  "The terminal picture of attachment `row` at screen `row-top`, or nil without one."
+  [thumbnail row left row-top]
+  (let [{:keys [path mime width height] :as picture} (when thumbnail (thumbnail row))]
+    (when (and (map? picture) path width height)
+      (let [{:keys [cols rows]} (timg/cell-size {:w width :h height} thumb-cols block-h)]
+        {:row (+ (long row-top) (quot (- (long block-h) (long rows)) 2))
+         :col (+ (long left) 2 (quot (- (long thumb-cols) (long cols)) 2))
+         :img {:id (str "attachment-table/" path)
+               :path path
+               :mime mime
+               :cols cols
+               :rows rows
+               :width width
+               :height height}}))))
+
+(defn- paint-table-line!
+  "Paint one line of the attachment table."
+  [g item rows thumbnail selected {:keys [left inner-w]} y]
+  (let [left
+        (long left)
+
+        inner-w
+        (long inner-w)
+
+        rule-x
+        (+ left 2 (long thumb-cols) 1)
+
+        text-x
+        (+ rule-x 2)
+
+        text-w
+        (max 1 (- (+ left inner-w) text-x 1))]
+
+    (cond (:header item) (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                             (p/put-str! g (+ left 2) y (:header item)))
+          (:empty item)
+          (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+              (p/put-str! g (+ left 2) y (p/ellipsize (:empty item) (max 1 (- inner-w 3)))))
+          (:rule item) (do (p/set-colors! g t/turn-separator-fg t/dialog-bg)
+                           (p/put-str! g
+                                       (+ left 2)
+                                       y
+                                       (p/joined-horiz-line [(- rule-x left 2)
+                                                             (- (+ left inner-w) rule-x 2)]
+                                                            (first (:rule item)))))
+          :else
+          (let [i
+                (long (:block item))
+
+                line
+                (long (:line item))
+
+                row
+                (nth rows i)
+
+                selected?
+                (= i (long selected))
+
+                text
+                (nth (row-lines row) line nil)
+
+                picture
+                (when thumbnail (thumbnail row))]
+
+            (when (and (= 1 line) (not (map? picture)))
+              (let [badge (p/ellipsize (if (= :loading picture) "…" (kind-badge row)) thumb-cols)]
+                (p/set-colors! g t/dialog-hint t/dialog-bg)
+                (p/put-str! g
+                            (+ left 2 (quot (- (long thumb-cols) (long (p/display-width badge))) 2))
+                            y
+                            badge)))
+            ;; The selection marks the text side, so the thumbnail keeps its own background.
+            (p/set-colors! g t/dialog-fg t/dialog-bg)
+            (p/styled g
+                      (p/selection-styles selected?)
+                      (p/fill-rect! g (inc rule-x) y (- (+ left inner-w) rule-x 2) 1)
+                      (when text
+                        (p/set-colors! g
+                                       (if (or selected? (zero? line)) t/dialog-fg t/dialog-hint)
+                                       t/dialog-bg)
+                        (if (zero? line)
+                          (p/styled g [p/BOLD] (p/put-str! g text-x y (p/ellipsize text text-w)))
+                          (p/put-str! g text-x y (p/ellipsize text text-w)))))
+            (p/set-colors! g t/turn-separator-fg t/dialog-bg)
+            (p/put-str! g rule-x y "│")))
+    (p/clear-styles! g)))
+
+(defn- thumbnail-reader
+  "A `:read-key` that also wakes the modal when a thumbnail finishes loading."
+  [thumbnail rows]
+  (let [pictures
+        #(mapv thumbnail (filter image-row? rows))
+
+        seen
+        (volatile! (pictures))]
+
+    (fn [screen]
+      (loop []
+
+        (let [now (pictures)]
+          (cond (dlg/modal-input-pending? screen) (do (vreset! seen now)
+                                                      (dlg/read-modal-key! screen))
+                (not= now @seen) (do (vreset! seen now) nil)
+                (some #{:loading} now) (do (Thread/sleep 30) (recur))
+                :else (dlg/read-modal-key! screen)))))))
 
 (defn inspector-modal-component
-  "Pure attachment inspector. Enter opens an app on its app surface, a sent picture in
-   the image viewer and any other row in its viewer; o keeps the external opener."
-  [staged sent artifacts load-error]
-  (let [rows
-        (inspector-rows staged sent artifacts)
+  "Pure attachment inspector: one table row for each attachment, with a thumbnail cell, a
+   rule and the name and details. Enter opens an app on its app surface, a sent picture in
+   the image viewer and any other row in its viewer; o keeps the external opener.
 
-        display
-        (display-rows rows load-error)
+   `opts` can hold `:thumbnail`, a function from a row to its picture (`{:path :mime :width
+   :height}`, `:loading` or nil), and `:paint-images!`, which receives the picture regions
+   after each refresh. Without them, each thumbnail cell shows the type of its attachment."
+  ([staged sent artifacts load-error]
+   (inspector-modal-component staged sent artifacts load-error nil))
+  ([staged sent artifacts load-error {:keys [thumbnail paint-images!]}]
+   (let [rows
+         (inspector-rows staged sent artifacts)
 
-        total
-        (long (count rows))]
+         lines
+         (table-lines rows load-error)
 
-    {:init {:selected 0 :scroll 0}
-     :measure (fn [_ cols rows-count]
-                (let [footer
-                      (cond-> [["↑/↓" "move"] ["Enter" "read"] ["o" "external"]]
-                        (seq staged)
-                        (conj ["Del" "remove"])
+         total
+         (long (count rows))
 
-                        true
-                        (conj ["Esc" "close"]))
+         page
+         #(max 1 (quot (long (:list-h %)) (inc (long block-h))))]
 
-                      content-w
-                      (dlg/default-content-width cols)
+     (cond-> {:init {:selected 0 :scroll 0}
+              :measure (fn [_ cols rows-count]
+                         (let [footer
+                               (cond-> [["↑/↓" "move"] ["Enter" "read"] ["o" "external"]]
+                                 (seq staged)
+                                 (conj ["Del" "remove"])
 
-                      content-h-req
-                      (min 18 (max 3 (inc (count display))))
+                                 true
+                                 (conj ["Esc" "close"]))
 
-                      bounds
-                      (dlg/dialog-bounds cols rows-count content-w content-h-req)
+                               content-w
+                               (dlg/default-content-width cols)
 
-                      {:keys [content-top content-h hint-row]}
-                      (dlg/dialog-layout bounds)
+                               content-h-req
+                               (min (max 3 (count lines)) (max 3 (- (long rows-count) 8)))
 
-                      list-h
-                      (max 1 (long content-h))]
+                               bounds
+                               (dlg/dialog-bounds cols rows-count content-w content-h-req)
 
-                  {:cols cols
-                   :rows rows-count
-                   :footer footer
-                   :content-w content-w
-                   :content-h-req content-h-req
-                   :bounds bounds
-                   :content-top content-top
-                   :content-h content-h
-                   :hint-row hint-row
-                   :list-h list-h}))
-     :reconcile (fn [{:keys [selected scroll] :as state} {:keys [list-h]}]
-                  (let [selected
-                        (p/clamp (long selected) 0 (max 0 (dec (long total))))
+                               {:keys [content-top content-h hint-row]}
+                               (dlg/dialog-layout bounds)]
 
-                        display-index
-                        (long (selected-display-index display selected))
+                           {:cols cols
+                            :rows rows-count
+                            :footer footer
+                            :content-w content-w
+                            :content-h-req content-h-req
+                            :bounds bounds
+                            :content-top content-top
+                            :content-h content-h
+                            :hint-row hint-row
+                            :list-h (max 1 (long content-h))}))
+              :reconcile (fn [{:keys [selected scroll] :as state} {:keys [list-h]}]
+                           (let [selected
+                                 (p/clamp (long selected) 0 (max 0 (dec total)))
 
-                        max-scroll
-                        (max 0 (- (long (count display)) (long list-h)))
+                                 [first-line last-line]
+                                 (block-span lines selected)
 
-                        scroll
-                        (-> (long scroll)
-                            (min display-index)
-                            (max (inc (- display-index (long list-h))))
-                            (p/clamp 0 max-scroll))]
+                                 max-scroll
+                                 (max 0 (- (long (count lines)) (long list-h)))
 
-                    (assoc state
-                      :selected selected
-                      :scroll scroll)))
-     :paint (fn [g {:keys [selected scroll]}
-                 {:keys [cols rows footer content-w content-h-req bounds content-top content-h
-                         hint-row list-h]}]
-              (let [{:keys [left inner-w]}
-                    bounds
+                                 scroll
+                                 (-> (long scroll)
+                                     (max (inc (- (long last-line) (long list-h))))
+                                     (min (long first-line))
+                                     (p/clamp 0 max-scroll))]
 
-                    selected-display
-                    (selected-display-index display selected)]
+                             (assoc state
+                               :selected selected
+                               :scroll scroll)))
+              :paint
+              (fn [g {:keys [selected scroll]}
+                   {screen-rows :rows
+                    :keys [cols footer content-w content-h-req bounds content-top content-h hint-row
+                           list-h]}]
+                (let [{:keys [left inner-w]} bounds]
+                  (dlg/draw-dialog-chrome! g cols screen-rows "Attachments" content-w content-h-req)
+                  (p/set-colors! g t/dialog-fg t/dialog-bg)
+                  (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
+                  (dotimes [i (min (long list-h) (- (count lines) (long scroll)))]
+                    (paint-table-line! g
+                                       (nth lines (+ (long scroll) (long i)))
+                                       rows
+                                       thumbnail
+                                       selected
+                                       bounds
+                                       (+ (long content-top) (long i))))
+                  (dlg/draw-hint-bar! g left hint-row inner-w footer)
+                  nil))
+              :on-key
+              (fn [{:keys [selected] :as state} ^KeyStroke key geom]
+                (let [clamp-selected
+                      #(p/clamp (long %) 0 (max 0 (dec total)))
 
-                (dlg/draw-dialog-chrome! g cols rows "Attachments" content-w content-h-req)
-                (p/set-colors! g t/dialog-fg t/dialog-bg)
-                (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
-                (dotimes [i (min (long list-h) (- (count display) (long scroll)))]
-                  (let [display-index (+ (long scroll) (long i))
-                        item (nth display display-index)
-                        row (+ (long content-top) (long i))]
+                      selected-row
+                      (nth rows selected nil)]
 
-                    (cond (:header item) (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                                             (p/put-str! g (+ (long left) 2) row (:header item)))
-                          (:empty item) (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                                            (p/put-str! g
-                                                        (+ (long left) 2)
-                                                        row
-                                                        (p/ellipsize (:empty item)
-                                                                     (max 1 (- (long inner-w) 3)))))
-                          :else (dlg/draw-selectable-row! g
-                                                          left
-                                                          row
-                                                          inner-w
-                                                          (= display-index selected-display)
-                                                          (row-label item)))))
-                (dlg/draw-hint-bar! g left hint-row inner-w footer)
-                nil))
-     :on-key
-     (fn [{:keys [selected] :as state} ^KeyStroke key {:keys [list-h]}]
-       (let [clamp-selected
-             #(p/clamp % 0 (max 0 (dec (long total))))
+                  (condp = (.getKeyType key)
+                    KeyType/Escape {::dlg/done nil}
+                    KeyType/ArrowUp (assoc state :selected (clamp-selected (dec (long selected))))
+                    KeyType/ArrowDown (assoc state :selected (clamp-selected (inc (long selected))))
+                    KeyType/PageUp
+                    (assoc state :selected (clamp-selected (- (long selected) (long (page geom)))))
+                    KeyType/PageDown
+                    (assoc state :selected (clamp-selected (+ (long selected) (long (page geom)))))
+                    KeyType/Home (assoc state :selected 0)
+                    KeyType/End (assoc state :selected (max 0 (dec total)))
+                    KeyType/Enter {::dlg/done (when selected-row
+                                                {:action (cond
+                                                           (and (= :produced (:source selected-row))
+                                                                (app-model/app-row? selected-row))
+                                                           :app
+                                                           (= :sent (:source selected-row)) :view
+                                                           :else :open)
+                                                 :row selected-row})}
+                    KeyType/Character (if (and (= \o (.getCharacter key)) selected-row)
+                                        {::dlg/done {:action :open :row selected-row}}
+                                        state)
+                    KeyType/Delete {::dlg/done (when (= :staged (:source selected-row))
+                                                 {:action :remove :row selected-row})}
+                    KeyType/Backspace {::dlg/done (when (= :staged (:source selected-row))
+                                                    {:action :remove :row selected-row})}
+                    state)))}
+       paint-images!
+       (assoc :after-refresh
+         (fn [{:keys [scroll]} {:keys [bounds content-top list-h]}]
+           (paint-images!
+             (into []
+                   (keep (fn [k]
+                           (let [k
+                                 (long k)
 
-             selected-row
-             (nth rows selected nil)]
+                                 item
+                                 (nth lines k nil)]
 
-         (condp = (.getKeyType key)
-           KeyType/Escape {::dlg/done nil}
-           KeyType/ArrowUp (assoc state :selected (clamp-selected (dec (long selected))))
-           KeyType/ArrowDown (assoc state :selected (clamp-selected (inc (long selected))))
-           KeyType/PageUp (assoc state
-                            :selected (dlg/page-selected-index display selected list-h -1 :source))
-           KeyType/PageDown (assoc state
-                              :selected (dlg/page-selected-index display selected list-h 1 :source))
-           KeyType/Home (assoc state :selected 0)
-           KeyType/End (assoc state :selected (max 0 (dec (long total))))
-           KeyType/Enter {::dlg/done (when selected-row
-                                       {:action (cond (and (= :produced (:source selected-row))
-                                                           (app-model/app-row? selected-row))
-                                                      :app
-                                                      (= :sent (:source selected-row)) :view
-                                                      :else :open)
-                                        :row selected-row})}
-           KeyType/Character (if (and (= \o (.getCharacter key)) selected-row)
-                               {::dlg/done {:action :open :row selected-row}}
-                               state)
-           KeyType/Delete {::dlg/done (when (= :staged (:source selected-row))
-                                        {:action :remove :row selected-row})}
-           KeyType/Backspace {::dlg/done (when (= :staged (:source selected-row))
-                                           {:action :remove :row selected-row})}
-           state)))}))
+                             (when (and item
+                                        (zero? (long (:line item -1)))
+                                        (< (+ k (dec (long block-h)))
+                                           (+ (long scroll) (long list-h))))
+                               (thumbnail-region thumbnail
+                                                 (nth rows (:block item))
+                                                 (:left bounds)
+                                                 (+ (long content-top) (- k (long scroll))))))))
+                   (range scroll (+ (long scroll) (long list-h)))))))
+
+       thumbnail
+       (assoc :read-key (thumbnail-reader thumbnail rows))))))
 
 (defn show!
   "Open the inspector and return its selected action, or nil on close."
-  [^TerminalScreen screen staged sent artifacts load-error]
-  (dlg/run-modal! screen (inspector-modal-component staged sent artifacts load-error)))
+  ([screen staged sent artifacts load-error] (show! screen staged sent artifacts load-error nil))
+  ([^TerminalScreen screen staged sent artifacts load-error opts]
+   (dlg/run-modal! screen (inspector-modal-component staged sent artifacts load-error opts))))
 
 (def ^:private image-zoom-max
   "Largest zoom of the image viewer, as a multiple of the fitted picture."
@@ -826,3 +973,69 @@
            (with-open [out (FileOutputStream. target)]
              (.write out bytes))
            target))))))
+
+(defonce ^:private thumbnails
+  ;; [session-id iteration-id index], or [source path] for a local file -> a delay of the
+  ;; picture or of the Future that downloads it.
+  (atom {}))
+
+(defn- picture
+  [^File file mime]
+  (when (and file (.isFile file))
+    (when-let [{:keys [w h]} (timg/probe-dimensions (.getPath file) mime)]
+      {:path (.getPath file) :mime mime :width w :height h})))
+
+(defn- download-thumbnail
+  [session-id {:keys [media-type filename] :as row}]
+  (try (picture (materialize-artifact! session-id
+                                       row
+                                       (File. (System/getProperty "java.io.tmpdir")
+                                              "vis-attachment-thumbnails"))
+                media-type)
+       (catch Throwable e
+         (tel/log! {:level :warn
+                    :id ::thumbnail-failed
+                    :error e
+                    :data {:session-id (str session-id) :filename filename}}
+                   "could not load an attachment thumbnail")
+         nil)))
+
+(defn thumbnail-loader
+  "A function from an inspector row to its thumbnail: `{:path :mime :width :height}`,
+   `:loading` while the bytes of a produced picture download, or nil. Each picture
+   downloads once for each process."
+  [session-id]
+  (fn [{:keys [source media-type attachment image iteration-id index] :as row}]
+    (when (image-row? row)
+      (let [path
+            (some-> (case source
+                      :staged
+                      (:path attachment)
+
+                      :sent
+                      (:path image)
+
+                      nil)
+                    str
+                    not-empty)
+
+            k
+            (if (= :produced source) [(str session-id) iteration-id index] [source path])
+
+            make
+            #(if (= :produced source)
+               (delay (vis/worker-future "vis-tui-attachment-thumbnail"
+                                         (fn []
+                                           (download-thumbnail session-id row))))
+               (delay (if (and (:width image) (:height image))
+                        {:path path :mime media-type :width (:width image) :height (:height image)}
+                        (some-> path
+                                File.
+                                (picture media-type)))))
+
+            loaded
+            @(get (swap! thumbnails update k #(or % (make))) k)]
+
+        (if (instance? java.util.concurrent.Future loaded)
+          (if (realized? loaded) @loaded :loading)
+          loaded)))))

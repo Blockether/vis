@@ -6291,6 +6291,25 @@
                                        (:line-meta (data :kitty (md [[1206 2622]]))))))]
           (expect (= 8 (long (:rows img))))
           (expect (< (long (:cols img)) 24))))
+    (it "rules the thumbnail column off from the text column"
+        (let [{:keys [line-meta]}
+              (data :kitty (md [[1600 900] [1206 2622]]))
+
+              joints
+              (keep :table-joint line-meta)
+
+              rows
+              (filter #(= :image-table (:card-part %)) line-meta)
+
+              rule-col
+              (:table-rule-col (first rows))]
+
+          (expect (= ["┬" "┼" "┴"] joints))
+          (expect (every? #(= rule-col (:table-rule-col %)) rows))
+          (expect (< (long rule-col) (long (:table-text-col (first rows)))))
+          (expect (every? #(< (+ (long (:image-col-offset %)) (long (:cols (:img %))))
+                              (long rule-col))
+                          (filter :img rows)))))
     (it "several pictures share one card with one row block each"
         (let [{:keys [line-meta]}
               (data :kitty (md [[1600 900] [1206 2622] [1200 900]]))

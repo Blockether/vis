@@ -1975,7 +1975,10 @@
 
         (when (and (zero? line) (not (:table-preview? meta)))
           (p/set-colors! g t/footer-fg-muted t/code-block-bg)
-          (p/put-str! g (+ x 2) y "No preview"))
+          (p/put-str! g
+                      (+ x 2)
+                      y
+                      (p/ellipsize "No preview" (max 1 (- (long (:table-rule-col meta 13)) 3)))))
         (case line
           0
           (do (p/set-colors! g t/text-fg t/code-block-bg)
@@ -2054,6 +2057,21 @@
           (p/put-str! g (inc x) y (repeat-str \─ inner)))
 
       (do (p/put-str! g x y "│") (p/put-str! g right y "│")))
+    ;; An image table rules its thumbnail column off from the text column.
+    (when-let [rule-col (:table-rule-col meta)]
+      (let [col (+ x (long rule-col))]
+        (case part
+          :top
+          (p/put-str! g col y (str (:table-joint meta)))
+
+          :separator
+          (do (p/set-colors! g t/answer-sep-fg paper)
+              (p/put-str! g col y (str (:table-joint meta))))
+
+          :image-table
+          (do (p/set-colors! g t/answer-sep-fg paper) (p/put-str! g col y "│"))
+
+          nil)))
     (when-let [title (and (= :top part) (not-empty (:card-title meta)))]
       (p/set-colors! g t/text-fg t/code-block-bg)
       (p/styled g
@@ -5354,105 +5372,111 @@
    thumbnail opens the image viewer at that picture, and the footer tells how to open the
    viewer. A terminal without inline pictures shows the same table without thumbnails."
   [nodes content-w {:keys [session-turn-id] :as opts}]
-  (let [parts
-        (mapv image-block-parts nodes)
+  (let
+    [parts
+     (mapv image-block-parts nodes)
 
-        images
-        (mapv image-view-entry parts)
+     images
+     (mapv image-view-entry parts)
 
-        viewable
-        (filterv :path images)
+     viewable
+     (filterv :path images)
 
-        graphical?
-        (timg/graphical-terminal?)
+     graphical?
+     (timg/graphical-terminal?)
 
-        first-id
-        (or (some-> (re-find #"#(\d+)" (:summary (first parts)))
-                    second)
-            "0")
+     first-id
+     (or (some-> (re-find #"#(\d+)" (:summary (first parts)))
+                 second)
+         "0")
 
-        node-id
-        (str (detail-node-id {:session-turn-id session-turn-id
-                              :section (:image-section opts :user)
-                              :kind :image
-                              :details-path ["table" first-id]}))
+     node-id
+     (str (detail-node-id {:session-turn-id session-turn-id
+                           :section (:image-section opts :user)
+                           :kind :image
+                           :details-path ["table" first-id]}))
 
-        separator
-        (attachment-card-row :separator "" {})
+     thumb-w
+     (image-table-thumb-w content-w)
 
-        thumb-w
-        (image-table-thumb-w content-w)
+     rule-col
+     (+ 2 (long thumb-w) 1)
 
-        block
-        (fn [i {:keys [path mime width height name label size-label] :as image}]
-          (let [box
-                (when (and graphical? path) (image-table-box image thumb-w))
+     rule
+     (fn [part joint]
+       (attachment-card-row part "" {:table-rule-col rule-col :table-joint joint}))
 
-                img
-                (when box
-                  {:id (str node-id "/" path)
-                   :path path
-                   :mime mime
-                   :cols (:cols box)
-                   :rows (:rows box)
-                   :width width
-                   :height height})
+     block
+     (fn [i {:keys [path mime width height name label size-label] :as image}]
+       (let [box
+             (when (and graphical? path) (image-table-box image thumb-w))
 
-                view
-                (when path {:images viewable :index (count (filter :path (take i images)))})
+             img
+             (when box
+               {:id (str node-id "/" path)
+                :path path
+                :mime mime
+                :cols (:cols box)
+                :rows (:rows box)
+                :width width
+                :height height})
 
-                target
-                (when path
-                  {:doc {:path path :mime mime :name name :size-label size-label :title name}})
+             view
+             (when path {:images viewable :index (count (filter :path (take i images)))})
 
-                rows
-                (image-table-block-rows image graphical? thumb-w)
+             target
+             (when path
+               {:doc {:path path :mime mime :name name :size-label size-label :title name}})
 
-                label
-                (if path label (str label " · Unavailable"))
+             rows
+             (image-table-block-rows image graphical? thumb-w)
 
-                img-col
-                (+ 2 (quot (- (long thumb-w) (long (or (:cols box) 0))) 2))]
+             label
+             (if path label (str label " · Unavailable"))
 
-            (mapv (fn [r]
-                    (attachment-card-row :image-table
-                                         (case (long r)
-                                           0
-                                           name
+             img-col
+             (+ 2 (quot (- (long thumb-w) (long (or (:cols box) 0))) 2))]
 
-                                           1
-                                           label
+         (mapv (fn [r]
+                 (attachment-card-row :image-table
+                                      (case (long r)
+                                        0
+                                        name
 
-                                           "")
-                                         (cond-> {:table-line r
-                                                  :table-text-col (+ 2 (long thumb-w) 3)
-                                                  :table-name name
-                                                  :table-label label
-                                                  :table-target target
-                                                  :table-preview? (some? img)}
-                                           ;; Each row of the thumbnail carries the picture, so it paints and
-                                           ;; opens the image viewer.
-                                           (and img (< (long r) (long (:rows box))))
-                                           (assoc :kind
-                                             (if (zero? (long r)) :image :image-pad) :img
-                                             img :img-idx
-                                             r :image-col-offset
-                                             img-col :view
-                                             view :node-id
-                                             node-id))))
-                  (range rows))))
+                                        1
+                                        label
 
-        hint-text
-        (if graphical?
-          "Click a thumbnail or press Ctrl+X Shift+I to view pictures. Ctrl+X Shift+O opens the newest."
-          "This terminal cannot show pictures. Ctrl+X Shift+O opens the newest one.")
+                                        "")
+                                      (cond-> {:table-line r
+                                               :table-rule-col rule-col
+                                               :table-text-col (+ 2 (long thumb-w) 3)
+                                               :table-name name
+                                               :table-label label
+                                               :table-target target
+                                               :table-preview? (some? img)}
+                                        ;; Each row of the thumbnail carries the picture, so it paints and
+                                        ;; opens the image viewer.
+                                        (and img (< (long r) (long (:rows box))))
+                                        (assoc :kind
+                                          (if (zero? (long r)) :image :image-pad) :img
+                                          img :img-idx
+                                          r :image-col-offset
+                                          img-col :view
+                                          view :node-id
+                                          node-id))))
+               (range rows))))
 
-        hint
-        (attachment-card-row :image-table-hint hint-text {:table-hint hint-text})]
+     hint-text
+     (if graphical?
+       "Click a thumbnail or press Ctrl+X Shift+I to view pictures. Ctrl+X Shift+O opens the newest."
+       "This terminal cannot show pictures. Ctrl+X Shift+O opens the newest one.")
 
-    (-> [(attachment-card-row :top "" {})]
-        (into (comp (interpose [separator]) cat) (map-indexed block images))
-        (conj separator hint (attachment-card-row :bottom "" {})))))
+     hint
+     (attachment-card-row :image-table-hint hint-text {:table-hint hint-text})]
+
+    (-> [(rule :top "┬")]
+        (into (comp (interpose [(rule :separator "┼")]) cat) (map-indexed block images))
+        (conj (rule :separator "┴") hint (attachment-card-row :bottom "" {})))))
 
 (defn- table-block-parts
   "Parse a `vis-table` node body — the header lines `attach` writes, then the

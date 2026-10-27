@@ -2993,12 +2993,25 @@
       (let [{:keys [artifacts error]} (artifact-inspector/fetch-session-artifacts! session-id)
             sent (sent-images (:messages @state/app-db))]
 
-        (when-let [{:keys [action row]} (with-dialog-lock #(artifact-inspector/show!
-                                                             screen
-                                                             (:attachments @state/app-db)
-                                                             sent
-                                                             artifacts
-                                                             error))]
+        (when-let [{:keys [action row]}
+                   (with-dialog-lock
+                     #(try (artifact-inspector/show!
+                             screen
+                             (:attachments @state/app-db)
+                             sent
+                             artifacts
+                             error
+                             (when (timg/graphical-terminal?)
+                               {:thumbnail (artifact-inspector/thumbnail-loader session-id)
+                                :paint-images! (fn [regions]
+                                                 (swap! modal-images assoc
+                                                   :own
+                                                   (mapv (fn [region]
+                                                           (update region :col frame/screen-column))
+                                                         regions))
+                                                 (paint-modal-images!))}))
+                           ;; The thumbnails leave the graphics layer with the modal.
+                           (finally (drop-terminal-images!))))]
           (case action
             :remove
             (do (state/dispatch [:remove-attachment (get-in row [:attachment :id])]) (recur))
