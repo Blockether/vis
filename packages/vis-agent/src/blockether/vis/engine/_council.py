@@ -347,9 +347,9 @@ class Council:
 
         The parent must be active, as for ``spawn``: an idle parent gets
         ``inactive-session``. The child keeps its whole context in its own session.
-        A stop of the parent's turn cancels its children; its next turn can resume
-        them. A child without
-        iterations left needs ``extend`` first. A running child needs ``wait``.
+        A stop of the parent's turn cancels its children. The next turn of the parent
+        can resume them. A child without iterations left needs ``extend`` first.
+        A running child needs ``wait``.
         ``files`` replaces the file grant of the child for the follow-up task.
         """
         body: dict[str, Any] = {

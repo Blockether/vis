@@ -1687,10 +1687,12 @@
 
 (defn resume-agent
   "Give a finished or cancelled subagent a follow-up task in its own session, with its whole
-   context. A stop of the leader's turn cancels its children; its next turn can continue them.
-   Then wait like council.run and return the records. A Council ping continues the child the same way,
-   without the wait. A child without iterations left needs council.extend first. A running child
-   needs council.wait. timeout_secs defaults to 240 (max 1800).
+   context. Then wait like council.run and return the records. timeout_secs defaults to 240
+   (max 1800).
+
+   A stop of the leader's turn cancels its children. The next turn of the leader can continue
+   them. A Council ping continues the child the same way, without the wait. A child without
+   iterations left needs council.extend first. A running child needs council.wait.
 
    files gives the follow-up task its own write, read_only and deny rules, like a task dict. They
    replace the grant of the child in the same call, so a read-only reviewer can then edit its
