@@ -56,7 +56,7 @@
         io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
         metosin/reitit-ring {:mvn/version "0.10.1"}
         org.apache.commons/commons-compress {:mvn/version "1.28.0"}
-        org.babashka/http-client {:mvn/version "0.4.25"}
+        org.babashka/http-client {:mvn/version "0.4.26"}
         ;; X.509 minting for the egress proxy's per-session MITM CA. No provider is registered;
         ;; bcpkix uses the default JCA signer, which the native image can build.
         org.bouncycastle/bcpkix-jdk18on {:mvn/version "1.85"}
@@ -87,7 +87,7 @@
    ;; :replace-deps keeps the engine classpath out; keep these pins equal to the :deps above.
    :audit {:main-opts ["scripts/gen_audit.clj"]
            :replace-deps {babashka/fs {:mvn/version "0.5.34"}
-                          org.babashka/http-client {:mvn/version "0.4.25"}
+                          org.babashka/http-client {:mvn/version "0.4.26"}
                           org.clojure/clojure {:mvn/version "1.12.6"}}}
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
                  org.apache.commons/commons-compress {:mvn/version "1.28.0"}

@@ -176,7 +176,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `io.github.tonsky/clojure-plus` | `1.7.2` | MIT | 33 KB | 3rd-party |
 | `metosin/reitit-ring` | `0.10.1` | EPL-1.0 | 9 KB | 3rd-party |
 | `org.apache.commons/commons-compress` | `1.28.0` | Apache-2.0 | 1.1 MB | 3rd-party |
-| `org.babashka/http-client` | `0.4.25` | MIT | 16 KB | 3rd-party |
+| `org.babashka/http-client` | `0.4.26` | MIT | 16 KB | 3rd-party |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | Bouncy Castle Licence | 1.3 MB | 3rd-party |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | Bouncy Castle Licence | 9.8 MB | 3rd-party |
 | `org.clojure/clojure` | `1.12.6` | EPL-1.0 | 4.0 MB | 3rd-party |
