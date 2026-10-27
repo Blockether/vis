@@ -966,14 +966,16 @@
           (with-redefs [toggles/enabled? (constantly false)]
             (expect (nil? (council 'prompt nil))))))))
 
-(defdescribe wake-continuation-guidance-test
-             (it "wake continuation guidance"
-                 (with-council
-                   (let [prompt (council 'prompt nil)]
-                     (expect (str/includes? prompt "If that task is clear and safe, continue it"))
-                     (expect (str/includes? prompt
-                                            "When a peer declines ownership, the task stays yours"))
-                     (expect (str/includes? prompt "its authorization carries over"))))))
+(defdescribe
+  wake-continuation-guidance-test
+  (it
+    "wake continuation guidance"
+    (with-council
+      (let [prompt (council 'prompt nil)]
+        (expect
+          (str/includes?
+            prompt
+            "On a wake, continue only the related unfinished task, within the permissions of the user."))))))
 
 (defdescribe
   independent-store-and-reopen-test
