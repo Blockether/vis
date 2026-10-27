@@ -10015,6 +10015,28 @@
                  (reset! driven false)
                  (expect (true? (evict-if-idle! k 5000 :idle-timeout str)))
                  (expect (not (contains? @env-cache k))))
+               (finally (swap! env-cache dissoc k)))))
+    (it "puts the session to sleep: the disposal keeps the children of its Python"
+        ;; Regression: an idle sandbox stop killed every process that its Python had
+        ;; started. Only a gateway stop or a closed session ends them.
+        (let [k
+              "reaper-test/sleep"
+
+              entry
+              (new-cache-entry {})
+
+              seen
+              (atom [])]
+
+          (swap! env-cache assoc k entry)
+          (try (backdate-entry! entry 10000)
+               (with-redefs [loop-env/dispose-environment!
+                             (fn [_ cause _]
+                               (swap! seen conj [cause python-worker/*keep-children?*]))]
+
+                 (expect (true? (evict-if-idle! k 5000 :idle-timeout str)))
+                 (expect (= [[:idle-timeout true]] @seen))
+                 (expect (false? python-worker/*keep-children?*)))
                (finally (swap! env-cache dissoc k)))))))
 
 (def ^:private reap-idle-envs! (deref #'loop-env/reap-idle-envs!))

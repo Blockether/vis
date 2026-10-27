@@ -1716,7 +1716,7 @@ print(worker_value)"))))
   ;; Regression: a gateway stop left the children of a trusted extension worker
   ;; running. The worker exited on EOF alone, so nothing killed its process group.
   (it
-    "kills each worker's process group and every spare, and installs the exit hook"
+    "kills every process that a worker started, every spare, and installs the exit hook"
     (let [key
           (worker/extension-worker-key (str (java.util.UUID/randomUUID)))
 
@@ -1738,7 +1738,10 @@ print(worker_value)"))))
       (worker/keep-spares! nil nil)
       (try (worker/exec! key
                          com.blockether.vis-python-runtime/default-session
-                         "import subprocess\n__vis_child__ = subprocess.Popen(['sleep', '600'])\n")
+                         (str "import subprocess\n"
+                              "__vis_child__ = subprocess.Popen(['sleep', '600'])\n"
+                              "__vis_detached__ = subprocess.Popen(['sleep', '601'],"
+                              " start_new_session=True)\n"))
            (worker/keep-spares! "pass\n" [nil])
            (let [^Process process
                  (:process (get @@#'worker/workers key))
@@ -1750,7 +1753,8 @@ print(worker_value)"))))
                  ^Process spare
                  (:process @(get @@#'worker/spares nil))]
 
-             (expect (seq children))
+             ;; Both children, also the one outside the worker's process group.
+             (expect (<= 2 (count children)))
              (expect (realized? @#'worker/stop-on-exit))
              (worker/stop!)
              (expect (gone? (into [(.pid process) (.pid spare)] children)))
@@ -1759,6 +1763,51 @@ print(worker_value)"))))
              ;; A second stop finds nothing and still ends cleanly.
              (expect (nil? (worker/stop!))))
            (finally (worker/keep-spares! nil nil) (worker/stop-worker! key))))))
+
+(defdescribe sleeping-worker-test
+             ;; Regression: an idle sandbox stop killed the processes that its Python started.
+             ;; A sleeping worker keeps them; only `stop!` ends them.
+             (it
+               "keeps the children of a sleeping worker until the worker stop"
+               (let [key
+                     (worker/extension-worker-key (str (java.util.UUID/randomUUID)))
+
+                     alive?
+                     (fn [^java.lang.ProcessHandle handle]
+                       (.isAlive handle))
+
+                     gone?
+                     (fn [handles]
+                       (loop [attempt 0]
+                         (cond (not-any? alive? handles) true
+                               (< attempt 500) (do (Thread/sleep 10) (recur (inc attempt)))
+                               :else false)))]
+
+                 (try (worker/exec!
+                        key
+                        com.blockether.vis-python-runtime/default-session
+                        "import subprocess\n__vis_child__ = subprocess.Popen(['sleep', '600'])\n")
+                      (let [^Process process
+                            (:process (get @@#'worker/workers key))
+
+                            handle
+                            (.toHandle process)
+
+                            children
+                            (with-open [stream (.descendants handle)]
+                              (vec (iterator-seq (.iterator stream))))]
+
+                        (expect (= 1 (count children)))
+                        (binding [worker/*keep-children?* true]
+                          (worker/stop-worker! key))
+                        (expect (gone? [handle]))
+                        (Thread/sleep 300)
+                        (expect (every? alive? children))
+                        (expect (every? (set @@#'worker/kept-children) children))
+                        (worker/stop!)
+                        (expect (gone? children))
+                        (expect (empty? @@#'worker/kept-children)))
+                      (finally (worker/stop-worker! key))))))
 
 (defdescribe trusted-worker-missing-packages-test
              (it "never creates a missing project packages directory"

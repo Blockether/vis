@@ -27,6 +27,7 @@
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
+            [com.blockether.vis.internal.python.worker :as python-worker]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
@@ -1318,7 +1319,8 @@
    sandbox drives an open owned view ([[drives-owned-view?]]). Lock-guarded and
    re-checked under the lock, so it never races a live turn or a concurrent
    `close!`. `cause` and `(detail-fn idle-ms)` say why, for the log. Returns true
-   iff it evicted."
+   iff it evicted. Eviction only puts the session to sleep, so the processes that
+   its Python started keep running."
   [k min-idle-ms cause detail-fn]
   (let [entry
         (get @cache k)
@@ -1340,7 +1342,8 @@
                (when (and cur
                           (>= (long idle) (long min-idle-ms))
                           (not (drives-owned-view? (:environment cur))))
-                 (try (dispose-environment! (:environment cur) cause (detail-fn idle))
+                 (try (binding [python-worker/*keep-children?* true]
+                        (dispose-environment! (:environment cur) cause (detail-fn idle)))
                       (catch Throwable _ nil))
                  (swap! cache dissoc k)
                  true))

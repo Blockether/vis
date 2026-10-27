@@ -52,6 +52,7 @@
             [taoensso.telemere :as tel])
   (:import (com.blockether.vispython Locations Sources)
            (java.io File FileOutputStream)
+           (java.lang ProcessHandle)
            (java.lang.management ManagementFactory)
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
            (java.nio.channels SelectionKey Selector ServerSocketChannel SocketChannel)
@@ -602,21 +603,76 @@
 
 (defn- alive? [state] (and state (.isAlive ^Process (:process state))))
 
+(def ^:dynamic *keep-children?*
+  "True while a stop only puts a session to sleep, such as an idle sandbox. Such a
+   stop ends the worker process but keeps the processes that it started. They stay
+   in [[kept-children]] until [[stop!]]. Every other stop ends the whole tree."
+  false)
+
+(defonce ^:private kept-children
+  ;; ProcessHandle of each process that a sleeping worker left running. `stop!`
+  ;; ends them and their descendants. A handle checks the start time, so a reused
+  ;; pid is never signalled.
+  (atom #{}))
+
+(defn- process-tree
+  "Every descendant of `handle` that is alive now, also one that left the process
+   group with `setsid`. A process started after this call is not in it."
+  [^ProcessHandle handle]
+  (try (with-open [stream (.descendants handle)]
+         (vec (iterator-seq (.iterator stream))))
+       (catch Throwable _ [])))
+
+(defn- end-processes!
+  "Send SIGTERM to each of `handles`, wait at most `wait-ms` for all, then send
+   SIGKILL to each one that is still alive."
+  [handles wait-ms]
+  (doseq [^ProcessHandle handle handles]
+    (try (.destroy handle) (catch Throwable _ nil)))
+  (let [deadline (+ (long (util/now-ms)) (long wait-ms))]
+    (doseq [^ProcessHandle handle handles]
+      (try (.get (.onExit handle) (max 0 (- deadline (long (util/now-ms)))) TimeUnit/MILLISECONDS)
+           (catch Throwable _ nil))))
+  (doseq [^ProcessHandle handle handles]
+    (try (when (.isAlive handle) (.destroyForcibly handle)) (catch Throwable _ nil))))
+
 (defn- stop-state!
   "Stop one started worker process. Closing the socket releases every pending
-   parent call; a child that does not leave promptly is force-killed."
+   parent call; a child that does not leave promptly is force-killed. Without
+   [[*keep-children?*]], also end every process that the worker started."
   [state]
   ;; Lifecycle cancellation is explicit, not an authorization or crash error.
   (let [[pending _] (reset-vals! (:pending (:peer state)) {})]
     (doseq [[_ waiting] pending]
       (deliver waiting {"error" "Python worker stopped by session lifecycle cancellation"})))
-  (try (.close ^SocketChannel (:channel (:peer state))) (catch Throwable _ nil))
-  (let [^Process process (:process state)]
-    (.destroy process)
-    (try (when-not (.waitFor process 200 TimeUnit/MILLISECONDS) (.destroyForcibly process))
-         (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil))))
-    (try (prune-empty-run-dir! process (:log state)) (catch Throwable _ nil))))
+  (let [^Process process
+        (:process state)
 
+        ;; A JailedProcess has no handle once its process is gone.
+        ^ProcessHandle handle
+        (try (.toHandle process) (catch Throwable _ nil))
+
+        ;; Take the tree before the worker dies: its orphans move to init.
+        tree
+        (if handle (process-tree handle) [])]
+
+    (try (.close ^SocketChannel (:channel (:peer state))) (catch Throwable _ nil))
+    (if *keep-children?*
+      (do (swap! kept-children (fn [kept]
+                                 (into (into #{} (filter #(.isAlive ^ProcessHandle %)) kept) tree)))
+          ;; EOF ends the worker alone. Signal its pid, never its process group.
+          (when handle
+            (try (when-not (.waitFor process 200 TimeUnit/MILLISECONDS)
+                   (.destroy handle)
+                   (when-not (.waitFor process 200 TimeUnit/MILLISECONDS)
+                     (.destroyForcibly handle)))
+                 (catch Throwable _ (try (.destroyForcibly handle) (catch Throwable _ nil))))))
+      (do (.destroy process)
+          (try (when-not (.waitFor process 200 TimeUnit/MILLISECONDS) (.destroyForcibly process))
+               (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil))))
+          ;; A process that left the group with `setsid` gets no group signal.
+          (end-processes! tree 200)))
+    (try (prune-empty-run-dir! process (:log state)) (catch Throwable _ nil))))
 (defonce ^:private spare-warmup
   ;; Python that a spare trusted worker runs before its first context. Nil keeps no spares.
   (atom nil))
@@ -1036,9 +1092,10 @@
   10000)
 
 (defn stop!
-  "Stop every worker and every spare, in parallel. Idempotent. A worker that
-   outlives this process exits on EOF alone and leaves the children of its process
-   group running, so a JVM shutdown hook calls this for every host."
+  "Stop every worker and every spare, in parallel, and end every process that a
+   worker started, also those that sleeping workers kept. Idempotent. A worker that
+   outlives this process exits on EOF alone and leaves its children running, so a
+   JVM shutdown hook calls this for every host."
   []
   (let [spare-futures
         (locking spares
@@ -1051,16 +1108,26 @@
 
         stops
         (doall (concat (map (fn [k]
-                              (future (stop-worker! k)))
+                              (future (binding [*keep-children?* false]
+                                        (stop-worker! k))))
                             (keys @workers))
                        (map (fn [spare]
                               (future (when-let [state (try (deref spare STOP_ALL_MS nil)
                                                             (catch Throwable _ nil))]
-                                        (stop-state! state))))
+                                        (binding [*keep-children?* false]
+                                          (stop-state! state)))))
                             spare-futures)))]
 
     (doseq [stop stops]
-      (try (deref stop (max 0 (- deadline (long (util/now-ms)))) nil) (catch Throwable _ nil))))
+      (try (deref stop (max 0 (- deadline (long (util/now-ms)))) nil) (catch Throwable _ nil)))
+    (let [[kept _]
+          (reset-vals! kept-children #{})
+
+          alive
+          (filter #(.isAlive ^ProcessHandle %) kept)]
+
+      (end-processes! (distinct (concat (mapcat process-tree alive) alive))
+                      (min 1000 (max 0 (- deadline (long (util/now-ms))))))))
   (reset! worker-policy-fns {})
   (reset! retired-workers {})
   nil)
