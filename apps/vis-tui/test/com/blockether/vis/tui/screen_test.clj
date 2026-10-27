@@ -3149,44 +3149,51 @@ therapy line 2"
                        (expect (= {:project-id (str pid)} @asked))
                        (expect (= ["a" "b"] (mapv #(get % "id") members))))))))
 
-(defdescribe fitting-image-placements-test
-             ;; A picture whose reserved box runs past the BOTTOM of the transcript
-             ;; band must shrink whole (aspect-preserving) into the rows that are
-             ;; left — never source-crop to a decapitated top slice. Source-cropping
-             ;; is only right when the user has scrolled INTO the picture.
-             (let [fit
-                   (deref #'screen/fitting-image-placements)
+(defdescribe
+  fitting-image-placements-test
+  ;; Regression, this Vis session (paraphrased: "thumbnails shrink while I scroll; in a
+  ;; table they must keep one width and height"): a picture that crosses an edge of the
+  ;; transcript band keeps its box and shows only its visible rows.
+  (let [fit
+        (deref #'screen/fitting-image-placements)
 
-                   img
-                   {:path "/tmp/shot.png" :cols 40 :rows 40}
+        img
+        {:id "turn/image/1" :path "/tmp/shot.png" :cols 40 :rows 40 :width 800 :height 800}
 
-                   band
-                   (fn [n first-idx row0]
-                     (mapv
-                       (fn [i]
-                         {:row (+ (long row0) i) :col 2 :img img :img-idx (+ (long first-idx) i)})
-                       (range n)))]
+        band
+        (fn band ([n first-idx row0] (band n first-idx row0 img)) ([n first-idx row0 img]
+                                                                   (mapv (fn [i]
+                                                                           {:row (+ (long row0) i)
+                                                                            :col 2
+                                                                            :img img
+                                                                            :img-idx
+                                                                            (+ (long first-idx) i)})
+                                                                     (range n))))]
 
-               (it "kitty: a bottom-overflowing box shrinks to the visible rows"
-                   (with-redefs [timg/images-protocol (constantly :kitty)]
-                     (let [got (:img (first (fit (band 10 0 5) 0 15)))]
-                       (expect (= 10 (long (:rows got))))
-                       (expect (= 10 (long (:cols got))))
-                       (expect (nil? (:crop-bottom got))))))
-               (it "kitty: a box scrolled INTO still source-crops at native scale"
-                   (with-redefs [timg/images-protocol (constantly :kitty)]
-                     (let [got (:img (first (fit (band 20 20 0) 0 30)))]
-                       (expect (= 40 (long (:rows got))))
-                       (expect (= 20 (long (:crop-top got)))))))
-               (it "iterm2 normalizes every partial image into the visible rows"
-                   (with-redefs [timg/images-protocol (constantly :iterm2)]
-                     (let [bottom (:img (first (fit (band 10 0 5) 0 15)))
-                           scrolled (:img (first (fit (band 20 20 0) 0 30)))]
+    (it "keeps a whole picture as it is"
+        (with-redefs [timg/images-protocol (constantly :iterm2)]
+          (expect (= img (:img (first (fit (band 40 0 0) 0 50)))))))
+    (it "kitty: cuts a picture at the bottom edge and keeps its size"
+        (with-redefs [timg/images-protocol (constantly :kitty)]
+          (let [[{:keys [row img]}] (fit (band 10 0 5) 0 15)]
+            (expect (= 5 row))
+            (expect (= [40 40 0 30] ((juxt :rows :cols :crop-top :crop-bottom) img))))))
+    (it "kitty: cuts a picture scrolled into at the top edge and keeps its size"
+        (with-redefs [timg/images-protocol (constantly :kitty)]
+          (let [[{:keys [row img]}] (fit (band 20 20 0) 0 30)]
+            (expect (= 0 row))
+            (expect (= [40 40 20 0] ((juxt :rows :cols :crop-top :crop-bottom) img))))))
+    (it "iterm2: shows the visible rows as a source view at the same scale"
+        (with-redefs [timg/images-protocol (constantly :iterm2)]
+          (let [bottom (:img (first (fit (band 10 0 5) 0 15)))
+                scrolled (:img (first (fit (band 20 20 0) 0 30)))]
 
-                       (expect (= 10 (long (:rows bottom))))
-                       (expect (= 10 (long (:cols bottom))))
-                       (expect (= 20 (long (:rows scrolled))))
-                       (expect (= 20 (long (:cols scrolled)))))))))
+            (expect (= [10 40 {:x 0 :y 0 :w 800 :h 200}] ((juxt :rows :cols :view) bottom)))
+            (expect (= [20 40 {:x 0 :y 400 :w 800 :h 400}] ((juxt :rows :cols :view) scrolled)))
+            (expect (not= (:id bottom) (:id scrolled)) "each slice is its own upload"))))
+    (it "drops a cut picture of unknown size until it is whole on screen"
+        (with-redefs [timg/images-protocol (constantly :iterm2)]
+          (expect (empty? (fit (band 10 0 5 (dissoc img :width :height)) 0 15)))))))
 
 (defdescribe
   kitty-multiple-image-placement-test

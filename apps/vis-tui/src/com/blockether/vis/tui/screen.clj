@@ -2035,19 +2035,47 @@
            :history (:copy-history m)
            :node-id (:node-id m)})))))
 
+(defn- visible-slice
+  "`img` cut to the rows `crop-top` to `crop-top` + `visible` of its full box, at the same
+   scale. Kitty cuts with its source rectangle; another protocol gets the slice as a
+   source `:view` in pixels, the same way the image viewer shows a zoomed part. Returns
+   nil when the size of the picture is unknown."
+  [img crop-top visible kitty?]
+  (let [full-rows
+        (long (:rows img))
+
+        crop-top
+        (long crop-top)
+
+        visible
+        (long visible)]
+
+    (if kitty?
+      (assoc img
+        :crop-top crop-top
+        :crop-bottom (max 0 (- full-rows crop-top visible)))
+      (when-let [[width height] (and (:width img) (:height img) [(:width img) (:height img)])]
+        (let [height (long height)
+              y (min (dec height) (Math/round (/ (* (double height) crop-top) full-rows)))
+              h (max 1 (min (- height y) (Math/round (/ (* (double height) visible) full-rows))))]
+
+          (assoc img
+            :id (str (or (:id img) (:path img)) "#rows " crop-top "+" visible)
+            :rows visible
+            :height h
+            :view {:x 0 :y y :w (long width) :h h}))))))
+
 (defn- fitting-image-placements
   "Keep every inline-image placement that INTERSECTS the transcript viewport
    `[messages-top, messages-bottom)`, so a partially-scrolled picture stays
    VISIBLE instead of vanishing the instant its box isn't fully on screen.
 
-   The graphics layer can't be cell-clipped to the scroll region, so an image
-   whose box overflows the BOTTOM edge would otherwise paint over the input /
-   footer. Rather than drop it (the old behaviour), clamp the box to the visible
-   row count — shrinking `:rows`/`:cols` together so aspect is preserved — and
-   let the picture render smaller within the band. `draw-chat-bubble!` only
-   records the placement for a row it actually painted, so `:row` is always
-   inside the band and only the bottom edge can overflow. `placements` are the
-   exact painted positions recorded via `render/*image-placements*`."
+   The graphics layer can't be cell-clipped to the scroll region, so a picture
+   that crosses an edge of the band shows only its visible rows, at the same size
+   (see [[visible-slice]]). A picture never shrinks while it scrolls: a thumbnail
+   in a table keeps its cell. A picture without a known pixel size is dropped
+   until it is whole on screen. `placements` are the exact painted positions
+   recorded via `render/*image-placements*`."
   [placements messages-top messages-bottom]
   (let [top
         (long messages-top)
@@ -2079,43 +2107,16 @@
                    img
                    (:img topmost)
 
-                   full-rows
-                   (long (:rows img))
-
-                   cols
-                   (long (or (:cols img) 1))
-
                    crop-top
                    (long (or (:img-idx topmost) 0))
 
                    visible
-                   (count sorted)
+                   (count sorted)]
 
-                   crop-bot
-                   (max 0 (- full-rows crop-top visible))]
-
-               (cond
-                 ;; Fully on screen — unchanged.
-                 (and (zero? crop-top) (zero? crop-bot)) topmost
-                 ;; Kitty, scrolled INTO the picture (its top edge is above the
-                 ;; band): show that vertical slice at native scale via the
-                 ;; protocol's source rectangle.
-                 (and kitty? (pos? crop-top)) (assoc topmost
-                                                :img (assoc img
-                                                       :crop-top crop-top
-                                                       :crop-bottom crop-bot))
-                 ;; Kitty can source-crop an image the user scrolled INTO, keeping
-                 ;; its visible slice at the original scale. iTerm2 cannot, so every
-                 ;; other partial placement scales the whole image into the visible
-                 ;; rows. That makes a tall image visible as soon as any part of its
-                 ;; reserved box reaches the viewport instead of dropping it.
-                 :else (assoc topmost
-                         :img (assoc img
-                                :rows visible
-                                :cols (max 1
-                                           (long (Math/round (* (double cols)
-                                                                (/ (double visible)
-                                                                   (double full-rows))))))))))))
+               (if (and (zero? crop-top) (= visible (long (:rows img))))
+                 topmost
+                 (when-let [slice (visible-slice img crop-top visible kitty?)]
+                   (assoc topmost :img slice))))))
          vec)))
 
 (defonce ^:private image-paint-state
