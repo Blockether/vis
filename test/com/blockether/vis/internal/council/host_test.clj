@@ -248,20 +248,24 @@
                     "Validation and idempotency checks use the request without this field."))
           (expect (str/includes? normalized "The existing thread title stays unchanged."))))))
 
-(defdescribe asynchronous-work-guidance-test
-             (it "asynchronous work guidance"
-                 (with-redefs [toggles/enabled? (constantly true)]
-                   (let [tool-doc (extension/symbol-doc-text (second host/symbols))
-                         prompt (council/prompt {})]
+(defdescribe
+  asynchronous-work-guidance-test
+  (it "asynchronous work guidance"
+      (with-redefs [toggles/enabled? (constantly true)]
+        (let [tool-doc (extension/symbol-doc-text (second host/symbols))
+              prompt (council/prompt {})]
 
-                     (doseq [text [tool-doc prompt]
-                             :let [normalized (str/lower-case (str/replace text #"[\s*]+" " "))]]
+          (doseq [text [tool-doc prompt]
+                  :let [normalized (str/lower-case (str/replace text #"[\s*]+" " "))]]
 
-                       (expect (str/includes? normalized "asynchronous message passing"))
-                       (expect (str/includes? normalized "acceptance criteria"))
-                       (expect (str/includes? normalized "before ending the turn"))
-                       (expect (not (str/includes? normalized "in the receiving iteration"))))
-                     (expect (str/includes? prompt "a reply is terminal"))))))
+            (expect (str/includes? normalized "asynchronous message passing"))
+            (expect (str/includes? normalized "acceptance criteria"))
+            (expect (str/includes? normalized "before ending the turn"))
+            (expect (not (str/includes? normalized "in the receiving iteration"))))
+          (expect (str/includes? prompt "a reply is terminal"))
+          ;; Regression: a leader polled `council.get` on its own request for replies.
+          (expect (str/includes? prompt "A reply to your request arrives as a Council ping."))
+          (expect (str/includes? prompt "Do not poll `council.get` or `council.read` for it."))))))
 
 (defdescribe context-reuse-guidance-test
              (it "context reuse guidance"
