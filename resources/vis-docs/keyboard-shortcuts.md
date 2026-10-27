@@ -291,12 +291,8 @@ works as Alt, such as **Use Option as Meta key** in Terminal.
 When **Projects** or the side panel is open, the screen has more than one area. Only one area
 gets your keys. Vis shows the other areas with faded colors.
 
-| Keys | What they do |
-|---|---|
-| Tab | Go to the next area: Projects, then the chat, then the side panel |
-| Shift+Tab | Go to the previous area |
-
-When only the chat is open, Tab does nothing in the chat.
+Press **Ctrl+O** to go to the next area: Projects, then the chat, then the side panel. After the
+last area, Vis goes back to the first one. When only the chat is open, Ctrl+O does nothing.
 
 ## In Projects
 
@@ -321,8 +317,8 @@ Press **?** to see them in Vis.
 | v | Show or hide archived rows |
 | D (Shift+D) | Delete the row. Vis asks you to confirm first |
 | / | Search sessions |
-| Esc | Return to the chat |
-| Tab or Shift+Tab | Go to the next or previous area |
+| Esc or Tab | Return to the chat |
+| Ctrl+O | Go to the next area |
 
 ## Edit your message
 

@@ -36,7 +36,8 @@
    overlay, the clickable header chips — reads this namespace, so a shortcut is
    defined once and stays in sync."
   (:require [clojure.string :as str]
-            [com.blockether.vis.tui.header-model :as vh]))
+            [com.blockether.vis.tui.header-model :as vh])
+  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (def
   ^{:const true
@@ -369,6 +370,20 @@
 ;; shorter help keys while it has focus.
 (def ^:const quit-key "C-c — quit on an empty draft, else clear it (terminal reflex)." \c)
 
+(def ^:const focus-key
+  "C-o — give the keyboard to the next open area: the project sidebar, the chat or
+   the side panel. Emacs moves between windows with C-x o; Vis drops the prefix."
+  \o)
+
+(defn focus-key?
+  "True when `key` is the `focus-key` chord."
+  [key]
+  (and (instance? KeyStroke key)
+       (= KeyType/Character (.getKeyType ^KeyStroke key))
+       (.isCtrlDown ^KeyStroke key)
+       (not (.isAltDown ^KeyStroke key))
+       (= focus-key (Character/toLowerCase (.charValue (.getCharacter ^KeyStroke key))))))
+
 (def ^:const sidebar-help-key "C-h — open or close help while the sidebar has focus." \h)
 
 (def ^:const sidebar-help-alias-key
@@ -402,8 +417,8 @@
    {:id :add-here :key \+ :label "Add a group, session or project here"}
    {:id :search :key \/ :label "Search sessions"} {:id :refresh :key \r :label "Reload projects"}
    {:id :help :key sidebar-help-alias-key :keys sidebar-help-hint :label "Show these keys"}
-   {:id :back :keys "Esc" :label "Return to the chat"}
-   {:id :areas :keys "Tab · S-Tab" :label "Move to the next or previous area"}
+   {:id :back :keys "Esc · Tab" :label "Return to the chat"}
+   {:id :areas :keys (chord focus-key) :label "Move to the next area"}
    {:id :hide :keys (label-for :switch-project) :label "Hide the sidebar"}
    {:id :rows :keys "↑ ↓ · C-p C-n" :label "Move between rows"}
    {:id :fold :keys "← →" :label "Fold or unfold the row"}

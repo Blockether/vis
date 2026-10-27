@@ -16,6 +16,7 @@
             [com.blockether.vis.tui.terminal-image :as timg]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+           [com.googlecode.lanterna.input KeyStroke]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
@@ -208,23 +209,26 @@
 (defn- focus-of [db] (#'screen/focused-area db))
 
 (defdescribe focus-area-test
-             (it "Tab gives the keyboard to the next open area and Shift+Tab to the previous one"
+             (it "C-o gives the keyboard to the next open area and wraps after the last one"
                  (with-redefs [state/app-db (atom
                                               (assoc-in (areas-db) [:live-panel :focused?] false))]
                    (expect (= :chat (focus-of @state/app-db)))
-                   (expect (true? (#'screen/cycle-focus! @state/app-db 1)))
+                   (expect (true? (#'screen/cycle-focus! @state/app-db)))
                    (expect (= :panel (focus-of @state/app-db)))
-                   (expect (#'screen/cycle-focus! @state/app-db 1))
+                   (expect (#'screen/cycle-focus! @state/app-db))
                    (expect (= :sidebar (focus-of @state/app-db)))
                    (expect (false? (get-in @state/app-db [:live-panel :focused?])))
-                   (expect (#'screen/cycle-focus! @state/app-db 1))
-                   (expect (= :chat (focus-of @state/app-db)))
-                   (expect (#'screen/cycle-focus! @state/app-db -1))
-                   (expect (= :sidebar (focus-of @state/app-db)))))
-             (it "leaves Tab to the composer while the chat is the only open area"
-                 (with-redefs [state/app-db (atom (dissoc (frame-db) :live-panel))]
-                   (expect (nil? (#'screen/cycle-focus! @state/app-db 1)))
+                   (expect (#'screen/cycle-focus! @state/app-db))
                    (expect (= :chat (focus-of @state/app-db)))))
+             (it "does nothing while the chat is the only open area"
+                 (with-redefs [state/app-db (atom (dissoc (frame-db) :live-panel))]
+                   (expect (nil? (#'screen/cycle-focus! @state/app-db)))
+                   (expect (= :chat (focus-of @state/app-db)))))
+             (it "reads C-o, and no plain o, Alt+o or Tab, as the focus key"
+                 (expect (keymap/focus-key? (KeyStroke. \o true false)))
+                 (expect (not (keymap/focus-key? (cap/key-stroke \o))))
+                 (expect (not (keymap/focus-key? (KeyStroke. \o true true))))
+                 (expect (not (keymap/focus-key? (cap/key-stroke :tab)))))
              (it "keeps one focused area when the sidebar or the panel takes the focus"
                  (with-db (fn []
                             (swap! state/app-db merge (areas-db))
@@ -233,17 +237,15 @@
                             (state/dispatch [:live-panel-focus])
                             (expect (true? (get-in @state/app-db [:live-panel :focused?])))
                             (expect (false? (get-in @state/app-db [:project-sidebar :focused?]))))))
-             (it "in the focused panel, ] shows the next owner and Tab moves the focus"
+             (it "in the focused panel, Tab still shows the next owner"
                  (with-redefs [state/app-db (atom (assoc (areas-db)
                                                     :live-views
                                                     (mapv lv/opened
                                                           [(view "a" "Deploy board" "deploy" :panel)
                                                            (view "b" "Job queue" "jobs" :panel)])))]
-                   (expect (#'screen/live-panel-key! nil @state/app-db (cap/key-stroke \])))
-                   (expect (= "jobs" (get-in @state/app-db [:live-panel :tab])))
-                   (expect (= :panel (focus-of @state/app-db)))
                    (expect (#'screen/live-panel-key! nil @state/app-db (cap/key-stroke :tab)))
-                   (expect (= :sidebar (focus-of @state/app-db))))))
+                   (expect (= "jobs" (get-in @state/app-db [:live-panel :tab])))
+                   (expect (= :panel (focus-of @state/app-db))))))
 
 (defn- ink-at
   "The text colour of the first cell of `text` in a frame painted from `db`."

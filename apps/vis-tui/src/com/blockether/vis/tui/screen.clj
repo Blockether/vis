@@ -784,14 +784,13 @@
           :else :chat)))
 
 (defn- cycle-focus!
-  "Tab (`step` 1) and Shift+Tab (`step` -1): give the keyboard to the next or the
-   previous open area, and wrap at the ends. Returns true when the focus moved, or
-   nil while the chat is the only open area."
-  [db step]
+  "C-o: give the keyboard to the next open area, and wrap after the last one.
+   Returns true when the focus moved, or nil while the chat is the only open area."
+  [db]
   (let [areas (focus-areas db)]
     (when (< 1 (count areas))
       (let [at (.indexOf ^java.util.List areas (focused-area db))]
-        (state/dispatch [:focus-area (nth areas (mod (+ at (long step)) (count areas)))])
+        (state/dispatch [:focus-area (nth areas (mod (inc at) (count areas)))])
         (state/dispatch [:bump-render-version])
         true))))
 
@@ -2635,9 +2634,8 @@
 
 (defn- live-panel-key!
   "Keys of the focused side panel. ↑ and ↓ select a view, ← folds it, → unfolds it,
-   Enter lists its controls, ] and [ show the next and the previous owner, Tab and
-   Shift+Tab move the focus to the next area and Esc closes the panel. Returns true
-   when the panel used the key."
+   Enter lists its controls, Tab shows the next owner and Esc closes the panel.
+   Returns true when the panel used the key."
   [screen db ^KeyStroke key]
   (when-let [panes (seq (lv/panel-panes (:live-views db)))]
     (let [{:keys [tab selected]} (:live-panel db)
@@ -2647,46 +2645,35 @@
           selected (lv/panel-selected shown selected)
           idx (long (or (first (keep-indexed #(when (= selected %2) %1) ids)) 0))
           select! #(state/dispatch [:live-panel-select (get ids (max 0 (min (dec (count ids)) %)))])
-          owner! (fn [step]
-                   (when (> (count tabs) 1)
-                     (let [at (long (or (first (keep-indexed #(when (= tab %2) %1) tabs)) 0))]
-                       (state/dispatch [:live-panel-tab
-                                        (get tabs (mod (+ at (long step)) (count tabs)))]))))
-          handled? (case (some-> key
-                                 .getKeyType
-                                 .name)
-                     "ArrowUp"
-                     (do (select! (dec idx)) true)
+          handled?
+          (case (some-> key
+                        .getKeyType
+                        .name)
+            "ArrowUp"
+            (do (select! (dec idx)) true)
 
-                     "ArrowDown"
-                     (do (select! (inc idx)) true)
+            "ArrowDown"
+            (do (select! (inc idx)) true)
 
-                     "ArrowLeft"
-                     (do (state/dispatch [:live-panel-fold selected true]) true)
+            "ArrowLeft"
+            (do (state/dispatch [:live-panel-fold selected true]) true)
 
-                     "ArrowRight"
-                     (do (state/dispatch [:live-panel-fold selected false]) true)
+            "ArrowRight"
+            (do (state/dispatch [:live-panel-fold selected false]) true)
 
-                     "Tab"
-                     (boolean (cycle-focus! db 1))
+            "Tab"
+            (do (when (> (count tabs) 1)
+                  (let [at (long (or (first (keep-indexed #(when (= tab %2) %1) tabs)) 0))]
+                    (state/dispatch [:live-panel-tab (get tabs (mod (inc at) (count tabs)))])))
+                true)
 
-                     "ReverseTab"
-                     (boolean (cycle-focus! db -1))
+            "Escape"
+            (do (state/dispatch [:live-panel-close]) true)
 
-                     "Character"
-                     (if-let [step (when-not (or (.isCtrlDown key) (.isAltDown key))
-                                     ({\] 1 \[ -1} (.getCharacter key)))]
-                       (do (owner! step) true)
-                       false)
+            "Enter"
+            (do (live-controls! screen db (filter #(= selected (lv/view-id %)) shown)) true)
 
-                     "Escape"
-                     (do (state/dispatch [:live-panel-close]) true)
-
-                     "Enter"
-                     (do (live-controls! screen db (filter #(= selected (lv/view-id %)) shown))
-                         true)
-
-                     false)]
+            false)]
 
       (when handled? (state/dispatch [:bump-render-version]))
       handled?)))
@@ -7432,13 +7419,6 @@
       (:blur :blur-pass)
       (state/dispatch [:project-sidebar {:focused? false :adding nil}])
 
-      ;; Tab and Shift+Tab give the keyboard to the next or the previous open area.
-      :focus-next
-      (cycle-focus! @state/app-db 1)
-
-      :focus-previous
-      (cycle-focus! @state/app-db -1)
-
       :focus
       (state/dispatch [:project-sidebar {:focused? true}])
 
@@ -8581,6 +8561,14 @@
                                                       physical-key)
                         (sidebar-key! physical-key))
                    (recur)
+                   ;; C-o gives the keyboard to the next open area from every area. With
+                   ;; only the chat open it does nothing; after C-x it stays C-x C-o.
+                   (and (not @paste-buffer)
+                        (not (overlay-locked? db))
+                        (not (:prefix (:input db)))
+                        (keymap/focus-key? key)
+                        (cycle-focus! db))
+                   (recur)
                    ;; Forms retain ordinary typing; C-x still reaches global navigation.
                    (human-input-owns-key? db key) (do (human-input-key! db key) (recur))
                    ;; The side panel takes its navigation keys only after C-x V gave it focus.
@@ -9597,16 +9585,6 @@
                    ;; label keys never reach the draft or the app-verb dispatch.
                    (and (instance? KeyStroke key) (:detail-labels-active? db))
                    (do (activate-detail-label! screen db key) (recur))
-                   ;; Tab and Shift+Tab give the keyboard to the next or the previous open
-                   ;; area. With only the chat open, the composer keeps them, and C-x TAB
-                   ;; still folds every disclosure.
-                   (and (instance? KeyStroke key)
-                        (not (:prefix (:input db)))
-                        (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType ^KeyStroke key))
-                        (not (.isCtrlDown ^KeyStroke key))
-                        (not (.isAltDown ^KeyStroke key))
-                        (cycle-focus! db (if (= KeyType/Tab (.getKeyType ^KeyStroke key)) 1 -1)))
-                   (recur)
                    :else
                    (let [escaped-char (and (:loading? db) (input/escaped-typing-character key))
                          {:keys [action state character queue-index keybinding]}

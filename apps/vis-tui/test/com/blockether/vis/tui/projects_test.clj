@@ -342,9 +342,9 @@
         (expect (= [:select project-a] (projects/key-action db (cap/key-stroke :enter))))
         (expect (= [:move 1] (projects/key-action db (cap/key-stroke :down))))
         (expect (= [:blur] (projects/key-action db (cap/key-stroke :esc))))
-        ;; Tab and Shift+Tab move the keyboard to the next or the previous open area.
-        (expect (= [:focus-next] (projects/key-action db (cap/key-stroke :tab))))
-        (expect (= [:focus-previous] (projects/key-action db (cap/key-stroke :reverse-tab))))
+        (expect (= [:blur] (projects/key-action db (cap/key-stroke :tab))))
+        ;; C-o reaches the screen, which moves the keyboard to the next open area.
+        (expect (nil? (projects/key-action db (KeyStroke. \o true false))))
         (expect (nil? (projects/key-action db (KeyStroke. \x true false))))
         (expect (nil? (projects/key-action (assoc-in db [:project-sidebar :open?] false)
                                            (cap/key-stroke \+)))))

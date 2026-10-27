@@ -318,12 +318,12 @@
      {:title "Subagents"
       :rows [["Click a subagent row" "Show its timeline, then open its session or stop it"]]}
      {:title "Live views"
-      :rows
-      [[(keymap/label-for :live-panel)
-        "Open the side panel, then move the focus between it and the transcript"]
-       ["↑ · ↓" "Select a view in the focused panel"] ["← · →" "Fold · unfold the selected view"]
-       ["Enter" "List the controls of the selected view"]
-       ["] · [" "Show the views of the next · previous owner"] ["Esc" "Close the side panel"]]}
+      :rows [[(keymap/label-for :live-panel)
+              "Open the side panel, then move the focus between it and the transcript"]
+             ["↑ · ↓" "Select a view in the focused panel"]
+             ["← · →" "Fold · unfold the selected view"]
+             ["Enter" "List the controls of the selected view"]
+             ["Tab" "Show the views of the next owner"] ["Esc" "Close the side panel"]]}
      {:title "Apps"
       :rows [["Enter" "Press the selected button, row or card · edit the selected field"]
              ["s · r" "Send the app · reload it from the gateway"]
@@ -332,7 +332,8 @@
              ["Esc" "Close the app"]]}
      {:title "Project sidebar"
       :rows [[(keymap/label-for :switch-project) "Show or hide the project sidebar"]
-             ["Tab · S-Tab" "Move the focus to the next · previous area: sidebar, chat, side panel"]
+             [(keymap/chord keymap/focus-key)
+              "Move the focus to the next area: sidebar, chat, side panel"]
              [keymap/sidebar-help-hint "List the sidebar keys while the sidebar has focus"]
              ["g · Right-click" "Open the menu of the selected row"]]}
      {:title "Folding"
