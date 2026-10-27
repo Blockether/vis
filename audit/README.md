@@ -197,7 +197,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.57` | LGPL-3.0 | 670 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.58` | LGPL-3.0 | 671 KB | Blockether (in-house) |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
 ### `vis-contract` module
@@ -227,7 +227,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 Dependencies use several licenses, listed above. Vis first-party code uses
 Apache-2.0. Review dependency terms for the intended distribution method — **with the copyleft exception(s) below that need legal sign-off:**
 
-> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.57`) uses LGPL-3.0.** Review source, notice and relinking
+> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.58`) uses LGPL-3.0.** Review source, notice and relinking
 > obligations before distribution, particularly for static native-image builds.
 > Keeping an optional dependency separate may affect those obligations (§4.3).
 

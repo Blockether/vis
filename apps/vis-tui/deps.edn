@@ -26,5 +26,5 @@
         org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
         com.taoensso/telemere {:mvn/version "1.2.1"}
         com.blockether/imaging {:mvn/version "0.1.12"}
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.57"}}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.58"}}
  :paths ["src" "resources"]}
