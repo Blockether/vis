@@ -3478,6 +3478,14 @@
    the generic dispatcher stays a pure command tree while the binary owns
    CLI ergonomics (`vis-agent fix this`, `vis-agent --json summarize`)."
   [& raw-args]
+  ;; #423: temporary files follow VIS_RUNTIME_DIR, so this runs before anything makes one.
+  ;; A refused setting stops Vis: it never falls back to the system temporary directory.
+  (try (paths/install-temp-dir!)
+       (catch clojure.lang.ExceptionInfo e
+         (when-not (= :vis/runtime-dir (:type (ex-data e))) (throw e))
+         (commandline/stderr! (str (ex-message e)
+                                   " Vis does not start until it names a private directory."))
+         (System/exit 1)))
   ;; uv owns every following token, including help, version and child-program flags.
   (when (= ["python" "uv"] (take 2 raw-args))
     (System/exit (python-runtime/uv-command! (drop 2 raw-args))))

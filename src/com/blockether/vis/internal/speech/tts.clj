@@ -443,7 +443,7 @@
         (.generateWithConfigAndCallback tts text gen callback)
 
         out
-        (File/createTempFile "vis-speech-" ".wav")
+        (File/createTempFile "vis-speech-" ".wav" (paths/temp-dir))
 
         samples
         (alength ^floats (.getSamples audio))]

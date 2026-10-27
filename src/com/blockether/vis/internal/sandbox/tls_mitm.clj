@@ -21,7 +21,8 @@
    No JCA provider is registered globally: bcpkix's Jca* builders use the default
    platform signer (SHA256withRSA via SunRsaSign), which keeps this native-image
    friendly and side-effect free."
-  (:require [com.blockether.vis.internal.util :as util])
+  (:require [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io File FileOutputStream)
            (java.math BigInteger)
            (java.security KeyPair KeyPairGenerator KeyStore PrivateKey SecureRandom)
@@ -217,7 +218,7 @@
    no host trust store is modified."
   [^X509Certificate cert roots]
   (let [file
-        (File/createTempFile "vis-ca-" ".p12")
+        (File/createTempFile "vis-ca-" ".p12" (paths/temp-dir))
 
         password
         (str (UUID/randomUUID))

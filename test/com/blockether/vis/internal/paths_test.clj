@@ -259,3 +259,108 @@
                                  (paths/release-held-files! ::other)
                                  (doseq [^File entry (reverse (file-seq dir))]
                                    (.delete entry)))))))
+
+;; #423: an outer sandbox can deny /tmp, so VIS_RUNTIME_DIR also holds temporary files.
+(defn- with-runtime-setting
+  "Run `f` with `vis.runtime.dir` set to `value`, then restore it and `java.io.tmpdir`."
+  [value f]
+  (let [previous-setting
+        (System/getProperty "vis.runtime.dir")
+
+        previous-tmpdir
+        (System/getProperty "java.io.tmpdir")]
+
+    (try (System/setProperty "vis.runtime.dir" (str value))
+         (f)
+         (finally (if previous-setting
+                    (System/setProperty "vis.runtime.dir" previous-setting)
+                    (System/clearProperty "vis.runtime.dir"))
+                  (System/setProperty "java.io.tmpdir" previous-tmpdir)))))
+
+(defn- private-task-dir
+  "A new private directory with its real path, so it has no symbolic link."
+  ^File []
+  (.toFile (.toRealPath (Files/createTempDirectory "vis-423-" (make-array FileAttribute 0))
+                        (make-array java.nio.file.LinkOption 0))))
+
+(defn- delete-tree!
+  [^File dir]
+  (doseq [^File f (reverse (file-seq dir))]
+    (.delete f)))
+
+(defn- refusal
+  "The ex-data and message of the refusal of `setting`, or nil when nothing refused."
+  [setting]
+  (with-runtime-setting setting
+                        (fn []
+                          (try (paths/install-temp-dir!)
+                               nil
+                               (catch clojure.lang.ExceptionInfo e
+                                 (assoc (ex-data e)
+                                   :message (ex-message e)
+                                   :tmpdir (System/getProperty "java.io.tmpdir")))))))
+
+(defdescribe
+  runtime-temp-dir-test
+  (it "changes nothing when the task runtime directory is unset"
+      (let [previous (System/getProperty "java.io.tmpdir")]
+        (with-runtime-setting ""
+                              (fn []
+                                (expect (nil? (paths/install-temp-dir!)))
+                                (expect (= previous (System/getProperty "java.io.tmpdir")))
+                                (expect (= {} (paths/temp-env)))))))
+  (it "moves temporary files into a private directory in the task directory"
+      (let [task (private-task-dir)]
+        (try (with-runtime-setting
+               task
+               (fn []
+                 (let [dir (paths/install-temp-dir!)
+                       expected (.toPath (File. task "tmp"))]
+
+                   (expect (= expected dir))
+                   (expect (= "rwx------"
+                              (java.nio.file.attribute.PosixFilePermissions/toString
+                                (Files/getPosixFilePermissions dir
+                                                               (make-array java.nio.file.LinkOption
+                                                                           0)))))
+                   (expect (= (str expected) (System/getProperty "java.io.tmpdir")))
+                   (expect (= (.toFile expected) (paths/temp-dir)))
+                   (expect (= {"TMPDIR" (str expected)} (paths/temp-env)))
+                   (expect (= expected (paths/install-temp-dir!)) "a second run keeps it")
+                   (let [file (File/createTempFile "vis-423-" ".tmp" (paths/temp-dir))]
+                     (expect (= (.toFile expected) (.getParentFile file)))))))
+             (finally (delete-tree! task)))))
+  (it
+    "fails closed and keeps the temporary directory on a refused setting"
+    (let [task
+          (private-task-dir)
+
+          link
+          (File. (.getParentFile task) (str (.getName task) "-link"))
+
+          shared
+          (doto (File. task "shared") (.mkdirs))
+
+          linked-tmp
+          (doto (File. task "linked") (.mkdirs))
+
+          previous
+          (System/getProperty "java.io.tmpdir")]
+
+      (try (Files/createSymbolicLink (.toPath link) (.toPath task) (make-array FileAttribute 0))
+           (Files/setPosixFilePermissions (.toPath shared)
+                                          (java.nio.file.attribute.PosixFilePermissions/fromString
+                                            "rwxrwxrwx"))
+           (Files/createSymbolicLink (.toPath (File. linked-tmp "tmp"))
+                                     (.toPath task)
+                                     (make-array FileAttribute 0))
+           (doseq [[setting reason] [[(File. task "missing") "does not exist"]
+                                     ["relative/task" "is not an absolute path"]
+                                     [link "contains a symbolic link"]
+                                     [shared "is writable by other users"]
+                                     [linked-tmp "that is not a private directory"]]]
+             (let [{:keys [type message tmpdir]} (refusal setting)]
+               (expect (= :vis/runtime-dir type) (str setting))
+               (expect (str/includes? (str message) reason) (str message))
+               (expect (= previous tmpdir))))
+           (finally (.delete link) (delete-tree! task))))))

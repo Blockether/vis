@@ -25,6 +25,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.capability :as capability]
             [com.blockether.vis.internal.inference.runtime :as runtime]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.speech.files :as files]
             [com.blockether.vis.internal.util :as util])
   (:import [java.io ByteArrayInputStream File InputStream]
@@ -170,7 +171,7 @@
   "Download the platform jar; on shared platforms extract only Sherpa's JNI."
   [token dir shared?]
   (let [^File archive
-        (File/createTempFile "vis-speech-sherpa-" ".jar")
+        (File/createTempFile "vis-speech-sherpa-" ".jar" (paths/temp-dir))
 
         ^File staging
         (when-not shared? (io/file (str dir ".staging-" (System/nanoTime))))]

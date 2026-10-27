@@ -6,6 +6,7 @@
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.speech.files :as files]
             [com.blockether.vis.internal.util :as util])
   (:import [java.io File FileInputStream FileOutputStream]
@@ -195,7 +196,7 @@
 
     (with-open [out (FileOutputStream. archive)]
       (doseq [part parts]
-        (let [^File piece (File/createTempFile "vis-decision-part-" ".zip")]
+        (let [^File piece (File/createTempFile "vis-decision-part-" ".zip" (paths/temp-dir))]
           (try (files/download! (:url part) (str piece) {:sha256 (:sha256 part)})
                (when-not (= (.length piece) (long (:bytes part)))
                  (throw (ex-info "Decision archive part size does not match the manifest"
@@ -229,7 +230,7 @@
          (io/file (str dir ".backup-" (System/nanoTime)))
 
          ^File archive
-         (File/createTempFile "vis-decision-" ".zip")]
+         (File/createTempFile "vis-decision-" ".zip" (paths/temp-dir))]
 
      (if (installed? asset dir)
        (do (.delete archive) dir)

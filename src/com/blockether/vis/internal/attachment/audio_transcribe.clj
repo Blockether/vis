@@ -40,6 +40,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.speech.core :as speech]
             [taoensso.telemere :as tel])
@@ -189,7 +190,8 @@
       (when-let [payload (not-empty (str base64))]
         (let [buffer (.decode (Base64/getDecoder) ^String payload)
               temp (File/createTempFile "vis-recording"
-                                        (container-extension buffer media-type filename))]
+                                        (container-extension buffer media-type filename)
+                                        (paths/temp-dir))]
 
           (with-open [out (FileOutputStream. temp)]
             (.write out ^bytes buffer))

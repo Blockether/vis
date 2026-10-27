@@ -8,7 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- Sandbox: `VIS_RUNTIME_DIR` keeps the control socket of each Python worker in a task directory, not in `/tmp` (#423).
+- Sandbox: `VIS_RUNTIME_DIR` keeps temporary files and the control socket of each Python worker in a task directory, not in `/tmp` (#423).
+
+### Changed
+- Agent: the system prompt tells the model to use `$TMPDIR` or `tempfile`, never a fixed `/tmp` path (#423).
 
 ## [v0.3.4] - 2026-10-26
 

@@ -14,7 +14,8 @@
    recording goes through it
    into a TEMP mono 16 kHz file that is deleted the moment the work is done."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths])
   (:import [java.io File]
            [java.nio.charset StandardCharsets]))
 
@@ -62,7 +63,7 @@
           (ffmpeg-path)
 
           converted
-          (File/createTempFile "vis-transcode" ".wav")]
+          (File/createTempFile "vis-transcode" ".wav" (paths/temp-dir))]
 
       (when-not ffmpeg
         (.delete converted)

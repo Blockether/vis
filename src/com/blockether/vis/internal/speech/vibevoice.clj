@@ -21,6 +21,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.inference.runtime :as runtime]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.speech.asr :as asr]
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.engine :as engine]
@@ -591,7 +592,7 @@
           (speak dir spoken voice {:seed (or seed default-seed) :report report})
 
           out
-          (File/createTempFile "vis-speech-" ".wav")]
+          (File/createTempFile "vis-speech-" ".wav" (paths/temp-dir))]
 
       (write-wav! out samples sample-rate)
       {:audio-path (str out)

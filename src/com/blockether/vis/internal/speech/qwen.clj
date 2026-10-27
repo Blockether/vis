@@ -34,6 +34,7 @@
    caches stay in native memory, as in [[com.blockether.vis.internal.speech.vibevoice]]."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.tts :as tts]
             [com.blockether.vis.internal.speech.vibevoice :as vv]
@@ -989,7 +990,7 @@
           (speak dir spoken voice {:seed (or seed default-seed) :report report})
 
           out
-          (File/createTempFile "vis-speech-" ".wav")]
+          (File/createTempFile "vis-speech-" ".wav" (paths/temp-dir))]
 
       (vv/write-wav! out samples sample-rate)
       {:audio-path (str out)

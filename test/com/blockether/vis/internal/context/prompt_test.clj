@@ -905,6 +905,8 @@
                ;; test files in the project root and failed a structural gate.
                "Add a test only where nearby tests show a place"
                "Keep scratch work, probes and benchmarks in sandbox variables, not in files"
+               ;; #423: an outer sandbox can deny /tmp; a fixed /tmp path then fails.
+               "never a fixed `/tmp` path"
                ;; User decision after CTB round m11: ub-mode rules. Agents called a missed
                ;; latency target a limitation and measured an easier case than the checker.
                "See it fail for the reason that you expect"

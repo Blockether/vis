@@ -307,8 +307,9 @@ unconfined process.
 ## Run Vis inside your own sandbox
 
 An evaluation harness or a container can confine Vis itself, for example to one task directory.
-Each Python worker of Vis then needs a place for its control socket. By default, this socket is in
-`/tmp`. If your sandbox denies `/tmp`, set `VIS_RUNTIME_DIR` to a directory in the task directory:
+By default, Vis keeps its temporary files and the control socket of each Python worker in the system
+temporary directory, usually `/tmp`. If your sandbox denies `/tmp`, set `VIS_RUNTIME_DIR` to a
+directory in the task directory:
 
 ```bash
 mkdir -m 700 "$TASK/runtime"
@@ -323,12 +324,18 @@ these conditions:
 - The path has no symbolic link. On macOS, write `/private/tmp`, not `/tmp`.
 - Only you can write to it.
 
-If one condition is false, no Python worker starts, and Vis tells you the cause. Vis never uses
-`/tmp` in its place.
+If one condition is false, Vis does not start, and it tells you the cause. Vis never uses `/tmp`
+in its place.
 
-Each worker gets a new private directory with mode 700 in `VIS_RUNTIME_DIR`. Vis removes that
-directory after the worker connects, also when the start fails. Other files in `VIS_RUNTIME_DIR`
-stay. Logs and other worker state stay under `HOME`.
+Vis puts these items in `VIS_RUNTIME_DIR`:
+
+- `tmp`, a private directory with mode 700 for temporary files. Vis keeps it. Commands that Vis
+  starts for a session get it as `TMPDIR`.
+- A new private directory with mode 700 for each Python worker. Vis removes it after the worker
+  connects, also when the start fails.
+
+Other files in `VIS_RUNTIME_DIR` stay. Logs and other worker state stay under `HOME`. Host tools
+such as `git` and `uv` keep the environment that you give Vis. Set `TMPDIR` for them yourself.
 
 A socket path can have at most 103 bytes. If the full path is longer, Vis uses a path from its
 working directory. For a long path, start Vis in the directory that `-Duser.dir` names, or do not

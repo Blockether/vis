@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.speech.core :as speech]
             [ring.core.protocols :as ring-protocols]
             [taoensso.telemere :as tel])
@@ -179,7 +180,7 @@
     (fn [_sid engine]
       (if-not (speech/ready? engine)
         (engine-not-ready :transcribe engine)
-        (let [tmp (java.io.File/createTempFile "vis-speech" ".wav")]
+        (let [tmp (java.io.File/createTempFile "vis-speech" ".wav" (paths/temp-dir))]
           (try (with-open [in ^java.io.InputStream (:body request)
                            out (io/output-stream tmp)]
 
@@ -404,27 +405,27 @@
    No session in the path: an imported clip belongs to the machine, and every session on
    it speaks with the same catalogue."
   [request]
-  (with-engine :synthesize
-               request
-               (fn [engine]
-                 (if-not (= :post (:request-method request))
-                   (http/json-response 200
-                                       {:engine (speech/public-engine engine)
-                                        :voices (speech/voices engine)})
-                   (let [tmp (java.io.File/createTempFile "vis-speech-clip" ".upload")]
-                     (try (with-open [in ^java.io.InputStream (:body request)
-                                      out (io/output-stream tmp)]
+  (with-engine
+    :synthesize
+    request
+    (fn [engine]
+      (if-not (= :post (:request-method request))
+        (http/json-response 200
+                            {:engine (speech/public-engine engine) :voices (speech/voices engine)})
+        (let [tmp (java.io.File/createTempFile "vis-speech-clip" ".upload" (paths/temp-dir))]
+          (try (with-open [in ^java.io.InputStream (:body request)
+                           out (io/output-stream tmp)]
 
-                            (io/copy in out))
-                          (http/json-response 201
-                                              {:voice (speech/import-voice!
-                                                        engine
-                                                        {:path (str tmp)
-                                                         :voice-name (http/query-str request "name")
-                                                         :language (http/query-str request "lang")
-                                                         :text (http/query-str request "text")})})
-                          (catch Throwable t (voice-import-failure t))
-                          (finally (.delete tmp))))))))
+                 (io/copy in out))
+               (http/json-response 201
+                                   {:voice (speech/import-voice!
+                                             engine
+                                             {:path (str tmp)
+                                              :voice-name (http/query-str request "name")
+                                              :language (http/query-str request "lang")
+                                              :text (http/query-str request "text")})})
+               (catch Throwable t (voice-import-failure t))
+               (finally (.delete tmp))))))))
 
 (defn- voice-changes
   "The `{:voice-name :language :text}` changes of a PATCH body, or nil when the body is

@@ -33,6 +33,7 @@
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.transcript :as transcript]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.python.env :as env]
@@ -1886,7 +1887,7 @@
 (defn- with-trace-store
   "Keep trace bodies on disk until the terminal response needs its transient snapshot."
   [f]
-  (let [path (java.nio.file.Files/createTempFile "vis-turn-trace-"
+  (let [path (java.nio.file.Files/createTempFile (.toPath (paths/temp-dir)) "vis-turn-trace-"
                                                  ".bin"
                                                  (make-array java.nio.file.attribute.FileAttribute
                                                              0))]

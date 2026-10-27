@@ -2861,7 +2861,7 @@
 
 (defn- write-temp-audio!
   ^File [body]
-  (let [file (File/createTempFile "vis-gateway-speech" ".wav")]
+  (let [file (File/createTempFile "vis-gateway-speech" ".wav" (paths/temp-dir))]
     (with-open [out (io/output-stream file)]
       (.write out ^bytes body))
     file))

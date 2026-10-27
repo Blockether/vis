@@ -2,9 +2,11 @@
   "Cross-platform path helpers. A LEAF namespace (no project deps) so any
    layer — core, extensions, tests — can normalize without a require cycle."
   (:require [clojure.string :as str])
-  (:import [java.io File]
+  (:import [java.io File IOException]
            [java.nio.channels FileChannel FileLock]
-           [java.nio.file Files OpenOption Path Paths StandardOpenOption]
+           [java.nio.file FileAlreadyExistsException Files InvalidPathException LinkOption
+            OpenOption Path Paths StandardOpenOption]
+           [java.nio.file.attribute FileAttribute PosixFilePermission PosixFilePermissions]
            [java.time Instant LocalDate ZoneOffset]
            [java.time.format DateTimeFormatter DateTimeParseException]
            [java.util Locale]
@@ -118,6 +120,85 @@
             (if (re-matches #"[A-Za-z0-9_@%+=:,./-]*" word)
               word
               (str "'" (str/replace word "'" "'\\''") "'")))))))
+
+(defn runtime-dir-setting
+  "The task runtime directory: JVM property `vis.runtime.dir`, then `VIS_RUNTIME_DIR`.
+   Empty is unset. A set value holds worker control endpoints and temporary files (#423)."
+  []
+  (or (not-empty (System/getProperty "vis.runtime.dir"))
+      (not-empty (System/getenv "VIS_RUNTIME_DIR"))))
+
+(defn- refuse-runtime-dir!
+  [setting reason]
+  (throw (ex-info (str "VIS_RUNTIME_DIR " (pr-str (str setting)) " " reason ".")
+                  {:type :vis/runtime-dir :runtime-dir (str setting) :reason reason})))
+
+(defn- shared-permissions
+  "The group and other permissions of `path`, without following a symbolic link."
+  [^Path path]
+  (filter #{PosixFilePermission/GROUP_READ PosixFilePermission/GROUP_WRITE
+            PosixFilePermission/GROUP_EXECUTE PosixFilePermission/OTHERS_READ
+            PosixFilePermission/OTHERS_WRITE PosixFilePermission/OTHERS_EXECUTE}
+          (Files/getPosixFilePermissions path (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))))
+
+(defn runtime-dir
+  "The checked task runtime directory, or nil when it is unset. A set value fails
+   closed and never falls back to `/tmp`: it must be an existing absolute directory
+   without symbolic links that only its owner can write. A refusal is
+   `:vis/runtime-dir` and names its reason."
+  ^Path []
+  (when-let [setting (runtime-dir-setting)]
+    (let [^Path path (try (Path/of ^String setting (make-array String 0))
+                          (catch InvalidPathException _
+                            (refuse-runtime-dir! setting "is not a path")))]
+      (when-not (.isAbsolute path) (refuse-runtime-dir! setting "is not an absolute path"))
+      (let [^Path real (try (.toRealPath path (make-array LinkOption 0))
+                            (catch IOException _ (refuse-runtime-dir! setting "does not exist")))]
+        (when-not (= real (.normalize path))
+          (refuse-runtime-dir! setting (str "contains a symbolic link; use " real)))
+        (when-not (Files/isDirectory real (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+          (refuse-runtime-dir! setting "is not a directory"))
+        (when (some #{PosixFilePermission/GROUP_WRITE PosixFilePermission/OTHERS_WRITE}
+                    (shared-permissions real))
+          (refuse-runtime-dir! setting "is writable by other users"))
+        real))))
+
+(defn install-temp-dir!
+  "Point `java.io.tmpdir` at the private `tmp` directory in the task runtime
+   directory, and return it. Return nil and change nothing when the setting is
+   unset. Run it at startup: the one-argument `createTempFile` forms keep the
+   startup value, so their callers pass [[temp-dir]]. A second run keeps the same
+   directory."
+  ^Path []
+  (when-let [^Path root (runtime-dir)]
+    (let [dir (.resolve root "tmp")
+          no-follow (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])]
+
+      (try (Files/createDirectory dir
+                                  (into-array FileAttribute
+                                              [(PosixFilePermissions/asFileAttribute
+                                                 (PosixFilePermissions/fromString "rwx------"))]))
+           (catch FileAlreadyExistsException _ nil))
+      (when-not (and (Files/isDirectory dir no-follow)
+                     (= (Files/getOwner dir no-follow) (Files/getOwner root no-follow))
+                     (empty? (shared-permissions dir)))
+        (refuse-runtime-dir! root
+                             (str "has a " dir " that is not a private directory of its owner")))
+      (System/setProperty "java.io.tmpdir" (str dir))
+      dir)))
+
+(defn temp-dir
+  "The directory for temporary files: `java.io.tmpdir`, which [[install-temp-dir!]]
+   moves into the task runtime directory. Give it to every `createTempFile` and
+   `createTempDirectory` call."
+  ^File []
+  (File. (System/getProperty "java.io.tmpdir")))
+
+(defn temp-env
+  "The `TMPDIR` of a child process when the task runtime directory is set, else an
+   empty map, so the child keeps its inherited value."
+  []
+  (if (runtime-dir-setting) {"TMPDIR" (str (temp-dir))} {}))
 
 (defn logs-dir
   "Root for diagnostic logs and reports: the `vis.logs.dir` system property, else

@@ -50,23 +50,18 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel])
-  (:import (com.blockether.vispython Locations Sources)
-           (java.io File FileOutputStream IOException)
-           (java.lang ProcessHandle)
-           (java.lang.management ManagementFactory)
-           (java.net StandardProtocolFamily UnixDomainSocketAddress)
-           (java.nio.channels SelectionKey Selector ServerSocketChannel SocketChannel)
-           (java.nio.charset StandardCharsets)
-           (java.nio.file CopyOption
-                          FileAlreadyExistsException
-                          Files
-                          InvalidPathException
-                          LinkOption
-                          Path
-                          StandardCopyOption)
-           (java.nio.file.attribute FileAttribute PosixFilePermission PosixFilePermissions)
-           (java.util.concurrent ExecutionException TimeUnit)
-           (java.util.concurrent.locks ReentrantLock)))
+  (:import
+    (com.blockether.vispython Locations Sources)
+    (java.io File FileOutputStream IOException)
+    (java.lang ProcessHandle)
+    (java.lang.management ManagementFactory)
+    (java.net StandardProtocolFamily UnixDomainSocketAddress)
+    (java.nio.channels SelectionKey Selector ServerSocketChannel SocketChannel)
+    (java.nio.charset StandardCharsets)
+    (java.nio.file CopyOption FileAlreadyExistsException Files LinkOption Path StandardCopyOption)
+    (java.nio.file.attribute FileAttribute PosixFilePermissions)
+    (java.util.concurrent ExecutionException TimeUnit)
+    (java.util.concurrent.locks ReentrantLock)))
 
 (set! *warn-on-reflection* true)
 
@@ -486,13 +481,6 @@
   [path]
   (<= (alength (.getBytes (str path) StandardCharsets/UTF_8)) (long MAX_SOCKET_PATH_BYTES)))
 
-(defn- runtime-dir-setting
-  "The task runtime directory: JVM property `vis.runtime.dir`, then `VIS_RUNTIME_DIR`.
-   Empty is unset. A set value holds every worker control endpoint (#423)."
-  []
-  (or (not-empty (System/getProperty "vis.runtime.dir"))
-      (not-empty (System/getenv "VIS_RUNTIME_DIR"))))
-
 (defn- refuse-runtime-dir!
   [setting reason]
   (throw (ex-info (str "VIS_RUNTIME_DIR "
@@ -503,27 +491,13 @@
                   {:type :vis/python-worker :runtime-dir setting})))
 
 (defn- runtime-dir
-  "The checked parent of worker control directories, or nil when unset. A set value
-   fails closed and never falls back to `/tmp`: it must be an existing absolute
-   directory without symbolic links that only its owner can write."
+  "[[paths/runtime-dir]], the parent of worker control directories. A refusal is
+   a worker failure, so no worker starts and the error card names the reason."
   ^java.nio.file.Path []
-  (when-let [setting (runtime-dir-setting)]
-    (let [^Path path (try (Path/of ^String setting (make-array String 0))
-                          (catch InvalidPathException _
-                            (refuse-runtime-dir! setting "is not a path")))
-          no-follow (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])]
-
-      (when-not (.isAbsolute path) (refuse-runtime-dir! setting "is not an absolute path"))
-      (let [^Path real (try (.toRealPath path (make-array LinkOption 0))
-                            (catch IOException _ (refuse-runtime-dir! setting "does not exist")))]
-        (when-not (= real (.normalize path))
-          (refuse-runtime-dir! setting (str "contains a symbolic link; use " real)))
-        (when-not (Files/isDirectory real no-follow)
-          (refuse-runtime-dir! setting "is not a directory"))
-        (when (some #{PosixFilePermission/GROUP_WRITE PosixFilePermission/OTHERS_WRITE}
-                    (Files/getPosixFilePermissions real no-follow))
-          (refuse-runtime-dir! setting "is writable by other users"))
-        real))))
+  (try (paths/runtime-dir)
+       (catch clojure.lang.ExceptionInfo e
+         (let [{:keys [type runtime-dir reason]} (ex-data e)]
+           (if (= :vis/runtime-dir type) (refuse-runtime-dir! runtime-dir reason) (throw e))))))
 
 (defn- create-control-dir!
   "A new private directory for ONE worker's control socket. A short random name

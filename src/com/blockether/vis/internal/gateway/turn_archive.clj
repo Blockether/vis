@@ -1,12 +1,15 @@
 (ns com.blockether.vis.internal.gateway.turn-archive
   "Disk-backed gateway projections for terminal turns, including turns that never entered the engine."
-  (:require [taoensso.nippy :as nippy]
+  (:require [com.blockether.vis.internal.paths :as paths]
+            [taoensso.nippy :as nippy]
             [taoensso.telemere :as tel])
   (:import [java.nio.file Files Path OpenOption]
            [java.nio.file.attribute FileAttribute]))
 
 (defonce ^:private directory
-  (delay (let [path (Files/createTempDirectory "vis-gateway-" (make-array FileAttribute 0))]
+  (delay (let [path (Files/createTempDirectory (.toPath (paths/temp-dir))
+                                               "vis-gateway-"
+                                               (make-array FileAttribute 0))]
            ;; One process-owned directory, not deleteOnExit's ever-growing set of names.
            (.addShutdownHook (Runtime/getRuntime)
                              (Thread. ^Runnable

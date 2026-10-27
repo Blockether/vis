@@ -1297,7 +1297,7 @@
    one patch, then every untracked, non-ignored file copied over. `source` is
    only read."
   [^File source ^File target]
-  (let [patch (File/createTempFile "vis-draft-" ".patch")]
+  (let [patch (File/createTempFile "vis-draft-" ".patch" (paths/temp-dir))]
     (try (git! source
                ["diff" "--binary" "--no-color" "--no-ext-diff" (str "--output=" (.getPath patch))
                 "HEAD" "--"])

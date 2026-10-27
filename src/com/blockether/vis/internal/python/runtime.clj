@@ -464,7 +464,8 @@
   "Use shared packages when uv selects no project installation or dependencies beyond the bundled Vis SDK.
    Keep editable projects and dependency groups in their own environment."
   [^File project automatic?]
-  (let [requirements (Files/createTempFile "vis-project-"
+  (let [requirements (Files/createTempFile (.toPath (paths/temp-dir))
+                                           "vis-project-"
                                            ".txt"
                                            (make-array java.nio.file.attribute.FileAttribute 0))]
     (try (let [command (into [(bundled-uv!) "export" "--format" "requirements-txt" "--no-header"

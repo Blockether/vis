@@ -357,6 +357,26 @@
                                          :env-values {"NODE_OPTIONS" "--max-old-space-size=2048"}})]
         (expect (= "--max-old-space-size=2048" (get env "NODE_OPTIONS"))))))
 
+;; #423: a child of Vis in an outer sandbox without /tmp needs the task's own TMPDIR.
+(defdescribe runtime-dir-tmpdir-reaches-children
+             (it "names the task temporary directory in confined and unconfined children"
+                 (let [previous-setting
+                       (System/getProperty "vis.runtime.dir")
+
+                       previous-tmpdir
+                       (System/getProperty "java.io.tmpdir")]
+
+                   (try (System/setProperty "vis.runtime.dir" "/task/run")
+                        (System/setProperty "java.io.tmpdir" "/task/run/tmp")
+                        (doseq [policy [{:disabled? true}
+                                        {:roots-fn (constantly []) :net-enabled? false}]]
+                          (expect (= "/task/run/tmp" (get (pj/process-environment policy) "TMPDIR"))
+                                  (pr-str policy)))
+                        (finally (if previous-setting
+                                   (System/setProperty "vis.runtime.dir" previous-setting)
+                                   (System/clearProperty "vis.runtime.dir"))
+                                 (System/setProperty "java.io.tmpdir" previous-tmpdir))))))
+
 (defdescribe
   keychain-denial-hint-explains-a-denied-lookup
   (it "a Security-framework failure under a live jail names the config key"

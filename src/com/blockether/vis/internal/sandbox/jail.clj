@@ -541,9 +541,10 @@
   #{"NODE_OPTIONS"})
 
 (defn- ambient-env
-  "The operator's ambient environment without [[ambient-env-drops]]."
+  "The operator's ambient environment without [[ambient-env-drops]]. With a task
+   runtime directory, `TMPDIR` names its private temporary directory (#423)."
   ([] (ambient-env (System/getenv)))
-  ([env] (apply dissoc (into {} env) ambient-env-drops)))
+  ([env] (merge (apply dissoc (into {} env) ambient-env-drops) (paths/temp-env))))
 
 (defn declared-env
   "The policy's RESOLVED project environment, as string pairs: the workspace's

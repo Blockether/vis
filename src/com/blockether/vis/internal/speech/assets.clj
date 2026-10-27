@@ -23,6 +23,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.speech.files :as files])
   (:import [java.io File]))
 
@@ -118,7 +119,7 @@
 
 (defn- fetch-archive!
   [source staging report]
-  (let [archive (File/createTempFile "vis-speech-asset-" ".tar.bz2")]
+  (let [archive (File/createTempFile "vis-speech-asset-" ".tar.bz2" (paths/temp-dir))]
     (try (files/download! (:url source)
                           (str archive)
                           {:sha256 (:sha256 source)
