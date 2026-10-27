@@ -58,4 +58,19 @@
              (let [snap (monorepo/snapshot root)]
                (expect (= 2 (long (get-in snap [:totals :node]))))
                (expect (some? (:shape snap))))
+             (finally (cleanup root)))))
+  (it "reads a given git file list instead of a walk (#422)"
+      (let [root (make-tmp-dir)]
+        (try (spit-rel root "package.json" "{}")
+             (spit-rel root "packages/a/package.json" "{}")
+             (spit-rel root "packages/b/package.json" "{}")
+             (spit-rel root "ios/DerivedData/c/package.json" "{}")
+             (let [snap (monorepo/snapshot root
+                                           {:files ["package.json" "packages/a/package.json"
+                                                    "packages/b/package.json"
+                                                    "node_modules/d/package.json"]})]
+               (expect (= {:node 2} (:totals snap)))
+               (expect (= ["packages/a/package.json" "packages/b/package.json"]
+                          (get-in snap [:files :node])))
+               (expect (false? (:truncated? snap))))
              (finally (cleanup root))))))

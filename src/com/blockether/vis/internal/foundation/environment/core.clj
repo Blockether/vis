@@ -73,25 +73,34 @@
                     (java.io.File.))
             cwd-file)
 
+        ;; The repository scan does its own walk, so it runs next to the other scans.
+        repos-map
+        (future (try (repositories/snapshot scan-root)
+                     (catch Throwable t
+                       (tel/log!
+                         {:level :warn :id ::repositories-failed :data {:error (ex-message t)}})
+                       nil)))
+
+        ;; One git file list serves both scans; ignored build output is never walked.
+        listed
+        (when git-map
+          (or (git/work-tree-files scan-root)
+              (do (tel/log! {:level :warn :id ::file-list-failed :data {:root (str scan-root)}})
+                  nil)))
+
         langs-map
-        (try (languages/scan scan-root)
+        (try (languages/scan scan-root {:files listed})
              (catch Throwable t
                (tel/log! {:level :warn :id ::languages-failed :data {:error (ex-message t)}})
                nil))
 
         mono-map
-        (try (monorepo/snapshot scan-root)
+        (try (monorepo/snapshot scan-root {:files listed})
              (catch Throwable t
                (tel/log! {:level :warn :id ::monorepo-failed :data {:error (ex-message t)}})
-               nil))
-
-        repos-map
-        (try (repositories/snapshot scan-root)
-             (catch Throwable t
-               (tel/log! {:level :warn :id ::repositories-failed :data {:error (ex-message t)}})
                nil))]
 
-    {:host host-map :git git-map :languages langs-map :monorepo mono-map :repositories repos-map}))
+    {:host host-map :git git-map :languages langs-map :monorepo mono-map :repositories @repos-map}))
 
 (defn snapshot
   "Full environment snapshot map {:host :git :languages :monorepo :repositories}. Cached per cwd; host helper, not a model tool."

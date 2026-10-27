@@ -374,6 +374,22 @@
           (git/run-git repo (into ["-c" "core.quotePath=false" "check-ignore" "--"] owners))]
       (if (= 0 exit) (set (remove str/blank? (str/split-lines (or out "")))) #{}))))
 
+(defn- skill-path-in?
+  "True when `relative-path` is `<any>/<parts>/<name>/SKILL.md`: the glob `**/<parts>/*/SKILL.md`."
+  [^String relative-path parts]
+  (let [segments
+        (str/split relative-path #"/")
+
+        n
+        (count parts)
+
+        k
+        (count segments)]
+
+    (and (>= k (+ n 2))
+         (= "SKILL.md" (peek segments))
+         (= (vec parts) (subvec segments (- k n 2) (- k 2))))))
+
 (defn- nested-skill-files
   "Project-skill files below a repository-root session, discovered through Vis' one
    pooled fff index. Git ignores stay enabled for the tree; only the explicit harness
@@ -410,20 +426,25 @@
                                                       [(str h "/**") (str "**/" h "/**")])
                                                     harnesses)))}
 
-            matches
+            ;; One glob for every harness: each glob call scans the whole index.
+            skill-paths
             (fff-index/with-index
               [idx (fff-index/lease repo true overlay {:content-indexing? false :resync? false})]
-              (vec (mapcat (fn [[tool _ & parts]]
-                             (let [pattern (str "**/" (str/join "/" parts) "/*/SKILL.md")]
-                               (for [{:keys [relative-path]}
-                                     (sort-by :relative-path
-                                              (:items
-                                                (fff/glob idx {:pattern pattern :page-size 10000})))
-                                     :let [owner (nested-owner relative-path parts)]
-                                     :when (not (dependency-owner? owner))]
+              (vec (sort (map :relative-path
+                              (:items (fff/glob idx {:pattern "**/SKILL.md" :page-size 10000}))))))
 
-                                 {:tool tool :owner owner :file (io/file repo relative-path)})))
-                           specs)))
+            matches
+            (vec (mapcat (fn [[tool _ & parts]]
+                           (for [relative-path
+                                 skill-paths
+
+                                 :when (skill-path-in? relative-path parts)
+                                 :let [owner
+                                       (nested-owner relative-path parts)]
+                                 :when (not (dependency-owner? owner))]
+
+                             {:tool tool :owner owner :file (io/file repo relative-path)}))
+                         specs))
 
             ignored
             (git-ignored-owners repo (vec (distinct (remove str/blank? (map :owner matches)))))]

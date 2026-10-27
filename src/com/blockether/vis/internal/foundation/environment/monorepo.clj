@@ -8,8 +8,10 @@
    shape label (e.g. \"polylith\", \"workspace\", \"submodules\").
 
    Reflection-clean. Honors the same skip-directory list as the
-   language scanner."
+   language scanner. A caller can give the file list of a git work tree
+   as `:files`; the scan then reads that list instead of a walk."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
@@ -79,10 +81,13 @@
 
    The `:files` paths are relative to `root` and OMIT the manifest
    in the root itself (we only care about descendants - a single
-   root-level deps.edn is not a monorepo)."
+   root-level deps.edn is not a monorepo).
+
+   Option `:files` gives relative paths to read instead of a walk, for
+   example a git file list."
   ([root] (snapshot root nil))
   ([root
-    {:keys [max-files deadline-ms]
+    {:keys [max-files deadline-ms files]
      :or {max-files default-max-files deadline-ms default-deadline-ms}}]
    (let [^File root-file
          (cond (instance? File root) root
@@ -133,7 +138,18 @@
                                FileVisitResult/CONTINUE))))
            (visitFileFailed [^Path _file _exception] FileVisitResult/CONTINUE))]
 
-     (try (Files/walkFileTree start visitor) (catch Throwable _ nil))
+     (if files
+       (loop [[^String rel & more] (seq files)]
+         (when rel
+           (if (or (>= (aget visited 0) (long max-files)) (> (util/now-ms) deadline))
+             (aset truncated 0 true)
+             (let [parts (str/split rel #"/")]
+               (when-not (some skip-directories (butlast parts))
+                 (aset visited 0 (inc (aget visited 0)))
+                 (when-let [kind (when (next parts) (get manifest-kinds (peek parts)))]
+                   (.put buckets kind (conj (or (.get buckets kind) []) rel))))
+               (recur more)))))
+       (try (Files/walkFileTree start visitor) (catch Throwable _ nil)))
      (let [files-by-kind
            (into {} buckets)
 

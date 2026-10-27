@@ -10,10 +10,14 @@
    deadline. Either one stops the walk via `TERMINATE`. Callers get
    a possibly-partial result; on a small repo the result is exact.
 
+   A caller can give the file list of a git work tree as `:files`. The
+   scan then reads only those files and does not walk ignored build output.
+
    No third-party deps. Reflection-clean."
-  (:require [com.blockether.vis.internal.util :as util])
-  (:import (java.io File)
-           (java.nio.file FileVisitResult Files Path SimpleFileVisitor)
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util])
+  (:import (java.io File IOException)
+           (java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor)
            (java.nio.file.attribute BasicFileAttributes)))
 
 (def ^:const default-max-files 10000)
@@ -138,6 +142,17 @@
   (let [name (str (.getFileName dir))]
     (if (contains? skip-directories name) FileVisitResult/SKIP_SUBTREE FileVisitResult/CONTINUE)))
 
+(defn- listed-file-size
+  "Size of the regular file `rel` below `start`, or nil for a link, a directory or a missing file."
+  [^Path start ^String rel]
+  (try (let [attrs (Files/readAttributes (.resolve start rel)
+                                         BasicFileAttributes
+                                         ^"[Ljava.nio.file.LinkOption;"
+                                         (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))]
+         (when (.isRegularFile attrs) (.size attrs)))
+       ;; A tracked file can be deleted in the work tree; the walk also skips unreadable files.
+       (catch IOException _ nil)))
+
 (defn- bucket-rollup
   "Convert a `{lang {:files n :bytes b}}` map into a sorted vec with
    percentages by both file count and total bytes.
@@ -193,10 +208,11 @@
 
    Options:
      :max-files    soft cap on visited files (default 10000).
-     :deadline-ms  wall-time cap in ms (default 1000)."
+     :deadline-ms  wall-time cap in ms (default 1000).
+     :files        relative paths to read instead of a walk, for example a git file list."
   ([root] (scan root nil))
   ([root
-    {:keys [max-files deadline-ms]
+    {:keys [max-files deadline-ms files]
      :or {max-files default-max-files deadline-ms default-deadline-ms}}]
    (let [^Path start
          (cond (instance? Path root) root
@@ -218,6 +234,17 @@
          start-ms
          (util/now-ms)
 
+         count-file!
+         (fn [^String filename size-fn]
+           (when-let [lang (some-> (file-extension-of filename)
+                                   extension-to-language)]
+             (when-not (generated? filename)
+               (let [bucket (or (.get buckets lang) {:files 0 :bytes 0})]
+                 (.put buckets
+                       lang
+                       {:files (inc (long (:files bucket)))
+                        :bytes (+ (long (:bytes bucket)) (long (size-fn)))})))))
+
          visitor
          (proxy [SimpleFileVisitor] []
            (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
@@ -231,24 +258,25 @@
              (let [count* (aget visited 0)]
                (cond (or (>= count* (long max-files)) (> (util/now-ms) deadline))
                      (do (aset truncated 0 true) FileVisitResult/TERMINATE)
-                     (.isRegularFile attrs)
-                     (do (aset visited 0 (inc count*))
-                         (let [filename (str (.getFileName file))]
-                           (when (and (not (generated? filename))
-                                      (some? (file-extension-of filename)))
-                             (when-let [lang (extension-to-language (file-extension-of filename))]
-                               (let [bucket (or (.get buckets lang) {:files 0 :bytes 0})
-                                     size (try (.size attrs) (catch Throwable _ 0))]
-
-                                 (.put buckets
-                                       lang
-                                       {:files (inc (long (:files bucket)))
-                                        :bytes (+ (long (:bytes bucket)) (long size))})))))
-                         FileVisitResult/CONTINUE)
+                     (.isRegularFile attrs) (do (aset visited 0 (inc count*))
+                                                (count-file! (str (.getFileName file))
+                                                             #(.size attrs))
+                                                FileVisitResult/CONTINUE)
                      :else FileVisitResult/CONTINUE)))
            (visitFileFailed [^Path _file _exception] FileVisitResult/CONTINUE))]
 
-     (try (Files/walkFileTree start visitor) (catch Throwable _ nil))
+     (if files
+       (loop [[^String rel & more] (seq files)]
+         (when rel
+           (if (or (>= (aget visited 0) (long max-files)) (> (util/now-ms) deadline))
+             (aset truncated 0 true)
+             (let [parts (str/split rel #"/")]
+               (when-not (some skip-directories (butlast parts))
+                 (when-let [size (listed-file-size start rel)]
+                   (aset visited 0 (inc (aget visited 0)))
+                   (count-file! (peek parts) (constantly size))))
+               (recur more)))))
+       (try (Files/walkFileTree start visitor) (catch Throwable _ nil)))
      (let [bucket-map
            (into {} buckets)
 

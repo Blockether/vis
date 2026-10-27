@@ -51,6 +51,18 @@
            (when (and behind ahead) {:ahead ahead :behind behind :stale? (pos? (long behind))})))
        (catch Throwable _ nil)))
 
+(defn work-tree-files
+  "Relative paths of the tracked and untracked files below the work tree `root`,
+   without the files that `.gitignore` excludes. Answer nil when git fails.
+   Nested repositories are not listed."
+  [^File root]
+  (let [{:keys [exit out]}
+        (vis-git/run-git root ["ls-files" "-z" "--cached" "--others" "--exclude-standard"])]
+    (when (= 0 exit)
+      (into []
+            (comp (remove str/blank?) (remove #(str/ends-with? % "/")) (distinct))
+            (str/split (or out "") #"\x00")))))
+
 (defn snapshot
   "Inspect the repository that contains `start-file`. Returns a map of git
    facts, or nil when `start-file` is not in a repo.
