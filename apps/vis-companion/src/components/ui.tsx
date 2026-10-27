@@ -266,7 +266,7 @@ export function KeyCap({
   return (
     <kbd
       aria-hidden="true"
-      className={`${display} h-[1.4em] min-w-[1.4em] shrink-0 items-center justify-center border bg-panel px-1 font-mono text-chip font-normal normal-case leading-none tracking-normal ${ink} ${className}`}
+      className={`${display} h-[1.4em] min-w-[1.4em] shrink-0 items-center justify-center border bg-panel px-1 font-mono text-chip font-normal normal-case tracking-normal ${ink} ${className}`}
     >
       {arrow ? <KeyArrowIcon direction={arrow} className="size-3" /> : shortcutGlyph(keyName)}
     </kbd>
