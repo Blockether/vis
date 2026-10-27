@@ -785,10 +785,12 @@
       (vec (distinct (concat configured (host-filesystem-roots)))))))
 
 (defn access-view
-  "Build the string-keyed model context from the exact enforcement snapshot.
-   `workspace-roots` are the live session overlay; configured grants remain
-   immutable. Paths under HOME render as `~/…` without changing enforcement."
-  [policy workspace-roots]
+  "Build the string-keyed model context from the exact enforcement snapshot. It
+   holds only the RULES: the paths, their modes, descriptions, search and draft
+   settings are in the one `session[\"workspace\"][\"filesystem_roots\"]` list. A
+   subagent file grant adds its `\"write_rules\"`: outside them, every root is
+   read only. Paths under HOME render as `~/…` without changing enforcement."
+  [policy]
   (let [home
         (:home policy)
 
@@ -798,60 +800,21 @@
         network
         (:network policy)
 
-        rw
-        (->> (concat workspace-roots (read-write-roots policy))
-             (keep identity)
-             distinct
-             (mapv #(home-relative % home)))
-
-        ;; A subagent file grant writes only its rules; its other roots stay readable.
         write-rules
         (some->> (seq (:write-rules jail))
                  (mapv #(home-relative % home)))
-
-        ro
-        (->> (:allow-read jail)
-             distinct
-             (mapv #(home-relative % home)))
 
         deny-read
         (mapv #(home-relative % home) (or (:deny-read-rules jail) (:deny-read jail)))
 
         deny-write
-        (mapv #(home-relative % home) (or (:deny-write-rules jail) (:deny-write jail)))
-
-        no-search
-        (mapv #(home-relative % home) (no-search-roots policy))
-
-        descriptions
-        (into {}
-              (map (fn [[k v]]
-                     [(home-relative k home) v]))
-              (:path-descriptions jail))
-
-        ;; Only roots that opt OUT of the default `shared` isolation are worth
-        ;; naming: a drafted session either works on a private copy of them or
-        ;; cannot touch them at all.
-        draft
-        (into {}
-              (keep (fn [[k v]]
-                      (let [p (name v)]
-                        (when-not (= "shared" p) [(home-relative k home) p]))))
-              (draft-policies policy))]
+        (mapv #(home-relative % home) (or (:deny-write-rules jail) (:deny-write jail)))]
 
     (cond-> {"generation" (:generation policy)
              "is_jailed" (boolean (:jail-enabled policy))
-             "filesystem" (cond-> {"read_write" (or write-rules rw)
-                                   "process_read_only" ro
-                                   "deny_read" deny-read
-                                   "deny_write" deny-write
-                                   "no_search" no-search
-                                   "descriptions" descriptions}
+             "filesystem" (cond-> {"deny_read" deny-read "deny_write" deny-write}
                             write-rules
-                            (assoc "read_only" rw)
-
-                            (seq draft)
-                            (assoc "draft" draft))
+                            (assoc "write_rules" write-rules))
              "network" {"enabled" true
                         "allowed_domains" (vec (:allowed-domains network))
                         "denied_domains" (vec (:denied-domains network))

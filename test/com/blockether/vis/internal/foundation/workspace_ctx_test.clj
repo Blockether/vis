@@ -56,9 +56,10 @@
                    "isolated" true
                    "draft" "copy-only"}]
                  (filter #(= "/draft/library" (get % "cwd")) roots)))
-      (expect (= [{"cwd" "/projects/private" "isolated" false "draft" "shared" "is_denied" true}]
+      ;; Defaults (not isolated, `shared` draft, searched) are not written on each root.
+      (expect (= [{"cwd" "/projects/private" "is_denied" true}]
                  (filter #(get % "is_denied") roots)))
-      (expect (some #(= {"cwd" "/draft/cache" "isolated" true "draft" "shared"} %) roots))
+      (expect (some #(= {"cwd" "/draft/cache" "isolated" true "no_search" true} %) roots))
       (expect (not-any? #(#{"/projects/main" "/draft/main"} (get % "cwd")) roots))))
   (it "keeps the main root in workspace.root without an extra catalog or duplicate root row"
       (let [block (wctx/render-block

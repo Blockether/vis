@@ -67,7 +67,8 @@
 
     (workspace-ctx/render-block (assoc (or pair {:workspace (fallback-workspace env)})
                                   :filesystem-roots (workspace/env-filesystem-roots env)
-                                  :project-paths (get-in env [:security-policy :project-paths])))))
+                                  :project-paths (get-in env [:security-policy :project-paths])
+                                  :policy (:security-policy env)))))
 
 (defn- session-apps-context
   "What the apps and HTML pages of the session tell the model, or nil. A failed

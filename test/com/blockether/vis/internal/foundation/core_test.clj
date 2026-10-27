@@ -134,16 +134,15 @@
             (renderer/render-ctx-delta standing removed)]
 
         (expect (= "/projects/main" (get-in standing ["workspace" "root"])))
-        (expect (= [{"cwd" "/projects/library"
-                     "python_name" "library_path"
-                     "isolated" false
-                     "draft" "shared"}]
+        (expect (= [{"cwd" "/projects/library" "python_name" "library_path"}]
                    (filter #(get % "python_name")
                            (get-in standing ["workspace" "filesystem_roots"]))))
         (expect (not (contains? (get standing "workspace") "path_globals")))
         (expect (str/includes? rendered "\"python_name\": \"library_path\""))
         (expect (= 1 (count (re-seq #"\"/projects/library\"" rendered))))
-        (expect (str/includes? delta "del session[\"workspace\"][\"filesystem_roots\"]"))
+        ;; The jail's automatic read-only grants stay in the one path list; the project leaves it.
+        (expect (str/includes? delta "session[\"workspace\"][\"filesystem_roots\"]"))
+        (expect (not (str/includes? delta "/projects/library")))
         (python-env/bind-ctx! python standing)
         (expect (= "/projects/main /projects/library\n"
                    (:stdout (python-env/run-python-block

@@ -251,7 +251,7 @@
                    "    pathlib.Path('" root
                    "/other.txt').write_text('no')\n" "    print('other written')\n"
                    "except Exception as e:\n" "    print('other refused', type(e).__name__, e)\n"
-                   "print(session['access']['filesystem']['read_write'])\n"
+                   "print(session['access']['filesystem']['write_rules'])\n"
                    "print(session['agent']['files']['write'])")]
 
           (try (with-redefs [svar/ask-code! (fn [_ opts]

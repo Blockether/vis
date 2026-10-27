@@ -33,8 +33,9 @@ jail:
 
 After changing security settings, run `/reload`. Each active session uses the
 new policy on its next message. The agent can inspect the effective policy in
-`session["access"]`, including `is_jailed`, filesystem modes, network rules and
-`changes_require`.
+`session["access"]`, including `is_jailed`, deny rules, network rules and `changes_require`.
+Each path is in one list, `session["workspace"]["filesystem_roots"]`, with its mode, description
+and search setting.
 
 Shell availability is separate. `toggles.shell: false` removes `shell(...)`, but it does not change
 the policy for other managed processes.
@@ -96,10 +97,10 @@ in a jailed shell. The grant covers `~/.gitconfig`, `~/.config/git/config`, `~/.
 `~/.config/git/attributes` and the files that their `include` sections name. It respects
 `XDG_CONFIG_HOME` and `GIT_CONFIG_GLOBAL`. Git credential files stay closed.
 
-These grants are frozen in the policy snapshot of the session. They appear with descriptions under
-`session["access"]["filesystem"]["process_read_only"]`. Default searches skip them. They do not
-become workspace roots, and they give Python filesystem tools no extra access. Explicit catalog
-grants keep their access mode and search setting. Deny rules still win.
+These grants are frozen in the policy snapshot of the session. They appear with descriptions in
+`session["workspace"]["filesystem_roots"]`, with `"mode": "read"` and `"no_search": true`. Default
+searches skip them. They give Python filesystem tools no extra access. Explicit catalog grants keep
+their access mode and search setting. Deny rules still win.
 
 A language call or an `environment:` declaration can select `JAVA_HOME`. Then Vis puts the `bin`
 directory of that JDK first on the child's `PATH`. It also gives the jailed child read-only access

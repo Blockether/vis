@@ -670,10 +670,7 @@
                                          (remove #(contains? withheld (workspace/normalize-root %))
                                            configured-rw-roots)))))))
             access-view-fn (fn []
-                             (let [ws @workspace-atom
-                                   live-roots (when ws [(:root ws)])]
-
-                               (security-policy/access-view security-config live-roots)))
+                             (security-policy/access-view security-config))
             draft-required? (:draft-required? policy)
             draft-home (when draft-required?
                          (let [directory (io/file (workspace/session-drafts-home session-id))]

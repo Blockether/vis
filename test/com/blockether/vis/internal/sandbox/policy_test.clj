@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.sandbox.policy-test
   (:require [com.blockether.vis.internal.config.validation :as config-validation]
+            [com.blockether.vis.internal.foundation.workspace-ctx :as wctx]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as policy]
@@ -7,6 +8,18 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]
            [java.nio.file FileVisitOption Files Path]))
+
+(defn- one-list
+  "The session's one path list, `session[\"workspace\"][\"filesystem_roots\"]`, for `root`."
+  [snapshot root]
+  (get (wctx/render-block {:workspace {:root root}
+                           :filesystem-roots
+                           (workspace/env-filesystem-roots
+                             {:security-policy snapshot
+                              :security/filesystem-roots (policy/read-write-roots snapshot)
+                              :security/no-search-roots (policy/no-search-roots snapshot)})
+                           :policy snapshot})
+       "filesystem_roots"))
 
 (defn- with-java-installations
   [f]
@@ -144,16 +157,15 @@
                        snapshot
                        (policy/snapshot {"jail" {"enabled" true "filesystem" {"allow" []}}})
 
-                       view
-                       (policy/access-view snapshot [])
-
-                       rendered
-                       (policy/home-relative java-home)]
+                       entry
+                       (some #(when (= (paths/abbreviate-home java-home) (get % "cwd")) %)
+                             (one-list snapshot (System/getProperty "user.dir")))]
 
                    (expect (some #{java-home} (get-in snapshot [:process-jail :allow-read])))
-                   (expect (some #{rendered} (get-in view ["filesystem" "process_read_only"])))
+                   (expect (= "read" (get entry "mode")))
+                   (expect (true? (get entry "no_search")))
                    (expect (some #{java-home} (policy/no-search-roots snapshot)))
-                   (expect (string? (get-in view ["filesystem" "descriptions" rendered])))
+                   (expect (string? (get entry "description")))
                    (expect (not (some #{java-home} (policy/read-write-roots snapshot))))
                    (expect (not (some #{java-home} (vals (:project-paths snapshot))))))))
 
@@ -251,7 +263,10 @@
             #(policy/snapshot cfg {:base-dir (.getPath project) :home (.getPath home)}))
 
           view
-          (policy/access-view snapshot [(.getPath project)])]
+          (policy/access-view snapshot)
+
+          in-home
+          #(.getPath (java.io.File. home ^String %))]
 
       ;; The implicit session folder (`~/.vis`) is always granted, engine-level.
       (expect (= [(.getCanonicalPath sibling) (.getCanonicalPath cache)
@@ -265,16 +280,18 @@
       (expect (= "relative/AGENTS.md" (paths/abbreviate-home "relative/AGENTS.md" (.getPath home))))
       (expect (= (str (.getPath home) "-other/AGENTS.md")
                  (paths/abbreviate-home (str (.getPath home) "-other/AGENTS.md") (.getPath home))))
-      (expect (= ["~/vis" "~/demo" "~/.m2" "~/.vis"] (get-in view ["filesystem" "read_write"])))
-      (expect (= ["~/read-only"] (get-in view ["filesystem" "process_read_only"])))
-      (expect (= ["~/.m2" "~/.vis"] (get-in view ["filesystem" "no_search"])))
-      (expect (= {"~/demo" "Sibling repo"
-                  "~/.m2" "Maven cache"
-                  "~/.vis" (get config-validation/vis-home-entry "description")}
-                 (get-in view ["filesystem" "descriptions"])))
-      ;; Only roots that opt OUT of the default `shared` isolation are named.
-      (expect (= {"~/demo" "copy-and-apply" "~/read-only" "not-allowed"}
-                 (get-in view ["filesystem" "draft"])))
+      ;; User review: the session object listed each path up to three times. Now each path
+      ;; is in one list once, with only the facts that differ from the default. A root that
+      ;; opts OUT of the default `shared` isolation names its draft policy.
+      (expect (= [{"cwd" (in-home "demo") "description" "Sibling repo" "draft" "copy-and-apply"}
+                  {"cwd" (in-home ".m2") "description" "Maven cache" "no_search" true}
+                  {"cwd" (in-home ".vis")
+                   "description" (get config-validation/vis-home-entry "description")
+                   "no_search" true}
+                  {"cwd" (in-home "read-only") "mode" "read" "draft" "not-allowed"}]
+                 (one-list snapshot (.getPath project))))
+      ;; The access block keeps only the rules.
+      (expect (= {"deny_read" [] "deny_write" []} (get view "filesystem")))
       (expect (= {(.getCanonicalPath sibling) :copy-and-apply
                   (.getCanonicalPath (java.io.File. home "read-only")) :not-allowed}
                  (policy/draft-policies snapshot)))
@@ -300,7 +317,7 @@
             (policy/snapshot {} {:base-dir base :home (.getPath home)})
 
             view
-            (policy/access-view snapshot [base])]
+            (policy/access-view snapshot)]
 
         (expect (true? (get-in snapshot [:process-jail :disabled?])))
         (expect (false? (:jail-enabled snapshot)))
@@ -340,17 +357,17 @@
             [(.getPath sibling) vis-home]
 
             view
-            (policy/access-view snapshot [base])]
+            (policy/access-view snapshot)]
 
         (expect (false? (:jail-enabled snapshot)))
         (expect (false? (get view "is_jailed")))
         (expect (= (vec (distinct (concat catalog host-roots))) (policy/read-write-roots snapshot)))
         (expect (= (vec (distinct (concat [vis-home] host-roots)))
                    (policy/no-search-roots snapshot)))
-        (expect (= (vec (distinct (concat ["~/vis" "~/sibling" "~/.vis"] host-roots)))
-                   (get-in view ["filesystem" "read_write"])))
-        (expect (= (vec (distinct (concat ["~/.vis"] host-roots)))
-                   (get-in view ["filesystem" "no_search"])))
+        (expect (= (vec (distinct (concat catalog host-roots)))
+                   (mapv #(get % "cwd") (one-list snapshot base))))
+        (expect (= (vec (distinct (concat [vis-home] host-roots)))
+                   (keep #(when (get % "no_search") (get % "cwd")) (one-list snapshot base))))
         (expect (= (into (mapv (fn [root]
                                  (cond-> {:trunk root :clone root :draft :shared}
                                    (= vis-home root)
@@ -398,8 +415,8 @@
 
         (expect (= (vec (distinct (concat [cache vis-home] host-roots)))
                    (policy/no-search-roots snapshot)))
-        (expect (= (vec (distinct (concat ["~/cache" "~/.vis"] host-roots)))
-                   (get-in (policy/access-view snapshot [base]) ["filesystem" "no_search"])))
+        (expect (= (vec (distinct (concat [cache vis-home] host-roots)))
+                   (keep #(when (get % "no_search") (get % "cwd")) (one-list snapshot base))))
         (expect (true? (:no-search? (first (filter #(= cache (:trunk %)) entries)))))))
   (it
     "keeps a stable generation for equivalent snapshots and changes it with policy"
@@ -423,7 +440,7 @@
             (policy/snapshot {"jail" {"network" {"allowed_domains" ["example.com"]}}})
 
             clean
-            (policy/access-view snap [])
+            (policy/access-view snap)
 
             erred
             (policy/access-view (assoc snap
@@ -431,8 +448,7 @@
                                   {"source" "vis.yml"
                                    "problems"
                                    ["toggles: unknown top-level config key (config is closed)"]
-                                   "hint" "fix it and /reload"})
-                                [])]
+                                   "hint" "fix it and /reload"}))]
 
         (expect (not (contains? clean "config_error")))
         (expect (= "vis.yml" (get-in erred ["config_error" "source"])))
@@ -488,9 +504,9 @@
                             (:deny-read (process-jail/runtime-policy jail)))))
             ;; Diagnostics show the rules an operator wrote, never file contents.
             (expect (= [(str root "/.env") (str root "/**/.env")]
-                       (get-in (policy/access-view snapshot []) ["filesystem" "deny_read"])))
+                       (get-in (policy/access-view snapshot) ["filesystem" "deny_read"])))
             (expect (= [(str root "/service")]
-                       (get-in (policy/access-view snapshot []) ["filesystem" "deny_write"]))))))))
+                       (get-in (policy/access-view snapshot) ["filesystem" "deny_write"]))))))))
 
 (defn- deny-snapshot
   "A snapshot of a project with glob deny rules, with the jail on or off."
@@ -698,13 +714,20 @@
       ;; Other writable roots stay readable only.
       (expect (every? (set (:allow-read jail)) (get-in base [:process-jail :allow-read-write])))
       (expect (= [(str root "/src/**")]
-                 (get-in (policy/access-view narrowed [root]) ["filesystem" "read_write"])))
+                 (get-in (policy/access-view narrowed) ["filesystem" "write_rules"])))
       ;; A grant whose only rule is outside the ceiling writes nothing at all.
       (let [none (:process-jail (policy/restrict base {:write ["/elsewhere/**"]}))]
         (expect (true? (:write-limited? none)))
         (expect (= [] (:write-rules none) (:allow-read-write none))))
-      (expect (some #{root}
-                    (get-in (policy/access-view narrowed [root]) ["filesystem" "read_only"])))))
+      ;; The one path list marks each root that the grant left readable only.
+      (let [modes
+            (into {} (map (juxt #(get % "cwd") #(get % "mode"))) (one-list narrowed "/elsewhere"))
+
+            former
+            (get-in base [:process-jail :allow-read-write])]
+
+        (expect (seq former))
+        (expect (every? #(= "read" (get modes (paths/abbreviate-home %))) former)))))
   (it
     "never gives a child more than its parent: the parent's deny rules survive a wide grant"
     (let [root

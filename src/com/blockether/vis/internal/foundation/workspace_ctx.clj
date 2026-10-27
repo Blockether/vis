@@ -54,8 +54,11 @@
   50)
 
 (defn- project-filesystem-roots
-  "Merge registrations into filesystem roots, projecting names and cwd onto permitted working copies."
-  [root repo-root filesystem-roots project-paths]
+  "Merge registrations and access facts into ONE list of filesystem roots, projecting names and
+   cwd onto permitted working copies. A process read-only grant of `policy` is in the list with
+   `\"mode\" \"read\"`, so is a root that a subagent write grant left readable only. Only
+   facts that differ from the default (read/write, shared, searched) are written."
+  [root repo-root filesystem-roots project-paths policy]
   (let [own
         (set [root (canonical-path repo-root)])
 
@@ -78,28 +81,75 @@
                                       (.relativize (.toPath (io/file (:trunk mapping))) source)))
                                path)]
                   (when-not (= root target)
-                    (assoc mapping
-                      :trunk path
-                      :clone target
-                      :python-name alias))))))
+                    (cond-> (assoc mapping
+                              :trunk path
+                              :clone target
+                              :python-name alias)
+                      ;; A search setting belongs to its own root, not to a path below it.
+                      (not= path (:trunk mapping))
+                      (dissoc :no-search?)))))))
           (sort-by key project-paths))
 
         registered
-        (into #{} (map :trunk) projects)]
+        (into #{} (map :trunk) projects)
 
-    (mapv (fn [{:keys [trunk clone draft denied? python-name]}]
-            (cond-> {"cwd" (paths/abbreviate-home (if denied? trunk (or clone trunk)))
-                     "isolated" (boolean (and clone (not= clone trunk)))
-                     "draft" (name (or draft :shared))}
-              denied?
-              (assoc "is_denied" true)
+        catalog
+        (remove #(or (:primary? %) (contains? own (:trunk %)) (contains? registered (:trunk %)))
+          filesystem-roots)
 
-              python-name
-              (assoc "python_name" python-name)))
-          (concat
-            projects
-            (remove #(or (:primary? %) (contains? own (:trunk %)) (contains? registered (:trunk %)))
-              filesystem-roots)))))
+        jail
+        (:process-jail policy)
+
+        listed
+        (into (into own registered) (map :trunk) catalog)
+
+        no-search
+        (set (:no-search jail))
+
+        read?
+        (set (:allow-read jail))
+
+        read-only
+        (keep (fn [path]
+                (when-not (contains? listed path)
+                  {:trunk path
+                   :draft (get (:draft-policies policy) path)
+                   :no-search? (contains? no-search path)}))
+              (distinct (:allow-read jail)))
+
+        descriptions
+        (:path-descriptions jail)]
+
+    (mapv (fn [{:keys [trunk clone draft denied? no-search? python-name]}]
+            (let [draft
+                  (some-> draft
+                          name)
+
+                  description
+                  (get descriptions trunk)]
+
+              (cond-> {"cwd" (paths/abbreviate-home (if denied? trunk (or clone trunk)))}
+                python-name
+                (assoc "python_name" python-name)
+
+                (read? trunk)
+                (assoc "mode" "read")
+
+                description
+                (assoc "description" description)
+
+                (and clone (not= clone trunk))
+                (assoc "isolated" true)
+
+                (and draft (not= "shared" draft))
+                (assoc "draft" draft)
+
+                denied?
+                (assoc "is_denied" true)
+
+                no-search?
+                (assoc "no_search" true))))
+          (concat projects catalog read-only))))
 
 (defn render-block
   "Project a hydrated `{:workspace :session-state}` pair into the
@@ -111,15 +161,17 @@
    Paths under home read as `~/…`, like the access block; Python expands them.
 
    workspace identity — `\"root\"` `\"isolated\"` `\"id\"` `\"label\"`
-     `\"filesystem_roots\"` — additional roots with their working `\"cwd\"`, `\"draft\"`
-       isolation policy and `\"isolated\"` flag. A registered project's `\"python_name\"`
-       binds a prebound Python Path to that same cwd; caches and denied roots have
-       no automatic name. The session's OWN root stays in `\"root\"`/`\"isolated\"`
-       and binds `project_root_path`, never a duplicate filesystem-roots row.
+     `\"filesystem_roots\"` — the ONE list of other paths: each working `\"cwd\"` with
+       its `\"description\"`, `\"mode\" \"read\"` for a process read-only grant,
+       `\"no_search\"`, a non-shared `\"draft\"` policy and `\"isolated\"` for a private
+       copy. A registered project's `\"python_name\"` binds a prebound Python Path to
+       that same cwd; caches and denied roots have no automatic name. The session's OWN
+       root stays in `\"root\"`/`\"isolated\"` and binds `project_root_path`, never a
+       duplicate filesystem-roots row. `session[\"access\"]` keeps only the rules.
    `\"changed\"` / `\"changed_paths\"` — since-fork edits
    session linkage — `\"session_state_id\"` `\"session_id\"` `\"session_title\"`
      `\"session_fork_of\"` (foreign namespaces stay folded)"
-  [{:keys [workspace session-state filesystem-roots project-paths]}]
+  [{:keys [workspace session-state filesystem-roots project-paths policy]}]
   (let [root
         (canonical-path (or (:root workspace) (workspace/cwd)))
 
@@ -133,7 +185,7 @@
         (not= :live (or (:workspace-backend workspace) (when fork-ms :legacy-isolated) :live))
 
         roots
-        (project-filesystem-roots root (:repo-root workspace) filesystem-roots project-paths)
+        (project-filesystem-roots root (:repo-root workspace) filesystem-roots project-paths policy)
 
         changed
         (when (and root fork-ms (.exists (io/file root)))
