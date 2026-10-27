@@ -237,6 +237,26 @@
           (expect (str/includes? text "│ notes.pdf"))
           (expect (str/includes? text "PDF"))
           (expect (str/includes? text "PDF · 200B"))))
+    (it "writes the section headings in bold"
+        (let [frame
+              (last (:frames (paint-component
+                               (inspector/inspector-modal-component staged sent produced nil))))
+
+              heading-cells
+              (fn [heading]
+                (some (fn [row]
+                        (let [text
+                              (apply str (map :ch row))
+
+                              at
+                              (str/index-of text heading)]
+
+                          (when at (subvec row at (+ at (count heading))))))
+                      frame))]
+
+          (doseq [heading ["Ready to send" "Sent in this session" "Produced in this session"]]
+            (expect (seq (heading-cells heading)) heading)
+            (expect (every? :bold (heading-cells heading)) heading))))
     (it "places each visible thumbnail inside its cell"
         (let [painted
               (atom nil)

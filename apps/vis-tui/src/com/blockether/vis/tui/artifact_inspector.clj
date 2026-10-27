@@ -258,8 +258,8 @@
         text-w
         (max 1 (- (+ left inner-w) text-x 1))]
 
-    (cond (:header item) (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                             (p/put-str! g (+ left 2) y (:header item)))
+    (cond (:header item) (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+                             (p/styled g [p/BOLD] (p/put-str! g (+ left 2) y (:header item))))
           (:empty item)
           (do (p/set-colors! g t/dialog-hint t/dialog-bg)
               (p/put-str! g (+ left 2) y (p/ellipsize (:empty item) (max 1 (- inner-w 3)))))
