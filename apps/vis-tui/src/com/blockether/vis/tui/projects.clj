@@ -472,8 +472,7 @@
       (map-indexed #(assoc %2 :index (inc (long %1))))
       vec)))
 
-(defn sidebar-entries
-  "Project and saved-session rows in shared paint/keyboard order."
+(defn- build-sidebar-entries
   [db]
   (cond (get-in db [:project-sidebar :search]) (search-entries db)
         (contains? (:project-sidebar db) :pages) (saved-entries db)
@@ -542,6 +541,39 @@
                                        tabs)))))))
                 (map-indexed #(assoc %2 :index (inc (long %1))))
                 vec)))
+
+(defn- tab-entry-inputs
+  "The fields of one tab state that sidebar rows read: its session, draft, queue and status."
+  [local]
+  (when local
+    [(get-in local [:session :id]) (:input local) (:attachments local) (:pending-sends local)
+     (:human-input local) (:loading? local)]))
+
+(defn- sidebar-entry-inputs
+  "Every part of `db` that `build-sidebar-entries` reads. The active tab state is `db` itself."
+  [db]
+  [(:project-sidebar db) (:tabs db) (:active-tab-id db) (:session-drafts db) (tab-entry-inputs db)
+   (mapv #(tab-entry-inputs (get-in db [:tab-locals (:id %)])) (:tabs db))])
+
+(defonce ^:private sidebar-entries-memo
+  ;; `[inputs entries]` of the last build. Every frame paints the rail, and a build
+  ;; walks every loaded session, so an unchanged sidebar reuses its rows.
+  (atom nil))
+
+(defn sidebar-entries
+  "Project and saved-session rows in shared paint/keyboard order."
+  [db]
+  (let [inputs
+        (sidebar-entry-inputs db)
+
+        [cached-inputs cached-entries]
+        @sidebar-entries-memo]
+
+    (if (and cached-entries (= inputs cached-inputs))
+      cached-entries
+      (let [entries (build-sidebar-entries db)]
+        (reset! sidebar-entries-memo [inputs entries])
+        entries))))
 
 (defn- entry-id
   "Stable row identity across gateway refreshes; display labels and counts can change."
