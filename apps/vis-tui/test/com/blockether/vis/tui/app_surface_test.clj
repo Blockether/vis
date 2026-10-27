@@ -1,5 +1,6 @@
 (ns com.blockether.vis.tui.app-surface-test
-  (:require [com.blockether.vis.tui.app-model :as model]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.tui.app-model :as model]
             [com.blockether.vis.tui.app-surface :as surface]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.input :as input]
@@ -285,3 +286,315 @@
       (expect (false? (get-in @state/app-db [:app-views "app-1" :is-gap])))
       (state/dispatch [:live-view-close "app-1" {:reason :completed}])
       (expect (= :closed (model/status (get-in @state/app-db [:app-views "app-1" :view]))))))
+
+(def ^:private game
+  "A small app with controls, a selectable table, an input and shortcuts."
+  {:id "app-2"
+   :title "Board"
+   :seq 2
+   :placement :attachment
+   :nodes [{:id "go" :type :button :label "Go"}
+           {:id "off" :type :button :label "Off" :is-disabled true}
+           {:id "pick" :type :card :title "Pick me" :text "A card" :is-selectable true}
+           {:id "jobs"
+            :type :table
+            :is-selectable true
+            :columns [{:id "job" :label "Job"}]
+            :rows [{:id "r1" :cells ["One"]} {:id "r2" :cells ["Two"]}]
+            :selected-ids []
+            :max-rows 500} {:id "ok" :type :checkbox :label "Confirm"}
+           {:id "done" :type :button :label "Done" :action :submit}]
+   :shortcuts [{:key "n" :label "New game" :action "new"} {:key "g" :label "Go" :node-id "go"}
+               {:key "s" :label "Shuffle" :action "shuffle"}
+               {:key "ArrowLeft" :label "Left" :action "left"}]})
+
+(defn- game-harness
+  [v]
+  (let [{:keys [calls] :as h}
+        (harness v)
+
+        effects
+        {:save! (fn [action _]
+                  (swap! calls conj [:save action]))
+         :send! (fn [action node-id]
+                  (swap! calls conj [:send action node-id]))
+         :activate! (fn [action]
+                      (swap! calls conj [:activate action]))
+         :select! (fn [action]
+                    (swap! calls conj [:select action]))
+         :edit! (fn [node]
+                  (swap! calls conj [:edit (:id node)]))
+         :shortcut! (fn [action s]
+                      (swap! calls conj [:shortcut action (:action s)]))
+         :reload! (fn []
+                    (swap! calls conj [:reload]))
+         :paste identity}]
+
+    (assoc h
+      :press (fn [st key]
+               (let [geom (surface/measure st 100 40 v)]
+                 (surface/reconcile (surface/handle-key st key geom effects) geom))))))
+
+(defn- ch [c] (KeyStroke. (char c) false false))
+
+(defn- select-row
+  "Move the cursor down until `pred` holds for the selected row."
+  [press st v pred]
+  (loop [st
+         st
+
+         n
+         0]
+
+    (if (or (pred (row-at st v)) (> n 40)) st (recur (press st (k KeyType/ArrowDown)) (inc n)))))
+
+(defdescribe
+  app-shortcuts
+  (it "reads the shortcut key names of plain, named and modified keys"
+      (expect (= "n" (surface/shortcut-key (ch \n))))
+      (expect (= "N" (surface/shortcut-key (KeyStroke. \N false false))))
+      (expect (= "Space" (surface/shortcut-key (ch \space))))
+      (expect (= "ArrowLeft" (surface/shortcut-key (k KeyType/ArrowLeft))))
+      (expect (= "Enter" (surface/shortcut-key (k KeyType/Enter))))
+      (expect (nil? (surface/shortcut-key (k KeyType/Escape))))
+      (expect (nil? (surface/shortcut-key (k KeyType/Tab))))
+      (expect (nil? (surface/shortcut-key (k \n true)))))
+  (it "posts an action shortcut and shows its label"
+      (let [{:keys [press start calls]}
+            (game-harness game)
+
+            st
+            (press start (ch \n))]
+
+        (expect (= [[:shortcut {:action :shortcut :key "n"} "new"]] @calls))
+        (expect (= "New game …" (surface/status-line st)))))
+  (it "presses the node of a node shortcut like Enter"
+      (let [{:keys [press start calls]} (game-harness game)]
+        (press start (ch \g))
+        (expect (= [[:activate {:action :activate :node-id "go"}]] @calls))))
+  (it "lets a shortcut take a surface key and keeps the verb behind C-x"
+      (let [{:keys [press start calls]}
+            (game-harness game)
+
+            st
+            (press start (ch \s))]
+
+        (expect (= [[:shortcut {:action :shortcut :key "s"} "shuffle"]] @calls))
+        (let [st (press st (k \x true))]
+          (expect (true? (:prefix st)))
+          (let [st (press st (ch \s))]
+            (expect (nil? (:prefix st)))
+            (expect (= :send (first (last @calls))))
+            (expect (= :sending (get-in st [:send :state])))))))
+  (it "takes a named key such as ArrowLeft"
+      (let [{:keys [press start calls]} (game-harness game)]
+        (press start (k KeyType/ArrowLeft))
+        (expect (= [[:shortcut {:action :shortcut :key "ArrowLeft"} "left"]] @calls))))
+  (it "never binds Escape, and C-g leaves the C-x prefix"
+      (let [{:keys [press start calls]} (game-harness game)]
+        (expect
+          (= {::dlg/done nil}
+             (surface/handle-key start (k KeyType/Escape) (surface/measure start 100 40 game) {})))
+        (let [st (press (press start (k \x true)) (k \g true))]
+          (expect (nil? (:prefix st)))
+          (expect (empty? @calls)))))
+  (it "ignores shortcuts while the editor has the focus"
+      (let [{:keys [press start calls]}
+            (game-harness (assoc view :shortcuts [{:key "a" :action "a"}]))
+
+            st
+            (press (down press start 1) (k KeyType/Enter))
+
+            st
+            (press st (ch \a))]
+
+        (expect (some? (:editor st)))
+        (expect (= "a" (input/input->text (get-in st [:editor :input]))))
+        (expect (empty? @calls))))
+  (it "has no shortcuts once the app is closed"
+      (let [closed
+            (assoc game :is-closed true)
+
+            {:keys [press start calls]}
+            (game-harness closed)]
+
+        (press start (ch \n))
+        (expect (empty? @calls))
+        (expect (nil? (surface/shortcut-legend closed)))))
+  (it "shows the legend and marks hidden verbs with C-x"
+      (let [geom (surface/measure (surface/initial-state) 100 40 game)]
+        (expect (= [["n" "New game"] ["g" "Go"] ["s" "Shuffle"] ["←" "Left"]] (:legend geom)))
+        (expect (nil? (:legend (surface/measure (surface/initial-state) 100 40 view)))))))
+
+(defdescribe
+  stale-app
+  (it "answers app keys and owner controls with one notice and calls nothing"
+      (let [stale
+            (assoc game :is-stale true)
+
+            {:keys [press start calls]}
+            (game-harness stale)]
+
+        (expect (= surface/disconnected-notice (surface/status-line (press start (ch \n)))))
+        (expect (= surface/disconnected-notice (surface/status-line (press start (ch \g)))))
+        (expect (= surface/disconnected-notice
+                   (surface/status-line (press start (k KeyType/ArrowLeft)))))
+        (expect (= surface/disconnected-notice
+                   (surface/status-line (press (down press start 0) (k KeyType/Enter)))))
+        (expect (empty? @calls))))
+  (it "keeps Send, reload and the C-x surface keys"
+      (let [{:keys [press start calls]}
+            (game-harness (assoc game :is-stale true))
+
+            st
+            (press (press start (k \x true)) (ch \s))]
+
+        (expect (= :sending (get-in st [:send :state])))
+        (expect (= :send (first (last @calls))))
+        (press (press start (k \x true)) (ch \r))
+        (expect (= [:reload] (last @calls)))))
+  (it "dims the legend into one line and says Disconnected in the title"
+      (let [geom (surface/measure (surface/initial-state) 100 40 (assoc game :is-stale true))]
+        (expect (string? (:legend geom)))
+        (expect (str/starts-with? (:legend geom) "Disconnected"))
+        (expect (str/includes? (:legend geom) "n New game"))
+        (expect (= "Disconnected"
+                   (get model/status-label (model/status (assoc game :is-stale true)))))))
+  (it "says Disconnected once when the gateway refuses an action with 409"
+      (expect (= surface/disconnected-notice
+                 (surface/refusal-notice
+                   {:is-accepted false :reason "disconnected" :http-status 409}))))
+  (it "keeps one app for each view id and follows the owner state of each open"
+      (reset! state/app-db
+        {:session {:id "s1"} :tabs [] :live-views [] :app-views {} :render-version 0})
+      (state/dispatch [:live-view-open (assoc game :session-id "s1")])
+      (state/dispatch [:live-view-patch
+                       {:view-id "app-2" :seq 3 :ops [{:op :set :node-id "pick" :text "Moved"}]}])
+      (state/dispatch [:live-view-open
+                       (assoc game
+                         :session-id "s1"
+                         :is-stale true)])
+      (expect (= ["app-2"] (keys (:app-views @state/app-db))))
+      (expect (= 3 (get-in @state/app-db [:app-views "app-2" :view :seq])))
+      (expect (= :stale (model/status (get-in @state/app-db [:app-views "app-2" :view]))))
+      (state/dispatch [:live-view-open
+                       (assoc game
+                         :session-id "s1"
+                         :seq 3)])
+      (expect (= :live (model/status (get-in @state/app-db [:app-views "app-2" :view]))))
+      (state/dispatch [:live-view-open
+                       (assoc game
+                         :session-id "s1"
+                         :seq 4
+                         :is-stale true)])
+      (expect (= 4 (get-in @state/app-db [:app-views "app-2" :view :seq])))
+      (expect (= :stale (model/status (get-in @state/app-db [:app-views "app-2" :view]))))))
+
+(defdescribe
+  app-controls
+  (it "presses buttons, cards and table rows and edits inputs with Enter"
+      (let [{:keys [press start calls]}
+            (game-harness game)
+
+            on
+            (fn [pred]
+              (let [st (select-row press start game pred)]
+                (press st (k KeyType/Enter))))]
+
+        (on #(= "go" (:node-id %)))
+        (on #(= "pick" (:node-id %)))
+        (on #(= "r2" (:item-id %)))
+        (on #(= "ok" (:node-id %)))
+        (expect (= [[:activate {:action :activate :node-id "go"}]
+                    [:activate {:action :activate :node-id "pick"}]
+                    [:select {:action :select :node-id "jobs" :item-ids ["r2"]}] [:edit "ok"]]
+                   @calls))))
+  (it "never stops on a disabled button"
+      (let [{:keys [rows]} (surface/measure (surface/initial-state) 100 40 game)]
+        (expect (not-any? #(and (= "off" (:node-id %)) (:is-selectable %)) rows))
+        (expect (= 1 (count (filter #(and (= "ok" (:node-id %)) (:is-selectable %)) rows))))))
+  (it "sends the input values with a submit button"
+      (let [v
+            (update game
+                    :nodes
+                    (fn [nodes]
+                      (mapv #(if (= "ok" (:id %)) (assoc % :value true) %) nodes)))
+
+            {:keys [press start calls]}
+            (game-harness v)
+
+            st
+            (select-row press start v #(= "done" (:node-id %)))]
+
+        (press st (k KeyType/Enter))
+        (let [[kind action node-id] (last @calls)]
+          (expect (= :send kind))
+          (expect (= "done" node-id))
+          (expect (= {"ok" true} (:values action))))))
+  (it "says why the gateway refused an action"
+      (expect (= "That key has no app action"
+                 (surface/refusal-notice {:is-accepted false :reason "unbound"})))
+      (expect (= "The app is closed"
+                 (surface/refusal-notice {:is-accepted false :reason "closed"})))
+      (expect (nil? (surface/refusal-notice {:is-accepted true})))))
+
+(defdescribe app-height
+             (it "uses most of a small terminal, so the controls fit"
+                 (let [g (surface/measure (surface/initial-state) 80 24 game)]
+                   (expect (<= 12 (long (:list-h g))))
+                   (expect (<= (long (:hint-row g)) 22))))
+             (it "keeps a margin around the box in a large terminal"
+                 (let [{:keys [bounds]} (surface/measure (surface/initial-state) 160 48 game)]
+                   (expect (<= 2 (long (:top bounds))))
+                   (expect (<= (long (:bottom bounds)) 45)))))
+
+(def ^:private entry-row
+  "An app with a field and buttons side by side, as a row group lays them out."
+  {:id "app-3"
+   :title "Todo"
+   :seq 1
+   :placement :attachment
+   :nodes [{:id "entry"
+            :type :group
+            :direction :row
+            :children [{:id "new" :type :plaintext :name "new" :label "New task" :value ""}
+                       {:id "add" :type :button :label "Add" :action :activate}]}
+           {:id "acts"
+            :type :group
+            :direction :row
+            :children [{:id "undo" :type :button :label "Undo" :action :activate}
+                       {:id "off" :type :button :label "Off" :is-disabled true}
+                       {:id "clear" :type :button :label "Clear" :action :activate}]}]})
+
+(defdescribe side-by-side-controls
+             (it "stops on each control of a row and skips a disabled one"
+                 (let [{:keys [press start]}
+                       (game-harness entry-row)
+
+                       ids
+                       (fn [st]
+                         (let [rows (:rows (surface/measure st 100 40 entry-row))]
+                           (some-> (surface/focused-entry (nth rows (:selected st)) (:cell st))
+                                   :node-id)))]
+
+                   (expect (= ["new" "add" "undo" "clear"]
+                              (mapv #(ids (down press start %)) [0 1 2 3])))))
+             (it "Enter edits the focused field and presses the focused button"
+                 (let [{:keys [calls press start]} (game-harness entry-row)]
+                   (press start (k KeyType/Enter))
+                   (press (down press start 1) (k KeyType/Enter))
+                   (expect (= [:edit "new"] (first @calls)))
+                   (expect (= :activate (first (second @calls)))))))
+
+(defdescribe shortcut-legend-merge
+             (it "joins the keys of one label, so a narrow legend keeps every action"
+                 (expect (= [["←/h" "Left"] ["→/l" "Right"] ["Del" "Delete"]]
+                            (surface/shortcut-legend
+                              {:id "k"
+                               :placement :attachment
+                               :nodes []
+                               :shortcuts [{:key "ArrowLeft" :label "Left" :action "left"}
+                                           {:key "ArrowRight" :label "Right" :action "right"}
+                                           {:key "h" :label "Left" :action "left"}
+                                           {:key "l" :label "Right" :action "right"}
+                                           {:key "Delete" :label "Delete" :action "delete"}]})))))

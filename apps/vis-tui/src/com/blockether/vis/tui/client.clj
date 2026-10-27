@@ -589,6 +589,15 @@
      (vec (get (send-json-with-entry! entry "GET" path nil {:timeout-ms slash-catalog-timeout-ms})
                "commands")))))
 
+(defn session-keybindings
+  "GET the C-x key bindings of the extensions of `sid`, in gateway order, each as
+   `{:key :command|:action :label :group :extension}`. A gateway without the route
+   answers 404, and then this answers an empty list."
+  [sid]
+  (try (mapv wire/->engine
+             (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/keybindings")) "keybindings"))
+       (catch clojure.lang.ExceptionInfo e (if (= 404 (:http-status (ex-data e))) [] (throw e)))))
+
 (defn soul
   [sid]
   (try (send-json! "GET" (str "/v1/sessions/" (enc sid)))
@@ -2639,6 +2648,8 @@
 (def gateway-session-model-cached session-model-cached)
 
 (def gateway-session-slashes session-slashes)
+
+(def gateway-session-keybindings session-keybindings)
 
 (def gateway-session-workspace session-workspace-info)
 

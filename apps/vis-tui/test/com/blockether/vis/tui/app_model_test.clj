@@ -106,7 +106,7 @@
                       (model/submit-action {:seq 3} k nil)]
 
                   (expect (app/idempotency-key? k))
-                  (expect (= {:action :submit :idempotency-key k :base-seq 3} action))
+                  (expect (= {:action :submit :idempotency-key k :base-seq 3 :values {}} action))
                   (expect (not= k (model/idempotency-key))))))
   (describe "outcomes"
             (it "names each refusal"

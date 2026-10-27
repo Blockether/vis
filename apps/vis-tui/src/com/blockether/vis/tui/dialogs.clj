@@ -9183,3 +9183,42 @@
                   (do (swap! scroll #(min max-scroll (+ (long %) (long content-h)))) (recur))
                   KeyType/Character (recur)
                   (recur))))))))))
+
+(defn live-input-value!
+  "Ask the human for a new value of one view input `node`. Returns `{:value v}`, or nil
+   when the human cancels or types a number outside the field's domain."
+  [screen {:keys [type label options value is-secret]}]
+  (let [option-label (fn [o]
+                       (or (:label o) (str (:value o))))]
+    (case type
+      :checkbox
+      {:value (not (boolean value))}
+
+      :select
+      (when-let [choice (list-dialog! screen
+                                      label
+                                      (mapv #(hash-map :label (option-label %) :value (:value %))
+                                            options)
+                                      {:enter-label "choose" :height :content})]
+        {:value (:value choice)})
+
+      :multiselect
+      (when-let [picked
+                 (multi-select-dialog!
+                   screen
+                   label
+                   (mapv option-label options)
+                   (into #{} (keep #(when (some #{(:value %)} value) (option-label %))) options))]
+        {:value (into [] (keep #(when (some #{(option-label %)} picked) (:value %))) options)})
+
+      :range
+      (when-let [typed (text-input-dialog! screen label "Value" :initial (str value))]
+        (when-let [n (parse-double (str/trim typed))]
+          {:value (if (== (double n) (Math/rint (double n))) (long n) n)}))
+
+      (when-let [typed (text-input-dialog! screen
+                                           label
+                                           "Value"
+                                           :initial (if is-secret "" (str (or value "")))
+                                           :mask (when (or is-secret (= :password type)) \*))]
+        {:value typed}))))

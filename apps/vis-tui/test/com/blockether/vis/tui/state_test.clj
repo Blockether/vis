@@ -1443,7 +1443,35 @@
                                                  :token)]
 
             (let [{db' :db} (send-message-fn db [:send-message "hello"])]
-              (expect (= scroll/follow (:scroll db')))))))))
+              (expect (= scroll/follow (:scroll db')))))))
+    (it "a bare send leaves the draft, its pastes and its attachments alone"
+        (let [send-message-fn (ev :send-message)
+              db {:session {:id "c1"}
+                  :active-tab-id :main
+                  :messages []
+                  :input-history []
+                  :input {:text "half-typed"}
+                  :scroll scroll/follow
+                  :settings {:reasoning-level "balanced" :verbosity "low"}
+                  :pastes {1 "pasted"}
+                  :attachments [{:path "a.png"}]}]
+
+          (with-redefs [input/expand-paste-placeholders (fn [text _]
+                                                          text)
+                        input/expand-file-mentions identity
+                        vis/cancellation-token (fn []
+                                                 :token)]
+
+            (let [{db' :db fx :fx} (send-message-fn db
+                                                    [:send-message "/review" nil {:is-bare true}])
+                  [_ _ _ agent-text & more] (first fx)]
+
+              (expect (= "/review" agent-text))
+              (expect (= [] (last more)) "no draft attachment rides along")
+              (expect (= {:text "half-typed"} (:input db')))
+              (expect (= {1 "pasted"} (:pastes db')))
+              (expect (= [{:path "a.png"}] (:attachments db')))
+              (expect (true? (get-in db' [:submitted-input :is-bare])))))))))
 
 (defdescribe
   cancel-turn-test

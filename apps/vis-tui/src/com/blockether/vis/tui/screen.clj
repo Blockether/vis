@@ -507,6 +507,29 @@
                                           (state/dispatch [:reset-input]))
         :else (do (state/dispatch [:send-message text wid]) (state/dispatch [:reset-input]))))))
 
+(defn- run-keybinding!
+  "Run the slash command of the C-x key binding `kb` as if the human typed it and
+   pressed Enter, without touching the draft: a bare send carries no draft pastes
+   or attachments. A busy session queues it, like Enter does."
+  [kb]
+  (let [db
+        @state/app-db
+
+        text
+        (str/trim (str (:command kb)))
+
+        wid
+        (or (:active-tab-id db) (:id (some #(when (:active? %) %) (:tabs db))))]
+
+    (cond (str/blank? text) nil
+          (nil? (:session db)) (vis/notify! "The session is not ready yet" :level :warn)
+          (:cancelling? db) (vis/notify!
+                              "Cancelling current turn — press the key again once it stops"
+                              :level :warn
+                              :ttl-ms 2500)
+          (:loading? db) (state/dispatch [:enqueue-message text wid {:is-bare true}])
+          :else (state/dispatch [:send-message text wid {:is-bare true}]))))
+
 (def ^:private copy-success-ttl-ms 1500)
 
 (def ^:private status-error-ttl-ms 5000)
@@ -1214,18 +1237,46 @@
     (when (seq commands) (store-slash-catalog! commands) (state/dispatch [:bump-render-version]))
     commands))
 
-(defn- start-deferred-gateway-slash-load!
-  "Ask the already-listening gateway for its catalog after the first usable frame.
-   The gateway initializes Python once; this TUI process never constructs CPython."
+(defonce ^:private last-refused-keybindings (atom nil))
+
+(defn- refresh-gateway-keybindings!
+  "Fetch the C-x key bindings of the session's extensions and merge them into the
+   keymap. A set of refused bindings shows one notice."
   [session-id]
-  (vis/worker-future "tui-gateway-slash-load"
-                     (fn []
-                       (try (when session-id (refresh-gateway-slash-commands! session-id))
-                            (catch Throwable t
-                              (tel/log! {:level :warn
-                                         :id ::gateway-slash-command-load-failed
-                                         :data {:error (ex-message t)}}
-                                        "Gateway slash-command loading failed."))))))
+  (let [refused (keymap/set-keybindings! (vis/gateway-session-keybindings session-id))]
+    (state/dispatch [:bump-render-version])
+    (when (and (seq refused) (not= refused (first (reset-vals! last-refused-keybindings refused))))
+      (tel/log! {:level :warn :id ::keybindings-refused :data {:refused refused}}
+                "Extension key bindings refused.")
+      (vis/notify! (str "C-x "
+                        (str/join ", " (map #(get-in % [:binding :key]) refused))
+                        ": "
+                        (:reason (first refused))
+                        (when (next refused) (str " (+" (dec (count refused)) " more)"))
+                        (when-let [free (not-empty (keymap/free-prefix-letters))]
+                          (str ". Free keys: " free)))
+                   :level
+                   :warn))
+    refused))
+
+(defn- start-deferred-gateway-slash-load!
+  "Ask the already-listening gateway for its catalog and the C-x key bindings of its
+   extensions after the first usable frame. The gateway initializes Python once;
+   this TUI process never constructs CPython."
+  [session-id]
+  (vis/worker-future
+    "tui-gateway-slash-load"
+    (fn []
+      (try (when session-id (refresh-gateway-slash-commands! session-id))
+           (catch Throwable t
+             (tel/log!
+               {:level :warn :id ::gateway-slash-command-load-failed :data {:error (ex-message t)}}
+               "Gateway slash-command loading failed.")))
+      (try (when session-id (refresh-gateway-keybindings! session-id))
+           (catch Throwable t
+             (tel/log!
+               {:level :warn :id ::gateway-keybinding-load-failed :data {:error (ex-message t)}}
+               "Gateway key-binding loading failed."))))))
 
 (defonce ^:private last-extensions-reload (atom nil))
 
@@ -2341,52 +2392,13 @@
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock ^ReentrantLock draw-lock))))
 
-(defn- live-input-value
-  "Ask the human for a new value of one view input. Returns `{:value v}`, or nil
-   when the human cancels or types a number outside the field's domain."
-  [screen {:keys [type label options value is-secret]}]
-  (let [option-label (fn [o]
-                       (or (:label o) (str (:value o))))]
-    (case type
-      :checkbox
-      {:value (not (boolean value))}
-
-      :select
-      (when-let [choice (dlg/list-dialog!
-                          screen
-                          label
-                          (mapv #(hash-map :label (option-label %) :value (:value %)) options)
-                          {:enter-label "choose" :height :content})]
-        {:value (:value choice)})
-
-      :multiselect
-      (when-let [picked
-                 (dlg/multi-select-dialog!
-                   screen
-                   label
-                   (mapv option-label options)
-                   (into #{} (keep #(when (some #{(:value %)} value) (option-label %))) options))]
-        {:value (into [] (keep #(when (some #{(option-label %)} picked) (:value %))) options)})
-
-      :range
-      (when-let [typed (dlg/text-input-dialog! screen label "Value" :initial (str value))]
-        (when-let [n (parse-double (str/trim typed))]
-          {:value (if (== n (Math/rint n)) (long n) n)}))
-
-      (when-let [typed (dlg/text-input-dialog! screen
-                                               label
-                                               "Value"
-                                               :initial (if is-secret "" (str (or value "")))
-                                               :mask (when (or is-secret (= :password type)) \*))]
-        {:value typed}))))
-
 (defn- edit-live-input!
   "Edit one input of a live view and send the new value at once as a `change`.
    The engine answers with the ordinary patch, so the TUI keeps no private copy."
   [screen db {:keys [view-id node-id]}]
   (when-let [pane (live-pane db view-id)]
     (when-let [node (lv/input-node pane node-id)]
-      (when-let [{:keys [value]} (with-dialog-lock #(live-input-value screen node))]
+      (when-let [{:keys [value]} (with-dialog-lock #(dlg/live-input-value! screen node))]
         (future
           (try (let [outcome (vis/gateway-view-action!
                                (get-in pane [:view :session-id])
@@ -9322,7 +9334,7 @@
                    (do (activate-detail-label! screen db key) (recur))
                    :else
                    (let [escaped-char (and (:loading? db) (input/escaped-typing-character key))
-                         {:keys [action state character queue-index]}
+                         {:keys [action state character queue-index keybinding]}
                          (if escaped-char
                            {:action :escaped-typing :state (:input db) :character escaped-char}
                            (resolve-prefix! screen db (input/handle-key key (:input db))))]
@@ -9893,6 +9905,11 @@
                          (do (state/dispatch [:scroll-to-top])
                              (state/dispatch [:bump-render-version])
                              (recur))
+
+                         ;; C-x <key> of an extension binding: run its slash command as if
+                         ;; the human typed it and pressed Enter. The draft stays as it is.
+                         :run-keybinding
+                         (do (run-keybinding! keybinding) (recur))
 
                          :continue
                          (recur))))))))

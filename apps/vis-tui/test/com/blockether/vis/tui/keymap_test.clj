@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.keymap-test
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
+            [clojure.string :as str]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.transient :as tr]
@@ -307,3 +308,78 @@
         (expect (= :open-newest-image (keymap/prefix-action-for \O)))
         (expect (= "C-x O" (keymap/label-for :open-newest-image)))
         (expect (= :providers (keymap/prefix-action-for \o)) "C-x O stays apart from C-x o"))))
+
+(defn- with-extension-bindings
+  "Run `f` with extension `bindings` in the C-x keymap, then restore the built-in
+   keymap."
+  [bindings f]
+  (try (keymap/set-keybindings! bindings) (f) (finally (keymap/set-keybindings! []))))
+
+(defdescribe
+  extension-keybindings-test
+  (it "a command binding takes a free key under the Extensions heading"
+      (with-extension-bindings
+        [{:key "E" :command "/review" :label "Review" :extension "acme"}]
+        (fn []
+          (let [cmd (keymap/prefix-command-for \E)]
+            (expect (= "/review" (:command cmd)))
+            (expect (= "Extensions" (:group cmd)))
+            (expect (= "acme" (:extension cmd))))
+          (expect (nil? (keymap/prefix-command-for \e)) "C-x E stays apart from C-x e")
+          (expect (some #(and (= "Extensions" (:title %))
+                              (some (fn [i]
+                                      (= {:key "E" :label "Review"} (select-keys i [:key :label])))
+                                    (:items %)))
+                        (:groups (keymap/prefix-spec {})))))))
+  (it "C-x and the bound key resolve to the command, as typed"
+      (with-extension-bindings [{:key "E" :command "/review now" :label "Review" :extension "acme"}]
+                               (fn []
+                                 (let [r (input/resolve-prefix-key (KeyStroke. \E false false true)
+                                                                   {:prefix :cx})]
+                                   (expect (= :run-keybinding (:action r)))
+                                   (expect (= "/review now" (get-in r [:keybinding :command])))))))
+  (it "an action binding moves a built-in verb; the old holder keeps only the palette"
+      (with-extension-bindings
+        [{:key "s" :action "new-session" :extension "acme"}]
+        (fn []
+          (expect (= :new-session (keymap/prefix-action-for \s)))
+          (expect (= "C-x s" (keymap/label-for :new-session)))
+          (expect (nil? (keymap/label-for :show-sessions)))
+          (expect (nil? (keymap/prefix-action-for \n)) "C-x n is free after the move")
+          (expect (not (some #(= :show-sessions %)
+                             (map :id (mapcat :items (:groups (keymap/prefix-spec {})))))))
+          (expect (empty? (keymap/refused-keybindings))))))
+  (it "a moved verb frees its key for a command"
+      (with-extension-bindings [{:key "e" :action "new-session"}
+                                {:key "n" :command "/notes" :label "Notes"}]
+                               (fn []
+                                 (expect (= :new-session (keymap/prefix-action-for \e)))
+                                 (expect (= "/notes" (:command (keymap/prefix-command-for \n)))))))
+  (it "names the letters that are still free after C-x"
+      (let [free (keymap/free-prefix-letters)]
+        (expect (str/includes? free "e"))
+        (expect (str/includes? free "L"))
+        (expect (not (str/includes? free "g")) "g is reserved")
+        (expect (not (str/includes? free "i")) "i inspects attachments"))
+      (with-extension-bindings [{:key "L" :command "/apps" :label "Live apps"}]
+                               (fn []
+                                 (expect (not (str/includes? (keymap/free-prefix-letters) "L"))))))
+  (it "refuses reserved, taken, malformed and unknown bindings, with a reason"
+      (let [{:keys [refused commands]}
+            (keymap/merge-keybindings
+              [{:key "p" :command "/x" :label "X"} {:key "5" :command "/x" :label "X"}
+               {:key "m" :command "/x" :label "X"} {:key "ab" :command "/x" :label "X"}
+               {:key "e" :command "x" :label "X"} {:key "e" :action "no-such-verb"}
+               {:key "e" :action "new-session"} {:key "E" :action "new-session"}])]
+        ;; Action bindings merge first, then command bindings, each in order.
+        (expect (= ["the TUI has no such verb" "the verb moved already" "the key is reserved"
+                    "the key is reserved" "the key is taken"
+                    "the key is not one printable character" "the command does not start with /"]
+                   (mapv :reason refused)))
+        (expect (= :cycle-model (:action (first (filter #(= \m (:key %)) commands)))))))
+  (it "an empty binding list restores the built-in keymap"
+      (keymap/set-keybindings! [{:key "E" :command "/review" :label "Review"}])
+      (keymap/set-keybindings! [])
+      (expect (nil? (keymap/prefix-command-for \E)))
+      (expect (= "C-x n" (keymap/label-for :new-session)))
+      (expect (empty? (keymap/refused-keybindings)))))

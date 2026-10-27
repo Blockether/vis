@@ -1026,7 +1026,9 @@
    chord, it never re-implements it.
    The prefix is cleared either way:
      • C-x p (or C-x C-p) (`keymap/prefix-palette-key`) → the Command Palette.
-     • C-x <letter> in `keymap/prefix-commands` → the vis verb.
+     • C-x <key> of an extension command binding → `:run-keybinding` with
+       `:keybinding`, the merged command (`keymap/merge-keybindings`).
+     • C-x <letter> in `keymap/current-prefix-commands` → the vis verb.
      • C-x 1-9 → toggle that queue row for the next step (`keymap/queue-row-index`).
      • C-x Backspace or Delete → the C-x D verb: delete the current session.
      • anything else → abort the prefix (no-op), so a stray C-x never swallows
@@ -1047,6 +1049,9 @@
       ;; second key (C-x C-p) is also accepted for old muscle memory.
       (and c (= (Character/toLowerCase ^char c) keymap/prefix-palette-key)) {:action :show-palette
                                                                              :state state}
+      ;; C-x <key> → an extension key binding that runs a slash command.
+      (and c (:command (keymap/prefix-command-for c)))
+      {:action :run-keybinding :keybinding (keymap/prefix-command-for c) :state state}
       ;; C-x <letter> → a vis verb (plain second key).
       (and c (keymap/prefix-action-for c)) {:action (keymap/prefix-action-for c) :state state}
       ;; C-x 1-9 → send that queue row at the next step, or take its mark back.

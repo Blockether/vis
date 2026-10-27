@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.artifact-inspector-test
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.app-model :as app-model]
             [com.blockether.vis.tui.artifact-inspector :as inspector]
             [com.blockether.vis.tui.capture :as cap]
             [lazytest.core :refer [defdescribe expect it]])
@@ -163,33 +164,66 @@
       (expect (<= (dec (:list-h geom)) (:selected down)))
       (expect (= 0 (:selected up))))))
 
-(defdescribe artifact-inspector-gateway
-             (it "loads the whole-session index through the facade"
-                 (let [asked (atom nil)]
-                   (with-redefs [vis/gateway-session-artifacts (fn [session-id]
-                                                                 (reset! asked session-id)
-                                                                 [{"filename" "decision.html"}])]
-                     (expect (= "decision.html"
-                                (get (first (:artifacts (inspector/fetch-session-artifacts!
-                                                          "session-1")))
-                                     "filename")))
-                     (expect (= "session-1" @asked)))))
-             (it "paints an index it could not read as unavailable, never as empty"
-                 (with-redefs [vis/gateway-session-artifacts (constantly nil)]
-                   (expect (= {:artifacts [] :error "Artifact index unavailable"}
-                              (inspector/fetch-session-artifacts! "session-1")))))
-             (it "materializes durable bytes under the artifact basename"
-                 (with-redefs [vis/gateway-iteration-attachment-bytes
-                               (fn [sid iid idx]
-                                 (expect (= ["session-1" "iteration-new" 2] [sid iid idx]))
-                                 (.getBytes "<html>decision</html>" "UTF-8"))]
-                   (let [file (inspector/materialize-artifact!
-                                "session-1"
-                                {:filename "decision.html" :iteration-id "iteration-new" :index 2})]
-                     (try (expect (= "decision.html" (.getName file)))
-                          (expect (= "<html>decision</html>"
-                                     (String. (Files/readAllBytes (.toPath file)) "UTF-8")))
-                          (finally (.delete file) (.delete (.getParentFile file))))))))
+(defdescribe
+  artifact-inspector-gateway
+  (it "loads the whole-session index through the facade"
+      (let [asked (atom nil)]
+        (with-redefs [vis/gateway-session-artifacts (fn [session-id]
+                                                      (reset! asked session-id)
+                                                      [{"filename" "decision.html"}])
+                      vis/gateway-app-views (constantly [])]
+
+          (expect (= "decision.html"
+                     (get (first (:artifacts (inspector/fetch-session-artifacts! "session-1")))
+                          "filename")))
+          (expect (= "session-1" @asked)))))
+  (it "lists every app of the session, also an app that no block filed"
+      (with-redefs [vis/gateway-session-artifacts
+                    (constantly [{"media_type" app-model/media-type
+                                  "view_id" "app-1"
+                                  "filename" "counter.app.json"}])
+
+                    vis/gateway-app-views
+                    (fn [_ archived?]
+                      (if archived?
+                        [{"id" "app-3" "title" "Old" "key" "old" "is_archived" true}]
+                        [{"id" "app-1" "title" "Counter" "key" "counter"}
+                         {"id" "app-2" "title" "Todo" "key" "todo" "is_stale" true}]))]
+
+        (let [rows (inspector/inspector-rows []
+                                             (:artifacts (inspector/fetch-session-artifacts!
+                                                           "session-1")))]
+          (expect (= #{"app-1" "app-2" "app-3"} (set (map :view-id rows))))
+          (expect (= 3 (count rows)) "a filed app keeps one row")
+          (expect (= :archived (:app-status (first (filter #(= "app-3" (:view-id %)) rows)))))
+          (expect (every? app-model/app-row? rows))
+          (expect (= :stale (:app-status (first (filter #(= "app-2" (:view-id %)) rows))))))))
+  (it "keeps the artifacts when the app list cannot be read"
+      (with-redefs [vis/gateway-session-artifacts
+                    (constantly [{"filename" "a.txt"}])
+
+                    vis/gateway-app-views
+                    (fn [_ _]
+                      (throw (ex-info "down" {})))]
+
+        (expect (= [{"filename" "a.txt"}]
+                   (:artifacts (inspector/fetch-session-artifacts! "session-1"))))))
+  (it "paints an index it could not read as unavailable, never as empty"
+      (with-redefs [vis/gateway-session-artifacts (constantly nil)]
+        (expect (= {:artifacts [] :error "Artifact index unavailable"}
+                   (inspector/fetch-session-artifacts! "session-1")))))
+  (it "materializes durable bytes under the artifact basename"
+      (with-redefs [vis/gateway-iteration-attachment-bytes
+                    (fn [sid iid idx]
+                      (expect (= ["session-1" "iteration-new" 2] [sid iid idx]))
+                      (.getBytes "<html>decision</html>" "UTF-8"))]
+        (let [file (inspector/materialize-artifact!
+                     "session-1"
+                     {:filename "decision.html" :iteration-id "iteration-new" :index 2})]
+          (try (expect (= "decision.html" (.getName file)))
+               (expect (= "<html>decision</html>"
+                          (String. (Files/readAllBytes (.toPath file)) "UTF-8")))
+               (finally (.delete file) (.delete (.getParentFile file))))))))
 
 (def ^:private app-artifacts
   [{"filename" "review.app.json"

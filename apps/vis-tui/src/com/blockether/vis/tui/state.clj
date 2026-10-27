@@ -4050,14 +4050,17 @@
                                    (conj runs row)))))))))
 
 (defn- mount-app-view
-  "Keep app attachment `view` for the app surface. A newer copy wins."
+  "Keep app attachment `view` for the app surface, one copy for each view id. A
+   newer copy wins. The owner state of the last `view.open` always wins: a restart
+   marks the app stale, and an adopting open makes it live again."
   [workspace view]
-  (update-in workspace
-             [:app-views (:id view)]
-             (fn [held]
-               (if (and held (> (long (or (get-in held [:view :seq]) 0)) (long (or (:seq view) 0))))
-                 held
-                 {:view view :is-gap false}))))
+  (update-in
+    workspace
+    [:app-views (:id view)]
+    (fn [held]
+      (if (and held (> (long (or (get-in held [:view :seq]) 0)) (long (or (:seq view) 0))))
+        (update held :view #(if (:is-stale view) (assoc % :is-stale true) (dissoc % :is-stale)))
+        {:view view :is-gap false}))))
 
 (defn- patch-app-view
   "Apply `patch` to a held app view. A seq gap marks the copy for a full read."
@@ -4928,13 +4931,23 @@
    LF, far shorter than a human retyping (or history-recalling) the same line."
   750)
 
+(defn- bare-draft
+  "`source-db` without the draft pastes and attachments when `opts` has
+   `:is-bare`: a C-x key binding sends its command text alone, and the draft stays."
+  [source-db opts]
+  (cond-> source-db
+    (:is-bare opts)
+    (assoc :pastes
+      nil :attachments
+      [])))
+
 (defn- enqueue-message-result
-  [db workspace-id text]
+  [db workspace-id text & [opts]]
   (let [workspace-id
         (or workspace-id (current-tab-id db))
 
         source-db
-        (db-for-tab db workspace-id)
+        (bare-draft (db-for-tab db workspace-id) opts)
 
         pastes
         (:pastes source-db)
@@ -5048,12 +5061,14 @@
   ;;      stay concise in the visible transcript, but expand into
   ;;      a short read-now directive for the AGENT; the model picks
   ;;      the right tool (`cat`, `z/symbols`, etc.) itself.
-  (fn [db [_ text workspace-id]]
+  ;;
+  ;; `opts` `{:is-bare true}` sends `text` without the draft pastes and attachments.
+  (fn [db [_ text workspace-id opts]]
     (let [workspace-id
           (or workspace-id (current-tab-id db))
 
           source-db
-          (db-for-tab db workspace-id)
+          (bare-draft (db-for-tab db workspace-id) opts)
 
           pastes
           (:pastes source-db)
@@ -5067,7 +5082,7 @@
           preview-text
           (input/collapse-paste-placeholders text pastes)]
 
-      (cond (:loading? source-db) (enqueue-message-result db workspace-id text)
+      (cond (:loading? source-db) (enqueue-message-result db workspace-id text opts)
             (nil? (:session source-db)) {:db db}
             :else
             (let [workspace
@@ -5128,12 +5143,15 @@
                                             ;; recognised by that id — never by request text — instead of
                                             ;; being painted as a second "Queued" row.
                                             :live-turn-client-id client-turn-id
+                                            ;; A bare send never refills the editor on a failure:
+                                            ;; the draft there is the human's own text.
                                             :submitted-input
                                             {:text text
                                              :pastes (:pastes source-db)
                                              :paste-counter (:paste-counter source-db)
                                              :image-counter (:image-counter source-db)
-                                             :attachments attachments}
+                                             :attachments attachments
+                                             :is-bare (boolean (:is-bare opts))}
                                             :input-history-index nil
                                             :input-history-draft nil
                                             :slash-command-index 0
@@ -5154,8 +5172,8 @@
               ;; Capture a user submission while a previous turn is still processing.
               ;; Queue lives on that workspace/session and drains after the
               ;; in-flight turn commits. No provider call happens from this handler.
-              (fn [db [_ text workspace-id]]
-                (enqueue-message-result db workspace-id text)))
+              (fn [db [_ text workspace-id opts]]
+                (enqueue-message-result db workspace-id text opts)))
 
 (reg-event-db :stage-queued-locally
               ;; FAILURE PATH ONLY: the gateway enqueue never landed, so nothing on the
@@ -6725,7 +6743,9 @@
                       ;; (one ArrowUp away in the input history) and the editor keeps
                       ;; whatever the user typed since.
                       ws-final
-                      (if (and (:submitted-input workspace) failed?)
+                      (if (and (:submitted-input workspace)
+                               (not (get-in workspace [:submitted-input :is-bare]))
+                               failed?)
                         (restore-editor-only workspace' (:submitted-input workspace))
                         (cond-> workspace'
                           (not still-pending?)

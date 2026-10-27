@@ -18,19 +18,22 @@
 
 (set! *unchecked-math* :warn-on-boxed)
 
-(defn- app-statuses
-  "The lifecycle state of each app of `session-id`, by view id. An app the
-   gateway does not list keeps no state here, and its row says only App."
+(defn- session-apps
+  "The app views of `session-id` in wire shape, the active ones and then the
+   archived ones, or nil when the gateway cannot answer."
   [session-id]
-  (try (into {}
-             (keep (fn [wire]
-                     (when-let [id (get wire "view_id" (get wire "id"))]
-                       [(str id) (app-model/status (vis/wire->engine wire))])))
-             (vis/gateway-app-views session-id true))
+  (try (into (vis/gateway-app-views session-id false) (vis/gateway-app-views session-id true))
        (catch Throwable e
          (tel/log!
            {:level :warn :id ::app-statuses-failed :error e :data {:session-id (str session-id)}})
-         {})))
+         nil)))
+
+(defn- wire-app-id
+  [wire]
+  (some-> (get wire "view_id" (get wire "id"))
+          str
+          str/trim
+          not-empty))
 
 (defn- wire-view-id
   "The app view id of artifact index entry `artifact`, which has wire keys, or nil."
@@ -41,18 +44,38 @@
             str/trim
             not-empty)))
 
+(defn- listed-app
+  "An artifact index entry for app `wire` that no block filed: an app that a slash
+   command or a program outside a turn opened. Its row opens the app."
+  [wire]
+  {"media_type" app-model/media-type
+   "view_id" (wire-app-id wire)
+   "title" (get wire "title")
+   "filename" (str (or (not-empty (str (get wire "key"))) (wire-app-id wire)) ".app.json")})
+
 (defn fetch-session-artifacts!
   "Whole-session artifact index through the facade. Returns `{:artifacts [...]}`,
    or `{:artifacts [] :error string}` when the daemon cannot answer. An app row
-   also holds its lifecycle state in \"app_status\"."
+   also holds its lifecycle state in \"app_status\". Every app of the session has a
+   row, also an app that no block filed."
   [session-id]
   (if (str/blank? (str session-id))
     {:artifacts []}
     (if-let [artifacts (vis/gateway-session-artifacts session-id)]
-      (let [apps (when (some wire-view-id artifacts) (app-statuses session-id))]
-        {:artifacts
-         (mapv #(if-let [status (get apps (wire-view-id %))] (assoc % "app_status" (name status)) %)
-               artifacts)})
+      (let [apps (session-apps session-id)
+            statuses (into {}
+                           (keep #(when-let [id (wire-app-id %)] [id
+                                                                  (app-model/status
+                                                                    (vis/wire->engine %))]))
+                           apps)
+            filed (set (keep wire-view-id artifacts))
+            all
+            (into (vec artifacts) (comp (remove #(filed (wire-app-id %))) (map listed-app)) apps)]
+
+        {:artifacts (mapv #(if-let [status (get statuses (wire-view-id %))] (assoc %
+                                                                              "app_status"
+                                                                              (name status)) %)
+                          all)})
       {:artifacts [] :error "Artifact index unavailable"})))
 
 (defn- produced-rows

@@ -38,6 +38,11 @@
   [view]
   (contains? #{:closed :archived} (status view)))
 
+(defn stale?
+  "True when the app waits for its owner: its controls and keys reach nobody."
+  [view]
+  (= :stale (status view)))
+
 ;;; ── Diff lines ─────────────────────────────────────────────────────────────
 
 (defn- strip-prefix
@@ -365,11 +370,10 @@
       (assoc :revision (app/revision node)))))
 
 (defn submit-action
-  "The gateway `submit` action of one Send attempt with idempotency key `k`."
+  "The gateway `submit` action of one Send attempt with idempotency key `k`.
+   The gateway needs `:values` as an object, also when the app has no inputs."
   [view k values]
-  (cond-> {:action :submit :idempotency-key k :base-seq (:seq view)}
-    (seq values)
-    (assoc :values values)))
+  {:action :submit :idempotency-key k :base-seq (:seq view) :values (or values {})})
 
 (defn outcome-state
   "What an action outcome means for the surface: `:saved`, `:offline`,

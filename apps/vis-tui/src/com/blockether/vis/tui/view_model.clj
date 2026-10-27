@@ -21,8 +21,8 @@
 
 (def ^:private app-data-keys
   "App data keeps its enum values as strings, as `contract.app` reads them: receipt
-   status, author kind and anchor side."
-  #{:submissions :submission :threads :thread :messages})
+   status, author kind and anchor side. A shortcut keeps its owner `action` id as text."
+  #{:submissions :submission :threads :thread :messages :shortcuts})
 
 (defn- restore-values
   [x]

@@ -488,7 +488,10 @@
         (:view pane)
 
         lines
-        (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))
+        (reduce +
+                0
+                (keep #(when (= :log (:type %)) (or (:total-lines %) (count (:lines %))))
+                      (:nodes view)))
 
         end
         (long (or ended-at (System/currentTimeMillis)))]
@@ -662,6 +665,8 @@
                            (map-indexed vector ws)))]
           (recur (update ws idx #(max 1 (dec (long %))))))))))
 
+(def ^:private free-text-width "The content width above which a table column holds free text." 24)
+
 (defn- filled-widths
   "`widths` GROWN into the room the band gives them, the slack going to the WIDEST
    column — the same column [[fitted-widths]] takes cells from first, so a table
@@ -669,24 +674,41 @@
 
    A table fills the band because a rule that stops halfway across reads as a
    table still loading, and because the column that holds free text is the one
-   that can use the room."
-  [widths text-w]
-  (let [n
-        (count widths)
+   that can use the room. With `content`, the slack goes to the column with the
+   widest content instead: a row mark or an indent makes no column wider there.
+   When no content is longer than [[free-text-width]], no column holds free
+   text: the slack is spread evenly, so a grid or a short table keeps its shape."
+  ([widths text-w] (filled-widths widths text-w widths))
+  ([widths text-w content]
+   (let [n
+         (count widths)
 
-        chrome
-        (table-chrome n)
+         chrome
+         (table-chrome n)
 
-        slack
-        (- (long text-w) chrome (long (reduce + 0 (map long widths))))]
+         slack
+         (- (long text-w) chrome (long (reduce + 0 (map long widths))))
 
-    (if (or (zero? n) (<= slack 0))
-      (vec widths)
-      (let [idx (first (apply max-key
-                         (fn [[_ w]]
-                           (long w))
-                         (map-indexed vector widths)))]
-        (update (vec widths) idx #(+ (long %) slack))))))
+         content
+         (if (= n (count content)) content widths)]
+
+     (cond (or (zero? n) (<= slack 0)) (vec widths)
+           (and (not (identical? content widths))
+                (<= (long (reduce max 0 (map long content))) (long free-text-width)))
+           (let [share
+                 (quot slack n)
+
+                 extra
+                 (rem slack n)]
+
+             (vec (map-indexed (fn [i w]
+                                 (+ (long w) share (if (< (long i) extra) 1 0)))
+                               widths)))
+           :else (let [idx (first (apply max-key
+                                    (fn [[_ w]]
+                                      (long w))
+                                    (map-indexed vector content)))]
+                   (update (vec widths) idx #(+ (long %) slack)))))))
 
 (defn- run-segments
   "Styled markdown runs as [[paint-segments!]] segments over one base ink: a code
@@ -1056,8 +1078,11 @@
         ;; FIT is what a cramped terminal does to the paint, and it is deliberately
         ;; not what the pane remembers. A selectable first cell also carries the same
         ;; two-column ●/○ state mark as the Companion, and a parent's leg its indent.
+        content
+        (desired-widths columns painted)
+
         desired
-        (cond-> (desired-widths columns painted)
+        (cond-> content
           (and (seq columns) (some :is-leg shown))
           (update 0 + 2)
 
@@ -1070,7 +1095,7 @@
         ;; Squeezed if it must be, then GROWN into whatever the band has left: a
         ;; table is a block, and a block that ends in mid-air reads as unfinished.
         ws
-        (filled-widths (fitted-widths measured text-w) text-w)
+        (filled-widths (fitted-widths measured text-w) text-w content)
 
         aligns
         (mapv #(or (:align %) :left) columns)
@@ -1489,7 +1514,8 @@
         (if disclosure?
           (str (if is-open "▾ " "▸ ")
                (or (:label node) "Output")
-               (when (= :log (:type node)) (str " · " (long (or (:total-lines node) 0)) " lines")))
+               (when (= :log (:type node))
+                 (str " · " (long (or (:total-lines node) (count (:lines node)))) " lines")))
           ;; A button names itself, and the field renderer draws a field's label.
           (when-not (or (= :button (:type node)) (contains? input-node-types (:type node)))
             (flat-text (:label node))))]

@@ -177,11 +177,133 @@
 
 (def ^:private binding-by-action (into {} (map (juxt :action identity)) bindings))
 
-(def ^:private prefix-action-by-char
-  "Lowercase SECOND-key char → action, for the C-x prefix."
-  (into {} (map (juxt :key :action)) prefix-commands))
+(defn- index-commands
+  "The lookup maps of the merged C-x commands `commands`."
+  [commands refused]
+  {:commands commands
+   :refused refused
+   :by-char (into {} (keep #(when (:key %) [(:key %) %])) commands)
+   :by-action (into {} (map (juxt :action identity)) commands)})
 
-(def ^:private prefix-binding-by-action (into {} (map (juxt :action identity)) prefix-commands))
+(defonce ^:private merged-keymap
+  ;; The C-x commands after the key bindings of the session's extensions.
+  (atom (index-commands prefix-commands [])))
+
+(def reserved-prefix-keys
+  "Keys after C-x that no extension can bind: the palette, the abort key and the
+   queue digits."
+  (into #{\p \g} (map char) (range (int \0) (inc (int \9)))))
+
+(def default-binding-group "The C-x heading of an extension command." "Extensions")
+
+(defn- binding-char
+  "The one printable ASCII character of binding key `k`, or nil."
+  [k]
+  (when (and (string? k) (= 1 (count k)))
+    (let [c (.charAt ^String k 0)]
+      (when (<= 33 (long (int c)) 126) c))))
+
+(defn- refuse [b reason] {:binding b :reason reason})
+
+(defn- move-verb
+  "Phase 1 of the merge: binding `b` moves a built-in verb to its key."
+  [{:keys [commands claimed] :as acc} b]
+  (let [c
+        (binding-char (:key b))
+
+        verb
+        (keyword (str (:action b)))
+
+        idx
+        (first (keep-indexed #(when (= verb (:action %2)) %1) commands))]
+
+    (cond (nil? c) (update acc :refused conj (refuse b "the key is not one printable character"))
+          (reserved-prefix-keys c) (update acc :refused conj (refuse b "the key is reserved"))
+          (nil? idx) (update acc :refused conj (refuse b "the TUI has no such verb"))
+          (contains? (:moved acc) verb)
+          (update acc :refused conj (refuse b "the verb moved already"))
+          (contains? claimed c) (update acc :refused conj (refuse b "another binding has the key"))
+          :else (let [commands
+                      (mapv #(if (and (= c (:key %)) (not= verb (:action %))) (dissoc % :key) %)
+                            commands)]
+                  (-> acc
+                      (assoc :commands (update commands
+                                               idx
+                                               #(cond-> (assoc % :key c) (:label b) (assoc :label
+                                                                                      (:label b))
+                                                  (:group b) (assoc :group (:group b)))))
+                      (update :claimed conj c)
+                      (update :moved conj verb))))))
+
+(defn- add-command
+  "Phase 2 of the merge: binding `b` runs a slash command from a free key."
+  [{:keys [commands] :as acc} b]
+  (let [c
+        (binding-char (:key b))
+
+        command
+        (str/trim (str (:command b)))]
+
+    (cond (nil? c) (update acc :refused conj (refuse b "the key is not one printable character"))
+          (reserved-prefix-keys c) (update acc :refused conj (refuse b "the key is reserved"))
+          (not (str/starts-with? command "/"))
+          (update acc :refused conj (refuse b "the command does not start with /"))
+          (some #(= c (:key %)) commands) (update acc :refused conj (refuse b "the key is taken"))
+          :else (update acc
+                        :commands
+                        conj
+                        {:action (keyword "keybinding" (str c))
+                         :key c
+                         :label (or (not-empty (str (:label b))) command)
+                         :group (or (not-empty (str (:group b))) default-binding-group)
+                         :command command
+                         :extension (:extension b)}))))
+
+(defn merge-keybindings
+  "PURE: the C-x commands after extension `bindings` (maps with `:key`, `:command`
+   or `:action`, `:label`, `:group` and `:extension`, in gateway order).
+
+   First every `:action` binding moves its built-in verb to its key. A built-in verb
+   that had that key keeps only the palette. Then every `:command` binding takes a
+   free key. A reserved, taken or malformed binding is refused. Answers
+   `{:commands [...] :refused [{:binding b :reason text}]}`."
+  [bindings]
+  (let [moved
+        (reduce move-verb
+                {:commands prefix-commands :claimed #{} :moved #{} :refused []}
+                (filter :action bindings))
+
+        added
+        (reduce add-command moved (remove :action bindings))]
+
+    (select-keys added [:commands :refused])))
+
+(defn set-keybindings!
+  "Use extension `bindings` for C-x from now on. Answers the refused bindings."
+  [bindings]
+  (let [{:keys [commands refused]} (merge-keybindings bindings)]
+    (reset! merged-keymap (index-commands commands refused))
+    refused))
+
+(defn refused-keybindings
+  "The extension bindings that the current keymap refused."
+  []
+  (:refused @merged-keymap))
+
+(defn free-prefix-letters
+  "The letters after C-x that an extension can still bind, as one string: lower case
+   first, then upper case."
+  []
+  (let [taken (set (keep :key (:commands @merged-keymap)))]
+    (apply str
+      (remove #(or (taken %) (reserved-prefix-keys %))
+        (concat (map char (range (int \a) (inc (int \z))))
+                (map char (range (int \A) (inc (int \Z)))))))))
+
+(defn current-prefix-commands
+  "Every C-x command after the extension bindings, built-in verbs first."
+  []
+  (:commands @merged-keymap))
 
 (defn action-for
   "The action bound to a DIRECT Ctrl + `ch` chord, or nil — always nil now (verbs
@@ -189,12 +311,19 @@
   [ch]
   (when ch (action-by-char (Character/toLowerCase ^char ch))))
 
+(defn prefix-command-for
+  "The C-x command bound to `ch`, or nil. An exact match wins, so C-x D is not
+   C-x d; any other key is lower-cased."
+  [ch]
+  (when ch
+    (let [by-char (:by-char @merged-keymap)]
+      (or (by-char ch) (by-char (Character/toLowerCase ^char ch))))))
+
 (defn prefix-action-for
   "The verb action bound to the C-x prefix followed by `ch`, or nil. An exact match
    wins, so C-x D is not C-x d; any other key is lower-cased."
   [ch]
-  (when ch
-    (or (prefix-action-by-char ch) (prefix-action-by-char (Character/toLowerCase ^char ch)))))
+  (:action (prefix-command-for ch)))
 
 (defn queue-row-index
   "The 1-based queue row that C-x followed by `ch` toggles for the next step, or nil.
@@ -223,8 +352,8 @@
       (some-> (binding-by-action action)
               :key
               chord)
-      (when-let [b (prefix-binding-by-action action)]
-        (str "C-x " (:key b)))))
+      (when-let [k (get-in @merged-keymap [:by-action action :key])]
+        (str "C-x " k))))
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else
@@ -375,7 +504,7 @@
   "`prefix-commands` filtered to the verbs that can act in `db`, in declaration
    order."
   [db]
-  (filterv #(verb-available? db %) prefix-commands))
+  (filterv #(and (:key %) (verb-available? db %)) (current-prefix-commands)))
 
 (defn prefix-spec
   "PURE: the `transient/run!` spec for the C-x hydra in `db` — one group per
@@ -405,4 +534,6 @@
                                    (= g "Tools")
                                    (conj palette))]
                              (when (seq items) {:title g :items items}))))
-                   prefix-groups)}))
+                   (into prefix-groups
+                         (comp (map :group) (distinct) (remove (set prefix-groups)))
+                         (current-prefix-commands)))}))

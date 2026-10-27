@@ -273,62 +273,81 @@
 ;; right-slot cluster — so there's no shared chip def here.)
 
 ;; ── help overlay ────────────────────────────────────────────────────────────
-(def ^:private help-sections
+(defn- extension-help-rows
+  "The help rows of the C-x commands that the session's extensions bind."
+  []
+  (into []
+        (keep (fn [{:keys [key label command]}]
+                (when (and key command) [(str "C-x " key) (str label " — runs " command)])))
+        (keymap/current-prefix-commands)))
+
+(defn- help-sections
   "Sections of `[keys description]` rows shown in the C-x h help card, grouped
    under a section `:title`. Chords are derived from `keymap` so the card never
-   drifts from the live bindings; the editing keys use the same Emacs `C-…`
-   notation."
-  [{:title "Command palette"
-    :rows
-    [[keymap/palette-chord
-      "Every command (new session, search, providers, sessions, voice, files…); type to filter"]]}
-   {:title "Session, model & tools"
-    :rows [[(keymap/label-for :cycle-model) "Cycle model"]
-           [(keymap/label-for :pick-model) "Pick model (search)"]
-           [(keymap/label-for :pick-reasoning) "Change reasoning effort"]
-           [(keymap/label-for :toggle-codex-fast) "Toggle Codex Fast mode"]
-           [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
-           [(keymap/label-for :toggle-thinking-summary) "Show or omit thinking summary"]
-           [(keymap/label-for :search-open) "Search in session"]
-           [(keymap/label-for :pick-file) "Attach file"]
-           [(keymap/label-for :toggle-voice-recording) "Voice recording"]
-           [(keymap/label-for :toggle-help) "Toggle this help"]]}
-   {:title "Messaging & navigation"
-    :rows
-    [["Enter" "Send — or queue it while a turn is running"]
-     ["S-Enter · M-Enter" "New line in the draft"]
-     ["Esc · C-g" "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
-     ["C-c" "Quit — clears a draft, cancels a running turn, quits again while cancelling"]
-     ["M-> · C-x j · C-l · C-End" "Jump to the bottom (or click the ↓ messages chip)"]
-     ["M-<" "Jump to the top — beginning-of-buffer"]
-     ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
-     [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
-     [(keymap/label-for :session-metrics) "Session metrics — context health, totals and cache"]]}
-   {:title "Subagents"
-    :rows [["Click a subagent row" "Show its timeline, then open its session or stop it"]]}
-   {:title "Live views"
-    :rows [[(keymap/label-for :live-panel)
-            "Open the side panel, then move the focus between it and the transcript"]
-           ["↑ · ↓" "Select a view in the focused panel"]
-           ["← · →" "Fold · unfold the selected view"]
-           ["Enter" "List the controls of the selected view"]
-           ["Tab" "Show the views of the next owner"] ["Esc" "Close the side panel"]]}
-   {:title "Project sidebar"
-    :rows [[(keymap/label-for :switch-project) "Show or hide the project sidebar"]
-           [keymap/sidebar-help-hint "List the sidebar keys while the sidebar has focus"]
-           ["g · Right-click" "Open the menu of the selected row"]]}
-   {:title "Folding"
-    :rows [["C-x TAB · C-x S-Tab" "Fold / unfold every disclosure (thinking, tool calls)"]
-           [(keymap/label-for :toggle-detail-labels)
-            "Label every fold — press a letter to jump-toggle one"]]}
-   {:title "Text editing"
-    :rows [["C-a · C-e" "Beginning · end of line"] ["C-b · C-f" "Backward · forward char"]
-           ["C-p · C-n" "Previous · next line"] ["C-t" "Transpose chars"]
-           ["C-k · C-u" "Kill to line end · start"]
-           ["C-w · C-d" "Kill word back · delete char forward"]
-           ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
-           ["Copy / paste" "Use your terminal — select to copy, its paste key"]
-           ["Mouse" "Click a session in Projects · ↓ messages jumps down"]]}])
+   drifts from the live bindings, extension bindings included; the editing keys use
+   the same Emacs `C-…` notation."
+  []
+  (cond->
+    [{:title "Command palette"
+      :rows
+      [[keymap/palette-chord
+        "Every command (new session, search, providers, sessions, voice, files…); type to filter"]]}
+     {:title "Session, model & tools"
+      :rows [[(keymap/label-for :cycle-model) "Cycle model"]
+             [(keymap/label-for :pick-model) "Pick model (search)"]
+             [(keymap/label-for :pick-reasoning) "Change reasoning effort"]
+             [(keymap/label-for :toggle-codex-fast) "Toggle Codex Fast mode"]
+             [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
+             [(keymap/label-for :toggle-thinking-summary) "Show or omit thinking summary"]
+             [(keymap/label-for :search-open) "Search in session"]
+             [(keymap/label-for :pick-file) "Attach file"]
+             [(keymap/label-for :toggle-voice-recording) "Voice recording"]
+             [(keymap/label-for :toggle-help) "Toggle this help"]]}
+     {:title "Messaging & navigation"
+      :rows [["Enter" "Send — or queue it while a turn is running"]
+             ["S-Enter · M-Enter" "New line in the draft"]
+             ["Esc · C-g"
+              "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
+             ["C-c" "Quit — clears a draft, cancels a running turn, quits again while cancelling"]
+             ["M-> · C-x j · C-l · C-End" "Jump to the bottom (or click the ↓ messages chip)"]
+             ["M-<" "Jump to the top — beginning-of-buffer"]
+             ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
+             [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
+             [(keymap/label-for :session-metrics)
+              "Session metrics — context health, totals and cache"]]}
+     {:title "Subagents"
+      :rows [["Click a subagent row" "Show its timeline, then open its session or stop it"]]}
+     {:title "Live views"
+      :rows [[(keymap/label-for :live-panel)
+              "Open the side panel, then move the focus between it and the transcript"]
+             ["↑ · ↓" "Select a view in the focused panel"]
+             ["← · →" "Fold · unfold the selected view"]
+             ["Enter" "List the controls of the selected view"]
+             ["Tab" "Show the views of the next owner"] ["Esc" "Close the side panel"]]}
+     {:title "Apps"
+      :rows [["Enter" "Press the selected button, row or card · edit the selected field"]
+             ["s · r" "Send the app · reload it from the gateway"]
+             ["Letters on the hint row" "Keys that the app binds"]
+             ["C-x <key>" "An app key that the app binds over: s, r and the other surface keys"]
+             ["Esc" "Close the app"]]}
+     {:title "Project sidebar"
+      :rows [[(keymap/label-for :switch-project) "Show or hide the project sidebar"]
+             [keymap/sidebar-help-hint "List the sidebar keys while the sidebar has focus"]
+             ["g · Right-click" "Open the menu of the selected row"]]}
+     {:title "Folding"
+      :rows [["C-x TAB · C-x S-Tab" "Fold / unfold every disclosure (thinking, tool calls)"]
+             [(keymap/label-for :toggle-detail-labels)
+              "Label every fold — press a letter to jump-toggle one"]]}
+     {:title "Text editing"
+      :rows [["C-a · C-e" "Beginning · end of line"] ["C-b · C-f" "Backward · forward char"]
+             ["C-p · C-n" "Previous · next line"] ["C-t" "Transpose chars"]
+             ["C-k · C-u" "Kill to line end · start"]
+             ["C-w · C-d" "Kill word back · delete char forward"]
+             ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
+             ["Copy / paste" "Use your terminal — select to copy, its paste key"]
+             ["Mouse" "Click a session in Projects · ↓ messages jumps down"]]}]
+    (seq (extension-help-rows))
+    (conj {:title keymap/default-binding-group :rows (extension-help-rows)})))
 
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!
@@ -579,7 +598,7 @@
         "Keyboard shortcuts"
 
         sections
-        help-sections
+        (help-sections)
 
         all-rows
         (mapcat :rows sections)

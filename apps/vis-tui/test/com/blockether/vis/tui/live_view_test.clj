@@ -76,6 +76,18 @@
 
 (defn- rows-of [p] (lv/plan p 80))
 
+(defn- mid-rule-cells
+  "The cell widths of the first inner rule of the table in `p`, `w` columns wide."
+  [p w]
+  (->> (lv/plan p w)
+       (filter #(= :trule (:kind %)))
+       (map :text)
+       (filter #(str/includes? % "┼"))
+       first
+       (#(str/split % #"[├┼┤]"))
+       (remove str/blank?)
+       (mapv count)))
+
 (defn- kinds-of [p kind] (filterv #(= kind (:kind %)) (rows-of p)))
 
 ;;; ── Painting ────────────────────────────────────────────────────────────────
@@ -1189,6 +1201,36 @@
         (= (apply max cells) (second cells))
         "`state` holds the longest word, so `state` is the column that grows — the same judge that shrinks first")
       (expect (< (long (first cells)) (long (second cells))))))
+  (it "a grid of short columns spreads the slack evenly"
+      (let [grid
+            (mounted {}
+                     (fixture/table
+                       "board"
+                       (mapv #(fixture/table-column % (str/upper-case %)) ["a" "b" "c" "d"])
+                       {:rows (mapv #(fixture/table-row (str "r" %) ["2" "·" "4" "·"]) (range 4))}))
+
+            cells
+            (mid-rule-cells (lv/opened grid) 80)]
+
+        (expect (= 4 (count cells)))
+        (expect (<= (- (long (apply max cells)) (long (apply min cells))) 1)
+                "no short column takes all the room, so the board stays a grid")))
+  (it "the free-text column takes the slack, also beside a row mark"
+      (let [tasks
+            (mounted {}
+                     (fixture/table
+                       "tasks"
+                       [(fixture/table-column "done" "Done") (fixture/table-column "task" "Task")]
+                       {:is-selectable true
+                        :rows [(fixture/table-row
+                                 "t1"
+                                 ["no" "Write the release notes for the next version"])]}))
+
+            [done task]
+            (mid-rule-cells (lv/opened tasks) 100)]
+
+        (expect (< (long done) 12) "the selectable mark does not make `done` the widest")
+        (expect (> (long task) 60) "the long text gets the room")))
   (it "and the table is a BOX, with a rail between every pair of rows"
       (let [rows
             (filterv #(#{:thead :trule :trow} (:kind %)) (lv/plan (pane) 80))

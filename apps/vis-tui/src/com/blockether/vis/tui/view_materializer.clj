@@ -417,6 +417,12 @@
     :submission
     (app/upsert-submission view (:submission op))
 
+    ;; The shortcut list belongs to the app. An empty list removes every shortcut.
+    :shortcuts
+    (if (seq (:shortcuts op))
+      (assoc view :shortcuts (vec (:shortcuts op)))
+      (dissoc view :shortcuts))
+
     (let [path
           (or (node-path view (:node-id op))
               (invalid-patch! (:node-id op)

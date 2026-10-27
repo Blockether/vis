@@ -20,7 +20,8 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
   explains each task.
 - **You want to dictate a message, or voice recording fails.** See [Use voice input](#use-voice-input).
 - **You want to see the pictures in a message larger.** See [View pictures](#view-pictures).
-- **You want to comment on a change in an app.** See [Use an app](#use-an-app).
+- **You want to use an app, such as a review, a form or a game.** See [Use an app](#use-an-app).
+- **An extension added a key, or a key does something new.** See [Keys from extensions](#keys-from-extensions).
 - **You want to send an earlier message again from the desktop or phone app.** See [In the
   desktop or phone app](#in-the-desktop-or-phone-app).
 - **You want to know what cancelling or quitting does to your queued messages.** Read
@@ -65,6 +66,50 @@ once it can act.
 |---|---|
 | Ctrl+X p | Open the command palette with every command, then type to filter |
 | Ctrl+X h | Show or hide the keyboard shortcuts |
+
+### Keys from extensions
+
+An extension can add its own **Ctrl+X** keys, or move a command of this page to another key. The
+keys that extensions add appear under **Extensions** after **Ctrl+X**, and in the help of **Ctrl+X h**.
+Such a key runs its command as if you typed it and pressed Enter. Your draft stays as it is.
+
+- A key that an extension moves replaces the key on this page. The old key then does nothing, and
+  the command palette still has the command.
+- An extension cannot use **Ctrl+X p**, **Ctrl+X g** or **Ctrl+X** with a digit.
+- When two keys conflict, Vis keeps the first one and shows one notice.
+
+To move a command, the extension names its verb id. These are the verb ids and their default keys:
+
+| Verb id | Default key | What it does |
+|---|---|---|
+| `new-session` | Ctrl+X n | Start a new session |
+| `show-sessions` | Ctrl+X s | Switch to another session |
+| `delete-session` | Ctrl+X D | Delete this session |
+| `archive-session` | Ctrl+X A | Archive or restore this session |
+| `session-metrics` | Ctrl+X u | Show session metrics |
+| `queue-send-all-now` | Ctrl+X k | Send the queued messages now |
+| `fork-session` | Ctrl+X y | Fork this session |
+| `fork-at-turn` | Ctrl+X t | Fork from an earlier turn |
+| `switch-project` | Ctrl+X w | Open **Projects** |
+| `session-group` | Ctrl+X d | Move this session to a group |
+| `cycle-model` | Ctrl+X m | Use the next model |
+| `pick-model` | Ctrl+X c | Choose a model |
+| `pick-reasoning` | Ctrl+X r | Choose the reasoning level |
+| `toggle-codex-fast` | Ctrl+X q | Turn fast mode on or off |
+| `cycle-verbosity` | Ctrl+X l | Change the answer length |
+| `toggle-thinking-summary` | Ctrl+X x | Show or hide the thinking summary |
+| `search-open` | Ctrl+X f | Search the conversation |
+| `recenter` | Ctrl+X j | Jump to the bottom |
+| `live-panel` | Ctrl+X V | Show or hide the side panel |
+| `toggle-detail-labels` | Ctrl+X z | Show or hide the fold labels |
+| `toggle-help` | Ctrl+X h | Show or hide the keyboard shortcuts |
+| `pick-file` | Ctrl+X a | Attach a file |
+| `focus-attachments` | Ctrl+X i | Open the attachments and apps |
+| `view-images` | Ctrl+X I | View the pictures |
+| `open-newest-image` | Ctrl+X O | Open the newest picture |
+| `toggle-voice-recording` | Ctrl+X v | Start or stop voice input |
+| `toggle-voice-conversation` | Ctrl+X b | Start or stop a voice conversation |
+| `providers` | Ctrl+X o | Open the providers |
 
 ### Sessions
 
@@ -149,20 +194,31 @@ or use the arrow keys to move it. Press **0** to see the whole picture again.
 
 ## Use an app
 
-An app is a screen that the agent or an extension attaches to a session, for example a diff to
-review. Click its row in the transcript, or press **Ctrl+X i**, select the app and press Enter. You
+An app is a screen that the agent or an extension attaches to a session. Examples are a diff to
+review, a form and a game. Click its row in the transcript, or press **Ctrl+X i**, select the app and
+press Enter. You can press its buttons, fill in its fields and select its rows. In a review app, you
 write comments on lines and in threads, save them as drafts and send them together.
 
 | Keys | What they do |
 |---|---|
-| ↑ or ↓ | Select the previous or the next line. PgUp, PgDn, Home and End move further |
-| ← or → | Fold or unfold the selected file |
+| ↑ or ↓ | Select the previous or the next row. PgUp, PgDn, Home and End move further |
+| ← or → | Fold or unfold the selected file or group |
 | < or > | Scroll long lines to the side |
-| Enter | Write a comment on the selected line or thread. On a file row, fold or unfold the file |
+| Enter | Press the selected button, card or table row. On a field, edit its value. On a line, write a comment. On a file row, fold or unfold the file |
 | Ctrl+S | In the comment editor, save the comment as a draft |
-| s | Send every saved draft and the values of the inputs |
+| s | Send every saved draft and the values of the fields |
 | r | Load the app again |
 | Esc | In the comment editor, cancel the comment. Else close the app |
+
+### Keys of an app
+
+An app can give its own keys, for example arrow keys in a game. The row above the status line shows
+each key of the app and its label. When you press one of these keys, the status line shows the label
+and then a check mark when the app has its answer.
+
+An app key can use a key from the table above, for example **s** or an arrow. Then press **Ctrl+X**
+first to use the key from the table: **Ctrl+X s** still sends the app. The status line shows `C-x s`
+for each such key. A closed app does not use its own keys.
 
 After Ctrl+S, the app shows `Saved · state N` when the gateway has saved your draft. After s, it
 shows `Sent` and the id of the receipt. A closed or archived app is read only. There, Enter and s
