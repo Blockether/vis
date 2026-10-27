@@ -1182,7 +1182,72 @@
           (virtual/layout msgs bubble-w settings nil 5 {})
           (expect (pos? (virtual/height-cache-size)))
           (virtual/invalidate-heights!)
-          (expect (zero? (virtual/height-cache-size)))))))
+          (expect (zero? (virtual/height-cache-size)))))
+    ;; Regression, session ef8c4571: each agent status change gave the team card of a long turn
+    ;; a new cache key. Its height fell back to the estimate and the turn projected again, so
+    ;; the view froze and the thumb jumped. A card change now only adds or removes card rows.
+    (it "keeps the measured height and projection when the team card changes"
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [agent
+              (fn [sid now created]
+                {"team_id" "turn-1"
+                 "session_id" sid
+                 "status" "running"
+                 "role" "implement"
+                 "title" "Fix parser"
+                 "now" now
+                 "created_at" created})
+
+              card-a
+              (agent-team/card "turn-1" [(agent "c1" "Reading files" 1000)])
+
+              card-b
+              (agent-team/card "turn-1"
+                               [(agent "c1" "Running the tests" 1000)
+                                (agent "c2" "Reviewing" 2000)])
+
+              base
+              (assoc (trace-assistant-msg 3 1 "done") :session-turn-id "turn-1")
+
+              opts
+              {:session-id "cid" :detail-expansions {}}
+
+              height-of
+              (fn [card]
+                (first (:heights (virtual/layout [(assoc base :agent-team-card card)]
+                                                 bubble-w
+                                                 settings
+                                                 nil
+                                                 200
+                                                 {}
+                                                 opts))))
+
+              h-a
+              (long (height-of card-a))]
+
+          (expect (not= (agent-team/card-height card-a bubble-w)
+                        (agent-team/card-height card-b bubble-w)))
+          (let [h-b
+                (long (with-redefs [virtual/project-message
+                                    (fn ([_ ^long _ _] (throw (ex-info "projected again" {})))
+                                      ([_ ^long _ _ _] (throw (ex-info "projected again" {}))))]
+                        (height-of card-b)))
+
+                ;; Only the tail is visible, so the turn reads its height from the cache.
+                off-screen
+                (virtual/layout [(assoc base :agent-team-card card-b) (plain-assistant-msg "tail")]
+                                bubble-w
+                                settings
+                                nil
+                                1
+                                {}
+                                opts)]
+
+            (expect (= (- h-b h-a)
+                       (- (agent-team/card-height card-b bubble-w)
+                          (agent-team/card-height card-a bubble-w))))
+            (expect (= h-b (first (:heights off-screen)))))))))
 
 (defdescribe
   long-transcript-scroll-test

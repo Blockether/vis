@@ -103,11 +103,19 @@
    projection has decorated the map.
 
    Memoized by object identity (see comment above): a stable bubble
-   computes its fingerprint once, then every later tick is a lookup."
+   computes its fingerprint once, then every later tick is a lookup.
+
+   The team card is excluded too: it changes with every agent status, but it only appends
+   rows after the projection. `card-rows` adds them to the cached height."
   [message]
   (locking message-fp-memo
     (or (.get ^IdentityHashMap message-fp-memo message)
-        (let [fp (hash (dissoc message :text :prewrapped-lines :line-meta :turn-separator?))]
+        (let [fp (hash (dissoc message
+                         :text
+                         :prewrapped-lines
+                         :line-meta
+                         :turn-separator?
+                         :agent-team-card))]
           (when (> (long (.size ^IdentityHashMap message-fp-memo)) 4096)
             (.clear ^IdentityHashMap message-fp-memo))
           (.put ^IdentityHashMap message-fp-memo message fp)
@@ -183,12 +191,19 @@
             (.put ^IdentityHashMap height-key-memo message k)
             k))))))
 
+(defn- card-rows
+  "Rows of the team card that `message` carries at `bubble-w`, or 0."
+  ^long [message bubble-w]
+  (agent-team/card-height (:agent-team-card message) bubble-w))
+
 (defn- height-cache-get
-  "Peek the sticky height cache. Returns a long or nil."
+  "Peek the sticky height cache. Returns a long or nil. The cache holds the
+   height without the team card, so a card change keeps the measured trace."
   [message bubble-w settings detail-expansions session-id]
-  (locking height-cache
-    (.get ^LinkedHashMap height-cache
-          (height-key message bubble-w settings detail-expansions session-id))))
+  (when-let [h (locking height-cache
+                 (.get ^LinkedHashMap height-cache
+                       (height-key message bubble-w settings detail-expansions session-id)))]
+    (+ (long h) (card-rows message bubble-w))))
 
 (defn- height-cache-put!
   "Pin `h` as the real height for `message` at `bubble-w` under `settings`
@@ -197,7 +212,7 @@
   (locking height-cache
     (.put ^LinkedHashMap height-cache
           (height-key message bubble-w settings detail-expansions session-id)
-          h))
+          (- (long h) (card-rows message bubble-w))))
   h)
 
 ;; Estimate memo — same key axes as the sticky height cache. `layout`
@@ -945,19 +960,34 @@
 
 (defn- project-message-cached
   "Memoized complete `project-message` for stable (non-live) bubbles, keyed
-   exactly like `height-cache-get`. Live bubbles and windowed slices bypass it."
+   exactly like `height-cache-get`. Live bubbles and windowed slices bypass it.
+   The key ignores the team card, so a card change reuses the projection and
+   only appends the new card rows."
   [message bubble-w settings detail-expansions session-id]
-  (render/with-cache projection-cache
-                     projection-cache-gen
-                     (height-key message bubble-w settings detail-expansions session-id)
-                     ;; The turn that started a team ends with its team card.
-                     (agent-team/with-card-lines (project-message message
-                                                                  bubble-w
-                                                                  settings
-                                                                  {:session-id session-id
-                                                                   :detail-expansions
-                                                                   detail-expansions})
-                                                 bubble-w)))
+  (let [k
+        (height-key message bubble-w settings detail-expansions session-id)
+
+        team-card
+        (:agent-team-card message)
+
+        projected
+        (render/with-cache projection-cache
+                           projection-cache-gen
+                           k
+                           (project-message (dissoc message :agent-team-card)
+                                            bubble-w
+                                            settings
+                                            {:session-id session-id
+                                             :detail-expansions detail-expansions}))]
+
+    ;; The turn that started a team ends with its team card.
+    (if team-card
+      (render/with-cache projection-cache
+                         projection-cache-gen
+                         [k team-card]
+                         (agent-team/with-card-lines (assoc projected :agent-team-card team-card)
+                                                     bubble-w))
+      projected)))
 
 ;;; ── Layout plan ────────────────────────────────────────────────────────────
 ;;

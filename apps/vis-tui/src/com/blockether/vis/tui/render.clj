@@ -8570,8 +8570,9 @@
                 c-marker
                 code-marker
 
+                ;; A closed digest drops comments, Code, Result and errors, so it formats none.
                 comment-lines
-                (when (and (string? comment) (not (str/blank? comment)))
+                (when (and (not digest-closed?) (string? comment) (not (str/blank? comment)))
                   (let [trimmed
                         (str/trim comment)
 
@@ -8610,12 +8611,13 @@
                 ;; colors and Python gets `PythonHighlighter`'s; both fold SGR-aware
                 ;; below. Any other language folds plain.
                 colored-lines
-                (cond (str/includes? code-text "\u001b[") (str/split-lines code-text)
+                (cond digest-closed? nil
+                      (str/includes? code-text "\u001b[") (str/split-lines code-text)
                       (= "python" code-language) (str/split-lines (PythonHighlighter/highlight
                                                                     code-text)))
 
                 inline-error-code-lines
-                (when (and error (not (:group-errors form)))
+                (when (and error (not digest-closed?) (not (:group-errors form)))
                   (inline-error-context-lines code-text error colored-lines))
 
                 ;; Soft-fold oversized source rows, but keep error caret alignment and
@@ -8624,15 +8626,16 @@
                 ;; every wrapped row; dropping to the plain fold left the widest lines —
                 ;; exactly the ones that wrap — as the only uncolored code on screen.
                 code-line-groups
-                (or (some->> inline-error-code-lines
-                             (mapv vector))
-                    (mapv (fn [plain colored]
-                            (let [width (max 1 (- (long fill-w) 2))]
-                              (if colored
-                                (p/ansi-fold-cols colored width)
-                                (p/fold-cols plain width))))
-                          (str/split-lines code-text)
-                          (or colored-lines (repeat nil))))
+                (when-not digest-closed?
+                  (or (some->> inline-error-code-lines
+                               (mapv vector))
+                      (mapv (fn [plain colored]
+                              (let [width (max 1 (- (long fill-w) 2))]
+                                (if colored
+                                  (p/ansi-fold-cols colored width)
+                                  (p/fold-cols plain width))))
+                            (str/split-lines code-text)
+                            (or colored-lines (repeat nil)))))
 
                 code-node-id
                 (when session-id
@@ -8647,7 +8650,9 @@
                     (detail-expanded? detail-expansions session-id code-node-id false))
 
                 c-lines
-                (when (and show-execution-details? (not (str/blank? code-text)))
+                (when (and show-execution-details?
+                           (not digest-closed?)
+                           (not (str/blank? code-text)))
                   (let [header-width
                         (max 1 (long fill-w))
 
@@ -8720,7 +8725,8 @@
                   (update :stdout strip-produced-artifact-transport))
 
                 card
-                (when show-execution-details? (vis/result-card display-form))
+                (when (and show-execution-details? (not digest-closed?))
+                  (vis/result-card display-form))
 
                 result-text
                 (some-> (:body card)
@@ -8849,7 +8855,7 @@
 
                 ;; Visible failures have an independent diagnostic disclosure.
                 inline-error-message-lines
-                (when (and show-execution-details? error)
+                (when (and show-execution-details? error (not digest-closed?))
                   (let [node-id
                         (when session-id
                           (detail-node-id {:session-turn-id session-turn-id
@@ -8952,16 +8958,17 @@
                 ;; Python and Result share the compact execution surface. Activity follows as
                 ;; a timeline surface, while the verdict remains transcript text above both.
                 generic-run-entries
-                (run-row-entries (filterv (fn [run]
-                                            (and (not (:live-pane run))
-                                                 (not-any? #(and (attach/live-artifact? %)
-                                                                 (:view-id %)
-                                                                 (= (:view-id %) (:view-id run)))
-                                                           iteration-artifacts)))
-                                   runs)
-                                 fill-w
-                                 session-id
-                                 false)
+                (when-not digest-closed?
+                  (run-row-entries (filterv (fn [run]
+                                              (and (not (:live-pane run))
+                                                   (not-any? #(and (attach/live-artifact? %)
+                                                                   (:view-id %)
+                                                                   (= (:view-id %) (:view-id run)))
+                                                             iteration-artifacts)))
+                                     runs)
+                                   fill-w
+                                   session-id
+                                   false))
 
                 inline-live-entries
                 (mapcat #((:inline-entries %) fill-w) (filter :inline-entries runs))

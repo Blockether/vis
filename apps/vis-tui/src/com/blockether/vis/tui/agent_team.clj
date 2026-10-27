@@ -480,6 +480,17 @@
                           rows)
                   [{:line marker :meta nil}]))))
 
+(defn- card-width ^long [bubble-w] (max 1 (- (long bubble-w) 4)))
+
+(defn card-height
+  "Rows that `with-card-lines` appends for `team-card` at bubble width `bubble-w`: 0 without a
+   card. Layout adds it to the cached height of the message without its card."
+  ^long [team-card bubble-w]
+  (if-let [rows (:rows team-card)]
+    (let [width (card-width bubble-w)]
+      (+ 3 (long (reduce + 0 (map #(row-line-count % width) rows)))))
+    0))
+
 (defn with-card-lines
   "Append the team block of `projected` (an assistant message with `:agent-team-card`) to its
    painted lines at bubble width `bubble-w`. A windowed slice keeps its lines."
@@ -489,7 +500,7 @@
                           (:agent-team-card projected))]
     (let [lines (vec (:prewrapped-lines projected))
           line-meta (or (:line-meta projected) (vec (repeat (count lines) nil)))
-          entries (card-entries team-card (max 1 (- (long bubble-w) 4)))]
+          entries (card-entries team-card (card-width bubble-w))]
 
       (assoc projected
         :prewrapped-lines (into (conj lines "") (map :line) entries)

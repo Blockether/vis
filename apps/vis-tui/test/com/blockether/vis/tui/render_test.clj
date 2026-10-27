@@ -12159,6 +12159,52 @@ print(paths)"
             (expect (= (str "▸ 1 " (if (= state "cancelled") "cancelled" "failed"))
                        (str/trim (subs (:line entry) 1))))
             (expect (= :error (get-in entry [:meta :status-tone]))))))
+    ;; Regression, session ef8c4571: scrolling into a turn with 471 steps froze the TUI for
+    ;; seconds, because each step under a closed digest formatted its Code and Result and then
+    ;; dropped them. A closed digest formats none of them.
+    (it
+      "formats no Code, Result or failure of the steps under a closed digest"
+      (let [steps
+            [{:iteration-id "i1"
+              :assistant-prose "Check the parser."
+              :forms [{:code "print('ok')\nraise ValueError('bad')"
+                       :stdout "## Result\n\n- one\n- two"
+                       :success? false
+                       :duration-ms 12
+                       :error {:type "ValueError" :message "bad"}}]}]
+
+            render
+            (fn [expansions]
+              (render/invalidate-cache!)
+              (#'render/trace-render-entries
+               {:iterations steps
+                :live? false
+                :content-w 76
+                :session-id "s"
+                :session-turn-id "t"
+                :detail-expansions expansions
+                :settings {:summarize-steps true}}))
+
+            calls
+            (atom [])
+
+            track
+            (fn [k f]
+              (fn [& args]
+                (swap! calls conj k)
+                (apply f args)))]
+
+        (with-redefs [vis/result-card
+                      (track :result-card vis/result-card)
+
+                      render/inline-error-context-lines
+                      (track :code-context @#'render/inline-error-context-lines)]
+
+          (let [closed (render {})]
+            (expect (some digest? closed))
+            (expect (= [] @calls)))
+          (render (open-digests "s" "t"))
+          (expect (= #{:result-card :code-context} (set @calls))))))
     ;; Regression, user screenshot: an open digest showed Failed without the CODE that failed.
     ;; The NameError stopped the block before any tool call, so the step has no Activity.
     (it
