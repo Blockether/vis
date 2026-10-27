@@ -2122,7 +2122,8 @@
    dispose the OLD Python session (and its own per-env DB connection). MUST be
    called while holding the entry lock, so no turn races the swap and `old` is
    stable. The transcript lives in the DB; `open-env!` resumes it, and the
-   session snapshot restores the helpers and variables the old sandbox saved."
+   session snapshot restores the helpers and variables the old sandbox saved.
+   The session lives on, so the processes that its Python started keep running."
   [k]
   (when-let [old (get @cache k)]
     (env/log-sandbox-stop! (:session-id (:environment old)) :settings-change settings-change-detail)
@@ -2138,7 +2139,8 @@
                           (long @python-exec/policy-reload-epoch))))
       ;; A teardown failure must not take the swap down, but it must not vanish
       ;; either: an unreported failure leaks a worker nobody can find.
-      (try (dispose-environment! (:environment old))
+      (try (binding [python-worker/*keep-children?* true]
+             (dispose-environment! (:environment old)))
            (catch Throwable t
              (tel/log! :error
                        ["gateway: recycle failed to dispose the old env" (str k)

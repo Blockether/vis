@@ -10134,7 +10134,7 @@
 
                                       loop-env/dispose-environment!
                                       (fn [e]
-                                        (swap! disposed conj e))]
+                                        (swap! disposed conj [e python-worker/*keep-children?*]))]
 
                           (recycle-env! k))
                         (let [e2 (get @env-cache k)]
@@ -10142,8 +10142,10 @@
                           (expect (= fresh-env (:environment e2)))
                           ;; SAME lock preserved so a queued caller stays correct
                           (expect (identical? (:lock entry) (:lock e2)))
-                          ;; the OLD env disposed exactly once
-                          (expect (= [old-env] @disposed)))
+                          ;; the OLD env disposed exactly once. The session lives on, so the
+                          ;; disposal keeps the processes that its Python started (REPLs).
+                          (expect (= [[old-env true]] @disposed))
+                          (expect (false? python-worker/*keep-children?*)))
                         (finally (swap! env-cache dissoc k)))))))
 
 (defn- with-reload-cache
