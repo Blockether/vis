@@ -20,6 +20,8 @@ export const APP_ACTION_STATUSES = [
   'stale',
   'closed',
   'invalid',
+  'unbound',
+  'disconnected',
   'failed',
 ] as const;
 
@@ -49,6 +51,8 @@ export const APP_ACTION_WORDS: Record<AppActionStatus, string> = {
   stale: 'New revision',
   closed: 'Closed',
   invalid: 'Not valid',
+  unbound: 'No such key',
+  disconnected: 'Disconnected',
   failed: 'Failed',
 };
 
@@ -77,6 +81,11 @@ function refusal(raw: Record<string, unknown>): AppActionResult {
       };
     case 'closed':
       return { status: 'closed' };
+    case 'unbound':
+      return { status: 'unbound' };
+    // The owner is gone, such as after a restart: the app is read only until it comes back.
+    case 'disconnected':
+      return { status: 'disconnected' };
     case 'invalid': {
       const errors = record(raw.errors) as Record<string, string> | undefined;
       return { status: 'invalid', ...(errors ? { errors } : {}) };

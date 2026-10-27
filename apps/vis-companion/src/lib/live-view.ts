@@ -11,6 +11,9 @@ import {
   VIEW_GROUP_DIRECTIONS,
   VIEW_OPEN_EVENT,
   VIEW_PATCH_EVENT,
+  VIEW_SHORTCUT_LABEL_MAX,
+  VIEW_SHORTCUT_NAMED_KEYS,
+  VIEW_SHORTCUTS_MAX,
   viewGroupDirection,
   viewKind,
   viewMaxColumns,
@@ -60,13 +63,15 @@ export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
 /**
  * Everything a patch can do to a view (`live-ops`). CLOSED.
  *
- * The first four address ONE node by id and the last two change the view's
- * SHAPE. There is no seventh: protocol 7 took Activity off the Live View rail
+ * Most address ONE node by id: `set-value` puts an input's value in place, the
+ * value the engine answers each accepted `change` and `submit` with. `add-node`
+ * and `remove-node` change the view's SHAPE. There is no seventh: protocol 7 took Activity off the Live View rail
  * and gave it to the form that produced it, so a view no longer carries a
  * projection for a patch to replace.
  */
 export const LIVE_OPS = [
   'set',
+  'set-value',
   'append',
   'remove',
   'clear',
@@ -74,6 +79,7 @@ export const LIVE_OPS = [
   'remove-node',
   'thread',
   'submission',
+  'shortcuts',
 ] as const;
 
 /** Where a view stands (`view.spec/placements`). CLOSED. An `attachment` is an app. */
@@ -456,6 +462,70 @@ export interface LiveView {
   key?: string;
   /** Local reconnect marker, never sent on the wire. */
   is_stale?: boolean;
+  /** The keys an app binds, in the order the owner declared them. */
+  shortcuts?: LiveShortcut[];
+}
+
+/**
+ * The named keys an app can bind (`shortcut_key`). Any other key is ONE printable
+ * ASCII character, `!` to `~`, compared case-sensitively. Escape and Tab never
+ * bind: they close the app and move focus.
+ */
+export const LIVE_SHORTCUT_NAMED_KEYS = VIEW_SHORTCUT_NAMED_KEYS;
+
+/** The most keys one app binds. */
+export const LIVE_SHORTCUTS_MAX = VIEW_SHORTCUTS_MAX;
+
+/**
+ * One key that an app binds. A key with `node_id` presses that node. A key with
+ * `action` goes to the owner as `{action: "shortcut", key}`.
+ */
+export interface LiveShortcut {
+  key: string;
+  label?: string;
+  action?: string;
+  node_id?: string;
+}
+
+/** True when `key` is a key that an app can bind. */
+export function isLiveShortcutKey(key: string): boolean {
+  if (LIVE_SHORTCUT_NAMED_KEYS.includes(key)) return true;
+  if (key.length !== 1) return false;
+  const code = key.charCodeAt(0);
+  return code >= 0x21 && code <= 0x7e;
+}
+
+function nonBlank(value: unknown): string | undefined {
+  const one = optionalText(value);
+  return one && one.trim() !== '' ? one : undefined;
+}
+
+function shortcutFromWire(raw: Record<string, unknown>): LiveShortcut | null {
+  const key = text(raw.key);
+  if (!isLiveShortcutKey(key)) return null;
+  const label = optionalText(raw.label)?.trim().slice(0, VIEW_SHORTCUT_LABEL_MAX);
+  const action = nonBlank(raw.action);
+  const nodeId = nonBlank(raw.node_id);
+  // A shortcut has exactly one target: an owner action or a node to press.
+  if (Boolean(action) === Boolean(nodeId)) return null;
+  return {
+    key,
+    ...(label ? { label } : {}),
+    ...(action ? { action } : {}),
+    ...(nodeId ? { node_id: nodeId } : {}),
+  };
+}
+
+/** The bindings read from the wire: valid keys only, the first of a repeated key, at most the bound. */
+export function liveShortcutsFromWire(raw: unknown): LiveShortcut[] {
+  const seen = new Set<string>();
+  const kept: LiveShortcut[] = [];
+  for (const one of keyed(raw, shortcutFromWire)) {
+    if (seen.has(one.key) || kept.length >= LIVE_SHORTCUTS_MAX) continue;
+    seen.add(one.key);
+    kept.push(one);
+  }
+  return kept;
 }
 
 /**
@@ -965,6 +1035,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     ...(view.is_archived === true ? { is_archived: true } : {}),
     ...(view.is_closed === true ? { is_closed: true } : {}),
     ...(view.is_stale === true ? { is_disconnected: true } : {}),
+    ...(Array.isArray(view.shortcuts) ? { shortcuts: liveShortcutsFromWire(view.shortcuts) } : {}),
   };
 }
 
@@ -1292,6 +1363,51 @@ function dropNode(nodes: LiveNode[], id: string): LiveNode[] {
   return changed ? next : nodes;
 }
 
+/** The secret inputs: the host keeps no value of theirs, only `is_set`. */
+const LIVE_SECRET_TYPES: readonly LiveInputType[] = ['password', 'otp'];
+
+/** True when the host never holds or sends the value of this input. */
+export function isLiveSecretInput(node: LiveInputNode): boolean {
+  return LIVE_SECRET_TYPES.includes(node.type);
+}
+
+/** True when `value` fits the domain of `node` (`spec/value-in-domain?`). */
+function inLiveInputDomain(node: LiveInputNode, value: unknown): boolean {
+  const options = (node.field.options ?? []).map((option) => option.value);
+  switch (node.type) {
+    case 'checkbox':
+      return typeof value === 'boolean';
+    case 'range':
+      return typeof value === 'number' && Number.isFinite(value);
+    case 'select':
+      return typeof value === 'string' && (options.length === 0 || options.includes(value));
+    case 'multiselect':
+      return (
+        Array.isArray(value) &&
+        value.every(
+          (item) => typeof item === 'string' && (options.length === 0 || options.includes(item)),
+        )
+      );
+    default:
+      return typeof value === 'string';
+  }
+}
+
+/**
+ * `set-value` (`live/apply-set-value`): the input with its new value, or without
+ * one when the value is `null`. A secret input, a node that is no input and a
+ * value outside the input's domain leave the node as it was.
+ */
+function applySetValue(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
+  if (!isLiveInputNode(node) || isLiveSecretInput(node) || !('value' in op)) return node;
+  if (op.value === null) {
+    if (!('value' in node)) return node;
+    const { value: _cleared, ...rest } = node;
+    return rest;
+  }
+  return inLiveInputDomain(node, op.value) ? { ...node, value: op.value } : node;
+}
+
 function applyOp(view: LiveView, raw: unknown): LiveView {
   const op = record(raw);
   if (!op) return view;
@@ -1301,6 +1417,10 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
     const submission = raw ? submissionFromWire(raw) : null;
     if (!submission) return view;
     return { ...view, submissions: upsertSubmission(view.submissions ?? [], submission) };
+  }
+  if (name === 'shortcuts') {
+    // The op REPLACES every binding; an empty list clears them.
+    return { ...view, shortcuts: liveShortcutsFromWire(op.shortcuts) };
   }
   if (name === 'add-node') {
     const node = liveNodeFromWire(op.node_spec);
@@ -1323,17 +1443,22 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
     // Layout is declared and no op carries it (`live-op-key-sets` names no
     // group), so a frame naming a row leaves the arrangement where it stands.
     if (node.type === 'group') return node;
-    return name === 'set'
-      ? applySet(node, op)
-      : name === 'append'
-        ? applyAppend(node, op)
-        : name === 'remove'
-          ? applyRemove(node, op)
-          : name === 'clear'
-            ? applyClear(node)
-            : name === 'thread'
-              ? applyThread(node, op)
-              : node;
+    switch (name) {
+      case 'set':
+        return applySet(node, op);
+      case 'set-value':
+        return applySetValue(node, op);
+      case 'append':
+        return applyAppend(node, op);
+      case 'remove':
+        return applyRemove(node, op);
+      case 'clear':
+        return applyClear(node);
+      case 'thread':
+        return applyThread(node, op);
+      default:
+        return node;
+    }
   });
   return nodes === view.nodes ? view : { ...view, nodes };
 }

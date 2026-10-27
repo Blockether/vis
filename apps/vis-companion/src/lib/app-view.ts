@@ -37,8 +37,12 @@ export function foldAppEvent(view: LiveView, event: SseEvent): AppFold {
 export function newerAppView(held: LiveView | null, read: LiveView): LiveView {
   if (!held || held.id !== read.id) return read;
   if (read.seq > held.seq) return read;
-  if (read.seq === held.seq && (read.is_closed || read.is_disconnected !== held.is_disconnected))
-    return { ...held, ...read };
+  if (read.seq === held.seq && (read.is_closed || read.is_disconnected !== held.is_disconnected)) {
+    // A read without the flag is the owner back again: the held flag must not stay.
+    const merged = { ...held, ...read };
+    if (read.is_disconnected !== true) delete merged.is_disconnected;
+    return merged;
+  }
   return held;
 }
 

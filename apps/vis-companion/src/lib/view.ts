@@ -23,6 +23,16 @@ export const VIEW_MAX_COLUMNS =
     (branch) => branch.properties.type?.const === 'group',
   )?.properties.max_columns?.maximum ?? 1;
 
+type ShortcutKeySchema = { oneOf: { enum?: string[] }[] };
+/** The named keys that an app can bind (`shortcut_key` in view.json). CLOSED. */
+export const VIEW_SHORTCUT_NAMED_KEYS: readonly string[] =
+  (viewSchema.$defs.shortcut_key as unknown as ShortcutKeySchema).oneOf.find((branch) => branch.enum)
+    ?.enum ?? [];
+/** The most shortcuts that one app binds (view.json). */
+export const VIEW_SHORTCUTS_MAX = viewSchema.$defs.live_view.properties.shortcuts.maxItems;
+/** The longest legend label of a shortcut (view.json). */
+export const VIEW_SHORTCUT_LABEL_MAX = viewSchema.$defs.shortcut.properties.label.maxLength;
+
 /** Read a group direction; an unknown or absent one stacks as a column. */
 export function viewGroupDirection(raw: unknown): ViewGroupDirection {
   return (VIEW_GROUP_DIRECTIONS as readonly unknown[]).includes(raw)
@@ -44,6 +54,7 @@ export const VIEW_ACTIONS = [
   'draft',
   'interrupt',
   'select',
+  'shortcut',
   'submit',
 ] as const;
 export type ViewActionName = (typeof VIEW_ACTIONS)[number];
@@ -81,6 +92,8 @@ export type ViewAction =
   | { action: 'cancel' }
   | { action: 'activate'; node_id: string }
   | { action: 'select'; node_id: string; item_ids: string[] }
+  /** A key that the app binds to an action of its owner. */
+  | { action: 'shortcut'; key: string }
   | { action: 'interrupt'; note?: string };
 
 export type ViewActionOutcome = {
@@ -99,6 +112,10 @@ export type ViewActionOutcome = {
   submission?: unknown;
   /** The current diff revision of a `stale_revision` refusal. */
   revision?: string;
+  /** The key of a `shortcut` action. */
+  key?: string;
+  /** The owner action that an accepted `shortcut` key ran. */
+  shortcut?: string;
 };
 
 /** Read the CLOSED capability kind without accepting an arbitrary string. */

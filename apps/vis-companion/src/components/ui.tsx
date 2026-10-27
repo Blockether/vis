@@ -70,8 +70,10 @@ import {
   CloseIcon,
   CopyIcon,
   ImageIcon,
+  KeyArrowIcon,
   SidebarIcon,
 } from './icons';
+import { shortcutArrow, shortcutGlyph } from '../lib/app-shortcuts';
 
 /**
  * Shared reading roles for settings, lists and forms. Size, weight and quiet ink
@@ -238,6 +240,38 @@ export const Button = forwardRef<
     />
   );
 });
+
+/**
+ * One key of a keyboard shortcut, as a small framed cap. The cap is decorative:
+ * the control that it labels carries `aria-keyshortcuts` for a screen reader.
+ */
+export function KeyCap({
+  keyName,
+  isLit = false,
+  isPointerOnly = false,
+  className = '',
+}: {
+  /** The key, as a `KeyboardEvent.key` name such as `ArrowUp`, `Enter` or `q`. */
+  keyName: string;
+  /** The key was just pressed: the cap echoes it in the accent. */
+  isLit?: boolean;
+  /** A touch screen has no keys: the cap shows only under a pointer. */
+  isPointerOnly?: boolean;
+  className?: string;
+}) {
+  const ink = isLit ? 'border-accent text-accent-ink' : 'border-dialog-edge text-dialog-foreground';
+  // One display utility, so Tailwind's emission order never decides between two.
+  const display = isPointerOnly ? 'hidden mouse:inline-flex' : 'inline-flex';
+  const arrow = shortcutArrow(keyName);
+  return (
+    <kbd
+      aria-hidden="true"
+      className={`${display} h-[1.4em] min-w-[1.4em] shrink-0 items-center justify-center border bg-panel px-1 font-mono text-chip font-normal normal-case leading-none tracking-normal ${ink} ${className}`}
+    >
+      {arrow ? <KeyArrowIcon direction={arrow} className="size-3" /> : shortcutGlyph(keyName)}
+    </kbd>
+  );
+}
 
 // Icon controls never draw an enclosing border, ring or circular face. Keyboard
 // focus adds an underline instead; the hit target remains independent of the glyph.
@@ -1253,6 +1287,9 @@ export function OptionRow({
  * a click; a finger that slid off the control still releases nothing, which is
  * exactly what a click would have done.
  */
+/** The longest wait for the click that echoes a press read on release. */
+const TAP_ECHO_MS = 1000;
+
 function useTapPress(
   onPress: ((event: MouseEvent<HTMLButtonElement>) => void) | undefined,
   isDisabled: boolean,
@@ -1260,6 +1297,13 @@ function useTapPress(
   onPointerUp?: (event: PointerEvent<HTMLButtonElement>) => void,
 ) {
   const gesture = useRef<'idle' | 'down' | 'pressed'>('idle');
+  // When the press read on release is echoed by a click, that click comes at once. A
+  // press that disables the control gets no click at all, and iOS can drop it, so an
+  // old press must not swallow the next real click, such as a key or an app shortcut.
+  const pressedAt = useRef(0);
+  useEffect(() => {
+    if (isDisabled) gesture.current = 'idle';
+  }, [isDisabled]);
   const isOver = (event: PointerEvent<HTMLButtonElement>) => {
     const box = event.currentTarget.getBoundingClientRect();
     return (
@@ -1286,10 +1330,11 @@ function useTapPress(
       // only thing that says the finger left the control before it lifted.
       if (!isOver(event)) return;
       gesture.current = 'pressed';
+      pressedAt.current = event.timeStamp;
       onPress?.(event);
     },
     onClick: (event: MouseEvent<HTMLButtonElement>) => {
-      const isEcho = gesture.current === 'pressed';
+      const isEcho = gesture.current === 'pressed' && event.timeStamp - pressedAt.current < TAP_ECHO_MS;
       gesture.current = 'idle';
       if (isEcho) return;
       onPress?.(event);

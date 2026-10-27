@@ -1100,7 +1100,9 @@ describe('the section is built from the closed vocabulary', () => {
 describe('an opened run is a dialog over the chat', () => {
   it('opens in `Modal` + `DialogFrame`, never the full-screen artifact overlay', () => {
     expect(liveViewSource).toContain('<Modal within="session" onDismiss={onClose}>');
-    expect(liveViewSource).toContain('<DialogFrame title={title} subtitle={subtitle} onClose={onClose}>');
+    expect(liveViewSource).toContain(
+      '<DialogFrame title={title} subtitle={subtitle} footer={footer} onClose={onClose}>',
+    );
     expect(liveViewSource).not.toContain('OverlayScreen');
   });
 });

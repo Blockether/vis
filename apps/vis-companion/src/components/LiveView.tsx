@@ -22,6 +22,7 @@ import {
   Input,
   ListRow,
   Modal,
+  KeyCap,
   PROSE,
   Spinner,
   TextButton,
@@ -33,6 +34,7 @@ import { InlineMarkdown } from './ChatContent';
 import { HumanInputFieldRow } from './HumanInputPrompt';
 import { DiffNodeView, ThreadNodeView, type AppNodeActions } from './AppNodes';
 import { humanInputDefaultValue, type HumanInputValue } from '../lib/human-input';
+import { ariaShortcut, nodeShortcuts } from '../lib/app-shortcuts';
 import {
   ArrowOutIcon,
   CircleAlertIcon,
@@ -49,6 +51,7 @@ import {
   applyLiveViewEvent,
   LIVE_NOTE_CHARS,
   isLiveInputNode,
+  isLiveSecretInput,
   isLiveViewEvent,
   liveInputNodes,
   liveFraction,
@@ -66,6 +69,7 @@ import {
   type LiveStepsNode,
   type LiveGroup,
   type LiveRow,
+  type LiveShortcut,
   type LiveTableNode,
   type LiveTone,
   type LiveView as LiveViewModel,
@@ -1329,6 +1333,8 @@ type NodePresentation = {
   onActivate?: (id: string) => Promise<void> | void;
   /** The values the operator typed and the view has not echoed yet. */
   values: Record<string, HumanInputValue>;
+  /** The host's refusal of each input value, by node id. */
+  errors?: Readonly<Record<string, string>>;
   onChange?: (id: string, value: HumanInputValue) => void;
   /** Send a typed value now: the input lost focus or its own Enter fired. */
   onCommit?: (id: string) => void;
@@ -1336,7 +1342,15 @@ type NodePresentation = {
   onSubmit?: (id: string) => Promise<void> | void;
   /** The Save and Send actions of an app. Absent, review nodes are read only. */
   app?: AppNodeActions;
+  /** The app key that presses each node, by node id. */
+  keys?: ReadonlyMap<string, LiveShortcut>;
 };
+
+/** The key cap of a bound node. A touch screen has no keys, so it shows only with a mouse. */
+function NodeKey({ shortcut }: { shortcut?: LiveShortcut }) {
+  if (!shortcut) return null;
+  return <KeyCap keyName={shortcut.key} isPointerOnly className="ml-2 align-middle" />;
+}
 
 /** Wait this long after the last keystroke before a `change` goes out. */
 export const LIVE_CHANGE_DEBOUNCE_MS = 400;
@@ -1376,7 +1390,7 @@ function LiveInput({ node, presentation }: { node: LiveInputNode; presentation: 
       <HumanInputFieldRow
         field={node.field}
         values={{ [node.field.id]: liveInputValue(node, presentation.values) }}
-        errors={{}}
+        errors={presentation.errors?.[node.id] ? { [node.field.id]: presentation.errors[node.id] } : {}}
         disabled={presentation.isSettled || !onChange}
         onChange={(_, value) => onChange?.(node.id, value)}
         onSubmit={() => onCommit?.(node.id)}
@@ -1390,10 +1404,12 @@ function CardTile({
   node,
   onActivate,
   isSettled,
+  shortcut,
 }: {
   node: LiveCardNode;
   onActivate?: NodePresentation['onActivate'];
   isSettled: boolean;
+  shortcut?: LiveShortcut;
 }) {
   const [pending, setPending] = useState(false);
   const tone = node.tone ?? 'idle';
@@ -1402,6 +1418,7 @@ function CardTile({
       <span className="flex min-w-0 items-center gap-2">
         {node.tone && <ToneMark tone={tone} />}
         <span className="min-w-0 truncate text-body font-semibold text-white">{node.title}</span>
+        <NodeKey shortcut={shortcut} />
       </span>
       {node.text && (
         <span className="block text-ui text-dialog-foreground [overflow-wrap:anywhere]">
@@ -1421,6 +1438,8 @@ function CardTile({
     <ChoiceRow
       isOn={false}
       mark={null}
+      data-node-id={node.id}
+      aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
       disabled={isSettled || pending || !onActivate}
       aria-busy={pending}
       onClick={async () => {
@@ -1443,15 +1462,21 @@ function ActionButton({
   node,
   onActivate,
   isSettled,
+  shortcut,
 }: {
   node: Extract<LiveNode, { type: 'button' }>;
   onActivate?: NodePresentation['onActivate'];
   isSettled: boolean;
+  shortcut?: LiveShortcut;
 }) {
   const [pending, setPending] = useState(false);
   return (
     <Button
       variant="secondary"
+      data-node-id={node.id}
+      // The key cap is decorative: the name stays the label, never `Nextn`.
+      aria-label={shortcut ? node.label : undefined}
+      aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
       disabled={isSettled || node.is_disabled || pending || !onActivate}
       aria-busy={pending}
       onClick={async () => {
@@ -1465,6 +1490,7 @@ function ActionButton({
       }}
     >
       {node.label}
+      <NodeKey shortcut={shortcut} />
     </Button>
   );
 }
@@ -1585,6 +1611,7 @@ function NodeCell({
               node={node}
               isSettled={presentation.isSettled}
               onActivate={node.action === 'submit' ? presentation.onSubmit : presentation.onActivate}
+              shortcut={presentation.keys?.get(node.id)}
             />
           )}
           {node.type === 'card' && (
@@ -1592,6 +1619,7 @@ function NodeCell({
               node={node}
               isSettled={presentation.isSettled}
               onActivate={presentation.onActivate}
+              shortcut={presentation.keys?.get(node.id)}
             />
           )}
           {node.type === 'status' && <StatusRow node={node} aside={statusAside} />}
@@ -1675,6 +1703,7 @@ export function LiveViewPanel({
   embedded = false,
   inDialog = false,
   app,
+  errors,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -1682,8 +1711,11 @@ export function LiveViewPanel({
   /** Live selection, or local snapshot browsing in a receipt; omit when unavailable. */
   onSelect?: (nodeId: string, itemIds: string[]) => void;
   onActivate?: (nodeId: string) => Promise<void> | void;
-  /** Send one input's new value. The panel waits for a pause in the typing. */
-  onChange?: (nodeId: string, value: HumanInputValue) => Promise<void> | void;
+  /**
+   * Send one input's new value. The panel waits for a pause in the typing. An app
+   * answers the state version that holds the value: from there the view's value shows.
+   */
+  onChange?: (nodeId: string, value: HumanInputValue) => Promise<number | void> | number | void;
   /** Send every input value with the submit button `nodeId`. */
   onSubmit?: (nodeId: string, values: Record<string, HumanInputValue>) => Promise<void> | void;
   isInterrupting?: boolean;
@@ -1704,6 +1736,8 @@ export function LiveViewPanel({
   inDialog?: boolean;
   /** The Save and Send actions of an app attachment. */
   app?: AppNodeActions;
+  /** The host's refusal of each input value, by node id. */
+  errors?: Readonly<Record<string, string>>;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -1714,7 +1748,8 @@ export function LiveViewPanel({
     phase: string;
     values: Record<string, boolean>;
   }>({ phase, values: {} });
-  const [typed, setTyped] = useState<Record<string, HumanInputValue>>({});
+  // `until` is the state version that holds the value: from there the view's own value shows.
+  const [typed, setTyped] = useState<Record<string, { value: HumanInputValue; until?: number }>>({});
   const unsent = useRef(new Map<string, { value: HumanInputValue; timer: ReturnType<typeof setTimeout> }>());
   const sendRef = useRef(onChange);
   useEffect(() => {
@@ -1725,7 +1760,15 @@ export function LiveViewPanel({
     if (!held) return;
     clearTimeout(held.timer);
     unsent.current.delete(id);
-    void sendRef.current?.(id, held.value);
+    const value = held.value;
+    void Promise.resolve(sendRef.current?.(id, value)).then((seq) => {
+      if (typeof seq !== 'number') return;
+      setTyped((typedNow) =>
+        typedNow[id]?.value === value && !unsent.current.has(id)
+          ? { ...typedNow, [id]: { value, until: seq } }
+          : typedNow,
+      );
+    });
   };
   useEffect(() => {
     const held = unsent.current;
@@ -1738,14 +1781,43 @@ export function LiveViewPanel({
       }
     };
   }, []);
+  const keys = useMemo(() => nodeShortcuts(view.shortcuts ?? []), [view.shortcuts]);
+  // A typed value shows until the view reaches the state version that holds it. The
+  // engine answers each accepted `change` with a `set-value` patch at that version,
+  // so from there the view's own value shows, and an app can clear its own input,
+  // as a todo list does after Add. A secret input gets no such patch: the host
+  // keeps no value of it, so its typed value stays.
+  const shown = useMemo(() => {
+    const secrets = new Set(
+      liveInputNodes(view.nodes)
+        .filter(isLiveSecretInput)
+        .map((node) => node.id),
+    );
+    return Object.fromEntries(
+      Object.entries(typed)
+        .filter(
+          ([id, entry]) =>
+            entry.until === undefined || view.seq < entry.until || secrets.has(id),
+        )
+        .map(([id, entry]) => [id, entry.value]),
+    ) as Record<string, HumanInputValue>;
+  }, [typed, view.seq, view.nodes]);
   const presentation: NodePresentation = {
     isSettled,
     app,
-    onActivate,
-    values: typed,
+    keys,
+    onActivate: onActivate
+      ? async (id) => {
+          // The owner reads every typed value before the press that follows it.
+          for (const held of [...unsent.current.keys()]) sendChange(held);
+          await onActivate(id);
+        }
+      : undefined,
+    values: shown,
+    errors,
     onChange: onChange
       ? (id, value) => {
-          setTyped((held) => ({ ...held, [id]: value }));
+          setTyped((held) => ({ ...held, [id]: { value } }));
           const held = unsent.current.get(id);
           if (held) clearTimeout(held.timer);
           unsent.current.set(id, {
@@ -1758,7 +1830,7 @@ export function LiveViewPanel({
     onSubmit: onSubmit
       ? async (id) => {
           for (const held of [...unsent.current.keys()]) sendChange(held);
-          await onSubmit(id, liveSubmitValues(view.nodes, typed));
+          await onSubmit(id, liveSubmitValues(view.nodes, shown));
         }
       : undefined,
     expanded: disclosures.phase === phase ? disclosures.values : {},
@@ -2026,12 +2098,15 @@ function OpenedRun({
 export function RunDialog({
   title,
   subtitle,
+  footer,
   onClose,
   children,
 }: {
   title: string;
   /** What the band REPORTS under the run's name — a settled run's verdict. */
   subtitle?: ReactNode;
+  /** A docked strip under the body, such as the key legend of an app. */
+  footer?: ReactNode;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -2046,7 +2121,7 @@ export function RunDialog({
   }, [onClose]);
   return (
     <Modal within="session" onDismiss={onClose}>
-      <DialogFrame title={title} subtitle={subtitle} onClose={onClose}>
+      <DialogFrame title={title} subtitle={subtitle} footer={footer} onClose={onClose}>
         {/* The run is a BOX in here, so the dialog's edge is never mistaken for the run's. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3">{children}</div>
       </DialogFrame>

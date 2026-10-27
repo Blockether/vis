@@ -8,6 +8,8 @@ import {
   AlignLeft,
   Archive,
   ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   ArrowUp,
   ArrowUpRight,
   CalendarClock,
@@ -201,6 +203,19 @@ export function PauseIcon({ className }: { className?: string }) {
 /** More of the same, below: what "Load 12 more" does to the list. */
 export function ArrowDownIcon({ className }: { className?: string }) {
   return <Mark icon={ArrowDown} className={className} />;
+}
+
+const KEY_ARROWS = { up: ArrowUp, down: ArrowDown, left: ArrowLeft, right: ArrowRight } as const;
+
+/** An arrow KEY on a key cap: the key that it names, not a direction to go. */
+export function KeyArrowIcon({
+  direction,
+  className,
+}: {
+  direction: keyof typeof KEY_ARROWS;
+  className?: string;
+}) {
+  return <Mark icon={KEY_ARROWS[direction]} className={className} />;
 }
 
 /** Bring one not-yet-local thing down onto this machine. */

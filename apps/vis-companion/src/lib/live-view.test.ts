@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './live-view.fixture.json';
 import canonical from '../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json';
+import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 import {
   applyLivePatch,
   applyLiveViewEvent,
@@ -14,6 +15,8 @@ import {
   orderedRows,
   staleLiveViews,
   LIVE_LOG_WINDOW,
+  LIVE_OPS,
+  type LiveInputNode,
   type LiveNode,
   type LiveView,
 } from './live-view';
@@ -679,4 +682,113 @@ it('keeps #209 log tones aligned through wire parsing, chunk appends and clear',
   const cleared = patched(updated, 2, [{ op: 'clear', node_id: 'log' }]);
   expect(cleared.nodes[0]).toMatchObject({ lines: [], total_lines: 0 });
   expect(cleared.nodes[0]).not.toHaveProperty('line_tones', ['error', null]);
+});
+
+describe('set-value', () => {
+  // The engine answers each accepted change and submit with set-value. The
+  // Companion once ignored it, so a submit sent stale values (V, A4 b).
+  const form = (): LiveView => {
+    const view = liveViewFromWire({
+      id: 'form',
+      title: 'Deploy',
+      seq: 1,
+      nodes: [
+        { id: 'name', type: 'plaintext', label: 'Service name', value: 'old' },
+        {
+          id: 'env',
+          type: 'select',
+          label: 'Environment',
+          options: [
+            { value: 'staging', label: 'Staging' },
+            { value: 'production', label: 'Production' },
+          ],
+        },
+        {
+          id: 'box',
+          type: 'group',
+          direction: 'column',
+          children: [
+            {
+              id: 'regions',
+              type: 'multiselect',
+              label: 'Regions',
+              options: [
+                { value: 'eu', label: 'EU' },
+                { value: 'us', label: 'US' },
+              ],
+            },
+            { id: 'confirm', type: 'checkbox', label: 'Confirm' },
+            { id: 'replicas', type: 'range', label: 'Replicas', min: 1, max: 9 },
+          ],
+        },
+        { id: 'token', type: 'password', label: 'Token', is_set: false },
+        { id: 'note', type: 'status', text: 'Ready' },
+      ],
+    });
+    if (!view) throw new Error('the form must be paintable');
+    return view;
+  };
+  const patchWith = (view: LiveView, seq: number, ops: Record<string, unknown>[]) =>
+    applyLivePatch(view, { type: VIEW_PATCH_EVENT, kind: 'live', view_id: view.id, first_seq: seq, patch: { seq, ops } });
+  const input = (view: LiveView, id: string): LiveInputNode => {
+    const all = (nodes: LiveNode[]): LiveNode[] =>
+      nodes.flatMap((node) => (node.type === 'group' ? all(node.children) : [node]));
+    const found = all(view.nodes).find((node) => node.id === id);
+    if (!found || !('field' in found)) throw new Error(`no input ${id}`);
+    return found;
+  };
+
+  it('puts the value of each input kind in place, nested ones included', () => {
+    const view = patchWith(form(), 2, [
+      { op: 'set-value', node_id: 'name', value: 'sdk-api' },
+      { op: 'set-value', node_id: 'env', value: 'staging' },
+      { op: 'set-value', node_id: 'regions', value: ['eu', 'us'] },
+      { op: 'set-value', node_id: 'confirm', value: true },
+      { op: 'set-value', node_id: 'replicas', value: 3 },
+    ]);
+    expect(view.seq).toBe(2);
+    expect(input(view, 'name').value).toBe('sdk-api');
+    expect(input(view, 'env').value).toBe('staging');
+    expect(input(view, 'regions').value).toEqual(['eu', 'us']);
+    expect(input(view, 'confirm').value).toBe(true);
+    expect(input(view, 'replicas').value).toBe(3);
+  });
+
+  it('clears the value with null', () => {
+    const view = patchWith(form(), 2, [{ op: 'set-value', node_id: 'name', value: null }]);
+    expect(view.seq).toBe(2);
+    expect('value' in input(view, 'name')).toBe(false);
+  });
+
+  it('leaves the view as it was for an unknown node, a non-input or a secret', () => {
+    const start = form();
+    const view = patchWith(start, 2, [
+      { op: 'set-value', node_id: 'gone', value: 'x' },
+      { op: 'set-value', node_id: 'note', value: 'x' },
+      { op: 'set-value', node_id: 'token', value: 'hunter2' },
+    ]);
+    expect(view.seq).toBe(2);
+    expect(view.nodes).toBe(start.nodes);
+    expect('value' in input(view, 'token')).toBe(false);
+  });
+
+  it('refuses a value outside the input domain', () => {
+    const start = form();
+    const view = patchWith(start, 2, [
+      { op: 'set-value', node_id: 'env', value: 'mars' },
+      { op: 'set-value', node_id: 'confirm', value: 'yes' },
+      { op: 'set-value', node_id: 'replicas', value: '3' },
+      { op: 'set-value', node_id: 'regions', value: ['eu', 'moon'] },
+      { op: 'set-value', node_id: 'name', value: 7 },
+    ]);
+    expect(view.nodes).toBe(start.nodes);
+  });
+});
+
+it('LIVE_OPS names every patch op that view.json declares', () => {
+  // A missing op is silently dropped while the seq still moves (set-value, V A4 b).
+  const declared = viewSchema.$defs.live_op.oneOf.map(
+    (branch: { properties: { op: { const: string } } }) => branch.properties.op.const,
+  );
+  expect([...LIVE_OPS].sort()).toEqual([...declared].sort());
 });

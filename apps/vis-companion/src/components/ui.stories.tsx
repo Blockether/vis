@@ -36,6 +36,7 @@ import {
   ExecutionAction,
   IconButton,
   Input,
+  KeyCap,
   ListRow,
   LoadMore,
   MetaButton,
@@ -258,6 +259,13 @@ export const Marks: Story = {
       <Group of="Work in progress">
         <Spinner />
         <Spinner tone="accent" />
+      </Group>
+      <Group of="App keys">
+        <KeyCap keyName="Escape" />
+        <KeyCap keyName="Enter" />
+        <KeyCap keyName="ArrowUp" isLit />
+        <KeyCap keyName="ArrowLeft" />
+        <KeyCap keyName="Space" />
       </Group>
     </Sheet>
   ),

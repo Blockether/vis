@@ -658,10 +658,13 @@ function Tile({
  */
 function FilterStrip({
   list,
+  appCount,
   active,
   onPick,
 }: {
   list: SessionArtifact[];
+  /** The open apps, which the All list shows above the files: the header counts them too. */
+  appCount: number;
   active: string;
   onPick: (label: string) => void;
 }) {
@@ -674,7 +677,8 @@ function FilterStrip({
         className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1.5"
       >
         {ARTIFACT_FILTERS.map((filter) => {
-          const count = list.filter((entry) => filter.kinds.includes(entry.kind)).length;
+          const files = list.filter((entry) => filter.kinds.includes(entry.kind)).length;
+          const count = filter.label === 'All' ? files + appCount : files;
           const on = filter.label === active;
           return (
             <Chip
@@ -1159,6 +1163,7 @@ export function ArtifactsSheet({
       />
       <FilterStrip
         list={artifacts}
+        appCount={apps.length}
         active={filter}
         onPick={(label) => {
           setFilter(label);

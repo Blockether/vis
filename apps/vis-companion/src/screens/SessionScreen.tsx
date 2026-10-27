@@ -4652,6 +4652,12 @@ export function SessionScreen({
     () => sessionLiveViews.filter((view) => livePlacement(view) === 'panel'),
     [sessionLiveViews],
   );
+  // An open app counts in the Artifacts row, so an app that a program opened
+  // outside a turn is found in the same place as every other output.
+  const openAppCount = useMemo(
+    () => sessionLiveViews.filter((view) => livePlacement(view) === 'attachment').length,
+    [sessionLiveViews],
+  );
   // A tablet or a desk docks the panel beside the transcript. A phone opens it as a sheet.
   const docksPanel = useMediaMatch('(min-width: 48rem)');
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null);
@@ -5328,7 +5334,7 @@ export function SessionScreen({
     title,
     sessionId: sid,
     connected,
-    artifacts: { count: artifacts.length, isOpen: artifactsOpen },
+    artifacts: { count: artifacts.length + openAppCount, isOpen: artifactsOpen },
     goal: session?.goal,
   };
   const headerCommands: SessionHeaderCommands = {

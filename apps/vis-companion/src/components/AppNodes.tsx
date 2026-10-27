@@ -52,14 +52,22 @@ const STATUS_INK: Record<AppActionStatus, string> = {
   stale: 'text-warn',
   closed: 'text-dialog-hint',
   invalid: 'text-err',
+  unbound: 'text-warn',
+  disconnected: 'text-warn',
   failed: 'text-err',
 };
 
-/** The state word of a Save or a Send. Nothing shows while it is idle. */
-export function ActionStatus({ status }: { status: AppActionStatus }) {
+/**
+ * The state word of a Save or a Send. Nothing shows while it is idle. On a dialog
+ * band the word takes the band's ink: a warning amber on the amber band is unreadable.
+ */
+export function ActionStatus({ status, isOnBand = false }: { status: AppActionStatus; isOnBand?: boolean }) {
   if (status === 'idle') return null;
   return (
-    <span role="status" className={`font-mono text-ui ${STATUS_INK[status]}`}>
+    <span
+      role="status"
+      className={`font-mono text-ui ${isOnBand ? 'font-bold text-inherit' : STATUS_INK[status]}`}
+    >
       {APP_ACTION_WORDS[status]}
     </span>
   );

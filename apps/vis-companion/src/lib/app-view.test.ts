@@ -151,6 +151,15 @@ describe('newerAppView', () => {
     expect(newerAppView(held, { ...app(), seq: 9 }).seq).toBe(9);
     expect(newerAppView(held, { ...app(), seq: 8, is_closed: true }).is_closed).toBe(true);
   });
+
+  it('marks an app disconnected and live again at the same seq', () => {
+    const live = { ...app(), seq: 8 };
+    const lost = newerAppView(live, { ...app(), seq: 8, is_disconnected: true });
+    expect(lost.is_disconnected).toBe(true);
+    const back = newerAppView(lost, { ...app(), seq: 8 });
+    expect(back.is_disconnected).toBeUndefined();
+    expect(appStateWord(back)).toBe('Live');
+  });
 });
 
 describe('app actions', () => {

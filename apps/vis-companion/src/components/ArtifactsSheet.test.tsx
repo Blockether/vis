@@ -378,6 +378,21 @@ describe('the artifacts sheet', () => {
     expect(save.querySelectorAll('svg')).toHaveLength(1);
   });
 
+  // Live apps: the header counted the open apps, while the All chip said 0.
+  it('counts the open apps under All, as the header does', async () => {
+    const appClient = {
+      ...client,
+      appViews: async () => [
+        { id: 'app-1', title: 'Counter', placement: 'attachment', seq: 1, nodes: [] },
+        { id: 'app-2', title: 'Todo list', placement: 'attachment', seq: 1, nodes: [] },
+      ],
+    } as unknown as GatewayClient;
+    const view = render(<ArtifactsSheet client={appClient} sid="s1" artifacts={[document]} onClose={() => {}} />);
+    expect(await view.findByRole('button', { name: 'All, 3 artifacts' })).toBeEnabled();
+    expect(view.getByRole('button', { name: 'Documents, 1 artifacts' })).toBeEnabled();
+    view.unmount();
+  });
+
   it('draws a filter with nothing behind it disabled, never hidden', () => {
     const html = sheet([document]);
     expect(html).toContain('aria-label="Pictures, 0 artifacts"');
