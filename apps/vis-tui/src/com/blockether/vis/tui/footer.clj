@@ -36,7 +36,6 @@
    namespace replaces that whole path."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
-            [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.client :as lp]
             [com.blockether.vis.tui.limits-fmt :as lfmt]
             [com.blockether.vis.tui.components :as components]
@@ -707,16 +706,14 @@
        (into ["" "Use /goal --pause, --resume or --cancel in the composer."])))))
 
 (defn- build-limits-segments
-  "Cached quota information is plain text; only the adjacent goal and team chips are interactive."
+  "Cached quota information is plain text; only the adjacent goal chip is interactive. The
+   agent dock above the prompt shows the team, so the footer does not repeat it."
   [db now-ms]
   (let [provider
         (session-effective-provider db)
 
         text
-        (when provider (generic-limits-footer-text db provider now-ms))
-
-        team
-        (agent-team/footer-label (get-in db [:session :id]))]
+        (when provider (generic-limits-footer-text db provider now-ms))]
 
     (into (cond-> [{:text
                     (if text (str "Limits: " (str/replace text #"^limits: " "") " ") "Limits ")
@@ -737,14 +734,6 @@
                    :kind :footer-goal
                    :region :left
                    :priority 1
-                   :join-left? true})
-
-            ;; The team lives outside Activity: one chip while an agent works or waits.
-            team
-            (conj {:text (str " " team " ")
-                   :kind :footer-agents
-                   :region :left
-                   :priority 2
                    :join-left? true}))
           (build-usage-segments db))))
 
@@ -1040,7 +1029,7 @@
     (when (seq r) (draw-spans! g r-col row r separator))))
 
 (defn- echo-segments
-  "Content for the Emacs echo-area row directly above the input box.
+  "Content for the Emacs echo-area row under the agent dock, directly above the input box.
 
    NORMALLY EMPTY — the row lights up only when there is something to say:
      - startup session building → typing is live; Enter waits for readiness
@@ -1069,9 +1058,9 @@
           :else [])))
 
 (defn draw-echo-area!
-  "Emacs echo area / minibuffer analogue: ONE flat row directly above the
-   input box. Terminal background, NO box and NO side rails — the input box
-   owns its own border below. Blank until `echo-segments` has something to
+  "Emacs echo area / minibuffer analogue: ONE flat row under the agent dock,
+   directly above the input box. Terminal background, NO box and NO side rails —
+   the input box owns its own border below. Blank until `echo-segments` has something to
    say (a chord in progress, the mid-turn cancel hint, or a transient
    message). Left-aligned at the input's horizontal pad so it tracks the
    prompt column."

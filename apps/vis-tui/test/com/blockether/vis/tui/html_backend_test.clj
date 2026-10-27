@@ -897,7 +897,8 @@
 
           (expect (= @#'render/activity-marker (nth lines last-band-row)))
           (expect (= "" (nth lines (inc last-band-row))))
-          (expect (str/includes? (nth lines (+ last-band-row 2)) "Esc to cancel"))))))
+          ;; The spinner row: a frame, then two spaces. The cancel hint is on the echo row.
+          (expect (re-find #"[⠀-⣿]  " (str (nth lines (+ last-band-row 2)))))))))
 
 (defdescribe
   screen-accepts-a-transport-neutral-html-terminal-test
@@ -1020,15 +1021,16 @@
                        (update-vals sections frame/bounds)]
 
                    (expect (instance? GridLayout (.getLayoutManager ^Panel panel)))
-                   (expect (= [:header :header-gap :transcript :echo :attachments :composer :footer]
+                   ;; The echo row sits under the agent dock and the attachments, above the prompt.
+                   (expect (= [:header :header-gap :transcript :attachments :echo :composer :footer]
                               (vec (keys sections))))
                    (expect (every? #(instance? TextGraphicsComponent %) (vals sections)))
                    (expect (= {:col 0 :row 0 :cols 80 :rows 3} (:header bounds)))
                    ;; Keep a fixed blank row below the header while the transcript scrolls.
                    (expect (= {:col 0 :row 3 :cols 80 :rows 1} (:header-gap bounds)))
                    (expect (= {:col 0 :row 4 :cols 80 :rows 18} (:transcript bounds)))
-                   (expect (= {:col 0 :row 22 :cols 80 :rows 1} (:echo bounds)))
-                   (expect (= {:col 0 :row 23 :cols 80 :rows 2} (:attachments bounds)))
+                   (expect (= {:col 0 :row 22 :cols 80 :rows 2} (:attachments bounds)))
+                   (expect (= {:col 0 :row 24 :cols 80 :rows 1} (:echo bounds)))
                    (expect (= {:col 0 :row 25 :cols 80 :rows 3} (:composer bounds)))
                    (expect (= {:col 0 :row 28 :cols 80 :rows 2} (:footer bounds))))))
 

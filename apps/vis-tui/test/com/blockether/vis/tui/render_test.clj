@@ -39,6 +39,12 @@
 
 (def ^:private detail-node-id @#'render/detail-node-id)
 
+(defn- spinner-row?
+  "Whether `line` is the live spinner row: a spinner frame, then two spaces. The cancel hint
+   moved to the bottom echo row, so the row has no trailer to find it by."
+  [line]
+  (boolean (re-find #"[⠀-⣿]  " (str line))))
+
 (defn- open-digests
   "Detail expansions that open the step digests of the first 32 iterations of a turn, so a
    test sees each step."
@@ -3237,7 +3243,7 @@
                              :detail-expansions {:vis.channel-tui/expand-all-details? true}})))
 
             ticker
-            (count (take-while #(not (str/includes? % "Esc to cancel")) lines))]
+            (count (take-while #(not (spinner-row? %)) lines))]
 
         (expect (< ticker (count lines)))
         (expect (str/blank? (nth lines (dec ticker))))
@@ -3263,7 +3269,7 @@
                              :detail-expansions {:vis.channel-tui/expand-all-details? true}})))
 
             ticker
-            (count (take-while #(not (str/includes? % "Esc to cancel")) lines))]
+            (count (take-while #(not (spinner-row? %)) lines))]
 
         (expect (< 3 ticker (count lines)))
         (expect (= "" (nth lines (dec ticker))))
@@ -3924,7 +3930,7 @@
 
               spinner-idx
               (first (keep-indexed (fn [i l]
-                                     (when (str/includes? (str l) "Esc to cancel") i))
+                                     (when (spinner-row? l) i))
                                    lines))
 
               queued-idx
@@ -3941,7 +3947,7 @@
   spinner-transient-error-segment-test
   ;; A recoverable error on the LAST iteration surfaces a RED (INLINE_ERR
   ;; sentinel-wrapped) segment on the spinner row, to the RIGHT of the elapsed
-  ;; clock and to the LEFT of the "Esc to cancel" trailer (placement A). The
+  ;; clock (placement A). The
   ;; phase itself stays a plain "Vis is retrying"; the error detail lives ONLY
   ;; in the tinted suffix, and the copyable :text stays sentinel-free.
   (let [extra
@@ -3953,7 +3959,7 @@
 
         spinner
         (fn [d]
-          (first (filter #(str/includes? (str %) "Esc to cancel") (:lines d))))]
+          (first (filter #(spinner-row? %) (:lines d))))]
 
     (it "wraps the transient-error detail in INLINE_ERR sentinels after the clock"
         (let [d
@@ -3966,8 +3972,8 @@
           (expect (str/includes? line p/INLINE_ERR_ON))
           (expect (str/includes? line p/INLINE_ERR_OFF))
           (expect (str/includes? line "\u2014 http error \u00b7 retry 2/3 \u00b7 next in 1.0s"))
-          (expect (< (long (str/index-of line p/INLINE_ERR_OFF))
-                     (long (str/index-of line "Esc to cancel"))))
+          (expect (< (long (str/index-of line "Vis is retrying"))
+                     (long (str/index-of line p/INLINE_ERR_ON))))
           (expect (nil? (re-find #"[\uE110-\uE11B]" (:text d))))))
     (it "renders no segment when the last iteration has no error"
         (let [d
@@ -3988,7 +3994,7 @@
 
         spinner
         (fn [iterations]
-          (first (filter #(str/includes? (str %) "Esc to cancel")
+          (first (filter #(spinner-row? %)
                          (:lines
                            (render/progress->lines-data {:iterations iterations} 130 {} extra)))))]
 
@@ -4028,7 +4034,7 @@
 
         spinner
         (fn [iterations now-ms]
-          (first (filter #(str/includes? (str %) "Esc to cancel")
+          (first (filter #(spinner-row? %)
                          (:lines (render/progress->lines-data {:iterations iterations}
                                                               200
                                                               {}
@@ -4092,7 +4098,7 @@
 
         spinner
         (fn [iterations now-ms]
-          (first (filter #(str/includes? (str %) "Esc to cancel")
+          (first (filter #(spinner-row? %)
                          (:lines (render/progress->lines-data {:iterations iterations}
                                                               200
                                                               {}
@@ -4136,7 +4142,7 @@
 
         spinner
         (fn [live-title iterations]
-          (first (filter #(str/includes? (str %) "Esc to cancel")
+          (first (filter #(spinner-row? %)
                          (:lines (render/progress->lines-data {:iterations iterations}
                                                               130
                                                               {}
@@ -4149,7 +4155,7 @@
         (expect (str/includes? (spinner nil [{:thinking "weighing it"}])
                                "Vis is thinking (iter 1)")))
     (it "still yields to a turn being cancelled"
-        (expect (str/includes? (first (filter #(str/includes? (str %) "Esc to cancel")
+        (expect (str/includes? (first (filter #(spinner-row? %)
                                               (:lines (render/progress->lines-data
                                                         {:iterations [{:thinking "weighing it"}]}
                                                         130
@@ -4187,11 +4193,11 @@
 
         body-lines
         (fn [d]
-          (remove #(str/includes? (str %) "Esc to cancel") (:lines d)))
+          (remove #(spinner-row? %) (:lines d)))
 
         spinner
         (fn [d]
-          (first (filter #(str/includes? (str %) "Esc to cancel") (:lines d))))]
+          (first (filter #(spinner-row? %) (:lines d))))]
 
     (it "default (0) reflects streamed growth on every tick"
         (render/invalidate-cache!)
@@ -12414,7 +12420,7 @@ print(paths)"
   ;; "Send now": while a turn runs, the Queued block offers ` Send all now ` on its
   ;; header and ` Send it now ` at the right edge of every markable row, with no arrow
   ;; glyphs. A marked row keeps its place, says `· next iter` and its button reads
-  ;; ` Unsend `. A command (`/…`, `!…`) and a local-only row show no button. A held
+  ;; ` Send later `. A command (`/…`, `!…`) and a local-only row show no button. A held
   ;; queue (no running turn) shows no control at all.
   (let [settings
         {:show-thinking true :show-iterations true}
@@ -12483,13 +12489,13 @@ print(paths)"
                    (:queue-send first-meta)))
         (expect (str/includes? cmd-line "2. /help"))
         (expect (nil? (:queue-send cmd-meta)))
-        (expect (str/includes? local-line "3. △ unsent · local only"))
+        (expect (str/includes? local-line "3. unsent: local only"))
         (expect (nil? (:queue-send local-meta)))
         ;; The marked row stays in place, says so, and its button undoes the mark.
         ;; User report: the marked row still said Send it now, so the undo was unclear.
         (expect (str/includes? marked-line "4. third queued message · next iter"))
         (expect (= {:session-id "s1"
-                    :label "Unsend"
+                    :label "Send later"
                     :chord "C-x 4"
                     :turn-id "t3"
                     :marked? true
@@ -12580,7 +12586,7 @@ print(paths)"
         (expect (= (count "Send all now  C-x k") (long (:width (:bounds send-all)))))
         ;; One button per markable row (t1, t3): not the command, not the local row.
         ;; Every button ends at the same right edge as the header button.
-        (expect (= [(count "Send it now  C-x 1") (count "Unsend  C-x 4")]
+        (expect (= [(count "Send it now  C-x 1") (count "Send later  C-x 4")]
                    (mapv #(long (:width (:bounds %))) sends)))
         (let [right-edge (fn [region]
                            (+ (long (:col (:bounds region))) (long (:width (:bounds region)))))]
@@ -12661,11 +12667,44 @@ print(paths)"
         (expect (not (contains? dark paper)))
         (expect (= t/header-active-tab-accent (:fg header)))
         (expect (not-any? #(and (= (:row header) (:row %)) (= t/dialog-title-bg (:bg %))) @fills))
-        (doseq [text ["Send all now" "Send it now" "Unsend"]]
+        (doseq [text ["Send all now" "Send it now" "Send later"]]
           (expect (= {:fg t/header-active-tab-accent :bg paper}
                      (select-keys (put-of text) [:fg :bg]))))
         (doseq [chord ["C-x k" "C-x 1" "C-x 4"]]
           (expect (= {:fg t/dialog-hint :bg paper} (select-keys (put-of chord) [:fg :bg]))))))))
+
+(defdescribe queue-focus-render-test
+             ;; C-x e: the hint names the focus keys, the selected row is marked for the painter, a
+             ;; marked row shows a check and the row buttons go, so the keys are the only controls.
+             (let [rows
+                   [{:text "first" :turn-id "t1"} {:text "second" :turn-id "t2"}]
+
+                   entries
+                   (fn [focus]
+                     (#'render/queued-progress-entries
+                      rows
+                      80
+                      nil
+                      {:running? true :session-id "s1" :focus focus}))]
+
+               (it "names the chord that focuses the queue at rest"
+                   (expect (str/ends-with? (:line (peek (entries nil)))
+                                           "C-x e edit, send, remove or merge a message"))
+                   (expect (some #(:queue-send (:meta %)) (entries nil))
+                           "A running turn shows the row buttons"))
+               (it "selects, checks and hides the buttons while focused"
+                   (let [lines
+                         (entries {:index 1 :marked #{"t1"} :undo? true})
+
+                         items
+                         (filter #(:queue-gutter (:meta %)) lines)]
+
+                     (expect (str/includes? (:line (first items)) "1. ✓ first"))
+                     (expect (= [nil true] (mapv #(:queue-selected? (:meta %)) items)))
+                     (expect (not-any? #(or (:queue-send (:meta %)) (:queue-send-all (:meta %)))
+                                       lines))
+                     (expect (str/includes? (:line (peek lines)) "Space mark · Enter edit"))
+                     (expect (str/includes? (:line (peek lines)) "u undo"))))))
 
 (defdescribe
   delivered-user-input-test

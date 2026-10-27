@@ -135,10 +135,10 @@
   [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
    :input-history :input-history-session-id :input-history-index :input-history-draft
    :slash-command-index :slash-command-hidden? :submitted-input :pending-sends :retracted-sends
-   :queue-paused :pastes :paste-counter :image-counter :attachments :attachment-feedback
-   :attachment-focus? :attachment-index :loading? :cancel-token :cancelling? :cancelling-at-ms
-   :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress :turn-start-ms
-   :liveness-probed-at-ms :gateway-resynced-at-ms :detail-expansions :mouse-selection
+   :queue-paused :queue-focus :queue-removed :pastes :paste-counter :image-counter :attachments
+   :attachment-feedback :attachment-focus? :attachment-index :loading? :cancel-token :cancelling?
+   :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress
+   :turn-start-ms :liveness-probed-at-ms :gateway-resynced-at-ms :detail-expansions :mouse-selection
    :session-model-pref :human-input :human-input-queue :live-views :live-viewer-id
    :live-viewer-search :app-views
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
@@ -166,6 +166,8 @@
    :pending-sends []
    :retracted-sends []
    :queue-paused nil
+   :queue-focus nil
+   :queue-removed nil
    :pastes {}
    :paste-counter 0
    :image-counter 0
@@ -5795,6 +5797,216 @@
                                      (when-let [tid (:turn-id e)]
                                        [:gateway-delete-queued sid tid tab-id e])))
                              pending)})))
+
+(defn- take-queued
+  "Take the queued rows at 0-based `idxs` out of tab `tab-id`, in queue order:
+   `{:db :entries :fx}`. A row leaves the screen at once and its gateway record by
+   `:gateway-delete-queued`. A row without a turn id yet is retracted for its enqueue ack.
+   `f` gets the tab after the removal and the taken entries."
+  [db tab-id idxs f]
+  (let [sid
+        (get-in (db-for-tab db tab-id) [:session :id])
+
+        pending
+        (vec (:pending-sends (db-for-tab db tab-id)))
+
+        idxs
+        (into (sorted-set) (filter #(< -1 (long %) (count pending))) idxs)
+
+        entries
+        (mapv pending idxs)]
+
+    {:entries entries
+     :db (update-tab db
+                     tab-id
+                     (fn [w]
+                       (->
+                         (mark-retracted w entries)
+                         (assoc :pending-sends
+                                (into [] (keep-indexed #(when-not (contains? idxs %1) %2)) pending))
+                         (f entries))))
+     :fx (into []
+               (keep #(when (and sid (:turn-id %))
+                        [:gateway-delete-queued sid (:turn-id %) tab-id %]))
+               entries)}))
+
+(defn- edit-queued
+  "Put queued rows `idxs` (0-based, oldest first) of the current tab back in the composer,
+   below the draft and in queue order. Notifies `missing` when no row is there."
+  [db idxs missing]
+  (let [{:keys [db entries fx]} (take-queued db (current-tab-id db) idxs restore-entries-to-input)]
+    (if (empty? entries)
+      {:db db :fx [[:notify missing :info 1500]]}
+      ;; Like an ArrowUp recall: the slash overlay stays shut until the text changes.
+      {:db (assoc db
+             :slash-command-index 0
+             :slash-command-hidden? true)
+       :fx fx})))
+
+(defn- newest-index [db] (dec (count (:pending-sends (db-for-tab db (current-tab-id db))))))
+
+;; Put queued row `n` (1-based, oldest first; nil for the newest) back in the composer.
+(reg-event-fx :queue-edit-nth
+              (fn [db [_ n]]
+                (edit-queued db
+                             [(if n (dec (long n)) (newest-index db))]
+                             (if (and n (not (neg? (long (newest-index db)))))
+                               (str "No queued message " n)
+                               "Nothing is queued"))))
+
+;; ── C-x e: queue focus ─────────────────────────────────────────────────────
+
+(def ^:private ^:const queue-undo-ms
+  "How long `u` can bring back the rows that Delete removed in queue focus."
+  8000)
+
+(defn queue-undo-open?
+  "Whether `u` can still bring back the rows that queue focus removed, at `now-ms`."
+  [db now-ms]
+  (boolean (when-let [until (get-in db [:queue-removed :until-ms])]
+             (< (long now-ms) (long until)))))
+
+(defn- focus-idxs
+  "The rows that a queue focus verb acts on: the marked rows, else the selected row."
+  [db]
+  (let [pending
+        (vec (:pending-sends db))
+
+        {:keys [index marked]}
+        (:queue-focus db)
+
+        picked
+        (into [] (keep-indexed #(when (contains? marked (render/queued-row-key %2)) %1)) pending)]
+
+    (if (seq picked) picked (if (get pending index) [index] []))))
+
+(reg-event-fx :queue-focus
+              ;; C-x e: the keys act on the Queued block until Esc. The newest row, next to
+              ;; the prompt, is selected first.
+              (fn [db _]
+                (if (empty? (:pending-sends db))
+                  {:db db :fx [[:notify "Nothing is queued" :info 1500]]}
+                  {:db (assoc db
+                         :queue-focus {:index (dec (count (:pending-sends db))) :marked #{}})})))
+
+(reg-event-db :queue-blur
+              (fn [db _]
+                (assoc db :queue-focus nil)))
+
+(reg-event-db :queue-focus-move
+              (fn [db [_ delta]]
+                (let [n (count (:pending-sends db))]
+                  (cond-> db
+                    (and (:queue-focus db) (pos? n))
+                    (update-in [:queue-focus :index]
+                               #(max 0 (min (dec n) (+ (long (or % 0)) (long delta)))))))))
+
+(reg-event-db :queue-focus-select
+              (fn [db [_ n]]
+                (cond-> db
+                  (and (:queue-focus db) (<= 1 (long n) (count (:pending-sends db))))
+                  (assoc-in [:queue-focus :index] (dec (long n))))))
+
+(reg-event-db :queue-focus-mark
+              (fn [db _]
+                (if-let [row (get (vec (:pending-sends db)) (get-in db [:queue-focus :index]))]
+                  (update-in db
+                             [:queue-focus :marked]
+                             (fn [marked]
+                               (let [k (render/queued-row-key row)
+                                     marked (or marked #{})]
+
+                                 (if (contains? marked k) (disj marked k) (conj marked k)))))
+                  db)))
+
+(reg-event-fx :queue-focus-edit
+              ;; Enter: the marked rows, else the selected row, go back to the composer as one
+              ;; draft, oldest first. The focus ends, so the person can edit at once.
+              (fn [db _]
+                (edit-queued (assoc db :queue-focus nil) (focus-idxs db) "Nothing is queued")))
+
+(reg-event-fx
+  :queue-focus-deliver
+  ;; s / l: send the rows at the running turn's next step, or take that back.
+  ;; A command or a row that the gateway did not accept yet cannot move.
+  (fn [db [_ deliver]]
+    (let [rows (filterv render/markable-queued-row?
+                 (map (vec (:pending-sends db)) (focus-idxs db)))]
+      (if (empty? rows)
+        {:db db :fx [[:notify "Only a message that the gateway accepted can move" :info 1500]]}
+        {:db (assoc-in db [:queue-focus :marked] #{})
+         :fx (mapv #(vector :dispatch [:queue-send-now nil (:turn-id %) deliver]) rows)}))))
+
+(reg-event-fx
+  :queue-focus-remove
+  ;; Delete: remove the rows from the queue. `u` brings them back for a short time.
+  (fn [db _]
+    (let [tab-id
+          (current-tab-id db)
+
+          {:keys [db entries fx]}
+          (take-queued db
+                       tab-id
+                       (focus-idxs db)
+                       (fn [w _]
+                         w))
+
+          n
+          (count entries)]
+
+      (if (zero? n)
+        {:db db}
+        {:db (-> db
+                 (assoc :queue-removed {:entries entries
+                                        :until-ms (+ (System/currentTimeMillis)
+                                                     (long queue-undo-ms))})
+                 (assoc-in [:queue-focus :marked] #{})
+                 (update-in [:queue-focus :index]
+                            #(max 0 (min (long (or % 0)) (dec (count (:pending-sends db)))))))
+         :fx (conj fx
+                   [:notify (str "Removed " n " queued message" (when (> n 1) "s") " · u undo")
+                    :info 3000])}))))
+
+(reg-event-fx :queue-focus-undo
+              ;; u: queue the removed rows again, at the end of the queue and in their order.
+              ;; Each one is a new submission with a new client id, so no retraction hides it.
+              (fn [db _]
+                (if-not (queue-undo-open? db (System/currentTimeMillis))
+                  {:db db :fx [[:notify "Nothing to undo" :info 1500]]}
+                  (let [tab-id
+                        (current-tab-id db)
+
+                        session
+                        (:session db)
+
+                        workspace
+                        (when session (active-workspace db))
+
+                        entries
+                        (mapv (fn [e]
+                                (-> e
+                                    (select-keys [:text :preview-text :agent-text :pastes
+                                                  :paste-counter :image-counter :attachments])
+                                    (assoc :client-id (mint-client-id tab-id)
+                                           :mine? true
+                                           :queued-at-ms (System/currentTimeMillis))
+                                    (update :agent-text #(or % (:text e)))
+                                    (cond->
+                                      session
+                                      (assoc :awaiting-ack? true))))
+                              (get-in db [:queue-removed :entries]))]
+
+                    {:db (-> db
+                             (assoc :queue-removed nil)
+                             (update :pending-sends #(into (vec (or % [])) entries))
+                             (cond->
+                               (:queue-focus db)
+                               (assoc-in [:queue-focus :index]
+                                 (+ (count (:pending-sends db)) (dec (count entries))))))
+                     :fx (if session
+                           (mapv #(vector :gateway-enqueue tab-id session % nil nil {} workspace)
+                                 entries)
+                           [])}))))
 
 (defn- set-queued-deliver
   "Write the delivery mode of ONE mirrored queue row: `next_iteration` (marked for

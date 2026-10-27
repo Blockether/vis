@@ -90,6 +90,8 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | `archive-session` | Ctrl+X A | Archive or restore this session |
 | `session-metrics` | Ctrl+X u | Show session metrics |
 | `queue-send-all-now` | Ctrl+X k | Send the queued messages now |
+| `queue-edit` | Ctrl+X e | Edit, send, remove or merge queued messages |
+| `toggle-agent-dock` | Ctrl+X T (Shift+T) | Show or hide the subagent details |
 | `fork-session` | Ctrl+X y | Fork this session |
 | `fork-at-turn` | Ctrl+X t | Fork from an earlier turn |
 | `switch-project` | Ctrl+X w | Open **Projects** |
@@ -128,6 +130,24 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | Ctrl+X u | Show session metrics: context health, totals and cache |
 | Ctrl+X k | Send the queued messages now: the running turn reads them at its next step |
 | Ctrl+X 1 to 9 | Send that queued message now, or press again to keep it for the turn end |
+| Ctrl+X e | Select the queued messages to edit, send, remove or merge them. See [Queued messages](#queued-messages) |
+| Ctrl+X T (Shift+T) | Show or hide the subagent table under the one-line **Agents** summary. A click on the summary does the same |
+
+### Queued messages
+
+After **Ctrl+X e**, these keys act on the queued messages until you press **Esc**. The line under
+the queue shows them. Any other key returns to the prompt and does its usual work.
+
+| Keys | What they do |
+|---|---|
+| Up, Down or 1 to 9 | Select a queued message |
+| Space | Mark or unmark the selected message |
+| Enter | Put the marked messages, or the selected one, back in the prompt below your draft. Vis merges them oldest first |
+| s | Send the marked messages, or the selected one, at the next step of the running turn |
+| l | Keep the marked messages, or the selected one, for the end of the turn |
+| Delete or Backspace | Remove the marked messages, or the selected one, from the queue |
+| u | Queue the removed messages again, at the end of the queue. This works for 8 seconds |
+| Esc | Return to the prompt |
 
 ### Models and answers
 

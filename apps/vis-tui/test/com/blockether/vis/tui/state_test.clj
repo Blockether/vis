@@ -10,7 +10,7 @@
             [com.blockether.vis.tui.virtual :as virtual]
             [clojure.string :as str]
             [taoensso.telemere :as tel]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe describe expect it]]))
 
 ;; `"verbosity"` is a BUILTIN toggle (`internal/config/toggles.clj`), not a provider
 ;; extension's, because `text.verbosity` belongs to the OpenAI Responses WIRE
@@ -3920,6 +3920,130 @@
         (expect (empty? (:pending-sends db)))
         (expect (some #(and (= :gateway-delete-queued (first %)) (= "t-2" (nth % 2))) fx))
         (expect (some #(and (= :gateway-delete-queued (first %)) (= "t-3" (nth % 2))) fx))))
+  (describe
+    "C-x e puts a queued message back in the composer"
+    (let [edit-fn
+          (-> #'state/event-registry
+              deref
+              deref
+              (get :queue-edit-nth)
+              :fn)
+
+          db
+          {:active-tab-id :main
+           :session {:id "c1"}
+           :input (input/paste-text (input/empty-input) "draft")
+           :pastes {}
+           :paste-counter 0
+           :pending-sends [{:text "second" :pastes {} :paste-counter 0 :turn-id "t-2" :mine? true}
+                           {:text "third" :pastes {} :paste-counter 0 :turn-id "t-3" :mine? true}]}]
+
+      (it "appends row n to the draft and deletes only its gateway record"
+          (let [{:keys [db fx]} (edit-fn db [:queue-edit-nth 1])]
+            (expect (= "draft\n\nsecond" (input/input->text (:input db))))
+            (expect (= ["third"] (mapv :text (:pending-sends db))))
+            (expect (= [[:gateway-delete-queued "c1" "t-2" :main]] (mapv #(subvec % 0 4) fx)))))
+      (it "takes the newest row without a row number"
+          (let [{:keys [db fx]} (edit-fn db [:queue-edit-nth nil])]
+            (expect (= "draft\n\nthird" (input/input->text (:input db))))
+            (expect (= ["second"] (mapv :text (:pending-sends db))))
+            (expect (= [[:gateway-delete-queued "c1" "t-3" :main]] (mapv #(subvec % 0 4) fx)))))
+      (it "retracts a row that has no turn id yet, so its enqueue ack deletes it"
+          (let [db
+                (assoc db :pending-sends [{:text "fresh" :client-id "cid-1" :awaiting-ack? true}])
+
+                {:keys [db fx]}
+                (edit-fn db [:queue-edit-nth 1])]
+
+            (expect (empty? (:pending-sends db)))
+            (expect (= ["cid-1"] (:retracted-sends db)))
+            (expect (empty? fx))))
+      (it "changes nothing for a missing row or an empty queue"
+          (doseq [[db n] [[db 3] [(assoc db :pending-sends []) nil]]]
+            (let [{result :db fx :fx} (edit-fn db [:queue-edit-nth n])]
+              (expect (= db result))
+              (expect (= :notify (ffirst fx))))))))
+  ;; C-x e focuses the queue: the person selects, marks, edits, sends, removes and undoes.
+  (describe
+    "C-x e queue focus"
+    (let [run
+          (fn [db event]
+            (let [f
+                  (-> #'state/event-registry
+                      deref
+                      deref
+                      (get (first event))
+                      :fn)
+
+                  r
+                  (f db event)]
+
+              (if (contains? r :db) r {:db r})))
+
+          db
+          {:active-tab-id :main
+           :session {:id "c1"}
+           :input (input/paste-text (input/empty-input) "draft")
+           :pastes {}
+           :paste-counter 0
+           :pending-sends [{:text "first" :turn-id "t-1" :mine? true}
+                           {:text "second" :turn-id "t-2" :mine? true}
+                           {:text "third" :turn-id "t-3" :mine? true}]}
+
+          focused
+          (:db (run db [:queue-focus]))]
+
+      (it "selects the newest row and keeps the selection inside the queue"
+          (expect (= {:index 2 :marked #{}} (:queue-focus focused)))
+          (expect (= 0
+                     (get-in (:db (run (:db (run focused [:queue-focus-move -5]))
+                                       [:queue-focus-move 0]))
+                             [:queue-focus :index])))
+          (expect (= 0 (get-in (:db (run focused [:queue-focus-select 1])) [:queue-focus :index])))
+          (expect (= 2 (get-in (:db (run focused [:queue-focus-select 9])) [:queue-focus :index]))
+                  "A missing row number keeps the selection")
+          (expect (= :notify (ffirst (:fx (run (assoc db :pending-sends []) [:queue-focus])))))
+          (expect (nil? (:queue-focus (:db (run focused [:queue-blur]))))))
+      (it "merges the marked rows into the draft, oldest first, and ends the focus"
+          (let [marked
+                (-> focused
+                    (run [:queue-focus-mark])
+                    :db
+                    (run [:queue-focus-select 1])
+                    :db
+                    (run [:queue-focus-mark])
+                    :db)
+
+                {:keys [db fx]}
+                (run marked [:queue-focus-edit])]
+
+            (expect (= #{"t-1" "t-3"} (get-in marked [:queue-focus :marked])))
+            (expect (= "draft\n\nfirst\n\nthird" (input/input->text (:input db))))
+            (expect (= ["second"] (mapv :text (:pending-sends db))))
+            (expect (nil? (:queue-focus db)))
+            (expect (= ["t-1" "t-3"] (mapv #(nth % 2) fx)))))
+      (it "removes the selected row, and u queues it again with a new client id"
+          (let [{removed :db fx :fx}
+                (run focused [:queue-focus-remove])
+
+                {undone :db undo-fx :fx}
+                (run removed [:queue-focus-undo])]
+
+            (expect (= ["first" "second"] (mapv :text (:pending-sends removed))))
+            (expect (= 1 (get-in removed [:queue-focus :index])))
+            (expect (= "draft" (input/input->text (:input removed))) "A removal leaves the draft")
+            (expect (some #(= [:gateway-delete-queued "c1" "t-3"] (subvec % 0 3)) fx))
+            (expect (state/queue-undo-open? removed (System/currentTimeMillis)))
+            (expect (= ["first" "second" "third"] (mapv :text (:pending-sends undone))))
+            (expect (nil? (:turn-id (peek (:pending-sends undone)))))
+            (expect (string? (:client-id (peek (:pending-sends undone)))))
+            (expect (= [:gateway-enqueue] (mapv first undo-fx)))
+            (expect (= :notify (ffirst (:fx (run undone [:queue-focus-undo]))))
+                    "One removal comes back once")
+            (expect (not (state/queue-undo-open? removed (+ (System/currentTimeMillis) 9000))))))
+      (it "sends the selected row at the next step through the row button event"
+          (let [{:keys [fx]} (run focused [:queue-focus-deliver "next_iteration"])]
+            (expect (= [[:dispatch [:queue-send-now nil "t-3" "next_iteration"]]] fx))))))
   (it "a send while a cancel is in flight stays in the editor — never queued, never server-side"
       ;; Regression: cancel (`:cancelling?`) then immediately send. The send used
       ;; to still fire `:gateway-enqueue`, registering a SERVER-SIDE queued turn.

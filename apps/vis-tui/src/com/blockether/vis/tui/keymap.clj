@@ -144,6 +144,13 @@
    ;; `k` = kick the queue: mark every queued message for the running turn's next
    ;; step (the header's Send all now button). Palette-only — the Session band is full.
    {:action :queue-send-all-now :key \k :label "send queue now" :group "Session" :show-when :never}
+   ;; `e` = edit: the keys act on the Queued block until Esc, so a queued message can be
+   ;; edited, sent, removed or merged (`input/queue-focus-event`).
+   ;; Palette-only for the same reason; the hint under the queue shows the chord.
+   {:action :queue-edit :key \e :label "edit queued" :group "Session" :show-when :never}
+   ;; C-x T (Shift+t) shows or hides the agent table under the one-line agent dock. The dock
+   ;; line shows the chord, so the hydra does not list it.
+   {:action :toggle-agent-dock :key \T :label "agent details" :group "Session" :show-when :never}
    ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.
    {:action :fork-session :key \y :label "fork session" :group "Session" :show-when :has-turns}
    {:action :fork-at-turn :key \t :label "fork at turn" :group "Session" :show-when :has-turns}

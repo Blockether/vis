@@ -118,6 +118,35 @@
         ;; C-x 0 binds nothing: the prefix aborts as for any unknown key.
         (expect (= {:action :continue :state state}
                    (input/handle-key (char-key (Character. \0)) armed)))))
+  (it "C-x e focuses the queue, and the focus keys name their queue events"
+      (let [state
+            (-> (input/empty-input)
+                (input/paste-text "draft"))
+
+            armed
+            (:state (input/handle-key (ctrl-key (Character. \x)) state))
+
+            special
+            #(com.googlecode.lanterna.input.KeyStroke. ^com.googlecode.lanterna.input.KeyType %)]
+
+        (expect (= {:action :queue-edit :state state}
+                   (input/handle-key (char-key (Character. \e)) armed)))
+        (doseq [[key event]
+                [[(special com.googlecode.lanterna.input.KeyType/ArrowUp) [:queue-focus-move -1]]
+                 [(special com.googlecode.lanterna.input.KeyType/ArrowDown) [:queue-focus-move 1]]
+                 [(char-key (Character. \2)) [:queue-focus-select 2]]
+                 [(char-key (Character. \space)) [:queue-focus-mark]]
+                 [(special com.googlecode.lanterna.input.KeyType/Enter) [:queue-focus-edit]]
+                 [(char-key (Character. \s)) [:queue-focus-deliver "next_iteration"]]
+                 [(char-key (Character. \l)) [:queue-focus-deliver "turn_end"]]
+                 [(special com.googlecode.lanterna.input.KeyType/Delete) [:queue-focus-remove]]
+                 [(char-key (Character. \u)) [:queue-focus-undo]]
+                 [(special com.googlecode.lanterna.input.KeyType/Escape) [:queue-blur]]]]
+          (expect (= event (input/queue-focus-event key))))
+        ;; Row 0, another letter and C-g end the focus and go on, so C-g still cancels.
+        (doseq [key [(char-key (Character. \0)) (char-key (Character. \x))
+                     (ctrl-key (Character. \g))]]
+          (expect (nil? (input/queue-focus-event key))))))
   (it "C-x C-g aborts the prefix instead of running a C-x verb"
       (let [state
             (-> (input/empty-input)

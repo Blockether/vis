@@ -3245,8 +3245,15 @@
         input-box-h
         (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
+        footer-row
+        (- (long rows) (long footer/height))
+
         input-top
-        (- (long rows) input-box-h (long footer/height))
+        (- footer-row input-box-h)
+
+        ;; The echo row sits under the agent dock, directly above the prompt.
+        echo-row
+        (dec input-top)
 
         ;; The agent dock stands above the attachment rail, inside the same band.
         rail-h
@@ -3254,10 +3261,7 @@
            (agent-team/dock-height (get-in db [:session :id]) (running-turn-id db) cols))
 
         rail-top
-        (- input-top rail-h)
-
-        echo-row
-        (dec rail-top)]
+        (- echo-row rail-h)]
 
     {:text-rows text-rows
      :input-box-h input-box-h
@@ -3265,6 +3269,8 @@
      :input-top input-top
      :rail-top rail-top
      :rail-h rail-h
+     :messages-bottom rail-top
+     :footer-row footer-row
      :echo-row echo-row}))
 
 (defn- overlay-locked?
@@ -3380,6 +3386,14 @@
     (mapv lv/transcript-run
           (remove #(or (lv/dormant? %) (contains? earlier-view-ids (lv/view-id %)))
             (:live-views db)))))
+
+(defn- queue-focus-view
+  "The C-x e queue focus that the renderer paints, with `:undo?` while a removal can come
+   back. Nil without focus, or when the queue is empty and nothing can come back."
+  [db]
+  (when-let [focus (:queue-focus db)]
+    (let [undo? (state/queue-undo-open? db (System/currentTimeMillis))]
+      (when (or undo? (seq (:pending-sends db))) (assoc focus :undo? undo?)))))
 
 (defn- render-frame-content!
   "Draw one frame: background, messages area (bubbles), input box,
@@ -3506,6 +3520,7 @@
          :viewport-rows inner-h
          :pending-sends (:pending-sends db)
          :queue-paused (:queue-paused db)
+         :queue-focus (queue-focus-view db)
          :live-title (lv/watching-title (:live-views db))
          :live-runs (progress-live-runs db)}
 
@@ -4174,7 +4189,7 @@
   "True when the ONLY thing that changed vs the last painted frame is the input
    TEXT, AND the input box's rendered height is unchanged. The transcript
    viewport is a function of the input box height (`input-box-h` => `input-top`
-   => `echo-row`/`messages-bottom` => `inner-h`), so as long as the box still
+   => `rail-top`/`messages-bottom` => `inner-h`), so as long as the box still
    occupies the same number of visual rows, the whole band ABOVE the input —
    transcript, scrollbar, header — is byte-identical to the previous full frame.
    In that state a full frame would repaint every bubble to identical cells and
@@ -4218,8 +4233,8 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :header-help :footer-agents :footer-goal :footer-reasoning :footer-thinking
-    :header-tasks :header-search})
+  #{:copy-id :header-help :footer-goal :footer-reasoning :footer-thinking :header-tasks
+    :header-search})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 
@@ -4314,16 +4329,14 @@
         rows
         (long rows)
 
-        {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row]}
+        {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row ^long messages-bottom
+                ^long footer-row]}
         (composer-geometry db cols rows)
 
         ;; Keep partial-frame geometry identical to `render-frame!`; even a one-row
         ;; mismatch shifts content, scroll bounds and click targets.
         messages-top
         (inc (long (header/header-rows db)))
-
-        messages-bottom
-        echo-row
 
         bubble-w
         (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
@@ -4345,10 +4358,6 @@
         header-top
         0
 
-        ;; Match the full-frame footer geometry.
-        footer-row
-        (- rows (long footer/height))
-
         progress-extra
         {:agent-name (get-in db [:workspace "agent_name"])
          :now-ms now-ms
@@ -4357,6 +4366,7 @@
          :viewport-rows inner-h
          :pending-sends (:pending-sends db)
          :queue-paused (:queue-paused db)
+         :queue-focus (queue-focus-view db)
          :live-title (lv/watching-title (:live-views db))
          :live-runs (progress-live-runs db)}
 
@@ -4665,14 +4675,11 @@
         ;; Geometry MUST match render-frame! / render-live-bubble-frame!
         ;; EXACTLY — a one-row slip shifts the viewport + scrollbar and reads
         ;; as a jump on the fast<->full flip (see render-live-bubble-frame!).
-        {:keys [^long echo-row]}
+        {:keys [^long messages-bottom]}
         (composer-geometry db cols rows)
 
         messages-top
         (inc (long (header/header-rows db)))
-
-        messages-bottom
-        echo-row
 
         bubble-w
         (max 1 (- cols (long render/MESSAGE_SIDE_PAD)))
@@ -4697,6 +4704,7 @@
          :viewport-rows inner-h
          :pending-sends (:pending-sends db)
          :queue-paused (:queue-paused db)
+         :queue-focus (queue-focus-view db)
          :live-title (lv/watching-title (:live-views db))
          :live-runs (progress-live-runs db)}
 
@@ -4821,11 +4829,8 @@
         g
         (frame/surface-graphics screen cols rows)
 
-        {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row]}
+        {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row ^long footer-row]}
         (composer-geometry db cols rows)
-
-        footer-row
-        (- rows (long footer/height))
 
         slash-suggestions
         (slash-suggestions-for-db screen db)
@@ -5489,6 +5494,13 @@
           :session
           :id
           str))
+
+(defn- toggle-agent-dock!
+  "Show or hide the agent table under the dock summary line (C-x T or a click on the line)."
+  []
+  (when-let [sid (current-session-id)]
+    (agent-team/toggle-dock! sid)
+    (state/dispatch [:bump-render-version :full-frame])))
 
 (defn- source-soul
   "The gateway soul of `source-sid`, the session the user started from, or nil."
@@ -8832,8 +8844,8 @@
                                      :header-help
                                      (state/dispatch [:toggle-help])
 
-                                     :footer-agents
-                                     (show-agent-team!)
+                                     :agent-dock-toggle
+                                     (toggle-agent-dock!)
 
                                      :agent-timeline
                                      (show-agent-timeline! (:text hit))
@@ -9145,8 +9157,8 @@
                                  :header-help
                                  (state/dispatch [:toggle-help])
 
-                                 :footer-agents
-                                 (show-agent-team!)
+                                 :agent-dock-toggle
+                                 (toggle-agent-dock!)
 
                                  :agent-timeline
                                  (show-agent-timeline! (:text hit))
@@ -9322,8 +9334,8 @@
                                  :header-help
                                  (state/dispatch [:toggle-help])
 
-                                 :footer-agents
-                                 (show-agent-team!)
+                                 :agent-dock-toggle
+                                 (toggle-agent-dock!)
 
                                  :agent-timeline
                                  (show-agent-timeline! (:text hit))
@@ -9579,6 +9591,12 @@
                                                      (inspect-attachment! attachment))
                            (= KeyType/Escape ktype) (state/dispatch [:blur-attachments]))
                      (recur))
+                   ;; C-x e focuses the queue. Its keys act on the Queued block; Esc
+                   ;; returns to the prompt. Any other key ends the focus and goes on.
+                   (and (instance? KeyStroke key)
+                        (queue-focus-view db)
+                        (input/queue-focus-event key))
+                   (do (state/dispatch (input/queue-focus-event key)) (recur))
                    ;; Vim-style jump labels own the keyboard while active: a
                    ;; letter opens the card or toggles the fold under its badge;
                    ;; other key cancels. Sits above the fall-through so the
@@ -9586,7 +9604,8 @@
                    (and (instance? KeyStroke key) (:detail-labels-active? db))
                    (do (activate-detail-label! screen db key) (recur))
                    :else
-                   (let [escaped-char (and (:loading? db) (input/escaped-typing-character key))
+                   (let [_ (when (:queue-focus db) (state/dispatch [:queue-blur]))
+                         escaped-char (and (:loading? db) (input/escaped-typing-character key))
                          {:keys [action state character queue-index keybinding]}
                          (if escaped-char
                            {:action :escaped-typing :state (:input db) :character escaped-char}
@@ -9659,6 +9678,9 @@
 
                                      :fork-at-turn
                                      (switch-session! {:action :fork-at-turn})
+
+                                     :toggle-agent-dock
+                                     (toggle-agent-dock!)
 
                                      :switch-session
                                      (show-sessions!)
@@ -9744,6 +9766,9 @@
 
                                      :queue-send-all-now
                                      (state/dispatch [:queue-send-all-now nil])
+
+                                     :queue-edit
+                                     (state/dispatch [:queue-focus])
 
                                      :show-sessions
                                      (show-sessions!)
@@ -9975,6 +10000,10 @@
                          :queue-send-all-now
                          (do (state/dispatch [:queue-send-all-now nil]) (recur))
 
+                         ;; C-x e — the keys act on the Queued block until Esc.
+                         :queue-edit
+                         (do (state/dispatch [:queue-focus]) (recur))
+
                          ;; C-x 1-9 — send that queue row at the next step, or take
                          ;; its mark back (the row's own button).
                          :queue-send-nth
@@ -9996,6 +10025,10 @@
 
                          :fork-at-turn
                          (do (switch-session! {:action :fork-at-turn}) (recur))
+
+                         ;; C-x T — show or hide the agent table of the dock.
+                         :toggle-agent-dock
+                         (do (toggle-agent-dock!) (recur))
 
                          :session-group
                          (do (move-session-to-group! screen (current-session-id)) (recur))

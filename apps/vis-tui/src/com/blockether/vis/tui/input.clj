@@ -6,6 +6,7 @@
    Without a working copy helper, OSC 52 goes to the controlling terminal."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.tty :as tty]
             [com.blockether.vis.tui.format :as fmt]
@@ -1065,6 +1066,30 @@
       (#{KeyType/Backspace KeyType/Delete} (.getKeyType key))
       {:action (keymap/prefix-action-for keymap/prefix-delete-key) :state state}
       :else {:action :continue :state state})))
+
+(defn queue-focus-event
+  "The event of `key` while C-x e focuses the queue, or nil for a key that ends the focus
+   and goes on, C-g included. Arrows and 1-9 select, Space marks, Enter edits, `s` and `l`
+   send now or later, Delete removes, `u` brings removed rows back and Esc ends the focus."
+  [^KeyStroke key]
+  (let [ktype
+        (.getKeyType key)
+
+        c
+        (when (and (= KeyType/Character ktype) (not (.isCtrlDown key)) (not (.isAltDown key)))
+          (.getCharacter key))]
+
+    (cond (= KeyType/ArrowUp ktype) [:queue-focus-move -1]
+          (= KeyType/ArrowDown ktype) [:queue-focus-move 1]
+          (= KeyType/Enter ktype) [:queue-focus-edit]
+          (#{KeyType/Delete KeyType/Backspace} ktype) [:queue-focus-remove]
+          (= KeyType/Escape ktype) [:queue-blur]
+          (nil? c) nil
+          (keymap/queue-row-index c) [:queue-focus-select (keymap/queue-row-index c)]
+          (= \space (char c)) [:queue-focus-mark]
+          (= \s (char c)) [:queue-focus-deliver gateway-contract/queued-turn-deliver-next-iteration]
+          (= \l (char c)) [:queue-focus-deliver gateway-contract/default-queued-turn-deliver]
+          (= \u (char c)) [:queue-focus-undo])))
 
 (defn handle-key
   "Process keystroke. Returns {:action kw, :state s}."

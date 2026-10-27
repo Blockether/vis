@@ -2821,6 +2821,9 @@
                     ;; width (0 for the spacer rows, which paint the rail only).
                     (str/starts-with? line queue-item-marker)
                     (let [raw (subs line 1)
+                          ;; C-x e focus: the selected row gets a bar and the selection paper.
+                          selected? (:queue-selected? meta)
+                          bg-color (if selected? t/header-active-tab-bg bg-color)
                           gutter-n (long (or (:queue-gutter meta) 0))
                           cut (min gutter-n (count raw))
                           ord (subs raw 0 cut)
@@ -2839,7 +2842,7 @@
                       (p/set-colors! g t/header-active-tab-accent bg-color)
                       (p/styled g
                                 [p/BOLD]
-                                (p/put-str! g x y "│")
+                                (p/put-str! g x y (if selected? "┃" "│"))
                                 (when (pos? gutter-n) (p/put-str! g (+ (long x) 2) y ord)))
                       ;; Preview — dim italic, after the ordinal.
                       (p/set-colors! g t/dialog-hint bg-color)
@@ -2866,7 +2869,7 @@
                     ;; ── Queue bottom border — a square corner `└` at the rail
                     ;; column, then a horizontal rule filling the rest of the
                     ;; width. Caps the left rail and separates the queued items
-                    ;; from the "↑ to edit" hint below.
+                    ;; from the edit hint below.
                     (str/starts-with? line queue-border-marker)
                     (do (p/set-colors! g t/header-active-tab-accent bg-color)
                         (p/fill-rect! g fbx y fill-iw 1)
@@ -10028,24 +10031,48 @@
 
 (def ^:private queue-unsend-label
   "Label of a marked queue row's button: a press keeps the row for the turn end."
-  "Unsend")
+  "Send later")
 
 (def ^:private queue-marked-suffix
   "Trailer of a queue row that is marked to send at the next iteration."
   " · next iter")
+
+(defn queued-row-key
+  "The identity of a queue row across gateway syncs: its turn id, else its client id."
+  [row]
+  (or (some-> (:turn-id row)
+              str)
+      (:client-id row)))
+
+(defn queue-hint-text
+  "The hint under the Queued block. At rest it names the chord that focuses the queue. While
+   `focus` is set it names the focus keys, and `u undo` while a removal can come back."
+  [focus]
+  (if focus
+    (str "↑↓ select · Space mark · Enter edit · s send now · l send later · Del remove"
+         (when (:undo? focus) " · u undo")
+         " · Esc back")
+    (str (keymap/label-for :queue-edit) " edit, send, remove or merge a message")))
 
 (defn- queued-progress-entries
   "Rows of the Queued block. `send-opts` is `{:running? bool :session-id sid}`: while
    a turn runs, every markable row ends in a ` Send it now ` button. The header gets
    ` Send all now ` only with two or more markable rows (see `markable-queued-row?`): one
    row has its own button. With no running turn there is no next step, so nothing is
-   painted (the paused and held flows have their own controls)."
+   painted (the paused and held flows have their own controls).
+
+   `(:focus send-opts)` is `{:index :marked :undo?}` while C-x e focuses the queue. Then the
+   buttons go, the row at `:index` is selected, rows whose `queued-row-key` is in `:marked`
+   show a check, and the hint names the focus keys."
   [pending-sends content-w paused-info send-opts]
   (let [queued
         (vec (or pending-sends []))
 
+        focus
+        (:focus send-opts)
+
         running?
-        (boolean (:running? send-opts))
+        (and (not focus) (boolean (:running? send-opts)))
 
         session-id
         (:session-id send-opts)]
@@ -10101,7 +10128,9 @@
                     (and markable? (marked-queued-row? entry))
 
                     ord
-                    (str (inc (long idx)) ". ")
+                    (str (inc (long idx))
+                         ". "
+                         (when (contains? (:marked focus) (queued-row-key entry)) "✓ "))
 
                     gutter-n
                     (count ord)
@@ -10138,11 +10167,14 @@
                     (ellipsize-cols (cond->> (queued-preview (or (:preview-text entry)
                                                                  (:text entry)))
                                       (:unsent? entry)
-                                      (str "△ unsent · "))
+                                      (str "unsent: "))
                                     avail)]
 
                 {:line (str queue-item-marker ord preview suffix)
                  :meta (cond-> {:queue-gutter gutter-n}
+                         (and focus (= idx (:index focus)))
+                         (assoc :queue-selected? true)
+
                          markable?
                          (assoc :queue-send
                            {:session-id session-id
@@ -10167,12 +10199,11 @@
             border
             {:line queue-border-marker :meta nil}
 
-            ;; Nudge: ArrowUp on an empty input box pulls the newest queued
-            ;; submission (item #N, the bottom row) back into the editor (see state.clj
-            ;; :history-up). Accent hint on the REGULAR bubble bg (via
-            ;; `hint-marker`) so the affordance pops as a control.
+            ;; The chord that focuses the queue, or the focus keys while it is focused.
+            ;; Accent hint on the REGULAR bubble bg (via `hint-marker`) so the
+            ;; affordance pops as a control.
             hint
-            {:line (str hint-marker "↑ to edit") :meta nil}
+            {:line (str hint-marker (queue-hint-text focus)) :meta nil}
 
             ;; When the gateway paused the queue after a provider failure, the head
             ;; is held (not cascaded). Show WHY on its own row, above the edit hint.
@@ -10180,7 +10211,7 @@
             (when paused-info
               {:line (str
                        hint-marker
-                       "△ held — "
+                       "held — "
                        (str/replace (str (or (:reason paused-info) "provider unhealthy")) #"_" " ")
                        ;; A breaker-open hold (provider unhealthy) DOES resume on
                        ;; its own when the provider recovers. A turn-failure hold
@@ -10213,7 +10244,7 @@
    Layout while loading (spinner ALWAYS at the bottom):
      <iteration trace, if iterations exist and not hidden>
      <blank>
-     [spinner] phase... elapsed / Esc to cancel
+     [spinner] phase... elapsed   (the cancel hint is on the bottom echo row)
 
    The activity row sits last so it tracks the natural reading
    direction - trace history flows top-down like a transcript, and
@@ -10250,8 +10281,8 @@
          (max 10 (- (long bubble-w) 4))
 
          {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
-                 viewport-rows pending-sends command-label queue-paused live-title runs agent-name
-                 live-runs]}
+                 viewport-rows pending-sends command-label queue-paused queue-focus live-title runs
+                 agent-name live-runs]}
          extra
 
          now-ms
@@ -10313,8 +10344,7 @@
                 elapsed-str
                 (or (progress-error-segment iterations) "")
                 (or (provider-wait-segment iterations now-ms) "")
-                (or (python-busy-segment iterations now-ms) "")
-                "  /  Esc to cancel"))
+                (or (python-busy-segment iterations now-ms) "")))
 
          line-entry
          (fn [line]
@@ -10334,6 +10364,7 @@
                                          :session-turn-id session-turn-id
                                          :detail-expansions detail-expansions})
             (mapv (juxt :text :deliver :unsent? :turn-id) (vec (or pending-sends []))) queue-held?
+            queue-focus
             ;; Anchored rows ride `form-fingerprint`; UNPLACED ones never touch an
             ;; iteration, so the body key must name them directly or a settling run
             ;; would keep painting its pre-settle receipt.
@@ -10357,10 +10388,11 @@
                    (into (vec trace-entries) (run-row-entries unplaced-runs content-w session-id))
 
                    queued-entries
-                   (queued-progress-entries pending-sends
-                                            content-w
-                                            queue-paused
-                                            {:running? (not queue-held?) :session-id session-id})
+                   (queued-progress-entries
+                     pending-sends
+                     content-w
+                     queue-paused
+                     {:running? (not queue-held?) :session-id session-id :focus queue-focus})
 
                    ;; Top margin invariant: the spinner row carries EXACTLY ONE
                    ;; empty row above it, whether or not any iteration has been

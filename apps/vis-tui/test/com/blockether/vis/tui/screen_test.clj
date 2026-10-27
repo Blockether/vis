@@ -3956,9 +3956,12 @@ therapy line 2"
                                  :input-box-h 3
                                  :composer-h (+ 3 rail-h)
                                  :input-top 25
-                                 :rail-top (- 25 rail-h)
+                                 ;; The echo row sits under the dock and the rail, above the prompt.
+                                 :rail-top (- 24 rail-h)
                                  :rail-h rail-h
-                                 :echo-row (- 24 rail-h)}
+                                 :echo-row 24
+                                 :messages-bottom (- 24 rail-h)
+                                 :footer-row 28}
                                 geometry))))))
 
 (defdescribe

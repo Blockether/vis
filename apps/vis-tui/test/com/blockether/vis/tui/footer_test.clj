@@ -66,16 +66,12 @@
                 (expect (str/ends-with? limits-row "~$0.0042  "))))))))))
 
 (defdescribe footer-team-chip-test
-             (it "shows a clickable team chip only while the session's team is live"
-                 (with-redefs [agent-team/footer-label (fn [sid]
-                                                         (when (= "leader" sid) "Agents: A1 3/20"))]
-                   (let [chips (fn [sid]
-                                 (filterv #(= :footer-agents (:kind %))
-                                   (#'footer/build-limits-segments
-                                    {:messages [] :settings {} :session {:id sid}}
-                                    0)))]
-                     (expect (= [" Agents: A1 3/20 "] (mapv :text (chips "leader"))))
-                     (expect (= [] (chips "other")))))))
+             (it "leaves the team to the agent dock above the prompt"
+                 (with-redefs [agent-team/summary (constantly {:agents [{"status" "running"}]})]
+                   (let [segments (#'footer/build-limits-segments
+                                   {:messages [] :settings {} :session {:id "leader"}}
+                                   0)]
+                     (expect (not-any? #(str/includes? (str (:text %)) "Agents") segments))))))
 
 (defdescribe
   inline-goal-iterations-test

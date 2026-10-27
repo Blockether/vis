@@ -361,19 +361,19 @@
                      (expect (= label (team/header-label "leader" false)))))))
 
 (defdescribe
-  footer-team-chip-test
-  (it "counts the agents of each status and leaves while no agent works or waits"
-      (doseq [[agents label]
-              [[nil nil] [[{"status" "completed"}] nil]
-               [[{"status" "completed"}
-                 {"status" "running" "iterations_used" 3 "iteration_budget" 20}
-                 {"status" "running" "pending_input" true "pending_input_count" 2}
-                 {"status" "queued"}] "Agents: 2 running · 1 queued"]
-               [[{"status" "running" "role" "verify"} {"status" "running" "question" "Keep it?"}
-                 {"status" "running" "role" "research"} {"status" "completed" "role" "implement"}]
-                "Agents: 1 asking · 2 running"]]]
-        (with-redefs [team/summary (constantly {:agents agents})]
-          (expect (= label (team/footer-label "leader")))))))
+  summary-counts-test
+  (it
+    "counts the rows of each status in a fixed order"
+    (doseq [[agents label]
+            [[nil ""] [[{"status" "completed"}] "1 done"]
+             [[{"status" "completed"} {"status" "running" "iterations_used" 3 "iteration_budget" 20}
+               {"status" "running" "pending_input" true "pending_input_count" 2}
+               {"status" "queued"}] "2 running · 1 queued · 1 done"]
+             ;; An agent with a question waits for its leader, not for the person.
+             [[{"status" "running" "role" "verify"} {"status" "running" "question" "Keep it?"}
+               {"status" "running" "role" "research"} {"status" "completed" "role" "implement"}]
+              "2 running · 1 waiting · 1 done"]]]
+      (expect (= label (team/summary-counts (map-indexed #(team/team-row (inc %1) %2) agents)))))))
 
 (defdescribe old-tab-response-does-not-repaint-new-tab-test
              (it "old tab response does not repaint new tab"
@@ -445,13 +445,14 @@
     "role" "audit"}])
 
 (defdescribe waiting-agents-first-test
-             (it "puts waiting agents first, keeps numbers per team and says asking in the footer"
+             (it "puts waiting agents first and keeps numbers per team"
                  (with-redefs [team/summary (constantly {:agents waiting-team})]
                    (expect (= [[2 "c2"] [3 "c3"] [1 "c1"] [1 "c4"]]
                               (mapv (fn [[n agent]]
                                       [n (get agent "session_id")])
                                     (team/numbered waiting-team))))
-                   (expect (= "Agents: 2 asking · 1 running" (team/footer-label "leader"))))))
+                   (expect (not-any? #(str/includes? % "asking")
+                                     (team/dock-text "leader" nil 120 0))))))
 
 (def ^:private now-ms 1700000100000)
 
@@ -506,8 +507,8 @@
 
 (defdescribe status-word-test
              (it "names each status in words, without icons"
-                 (expect (= ["queued" "running" "asking" "running" "done" "passed" "failed" "failed"
-                             "cancelled" "out of budget"]
+                 (expect (= ["queued" "running" "waiting" "running" "done" "passed" "failed"
+                             "failed" "cancelled" "out of budget"]
                             (mapv team/status-word every-state)))))
 
 (defdescribe
@@ -529,7 +530,7 @@
         (expect (str/includes? (nth lines 1) "Patched src/a.clj"))
         (expect (str/ends-with? (nth lines 1) "1m 04s") "Running time counts from the start")
         (expect (str/includes? (nth lines 2) "#3"))
-        (expect (str/includes? (nth lines 2) "asking  "))
+        (expect (str/includes? (nth lines 2) "waiting  "))
         (expect (str/includes? (nth lines 2) "Keep the old API?"))
         ;; A form of a subagent opens in the leader session, so its row only runs.
         (expect (str/includes? (nth lines 3) "running"))
@@ -618,18 +619,28 @@
 
 (defdescribe
   dock-test
-  (it "shows one row for each agent of the running turn and leaves when the team ends"
+  (it "shows one summary line, and the agent table only after C-x T"
       (with-redefs [team/summary (constantly {:agents every-state})]
-        (let [text (team/dock-text "leader" "turn-1" 120 now-ms)]
-          (expect (= 8 (count text)) "The dock caps its rows and counts the rest")
-          (expect (= "+3 more" (peek text)))
-          (expect (= 8 (team/dock-height "leader" "turn-1" 120)))))
-      (with-redefs [team/summary (constantly {:agents (take 2 every-state)})]
-        (expect (= 2 (team/dock-height "leader" "turn-1" 120)))
-        (expect (= 4 (team/dock-height "leader" "turn-1" 40)) "A phone row takes two lines"))
+        (expect (not (team/dock-expanded? "leader")))
+        (let [[line :as text] (team/dock-text "leader" "turn-1" 120 now-ms)]
+          (expect (= 1 (count text)) "The dock is one line")
+          (expect (str/starts-with? line "Agents   "))
+          (expect (str/includes? line "1 waiting"))
+          (expect (not (str/includes? line "asking")))
+          (expect (str/ends-with? line "C-x T details")))
+        (try (expect (true? (team/toggle-dock! "leader")))
+             (let [text (team/dock-text "leader" "turn-1" 120 now-ms)]
+               (expect (str/ends-with? (first text) "C-x T hide details"))
+               (expect (= 11 (count text)) "The table caps its rows and counts the rest")
+               (expect (some #(str/includes? % "+5 more") text))
+               (expect (= 11 (team/dock-height "leader" "turn-1" 120))))
+             (finally (team/toggle-dock! "leader")))
+        (expect (= 1 (team/dock-height "leader" "turn-1" 120)) "C-x T again hides the table")
+        (expect (= ["Agents"] (team/dock-text "leader" "turn-1" 6 now-ms))
+                "A narrow line drops the counts and the hint"))
       (with-redefs [team/summary (constantly {:agents (drop 4 every-state)})]
         (expect (zero? (team/dock-height "leader" nil 120)) "No dock after a finished team")
-        (expect (= 6 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock"))
+        (expect (= 1 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock"))
       (with-redefs [team/summary (constantly {:agents []})]
         (expect (zero? (team/dock-height "leader" "turn-1" 120)) "An empty team has no dock"))))
 

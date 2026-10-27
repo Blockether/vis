@@ -318,19 +318,20 @@
 (defdescribe
   extension-keybindings-test
   (it "a command binding takes a free key under the Extensions heading"
-      (with-extension-bindings
-        [{:key "E" :command "/review" :label "Review" :extension "acme"}]
-        (fn []
-          (let [cmd (keymap/prefix-command-for \E)]
-            (expect (= "/review" (:command cmd)))
-            (expect (= "Extensions" (:group cmd)))
-            (expect (= "acme" (:extension cmd))))
-          (expect (nil? (keymap/prefix-command-for \e)) "C-x E stays apart from C-x e")
-          (expect (some #(and (= "Extensions" (:title %))
-                              (some (fn [i]
-                                      (= {:key "E" :label "Review"} (select-keys i [:key :label])))
-                                    (:items %)))
-                        (:groups (keymap/prefix-spec {})))))))
+      (with-extension-bindings [{:key "E" :command "/review" :label "Review" :extension "acme"}]
+                               (fn []
+                                 (let [cmd (keymap/prefix-command-for \E)]
+                                   (expect (= "/review" (:command cmd)))
+                                   (expect (= "Extensions" (:group cmd)))
+                                   (expect (= "acme" (:extension cmd))))
+                                 (expect (= :queue-edit (:action (keymap/prefix-command-for \e)))
+                                         "C-x E stays apart from C-x e")
+                                 (expect (some #(and (= "Extensions" (:title %))
+                                                     (some (fn [i]
+                                                             (= {:key "E" :label "Review"}
+                                                                (select-keys i [:key :label])))
+                                                           (:items %)))
+                                               (:groups (keymap/prefix-spec {})))))))
   (it "C-x and the bound key resolve to the command, as typed"
       (with-extension-bindings [{:key "E" :command "/review now" :label "Review" :extension "acme"}]
                                (fn []
@@ -357,7 +358,9 @@
                                  (expect (= "/notes" (:command (keymap/prefix-command-for \n)))))))
   (it "names the letters that are still free after C-x"
       (let [free (keymap/free-prefix-letters)]
-        (expect (str/includes? free "e"))
+        (expect (str/includes? free "E"))
+        (expect (not (str/includes? free "e")) "e focuses the queue")
+        (expect (not (str/includes? free "T")) "T shows the agent table")
         (expect (str/includes? free "L"))
         (expect (not (str/includes? free "g")) "g is reserved")
         (expect (not (str/includes? free "i")) "i inspects attachments"))
@@ -380,6 +383,6 @@
   (it "an empty binding list restores the built-in keymap"
       (keymap/set-keybindings! [{:key "E" :command "/review" :label "Review"}])
       (keymap/set-keybindings! [])
-      (expect (nil? (keymap/prefix-command-for \E)))
+      (expect (nil? (:command (keymap/prefix-command-for \E))))
       (expect (= "C-x n" (keymap/label-for :new-session)))
       (expect (empty? (keymap/refused-keybindings)))))
