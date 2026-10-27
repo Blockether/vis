@@ -185,6 +185,12 @@ The recipient can read, calculate and do authorized work across tool calls, but
 cannot end its turn until it answers each required request. Reading the message
 does not count as answering. New pings wait while required replies are outstanding.
 
+A session that your session started can ask a question that only you can
+decide. Your session then asks you in its answer, and its turn ends as
+suspended. The asking session keeps waiting until its `timeout_secs` ends.
+After you answer, your session replies to the question in its next turn. A
+one-shot command-line run has nobody to ask, so it answers each question itself.
+
 ### Check for an answer
 
 ```python

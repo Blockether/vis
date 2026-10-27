@@ -6953,6 +6953,16 @@
   (boolean (some #(contains? #{"queued" "running"} (:status %))
                  (vals (:turns (session-entry (str sid)))))))
 
+(defn- agent-awaits-person?
+  "True when the latest turn of `sid` ended suspended: its model asked the person and waits for
+   the answer. An open child question then keeps waiting for the next turn of `sid`."
+  [sid]
+  (let [entry (session-entry (str sid))]
+    (= "suspended"
+       (:status (some->> (:turn-order entry)
+                         peek
+                         (get (:turns entry)))))))
+
 (defn- agent-held?
   "True when a human holds the queue of `sid`."
   [sid]
@@ -6989,6 +6999,7 @@
    :route #'agent-route
    :grant #'agent-grant
    :live? #'agent-live?
+   :awaits-person? #'agent-awaits-person?
    :leader-active? #'agent-leader-active?
    :held? #'agent-held?
    :publish #'agent-publish})

@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -137,3 +138,108 @@
                    (#'state/drop-session! bid)
                    (loop-env/dispose-environment! b)
                    (loop-env/dispose-environment! a)))))))
+
+;; A subagent question that only the person can decide: an interactive leader asks the person
+;; and its turn ends suspended. A one-shot `:cli` leader still has to answer the question itself.
+(defdescribe
+  person-decides-child-question-test
+  (doseq [[channel interactive?] [[nil true] [:cli false]]]
+    (it
+      (str "ends the turn " (if interactive? "suspended for the person" "only after a reply"))
+      (let [router (svar/make-router [{:id :lmstudio
+                                       :api-key "test"
+                                       :base-url "http://127.0.0.1:1234/v1"
+                                       :models [{:name "model" :context 200000}]}])
+            leader (loop-env/create-environment router
+                                                (cond-> {:db :memory}
+                                                  channel
+                                                  (assoc :channel channel)))
+            db (:db-info leader)
+            child (loop-env/create-environment router {:db db})
+            lid (str (:session-id leader))
+            cid (str (:session-id child))
+            calls (atom 0)]
+
+        (try
+          (doseq [sid [lid cid]]
+            (#'state/update-session!
+             sid
+             (constantly {:current-turn "fixture"
+                          :turns {"fixture" {:status "running"
+                                             :cancel-token (cancellation/cancellation-token)}}})))
+          (with-redefs [toggles/enabled? (fn [id]
+                                           (= "council" id))]
+            (let [active (get (council/runtime db) cid)
+                  question (council/publish!
+                             db
+                             #(council/runtime db)
+                             {:session-id cid :activation-id (:activation-id active) :source "sdk"}
+                             {:kind "coordination"
+                              :content "Keep the old API or remove it?"
+                              :ping [lid]
+                              :reply_required true})
+                  entry-id (:entry_id question)
+                  tid (ps/db-store-session-turn! db
+                                                 {:parent-session-id (:session-id leader)
+                                                  :user-request "Lead the team"})
+                  result
+                  (with-redefs [agents/open-questions
+                                (fn [_ sid]
+                                  (if (= lid (str sid)) [{:session_id cid :entry_id entry-id}] []))
+                                svar/ask-code!
+                                (fn [_ _]
+                                  (let [n (swap! calls inc)]
+                                    (if (and (not interactive?) (= n 2))
+                                      {:stop-reason :tool-calls
+                                       :tokens {}
+                                       :tool-calls
+                                       [{:id "reply"
+                                         :name "python_execution"
+                                         :input {:code (str "await council.publish('Keep it.', "
+                                                            "kind='informational', reply_to="
+                                                            entry-id
+                                                            ")")}}]}
+                                      {:stop-reason :end
+                                       :tokens {}
+                                       :content
+                                       (if interactive? "Keep the old API or remove it?" "done")
+                                       :tool-calls []})))]
+
+                    (iteration/iteration-loop leader "Lead the team" {:session-turn-id tid}))
+                  replies (:replies (council/get-entry db lid {:entry_id entry-id}))]
+
+              (if interactive?
+                (do
+                  (expect (= 1 @calls) "The gate accepts the question for the person")
+                  (expect (= {:vis/answer-mode :needs-input
+                              :answer/text "Keep the old API or remove it?"}
+                             (:answer result))
+                          "A needs-input answer ends the gateway turn as suspended")
+                  (expect (nil? (some :reply_entry_id replies)))
+                  (expect (= [entry-id]
+                             (mapv :entry_id
+                                   (with-redefs [agents/open-questions (constantly [{:session_id cid
+                                                                                     :entry_id
+                                                                                     entry-id}])]
+                                     (council/session-pending-replies leader))))
+                          "The question stays pending")
+                  ;; The next turn has a new activation: the ended one interrupted its pings.
+                  (ps/db-council-interrupt! db lid (:activation-id (get (council/runtime db) lid)))
+                  (let [batch (with-redefs [agents/open-questions
+                                            (constantly [{:session_id cid :entry_id entry-id}])]
+                                (council/prepare-input! db
+                                                        lid
+                                                        "next-turn"
+                                                        (council/default-group db lid)
+                                                        (atom {})
+                                                        ["next" 0]
+                                                        8192))]
+                    (expect (= [entry-id] (mapv :entry_id (:pending_replies batch)))
+                            "The next turn of the leader still has to answer the question")))
+                (do (expect (= 3 @calls) "A :cli leader must reply before it ends its turn")
+                    (expect (= {:answer "done"} (:answer result)))
+                    (expect (some :reply_entry_id replies))))))
+          (finally (#'state/drop-session! lid)
+                   (#'state/drop-session! cid)
+                   (loop-env/dispose-environment! child)
+                   (loop-env/dispose-environment! leader)))))))

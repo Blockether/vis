@@ -189,6 +189,12 @@
                  [k (mapv #(shown-rule (:workspace/root env) %) rules)]))
           files)))
 
+(defn interactive?
+  "True when a person can answer in the session of `env`. A one-shot `:cli` run has nobody to
+   answer or approve."
+  [env]
+  (not= :cli (:channel env)))
+
 (defn context
   [env]
   (let [sid
@@ -200,8 +206,7 @@
     (wire/->wire (cond-> (merge {:role (if child "subagent" "leader")
                                  :session_id sid
                                  :leader_id sid
-                                 ;; A one-shot `:cli` run has nobody to answer or approve.
-                                 :interactive (not= :cli (:channel env))}
+                                 :interactive (interactive? env)}
                                 (select-keys child
                                              [:parent_id :leader_id :team_id :task :iteration_budget
                                               :iterations_used :status :allowed_models])
@@ -688,6 +693,17 @@
    :entry_id id}`, plus `:budget` or `:files` for a budget or file request."
   [sid]
   (get @questions (str sid)))
+
+(defn open-questions
+  "The open questions that the children of session `sid` wait on, as `{:session_id child
+   :entry_id id}` rows. A child asks its own parent, so the row of a deleted child stays out."
+  [db sid]
+  (let [sid (str sid)]
+    (into []
+          (keep (fn [[child {:keys [entry_id]}]]
+                  (when (and entry_id (= sid (some-> (info db child) :parent_id str)))
+                    {:session_id child :entry_id entry_id})))
+          @questions)))
 
 (defn- runtime-fn
   [k]
@@ -1218,10 +1234,11 @@
   (result :council.cancel (cancel-records env session-id)))
 
 (defn- parent-reply!
-  "Publish `question` to the parent of the calling child and wait for the reply text. Answers
-   nil when the parent is not running, the child is cancelled or `timeout_secs` (default 600)
-   ends. `request` adds a budget or file request to the open question: `{:budget …}` or
-   `{:files …}`."
+  "Publish `question` to the parent of the calling child and wait for the reply text. The wait
+   continues while the parent runs, or while its turn ended to ask the person (see the
+   `:awaits-person?` runtime operation). Answers nil when the parent is neither, the child is
+   cancelled or `timeout_secs` (default 600) ends. `request` adds a budget or file request to the
+   open question: `{:budget …}` or `{:files …}`."
   [env op question request opts]
   (let [db
         (:db-info env)
@@ -1242,7 +1259,11 @@
         (str (:parent_id me))
 
         live?
-        (runtime-fn :live?)]
+        (runtime-fn :live?)
+
+        ;; Only the gateway suspends a turn for the person; another runtime has no such wait.
+        awaits-person?
+        (or (get @runtime :awaits-person?) (constantly false))]
 
     (when (live? parent)
       (let [entry
@@ -1262,7 +1283,8 @@
                             ;; The call returns the reply, so Council input must not deliver it again.
                             (cond reply-id (reduced (do (ps/db-council-delivered! db sid [reply-id])
                                                         (:content (ps/db-council-get db reply-id))))
-                                  (or (= "cancelled" (:status (info db sid))) (not (live? parent)))
+                                  (or (= "cancelled" (:status (info db sid)))
+                                      (not (or (live? parent) (awaits-person? parent))))
                                   (reduced nil)
                                   :else nil))))
              (finally (swap! questions #(if (= entry-id (get-in % [sid :entry_id]))
@@ -1270,9 +1292,10 @@
                                           %))))))))
 
 (defn ask
-  "As a subagent, ask your parent for a decision and wait for the reply text. Returns None when
-   the parent is not running or does not reply within timeout_secs (default 600). Then choose the
-   safest option and say so in your answer."
+  "As a subagent, ask your parent for a decision and wait for the reply text. If only the person
+   can decide, your parent asks the person and you keep waiting. Returns None when the parent
+   stops or does not reply within timeout_secs (default 600). Then choose the safest option and
+   say so in your answer."
   ([env question] (ask env question {}))
   ([env question opts]
    (when (or (not (string? question)) (str/blank? question))

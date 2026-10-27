@@ -2109,3 +2109,73 @@
           (expect (document/valid-json? "agents" "timeline" (walk/stringify-keys view)))
           (expect (= :session-not-found (outcome #(agents/timeline db child child)))
                   "Only the parent reads the timeline of its child"))))))
+
+;; A subagent question that only the person can decide: the leader ends its turn suspended to ask
+;; the person. The child keeps waiting for the reply of the next leader turn.
+(defdescribe
+  child-question-waits-for-person-test
+  (it
+    "keeps the question open while the parent waits for the person"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:iteration_budget 4})
+
+          env
+          {:db-info db :session-id leader}
+
+          child-env
+          {:db-info db :session-id child}
+
+          live
+          (atom #{leader})
+
+          suspended?
+          (atom false)]
+
+      (with-fake-runtime
+        db
+        leader
+        live
+        (fn [entries]
+          (agents/install-runtime! (assoc @@#'agents/runtime
+                                     :awaits-person? (fn [sid]
+                                                       (and @suspended? (= leader (str sid))))))
+          (with-redefs [ps/db-council-get (fn [_ id]
+                                            (get @entries id))]
+            (let [asked (future (outcome
+                                  #(agents/ask child-env "Keep the old API?" {:timeout_secs 20})))]
+              (asking-record env child)
+              (expect (= [{:session_id child :entry_id (:entry_id (agents/open-request child))}]
+                         (agents/open-questions db leader))
+                      "The leader sees the open question of its child")
+              (expect (= [] (agents/open-questions db child)))
+              ;; The leader turn ends suspended: no turn runs, but the person decides.
+              (reset! suspended? true)
+              (reset! live #{})
+              (expect (= ::waiting (deref asked 2500 ::waiting))
+                      "The child waits while the parent asks the person")
+              ;; The person answers; the next leader turn replies to the child.
+              (reset! suspended? false)
+              (reset! live #{leader})
+              (agents/operation! env :answer {:session_id child :text "Keep it."})
+              (expect (= "Keep it." (deref asked 5000 ::timeout))))
+            (let [asked (future (outcome #(agents/ask child-env "Again?" {:timeout_secs 20})))]
+              (asking-record env child)
+              ;; The person cancels the next leader turn instead of an answer.
+              (reset! live #{})
+              (expect (nil? (deref asked 5000 ::timeout))
+                      "A parent that neither runs nor waits for the person ends the wait"))
+            (reset! live #{leader})
+            (reset! suspended? true)
+            (let [asked (future (outcome #(agents/ask child-env "Last?" {:timeout_secs 20})))]
+              (asking-record env child)
+              (reset! live #{})
+              (ps/db-agent-update! db child {:status "cancelled"})
+              (expect
+                (nil? (deref asked 5000 ::timeout))
+                "A cancelled child ends the wait also while the parent asks the person"))))))))

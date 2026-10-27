@@ -8500,3 +8500,16 @@
                  (expect (empty? (:turns (persistance/db-list-pending-turns store))))
                  (forget-session! sid)))
              (finally (sqlite/db-close! store))))))
+
+;; A subagent question that only the person can decide: a leader whose latest turn ended suspended
+;; asks the person, so the open question of its child keeps waiting.
+(defdescribe agent-awaits-person-test
+             (it "is true only when the latest turn of the parent ended suspended"
+                 (doseq [[order expected] [[["a" "b"] true] [["b" "a"] false] [[] false]]]
+                   (with-redefs-fn {#'state/registry (atom {"lead" {:turn-order order
+                                                                    :turns
+                                                                    {"a" {:status "completed"}
+                                                                     "b" {:status "suspended"}}}})}
+                     #(expect (= expected ((:awaits-person? state/agent-runtime) "lead")) order)))
+                 (with-redefs-fn {#'state/registry (atom {})}
+                   #(expect (false? ((:awaits-person? state/agent-runtime) "unknown"))))))
