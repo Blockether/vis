@@ -59,16 +59,31 @@
 
     (if (= "session" (:source row)) (boolean (:value row)) (toggles/enabled? "subagents"))))
 
-(defn- wakeable?
+(defonce ^:private runtime (atom {}))
+
+(defn install-runtime! [callbacks] (reset! runtime callbacks) nil)
+
+(defn- leader-active?
+  "True when leader `sid` runs a turn that nobody stopped. Only the gateway runs turns."
+  [sid]
+  (boolean (when sid ((get @runtime :leader-active? (constantly false)) (str sid)))))
+
+(defn- resumable?
+  "True when managed child `agent` can take a follow-up turn: it has iterations left. A stop
+   cancels it, and then only a running turn of its leader continues it. So a late ping cannot
+   restart a child that the user stopped."
   [agent]
   (and agent
-       (not= "cancelled" (:status agent))
-       (< (long (:iterations_used agent)) (long (:iteration_budget agent)))))
+       (< (long (:iterations_used agent)) (long (:iteration_budget agent)))
+       (or (not= "cancelled" (:status agent)) (leader-active? (:leader_id agent)))))
+
+(defn- wakeable? [agent] (and (resumable? agent) (not= "cancelled" (:status agent))))
 
 (defn wake-allowed?
   "Automatic resume has two sources: an explicit ping between independent sessions, and
    a managed team. A child may return to its leader; siblings must share a task team.
-   A managed session keeps its team rule, so a cancelled or exhausted subagent stays idle.
+   A managed session keeps its team rule, so an exhausted subagent stays idle. A cancelled
+   subagent wakes only for a running turn of its leader.
    Only a managed subagent wakes itself; an independent session stays idle."
   [db author-id recipient-id]
   (let [author-id
@@ -85,15 +100,15 @@
 
     (boolean (or (and (nil? author) (nil? recipient) (not= author-id recipient-id))
                  (and (enabled? db (if recipient recipient-id author-id))
-                      (or (and (wakeable? recipient) (= author-id (:leader_id recipient)))
+                      (or (and (resumable? recipient) (= author-id (:leader_id recipient)))
                           ;; Returning an outcome costs no further child iteration.
                           (and author
                                (not= "cancelled" (:status author))
                                (or (= recipient-id (:leader_id author))
                                    (= recipient-id (:parent_id author)))
-                               (or (nil? recipient) (wakeable? recipient)))
+                               (or (nil? recipient) (resumable? recipient)))
                           (and (wakeable? author)
-                               (wakeable? recipient)
+                               (resumable? recipient)
                                (= (:leader_id author) (:leader_id recipient))
                                (= (:team_id author) (:team_id recipient)))))))))
 
@@ -116,10 +131,6 @@
        (get-in schema ["$defs" "role" "description"])
        (apply str (map #(str "\n  - " (get % "const") ": " (get % "description")) roles))
        "\n"))
-
-(defonce ^:private runtime (atom {}))
-
-(defn install-runtime! [callbacks] (reset! runtime callbacks) nil)
 
 ;; Child session ids whose turn runs its handoff iteration. `finish!` reads it, so only a turn
 ;; that went past its budget ends as `budget_limited`.
@@ -1400,8 +1411,6 @@
 
     (when (= (str (:session-id env)) session_id)
       (fail! :not-owner "A subagent cannot extend its own budget"))
-    (when (= "cancelled" (:status child))
-      (fail! :invalid-request "A cancelled subagent cannot get more iterations"))
     (when (> (+ (long (:iteration_budget child)) (long iterations)) (long max-budget))
       (fail! :budget-exceeded
              (str "The budget of a subagent stays at most " max-budget " iterations")))
@@ -1558,10 +1567,12 @@
   "Queue subagent `sid` for a follow-up turn. A Council ping and council.resume both use it, so
    council.wait reports only the answer of the new turn. A follow-up can pass the active cap; only
    a new spawn counts against it. Answers a function that undoes the change, or nil when the child
-   is cancelled or has no iterations left. A child that already runs stays as is."
+   has no iterations left, or is cancelled while its leader runs no turn. A child that already runs
+   stays as is."
   [db sid]
   (let [child (info db sid)]
     (cond (or (nil? child) (contains? #{"queued" "running"} (:status child))) (constantly nil)
+          (not (resumable? child)) nil
           (ps/db-agent-resume! db sid (count (ps/db-list-session-turns db sid)) (util/now-ms))
           #(ps/db-agent-update! db
                                 sid
@@ -1624,8 +1635,9 @@
         (fn [child]
           (cond (or (live? session_id) (contains? #{"queued" "running"} (:status child)))
                 (fail! :invalid-request "The subagent still runs. Call council.wait.")
-                (= "cancelled" (:status child)) (fail! :invalid-request
-                                                       "A cancelled subagent cannot resume")
+                (= "cancelled" (:status child))
+                (fail! :invalid-request
+                       "A cancelled subagent resumes only during a running turn of its leader")
                 (>= (long (:iterations_used child)) (long (:iteration_budget child)))
                 (fail! :budget-exceeded
                        (str "The subagent has no iterations left. Call "
@@ -1674,8 +1686,9 @@
     (wait-records env [session_id] timeout)))
 
 (defn resume-agent
-  "Give a finished subagent a follow-up task in its own session, with its whole context. Then
-   wait like council.run and return the records. A Council ping continues the child the same way,
+  "Give a finished or cancelled subagent a follow-up task in its own session, with its whole
+   context. A stop of the leader's turn cancels its children; its next turn can continue them.
+   Then wait like council.run and return the records. A Council ping continues the child the same way,
    without the wait. A child without iterations left needs council.extend first. A running child
    needs council.wait. timeout_secs defaults to 240 (max 1800).
 

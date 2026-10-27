@@ -272,8 +272,9 @@ after cancellation or restart. Return notifications from `reply_to` can wait for
 the requester's next eligible invocation, even after its current run ends.
 
 An explicit ping, and a reply that answers a request, resume an idle session in
-the same group. Sessions in a managed agent team keep their team rule: a
-cancelled or exhausted team member stays idle.
+the same group. Sessions in a managed agent team keep their team rule: an
+exhausted team member stays idle. A stop of the leader's turn also stops its
+team members. A later leader turn continues one with `council.resume` or a ping.
 
 ### Automatic replies
 

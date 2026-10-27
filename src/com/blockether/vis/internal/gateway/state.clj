@@ -6646,7 +6646,7 @@
                        (vals (:turns (session-entry sid)))))
       {:session_id sid :status (:status child) :cancelled []}
       (do (doseq [id ids]
-            ;; Persist before cancelling: delayed pings and queued work cannot resume it.
+            ;; Persist before cancelling: no new iteration starts. Only a later leader turn resumes it.
             (persistance/db-agent-update! db id {:status "cancelled"})
             (doseq [[tid turn] (:turns (session-entry id))
                     :when (= "queued" (:status turn))]
@@ -6740,10 +6740,6 @@
           _
           (when-not (= sid (str (:parent_id child)))
             (agents/fail! :not-owner "Only the parent of a subagent can grant it files"))
-
-          _
-          (when (= "cancelled" (:status child))
-            (agents/fail! :invalid-request "A cancelled subagent cannot get a file grant"))
 
           ;; Without the parent's policy, a grant cannot prove that it narrows it.
           _
@@ -6974,6 +6970,17 @@
                                               [:council :activation-id])}
                       opts)))
 
+(defn- agent-leader-active?
+  "True when session `sid` runs a turn that nobody stopped. A cancelled child resumes only then, so
+   a ping that comes during or after a stop cannot restart it."
+  [sid]
+  (boolean (some (fn [turn]
+                   (and (= "running" (:status turn))
+                        (nil? (:cancelling_at turn))
+                        (not (some-> (:cancel-token turn)
+                                     cancellation/cancelled?))))
+                 (vals (:turns (session-entry (str sid)))))))
+
 (def agent-runtime
   "The session-agent operations `agents/install-runtime!` receives at startup."
   {:spawn #'agent-spawn
@@ -6982,6 +6989,7 @@
    :route #'agent-route
    :grant #'agent-grant
    :live? #'agent-live?
+   :leader-active? #'agent-leader-active?
    :held? #'agent-held?
    :publish #'agent-publish})
 

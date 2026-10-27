@@ -533,7 +533,9 @@
           (expect (= :not-owner
                      (outcome #(agents/extend-agent {:db-info db :session-id child} child 1))))
           (ps/db-agent-update! db child {:status "cancelled"})
-          (expect (= :invalid-request (outcome #(agents/extend-agent env child 1))))))))
+          (expect (= 7
+                     (get (first (outcome #(agents/extend-agent env child 1))) "iteration_budget"))
+                  "A cancelled child can get iterations before a resume")))))
   (it
     "lets a child ask for iterations and the parent grant or deny them"
     (let [db
@@ -826,7 +828,14 @@
           ;; #414: files on council.resume replace the grant of the follow-up task in one call.
           (expect (= {:write ["out.txt"]} (:files (agents/info db child))))
           (ps/db-agent-update! db child {:status "cancelled"})
-          (expect (= :invalid-request (outcome #(agents/resume-agent env child "More"))))))))
+          (expect (= :invalid-request (outcome #(agents/resume-agent env child "More")))
+                  "Without a running leader turn, a stopped child stays stopped")
+          (swap! @#'agents/runtime assoc :leader-active? #(= leader %))
+          (expect (= "queued"
+                     (get (first (outcome
+                                   #(agents/resume-agent env child "Again" {:timeout_secs 1})))
+                          "status"))
+                  "A running leader turn continues a cancelled child")))))
   ;; A Council ping and council.resume are one follow-up step, so both pass the active cap.
   (it
     "queues a pinged child like council.resume, past the active cap, and undoes it on demand"
@@ -866,8 +875,17 @@
         (expect (fn? (agents/queue-turn! db child)))
         (expect (= "queued" (:status (agents/info db child))))
         (ps/db-agent-update! db child {:status "cancelled"})
-        (expect (not (agents/wake-allowed? db leader child)))
-        (expect (nil? (agents/queue-turn! db child))))))
+        (let [saved @@#'agents/runtime]
+          (try (swap! @#'agents/runtime dissoc :leader-active?)
+               (expect (not (agents/wake-allowed? db leader child))
+                       "A late ping cannot restart a child that a stop cancelled")
+               (expect (nil? (agents/queue-turn! db child)))
+               (swap! @#'agents/runtime assoc :leader-active? #(= leader %))
+               (expect (agents/wake-allowed? db leader child)
+                       "A ping from a running leader continues a cancelled child")
+               (expect (fn? (agents/queue-turn! db child)))
+               (expect (= "queued" (:status (agents/info db child))))
+               (finally (reset! @#'agents/runtime saved)))))))
   (it "continues a resume past the active cap"
       (let [db
             (h/store)
@@ -1503,7 +1521,14 @@
           (expect (= [leader child] @armed))
           (expect (cancellation/cancelled? token))
           (expect (cancellation/cancelled? child-token))
-          (expect (= "cancelled" (:status (agents/info db child)))))))))
+          (expect (= "cancelled" (:status (agents/info db child))))
+          (expect (not (#'gateway/agent-leader-active? leader))
+                  "A stopped leader cannot continue its cancelled children")
+          (swap! registry assoc-in
+            [leader :turns "next-turn"]
+            {:status "running" :cancel-token (cancellation/cancellation-token)})
+          (expect (#'gateway/agent-leader-active? leader)
+                  "The next leader turn can continue them"))))))
 
 (defdescribe
   inactive-and-incomplete-delegations-do-not-allocate-children-test
@@ -1844,7 +1869,7 @@
 ;; Regression for #405: only a finished child with iterations left can resume.
 (defdescribe
   resume-of-a-running-or-cancelled-child-test
-  (it "refuses a running and a cancelled child and queues no turn"
+  (it "refuses a running child, and a cancelled child without a running leader turn"
       (let [db
             (h/store)
 

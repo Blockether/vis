@@ -343,10 +343,12 @@ class Council:
         files: dict[str, list[str]] | None = None,
         timeout_secs: int = 240,
     ) -> SubagentRecord:
-        """Give a finished subagent a follow-up task in its own session, then wait for it.
+        """Give a finished or cancelled subagent a follow-up task, then wait for it.
 
         The parent must be active, as for ``spawn``: an idle parent gets
-        ``inactive-session``. The child keeps its whole context. A child without
+        ``inactive-session``. The child keeps its whole context in its own session.
+        A stop of the parent's turn cancels its children; its next turn can resume
+        them. A child without
         iterations left needs ``extend`` first. A running child needs ``wait``.
         ``files`` replaces the file grant of the child for the follow-up task.
         """

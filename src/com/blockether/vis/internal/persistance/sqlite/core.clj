@@ -5445,8 +5445,8 @@
 
 (defn db-agent-extend-budget!
   "Add `iterations` to one child budget atomically, within the schema maximum. The status stays:
-   a `budget_limited` child stays idle until council.resume. Answers the new row, or nil when the
-   child is cancelled or missing, or the budget would pass the maximum."
+   a `budget_limited` or `cancelled` child stays idle until council.resume. Answers the new row, or
+   nil when the child is missing or the budget would pass the maximum."
   [db sid iterations]
   (let [max-budget
         (long (get-in agent-schema ["$defs" "spawn" "properties" "iteration_budget" "maximum"]))
@@ -5459,14 +5459,14 @@
                                              {:update :session_agent
                                               :set {:iteration_budget [:+ :iteration_budget n]}
                                               :where [:and [:= :session_id (str sid)]
-                                                      [:<> :status "cancelled"]
                                                       [:<= [:+ :iteration_budget n] max-budget]]})))
                           0)))
       (db-agent-info db sid))))
 
 (defn db-agent-resume!
   "Queue one idle child for a follow-up task from council.resume or a Council ping. One write
-   transaction checks that the child is idle, not cancelled and has iterations left. A follow-up
+   transaction checks that the child is idle and has iterations left. A cancelled child resumes too:
+   the caller checks that its leader runs a turn. A follow-up
    can pass the active cap. `turns` is the turn count before the task. Answers the new row, or nil
    when the child cannot resume."
   [db sid turns now]
@@ -5486,7 +5486,7 @@
                                               :outcome nil
                                               :finished_at nil}
                                         :where [:and [:= :session_id (str sid)]
-                                                [:not-in :status ["queued" "running" "cancelled"]]
+                                                [:not-in :status ["queued" "running"]]
                                                 [:< :iterations_used :iteration_budget]]})))))
                 0)))
     (db-agent-info db sid)))
