@@ -1,0 +1,14 @@
+[project]
+name = "vis-live-apps"
+version = "0.1.0"
+description = "Proof apps for Vis live apps: counter, todo, kanban, 2048, incidents and a deploy wizard."
+keywords = ["live-apps", "example"]
+requires-python = ">=3.12"
+dependencies = ["vis-agent>=0.1.45"]
+
+[tool.vis]
+category = "workflows"
+source_paths = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
