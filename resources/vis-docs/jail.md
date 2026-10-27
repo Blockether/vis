@@ -19,6 +19,8 @@ The [Python sandbox](python-sandbox.md) also has its own permission checks.
   port](#method-path-and-port-rules).
 - **A development server inside the jail must accept connections.** Open [inbound
   development ports](#inbound-development-ports).
+- **You run Vis inside your own sandbox, which denies `/tmp`.** [Set a task runtime
+  directory](#run-vis-inside-your-own-sandbox).
 - **A command is blocked and you need to know why.** [Diagnose the effective
   policy](#diagnose-the-effective-policy).
 
@@ -301,6 +303,37 @@ direct egress.
 If this host cannot enforce an enabled jail, Vis does not start the child. Vis also refuses when the
 session policy is missing. When Vis cannot tell which policy applies, it never falls back to an
 unconfined process.
+
+## Run Vis inside your own sandbox
+
+An evaluation harness or a container can confine Vis itself, for example to one task directory.
+Each Python worker of Vis then needs a place for its control socket. By default, this socket is in
+`/tmp`. If your sandbox denies `/tmp`, set `VIS_RUNTIME_DIR` to a directory in the task directory:
+
+```bash
+mkdir -m 700 "$TASK/runtime"
+VIS_RUNTIME_DIR="$TASK/runtime" HOME="$TASK/home" vis-agent "Fix the failing test"
+```
+
+The JVM property `-Dvis.runtime.dir` has the same effect and wins over the variable. The Python SDK
+gives its environment, with this variable, to the engine that it starts. The directory must meet
+these conditions:
+
+- It is an absolute path to a directory that exists.
+- The path has no symbolic link. On macOS, write `/private/tmp`, not `/tmp`.
+- Only you can write to it.
+
+If one condition is false, no Python worker starts, and Vis tells you the cause. Vis never uses
+`/tmp` in its place.
+
+Each worker gets a new private directory with mode 700 in `VIS_RUNTIME_DIR`. Vis removes that
+directory after the worker connects, also when the start fails. Other files in `VIS_RUNTIME_DIR`
+stay. Logs and other worker state stay under `HOME`.
+
+A socket path can have at most 103 bytes. If the full path is longer, Vis uses a path from its
+working directory. For a long path, start Vis in the directory that `-Duser.dir` names, or do not
+set `-Duser.dir`. If the relative path is also too long, the worker does not start. Then use a
+shorter directory.
 
 ## Executables and macOS services
 

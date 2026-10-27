@@ -635,7 +635,10 @@
            "by rewriting its code: the worker did not start, did not answer in time, "
            "or refused to bind this session's tools. A leftover global in the "
            "session's sandbox file whose name matches an extension tool fails every "
-           "later bind the same way.")
+           "later bind the same way."
+           ;; #423: a refused VIS_RUNTIME_DIR names its reason only in the message.
+           (when-let [cause (not-empty (str/trim (str (or (ex-message err) (:message err)))))]
+             (str " Cause: " cause)))
       (model-metadata-error? err)
       (str
         "WHAT HAPPENED: the provider's model catalog did not supply valid input/context limits for "

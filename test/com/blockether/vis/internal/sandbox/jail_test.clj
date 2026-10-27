@@ -93,7 +93,7 @@
                                             "/run/control.sock"
                                             ["/java" "/classpath"])]
         (expect (= ["/run"] (:allow-read-write policy)))
-        (expect (= ["/java" "/classpath"] (:allow-read policy)))
+        (expect (= ["/java" "/classpath" "/run"] (:allow-read policy)))
         (expect (= ["/run/control.sock"] (:unix-connect policy)))
         (expect (= {"all_proxy" "http://sess:vis@127.0.0.1:4322"
                     "ALL_PROXY" "http://sess:vis@127.0.0.1:4322"}

@@ -353,8 +353,10 @@
 
 (defn python-worker-policy
   "Add host-owned worker state, boot files and its exact control socket to a
-   session policy. When present, the session-attributed compatibility proxy
-   replaces the shared authenticated endpoint for stacks that omit proxy auth."
+   session policy. The socket's private directory is readable, so a jail that
+   binds paths shows a socket outside the temp directories (#423). When present,
+   the session-attributed compatibility proxy replaces the shared authenticated
+   endpoint for stacks that omit proxy auth."
   [base run-directory control-socket boot-read-paths]
   (cond-> base
     (and base (not (:disabled? base)))
@@ -362,6 +364,7 @@
         (update :allow-read
                 #(vec (concat (or % [])
                               boot-read-paths
+                              [(.getParent (java.io.File. (str control-socket)))]
                               (when-let [ca-file (:ca-file base)]
                                 [ca-file]))))
         (assoc :unix-connect [(str control-socket)]

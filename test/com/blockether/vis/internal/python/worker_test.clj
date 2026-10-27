@@ -21,7 +21,7 @@
             [com.blockether.vis.internal.sandbox.jail]
             [com.blockether.vis.internal.util]
             [com.blockether.vis-python-runtime]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [defdescribe describe expect it]]
             [taoensso.telemere :as tel])
   (:import (java.util.concurrent.atomic AtomicLong)))
 
@@ -443,6 +443,166 @@ print(worker_value)"))))
              (expect (not (.exists (.getParentFile path)))))
            (finally (doseq [^java.io.File file (reverse (file-seq (.toFile base)))]
                       (java.nio.file.Files/deleteIfExists (.toPath file))))))))
+
+(defn- runtime-dir-fixture
+  "A private task directory below target/ whose control socket path is over 103 bytes,
+   but not relative to the working directory."
+  ^java.io.File []
+  ;; The relative bind name, target/wt-XXXXXXXX/<40 bytes>/vis-py-XXXXXXXX/control.sock,
+  ;; is 88 bytes. Any real working directory makes the absolute path longer than 103.
+  (let [base
+        (.getCanonicalFile (java.io.File. "target"
+                                          (str "wt-" (subs (str (java.util.UUID/randomUUID)) 0 8))))
+
+        dir
+        (java.io.File. base (str "zadanie-" (apply str (repeat 16 "ż"))))]
+
+    (.mkdirs dir)
+    dir))
+
+(defn- delete-tree!
+  [^java.io.File root]
+  (doseq [^java.io.File file (reverse (file-seq root))]
+    (java.nio.file.Files/deleteIfExists (.toPath file))))
+
+(defn- with-runtime-dir
+  "Run `f` with the `vis.runtime.dir` setting, then restore the previous value."
+  [value f]
+  (let [previous (System/getProperty "vis.runtime.dir")]
+    (try (System/setProperty "vis.runtime.dir" (str value))
+         (f)
+         (finally (if previous
+                    (System/setProperty "vis.runtime.dir" previous)
+                    (System/clearProperty "vis.runtime.dir"))))))
+
+(defdescribe
+  worker-task-runtime-dir-test
+  ;; #423: a jailed task without /tmp keeps worker IPC in its own runtime directory.
+  (describe
+    "with a task runtime directory"
+    (it
+      "dials a long non-ASCII socket path, then removes only its own endpoint"
+      (let [dir
+            (runtime-dir-fixture)
+
+            sibling
+            (doto (java.io.File. dir "other-task.sock") (spit "keep"))
+
+            socket
+            (atom nil)
+
+            launch
+            @#'worker/launch-policy!]
+
+        (try (with-runtime-dir
+               dir
+               (fn []
+                 (with-redefs-fn {#'worker/launch-policy!
+                                  (fn [k run-directory control-socket boot-read-paths]
+                                    (reset! socket (java.io.File. ^String control-socket))
+                                    (launch k run-directory control-socket boot-read-paths))}
+                   (fn []
+                     (with-worker-context
+                       (fn [session]
+                         (expect (= "typed\n"
+                                    (:stdout (env/run-python-block
+                                               session
+                                               "print(await worker_echo('typed'))"))))))))))
+             (let [^java.io.File path @socket]
+               (expect (some? path))
+               (expect (= (.getPath dir) (.getParent (.getParentFile path))))
+               (expect (< 103 (count (.getBytes (.getPath path) "UTF-8"))))
+               (expect (not (.exists path)))
+               (expect (not (.exists (.getParentFile path)))))
+             (expect (= ["other-task.sock"] (vec (.list dir))))
+             (expect (= "keep" (slurp sibling)))
+             (finally (delete-tree! (.getParentFile dir))))))
+    (it "starts concurrent and repeated workers on unique endpoints"
+        (let [dir
+              (runtime-dir-fixture)
+
+              sockets
+              (atom #{})
+
+              launch
+              @#'worker/launch-policy!]
+
+          (try (with-runtime-dir
+                 dir
+                 (fn []
+                   (with-redefs-fn {#'worker/launch-policy!
+                                    (fn [k run-directory control-socket boot-read-paths]
+                                      (swap! sockets conj control-socket)
+                                      (launch k run-directory control-socket boot-read-paths))}
+                     (fn []
+                       (let [run (fn [n]
+                                   (with-worker-context
+                                     (fn [session]
+                                       (:stdout (env/run-python-block
+                                                  session
+                                                  (str "print(await worker_echo(" n "))"))))))]
+                         (expect (= ["0\n" "1\n" "2\n"]
+                                    (mapv deref (mapv #(future (run %)) (range 3)))))
+                         (expect (= "3\n" (run 3))))))))
+               (expect (= 4 (count @sockets)))
+               (expect (empty? (.list dir)))
+               (finally (delete-tree! (.getParentFile dir))))))
+    (it
+      "fails closed on a missing, relative, symbolic or shared setting"
+      (let [dir
+            (runtime-dir-fixture)
+
+            link
+            (java.io.File. (.getParentFile dir) "link")
+
+            shared
+            (java.io.File. (.getParentFile dir) "shared")]
+
+        (try (java.nio.file.Files/createSymbolicLink
+               (.toPath link)
+               (.toPath dir)
+               (make-array java.nio.file.attribute.FileAttribute 0))
+             (.mkdirs shared)
+             (java.nio.file.Files/setPosixFilePermissions
+               (.toPath shared)
+               (java.nio.file.attribute.PosixFilePermissions/fromString "rwxrwxrwx"))
+             (doseq [[setting reason] [[(java.io.File. dir "missing") "does not exist"]
+                                       ["relative/task" "is not an absolute path"]
+                                       [link "contains a symbolic link"]
+                                       [shared "is writable by other users"]]]
+               (let [error (with-runtime-dir
+                             setting
+                             (fn []
+                               (try (with-worker-context (fn [_]
+                                                           nil))
+                                    nil
+                                    (catch Throwable t
+                                      (str/join " "
+                                                (keep ex-message
+                                                      (take-while some? (iterate ex-cause t))))))))]
+                 (expect (some? error))
+                 (expect (str/includes? (str error) reason) (str error))))
+             (expect (empty? (.list dir)))
+             (finally (delete-tree! (.getParentFile dir))))))
+    (it "refuses a socket that does not fit, also relative to the working directory"
+        (let [dir
+              (runtime-dir-fixture)
+
+              deep
+              (doto (java.io.File. dir (apply str (repeat 60 "ż"))) (.mkdirs))
+
+              socket
+              (.toPath (java.io.File. deep "control.sock"))]
+
+          (try (expect (= {:bind "/tmp/vis-py-1/control.sock" :dial "/tmp/vis-py-1/control.sock"}
+                          (#'worker/socket-names
+                           (.toPath (java.io.File. "/tmp/vis-py-1/control.sock"))
+                           "/")))
+               (expect (str/includes? (try (#'worker/socket-names socket "/")
+                                           nil
+                                           (catch clojure.lang.ExceptionInfo e (ex-message e)))
+                                      "Set VIS_RUNTIME_DIR to a shorter directory"))
+               (finally (delete-tree! (.getParentFile dir))))))))
 
 ;; Regression, CI run 33987564965: the first pip install was invisible to
 ;; a worker whose package directory did not exist when its jail was installed.

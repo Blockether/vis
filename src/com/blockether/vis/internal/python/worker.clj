@@ -51,13 +51,20 @@
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel])
   (:import (com.blockether.vispython Locations Sources)
-           (java.io File FileOutputStream)
+           (java.io File FileOutputStream IOException)
            (java.lang ProcessHandle)
            (java.lang.management ManagementFactory)
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
            (java.nio.channels SelectionKey Selector ServerSocketChannel SocketChannel)
-           (java.nio.file CopyOption Files StandardCopyOption)
-           (java.nio.file.attribute FileAttribute PosixFilePermissions)
+           (java.nio.charset StandardCharsets)
+           (java.nio.file CopyOption
+                          FileAlreadyExistsException
+                          Files
+                          InvalidPathException
+                          LinkOption
+                          Path
+                          StandardCopyOption)
+           (java.nio.file.attribute FileAttribute PosixFilePermission PosixFilePermissions)
            (java.util.concurrent ExecutionException TimeUnit)
            (java.util.concurrent.locks ReentrantLock)))
 
@@ -471,6 +478,126 @@
                                          "vis-python-workers-stop"))
               (catch IllegalStateException _ nil))))
 
+(def ^:private MAX_SOCKET_PATH_BYTES
+  "The portable AF_UNIX path limit: macOS has 104 bytes of `sun_path`, with its NUL."
+  103)
+
+(defn- fits-socket-path?
+  [path]
+  (<= (alength (.getBytes (str path) StandardCharsets/UTF_8)) (long MAX_SOCKET_PATH_BYTES)))
+
+(defn- runtime-dir-setting
+  "The task runtime directory: JVM property `vis.runtime.dir`, then `VIS_RUNTIME_DIR`.
+   Empty is unset. A set value holds every worker control endpoint (#423)."
+  []
+  (or (not-empty (System/getProperty "vis.runtime.dir"))
+      (not-empty (System/getenv "VIS_RUNTIME_DIR"))))
+
+(defn- refuse-runtime-dir!
+  [setting reason]
+  (throw (ex-info (str "VIS_RUNTIME_DIR "
+                       (pr-str setting)
+                       " "
+                       reason
+                       ". Python workers do not start until it names a private directory.")
+                  {:type :vis/python-worker :runtime-dir setting})))
+
+(defn- runtime-dir
+  "The checked parent of worker control directories, or nil when unset. A set value
+   fails closed and never falls back to `/tmp`: it must be an existing absolute
+   directory without symbolic links that only its owner can write."
+  ^java.nio.file.Path []
+  (when-let [setting (runtime-dir-setting)]
+    (let [^Path path (try (Path/of ^String setting (make-array String 0))
+                          (catch InvalidPathException _
+                            (refuse-runtime-dir! setting "is not a path")))
+          no-follow (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])]
+
+      (when-not (.isAbsolute path) (refuse-runtime-dir! setting "is not an absolute path"))
+      (let [^Path real (try (.toRealPath path (make-array LinkOption 0))
+                            (catch IOException _ (refuse-runtime-dir! setting "does not exist")))]
+        (when-not (= real (.normalize path))
+          (refuse-runtime-dir! setting (str "contains a symbolic link; use " real)))
+        (when-not (Files/isDirectory real no-follow)
+          (refuse-runtime-dir! setting "is not a directory"))
+        (when (some #{PosixFilePermission/GROUP_WRITE PosixFilePermission/OTHERS_WRITE}
+                    (Files/getPosixFilePermissions real no-follow))
+          (refuse-runtime-dir! setting "is writable by other users"))
+        real))))
+
+(defn- create-control-dir!
+  "A new private directory for ONE worker's control socket. A short random name
+   keeps concurrent workers and tasks apart and leaves room in the AF_UNIX limit.
+   Mode 0700 keeps other users from connecting first. A set runtime directory must
+   belong to this user."
+  ^java.nio.file.Path []
+  (let [task-dir
+        (runtime-dir)
+
+        parent
+        (or task-dir (.toPath (io/file "/tmp")))
+
+        private
+        (into-array FileAttribute
+                    [(PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString
+                                                             "rwx------"))])
+
+        dir
+        (loop [attempt 0]
+          (let [name (str "vis-py-" (subs (str (java.util.UUID/randomUUID)) 0 8))
+                created (try (Files/createDirectory (.resolve parent name) private)
+                             (catch FileAlreadyExistsException error
+                               (when (>= attempt 15) (throw error))))]
+
+            (or created (recur (inc attempt)))))]
+
+    (when (and task-dir
+               (not= (Files/getOwner dir (make-array LinkOption 0))
+                     (Files/getOwner task-dir (make-array LinkOption 0))))
+      (Files/deleteIfExists dir)
+      (refuse-runtime-dir! (str task-dir) "belongs to another user"))
+    dir))
+
+(defn- socket-names
+  "How the parent binds and the child dials `socket`, each within the AF_UNIX limit.
+   An absolute path that fits serves both. A longer one is relative to each process'
+   own directory: the JVM start directory for the bind, `child-dir` for the dial.
+   Both name the same file: each is relative to a real directory."
+  [^java.nio.file.Path socket ^String child-dir]
+  (if (fits-socket-path? socket)
+    {:bind (str socket) :dial (str socket)}
+    (let [real
+          (.resolve (.toRealPath (.getParent socket) (make-array LinkOption 0))
+                    (.getFileName socket))
+
+          from
+          (fn [^java.nio.file.Path base]
+            (str (.relativize (.toRealPath base (make-array LinkOption 0)) real)))
+
+          names
+          {:bind (from (.toAbsolutePath (Path/of "" (make-array String 0))))
+           :dial (from (Path/of child-dir (make-array String 0)))}]
+
+      (when-not (every? fits-socket-path? (vals names))
+        (throw (ex-info (str "The Python worker control socket " socket
+                             " is longer than " MAX_SOCKET_PATH_BYTES
+                             " bytes, also relative to the working"
+                             " directory. Set VIS_RUNTIME_DIR to a shorter directory.")
+                        {:type :vis/python-worker :socket (str socket)})))
+      names)))
+
+(defn- bind-control!
+  "Bind `server` at `name`, or fail closed with the socket in the error."
+  [^ServerSocketChannel server ^String name ^java.nio.file.Path socket]
+  (try (.bind server (UnixDomainSocketAddress/of name))
+       (catch IOException error
+         (throw (ex-info (str "The Python worker control socket " socket
+                              " cannot bind: " (ex-message error)
+                              ". Start Vis from the directory in -Duser.dir,"
+                              " or set VIS_RUNTIME_DIR to a shorter directory.")
+                         {:type :vis/python-worker :socket (str socket)}
+                         error)))))
+
 (defn- start!
   "Start `k` behind its live session policy and answer it connected. The parent
    binds first; the run directory is the worker's only host-owned writable grant."
@@ -481,18 +608,14 @@
              "-" (util/now-ms)
              "-" (subs (str (java.util.UUID/randomUUID)) 0 8))
 
+        ;; Keep logs under HOME, but not the AF_UNIX endpoint: home paths can
+        ;; exceed the portable 104-byte limit. The endpoint is in /tmp, or in the
+        ;; task runtime directory (#423); remove it after the handshake.
+        control-dir
+        (create-control-dir!)
+
         dir
         (worker-dir stamp)
-
-        ;; Keep logs under HOME, but not the AF_UNIX endpoint: home paths can
-        ;; exceed the portable 104-byte limit. A private random directory prevents
-        ;; another user connecting before our child; remove it after the handshake.
-        control-dir
-        (Files/createTempDirectory (.toPath (io/file "/tmp"))
-                                   "vis-py-"
-                                   (into-array FileAttribute
-                                               [(PosixFilePermissions/asFileAttribute
-                                                  (PosixFilePermissions/fromString "rwx------"))]))
 
         socket
         (.toFile (.resolve control-dir "control.sock"))
@@ -500,13 +623,15 @@
         log
         (io/file dir "worker.log")
 
-        address
-        (UnixDomainSocketAddress/of (.toPath socket))]
+        ;; #420: the child starts in user.dir, which the boot policy grants.
+        child-dir
+        (System/getProperty "user.dir")]
 
     (with-open [server (ServerSocketChannel/open StandardProtocolFamily/UNIX)]
       (try
-        (.bind server address)
-        (let [library (try (python-runtime/ensure-library!)
+        (let [names (socket-names (.toPath socket) child-dir)
+              _ (bind-control! server (:bind names) (.toPath socket))
+              library (try (python-runtime/ensure-library!)
                            (catch Throwable t
                              (tel/log! {:level :debug
                                         :id ::no-library-to-hand-over
@@ -550,11 +675,10 @@
           (let [^Process process
                 ;; #420: start in user.dir, which the boot policy grants. A host can set
                 ;; -Duser.dir apart from its process directory, which the jail does not grant.
-                (process-jail/spawn!
-                  (child-argv library (.getAbsolutePath socket) guest-dir dir runtime-roots)
-                  (System/getProperty "user.dir")
-                  policy
-                  {:extra-environment extra :merge-stderr? true})
+                (process-jail/spawn! (child-argv library (:dial names) guest-dir dir runtime-roots)
+                                     child-dir
+                                     policy
+                                     {:extra-environment extra :merge-stderr? true})
                 _ (drain-output! process log)
                 _ (prune-run-dir-on-exit! process log)
                 accepted (await-worker-connection server process)]

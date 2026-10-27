@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Sandbox: `VIS_RUNTIME_DIR` keeps the control socket of each Python worker in a task directory, not in `/tmp` (#423).
+
 ## [v0.3.4] - 2026-10-26
 
 ### Added

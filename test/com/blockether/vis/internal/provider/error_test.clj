@@ -1140,6 +1140,12 @@
         (expect (= :python-worker
                    (perr/provider-error-kind (ex-info "the python worker did not answer exec"
                                                       {:type error-type :op "exec"}))))))
+  ;; #423: a refused VIS_RUNTIME_DIR names its reason only in the error message.
+  (it "shows the worker's own cause, so a refused runtime directory is named"
+      (let [reason "VIS_RUNTIME_DIR \"/task/run\" does not exist."
+            explanation (perr/provider-error-explanation
+                          (ex-info reason {:type :vis/python-worker :runtime-dir "/task/run"}))]
+        (expect (str/includes? explanation (str "Cause: " reason)))))
   (it "does NOT trip on an ordinary provider failure"
       (expect (not= :python-worker
                     (perr/provider-error-kind {:message "Provider unavailable"
