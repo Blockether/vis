@@ -96,6 +96,23 @@
 
 (def ^:private ^:dynamic *modal-backgrounds* [])
 
+(def ^:dynamic *on-modal-footprints*
+  "Function that learns where the open modals paint, or nil. The screen binds it to keep
+   the pictures that no modal covers. It gets one of these values:
+
+   - a vector of `[left top right bottom]` rectangles, one for each open modal, in
+     inclusive physical screen coordinates;
+   - `:unknown` while an open modal has not painted yet;
+   - `:blank` after a resize wiped the host cells under the modals."
+  nil)
+
+(defn- report-modal-footprints!
+  "Tell `*on-modal-footprints*` where the open modals paint now."
+  []
+  (when-let [f *on-modal-footprints*]
+    (let [footprints (mapv (comp :footprint deref :state) *modal-backgrounds*)]
+      (when (seq footprints) (f (if (every? some? footprints) footprints :unknown))))))
+
 (defn- invalidate-modal-backgrounds!
   "Discard every active backdrop for this screen after a terminal resize."
   [screen]
@@ -104,7 +121,9 @@
 
           :when (identical? screen (:screen background))]
 
-    (swap! (:state background) assoc :restore! nil :footprint nil :cursor nil)))
+    (swap! (:state background) assoc :restore! nil :footprint nil :cursor nil))
+  (when-let [f *on-modal-footprints*]
+    (f :blank)))
 
 (def ^:dynamic *dialog-region*
   "Pane band that scopes dialogs opened from it, or nil for the whole terminal.
@@ -196,7 +215,8 @@
           restore! (or restore! (frame-restorer (:screen background)))]
 
       (when footprint (apply restore! footprint))
-      (swap! state assoc :restore! restore! :footprint [left top right bottom]))))
+      (swap! state assoc :restore! restore! :footprint [left top right bottom])
+      (report-modal-footprints!))))
 
 (defn- finish-modal-background!
   "Restore the modal's footprint and cursor without flushing an extra frame."
@@ -210,10 +230,13 @@
   "Keep each modal's backdrop separate, including nested dialogs and failures."
   [screen & body]
   `(let [background# (capture-modal-background ~screen)]
-     (binding [*modal-backgrounds* (cond-> *modal-backgrounds*
-                                     background#
-                                     (conj background#))]
-       (try ~@body (finally (finish-modal-background! background#))))))
+     (try
+       (binding [*modal-backgrounds* (cond-> *modal-backgrounds*
+                                       background#
+                                       (conj background#))]
+         (try (report-modal-footprints!) ~@body (finally (finish-modal-background! background#))))
+       ;; The modals that stay open paint over less of the host now.
+       (finally (report-modal-footprints!)))))
 
 (defn clear-screen!
   "Fill the entire screen with terminal background. Call before sub-dialogs

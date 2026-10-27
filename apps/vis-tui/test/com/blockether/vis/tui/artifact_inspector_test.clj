@@ -1,5 +1,6 @@
 (ns com.blockether.vis.tui.artifact-inspector-test
-  (:require [clojure.string :as str]
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.app-model :as app-model]
             [com.blockether.vis.tui.artifact-inspector :as inspector]
@@ -59,7 +60,7 @@
   artifact-inspector-layout
   (it "keeps composer input and session output in distinct visible sections"
       (let [capture
-            (paint-component (inspector/inspector-modal-component staged produced nil))
+            (paint-component (inspector/inspector-modal-component staged [] produced nil))
 
             text
             (cap/frame-text capture)]
@@ -75,31 +76,32 @@
 
             text
             (cap/frame-text (paint-component
-                              (inspector/inspector-modal-component [] artifacts nil)))]
+                              (inspector/inspector-modal-component [] [] artifacts nil)))]
 
         (expect (str/includes? text "PLAN-search.md"))
         (expect (str/includes? text "Produced in this session"))
         (expect (str/includes? text "notes.pdf"))
         (expect (not (str/includes? text "Specifications")))))
   (it "shows an explicit empty state instead of silently doing nothing"
-      (let [text (cap/frame-text (paint-component (inspector/inspector-modal-component [] [] nil)))]
+      (let [text (cap/frame-text (paint-component
+                                   (inspector/inspector-modal-component [] [] [] nil)))]
         (expect (str/includes? text "No attachments in this session"))))
   (it "shows index failures as an explicit state"
       (let [text (cap/frame-text
                    (paint-component
-                     (inspector/inspector-modal-component [] [] "Artifact index unavailable")))]
+                     (inspector/inspector-modal-component [] [] [] "Artifact index unavailable")))]
         (expect (str/includes? text "Artifact index unavailable")))))
 
 (defdescribe artifact-inspector-selection
              (it "selects staged rows first and collapses produced filename versions newest-first"
-                 (let [rows (inspector/inspector-rows staged produced)]
+                 (let [rows (inspector/inspector-rows staged [] produced)]
                    (expect (= [:staged :produced :produced] (mapv :source rows)))
                    (expect (= ["diagram.png" "decision.html" "notes.pdf"] (mapv :filename rows)))
                    (expect (= [nil 2 1] (mapv :version-count rows)))
                    (expect (= "iteration-new" (:iteration-id (second rows))))))
              (it "returns open and staged-only remove actions from the pure key handler"
                  (let [component
-                       (inspector/inspector-modal-component staged produced nil)
+                       (inspector/inspector-modal-component staged [] produced nil)
 
                        on-key
                        (:on-key component)
@@ -124,6 +126,40 @@
                               (:action (:com.blockether.vis.tui.dialogs/done remove-result))))
                    (expect (nil? (:com.blockether.vis.tui.dialogs/done protected-result))))))
 
+;; Regression: C-x i said "No attachments in this session" while the transcript showed a
+;; picture that the person had pasted into a message.
+(defdescribe
+  artifact-inspector-sent-pictures
+  (let [sent [{:path "/tmp/clipboard.png"
+               :mime "image/png"
+               :name "clipboard.png"
+               :width 940
+               :height 1064
+               :label "PNG · 940x1064"}]]
+    (it "lists the pictures sent in the session between the staged and the produced rows"
+        (let [rows (inspector/inspector-rows staged sent produced)
+              text (cap/frame-text (paint-component
+                                     (inspector/inspector-modal-component [] sent [] nil)))]
+
+          (expect (= [:staged :sent :produced :produced] (mapv :source rows)))
+          (expect (= "/tmp/clipboard.png" (get-in (second rows) [:image :path])))
+          (expect (str/includes? text "Sent in this session"))
+          (expect (str/includes? text "clipboard.png"))
+          (expect (str/includes? text "PNG · 940x1064"))
+          (expect (not (str/includes? text "No attachments in this session")))))
+    (it "opens a sent picture in the image viewer on Enter and externally on o"
+        (let [component (inspector/inspector-modal-component [] sent [] nil)
+              geom ((:measure component) (:init component) 96 24)
+              done #(:com.blockether.vis.tui.dialogs/done
+                      ((:on-key component) (:init component) % geom))]
+
+          (expect (= {:action :view :index 0}
+                     (-> (done (KeyStroke. KeyType/Enter))
+                         (update :row :index)
+                         (set/rename-keys {:row :index}))))
+          (expect (= :open (:action (done (KeyStroke. \o false false)))))
+          (expect (nil? (done (KeyStroke. KeyType/Delete))) "a sent picture cannot be removed")))))
+
 (defdescribe
   artifact-inspector-paging
   (it
@@ -134,7 +170,7 @@
                 (range 50))
 
           component
-          (inspector/inspector-modal-component [] attachments nil)
+          (inspector/inspector-modal-component [] [] attachments nil)
 
           measure
           (:measure component)
@@ -191,6 +227,7 @@
                          {"id" "app-2" "title" "Todo" "key" "todo" "is_stale" true}]))]
 
         (let [rows (inspector/inspector-rows []
+                                             []
                                              (:artifacts (inspector/fetch-session-artifacts!
                                                            "session-1")))]
           (expect (= #{"app-1" "app-2" "app-3"} (set (map :view-id rows))))
@@ -241,17 +278,17 @@
 (defdescribe
   app-attachment-rows
   (it "keeps one row for each app, also when two apps share a file name"
-      (let [rows (inspector/inspector-rows [] app-artifacts)]
+      (let [rows (inspector/inspector-rows [] [] app-artifacts)]
         (expect (= #{"view-1" "view-2"} (set (map :view-id rows))))
         (expect (= :stale (:app-status (first (filter #(= "view-2" (:view-id %)) rows)))))))
   (it "shows the app title and its lifecycle state"
       (let [text (cap/frame-text (paint-component
-                                   (inspector/inspector-modal-component [] app-artifacts nil)))]
+                                   (inspector/inspector-modal-component [] [] app-artifacts nil)))]
         (expect (str/includes? text "Second review  ·  App  ·  Disconnected"))
         (expect (str/includes? text "Review  ·  App"))))
   (it "opens an app on the app surface and other text in its viewer"
       (let [enter (fn [artifacts]
-                    (let [component (inspector/inspector-modal-component [] artifacts nil)]
+                    (let [component (inspector/inspector-modal-component [] [] artifacts nil)]
                       (get-in ((:on-key component) (:init component) (KeyStroke. KeyType/Enter) {})
                               [:com.blockether.vis.tui.dialogs/done :action])))]
         (expect (= :app (enter [(first app-artifacts)])))

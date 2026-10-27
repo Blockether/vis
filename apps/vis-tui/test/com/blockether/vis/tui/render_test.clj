@@ -6284,7 +6284,8 @@
           (expect (not (str/includes? text "Thumbnail")))
           (expect (str/includes? text "shot-1.png"))
           (expect (str/includes? text "PNG · 1600x900 · 1.2 MB"))
-          (expect (str/includes? text "Click a thumbnail or press Ctrl+X I to view pictures."))))
+          (expect (str/includes? text
+                                 "Click a thumbnail or press Ctrl+X Shift+I to view pictures."))))
     (it "keeps the aspect of a tall picture inside the thumbnail column"
         (let [img (:img (first (filter #(= :image (:kind %))
                                        (:line-meta (data :kitty (md [[1206 2622]]))))))]
@@ -6318,8 +6319,9 @@
         (let [{:keys [text line-meta]} (data nil (md (repeat 3 [1200 900])))]
           (expect (str/includes? text "shot-2.png"))
           (expect (str/includes? text "PNG · 1200x900 · 1.2 MB"))
-          (expect (str/includes? text "This terminal cannot show pictures. Ctrl+X O opens"))
-          (expect (not (str/includes? text "Ctrl+X I")) "A plain terminal has no image viewer")
+          (expect (str/includes? text "This terminal cannot show pictures. Ctrl+X Shift+O opens"))
+          (expect (not (str/includes? text "Ctrl+X Shift+I"))
+                  "A plain terminal has no image viewer")
           (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"] (targets line-meta)))
           (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta))))
     ;; Regression: a card that ended the prompt lost its bottom edge to margin trimming.

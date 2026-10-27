@@ -123,39 +123,53 @@
               newest))))
 
 (defn inspector-rows
-  "Normalize staged composer files and produced artifacts into selectable rows.
-   Staged rows come first; otherwise the newest produced artifact is selected."
-  [staged artifacts]
-  (into (mapv (fn [attachment]
-                {:source :staged
-                 :filename (str (or (:filename attachment) "attachment"))
-                 :media-type (str (or (:media-type attachment) "application/octet-stream"))
-                 :size (:size attachment)
-                 :attachment attachment})
-              staged)
-        (produced-rows artifacts)))
+  "Normalize staged composer files, the pictures sent in the session's messages and
+   produced artifacts into selectable rows, in that order. Each `sent` picture is an
+   image viewer entry `{:path :mime :name :label}`."
+  [staged sent artifacts]
+  (-> (mapv (fn [attachment]
+              {:source :staged
+               :filename (str (or (:filename attachment) "attachment"))
+               :media-type (str (or (:media-type attachment) "application/octet-stream"))
+               :size (:size attachment)
+               :attachment attachment})
+            staged)
+      (into (map-indexed (fn [i image]
+                           {:source :sent
+                            :filename (str (or (:name image) "picture"))
+                            :media-type (str (or (:mime image) "image/png"))
+                            :label (:label image)
+                            :index i
+                            :image image}))
+            sent)
+      (into (produced-rows artifacts))))
 
 (defn- size-label [size] (when (number? size) (fmt/format-bytes size)))
 
 (defn- row-label
-  [{:keys [source filename media-type size version version-count title app-status] :as row}]
-  (if (app-model/app-row? row)
-    (str (or (not-empty (str title)) filename)
-         "  ·  App"
-         (when app-status (str "  ·  " (get app-model/status-label app-status))))
-    (str filename
-         (when (= source :produced)
-           (str (when version (str "  v" version))
-                (when (> (long version-count) 1) (str "  ·  " version-count " versions"))))
-         "  ·  "
-         media-type
-         (when-let [label (size-label size)]
-           (str "  ·  " label)))))
+  [{:keys [source filename media-type size version version-count title app-status label] :as row}]
+  (cond (app-model/app-row? row) (str (or (not-empty (str title)) filename)
+                                      "  ·  App"
+                                      (when app-status
+                                        (str "  ·  " (get app-model/status-label app-status))))
+        (and (= :sent source) (not (str/blank? label))) (str filename "  ·  " label)
+        :else (str filename
+                   (when (= source :produced)
+                     (str (when version (str "  v" version))
+                          (when (> (long version-count) 1)
+                            (str "  ·  " version-count " versions"))))
+                   "  ·  "
+                   media-type
+                   (when-let [label (size-label size)]
+                     (str "  ·  " label)))))
 
 (defn- display-rows
   [rows load-error]
   (let [staged
         (filterv #(= :staged (:source %)) rows)
+
+        sent
+        (filterv #(= :sent (:source %)) rows)
 
         produced
         (filterv #(= :produced (:source %)) rows)]
@@ -163,6 +177,9 @@
     (cond-> []
       (seq staged)
       (into (cons {:header "Ready to send"} staged))
+
+      (seq sent)
+      (into (cons {:header "Sent in this session"} sent))
 
       (seq produced)
       (into (cons {:header "Produced in this session"} produced))
@@ -187,11 +204,11 @@
       0)))
 
 (defn inspector-modal-component
-  "Pure attachment inspector. Enter opens an app on its app surface and any other
-   row in its viewer; o keeps the external opener."
-  [staged artifacts load-error]
+  "Pure attachment inspector. Enter opens an app on its app surface, a sent picture in
+   the image viewer and any other row in its viewer; o keeps the external opener."
+  [staged sent artifacts load-error]
   (let [rows
-        (vec (sort-by #(if (= :staged (:source %)) 0 1) (inspector-rows staged artifacts)))
+        (inspector-rows staged sent artifacts)
 
         display
         (display-rows rows load-error)
@@ -305,10 +322,11 @@
            KeyType/Home (assoc state :selected 0)
            KeyType/End (assoc state :selected (max 0 (dec (long total))))
            KeyType/Enter {::dlg/done (when selected-row
-                                       {:action (if (and (= :produced (:source selected-row))
-                                                         (app-model/app-row? selected-row))
-                                                  :app
-                                                  :open)
+                                       {:action (cond (and (= :produced (:source selected-row))
+                                                           (app-model/app-row? selected-row))
+                                                      :app
+                                                      (= :sent (:source selected-row)) :view
+                                                      :else :open)
                                         :row selected-row})}
            KeyType/Character (if (and (= \o (.getCharacter key)) selected-row)
                                {::dlg/done {:action :open :row selected-row}}
@@ -321,8 +339,8 @@
 
 (defn show!
   "Open the inspector and return its selected action, or nil on close."
-  [^TerminalScreen screen staged artifacts load-error]
-  (dlg/run-modal! screen (inspector-modal-component staged artifacts load-error)))
+  [^TerminalScreen screen staged sent artifacts load-error]
+  (dlg/run-modal! screen (inspector-modal-component staged sent artifacts load-error)))
 
 (def ^:private image-zoom-max
   "Largest zoom of the image viewer, as a multiple of the fitted picture."

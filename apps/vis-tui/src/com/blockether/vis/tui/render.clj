@@ -5444,8 +5444,8 @@
 
         hint-text
         (if graphical?
-          "Click a thumbnail or press Ctrl+X I to view pictures. Ctrl+X O opens the newest one."
-          "This terminal cannot show pictures. Ctrl+X O opens the newest one.")
+          "Click a thumbnail or press Ctrl+X Shift+I to view pictures. Ctrl+X Shift+O opens the newest."
+          "This terminal cannot show pictures. Ctrl+X Shift+O opens the newest one.")
 
         hint
         (attachment-card-row :image-table-hint hint-text {:table-hint hint-text})]

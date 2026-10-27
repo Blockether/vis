@@ -3354,6 +3354,66 @@ therapy line 2"
                      (expect (> (long top) 10))
                      (expect (seq (above [(region 3 4)] top)))))))
 
+;; Regression: a modal hid every transcript picture, also a thumbnail far away from the
+;; modal box. A modal now hides only the pictures that it covers.
+(defdescribe
+  modal-keeps-uncovered-images-test
+  (let [clear
+        {:row 2 :col 2 :img {:id "clear" :path "/tmp/clear.png" :cols 10 :rows 4}}
+
+        covered
+        {:row 28 :col 55 :img {:id "covered" :path "/tmp/covered.png" :cols 10 :rows 4}}
+
+        ;; The graphics layer while the modal is open, and after it closed.
+        layer-in-modal
+        (fn [dialog!]
+          (let [seen (atom :never)]
+            (with-redefs [timg/images-protocol (constantly :html)]
+              (reset! @#'screen/last-image-regions [clear covered])
+              (let [capture (cap/capture! {:cols 120
+                                           :rows 60
+                                           :keys [\r :esc]
+                                           :paint! (fn [{:keys [screen]}]
+                                                     (#'screen/with-dialog-lock
+                                                      #(dialog!
+                                                         screen
+                                                         (fn []
+                                                           (reset! seen
+                                                             @@#'screen/last-image-regions)))))})]
+                {:error (:error capture)
+                 :in-modal (mapv (comp :id :img) @seen)
+                 :modal-images @@#'screen/modal-images}))))]
+
+    (it "keeps a picture that the modal box does not cover"
+        (let [{:keys [error in-modal modal-images]} (layer-in-modal (fn [screen seen!]
+                                                                      (dlg/text-view-dialog!
+                                                                        screen
+                                                                        "Text" ["a" "b"]
+                                                                        :refresh-fn (fn []
+                                                                                      (seen!)
+                                                                                      ["a" "b"]))))]
+          (expect (nil? error))
+          (expect (= ["clear"] in-modal))
+          (expect (nil? modal-images) "closing the modal forgets its pictures")))
+    (it "keeps every picture hidden under a modal that does not report its box"
+        (let [{:keys [in-modal]} (layer-in-modal (fn [_ seen!]
+                                                   (seen!)))]
+          (expect (= [] in-modal))))
+    (it "keeps the pictures hidden after a resize cleared the screen under the modal"
+        (with-redefs [timg/images-protocol (constantly :html)]
+          (reset! @#'screen/modal-images {:hidden [clear covered] :kept [] :own []})
+          (#'screen/modal-footprints-changed! [[40 20 80 40]])
+          (expect (= ["clear"] (mapv (comp :id :img) @@#'screen/last-image-regions)))
+          (#'screen/modal-footprints-changed! :blank)
+          (#'screen/modal-footprints-changed! [[40 20 80 40]])
+          (expect (= [] @@#'screen/last-image-regions))
+          (reset! @#'screen/modal-images nil)))
+    (it "a box that touches one cell of a picture hides it"
+        (let [clear-of (deref #'screen/images-clear-of)]
+          (expect (= [] (clear-of [clear] [[11 5 20 9]])))
+          (expect (= [clear] (clear-of [clear] [[12 5 20 9]])))
+          (expect (= [clear] (clear-of [clear] [[2 6 20 9]])))))))
+
 (defdescribe
   provider-limits-active-provider-test
   "The background limits poller must resolve the SAME provider the footer

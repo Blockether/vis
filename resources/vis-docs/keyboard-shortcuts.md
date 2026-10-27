@@ -105,8 +105,8 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | `toggle-help` | Ctrl+X h | Show or hide the keyboard shortcuts |
 | `pick-file` | Ctrl+X a | Attach a file |
 | `focus-attachments` | Ctrl+X i | Open the attachments and apps |
-| `view-images` | Ctrl+X I | View the pictures |
-| `open-newest-image` | Ctrl+X O | Open the newest picture |
+| `view-images` | Ctrl+X I (Shift+I) | View the pictures |
+| `open-newest-image` | Ctrl+X O (Shift+O) | Open the newest picture |
 | `toggle-voice-recording` | Ctrl+X v | Start or stop voice input |
 | `toggle-voice-conversation` | Ctrl+X b | Start or stop a voice conversation |
 | `providers` | Ctrl+X o | Open the providers |
@@ -169,12 +169,13 @@ small preview of the picture, its name, type and size, and an **Open externally*
 button opens the picture in your system's picture app. kitty, Ghostty, WezTerm, Warp and iTerm2 can
 show the previews. Other terminals show the same table without previews.
 
-To open the newest picture in your picture app, press **Ctrl+X O**. This key works in every
-terminal.
+To open the newest picture in your picture app, press **Ctrl+X Shift+O**. This key works in every
+terminal. **Ctrl+X o** without Shift opens the providers.
 
 To see one picture larger, click its preview. To see every picture in the session, press
-**Ctrl+X I**. The picture viewer opens and fills most of the window. A terminal that cannot show
-pictures has no picture viewer. There, use **Ctrl+X O** or the **Open externally** buttons.
+**Ctrl+X Shift+I**. The picture viewer opens and fills most of the window. A terminal that cannot
+show pictures has no picture viewer. There, use **Ctrl+X Shift+O** or the **Open externally**
+buttons. **Ctrl+X i** without Shift lists the attachments of the session.
 
 To see a detail, zoom in. Turn the mouse wheel over the picture to zoom at the pointer, or press
 **+** and **-**. The header shows the zoom, for example `250%`. Then drag the picture with the mouse

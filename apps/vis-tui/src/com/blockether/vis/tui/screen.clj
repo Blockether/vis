@@ -2372,6 +2372,60 @@
   [source transcript-ranges input-ranges]
   (if (= source :input) input-ranges transcript-ranges))
 
+(defonce ^:private modal-images
+  ;; While a modal is open: `:hidden` holds the transcript pictures that it took off the
+  ;; graphics layer, `:kept` the hidden ones that no open modal covers, and `:own` the
+  ;; pictures that the modal paints itself. nil when no modal is open.
+  (atom nil))
+
+(defn- paint-modal-images!
+  "Place the kept transcript pictures and the modal's own pictures."
+  []
+  (let [{:keys [kept own]} @modal-images]
+    (paint-terminal-images! (into (vec kept) own))))
+
+(defn- images-clear-of
+  "The image `regions` whose whole box stays outside every `[left top right bottom]`
+   rectangle of `footprints`."
+  [regions footprints]
+  (filterv (fn [{:keys [row col img]}]
+             (let [top
+                   (long row)
+
+                   left
+                   (long col)
+
+                   bottom
+                   (+ top (dec (max 1 (long (or (:rows img) 1)))))
+
+                   right
+                   (+ left (dec (max 1 (long (or (:cols img) 1)))))]
+
+               (not-any? (fn [[l t r b]]
+                           (and (<= (long l) right)
+                                (<= left (long r))
+                                (<= (long t) bottom)
+                                (<= top (long b))))
+                         footprints)))
+    regions))
+
+(defn- modal-footprints-changed!
+  "`dlg/*on-modal-footprints*` while a modal is open: show again each hidden picture that
+   no open modal covers."
+  [footprints]
+  (swap! modal-images (fn [images]
+                        (case footprints
+                          :blank
+                          (assoc images
+                            :hidden []
+                            :kept [])
+
+                          :unknown
+                          (assoc images :kept [])
+
+                          (assoc images :kept (images-clear-of (:hidden images) footprints)))))
+  (paint-modal-images!))
+
 (defn- with-dialog-lock
   "Mark a dialog open in app-db AND grab `draw-lock` for the dialog's
    whole session. Holding the lock blocks the render thread cleanly
@@ -2384,16 +2438,21 @@
    repaint over the dialog area."
   [f]
   (.lock ^ReentrantLock draw-lock)
-  ;; Kitty inline images ride ABOVE text cells, so any transcript image would
-  ;; bleed over the modal we're about to open. Drop them (and clear the paint
-  ;; signature) so the dialog is the top surface; the post-dialog frame
-  ;; re-places them once the lock is released and the render thread wakes.
-  (drop-terminal-images!)
-  (try (state/dispatch [:set-dialog-open true])
-       (try (f)
-            (finally (reset! dialog-closed-at (System/currentTimeMillis))
-                     (state/dispatch [:set-dialog-open false])))
-       (finally (.unlock ^ReentrantLock draw-lock))))
+  (let [outer? (nil? @modal-images)]
+    (when outer? (reset! modal-images {:hidden @last-image-regions :kept [] :own []}))
+    ;; Kitty inline images ride ABOVE text cells, so any transcript image would
+    ;; bleed over the modal we're about to open. Drop them (and clear the paint
+    ;; signature) so the dialog is the top surface. When the modal reports where it
+    ;; paints, the pictures that it does not cover come back at once; the post-dialog
+    ;; frame re-places the rest once the lock is released and the render thread wakes.
+    (drop-terminal-images!)
+    (try (state/dispatch [:set-dialog-open true])
+         (try (binding [dlg/*on-modal-footprints* modal-footprints-changed!]
+                (f))
+              (finally (reset! dialog-closed-at (System/currentTimeMillis))
+                       (when outer? (reset! modal-images nil))
+                       (state/dispatch [:set-dialog-open false])))
+         (finally (.unlock ^ReentrantLock draw-lock)))))
 
 (defn- edit-live-input!
   "Edit one input of a live view and send the new value at once as a `change`.
@@ -2846,38 +2905,6 @@
                                (opener/open-local! path))
                              (catch Throwable _ nil)))))
 
-(defn- open-attachment-inspector!
-  "Open the unified staged-file and whole-session artifact surface. Removing a
-   staged row redraws the same modal; produced rows always resolve durable bytes."
-  [^TerminalScreen screen]
-  (let [session-id (get-in @state/app-db [:session :id])]
-    (loop []
-
-      (let [{:keys [artifacts error]} (artifact-inspector/fetch-session-artifacts! session-id)]
-        (when-let [{:keys [action row]} (with-dialog-lock #(artifact-inspector/show!
-                                                             screen
-                                                             (:attachments @state/app-db)
-                                                             artifacts
-                                                             error))]
-          (case action
-            :remove
-            (do (state/dispatch [:remove-attachment (get-in row [:attachment :id])]) (recur))
-
-            :app
-            (do (with-dialog-lock #(app-surface/show! screen session-id row)) (recur))
-
-            :open
-            (case (:source row)
-              :staged
-              (inspect-attachment! (:attachment row))
-
-              :produced
-              (open-produced-artifact! session-id row)
-
-              nil)
-
-            nil))))))
-
 (defn- open-image-externally!
   "Open the picture at `path` in the system viewer, off the input thread."
   [path]
@@ -2900,10 +2927,12 @@
                                          index
                                          {:paint-images!
                                           (fn [regions]
-                                            (paint-terminal-images!
+                                            (swap! modal-images assoc
+                                              :own
                                               (mapv (fn [region]
                                                       (update region :col frame/screen-column))
-                                                    regions)))})
+                                                    regions))
+                                            (paint-modal-images!))})
                                        ;; The enlarged picture leaves the graphics layer with the modal.
                                        (finally (drop-terminal-images!))))]
       (open-image-externally! (:path image)))))
@@ -2938,7 +2967,7 @@
     (cond (empty? images) (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000)
           (timg/graphical-terminal?) (open-image-viewer! screen images (dec (count images)))
           :else (vis/notify!
-                  "This terminal cannot show pictures. Press C-x O to open the newest one."
+                  "This terminal cannot show pictures. Press Ctrl+X Shift+O to open the newest one."
                   :level :info
                   :ttl-ms 3000))))
 
@@ -2948,6 +2977,54 @@
   (if-let [image (peek (session-images (:messages @state/app-db)))]
     (open-image-externally! (:path image))
     (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000)))
+
+(defn- sent-images
+  "The pictures that the person sent in the user messages of `messages`, oldest first."
+  [messages]
+  (session-images (filterv #(= :user (:role %)) messages)))
+
+(defn- open-attachment-inspector!
+  "Open the unified staged-file and whole-session artifact surface. Removing a
+   staged row redraws the same modal; produced rows always resolve durable bytes."
+  [^TerminalScreen screen]
+  (let [session-id (get-in @state/app-db [:session :id])]
+    (loop []
+
+      (let [{:keys [artifacts error]} (artifact-inspector/fetch-session-artifacts! session-id)
+            sent (sent-images (:messages @state/app-db))]
+
+        (when-let [{:keys [action row]} (with-dialog-lock #(artifact-inspector/show!
+                                                             screen
+                                                             (:attachments @state/app-db)
+                                                             sent
+                                                             artifacts
+                                                             error))]
+          (case action
+            :remove
+            (do (state/dispatch [:remove-attachment (get-in row [:attachment :id])]) (recur))
+
+            :view
+            (if (timg/graphical-terminal?)
+              (open-image-viewer! screen sent (:index row))
+              (open-image-externally! (get-in row [:image :path])))
+
+            :app
+            (do (with-dialog-lock #(app-surface/show! screen session-id row)) (recur))
+
+            :open
+            (case (:source row)
+              :staged
+              (inspect-attachment! (:attachment row))
+
+              :sent
+              (open-image-externally! (get-in row [:image :path]))
+
+              :produced
+              (open-produced-artifact! session-id row)
+
+              nil)
+
+            nil))))))
 
 (defn- open-automations!
   "Open the Automations view: run one now, pause or resume it, read its runs, create a
@@ -8212,7 +8289,7 @@
                              ;; user can configure a provider and get a session afterwards.
                              (do (vreset! startup-task ::no-provider)
                                  (vis/notify!
-                                   (str "No provider is configured yet. Press Ctrl+X O to add "
+                                   (str "No provider is configured yet. Press Ctrl+X o to add "
                                         "one, and this session starts right after you save it.")
                                    :level :warn
                                    :ttl-ms nil)))
