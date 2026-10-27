@@ -91,7 +91,7 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | `session-metrics` | Ctrl+X u | Show session metrics |
 | `queue-send-all-now` | Ctrl+X k | Send the queued messages now |
 | `queue-edit` | Ctrl+X e | Edit, send, remove or merge queued messages |
-| `toggle-agent-dock` | Ctrl+X T (Shift+T) | Show or hide the subagent details |
+| `toggle-agent-dock` | Ctrl+X T (Shift+T) | Show or hide the agent team details |
 | `fork-session` | Ctrl+X y | Fork this session |
 | `fork-at-turn` | Ctrl+X t | Fork from an earlier turn |
 | `switch-project` | Ctrl+X w | Open **Projects** |
@@ -131,7 +131,7 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | Ctrl+X k | Send the queued messages now: the running turn reads them at its next step |
 | Ctrl+X 1 to 9 | Send that queued message now, or press again to keep it for the turn end |
 | Ctrl+X e | Select the queued messages to edit, send, remove or merge them. See [Queued messages](#queued-messages) |
-| Ctrl+X T (Shift+T) | Show or hide the subagent table under the one-line **Agents** summary. A click on the summary does the same |
+| Ctrl+X T (Shift+T) | Show or hide the agent team table under the one-line **Agents** summary. A click on the summary does the same |
 
 ### Queued messages
 
