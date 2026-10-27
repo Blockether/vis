@@ -1014,6 +1014,6 @@
             @#'layout/prepared-prose-cache]
 
         (expect (identical? (prepare justice-prose []) (prepare justice-prose [])))
-        (doseq [i (range 100)]
+        (doseq [i (range (+ 100 (long @#'layout/prepared-prose-limit)))]
           (prepare (str "streamed paragraph " i) []))
-        (locking cache (expect (<= (.size cache) 64))))))
+        (locking cache (expect (<= (.size cache) (long @#'layout/prepared-prose-limit)))))))

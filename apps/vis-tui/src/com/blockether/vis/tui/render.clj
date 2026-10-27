@@ -5785,29 +5785,32 @@
   "Durable rows for the files that `activity` content references, in reference order. Files
    that `shown` already holds and live recordings stay out: they have their own surfaces."
   [activity attachments shown]
-  (let [blocks
-        (for [row
-              (mapcat #(tree-seq (comp seq :children) :children %) (:rows activity))
+  ;; Only rows that match an attachment survive, so skip the walk without one.
+  (if (empty? attachments)
+    []
+    (let [blocks
+          (for [row
+                (mapcat #(tree-seq (comp seq :children) :children %) (:rows activity))
 
-              :let [presentation
-                    (:presentation row)]
-              block
-              (concat (:content presentation) (mapcat :content (:sections presentation)))
+                :let [presentation
+                      (:presentation row)]
+                block
+                (concat (:content presentation) (mapcat :content (:sections presentation)))
 
-              :when (activity-attachment-block? block)]
+                :when (activity-attachment-block? block)]
 
-          block)
+            block)
 
-        shown-keys
-        (set (map (juxt :iteration-id :index) shown))]
+          shown-keys
+          (set (map (juxt :iteration-id :index) shown))]
 
-    (into []
-          (comp (keep (fn [id]
-                        (some #(when (= (str id) (str (get % "attachment_id"))) %) attachments)))
-                (map artifact-row)
-                (remove attach/live-artifact?)
-                (remove #(contains? shown-keys ((juxt :iteration-id :index) %))))
-          (distinct (keep :attachment-id blocks)))))
+      (into []
+            (comp (keep (fn [id]
+                          (some #(when (= (str id) (str (get % "attachment_id"))) %) attachments)))
+                  (map artifact-row)
+                  (remove attach/live-artifact?)
+                  (remove #(contains? shown-keys ((juxt :iteration-id :index) %))))
+            (distinct (keep :attachment-id blocks))))))
 
 (def ^:private display-fence-re
   "One complete picture, table or document fence that `attach` or `plt.show()`
@@ -5817,10 +5820,11 @@
 (defn- display-fences
   "The complete display fences in `stdout`, in print order."
   [stdout]
-  (some->> stdout
-           str
-           (re-seq display-fence-re)
-           vec))
+  (let [s (str stdout)]
+    ;; A plain search skips the regex, which tests every line, for output without a fence.
+    (when (str/includes? s "````vis-")
+      (some->> (re-seq display-fence-re s)
+               vec))))
 
 (defn shown-file-rows
   "Upper bound of the rows that the display fences in one form's `stdout` paint
@@ -5857,7 +5861,7 @@
   "Remove the display fences from `stdout`, because the transcript shows them
    below the step. Output without a fence stays unchanged."
   [stdout]
-  (if (and (string? stdout) (re-find display-fence-re stdout))
+  (if (and (string? stdout) (str/includes? stdout "````vis-") (re-find display-fence-re stdout))
     (some-> (str/replace stdout display-fence-re "")
             (str/replace #"^(?:[ \t]*\n)+" "")
             str/trimr
@@ -8730,14 +8734,11 @@
                 ;; stdout. Strip display fences and artifact transport markers first so live,
                 ;; restored, and direct renderer inputs share the same view. Long output
                 ;; mirrors thinking and collapses only the surplus.
-                display-form
-                (cond-> (update form :stdout strip-display-fences)
-                  (seq form-artifacts)
-                  (update :stdout strip-produced-artifact-transport))
-
                 card
                 (when (and show-execution-details? (not digest-closed?))
-                  (vis/result-card display-form))
+                  (vis/result-card (cond-> (update form :stdout strip-display-fences)
+                                     (seq form-artifacts)
+                                     (update :stdout strip-produced-artifact-transport))))
 
                 result-text
                 (some-> (:body card)

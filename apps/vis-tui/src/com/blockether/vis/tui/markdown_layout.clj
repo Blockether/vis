@@ -301,22 +301,26 @@
     (when (> (line-width {:runs @line}) (long @prefix-w)) (vswap! out conj {:runs @line}))
     @out))
 
+(def ^:private prepared-prose-limit
+  "Paragraphs that keep their measurements. One long turn has hundreds of step notes, and
+   a smaller bound measures each one again on every projection."
+  4096)
+
 (defonce ^:private ^java.util.LinkedHashMap prepared-prose-cache
-  (java.util.LinkedHashMap. 64 (float 0.75) true))
+  (java.util.LinkedHashMap. 256 (float 0.75) true))
 
 (defn- prepared-prose
-  "Cache bounded, immutable cell measurements across viewport widths, never styled runs."
+  "Cache bounded, immutable cell measurements across viewport widths, never styled runs.
+   A miss measures outside the lock, so layout on two threads does not wait."
   ^ParagraphLayout$Prepared [^String text breaks]
   (let [k [text breaks]]
-    (locking prepared-prose-cache
-      (or (.get prepared-prose-cache k)
-          (let [^ints offsets (int-array breaks)
-                prepared (ParagraphLayout/prepare text offsets)]
-
+    (or (locking prepared-prose-cache (.get prepared-prose-cache k))
+        (let [prepared (ParagraphLayout/prepare text (int-array breaks))]
+          (locking prepared-prose-cache
             (.put prepared-prose-cache k prepared)
-            (when (> (.size prepared-prose-cache) 64)
-              (.remove prepared-prose-cache (.next (.iterator (.keySet prepared-prose-cache)))))
-            prepared)))))
+            (when (> (.size prepared-prose-cache) (long prepared-prose-limit))
+              (.remove prepared-prose-cache (.next (.iterator (.keySet prepared-prose-cache))))))
+          prepared))))
 
 (def ^:private terminal-prose-options (ParagraphLayout$Options/terminal))
 
@@ -1876,28 +1880,30 @@
    the painter adds the line's absolute `x`/`row`. Block/inline markers are
    zero-width, so this offset matches the painted column."
   [runs]
-  (not-empty
-    (:spans
-      (reduce (fn [{:keys [col spans]} {:keys [text href style]}]
-                (let [w
-                      (p/display-width (or text ""))
+  ;; Most lines have no link, so skip measuring their runs.
+  (when (some #(and (:href %) (contains? (:style %) :link)) runs)
+    (not-empty
+      (:spans
+        (reduce (fn [{:keys [col spans]} {:keys [text href style]}]
+                  (let [w
+                        (p/display-width (or text ""))
 
-                      link?
-                      (and href (contains? style :link))
+                        link?
+                        (and href (contains? style :link))
 
-                      prev
-                      (peek spans)]
+                        prev
+                        (peek spans)]
 
-                  {:col (+ (long col) w)
-                   :spans (cond (not link?) spans
-                                ;; extend the previous span iff same href AND adjacent
-                                (and prev
-                                     (= (:url prev) href)
-                                     (= (+ (long (:col prev)) (long (:width prev))) (long col)))
-                                (conj (pop spans) (update prev :width + w))
-                                :else (conj spans {:col (long col) :width w :url href}))}))
-              {:col 0 :spans []}
-              runs))))
+                    {:col (+ (long col) w)
+                     :spans (cond (not link?) spans
+                                  ;; extend the previous span iff same href AND adjacent
+                                  (and prev
+                                       (= (:url prev) href)
+                                       (= (+ (long (:col prev)) (long (:width prev))) (long col)))
+                                  (conj (pop spans) (update prev :width + w))
+                                  :else (conj spans {:col (long col) :width w :url href}))}))
+                {:col 0 :spans []}
+                runs)))))
 
 (defn- line-body-sentinels
   "Inline-sentinel body string for one walker line's runs. A BLOCK code line
