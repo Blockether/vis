@@ -891,10 +891,10 @@
 def __vis_bind_ctx__(g, data, fallback, Path=__import__('pathlib').Path, set=set, sorted=sorted,
                      builtin_names=frozenset(dir(__import__('builtins')))):
     workspace = data.get('workspace') or {}
-    paths = {entry['python_name']: Path(entry['cwd'])
+    paths = {entry['python_name']: Path(entry['cwd']).expanduser()
              for entry in (workspace.get('filesystem_roots') or [])
              if entry.get('python_name') and not entry.get('is_denied')}
-    paths['project_root_path'] = Path(workspace.get('root') or fallback)
+    paths['project_root_path'] = Path(workspace.get('root') or fallback).expanduser()
     old = set(g.get('__vis_path_names__', ['project_root_path']))
     names = set(paths)
     protected = set(g.get('__vis_protected_names__') or [])

@@ -652,6 +652,23 @@
              "print(isinstance(project_root_path, pathlib.Path), str(project_root_path / 'src'))")]
           (expect (nil? (:error result)))
           (expect (= (str "True " directory "/src\n") (:stdout result)))))))
+  (it "expands the home-relative workspace paths of the session into absolute Paths"
+      ;; User review: the session block shows `~/…` paths, like the access block.
+      (tpc/with-own
+        [ctx {}]
+        (ep/bind-ctx! ctx
+                      {"workspace" {"root" "~/projects/main"
+                                    "filesystem_roots" [{"cwd" "~/projects/library"
+                                                         "python_name" "library_path"}]}})
+        (let [result
+              (ep/run-python-block
+                ctx
+                (str
+                  "import os\n"
+                  "print(project_root_path == pathlib.Path(os.path.expanduser('~/projects/main')),"
+                  " library_path.is_absolute(), session['workspace']['root'])"))]
+          (expect (nil? (:error result)))
+          (expect (= "True True ~/projects/main\n" (:stdout result))))))
   (it "answers a ctx field by attribute as well as by key"
       ;; `session` is read the way a tool result is, so the dot must not be the one
       ;; spelling that fails; a miss names the keys this map does carry.

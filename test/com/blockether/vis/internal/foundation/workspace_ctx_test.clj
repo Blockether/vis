@@ -68,6 +68,19 @@
         (expect (= "/projects/main" (get block "root")))
         (expect (not (contains? block "path_globals")))
         (expect (not (contains? block "filesystem_roots")))))
+  (it "shows paths under home as ~/ and keeps other paths absolute"
+      ;; User review: the session block repeated `/Users/<name>/` for every root.
+      (let [home
+            (System/getProperty "user.home")
+
+            block
+            (wctx/render-block {:workspace {:root (str home "/vis-wctx-absent/main")}
+                                :filesystem-roots [{:trunk (str home "/vis-wctx-absent/library")}
+                                                   {:trunk "/opt/cache"}]})]
+
+        (expect (= "~/vis-wctx-absent/main" (get block "root")))
+        (expect (= ["~/vis-wctx-absent/library" "/opt/cache"]
+                   (mapv #(get % "cwd") (get block "filesystem_roots"))))))
   (it "preserves explicitly registered distinct names for the same directory"
       (let [roots (get (wctx/render-block {:workspace {:root "/projects/main"}
                                            :filesystem-roots [{:trunk "/projects/library"

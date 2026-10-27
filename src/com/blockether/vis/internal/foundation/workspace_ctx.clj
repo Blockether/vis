@@ -12,6 +12,7 @@
    changed since the fork. The block is stamped once per turn at engine
    start; ctx_renderer serialises it verbatim."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.drafts :as drafts]
             [com.blockether.vis.internal.workspace.git :as git-core]))
@@ -87,7 +88,7 @@
         (into #{} (map :trunk) projects)]
 
     (mapv (fn [{:keys [trunk clone draft denied? python-name]}]
-            (cond-> {"cwd" (if denied? trunk (or clone trunk))
+            (cond-> {"cwd" (paths/abbreviate-home (if denied? trunk (or clone trunk)))
                      "isolated" (boolean (and clone (not= clone trunk)))
                      "draft" (name (or draft :shared))}
               denied?
@@ -106,6 +107,8 @@
    crosses the Clojure↔Python boundary as `session[\"workspace\"]`, so it
    carries no keyword keys/values at any depth (`\"vcs_kind\"` is the
    stringified `git/vcs-kind`).
+
+   Paths under home read as `~/…`, like the access block; Python expands them.
 
    workspace identity — `\"root\"` `\"isolated\"` `\"id\"` `\"label\"`
      `\"filesystem_roots\"` — additional roots with their working `\"cwd\"`, `\"draft\"`
@@ -136,7 +139,7 @@
         (when (and root fork-ms (.exists (io/file root)))
           (try (workspace/changed-paths root fork-ms) (catch Throwable _ nil)))]
 
-    (cond-> {"root" root
+    (cond-> {"root" (paths/abbreviate-home root)
              "isolated" isolated?
              "vcs_kind" (some-> (git-core/vcs-kind root)
                                 name)}
