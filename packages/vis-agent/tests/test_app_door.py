@@ -95,6 +95,26 @@ def test_session_attach_opens_the_app_over_the_sdk_route():
         Session(gateway, "s-1").attach(app(), owner="Review Bot")
 
 
+def test_an_app_note_reaches_the_view_and_a_blank_text_removes_it():
+    # The model reads the newest note of an app with the next user message.
+    gateway = Gateway()
+    handle = Session(gateway, "s-1").attach(app(), owner="bot")
+    handle.set_agent_note("  Card 3 is done  ")
+    op = gateway.envelopes("patch")[-1]["patch"]["ops"][0]
+    assert op == {"op": "agent-note", "text": "  Card 3 is done  "}
+    validate("view", "live_op", op)
+    assert gateway.engine._view["agent_note"] == "Card 3 is done"
+    handle.set_agent_note(" ")
+    assert "agent_note" not in gateway.engine._view
+    sent = len(gateway.calls)
+    with pytest.raises(TypeError, match="text"):
+        handle.set_agent_note(3)
+    with pytest.raises(ValueError, match="at most 4000"):
+        handle.set_agent_note("x" * 4001)
+    assert len(gateway.calls) == sent
+    handle.close()
+
+
 def test_on_event_long_polls_on_a_daemon_thread_until_the_app_closes():
     gateway = Gateway()
     seen = []

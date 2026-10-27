@@ -3946,6 +3946,61 @@
           (expect (= "nosniff" (get-in response [:headers "X-Content-Type-Options"])))))))
 
 (defdescribe
+  attachment-agent-note-test
+  ;; An HTML page keeps a note of its state. The model of its session reads it
+  ;; with the next user message.
+  (let [sid
+        (str (random-uuid))
+
+        put!
+        (fn [request-sid idx body]
+          (#'turns-api/attachment-agent-note-handler
+           {:path-params {:sid request-sid :iid "iteration" :idx (str idx)}
+            :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str body) "UTF-8"))}))
+
+        noted
+        (fn [f]
+          (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                           (constantly (io/file (System/getProperty "java.io.tmpdir")
+                                                (str "vis-views-" (random-uuid))))
+                           #'com.blockether.vis.internal.persistance.core/db-get-session
+                           (fn [_ id]
+                             (when (= sid (str id)) {:id id}))
+                           #'state/user-iteration-attachments
+                           (constantly
+                             [{:id "att-1"
+                               :media-type "text/html; charset=utf-8"
+                               :filename "board.html"}
+                              {:id "att-2" :media-type "image/png" :filename "chart.png"}])}
+            f))]
+
+    (it "keeps the trimmed note of a page, and the same request twice keeps one note"
+        (noted (fn []
+                 (dotimes [_ 2]
+                   (let [response (put! sid 0 {"text" " Row 2 "})]
+                     (expect (= 200 (:status response)))
+                     (expect (= {"id" "att-1" "agent_note" "Row 2"}
+                                (wire/parse-json (:body response))))))
+                 (expect (= [{:id "att-1" :title "board.html" :agent-note "Row 2"}]
+                            (live-sink/page-notes sid))))))
+    (it "removes the note with a blank text"
+        (noted (fn []
+                 (put! sid 0 {"text" "Row 2"})
+                 (expect (= {"id" "att-1" "agent_note" nil}
+                            (wire/parse-json (:body (put! sid 0 {"text" "  "})))))
+                 (expect (= [] (live-sink/page-notes sid))))))
+    (it "refuses another file, a missing page, a note that is not text and a note that is too long"
+        (noted (fn []
+                 (expect (= 404 (:status (put! sid 1 {"text" "Row 2"}))))
+                 (expect (= 404 (:status (put! sid 9 {"text" "Row 2"}))))
+                 (expect (= 400 (:status (put! sid 0 {"text" 3}))))
+                 (expect (= 400 (:status (put! sid 0 {"text" (apply str (repeat 4001 "x"))}))))
+                 (expect (= [] (live-sink/page-notes sid))))))
+    (it "answers 404 for an unknown session"
+        (noted (fn []
+                 (expect (= 404 (:status (put! (str (random-uuid)) 0 {"text" "Row 2"})))))))))
+
+(defdescribe
   pair-bind-still-answers-on-loopback
   (it
     "a concrete non-loopback bind (what --pair picks) also serves 127.0.0.1,

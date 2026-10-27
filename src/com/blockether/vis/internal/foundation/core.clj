@@ -16,7 +16,9 @@
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
             [com.blockether.vis.internal.foundation.workspace-slashes :as workspace-slashes]
-            [com.blockether.vis.internal.workspace.core :as workspace]))
+            [com.blockether.vis.internal.view.core :as view]
+            [com.blockether.vis.internal.workspace.core :as workspace]
+            [taoensso.telemere :as tel]))
 
 (defn- combined-prompt
   "Render the toggle-gated core guidance."
@@ -67,6 +69,22 @@
                                   :filesystem-roots (workspace/env-filesystem-roots env)
                                   :project-paths (get-in env [:security-policy :project-paths])))))
 
+(defn- session-apps-context
+  "What the apps and HTML pages of the session tell the model, or nil. A failed
+   read is logged and leaves the rest of the session context whole."
+  [env]
+  (when-let [sid (:session-id env)]
+    (try (not-empty (view/agent-notes sid))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::agent-notes-failed
+                      :data {:session-id (str sid)
+                             :error (ex-message t)
+                             :cause (some-> (ex-cause t)
+                                            ex-message)}
+                      :msg "Vis left the app notes out of the session context"})
+           nil))))
+
 (defn- combined-ctx
   "Foundation-core's single `:ext/ctx-fn` fn. Contributes the workspace
    block under `\"session_workspace\"` (STRING-KEYED — crosses the Python
@@ -82,11 +100,17 @@
         (session-workspace-block env)
 
         council-context
-        (council-host/context env)]
+        (council-host/context env)
+
+        apps-context
+        (session-apps-context env)]
 
     (cond-> {"session_goal" (goals/active-goal env) "session_agent" (agents/context env)}
       council-context
       (assoc "session_council" council-context)
+
+      apps-context
+      (assoc "session_apps" apps-context)
 
       ws-block
       (assoc "session_workspace" ws-block))))

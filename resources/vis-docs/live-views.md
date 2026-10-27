@@ -21,6 +21,8 @@ The view appears in the terminal or Companion app and can be stopped at any time
 - **People must review a change or answer you after your code returns.** Attach an
   [app](#apps). They save drafts and send them when they are ready.
 - **People must act in an app with single keys.** Add [shortcuts](#add-shortcuts-to-an-app).
+- **The model must know what people do in an app or an HTML page.** Give it a
+  [note](#tell-the-model-what-people-see).
 - **Your own program, not an extension, must own an app.** [Run it from your
   program](#run-an-app-from-your-own-program).
 - **The person must fill in values while the work runs.** [Collect input in the
@@ -888,6 +890,45 @@ def on_key(event):
 
 app.run(on_key)
 ```
+
+### Tell the model what people see
+
+The events of an app go to its owner, the code that opened it. They do not reach the model. The
+model also does not see what a person does in an HTML page. A note gives the model the current
+state as a short text. Vis sends the newest note to the model with the next message of the person.
+
+```python
+app.set_agent_note("Card 3 of 7 is open. Cards 1 and 2 are done.")
+```
+
+- `app.set_agent_note(text)` replaces the note of the app. An empty text removes the note.
+- A note holds at most 4000 characters. Vis removes the spaces at its start and end.
+- Write the current state, not a history. Each note replaces the note before it.
+- A closed or archived app gives no note.
+
+A script in an HTML page that you attach sets the note of that page with `vis.setAgentNote(text)`.
+Only the Companion app runs this script. The terminal opens the page in the system viewer, where
+`vis` does not exist. Check for it before the call:
+
+```xml
+<script>
+  function showCard(number) {
+    document.getElementById("card").textContent = "Card " + number;
+    if (window.vis) {
+      window.vis.setAgentNote("Card " + number + " of 7 is open.");
+    }
+  }
+</script>
+```
+
+- `vis.setAgentNote` takes a string of at most 4000 characters. A value that is not a string
+  raises a `TypeError`, and a longer text raises a `RangeError`.
+- The Companion app saves the note after a short pause. Many fast calls give one save.
+- In each session, Vis keeps the notes of the 8 pages that changed their notes last.
+
+The model reads the notes in `session["apps"]`. Each entry has `id`, `kind` (`app` or `page`),
+`title` and `agent_note`. Vis sends the notes with each new message of the person. In a long turn,
+the model also sees a changed note at its next step.
 
 ### Run an app from your own program
 

@@ -516,6 +516,9 @@
     :shortcuts
     (app-rule nil #(app/set-shortcuts view (:shortcuts op)))
 
+    :agent-note
+    (app-rule nil #(app/set-agent-note view (:text op)))
+
     (let [path
           (or (node-path view (:node-id op))
               (invalid-patch! (:node-id op)

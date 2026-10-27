@@ -2196,8 +2196,19 @@
                                    "headroom_tokens" (long initial-context-limit)
                                    "measured" false}))))))
 
+        ;; One snapshot gives the boundary and the baseline after it, so the app
+        ;; notes that the boundary shows never come back as an iteration delta.
+        turn-boundary
+        (ctx-loop/render-block! environment #(ctx-renderer/turn-boundary % @last-context-atom))
+
         turn-context
-        (ctx-loop/render-block! environment ctx-renderer/render-turn-boundary)
+        (:text turn-boundary)
+
+        _
+        (when turn-boundary
+          (reset! last-context-atom (:baseline turn-boundary))
+          (some-> standing-ctx-atom
+                  (swap! assoc :baseline (:baseline turn-boundary))))
 
         ;; A blind target does not lose the user's screenshot: a sighted model on the
         ;; foreground provider gets first refusal before the rest of the fleet. It turns

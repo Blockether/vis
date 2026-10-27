@@ -80,6 +80,7 @@ export const LIVE_OPS = [
   'thread',
   'submission',
   'shortcuts',
+  'agent-note',
 ] as const;
 
 /** Where a view stands (`view.spec/placements`). CLOSED. An `attachment` is an app. */
@@ -1421,6 +1422,10 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
   if (name === 'shortcuts') {
     // The op REPLACES every binding; an empty list clears them.
     return { ...view, shortcuts: liveShortcutsFromWire(op.shortcuts) };
+  }
+  if (name === 'agent-note') {
+    // The note is for the model. The Companion paints nothing for it.
+    return view;
   }
   if (name === 'add-node') {
     const node = liveNodeFromWire(op.node_spec);

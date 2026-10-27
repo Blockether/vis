@@ -14,6 +14,7 @@ import {
 } from '../lib/artifacts';
 import { openExternalUrl } from '../lib/desktop';
 import type { IterationAttachment } from '../lib/types';
+import { VIEW_AGENT_NOTE_MAX } from '../lib/view';
 import { type DocumentChrome, MarkdownArtifact } from './MarkdownArtifact';
 import { DiffArtifact } from './DiffArtifact';
 import { PdfReader } from './PdfArtifact';
@@ -137,6 +138,12 @@ const DOC_LINK_MESSAGE = 'vis-doc-open';
 /** The message a framed page sends when one of its own scripts fails. */
 const DOC_ERROR_MESSAGE = 'vis-doc-error';
 
+/** The message a framed page sends when it gives the model a new note. */
+const DOC_NOTE_MESSAGE = 'vis-doc-agent-note';
+
+/** How long a page's note waits for a newer one before the app saves it. */
+const DOC_NOTE_PAUSE_MS = 400;
+
 /** The schemes a framed page can hand to the browser: web pages and mail. */
 const OPENABLE_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
@@ -157,6 +164,10 @@ const OPENABLE_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
  * that the browser refuses, so such a page still runs. The stand-in lives only as
  * long as the frame, and it gives the page no access outside the frame. Each
  * uncaught error or rejection still goes to the app, which shows it over the frame.
+ *
+ * THE PAGE CAN TELL THE MODEL WHAT IT SHOWS. `vis.setAgentNote(text)` sends the text
+ * to the app, and the app saves it on the gateway as the note of this page. The model
+ * reads the latest note with the next user message. A blank text removes the note.
  *
  * The source has no `<` and no `&`, so it is also well-formed inside an XHTML page.
  */
@@ -222,6 +233,14 @@ export const DOC_LINK_BRIDGE = `(function (w) {
   w.addEventListener('click', claim);
   w.addEventListener('auxclick', claim);
   w.open = function (raw) { if (raw) send(raw); return null; };
+  function note(text) {
+    if (typeof text !== 'string') throw new w.TypeError('vis.setAgentNote needs a string');
+    if (text.length > ${VIEW_AGENT_NOTE_MAX}) {
+      throw new w.RangeError('vis.setAgentNote takes at most ${VIEW_AGENT_NOTE_MAX} characters');
+    }
+    w.parent.postMessage({ type: '${DOC_NOTE_MESSAGE}', text: text }, '*');
+  }
+  w.vis = { setAgentNote: note };
 })(window);`;
 
 /**
@@ -267,21 +286,35 @@ export function docErrorText(data: unknown): string | null {
   return message.trim().slice(0, 300);
 }
 
+/** The note that a framed page gave the model, or null for any other message. */
+export function docAgentNote(data: unknown): string | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const { type, text } = data as { type?: unknown; text?: unknown };
+  if (type !== DOC_NOTE_MESSAGE || typeof text !== 'string') return null;
+  return text.length > VIEW_AGENT_NOTE_MAX ? null : text;
+}
+
 /**
  * The artifact itself, quarantined: markup renders in its own opaque-origin
  * frame, with no gateway credential and no parent callback. It sends the app
- * two messages. A followed link opens only from this frame, only for a web or
+ * three messages. A followed link opens only from this frame, only for a web or
  * mail URL and only while the reader's click is active. The page's first error
- * shows as text over the frame, so a blank page has a reason (#418).
+ * shows as text over the frame, so a blank page has a reason (#418). A note for
+ * the model goes to `onAgentNote` after a short pause, so a page that writes it on
+ * each key press sends only the last text. A note that waits when the frame
+ * closes goes at once.
  */
 export const DocFrame = memo(function DocFrame({
   url,
   mime,
   name,
+  onAgentNote,
 }: {
   url: string;
   mime: string;
   name: string;
+  /** Save the page's note for the model. Without it, the page's notes go nowhere. */
+  onAgentNote?: (text: string) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const markup = isMarkupMedia(mime);
@@ -311,9 +344,26 @@ export const DocFrame = memo(function DocFrame({
     };
   }, [markup, mime, url]);
   useEffect(() => {
+    let note: string | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const save = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      if (note === null) return;
+      const text = note;
+      note = null;
+      onAgentNote?.(text);
+    };
     const onMessage = (event: MessageEvent) => {
       const own = frame.current?.contentWindow;
       if (!own || event.source !== own) return;
+      const next = markup && onAgentNote ? docAgentNote(event.data) : null;
+      if (next !== null) {
+        note = next;
+        clearTimeout(timer);
+        timer = setTimeout(save, DOC_NOTE_PAUSE_MS);
+        return;
+      }
       const text = docErrorText(event.data);
       if (text) {
         // The first error is the cause; the ones after it usually follow from it.
@@ -327,8 +377,12 @@ export const DocFrame = memo(function DocFrame({
       openExternalUrl(href);
     };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [url]);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      // The owner binds `onAgentNote` to the page on screen, so a waiting note goes to its own page.
+      save();
+    };
+  }, [markup, onAgentNote, url]);
   const src = markup ? (bridged?.from === url ? bridged.url : undefined) : url;
   const fault = error?.from === url ? error.text : null;
   return (
@@ -357,11 +411,13 @@ function DocBody({
   mime,
   url,
   failed,
+  onAgentNote,
 }: {
   name: string;
   mime: string;
   url: string | null;
   failed: boolean;
+  onAgentNote?: (text: string) => void;
 }) {
   if (failed)
     return (
@@ -375,7 +431,7 @@ function DocBody({
   return isTextMedia(mime, name) || isSubtitleMedia(mime, name) ? (
     <TextFrame url={url} mime={mime} name={name} fill />
   ) : (
-    <DocFrame url={url} mime={mime} name={name} />
+    <DocFrame url={url} mime={mime} name={name} onAgentNote={onAgentNote} />
   );
 }
 
@@ -447,6 +503,7 @@ export const DocOverlay = memo(function DocOverlay({
   shownAt = 0,
   onPick,
   onClose,
+  onAgentNote,
 }: {
   name: string;
   mime: string;
@@ -460,6 +517,8 @@ export const DocOverlay = memo(function DocOverlay({
   /** Read another cut; the owner fetches its bytes. */
   onPick?: (at: number) => void;
   onClose: () => void;
+  /** Save an HTML page's note for the model; see `DocFrame`. */
+  onAgentNote?: (text: string) => void;
 }) {
   const artifactLinks = useContext(ArtifactLinkContext);
   const openAttachment = artifactLinks
@@ -581,7 +640,7 @@ export const DocOverlay = memo(function DocOverlay({
   return chrome({
     actions: null,
     note: '',
-    body: <DocBody name={name} mime={mime} url={url} failed={failed} />,
+    body: <DocBody name={name} mime={mime} url={url} failed={failed} onAgentNote={onAgentNote} />,
   });
 });
 
@@ -608,6 +667,7 @@ export const DocPreview = memo(function DocPreview({
   shownAt = 0,
   onPick,
   onNeeded,
+  onAgentNote,
 }: {
   name: string;
   mime: string;
@@ -623,6 +683,8 @@ export const DocPreview = memo(function DocPreview({
   onPick?: (at: number) => void;
   /** Asked for the bytes — the parent starts the fetch. */
   onNeeded: () => void;
+  /** Save an HTML page's note for the model; see `DocFrame`. */
+  onAgentNote?: (text: string) => void;
 }) {
   // Keyed by the document, not by this row: a turn settling re-mounts the row
   // under a different subtree, and an opened document must stay opened.
@@ -678,6 +740,7 @@ export const DocPreview = memo(function DocPreview({
             shownAt={shownAt}
             onPick={onPick}
             onClose={close}
+            onAgentNote={onAgentNote}
           />,
           overlayLayer().host,
         )}

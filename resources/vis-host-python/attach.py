@@ -616,7 +616,9 @@ def __vis_install_attach__():
             "\n\naudience routes it: 'both' (default), 'user' (human only) "
             "or 'model' (context only). A CSV/TSV becomes a transcript table whose "
             "rows stay out of the model's context. A *.pdf/*.html is a human-only "
-            "document and refuses audience='model'."
+            "document and refuses audience='model'. A script in an HTML page can still "
+            "call vis.setAgentNote(text) to tell the model what the page shows. Only the "
+            "Companion app runs it, so check window.vis first."
             "\n\nkind, media_type and filename override inference, and label is a "
             "one-line caption. A near-miss spelling FOLDS onto the keyword it meant, "
             "so the call does not fail. The folds are name/file_name/fname -> "
@@ -635,7 +637,10 @@ def __vis_install_attach__():
             "submission_id=) answers them. set_status(submission_id, status) moves a "
             "receipt, and archive() or close() ends the app. A Send reaches this "
             "session as a new turn that names the app and its receipt. attach(row) "
-            "with the app row from list_attachments() gives the handle again.",
+            "with the app row from list_attachments() gives the handle again."
+            "\n\nNOTES: set_agent_note(text) tells the model the current state of the "
+            "app, and a blank text removes it. The newest note of each open app and HTML "
+            "page reaches session['apps'] with every user message.",
         ),
         (
             list_attachments,

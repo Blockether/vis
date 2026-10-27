@@ -32,6 +32,8 @@ export const VIEW_SHORTCUT_NAMED_KEYS: readonly string[] =
 export const VIEW_SHORTCUTS_MAX = viewSchema.$defs.live_view.properties.shortcuts.maxItems;
 /** The longest legend label of a shortcut (view.json). */
 export const VIEW_SHORTCUT_LABEL_MAX = viewSchema.$defs.shortcut.properties.label.maxLength;
+/** The longest note that an app or an HTML page gives the model (view.json). */
+export const VIEW_AGENT_NOTE_MAX = viewSchema.$defs.live_view.properties.agent_note.maxLength;
 
 /** Read a group direction; an unknown or absent one stacks as a column. */
 export function viewGroupDirection(raw: unknown): ViewGroupDirection {

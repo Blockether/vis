@@ -5866,6 +5866,22 @@ class LiveAttachment(LiveView):
             }
         )
 
+    def set_agent_note(self, text):
+        """Tell the model the current state of this app, in plain text.
+
+        The model reads the newest note with the next user message, also when no
+        event reached the agent. A blank text removes the note. Answers the new
+        `seq`.
+        """
+        text = _agent_note_text(text)
+        return self._app_call(
+            {
+                "op": "patch",
+                "view_id": self.view_id,
+                "patch": {"ops": [{"op": "agent-note", "text": text}]},
+            }
+        )
+
     def run(self, callback, *, timeout=None):
         """Serve the events of this app with `callback(event)` and block.
 
@@ -6107,6 +6123,13 @@ class _LiveRecorder:
                 view["shortcuts"] = self._copy(op["shortcuts"])
             else:
                 view.pop("shortcuts", None)
+            return
+        if action == "agent-note":
+            view = self._open_view()
+            if op["text"].strip():
+                view["agent_note"] = op["text"].strip()
+            else:
+                view.pop("agent_note", None)
             return
         if action == "remove-node":
             found = self._parent(op["node_id"])
@@ -6882,6 +6905,22 @@ def _ui_shortcut(key, action=None, *, node_id=None, label=None):
             raise ValueError(f"vis.ui.shortcut {name} must be nonblank text{bound}")
         shortcut[name] = value
     return shortcut
+
+
+def _agent_note_text(text):
+    """Check the note of an app for the model before the host sees it."""
+    from blockether.vis import _contracts
+
+    if not isinstance(text, str):
+        raise TypeError("an agent note must be text")
+    limit = _contracts.definition("view", "live_view")["properties"]["agent_note"][
+        "maxLength"
+    ]
+    if len(text) > limit:
+        raise ValueError(
+            f"an agent note holds at most {limit} characters, got {len(text)}"
+        )
+    return text
 
 
 def _shortcut_list(shortcuts):

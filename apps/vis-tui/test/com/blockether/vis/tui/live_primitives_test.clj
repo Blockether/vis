@@ -816,6 +816,23 @@
                       :ops [{:op :thread :node-id "d" :thread {:id "t9" :messages []}}]})
                    false
                    (catch clojure.lang.ExceptionInfo _ true))))
+  (it "keeps the note for the model of an app and removes it with a blank text"
+      (let [noted
+            (materializer/apply-patch
+              app-view
+              {:view-id "app" :seq 2 :ops [{:op :agent-note :text " Row 2 "}]})
+
+            cleared
+            (materializer/apply-patch noted
+                                      {:view-id "app" :seq 3 :ops [{:op :agent-note :text " "}]})]
+
+        (expect (= "Row 2" (:agent-note noted)))
+        (expect (not (contains? cleared :agent-note)))
+        (expect (try (materializer/apply-patch
+                       (assoc app-view :placement :inline)
+                       {:view-id "app" :seq 2 :ops [{:op :agent-note :text "Row 2"}]})
+                     false
+                     (catch clojure.lang.ExceptionInfo _ true)))))
   (it "reads a diff and a thread back from markdown"
       (let [markdown
             (materializer/->markdown app-view)

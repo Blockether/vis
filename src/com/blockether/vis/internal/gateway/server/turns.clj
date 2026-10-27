@@ -2,6 +2,7 @@
   "Turn routes: submit, list, edit and cancel turns, drive the turn queue, read
    traces, and upload or fetch attachments."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.attachment.core :as attachments]
@@ -9,7 +10,8 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as persistance]
-            [com.blockether.vis.internal.util :as util])
+            [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.view.sink :as view-sink])
   (:import [java.io InputStream]
            [java.util Base64 UUID]))
 
@@ -408,6 +410,45 @@
                              :index idx)))
     (http/session-404 (get-in request [:path-params :sid]))))
 
+(defn- page-media-type?
+  "True when `media-type` names an HTML page, which can tell the model its state."
+  [media-type]
+  (contains? #{(:html attachments/document-media-types) (:xhtml attachments/document-media-types)}
+             (str/lower-case (str/trim (first (str/split (str media-type) #";"))))))
+
+(defn- attachment-agent-note-handler
+  "PUT /v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note — keep what
+   one HTML page tells the model. The body is `{\"text\": …}`, the page state in
+   plain text. The model reads the newest note of each page with the next user
+   message. A blank text removes the note, and the same request twice gives the
+   same state."
+  [request]
+  (let [sid (http/path-sid request)]
+    (if (and sid (persistance/db-get-session (lp/db-info) sid))
+      (let [idx (path-idx request)
+            att (when (and idx (nat-int? idx))
+                  (nth (state/user-iteration-attachments (path-iid request)) idx nil))
+            text (get (http/body-json request) "text")
+            limit (:agent-note app/bounds)]
+
+        (cond
+          (not (and att (page-media-type? (:media-type att))))
+          (http/error-response 404
+                               :attachment-not-found "unknown HTML page"
+                               :iteration_id (str (path-iid request))
+                               :index idx)
+          (not (string? text))
+          (http/error-response 400 :invalid-request "the body needs text, the note for the model")
+          (> (count text) (long limit))
+          (http/error-response 400
+                               :invalid-request
+                               (str "a note for the model holds at most " limit " characters"))
+          :else (let [page-id (str (:id att))]
+                  (view-sink/note-page! sid {:id page-id :title (:filename att) :agent-note text})
+                  (http/json-response {:id page-id
+                                       :agent-note (when-not (str/blank? text) (str/trim text))}))))
+      (http/session-404 (get-in request [:path-params :sid])))))
+
 (defn- turn-attachments-handler
   "GET /v1/sessions/:sid/turns/:tid/attachments — the inline media a USER sent
    with one turn. `?transcription_only=true` omits the large base64 body when a
@@ -452,6 +493,8 @@
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/sessions/:sid/iterations/:iid/attachments/:idx"] attachment-bytes-handler
+   [:put "/v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note"]
+   attachment-agent-note-handler
    [:post "/v1/sessions/:sid/attachments"] upload-attachment-handler
    [:get "/v1/sessions/:sid/turns"] list-turns-handler
    [:post "/v1/sessions/:sid/turns"] submit-turn-handler

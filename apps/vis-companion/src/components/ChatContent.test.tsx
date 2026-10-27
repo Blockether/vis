@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -2067,6 +2067,51 @@ describe('the attachment rail', () => {
       expect(view.queryByRole('button', { name: 'Open notes.bin' })).toBeNull();
     } finally {
       view.unmount();
+    }
+  });
+  it("saves an HTML page's note for the model on the cut that is on screen", async () => {
+    const setPageAgentNote = vi.fn(async () => undefined);
+    const pageClient = {
+      attachmentUrl: async (_sid: string, iid: string, index: number) => `blob:${iid}/${index}`,
+      retainAttachment: () => () => {},
+      setPageAgentNote,
+    } as unknown as GatewayClient;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ blob: async () => new Blob(['<head></head>'], { type: 'text/html' }) })),
+    );
+    const create = URL.createObjectURL;
+    const revoke = URL.revokeObjectURL;
+    URL.createObjectURL = () => 'blob:bridged';
+    URL.revokeObjectURL = () => {};
+    const page = (index: number, version: number) => ({
+      filename: 'board.html',
+      media_type: 'text/html',
+      iteration_id: 'i1',
+      index,
+      version,
+    });
+    const view = render(<AttachmentRail client={pageClient} sid="s1" attachments={[page(0, 1), page(1, 2)]} />);
+    try {
+      fireEvent.click(view.getByRole('button', { name: 'Open board.html' }));
+      const frame = await waitFor(() => {
+        const shown = document.querySelector<HTMLIFrameElement>('iframe[title="board.html"]');
+        expect(shown?.getAttribute('src')).toBe('blob:bridged');
+        return shown as HTMLIFrameElement;
+      });
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'vis-doc-agent-note', text: 'Card 3 is done' },
+            source: frame.contentWindow,
+          }),
+        );
+      });
+      await waitFor(() => expect(setPageAgentNote).toHaveBeenCalledExactlyOnceWith('s1', 'i1', 1, 'Card 3 is done'));
+    } finally {
+      view.unmount();
+      URL.createObjectURL = create;
+      URL.revokeObjectURL = revoke;
     }
   });
   // Regression, user report: "the model attached a document, I commented on it and

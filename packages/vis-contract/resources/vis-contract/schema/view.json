@@ -2190,6 +2190,12 @@
           },
           "maxItems": 32
         },
+        "agent_note": {
+          "description": "The app state that the model reads with the next user message. Only an app takes a note.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
         "submissions": {
           "description": "The newest Send receipts of an app, oldest first.",
           "type": "array",
@@ -2566,6 +2572,24 @@
           "required": [
             "op",
             "shortcuts"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "agent-note"
+            },
+            "text": {
+              "description": "The new note for the model. It replaces the old note, and a blank text removes the note.",
+              "type": "string",
+              "maxLength": 4000
+            }
+          },
+          "required": [
+            "op",
+            "text"
           ]
         }
       ]

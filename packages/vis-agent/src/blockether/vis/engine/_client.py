@@ -1626,6 +1626,27 @@ class ExecutionLayer(ABC):
         )
         return response
 
+    def put_session_iteration_attachment_agent_note(
+        self,
+        sid: str,
+        iid: str,
+        idx: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PUT /v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note — set the note of an HTML page for the model."""
+        response = self._request(
+            "PUT",
+            "/v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note",
+            path={"sid": sid, "iid": iid, "idx": idx},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def get_session_model(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:

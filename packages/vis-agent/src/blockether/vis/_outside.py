@@ -1029,6 +1029,9 @@ _SPINNER_VARIANTS = tuple(
     for branch in _contracts.definition("view", "spinner_variant")["oneOf"]
 )
 _MAX_NODES = _contracts.definition("view", "live_view")["x-vis-max-nodes"]
+_AGENT_NOTE_MAX = _contracts.definition("view", "live_view")["properties"][
+    "agent_note"
+]["maxLength"]
 _LIVE_REASONS = _contracts.definition("view", "settlement_reason")["enum"]
 _LIVE_HANDLE_OPS = ("patch", "state", "events", "close")
 _LIVE_ITEMS = {
@@ -1267,6 +1270,18 @@ def _live_apply(view, op):
         else:
             view.pop("shortcuts", None)
         return f"shortcuts: {len(shortcuts)}"
+    if name == "agent-note":
+        # Outside Vis no model reads the note: the transcript shows it instead.
+        text = op.get("text")
+        if not isinstance(text, str):
+            raise Refused("an agent-note op carries text")
+        if len(text) > _AGENT_NOTE_MAX:
+            raise Refused(f"an agent note holds at most {_AGENT_NOTE_MAX} characters")
+        if text.strip():
+            view["agent_note"] = text.strip()
+            return f"agent note: {view['agent_note']}"
+        view.pop("agent_note", None)
+        return "agent note: removed"
     if name == "add-node":
         spec = op.get("node_spec")
         complaint = _live_check_node(spec, _live_ids(view["nodes"]))

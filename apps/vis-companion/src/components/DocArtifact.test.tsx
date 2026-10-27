@@ -10,6 +10,7 @@ import {
   DOC_LINK_BRIDGE,
   DocStack,
   OverlayScreen,
+  docAgentNote,
   docErrorText,
   docLinkHref,
   docSandbox,
@@ -17,6 +18,7 @@ import {
   withDocLinkBridge,
 } from './DocArtifact';
 import { dismissTopLayer } from '../lib/edge-back';
+import { VIEW_AGENT_NOTE_MAX } from '../lib/view';
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -228,7 +230,30 @@ describe('links in a framed page', () => {
     expect(docErrorText(null)).toBeNull();
   });
 
-  async function framedDoc() {
+  it('sends the note for the model to the app and refuses a note that is not text or too long', () => {
+    const { frame, win, posted } = bridgedFrame();
+    const { vis } = win as unknown as { vis: { setAgentNote: (text: unknown) => void } };
+    vis.setAgentNote('Row 3 is selected');
+    expect(posted).toHaveBeenCalledWith({ type: 'vis-doc-agent-note', text: 'Row 3 is selected' }, '*');
+    posted.mockClear();
+    expect(() => vis.setAgentNote(3)).toThrow(win.TypeError);
+    expect(() => vis.setAgentNote('x'.repeat(VIEW_AGENT_NOTE_MAX + 1))).toThrow(win.RangeError);
+    expect(posted).not.toHaveBeenCalled();
+    vis.setAgentNote('x'.repeat(VIEW_AGENT_NOTE_MAX));
+    expect(posted).toHaveBeenCalledTimes(1);
+    frame.remove();
+  });
+
+  it('accepts only a note of text within the bound', () => {
+    expect(docAgentNote({ type: 'vis-doc-agent-note', text: ' Row 3 ' })).toBe(' Row 3 ');
+    expect(docAgentNote({ type: 'vis-doc-agent-note', text: '' })).toBe('');
+    expect(docAgentNote({ type: 'vis-doc-agent-note', text: 'x'.repeat(VIEW_AGENT_NOTE_MAX + 1) })).toBeNull();
+    expect(docAgentNote({ type: 'vis-doc-agent-note', text: 1 })).toBeNull();
+    expect(docAgentNote({ type: 'vis-doc-error', text: 'Row 3' })).toBeNull();
+    expect(docAgentNote(null)).toBeNull();
+  });
+
+  async function framedDoc(onAgentNote?: (text: string) => void) {
     const made: Blob[] = [];
     const create = URL.createObjectURL;
     const revoke = URL.revokeObjectURL;
@@ -240,7 +265,9 @@ describe('links in a framed page', () => {
       'fetch',
       vi.fn().mockResolvedValue({ blob: async () => new Blob([source], { type: 'text/html; charset=utf-8' }) }),
     );
-    const view = render(<DocFrame url="blob:shared" mime="text/html" name="links.html" />);
+    const view = render(
+      <DocFrame url="blob:shared" mime="text/html" name="links.html" onAgentNote={onAgentNote} />,
+    );
     const frame = view.container.querySelector('iframe') as HTMLIFrameElement;
     await vi.waitFor(() => expect(frame.getAttribute('src')).toBe('blob:bridged/1'));
     const opened = vi.spyOn(window, 'open').mockImplementation(() => null);
@@ -297,6 +324,28 @@ describe('links in a framed page', () => {
       "This page reported an error: Uncaught SecurityError: Failed to read 'localStorage'",
     );
     restore();
+  });
+
+  it('saves the last note after a pause, and a waiting note when the page closes', async () => {
+    const saved = vi.fn();
+    const { send, restore } = await framedDoc(saved);
+    vi.useFakeTimers();
+    try {
+      send({ type: 'vis-doc-agent-note', text: 'Row 1' });
+      send({ type: 'vis-doc-agent-note', text: 'Row 2' });
+      send({ type: 'vis-doc-agent-note', text: 'Row 9' }, window);
+      vi.advanceTimersByTime(399);
+      expect(saved).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(saved).toHaveBeenCalledTimes(1);
+      expect(saved).toHaveBeenCalledWith('Row 2');
+      send({ type: 'vis-doc-agent-note', text: '' });
+      restore();
+      expect(saved).toHaveBeenCalledTimes(2);
+      expect(saved).toHaveBeenLastCalledWith('');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

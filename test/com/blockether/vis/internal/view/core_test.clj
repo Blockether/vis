@@ -3331,6 +3331,99 @@
                                                                             "node_id" "go"}]}}))))
                  (finally (hi/close-live! view-id))))))))
 
+(defn- note-app
+  [sid note]
+  {"op" "open"
+   "view" {"title" "Board"
+           "session_id" sid
+           "placement" "attachment"
+           "nodes" [{"id" "go" "type" "button" "label" "Go"}]
+           "agent_note" note}})
+
+(defdescribe
+  app-agent-note-test
+  ;; An app and an HTML page keep a note of their state. The model reads the
+  ;; latest notes of its session with the next user message.
+  (it "keeps a trimmed note and lists it for the model"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid (note-app sid "  Card 3 is done  ")) "view_id")]
+
+            (try (expect (= "Card 3 is done"
+                            (get-in (app-seam! sid {"op" "state" "view_id" view-id})
+                                    ["view" "agent_note"])))
+                 (expect
+                   (= [{"id" view-id "kind" "app" "title" "Board" "agent_note" "Card 3 is done"}]
+                      (hi/agent-notes sid)))
+                 (expect (= [] (hi/agent-notes (str (random-uuid)))) "another session has no note")
+                 (finally (hi/close-live! view-id)))
+            (expect (= [] (hi/agent-notes sid)) "a closed app has no note")))))
+  (it "replaces the note with a patch and removes it with a blank text"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid (note-app sid "Card 1")) "view_id")
+
+                note!
+                (fn [text]
+                  (app-seam! sid
+                             {"op" "patch"
+                              "view_id" view-id
+                              "patch" {"ops" [{"op" "agent-note" "text" text}]}})
+                  (get-in (app-seam! sid {"op" "state" "view_id" view-id}) ["view" "agent_note"]))]
+
+            (try (expect (= "Card 2" (note! " Card 2 ")))
+                 (expect (= "Card 2" (note! "Card 2")) "the same note again keeps the same state")
+                 (expect (nil? (note! "  ")))
+                 (expect (= [] (hi/agent-notes sid)))
+                 (finally (hi/close-live! view-id)))))))
+  (it "refuses a note on an inline view and a note that is too long"
+      (recorded (fn []
+                  (let [sid (str (random-uuid))]
+                    (expect (str/includes? (str (live-refusal #(hi/open-live!
+                                                                 (assoc (live-spec {:id "now"
+                                                                                    :type "status"
+                                                                                    :text "Ready"})
+                                                                   :agent-note "x"))))
+                                           "only an app"))
+                    (expect (some?
+                              (live-refusal
+                                #(app-seam! sid (note-app sid (apply str (repeat 4001 "x")))))))))))
+  (it "lists the latest note of each HTML page after the app notes"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid (note-app sid "Card 1")) "view_id")]
+
+            (try (live-sink/note-page! sid {:id "a1" :title "board.html" :agent-note " Row 1 "})
+                 (live-sink/note-page! sid {:id "a1" :title "board.html" :agent-note "Row 2"})
+                 (expect (= [{"id" view-id "kind" "app" "title" "Board" "agent_note" "Card 1"}
+                             {"id" "a1" "kind" "page" "title" "board.html" "agent_note" "Row 2"}]
+                            (hi/agent-notes sid)))
+                 (live-sink/note-page! sid {:id "a1" :title "board.html" :agent-note " "})
+                 (expect (= ["app"] (mapv #(get % "kind") (hi/agent-notes sid)))
+                         "a blank text removes the page note")
+                 (finally (hi/close-live! view-id)))))))
+  (it "keeps only the newest page notes"
+      (recorded (fn []
+                  (let [sid (str (random-uuid))]
+                    (doseq [n (range 10)]
+                      (live-sink/note-page!
+                        sid
+                        {:id (str "p" n) :title (str "p" n ".html") :agent-note (str "Row " n)}))
+                    (expect (= (mapv #(str "p" %) (range 2 10))
+                               (mapv #(get % "id") (hi/agent-notes sid)))))))))
+
 (defn- judge-next!
   "Answer the next `validate` question of app `view-id` with `errors`, or answer
    nothing for `:silent`. Answers the question."

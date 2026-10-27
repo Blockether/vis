@@ -2388,7 +2388,8 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
   /** Every cut of this name in the step, newest first and this one included. */
   versions: IterationAttachment[];
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  // The bytes on screen, with the cut that they belong to.
+  const [source, setSource] = useState<{ url: string; iterationId: string; index: number } | null>(null);
   const [failed, setFailed] = useState(false);
   const [wanted, setWanted] = useState(false);
   // The ROW is always the newest cut. The reader may go back through the band's
@@ -2405,13 +2406,13 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
     let alive = true;
     // Another cut is another set of bytes: the ones on screen are dropped rather
     // than left painting the version that was just left behind.
-    setUrl(null);
+    setSource(null);
     setFailed(false);
     const release = client.retainAttachment(sid, iterationId, index);
     client
       .attachmentUrl(sid, iterationId, index)
       .then((next) => {
-        if (alive) setUrl(next);
+        if (alive) setSource({ url: next, iterationId, index });
       })
       .catch(() => {
         if (alive) setFailed(true);
@@ -2422,6 +2423,19 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
     };
   }, [client, sid, iterationId, index, wanted]);
 
+  // An HTML page's note belongs to the cut whose bytes are on screen. Just after a
+  // pick, the shown bytes can still be those of the cut before it.
+  const shownIteration = source?.iterationId ?? '';
+  const shownIndex = source?.index ?? 0;
+  const saveNote = useCallback(
+    (text: string) => {
+      client.setPageAgentNote(sid, shownIteration, shownIndex, text).catch((error: unknown) => {
+        console.warn('page note: save failed', { sid, iterationId: shownIteration, index: shownIndex, error });
+      });
+    },
+    [client, sid, shownIteration, shownIndex],
+  );
+
   if (!iterationId) return null;
 
   return (
@@ -2429,12 +2443,13 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
       name={name}
       mime={cut.media_type ?? ''}
       sizeLabel={attachmentBytes(attachment.size)}
-      url={url}
+      url={source?.url ?? null}
       failed={failed}
       onNeeded={needed}
       versions={versions}
       shownAt={shownAt}
       onPick={setShownAt}
+      onAgentNote={shownIteration ? saveNote : undefined}
     />
   );
 });

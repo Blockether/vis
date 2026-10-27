@@ -997,6 +997,16 @@
     {
       "audience": "sdk",
       "operations": {
+        "put": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/iterations/:iid/attachments/:idx/agent-note"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "get": {
           "request": "none",
           "response": "json",

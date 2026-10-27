@@ -25,14 +25,16 @@
 
 (def bounds
   "How many receipts, threads, messages, Send values and Send comments an app
-   holds, and the longest text."
+   holds, and the longest texts: a message body, a Send note and the note for the
+   model."
   {:submissions (get-in (definition "live_view") ["properties" "submissions" "maxItems"])
    :threads (get-in (component "diff") ["properties" "threads" "maxItems"])
    :messages (get-in (definition "thread") ["properties" "messages" "maxItems"])
    :values (get-in (definition "submission") ["properties" "values" "maxItems"])
    :comments (get-in (definition "submission") ["properties" "comments" "maxItems"])
    :body (get-in (definition "message") ["properties" "body" "maxLength"])
-   :note (get-in (definition "submission") ["properties" "note" "maxLength"])})
+   :note (get-in (definition "submission") ["properties" "note" "maxLength"])
+   :agent-note (get-in (definition "live_view") ["properties" "agent_note" "maxLength"])})
 
 (def ^:private key-rule (definition "idempotency_key"))
 
@@ -379,3 +381,20 @@
   "The shortcut of `view` that binds key `k`, or nil."
   [view k]
   (some #(when (= k (:key %)) %) (:shortcuts view)))
+
+(defn agent-note-error
+  "nil when `text` can be the note of `view` for the model, otherwise the reason.
+   Only an app takes a note. A blank text is valid: it removes the note."
+  [view text]
+  (cond (not (app? view)) "only an app (placement attachment) takes a note for the model"
+        (not (string? text)) "the note for the model must be text"
+        (> (count text) (long (:agent-note bounds)))
+        (str "the note for the model holds at most " (:agent-note bounds) " characters")))
+
+(defn set-agent-note
+  "App `view` with `text` as its note for the model. The model reads the note
+   with the next user message. A blank text removes the note."
+  [view text]
+  (some-> (agent-note-error view text)
+          refuse-view!)
+  (if (blank-text? text) (dissoc view :agent-note) (assoc view :agent-note (str/trim text))))

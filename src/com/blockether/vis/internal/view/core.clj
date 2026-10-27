@@ -1450,7 +1450,13 @@
         (some-> (app/shortcuts-error (cond-> {:placement placement :nodes nodes}
                                        shortcuts
                                        (assoc :shortcuts shortcuts)))
-                invalid-live-view!)]
+                invalid-live-view!)
+
+        agent-note
+        (when (contains? view :agent-note)
+          (some-> (app/agent-note-error {:placement placement} (:agent-note view))
+                  invalid-live-view!)
+          (trimmed (:agent-note view)))]
 
     (checked-live-view
       (cond-> {:id (str (random-uuid))
@@ -1483,7 +1489,10 @@
         (assoc :key (trimmed (:key view)))
 
         (seq shortcuts)
-        (assoc :shortcuts shortcuts)))))
+        (assoc :shortcuts shortcuts)
+
+        agent-note
+        (assoc :agent-note agent-note)))))
 
 (def ^:private live-op-value
   "How ONE key of a patch operation is normalized, by key. A table rather than a
@@ -2389,6 +2398,31 @@
   "Every app of session `sid`, open or closed, in the order they opened."
   [sid]
   (into [] (comp (map :view-id) (distinct) (keep #(app-view sid %))) (sink/app-index (str sid))))
+
+(defn agent-notes
+  "What the open apps and the HTML pages of session `sid` tell the model: one map
+   of `id`, `kind`, `title` and `agent_note` each. Apps come first, in the order
+   they opened, then pages, oldest note first. A closed or archived app tells
+   nothing."
+  [sid]
+  (into (vec
+          (for [view
+                (session-apps sid)
+
+                :when (and (:agent-note view) (not (:is-closed view)) (not (:is-archived view)))]
+
+            {"id" (:id view) "kind" "app" "title" (:title view) "agent_note" (:agent-note view)}))
+        (for [{:keys [id title agent-note]}
+              (sink/page-notes sid)
+
+              :when (and (string? id) (string? agent-note))]
+
+          (cond-> (array-map "id" id "kind" "page")
+            (string? title)
+            (assoc "title" title)
+
+            true
+            (assoc "agent_note" agent-note)))))
 
 (defn- adoptable-app
   "The open entry of the app that `record` adopts: the newest app of its session

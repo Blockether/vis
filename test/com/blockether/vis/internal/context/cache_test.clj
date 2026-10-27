@@ -28,7 +28,7 @@
             [com.blockether.vis.internal.context.env-digest :as env-digest]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.test-provider-policies :as policies]
-            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+            [lazytest.core :refer [around-each defdescribe describe expect it set-ns-context!]]))
 
 ;; Breakpoint tiers and cache windows come from provider policy; every test routes
 ;; through the first-party declarations, as a booted engine does.
@@ -199,9 +199,10 @@
   ;; session accumulated 74 finished shells — 12k chars of `exit 0` on every request.
   (it "never renders live resources into the model-facing session"
       (let [boundary
-            (cr/render-turn-boundary {:ctx (assoc base-ctx
+            (:text (cr/turn-boundary {:ctx (assoc base-ctx
                                              "session_turn" 7
-                                             "session_resources" [{"id" "shell-1"}])})
+                                             "session_resources" [{"id" "shell-1"}])}
+                                     nil))
 
             enriched
             (with-redefs [prompt/active-extensions
@@ -230,13 +231,14 @@
                                 "resources")))
         (expect (not (contains? (set ctx-engine/model-facing-keys) "session_resources")))))
   (it "renders turn and utilization explicitly for iteration 1"
-      (let [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx
+      (let [boundary (:text (cr/turn-boundary {:ctx (assoc base-ctx
                                                       "session_turn" 7
                                                       "engine_utilization"
                                                       {"last_request_tokens" 1200
                                                        "auto_compress_above" 8000
                                                        "model_input_limit" 10000
-                                                       "saturation" 12})})]
+                                                       "saturation" 12})}
+                                              nil))]
         (expect (str/includes? boundary "session[\"turn\"] = 7"))
         (expect (str/includes? boundary "session[\"utilization\"]"))
         (expect (str/includes? boundary "\"latest_measured_input_tokens\": 1200"))
@@ -246,19 +248,56 @@
   ;; rendered, so iteration 1 of the turn that SETS a goal used to read a
   ;; session without one and spent a step re-checking whether it saved.
   (it "renders a goal set by this very turn for iteration 1"
-      (let [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx
+      (let [boundary (:text (cr/turn-boundary {:ctx (assoc base-ctx
                                                       "session_turn" 4
                                                       "session_goal" {"id" "g1"
                                                                       "objective"
                                                                       "remove the legacy cache"
                                                                       "status" "active"
-                                                                      "revision" 1})})]
+                                                                      "revision" 1})}
+                                              nil))]
         (expect (str/includes? boundary "session[\"goal\"] = "))
         (expect (str/includes? boundary "\"objective\": \"remove the legacy cache\""))
         (expect (str/includes? boundary "\"status\": \"active\""))))
   (it "omits the goal line for a session without a goal"
-      (let [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx "session_turn" 4)})]
+      (let [boundary (:text (cr/turn-boundary {:ctx (assoc base-ctx "session_turn" 4)} nil))]
         (expect (not (str/includes? boundary "session[\"goal\"]")))))
+  (describe
+    "app notes"
+    (let [apps
+          [{"id" "view-1" "kind" "app" "title" "Review" "agent_note" "2 of 5 files approved"}]
+
+          ctx
+          (assoc base-ctx
+            "session_turn" 4
+            "session_apps" apps)]
+
+      (it "renders the newest notes on every user message and in the session dict"
+          (let [{:keys [text baseline]} (cr/turn-boundary {:ctx ctx} {})]
+            (expect (str/includes? text "session[\"apps\"] = "))
+            (expect (str/includes? text "\"agent_note\": \"2 of 5 files approved\""))
+            (expect (= apps (get baseline "apps")))
+            (expect (= apps (get (cr/project-ctx (ctx-engine/session-view ctx)) "apps")))))
+      (it "does not repeat the notes of the boundary as an iteration delta"
+          (let [{:keys [baseline]} (cr/turn-boundary {:ctx ctx}
+                                                     (cr/ctx-static-map {:ctx base-ctx}))]
+            (expect (= apps (get (cr/ctx-delta-map {:ctx ctx}) "apps")))
+            (expect (not (str/includes? (str (cr/render-ctx-delta baseline
+                                                                  (cr/ctx-delta-map {:ctx ctx})))
+                                        "apps")))))
+      (it "removes the notes that the model saw when they are gone"
+          (let [{:keys [text baseline]} (cr/turn-boundary {:ctx (assoc base-ctx "session_turn" 5)}
+                                                          {"apps" apps})]
+            (expect (str/includes? text "del session[\"apps\"]"))
+            (expect (not (contains? baseline "apps")))))
+      (it "says nothing about notes in a session without notes"
+          (expect (not (str/includes?
+                         (:text (cr/turn-boundary {:ctx (assoc base-ctx "session_turn" 5)} {}))
+                         "apps"))))
+      (it "keeps an extension from replacing the notes"
+          (let [view (ctx-engine/session-view (assoc ctx
+                                                "session_extension_context" {"apps" "replaced"}))]
+            (expect (= apps (get (cr/project-ctx view) "apps")))))))
   (it "keeps the changing goal after the cached system prefix"
       (let [active
             (assoc base-ctx
@@ -316,7 +355,7 @@
         (expect (= expected (get (cr/project-ctx (ctx-engine/session-view ctx)) "utilization")))
         (expect (= expected (get (cr/ctx-delta-map {:ctx ctx}) "utilization")))
         (let [boundary
-              (cr/render-turn-boundary {:ctx ctx})
+              (:text (cr/turn-boundary {:ctx ctx} nil))
 
               delta
               (cr/render-ctx-delta (cr/ctx-static-map {:ctx base-ctx})

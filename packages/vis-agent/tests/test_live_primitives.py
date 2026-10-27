@@ -57,6 +57,20 @@ def test_builders_and_mutations(monkeypatch, host_kind):
         assert children["b"]["lines"] == ["independent"]
 
 
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_an_app_keeps_its_note_for_the_model(monkeypatch, host_kind):
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    app = vis.attach(vis.ui.app("Board", vis.ui.button("go", "Go")))
+    app.set_agent_note(" Card 3 is done ")
+    assert app.state()["agent_note"] == "Card 3 is done"
+    app.set_agent_note(" ")
+    assert "agent_note" not in app.state()
+    app.close()
+
+
 def test_operator_presses_wake_the_producer_and_are_counted(monkeypatch):
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)

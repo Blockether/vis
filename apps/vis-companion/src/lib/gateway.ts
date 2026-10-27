@@ -5065,6 +5065,18 @@ export class GatewayClient {
     return `${this.base}/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}`;
   }
 
+  /**
+   * Keep the state that an HTML page tells the model. The model reads it with the
+   * next user message. A new note replaces the old one, and a blank text removes it.
+   */
+  async setPageAgentNote(sid: string, iterationId: string, index: number, text: string): Promise<void> {
+    await this.request<unknown>(
+      'PUT',
+      `/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}/agent-note`,
+      { text },
+    );
+  }
+
   private static attachmentKey(sid: string, iterationId: string, index: number): string {
     return `${sid}\u0000${iterationId}\u0000${index}`;
   }

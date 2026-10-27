@@ -423,6 +423,10 @@
       (assoc view :shortcuts (vec (:shortcuts op)))
       (dissoc view :shortcuts))
 
+    ;; The note for the model belongs to the app. A blank text removes it.
+    :agent-note
+    (app-rule nil #(app/set-agent-note view (:text op)))
+
     (let [path
           (or (node-path view (:node-id op))
               (invalid-patch! (:node-id op)

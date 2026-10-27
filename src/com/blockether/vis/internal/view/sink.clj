@@ -219,6 +219,69 @@
                              nil))))
               (line-seq reader))))))
 
+(def page-note-limit
+  "How many HTML pages of one session keep a note for the model. A newer note
+   drops the oldest page."
+  8)
+
+(defonce ^:private page-notes-lock (Object.))
+
+(defn- page-notes-file
+  "The notes that the HTML pages of session `session-id` keep for the model."
+  ^File [session-id]
+  (io/file (views-dir) (str session-id) "page-notes.json"))
+
+(defn page-notes
+  "The notes of the HTML pages of session `session-id`, oldest first. Each entry
+   holds `:id`, `:title` and `:agent-note`. A file that does not parse is logged
+   and reads as no notes."
+  [session-id]
+  (let [file (page-notes-file session-id)]
+    (if-not (.isFile file)
+      []
+      (try (let [notes (wire/->engine (json/read-json (slurp file)))]
+             (if (sequential? notes) (filterv map? notes) []))
+           (catch Exception e
+             (tel/log! {:level :warn
+                        :id ::page-notes-unreadable
+                        :data {:session-id (str session-id) :file (str file) :error (ex-message e)}
+                        :msg "Vis skipped the unreadable page notes of a session"})
+             [])))))
+
+(defn note-page!
+  "Keep `note`, a map of `:id`, `:title` and `:agent-note`, as the note of one
+   HTML page of session `session-id` for the model. A blank `:agent-note` removes
+   the note of the page. Answers the notes of the session, oldest first.
+
+   The page with the newest note goes last, and only the newest
+   [[page-note-limit]] pages keep a note. The file is replaced atomically, so a
+   crash keeps the older file whole, and the same call twice gives the same file."
+  [session-id {:keys [id title agent-note]}]
+  (locking page-notes-lock
+    (let [file
+          (page-notes-file session-id)
+
+          others
+          (filterv #(not= id (:id %)) (page-notes session-id))
+
+          notes
+          (if (str/blank? agent-note)
+            others
+            (vec (take-last page-note-limit
+                            (conj others {:id id :title title :agent-note (str/trim agent-note)}))))
+
+          tmp
+          (io/file (.getParentFile file) (str "page-notes." (util/now-ms) ".tmp"))]
+
+      (io/make-parents file)
+      (spit tmp (wire/json-str notes))
+      (Files/move (.toPath tmp)
+                  (.toPath file)
+                  (into-array java.nio.file.CopyOption
+                              [java.nio.file.StandardCopyOption/REPLACE_EXISTING
+                               java.nio.file.StandardCopyOption/ATOMIC_MOVE]))
+      notes)))
+
 (defn- owned-file
   "The last pictures of every extension-owned view, one JSON array."
   ^File []

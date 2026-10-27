@@ -137,7 +137,9 @@ function useArtifactSource(
   artifact: SessionArtifact,
   enabled: boolean,
 ) {
-  const [source, setSource] = useState<{ url: string; blob: Blob } | null>(null);
+  const [source, setSource] = useState<{ url: string; blob: Blob; iterationId: string; index: number } | null>(
+    null,
+  );
   const [failed, setFailed] = useState(false);
   const { iterationId, index } = artifact;
   useEffect(() => {
@@ -151,7 +153,7 @@ function useArtifactSource(
       client.attachmentBlob(sid, iterationId, index),
     ])
       .then(([url, blob]) => {
-        if (alive) setSource({ url, blob });
+        if (alive) setSource({ url, blob, iterationId, index });
       })
       .catch(() => {
         if (alive) setFailed(true);
@@ -161,7 +163,14 @@ function useArtifactSource(
       release();
     };
   }, [client, sid, iterationId, index, enabled]);
-  return { url: source?.url ?? null, blob: source?.blob ?? null, failed };
+  return {
+    url: source?.url ?? null,
+    blob: source?.blob ?? null,
+    failed,
+    // The cut of the bytes: just after a switch, it can still be the cut before.
+    shownIteration: source?.iterationId ?? '',
+    shownIndex: source?.index ?? 0,
+  };
 }
 
 /**
@@ -845,7 +854,16 @@ function ArtifactDetail({
         artifactLinks.open(attachmentId);
       }
     : undefined;
-  const { url, blob, failed } = useArtifactSource(client, sid, artifact, true);
+  const { url, blob, failed, shownIteration, shownIndex } = useArtifactSource(client, sid, artifact, true);
+  // An HTML page's note belongs to the cut whose bytes are on screen.
+  const saveNote = useCallback(
+    (text: string) => {
+      client.setPageAgentNote(sid, shownIteration, shownIndex, text).catch((error: unknown) => {
+        console.warn('page note: save failed', { sid, iterationId: shownIteration, index: shownIndex, error });
+      });
+    },
+    [client, sid, shownIteration, shownIndex],
+  );
 
   if (failed || !url || !blob) {
     return (
@@ -1020,7 +1038,12 @@ function ArtifactDetail({
   }
   return (
     <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
-      <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} />
+      <DocFrame
+        url={url}
+        mime={artifact.mediaType}
+        name={artifact.name}
+        onAgentNote={shownIteration ? saveNote : undefined}
+      />
     </DetailOverlay>
   );
 }

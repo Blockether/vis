@@ -46,7 +46,7 @@
 (def ^:private reserved-context-keys
   "Core fields cannot be replaced by custom extension keys."
   #{"id" "turn" "scope" "workspace" "access" "env" "routing" "symbols" "council" "agent" "goal"
-    "utilization"})
+    "apps" "utilization"})
 
 (defn- extension-context
   [view]
@@ -72,6 +72,9 @@
 
      (get view "session_goal")
      (assoc "goal" (get view "session_goal"))
+
+     (get view "session_apps")
+     (assoc "apps" (get view "session_apps"))
 
      (get view "session_council")
      (assoc "council" (get view "session_council"))
@@ -164,8 +167,9 @@
 
 (defn ctx-delta-map
   "Per-iteration CURRENT map for the structural ctx delta: `ctx-static-map`
-   PLUS the live goal and utilization. Both change during a run, so they ride
-   after the cached prefix rather than being frozen in the system message."
+   PLUS the live goal, the app notes and utilization. They change during a run,
+   so they ride after the cached prefix rather than being frozen in the system
+   message."
   [{:keys [ctx warnings]}]
   (let [view
         (eng/session-view ctx warnings)
@@ -177,18 +181,27 @@
       (get view "session_goal")
       (assoc "goal" (get view "session_goal"))
 
+      (get view "session_apps")
+      (assoc "apps" (get view "session_apps"))
+
       (get view "session_utilization")
       (assoc "utilization" (get view "session_utilization")))))
 
-(defn render-turn-boundary
-  "Render the append-only turn boundary placed on every current user message.
-   It always states the current turn and includes utilization when available, so
-   iteration 1 never relies on a stale frozen system snapshot.
+(defn turn-boundary
+  "The append-only turn boundary placed on every current user message, as
+   `:text`, and the delta `:baseline` after it. It always states the current turn
+   and includes utilization when available, so iteration 1 never relies on a
+   stale frozen system snapshot.
 
    The goal rides here for the same reason: `/goal` persists AFTER the frozen
    standing block was rendered, so without this line the very turn that sets a
-   goal shows the model a session without one."
-  [{:keys [ctx warnings]}]
+   goal shows the model a session without one.
+
+   The app notes ride here too: the newest note of each app and HTML page reaches
+   the model with every user message. When the notes are gone and `baseline`
+   still holds them, the boundary removes them. The new baseline holds the notes
+   of the same snapshot, so iteration 1 does not repeat them as a delta."
+  [{:keys [ctx warnings]} baseline]
   (let [view
         (eng/session-view ctx warnings)
 
@@ -199,12 +212,19 @@
         (get view "session_utilization")
 
         goal
-        (get view "session_goal")]
+        (get view "session_goal")
 
-    (str "session[\"turn\"] = "
-         (env/ctx->python-line turn)
-         (when utilization (str "\nsession[\"utilization\"] = " (env/ctx->python-line utilization)))
-         (when goal (str "\nsession[\"goal\"] = " (env/ctx->python-line goal))))))
+        apps
+        (get view "session_apps")]
+
+    {:text (str "session[\"turn\"] = "
+                (env/ctx->python-line turn)
+                (when utilization
+                  (str "\nsession[\"utilization\"] = " (env/ctx->python-line utilization)))
+                (when goal (str "\nsession[\"goal\"] = " (env/ctx->python-line goal)))
+                (cond apps (str "\nsession[\"apps\"] = " (env/ctx->python-line apps))
+                      (contains? baseline "apps") "\ndel session[\"apps\"]"))
+     :baseline (if apps (assoc baseline "apps" apps) (dissoc baseline "apps"))}))
 
 (defn- ctx-path-str
   "A key path `[\"env\" \"host\" \"os\"]` → the Python subscript chain

@@ -1411,8 +1411,9 @@ of that file. Use a new filename only for a different file. An app declaration f
 explains it.
 
 Use `audience` to set who sees the file: `both` (the default), `user` or `model`. A PDF or HTML
-document is for the user only. A CSV or TSV table shows as a table, and its rows do not go to
-the model.
+document is for the user only. A script in an HTML page can still give the model a note, as
+[Tell the model what people see](live-views.md#tell-the-model-what-people-see) shows. A CSV or
+TSV table shows as a table, and its rows do not go to the model.
 
 If you do not give `media_type`, Vis detects the type from the bytes, then from the filename.
 If both fail, Vis uses `application/octet-stream`.
