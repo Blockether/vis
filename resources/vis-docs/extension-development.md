@@ -191,6 +191,13 @@ After `vis-agent python uv sync` succeeds, Vis records the ready environment in 
 next start then skips uv for that project. Vis checks uv again when `pyproject.toml`, `uv.lock`, a
 local path source or the installed packages change.
 
+With `python.environment: shared`, the gateway keeps the result of the last passed shared check in
+memory. A later reload skips uv for that project until the same inputs or the shared packages change.
+
+The `/reload` result ends with a `Time` line. It shows how long each part of the reload took, for
+example the wait for another reload, Python environments and extension loads. Use it to find the
+slow part of a reload. The gateway log has the same times as the `reload-phases` event.
+
 Reload switches live sessions at the next turn boundary. Calls that are already running can finish
 with old code. A failed reload keeps the last good tools and docs and marks them stale. The reload
 result, doctor and assistant context show the source fingerprints and the failure reason. Fix that

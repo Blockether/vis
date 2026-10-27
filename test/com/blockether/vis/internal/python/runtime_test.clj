@@ -827,6 +827,82 @@
              (finally (#'python-runtime/delete-tree! project)
                       (#'python-runtime/delete-tree! packages))))))
 
+;; Issue #422: each /reload ran four uv processes for every shared project, also unchanged ones.
+(defdescribe
+  shared-project-inputs-test
+  (it "skips uv while the project, its lock and shared packages stay the same"
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-shared-inputs")
+
+            packages
+            (temp-dir "vis-shared-inputs-packages")
+
+            ensure
+            #(shared-preparation-calls project
+                                       packages
+                                       true
+                                       (fn []
+                                         (python-runtime/ensure-shared-project! project)))]
+
+        (try (spit (io/file project "pyproject.toml") "[project]\nname = \"inputs\"\n")
+             (spit (io/file project "uv.lock") "version = 1\n")
+             (expect (= ["workspace" "export" "run" "pip"] (mapv first (:calls (ensure)))))
+             (let [{:keys [result calls]} (ensure)]
+               (expect (= (.getCanonicalFile packages) result))
+               (expect (empty? calls) "an unchanged project skips uv"))
+             (expect (empty? (:calls (shared-preparation-calls
+                                       project
+                                       packages
+                                       false
+                                       #(python-runtime/prepared-shared-project project))))
+                     "the check without installation reads the same record")
+             (spit (io/file project "uv.lock") "version = 1\nrevision = 2\n")
+             (expect (= 4 (count (:calls (ensure)))) "a changed lock runs the check again")
+             (.mkdirs (io/file packages "other-1.0.dist-info"))
+             (expect (= 4 (count (:calls (ensure))))
+                     "a change in shared packages runs the check again")
+             (expect (empty? (:calls (ensure))))
+             (finally (#'python-runtime/delete-tree! project)
+                      (#'python-runtime/delete-tree! packages)))))
+  (it "records an installation, so that the next preparation does not install again"
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-shared-installed")
+
+            packages
+            (temp-dir "vis-shared-installed-packages")
+
+            ensure
+            #(shared-preparation-calls project
+                                       packages
+                                       false
+                                       (fn []
+                                         (python-runtime/ensure-shared-project! project)))]
+
+        (try (spit (io/file project "uv.lock") "version = 1\n")
+             (expect (= "pip" (first (last (:calls (ensure))))))
+             (expect (empty? (:calls (ensure))))
+             (finally (#'python-runtime/delete-tree! project)
+                      (#'python-runtime/delete-tree! packages)))))
+  (it "keeps the uv check for a project without uv.lock"
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-shared-unlocked")
+
+            packages
+            (temp-dir "vis-shared-unlocked-packages")]
+
+        (try (dotimes [_ 2]
+               (expect (= 4
+                          (count (:calls (shared-preparation-calls
+                                           project
+                                           packages
+                                           true
+                                           #(python-runtime/ensure-shared-project! project)))))))
+             (finally (#'python-runtime/delete-tree! project)
+                      (#'python-runtime/delete-tree! packages))))))
+
 ;; Issue #391: every extension lock installs into the same shared packages. A check of the exact
 ;; lock pins failed each project whose versions a later installation replaced.
 (defn- wheel!

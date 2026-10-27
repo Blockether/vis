@@ -3397,6 +3397,53 @@
          {:dir dest :code-sha (code-sha dest)}
          (catch Throwable t (delete-tree! dest) (throw t)))))
 
+(def ^:private ^:dynamic *reload-phases*
+  "Nil, or an atom of the timed phases of one reload (#422)."
+  nil)
+
+(defn- record-phase!
+  "During a reload, record `phase` with its `detail` and the milliseconds since `started`."
+  [phase detail started]
+  (when-let [phases *reload-phases*]
+    (swap! phases conj
+      (cond-> {:phase phase :ms (quot (- (System/nanoTime) (long started)) 1000000)}
+        detail
+        (assoc :detail detail)))))
+
+(defn- timed-phase
+  "Call `f`. During a reload, record how long `phase` took, also when `f` throws."
+  [phase detail f]
+  (if *reload-phases*
+    (let [started (System/nanoTime)]
+      (try (f) (finally (record-phase! phase detail started))))
+    (f)))
+
+(defn- with-reload-phases
+  "Call `f` with a phase record. The outermost call logs every phase and the total (#422)."
+  [f]
+  (if *reload-phases*
+    (f)
+    (binding [*reload-phases* (atom [])]
+      (let [started (System/nanoTime)]
+        (try (f)
+             (finally (tel/log! {:level :info
+                                 :id ::reload-phases
+                                 :data {:project-root workspace/*workspace-root*
+                                        :session-id (:session-id extension/*current-environment*)
+                                        :total-ms (quot (- (System/nanoTime) started) 1000000)
+                                        :phases @*reload-phases*}})))))))
+
+(defn- entry-label
+  "A short name for an extension entry file: its package for `<package>/<version>/extension.py`."
+  [^File f]
+  (let [names (->> (iterate #(.getParentFile ^File %) (.getParentFile f))
+                   (take-while some?)
+                   (map #(.getName ^File %))
+                   (remove #(or (= "current" %) (re-matches #"\d+\.[\w.+-]*" %))))]
+    (if (= "extension.py" (.getName f))
+      (or (first names) (.getName f))
+      (str/replace (.getName f) #"\.py$" ""))))
+
 (defn- shared-environment?
   "True when the project's `python.environment` selects shared packages for `project`.
    The setting covers uv projects inside the project tree only."
@@ -3414,39 +3461,46 @@
    A project with `python.environment: shared` prepares its uv projects in shared packages."
   [{:keys [roots dependencies project automatic? package-metadata sync-projects? site-packages
            project-root]}]
-  (let [frozen (freeze-root! roots)]
-    (try (let [prepare? (or automatic? sync-projects?)
-               packages (when project
-                          (or (get site-packages (.getCanonicalPath ^File project))
-                              (cond (shared-environment? project-root project)
-                                    (str ((if prepare?
-                                            python-runtime/ensure-shared-project!
-                                            python-runtime/prepared-shared-project)
-                                           project))
-                                    (or sync-projects?
-                                        (python-runtime/project-environment-exists? project))
-                                    (str ((if prepare?
-                                            python-runtime/ensure-project!
-                                            python-runtime/prepared-project)
-                                           project)))))]
+  (let [frozen (timed-phase :snapshot
+                            (when-let [^File root (if (instance? File roots) roots (last roots))]
+                              (.getName root))
+                            #(freeze-root! roots))]
+    (try
+      (let [prepare? (or automatic? sync-projects?)
+            packages (when project
+                       (timed-phase :environment
+                                    (.getName ^File project)
+                                    #(or (get site-packages (.getCanonicalPath ^File project))
+                                         (cond (shared-environment? project-root project)
+                                               (str ((if prepare?
+                                                       python-runtime/ensure-shared-project!
+                                                       python-runtime/prepared-shared-project)
+                                                      project))
+                                               (or sync-projects?
+                                                   (python-runtime/project-environment-exists?
+                                                     project))
+                                               (str ((if prepare?
+                                                       python-runtime/ensure-project!
+                                                       python-runtime/prepared-project)
+                                                      project))))))]
 
-           (when (and (not project) (seq dependencies))
-             (let [result (try (python-runtime/pip-install! {:target (runtime/packages-dir)
-                                                             :upgrade? true}
-                                                            dependencies)
-                               (catch Throwable t
-                                 (throw (python-runtime/installer-error "pip"
-                                                                        :install
-                                                                        (assoc (ex-data t)
-                                                                          :out (.getMessage t))))))]
-               (when-not (zero? (long (or (:exit result) 1)))
-                 (throw (python-runtime/installer-error "pip" :install result)))))
-           (assoc frozen
-             :roots roots
-             :packages packages
-             :project-root project-root
-             :package-metadata package-metadata))
-         (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
+        (when (and (not project) (seq dependencies))
+          (let [result (try (python-runtime/pip-install! {:target (runtime/packages-dir)
+                                                          :upgrade? true}
+                                                         dependencies)
+                            (catch Throwable t
+                              (throw (python-runtime/installer-error "pip"
+                                                                     :install
+                                                                     (assoc (ex-data t)
+                                                                       :out (.getMessage t))))))]
+            (when-not (zero? (long (or (:exit result) 1)))
+              (throw (python-runtime/installer-error "pip" :install result)))))
+        (assoc frozen
+          :roots roots
+          :packages packages
+          :project-root project-root
+          :package-metadata package-metadata))
+      (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
 
 (defn ^:no-doc close-context!
   "Retire a registration after admitted calls drain. Session realizations remain
@@ -3892,12 +3946,18 @@
              v))
 
          fp
-         (mapv (fn [^File f]
-                 [(.getCanonicalPath f)
-                  (try (util/sha256-hex (slurp f)) (catch Throwable _ ::unreadable-source))
-                  (try (per-root :code-sha (get plans f) #(code-sha (:roots %)))
-                       (catch Throwable _ ::invalid-sources))])
-               files)
+         (timed-phase :fingerprint
+                      nil
+                      #(mapv (fn [^File f]
+                               [(.getCanonicalPath f)
+                                (try (util/sha256-hex (slurp f))
+                                     (catch Throwable _ ::unreadable-source))
+                                (try (per-root :code-sha
+                                               (get plans f)
+                                               (fn [plan]
+                                                 (code-sha (:roots plan))))
+                                     (catch Throwable _ ::invalid-sources))])
+                             files))
 
          fp
          (conj fp [::preparation preparation-failures])
@@ -4030,55 +4090,59 @@
                            (file-inputs f (get-in previous [:ext :ext/env]) (:packages previous))))
                  ;; Unchanged: keep the live entry; only its scan position can move.
                  (swap! loaded assoc-in [entry-key :order] (.indexOf ^java.util.List files f))
-                 (try (swap! reloaded inc)
-                      (let [{:keys [ext-name] :as entry}
-                            (as-> (load-file! f
-                                              (per-root :frozen (get plans f) prepare-root!)
-                                              (partial claimed path)
-                                              (manifest f))
-                              entry
-                              (assoc entry
-                                :order (.indexOf ^java.util.List files f)
-                                :inputs
-                                (file-inputs f (get-in entry [:ext :ext/env]) (:packages entry))))
-                            sealed (:sealed entry)
-                            entry (dissoc entry :sealed)]
+                 (try
+                   (swap! reloaded inc)
+                   (let [{:keys [ext-name] :as entry}
+                         (as-> (timed-phase :register
+                                            (entry-label f)
+                                            #(load-file!
+                                               f
+                                               (per-root :frozen (get plans f) prepare-root!)
+                                               (partial claimed path)
+                                               (manifest f)))
+                           entry
+                           (assoc entry
+                             :order (.indexOf ^java.util.List files f)
+                             :inputs
+                             (file-inputs f (get-in entry [:ext :ext/env]) (:packages entry))))
+                         sealed (:sealed entry)
+                         entry (dissoc entry :sealed)]
 
-                        (when (and @registration-manifests? sealed)
-                          (write-manifest! project-root path (:inputs entry) sealed))
-                        ;; A later file (project dir) registering the same extension
-                        ;; name supersedes an earlier one at a DIFFERENT path — the
-                        ;; registry already swapped the registration; close the
-                        ;; superseded context so its adapters can't linger.
-                        (doseq [[opath {oname :ext-name octx :context}] (scope-entries project-root)
-                                :when (and (= oname ext-name) (not= opath entry-key))]
+                     (when (and @registration-manifests? sealed)
+                       (write-manifest! project-root path (:inputs entry) sealed))
+                     ;; A later file (project dir) registering the same extension
+                     ;; name supersedes an earlier one at a DIFFERENT path — the
+                     ;; registry already swapped the registration; close the
+                     ;; superseded context so its adapters can't linger.
+                     (doseq [[opath {oname :ext-name octx :context}] (scope-entries project-root)
+                             :when (and (= oname ext-name) (not= opath entry-key))]
 
-                          (close-context! octx)
-                          (swap! loaded dissoc opath))
-                        (swap! loaded assoc entry-key entry)
-                        (close-context! prev-ctx))
-                      (catch Throwable t
-                        (tel/log! {:level :warn
-                                   :id ::load-failed
-                                   :data {:file (str f) :error (ex-message t)}
-                                   :msg (str "Python extension failed to load: " f
-                                             " — " (ex-message t))})
-                        (let [previous (get @loaded entry-key)
-                              [_ sha source-sha] (some #(when (= path (first %)) %) fp)]
+                       (close-context! octx)
+                       (swap! loaded dissoc opath))
+                     (swap! loaded assoc entry-key entry)
+                     (close-context! prev-ctx))
+                   (catch Throwable t
+                     (tel/log! {:level :warn
+                                :id ::load-failed
+                                :data {:file (str f) :error (ex-message t)}
+                                :msg (str "Python extension failed to load: " f
+                                          " — " (ex-message t))})
+                     (let [previous (get @loaded entry-key)
+                           [_ sha source-sha] (some #(when (= path (first %)) %) fp)]
 
-                          (swap! failures conj
-                            (merge
-                              (select-keys (ex-data t) [:changed-inputs :changed-distributions])
-                              {:file (str f)
-                               :project-root project-root
-                               :error (ex-message t)
-                               :extension (or (:extension (ex-data t)) (:ext-name previous))
-                               :stale? (boolean previous)
-                               :loaded-fingerprint
-                               (when previous
-                                 (util/sha256-hex (pr-str (select-keys previous [:sha :code-sha]))))
-                               :requested-fingerprint
-                               (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))}))))))))
+                       (swap! failures conj
+                         (merge (select-keys (ex-data t) [:changed-inputs :changed-distributions])
+                                {:file (str f)
+                                 :project-root project-root
+                                 :error (ex-message t)
+                                 :extension (or (:extension (ex-data t)) (:ext-name previous))
+                                 :stale? (boolean previous)
+                                 :loaded-fingerprint (when previous
+                                                       (util/sha256-hex
+                                                         (pr-str (select-keys previous
+                                                                              [:sha :code-sha]))))
+                                 :requested-fingerprint
+                                 (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))}))))))))
            ;; A package that could not install has no entrypoint to scan.
            (swap! failures into (remove #(scanned (:file %)) preparation-failures))
            ;; Files that vanished from disk since the last scan (deleted / renamed)
@@ -4288,7 +4352,10 @@
                                 project-root
                                 (vary-meta fingerprint dissoc ::scope-result)))
                             (let [prepared (when prepare?
-                                             (prepare-scope-packages! scope project-root))]
+                                             (timed-phase :packages
+                                                          (if (:global scope) "global" "project")
+                                                          #(prepare-scope-packages! scope
+                                                                                    project-root)))]
                               (when (or (:force? opts) pending?)
                                 (swap! last-fingerprint dissoc project-root))
                               (load-scope! (cond-> (merge opts scope prepared)
@@ -4363,14 +4430,21 @@
    Only new, changed and failed extension files load again; `{:all? true}` loads all (#393)."
   ([] (reload-python-extensions! nil))
   ([opts]
-   (with-load-lock (fn []
-                     (when (pyext/worker-live? pyext/shared-key)
-                       (pyext/exec! pyext/shared-key
-                                    runtime/default-session
-                                    (str "import package_paths; package_paths.refresh("
-                                         (python-string-literal (runtime/packages-dir))
-                                         ", reload=True)")))
-                     (load-scopes! (assoc opts :force? true) true)))))
+   (with-reload-phases (fn []
+                         (let [requested (System/nanoTime)]
+                           (with-load-lock
+                             (fn []
+                               (record-phase! :lock-wait nil requested)
+                               (when (pyext/worker-live? pyext/shared-key)
+                                 (timed-phase :package-paths
+                                              nil
+                                              #(pyext/exec!
+                                                 pyext/shared-key
+                                                 runtime/default-session
+                                                 (str "import package_paths; package_paths.refresh("
+                                                      (python-string-literal (runtime/packages-dir))
+                                                      ", reload=True)"))))
+                               (load-scopes! (assoc opts :force? true) true))))))))
 
 ;; The loader's own host extension: `/reload` + doctor surface
 
@@ -4389,11 +4463,48 @@
                      diffed-config-keys)]
     (when (seq tokens) (str/join ", " tokens))))
 
+(def ^:private phase-labels
+  "Reader names of the timed reload phases (#422)."
+  {:configuration "configuration"
+   :lock-wait "wait for another reload"
+   :package-paths "package paths"
+   :packages "declared packages"
+   :fingerprint "change check"
+   :snapshot "source snapshots"
+   :environment "Python environments"
+   :register "extension loads"
+   :hooks "reload hooks"
+   :guidance "skills and context files"
+   :templates "prompt templates"})
+
+(defn- phase-timing
+  "One report line with the time of each reload phase, in run order. A repeated phase
+   shows its count and its slowest part (#422)."
+  [phases]
+  (let [duration #(or (fmt/format-duration %) "0ms")]
+    (when (seq phases)
+      (str "- Time: "
+           (str/join ", "
+                     (for [phase (distinct (map :phase phases))
+                           :let [rows (filterv #(= phase (:phase %)) phases)
+                                 slowest (apply max-key :ms rows)]]
+
+                       (str (get phase-labels phase (name phase))
+                            " "
+                            (duration (reduce + 0 (map :ms rows)))
+                            (when (> (count rows) 1)
+                              (str " ("
+                                   (count rows)
+                                   (when (:detail slowest)
+                                     (str ", slowest " (:detail slowest)
+                                          " " (duration (:ms slowest))))
+                                   ")")))))))))
+
 (defn- reload-report
   "Summary line and details of one `/reload` from its typed data (Vis #363).
    The line counts what changed and names failures; the body lists each part."
   [{:keys [loaded failed reloaded all? scopes configuration-changes prompt-templates failed-hooks
-           context-error duration-ms]}]
+           context-error duration-ms phases]}]
   (let [counted
         (fn [n word]
           (str n " " word (when-not (= 1 (long n)) "s")))
@@ -4445,7 +4556,9 @@
                 [(str "- Skills, agents and context files: "
                       (if context-error
                         (str "failed — " (util/redact-secret-text context-error))
-                        "rescanned"))])
+                        "rescanned"))]
+                (when-let [timing (phase-timing phases)]
+                  [timing]))
 
         failures
         (when (pos? (long failed))
@@ -4463,74 +4576,81 @@
     ;; Python extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
     ;; templates, and any extension-owned discovery cache registered as a
     ;; reload hook (harness skills/agents).
-    (let [started
-          (util/now-ms)
+    (with-reload-phases
+      (fn []
+        (let [started
+              (util/now-ms)
 
-          all?
-          (= ["--all"] argv)
+              all?
+              (= ["--all"] argv)
 
-          old-config
-          (config/current-config)
+              old-config
+              (config/current-config)
 
-          ;; Read `vis.yml` first: the reload compares each extension's env values with
-          ;; the new configuration, so a changed `environment:` value loads it again.
-          _config
-          (config/reload-config!)
+              ;; Read `vis.yml` first: the reload compares each extension's env values with
+              ;; the new configuration, so a changed `environment:` value loads it again.
+              _config
+              (timed-phase :configuration nil config/reload-config!)
 
-          {:keys [loaded failed reloaded scopes]}
-          (if all? (reload-python-extensions! {:all? true}) (reload-python-extensions!))
+              {:keys [loaded failed reloaded scopes]}
+              (if all? (reload-python-extensions! {:all? true}) (reload-python-extensions!))
 
-          ;; Feature toggles live in the `toggles:` slot of the merged YAML and are
-          ;; otherwise hydrated ONLY at process start (gateway
-          ;; `install-toggle-persistence!`, TUI `screen/run-chat!`). Without this the
-          ;; in `vis.yml` (e.g. `shell: false`) had no effect until a full restart —
-          ;; `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
-          ;; from the freshly re-read raw config so YAML is the source of truth again;
-          ;; ids absent from the file keep their current in-memory value. Without a
-          ;; session, the process directory is the project; its files set only the
-          ;; keys that the session rules allow, and nothing is saved.
-          _toggles
-          (try (if-let [values (:config/toggles extension/*current-environment*)]
-                 (let [env extension/*current-environment*]
-                   (reset! values (scoped/values (:db-info env) (:session-id env))))
-                 (when-not workspace/*workspace-root* (scoped/hydrate! true)))
-               (catch Throwable _ nil))
+              ;; Feature toggles live in the `toggles:` slot of the merged YAML and are
+              ;; otherwise hydrated ONLY at process start (gateway
+              ;; `install-toggle-persistence!`, TUI `screen/run-chat!`). Without this the
+              ;; in `vis.yml` (e.g. `shell: false`) had no effect until a full restart —
+              ;; `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
+              ;; from the freshly re-read raw config so YAML is the source of truth again;
+              ;; ids absent from the file keep their current in-memory value. Without a
+              ;; session, the process directory is the project; its files set only the
+              ;; keys that the session rules allow, and nothing is saved.
+              _toggles
+              (try (if-let [values (:config/toggles extension/*current-environment*)]
+                     (let [env extension/*current-environment*]
+                       (reset! values (scoped/values (:db-info env) (:session-id env))))
+                     (when-not workspace/*workspace-root* (scoped/hydrate! true)))
+                   (catch Throwable _ nil))
 
-          cfg-changes
-          (config-diff old-config (config/current-config))
+              cfg-changes
+              (config-diff old-config (config/current-config))
 
-          hook-results
-          (extension/run-reload-hooks!)
+              hook-results
+              (timed-phase :hooks nil extension/run-reload-hooks!)
 
-          failed-hooks
-          (into []
-                (keep (fn [[id r]]
-                        (when-not (:ok? r) id)))
-                hook-results)
+              failed-hooks
+              (into []
+                    (keep (fn [[id r]]
+                            (when-not (:ok? r) id)))
+                    hook-results)
 
-          guidance
-          (try (agents/reload!) nil (catch Throwable t (ex-message t)))
+              guidance
+              (timed-phase :guidance
+                           nil
+                           #(try (agents/reload!) nil (catch Throwable t (ex-message t))))
 
-          template-cnt
-          (try (count (prompt-templates/reload!)) (catch Throwable _ nil))
+              template-cnt
+              (timed-phase :templates
+                           nil
+                           #(try (count (prompt-templates/reload!)) (catch Throwable _ nil)))
 
-          data
-          {:loaded loaded
-           :failed failed
-           :reloaded reloaded
-           :all? all?
-           :scopes (vec scopes)
-           :configuration-changes cfg-changes
-           :prompt-templates template-cnt
-           :failed-hooks failed-hooks
-           :context-error guidance
-           :duration-ms (- (long (util/now-ms)) (long started))}]
+              data
+              {:loaded loaded
+               :failed failed
+               :reloaded reloaded
+               :all? all?
+               :scopes (vec scopes)
+               :configuration-changes cfg-changes
+               :prompt-templates template-cnt
+               :failed-hooks failed-hooks
+               :context-error guidance
+               :phases @*reload-phases*
+               :duration-ms (- (long (util/now-ms)) (long started))}]
 
-      ;; Announce after every part, so clients read the new providers and slash commands.
-      (announce-reload!)
-      (assoc (reload-report data)
-        :slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
-        :slash/data data))))
+          ;; Announce after every part, so clients read the new providers and slash commands.
+          (announce-reload!)
+          (assoc (reload-report data)
+            :slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
+            :slash/data data))))))
 
 (def ^:private http-methods
   #{"GET" "HEAD" "POST" "PUT" "PATCH" "DELETE" "OPTIONS" "TRACE" "CONNECT"})

@@ -1127,37 +1127,97 @@
            (when-not (str/includes? output "Would make no changes") output))
          (finally (run! #(Files/deleteIfExists ^java.nio.file.Path %) files)))))
 
+(defonce ^:private shared-prepared
+  ;; Canonical project path -> the inputs of its last passed shared check or installation (#422).
+  (atom {}))
+
+(defn- shared-inputs
+  "Digest what the shared check reads, without uv: the `pyproject.toml` and `uv.lock` files of the
+   project and its ancestors, their local path sources, the shared packages and the embedded tools.
+   Nil without a `uv.lock`, so that a project without a lock always keeps the uv check."
+  [^File project]
+  (let [project
+        (.getCanonicalFile project)
+
+        packages
+        (io/file (runtime/packages-dir))
+
+        text
+        #(let [file (io/file %1 %2)] (when (.isFile file) (slurp file)))
+
+        files
+        (vec (for [^File dir
+                   (take-while some? (iterate #(.getParentFile ^File %) project))
+
+                   :let [pyproject
+                         (text dir "pyproject.toml")
+
+                         lock
+                         (text dir "uv.lock")]
+                   :when (or pyproject lock)]
+
+               [(.getPath dir) pyproject lock (when lock (path-sources dir lock))]))]
+
+    (when (and (some #(nth % 2) files) (.isDirectory packages))
+      (util/sha256-hex (pr-str [(.getPath project) files (.lastModified packages)
+                                (sort (.list packages)) (Interpreter/pythonExecutable)
+                                (runtime/uv-executable) @shared-check-source])))))
+
+(defn- shared-prepared?
+  "True when `inputs` are those of the project's last passed shared check or installation."
+  [^File project inputs]
+  (boolean (and inputs (= inputs (get @shared-prepared (.getCanonicalPath project))))))
+
+(defn- remember-shared!
+  "Record that shared packages satisfy `project` with `inputs`."
+  [^File project inputs]
+  (when inputs (swap! shared-prepared assoc (.getCanonicalPath project) inputs)))
+
 (defn ensure-shared-project!
   "Prepare an extension project in shared packages, as `vis-agent python --shared uv sync` does.
-   Install only when shared packages do not satisfy the project. Never create or read `.venv`."
+   Install only when shared packages do not satisfy the project. Never create or read `.venv`.
+   While the inputs of the last passed check or installation stay the same, skip uv (#422)."
   ^File [^File project]
   (locking preparation-lock
     (binding [*extension-preparation?* true]
-      (try (let [ready? (try (nil? (shared-project-plan project))
-                             (catch clojure.lang.ExceptionInfo _ false))]
-             (when-not ready?
-               (preparation-stage! project "installing")
-               (shared-project-install! project))
-             (preparation-stage! project (if ready? "cached" "ready"))
+      (try (let [inputs (shared-inputs project)]
+             (if (shared-prepared? project inputs)
+               (preparation-stage! project "cached")
+               (let [ready? (try (nil? (shared-project-plan project))
+                                 (catch clojure.lang.ExceptionInfo _ false))]
+                 (when-not ready?
+                   (preparation-stage! project "installing")
+                   (shared-project-install! project))
+                 ;; An installation changes shared packages: record their new state.
+                 (remember-shared! project (if ready? inputs (shared-inputs project)))
+                 (preparation-stage! project (if ready? "cached" "ready"))))
              (.getCanonicalFile (io/file (runtime/packages-dir))))
            (catch Throwable t (throw (preparation-failure project t)))))))
 
 (defn prepared-shared-project
-  "Check that shared packages satisfy an extension project's lock. Never install."
+  "Check that shared packages satisfy an extension project's lock. Never install.
+   While the inputs of the last passed check or installation stay the same, skip uv (#422)."
   ^File [^File project]
-  (let [hint (str "Run vis-agent python --shared uv sync --project "
-                  (project-argument project)
-                  ", then /reload.")]
-    (when-let [plan (try (shared-project-plan project)
-                         (catch clojure.lang.ExceptionInfo e
-                           (throw (ex-info (str (.getMessage e) "\n" hint)
-                                           (assoc (ex-data e) :type ::project-sync-required)
-                                           e))))]
+  (let [hint
+        (str "Run vis-agent python --shared uv sync --project "
+             (project-argument project)
+             ", then /reload.")
+
+        inputs
+        (shared-inputs project)]
+
+    (when-let [plan (when-not (shared-prepared? project inputs)
+                      (try (shared-project-plan project)
+                           (catch clojure.lang.ExceptionInfo e
+                             (throw (ex-info (str (.getMessage e) "\n" hint)
+                                             (assoc (ex-data e) :type ::project-sync-required)
+                                             e)))))]
       ;; Name the packages, so a real conflict between two extension locks is visible.
       (throw (ex-info (str/join "\n"
                                 ["Shared packages differ from the extension project's lock."
                                  (str/trim plan) hint])
                       {:type ::project-sync-required})))
+    (remember-shared! project inputs)
     (.getCanonicalFile (io/file (runtime/packages-dir)))))
 
 (defn- option-value

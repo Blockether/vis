@@ -6531,7 +6531,9 @@ vis.register_extension(vis.Extension(
           (expect (str/includes? body text)))
         (expect (= {:loaded 2 :failed 0 :configuration-changes "network" :prompt-templates 1}
                    (select-keys data [:loaded :failed :configuration-changes :prompt-templates])))
-        (expect (nat-int? (:duration-ms data))))))
+        (expect (nat-int? (:duration-ms data)))
+        (expect (= [:configuration :hooks :guidance :templates] (mapv :phase (:phases data))))
+        (expect (str/includes? body "- Time: configuration ")))))
   (it "names the folders that each extension scope scanned (Vis #365)"
       (let [home
             (System/getProperty "user.home")
@@ -6553,7 +6555,35 @@ vis.register_extension(vis.Extension(
 
         (doseq [text ["- Extensions (global): 1 loaded — memo (scanned ~/.vis/extensions)"
                       "- Extensions (project): 0 loaded (scanned /srv/rewrite/.vis/extensions)"]]
-          (expect (str/includes? body text))))))
+          (expect (str/includes? body text)))))
+  ;; Issue #422: a slow reload showed one total, not the phase that took the time.
+  (it "sums each reload phase in run order and names the slowest repeated part"
+      (let [{:slash/keys [body]} (#'pyx/reload-report
+                                  {:loaded 2
+                                   :failed 0
+                                   :scopes []
+                                   :phases [{:phase :lock-wait :ms 0}
+                                            {:phase :environment :detail "tools" :ms 1000}
+                                            {:phase :environment :detail "notes" :ms 500}
+                                            {:phase :register :detail "memo" :ms 40}]})]
+        (expect (str/includes? body
+                               (str "- Time: wait for another reload 0ms, Python environments 1.5s"
+                                    " (2, slowest tools 1.0s), extension loads 40ms")))))
+  (it "records the phases of a real reload"
+      (let [dir
+            (temp-dir)
+
+            phases
+            (atom [])]
+
+        (write-ext! dir "timed.py" "import blockether.vis.extension as vis\n")
+        (try (with-bindings {#'pyx/*reload-phases* phases}
+               (pyx/reload-python-extensions! {:dirs [(str dir)]}))
+             (expect (= :lock-wait (:phase (first @phases))))
+             (expect (every? (set (map :phase @phases)) [:fingerprint :snapshot :register]))
+             (expect (every? (comp nat-int? :ms) @phases))
+             (expect (some #(= {:phase :register :detail "timed"} (dissoc % :ms)) @phases))
+             (finally (reset! live-load nil) (pyx/reload-python-extensions! {:dirs []}))))))
 
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
 (defn- answer-pending!
