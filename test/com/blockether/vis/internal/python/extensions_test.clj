@@ -8556,6 +8556,56 @@ vis.register_extension(vis.Extension(
               (expect (= "two" (invoke))))))))))
 
 (defdescribe
+  package-scan-shares-one-context-test
+  (it
+    "inspects every package entry of one reload in one extension-package context (#422)"
+    (let [opened
+          (atom 0)
+
+          build
+          @#'pyx/build-context
+
+          package
+          (fn [name]
+            {(str name "/current/.venv/pyvenv.cfg") "home = fixture\n"
+             (str name "/current/pyproject.toml")
+             (format (str "[project]\nname='vis-%1$s'\nversion='1.0.0'\n"
+                          "description='Share fixture'\nrequires-python='>=3.11'\n"
+                          "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\n")
+                     name)
+             (str name "/current/extension.py")
+             (format (str
+                       "import blockether.vis.extension as vis\n"
+                       "def %1$s():\n    \"Answer the name.\"\n    return '%1$s'\n"
+                       "vis.register_extension(vis.Extension(name='vis-%1$s', "
+                       "description='Share fixture', alias='%1$s', symbols=[vis.Symbol(%1$s)]))\n")
+                     name)})]
+
+      (with-redefs [python-runtime/ensure-project! (fn [_]
+                                                     (io/file (runtime/packages-dir)))]
+        (with-fresh-loaded
+          (merge (package "alpha") (package "beta") (package "gamma"))
+          (fn [result {:keys [ext-dir]}]
+            (expect (= 0 (:failed result)) (pr-str (pyx/load-failures)))
+            (with-redefs [pyx/build-context (fn [& args]
+                                              (when (= "extension-package" (last args))
+                                                (swap! opened inc))
+                                              (apply build args))]
+              (write-ext! ext-dir
+                          "beta/current/extension.py"
+                          (str (slurp (io/file ext-dir "beta/current/extension.py")) "# changed\n"))
+              (let [reloaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+                    live (count @@#'pyx/live-contexts)]
+
+                (expect (= 0 (:failed reloaded)) (pr-str (pyx/load-failures)))
+                (expect (= 1 @opened))
+                (expect (= "beta" (:result ((symbol-fn (registered "vis-beta") 'beta)))))
+                (reset! opened 0)
+                (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+                (expect (<= @opened 1))
+                (expect (= live (count @@#'pyx/live-contexts)))))))))))
+
+(defdescribe
   source-only-package-loads-and-reloads-through-shared-packages-test
   (it
     "imports declared sources without creating a private environment"

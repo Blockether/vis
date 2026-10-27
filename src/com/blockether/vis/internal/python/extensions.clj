@@ -2873,12 +2873,42 @@
   ^File [^File f]
   (.getParentFile (.getCanonicalFile f)))
 
-(defn- package-call
-  [expression]
+(def ^:private ^:dynamic *package-context*
+  "A volatile with the `extension-package` context of one scan, or nil outside a scan."
+  nil)
+
+(defn- package-context
+  "Open a context with `extension_package.py` loaded."
+  []
   (let [ctx (build-context "extension-package")]
     (try (exec-in! ctx (classpath-src "blockether/vis/extension_package.py"))
-         (run-in ctx expression)
-         (finally (discard-context! ctx)))))
+         ctx
+         (catch Throwable t (discard-context! ctx) (throw t)))))
+
+(defn- package-call
+  "Run `expression` in an `extension-package` context. Inside `with-package-context`,
+   the calls share one context; else each call opens and closes its own."
+  [expression]
+  (if-let [shared *package-context*]
+    (let [ctx
+          (or (when-let [ctx @shared]
+                (if (context-dead? ctx) (do (discard-context! ctx) (vreset! shared nil) nil) ctx))
+              (vreset! shared (package-context)))]
+      (run-in ctx expression))
+    (let [ctx (package-context)]
+      (try (run-in ctx expression) (finally (discard-context! ctx))))))
+
+(defn- with-package-context
+  "Call `f` with one shared `extension-package` context, and close it after `f`.
+   A scan with many package entries then opens one context, not one per entry."
+  [f]
+  (if *package-context*
+    (f)
+    (let [shared (volatile! nil)]
+      (binding [*package-context* shared]
+        (try (f)
+             (finally (when-let [ctx @shared]
+                        (discard-context! ctx))))))))
 
 (def ^:no-doc evals-modules
   "The modules of the bundled SDK package `blockether.vis.evals` that its
@@ -3909,17 +3939,23 @@
          (into {} (map (juxt :file identity)) preparation-failures)
 
          plans
-         (into {}
-               (map (fn [f]
-                      [f
-                       (try (when-let [failure (get blocked (.getCanonicalPath ^File f))]
-                              (throw (ex-info (:error failure) {:extension (:extension failure)})))
-                            (assoc (extension-plan f)
-                              :sync-projects? sync-projects?
-                              :site-packages site-packages
-                              :project-root project-root)
-                            (catch Throwable t {:error t}))])
-                    files))
+         (timed-phase :plans
+                      nil
+                      #(with-package-context
+                         (fn []
+                           (into {}
+                                 (map (fn [f]
+                                        [f
+                                         (try (when-let [failure (get blocked
+                                                                      (.getCanonicalPath ^File f))]
+                                                (throw (ex-info (:error failure)
+                                                                {:extension (:extension failure)})))
+                                              (assoc (extension-plan f)
+                                                :sync-projects? sync-projects?
+                                                :site-packages site-packages
+                                                :project-root project-root)
+                                              (catch Throwable t {:error t}))])
+                                      files)))))
 
          roots
          (atom {})
@@ -4327,56 +4363,59 @@
                                                       state))
                                                   fingerprints
                                                   scopes))))
-              (mapv
-                (fn [{:keys [project-root] :as scope}]
-                  (let [initialized?
-                        (contains? @last-fingerprint project-root)
+              (with-package-context
+                (fn []
+                  (mapv
+                    (fn [{:keys [project-root] :as scope}]
+                      (let [initialized?
+                            (contains? @last-fingerprint project-root)
 
-                        ;; Prepare global and explicitly opened project catalogs only.
-                        prepare?
-                        (and (not explicit?)
-                             (or (:global scope) (some? workspace/*workspace-root*)))
+                            ;; Prepare global and explicitly opened project catalogs only.
+                            prepare?
+                            (and (not explicit?)
+                                 (or (:global scope) (some? workspace/*workspace-root*)))
 
-                        pending?
-                        (and prepare? (not (contains? @prepared-scopes project-root)))
+                            pending?
+                            (and prepare? (not (contains? @prepared-scopes project-root)))
 
-                        result
-                        (if (and initialized? (not force?) (not pending?))
-                          {:loaded (count (scope-entries project-root))
-                           :failed (count (filter #(= project-root (:project-root %)) @failures))
-                           :changed? false}
-                          (do
-                            ;; Invalidate before any admission or reload mutation.
-                            (when-let [fingerprint (get @last-fingerprint project-root)]
-                              (swap! last-fingerprint assoc
-                                project-root
-                                (vary-meta fingerprint dissoc ::scope-result)))
-                            (let [prepared (when prepare?
-                                             (timed-phase :packages
-                                                          (if (:global scope) "global" "project")
-                                                          #(prepare-scope-packages! scope
-                                                                                    project-root)))]
-                              (when (or (:force? opts) pending?)
-                                (swap! last-fingerprint dissoc project-root))
-                              (load-scope! (cond-> (merge opts scope prepared)
-                                             prepare?
-                                             (assoc :sync-projects? true))))))
+                            result
+                            (if (and initialized? (not force?) (not pending?))
+                              {:loaded (count (scope-entries project-root))
+                               :failed (count (filter #(= project-root (:project-root %))
+                                                      @failures))
+                               :changed? false}
+                              (do
+                                ;; Invalidate before any admission or reload mutation.
+                                (when-let [fingerprint (get @last-fingerprint project-root)]
+                                  (swap! last-fingerprint assoc
+                                    project-root
+                                    (vary-meta fingerprint dissoc ::scope-result)))
+                                (let [prepared (when prepare?
+                                                 (timed-phase
+                                                   :packages
+                                                   (if (:global scope) "global" "project")
+                                                   #(prepare-scope-packages! scope project-root)))]
+                                  (when (or (:force? opts) pending?)
+                                    (swap! last-fingerprint dissoc project-root))
+                                  (load-scope! (cond-> (merge opts scope prepared)
+                                                 prepare?
+                                                 (assoc :sync-projects? true))))))
 
-                        result
-                        (assoc result
-                          :extensions (vec (sort (keep :ext-name
-                                                       (vals (scope-entries project-root))))))]
+                            result
+                            (assoc result
+                              :extensions (vec (sort (keep :ext-name
+                                                           (vals (scope-entries project-root))))))]
 
-                    ;; Publish only after registration, listeners and cleanup finish.
-                    (when-let [fingerprint (get @last-fingerprint project-root)]
-                      (swap! last-fingerprint assoc
-                        project-root
-                        (vary-meta fingerprint
-                                   assoc
-                                   ::scope-result
-                                   (assoc result :changed? false))))
-                    result))
-                scopes))))]
+                        ;; Publish only after registration, listeners and cleanup finish.
+                        (when-let [fingerprint (get @last-fingerprint project-root)]
+                          (swap! last-fingerprint assoc
+                            project-root
+                            (vary-meta fingerprint
+                                       assoc
+                                       ::scope-result
+                                       (assoc result :changed? false))))
+                        result))
+                    scopes))))))]
 
     {:loaded (reduce + 0 (map :loaded results))
      :failed (reduce + 0 (map :failed results))
@@ -4469,6 +4508,7 @@
    :lock-wait "wait for another reload"
    :package-paths "package paths"
    :packages "declared packages"
+   :plans "extension metadata"
    :fingerprint "change check"
    :snapshot "source snapshots"
    :environment "Python environments"
