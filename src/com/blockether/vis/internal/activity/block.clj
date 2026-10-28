@@ -102,12 +102,19 @@
         (do (reset! published-at now)
             (try (on-snapshot (presentation block snapshot)) (catch Throwable _ nil)))))))
 
+(def ^:private team-operations
+  "Calls that start or collect subagents, built in and through the host door. The agent
+   table shows the team, so these calls reach `on-event` but leave no Activity row."
+  #{:council.run :council.wait :vis.council.spawn :vis.council.run :vis.council.wait})
+
 (defn record!
   "Record one host tool event on the block's serial worker. A failed durable write is
-   kept for [[settle!]]; an event that arrives after the block settled is dropped."
+   kept for [[settle!]]; an event that arrives after the block settled is dropped. A
+   team call reaches `on-event` only."
   [{:keys [store collector on-event dispatch! state error phase] :as block} tool-event]
   (try (dispatch! (fn []
-                    (when (= :open @phase)
+                    (when (and (= :open @phase)
+                               (not (contains? team-operations (keyword (:operation tool-event)))))
                       (let [snapshot (if store
                                        (try (reset! state ((:apply! store) tool-event))
                                             (catch Throwable failure

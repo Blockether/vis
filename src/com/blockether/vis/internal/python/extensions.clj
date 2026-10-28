@@ -766,7 +766,8 @@
 (def ^:private host-activities
   "The Activity `[operation label show-start?]` of each change through the host door.
    A read has no Activity of its own: a turn wait polls reads, and the calling tool
-   already shows its Activity."
+   already shows its Activity. A team call reaches progress only: the agent table shows
+   the team."
   {[:post "/v1/sessions"] [:vis.sessions.create "Create session" false]
    [:post "/v1/sessions/actions/import"] [:vis.sessions.restore "Restore session" true]
    [:patch "/v1/sessions/:sid"] [:vis.session.update "Update session" false]

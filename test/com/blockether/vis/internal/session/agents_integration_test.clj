@@ -590,6 +590,21 @@
                     {:ids [] :timeout 3} {:session_id "child-1"} {:ids ["child-1"] :timeout 5}]
                    (mapv #(nth % 2) @calls)))
         (expect (every? #(= (:session-id env) (first %)) @calls))
+        ;; The agent table shows the team, so Activity keeps only the leader's decision.
+        (let [db
+              (:db-info env)
+
+              tid
+              (:id (first (ps/db-list-session-turns db (:session-id env))))
+
+              rows
+              (mapcat #(get-in % [:activity :rows])
+                      (mapcat :forms (ps/db-list-session-turn-iterations db tid)))]
+
+          (expect (= ["council.cancel"]
+                     (mapv :operation
+                           (remove (comp seq :children)
+                             (mapcat #(tree-seq (comp seq :children) :children %) rows))))))
         (finally (loop-env/dispose-environment! env))))))
 
 ;; Regression: a turn with a CLI `--model` gave its subagents the router default model.

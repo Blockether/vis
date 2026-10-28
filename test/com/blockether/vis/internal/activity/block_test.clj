@@ -11,23 +11,28 @@
 
 (defn- run-operation!
   "Record one succeeded operation through the block and answer its events."
-  [activity]
-  (let [ctx
-        (:context activity)
+  ([activity] (run-operation! activity details))
+  ([activity details]
+   (let [ctx
+         (:context activity)
 
-        inv
-        (event/invocation ctx nil)
+         inv
+         (event/invocation ctx nil)
 
-        events
-        [(event/start-event ctx inv details)
-         (event/terminal-event ctx
-                               inv
-                               (assoc details
-                                 :outcome :succeeded
-                                 :started-at-ms (System/currentTimeMillis)))]]
+         events
+         [(event/start-event ctx inv details)
+          (event/terminal-event ctx
+                                inv
+                                (assoc details
+                                  :outcome :succeeded
+                                  :started-at-ms (System/currentTimeMillis)))]]
 
-    (run! #(block/record! activity %) events)
-    events))
+     (run! #(block/record! activity %) events)
+     events)))
+
+(def ^:private team-details
+  "Calls that start or collect subagents, built in and through the host door."
+  (mapv #(assoc details :operation %) [:council.run :council.wait :vis.council.wait]))
 
 (defdescribe block-activity-test
              (it "records events in order and settles them into the block's envelope"
@@ -47,6 +52,40 @@
                    (expect (= "done" (:stdout result)))
                    (expect (nil? (:error result)))
                    (expect (= "succeeded" (get-in result [:activity :rows 0 :state])))))
+             (it "leaves team calls to the agent table and still passes their events on"
+                 (let [seen
+                       (atom [])
+
+                       activity
+                       (block/start! {:on-event #(swap! seen conj %)})
+
+                       events
+                       (into (into [] (mapcat #(run-operation! activity %)) team-details)
+                             (run-operation! activity))
+
+                       result
+                       (block/settle! activity {})]
+
+                   (expect (= events @seen))
+                   (expect (= ["read-record"] (map :operation (get-in result [:activity :rows]))))
+                   (expect (= 1 (get-in result [:activity :counts :succeeded])))))
+             (it "keeps team calls out of durable Activity"
+                 (let [applied
+                       (atom [])
+
+                       activity
+                       (block/start! {:store {:history-id "history-1"
+                                              :apply! (fn [event]
+                                                        (swap! applied conj event)
+                                                        {})
+                                              :settle! (fn [_ _]
+                                                         nil)
+                                              :page (fn []
+                                                      nil)}})]
+
+                   (run! #(run-operation! activity %) team-details)
+                   (expect (= {} (block/settle! activity {})))
+                   (expect (= [] @applied))))
              (it "leaves the envelope alone when the block ran no tool"
                  (expect (= {:stdout "quiet"} (block/settle! (block/start! {}) {:stdout "quiet"}))))
              (it "drops an event that arrives after the block settled"
