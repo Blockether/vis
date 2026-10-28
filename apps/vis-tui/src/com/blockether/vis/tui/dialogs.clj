@@ -7660,13 +7660,13 @@
   4)
 
 (def ^:private navigator-min-preview-cols
-  "Columns the message preview keeps before the session list grows past its 60% share."
-  32)
+  "Columns the message preview keeps before the session list shrinks toward its 50% share."
+  40)
 
 (defn- navigator-pane-layout
   "Always split the body below the query into a session list on the left and
    a message preview on the right, including narrow terminals and blank queries.
-   The list takes 70% of the width while the preview keeps its minimum, else 60%."
+   The list takes 60% of the width while the preview keeps its minimum, else 50%."
   [{:keys [left right inner-w]} content-top content-h]
   (let [left
         (long left)
@@ -7684,8 +7684,8 @@
         (max 1 (- (long content-h) 2))
 
         list-inner
-        (long (p/clamp (max (quot (* 60 inner-w) 100)
-                            (min (quot (* 70 inner-w) 100)
+        (long (p/clamp (max (quot (* 50 inner-w) 100)
+                            (min (quot (* 60 inner-w) 100)
                                  (- inner-w (long navigator-min-preview-cols))))
                        4
                        (max 4 (- inner-w 4))))

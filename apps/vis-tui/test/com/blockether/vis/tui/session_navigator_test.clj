@@ -181,13 +181,14 @@
                  (expect (str/includes? line "… | Project: Workbench / Group: Planning"))
                  (expect (<= (count (str/trimr line)) 78)))
                (finally (.stopScreen screen)))))
-    (it "gives the list 70% of the width while the preview keeps 32 columns"
+    ;; User request: the 70/30 split left the preview too narrow.
+    (it "gives the list 60% of the width while the preview keeps 40 columns"
         (let [layout
               (fn [inner-w]
                 (#'dlg/navigator-pane-layout {:left 0 :right (+ inner-w 2) :inner-w inner-w} 0 30))]
-          (expect (= 110 (:divider (layout 156))))
-          (expect (<= 32 (:preview-w (layout 156))))
-          (expect (= 46 (:divider (layout 76)))))))
+          (expect (= 94 (:divider (layout 156))))
+          (expect (<= 40 (:preview-w (layout 156))))
+          (expect (= 39 (:divider (layout 76)))))))
   (describe
     "opening and resize"
     (it "always keeps the list beside the preview, including a blank query and narrow terminals"
