@@ -5,7 +5,8 @@
    are coalesced before they reach a listener, and the block settles its Activity once
    when it ends. Durable history is an injected store, so this domain never reaches
    into persistence."
-  (:require [com.blockether.vis.internal.activity.core :as activity]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
@@ -102,10 +103,22 @@
         (do (reset! published-at now)
             (try (on-snapshot (presentation block snapshot)) (catch Throwable _ nil)))))))
 
-(def ^:private team-operations
-  "Calls that start or collect subagents, built in and through the host door. The agent
-   table shows the team, so these calls reach `on-event` but leave no Activity row."
-  #{:council.run :council.wait :vis.council.spawn :vis.council.run :vis.council.wait})
+(def ^:private council-conversation
+  "Council calls that carry the conversation between sessions. Activity keeps their rows."
+  #{"council.publish" "council.read" "council.get" "council.threads" "council.members"
+    "vis.council.publish" "vis.council.wake"})
+
+(defn- team-call?
+  "Whether `event` belongs to a subagent call of a leader or a child, built in or through
+   the host door. The agent table shows the team, so a team call reaches `on-event` but
+   leaves no Activity row."
+  [event]
+  (let [operation (some-> (:operation event)
+                          name)]
+    (boolean (and operation
+                  (or (str/starts-with? operation "council.")
+                      (str/starts-with? operation "vis.council."))
+                  (not (contains? council-conversation operation))))))
 
 (defn record!
   "Record one host tool event on the block's serial worker. A failed durable write is
@@ -113,8 +126,7 @@
    team call reaches `on-event` only."
   [{:keys [store collector on-event dispatch! state error phase] :as block} tool-event]
   (try (dispatch! (fn []
-                    (when (and (= :open @phase)
-                               (not (contains? team-operations (keyword (:operation tool-event)))))
+                    (when (and (= :open @phase) (not (team-call? tool-event)))
                       (let [snapshot (if store
                                        (try (reset! state ((:apply! store) tool-event))
                                             (catch Throwable failure

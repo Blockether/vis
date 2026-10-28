@@ -580,7 +580,7 @@
            (fn [_ _]
              (if (= 1 (swap! requests inc))
                (code-response
-                 "assert 'agents' not in globals()\nassert callable(council.members)\nr = council.run(['Verify only the boundary', {'task': 'Check docs', 'iteration_budget': 2}], timeout_secs=5)\nassert r[0]['answer'] == 'Done', r\nassert council.wait(['child-1'])[0]['status'] == 'completed'\nassert council.wait(timeout_secs=3)[0]['status'] == 'completed'\nassert council.cancel('child-1')[0]['session_id'] == 'child-1'")
+                 "assert 'agents' not in globals()\nassert callable(council.members)\nr = council.run(['Verify only the boundary', {'task': 'Check docs', 'iteration_budget': 2}], timeout_secs=5)\nassert r[0]['answer'] == 'Done', r\nassert council.wait(['child-1'])[0]['status'] == 'completed'\nassert council.wait(timeout_secs=3)[0]['status'] == 'completed'\nassert council.cancel('child-1')[0]['session_id'] == 'child-1'\nls('.')")
                {:stop-reason :end :content "Bindings invoked"}))]
 
           (turn/run-turn! env "Exercise registered Python methods" {}))
@@ -590,7 +590,7 @@
                     {:ids [] :timeout 3} {:session_id "child-1"} {:ids ["child-1"] :timeout 5}]
                    (mapv #(nth % 2) @calls)))
         (expect (every? #(= (:session-id env) (first %)) @calls))
-        ;; The agent table shows the team, so Activity keeps only the leader's decision.
+        ;; The agent table shows the team, so Activity keeps no team call; `ls` is the control.
         (let [db
               (:db-info env)
 
@@ -601,7 +601,7 @@
               (mapcat #(get-in % [:activity :rows])
                       (mapcat :forms (ps/db-list-session-turn-iterations db tid)))]
 
-          (expect (= ["council.cancel"]
+          (expect (= ["ls"]
                      (mapv :operation
                            (remove (comp seq :children)
                              (mapcat #(tree-seq (comp seq :children) :children %) rows))))))

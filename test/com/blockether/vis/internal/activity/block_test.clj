@@ -31,8 +31,10 @@
      events)))
 
 (def ^:private team-details
-  "Calls that start or collect subagents, built in and through the host door."
-  (mapv #(assoc details :operation %) [:council.run :council.wait :vis.council.wait]))
+  "Subagent calls of a leader and a child, built in and through the host door."
+  (mapv #(assoc details :operation %)
+        [:council.run :council.wait :council.cancel :council.ask :council.result
+         :vis.council.wait]))
 
 (defdescribe block-activity-test
              (it "records events in order and settles them into the block's envelope"
@@ -61,14 +63,16 @@
 
                        events
                        (into (into [] (mapcat #(run-operation! activity %)) team-details)
-                             (run-operation! activity))
+                             (mapcat #(run-operation! activity %))
+                             [(assoc details :operation :council.publish) details])
 
                        result
                        (block/settle! activity {})]
 
                    (expect (= events @seen))
-                   (expect (= ["read-record"] (map :operation (get-in result [:activity :rows]))))
-                   (expect (= 1 (get-in result [:activity :counts :succeeded])))))
+                   (expect (= ["council.publish" "read-record"]
+                              (map :operation (get-in result [:activity :rows]))))
+                   (expect (= 2 (get-in result [:activity :counts :succeeded])))))
              (it "keeps team calls out of durable Activity"
                  (let [applied
                        (atom [])
