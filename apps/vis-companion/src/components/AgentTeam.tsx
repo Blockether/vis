@@ -42,8 +42,10 @@ export function agentLabel(agent: Subagent, agents: readonly Subagent[]): string
 }
 
 /**
- * The status word of an agent, with the theme ink that agrees with it. The views write the
- * word in capitals. A question to its leader is no status: the leader answers it, not a person.
+ * The status word of an agent, with the theme ink that agrees with it: `queued`, `running`,
+ * `done` or `failed`. The views write the word in capitals. A failed verdict, a cancel and a
+ * spent budget are all `failed`; the update of the row tells which. A question to its leader
+ * is no status: the leader answers it, not a person.
  */
 export function agentStatus(agent: Subagent): { text: string; ink: string } {
   switch (agent.status) {
@@ -52,17 +54,18 @@ export function agentStatus(agent: Subagent): { text: string; ink: string } {
     case 'running':
       return { text: 'running', ink: 'text-accent-ink' };
     case 'completed':
-      if (agent.outcome === 'passed') return { text: 'passed', ink: 'text-ok-ink' };
       if (agent.outcome === 'failed') return { text: 'failed', ink: 'text-err-ink' };
       return { text: 'done', ink: 'text-ok-ink' };
-    case 'failed':
-      return { text: 'failed', ink: 'text-err-ink' };
-    case 'cancelled':
-      return { text: 'cancelled', ink: 'text-dialog-hint' };
     default:
-      return { text: 'out of budget', ink: 'text-warn' };
+      return { text: 'failed', ink: 'text-err-ink' };
   }
 }
+
+// The end that `failed` hides, for an agent without a result.
+const END_REASON: Partial<Record<Subagent['status'], string>> = {
+  cancelled: 'cancelled',
+  budget_limited: 'out of budget',
+};
 
 // The start of the current task: the spawn, or the last resume.
 function startOf(agent: Subagent): number | undefined {
@@ -93,10 +96,10 @@ export function formatAgentTime(ms: number): string {
 /**
  * The update of a row. While the agent works: its newest progress note, the note that its
  * leader also reads, else its latest Activity line, else the first line of its task. After
- * its task: its result.
+ * its task: its result, else the reason of its end.
  */
 export function agentUpdate(agent: Subagent): string | undefined {
-  if (!isLive(agent)) return agent.result;
+  if (!isLive(agent)) return agent.result ?? END_REASON[agent.status];
   return agent.note ?? agent.activity ?? (agent.task.trim().split('\n', 1)[0].trim() || undefined);
 }
 
@@ -108,7 +111,7 @@ export interface TeamCount {
 }
 
 // The order of the status counts: the work first, then the ends.
-const STATUS_ORDER = ['running', 'queued', 'done', 'passed', 'failed', 'out of budget', 'cancelled'];
+const STATUS_ORDER = ['running', 'queued', 'done', 'failed'];
 
 function counted(words: readonly { text: string; ink: string }[], order: readonly string[]): TeamCount[] {
   const counts = new Map<string, TeamCount>();
@@ -353,14 +356,15 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
                 const end = item.kind === 'finished' && item.status
                   ? agentStatus({ ...agent, status: item.status, outcome: item.outcome })
                   : null;
+                const text = item.text || (item.kind === 'finished' && item.status ? END_REASON[item.status] : undefined);
                 return (
                   <li key={index} className="grid grid-cols-[8ch_9ch_minmax(0,1fr)] gap-x-3">
                     <time dateTime={new Date(item.at).toISOString()} className="text-dialog-hint tabular-nums">{clockTime(item.at)}</time>
                     <span className="text-dialog-hint">{STEP_WORDS[item.kind] ?? item.kind}</span>
                     <span className="whitespace-pre-wrap break-words">
                       {end && <span className={`uppercase ${end.ink}`}>{end.text}</span>}
-                      {end && item.text && ' · '}
-                      {item.text}
+                      {end && text && ' · '}
+                      {text}
                     </span>
                   </li>
                 );

@@ -43,7 +43,8 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('agent rows', () => {
   // A subagent asks only its leader. Its question or request is no status for a person.
-  it('reads every status as words, and a question to the leader as running', () => {
+  // Four words only: a passed verdict is done; a failed verdict, a cancel and a spent budget are failed.
+  it('reads every status as one of four words, and a question to the leader as running', () => {
     const words = [
       { status: 'queued' }, { status: 'running' }, { question: 'Which branch?' }, { budget_request: { iterations: 8 } },
       { files_request: { reason: 'Docs' } }, { pending_input: true }, { status: 'completed' },
@@ -52,7 +53,7 @@ describe('agent rows', () => {
     ].map((change) => agentStatus({ ...child, ...change } as Subagent).text);
     expect(words).toEqual([
       'queued', 'running', 'running', 'running', 'running', 'running', 'done',
-      'passed', 'failed', 'failed', 'cancelled', 'out of budget',
+      'done', 'failed', 'failed', 'failed', 'failed',
     ]);
   });
 
@@ -105,7 +106,11 @@ describe('agent rows', () => {
     expect(agentUpdate({ ...child, activity: 'Read ~/a.clj' })).toBe('Read ~/a.clj');
     expect(agentUpdate({ ...child, status: 'queued', task: '  Check the links.\nReport the dead ones.' })).toBe('Check the links.');
     expect(agentUpdate({ ...child, status: 'completed', note: 'Old note', result: 'All pass' })).toBe('All pass');
-    expect(agentUpdate({ ...child, status: 'cancelled', note: 'Old note' })).toBeUndefined();
+    // Without a result, the update gives the end that `failed` hides.
+    expect(agentUpdate({ ...child, status: 'cancelled', note: 'Old note' })).toBe('cancelled');
+    expect(agentUpdate({ ...child, status: 'budget_limited' })).toBe('out of budget');
+    expect(agentUpdate({ ...child, status: 'budget_limited', result: 'Read 41 of 60 files' })).toBe('Read 41 of 60 files');
+    expect(agentUpdate({ ...child, status: 'failed' })).toBeUndefined();
     render(<TurnAgents {...props} agents={[{ ...child, ...asks, note: 'The bug is in tokenize' }]} />);
     expect(rowTexts()[0]).toMatch(/^agent#1The bug is in tokenize/);
     expect(screen.queryByText(/old API|Slow tests/)).not.toBeInTheDocument();
@@ -126,7 +131,7 @@ describe('agent rows', () => {
   });
 
   it('takes one line on a phone for a row without an update, not a blank second line', () => {
-    const { container } = render(<TurnAgents {...props} agents={[{ ...child, status: 'cancelled' }]} />);
+    const { container } = render(<TurnAgents {...props} agents={[{ ...child, status: 'completed' }]} />);
     const [, , update] = container.querySelector('[data-agent-row="child"]')!.children;
     expect(update).toHaveClass('max-sm:hidden');
   });
@@ -188,7 +193,7 @@ describe('agent timeline', () => {
     render(<TurnAgents {...props} timeline={timeline} onOpen={onOpen} agents={[
       { ...child, role: 'verify', status: 'completed', outcome: 'passed', finished_at: T0 + 61_000 },
     ]} />);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /passed/ })); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /done/ })); });
     expect(timeline).toHaveBeenCalledWith('child');
     const sheet = screen.getByRole('dialog', { name: '#1' });
     const items = within(sheet).getAllByRole('listitem').map((item) => item.textContent);
@@ -196,15 +201,27 @@ describe('agent timeline', () => {
       `${clockTime(T0)}StartedVerify the contract`,
       `${clockTime(T0 + 12_000)}NoteThe schema has the new fields.`,
       `${clockTime(T0 + 40_000)}MessageAsked: keep the old API?`,
-      `${clockTime(T0 + 61_000)}Finishedpassed · All 40 tests pass`,
+      `${clockTime(T0 + 61_000)}Finisheddone · All 40 tests pass`,
     ]);
     expect(clockTime(T0)).toBe('14:03:07');
-    expect(sheet).toHaveTextContent('verify1m 01spassed');
+    expect(sheet).toHaveTextContent('verify1m 01sdone');
     expect(sheet.querySelectorAll('svg')).toHaveLength(1);
     expect(within(sheet).queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
     fireEvent.click(within(sheet).getByRole('button', { name: 'Open session' }));
     expect(onOpen).toHaveBeenCalledWith('child');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('gives the reason of a failed end without a text', async () => {
+    const timeline = vi.fn(async (): Promise<AgentTimeline> => ({ session_id: 'child', items: [
+      { at: T0 + 9_000, kind: 'finished', status: 'budget_limited' },
+    ] }));
+    render(<TurnAgents {...props} timeline={timeline} agents={[{ ...child, status: 'budget_limited', finished_at: T0 + 9_000 }]} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /failed/ })); });
+    const sheet = screen.getByRole('dialog', { name: '#1' });
+    expect(within(sheet).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      `${clockTime(T0 + 9_000)}Finishedfailed · out of budget`,
+    ]);
   });
 
   it('says when there are no steps, and shows a read error', async () => {
@@ -239,7 +256,7 @@ describe('team line', () => {
       { ...child, session_id: 'e', role: 'audit', status: 'queued' },
     ]);
     expect(roles.map(({ count, text }) => `${count} ${text}`)).toEqual(['2 research', '1 verify', '1 audit', '1 agent']);
-    expect(statuses.map(({ count, text }) => `${count} ${text}`)).toEqual(['2 running', '1 queued', '1 done', '1 cancelled']);
+    expect(statuses.map(({ count, text }) => `${count} ${text}`)).toEqual(['2 running', '1 queued', '1 done', '1 failed']);
     expect(roles[0].ink).toBe('text-role-research');
     expect(statuses[0].ink).toBe('text-accent-ink');
     expect(teamCounts([])).toEqual({ roles: [], statuses: [] });
@@ -253,7 +270,7 @@ describe('team line', () => {
     const team = screen.getByRole('region', { name: 'Subagents' });
     expect(team).toHaveClass('border');
     expect(team).toHaveAttribute('data-transcript-part');
-    expect(team.querySelector('[data-team-line]')).toHaveTextContent('team1 research1 verify1 running1 passed');
+    expect(team.querySelector('[data-team-line]')).toHaveTextContent('team1 research1 verify1 running1 done');
     expect(team.querySelector('[aria-hidden]')).toHaveTextContent('roletitleupdatetimestatus');
   });
 });

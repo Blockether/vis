@@ -158,8 +158,9 @@
   (or (not-empty (one-line (get agent "title"))) (str "#" n)))
 
 (defn status-word
-  "The status of `agent` in words: `queued`, `running`, `done`, `passed`, `failed`, `cancelled`
-   or `out of budget`. An agent that waits for the reply of its parent still runs."
+  "The status of `agent` in one of four words: `queued`, `running`, `done` or `failed`. An agent
+   that waits for the reply of its parent still runs. A failed verdict, a cancel and a spent
+   budget are all `failed`: the row text tells which."
   [agent]
   (case (get agent "status")
     "queued"
@@ -169,40 +170,33 @@
     "running"
 
     "completed"
-    (case (get agent "outcome")
-      "passed"
-      "passed"
+    (if (= "failed" (get agent "outcome")) "failed" "done")
 
-      "failed"
-      "failed"
-
-      "done")
-
-    "failed"
+    ("failed" "cancelled" "budget_limited")
     "failed"
 
+    (str/replace (str (get agent "status")) "_" " ")))
+
+(defn- end-reason
+  "The end that `failed` hides, for an agent without a result: `cancelled` or `out of budget`."
+  [agent]
+  (case (get agent "status")
     "cancelled"
     "cancelled"
 
     "budget_limited"
     "out of budget"
 
-    (str/replace (str (get agent "status")) "_" " ")))
+    nil))
 
 (defn- tone
   [word]
   (case word
-    "out of budget"
-    :attention
-
-    ("done" "passed")
+    "done"
     :ok
 
     "failed"
     :bad
-
-    "cancelled"
-    :cancelled
 
     "running"
     :running
@@ -210,11 +204,13 @@
     :muted))
 
 (defn- now-text
-  "The newest progress note or Activity line of a working agent, else its result. The questions
-   and grant requests of an agent go to its leader, never to the person, so no row shows them."
+  "The newest progress note or Activity line of a working agent, else its result, else the
+   reason of its end. The questions and grant requests of an agent go to its leader, never to
+   the person, so no row shows them."
   [agent]
   (one-line (or (when (active? agent) (or (get agent "note") (get agent "activity")))
-                (get agent "result"))))
+                (get agent "result")
+                (end-reason agent))))
 
 (defn- start-ms
   [agent]
@@ -396,17 +392,11 @@
 
     :status
     (case tone-key
-      :attention
-      t/warning-fg
-
       :ok
       t/status-ok
 
       :bad
       t/status-bad
-
-      :cancelled
-      t/cancelled-fg
 
       :running
       t/code-block-fg
@@ -720,7 +710,7 @@
 
 (def ^:private summary-words
   "The status words of the dock summary line, in their order."
-  ["running" "queued" "done" "passed" "failed" "cancelled" "out of budget"])
+  ["running" "queued" "done" "failed"])
 
 (defn summary-counts
   "The status counts of `rows`, such as `2 running · 1 queued · 1 done`."
@@ -975,16 +965,20 @@
    (let [kind
          (get item "kind")
 
+         end
+         (when (= "finished" kind)
+           {"status" (get item "status" "completed") "outcome" (get item "outcome")})
+
          word
-         (if (= "finished" kind)
-           (status-word {"status" (get item "status" "completed") "outcome" (get item "outcome")})
-           kind)]
+         (if end (status-word end) kind)]
 
      (str (.format ^java.time.format.DateTimeFormatter clock
                    (.atZone (java.time.Instant/ofEpochMilli (long (get item "at"))) zone))
           "  "
           word
-          (when-let [text (not-empty (one-line (get item "text")))]
+          (when-let [text (or (not-empty (one-line (get item "text")))
+                              (some-> end
+                                      end-reason))]
             (str "  " text))))))
 
 (defn timeline-items
