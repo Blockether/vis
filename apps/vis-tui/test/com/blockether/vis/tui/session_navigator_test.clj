@@ -229,7 +229,29 @@
 
           (expect (= {:action :switch :id "0"} choice))
           (expect (= ["0"] (mapv (comp :id :target :entry) (filter :selected? painted))))
-          (expect (not-any? #(= "59" (:id (:target (:entry %)))) painted)))))
+          (expect (not-any? #(= "59" (:id (:target (:entry %)))) painted))))
+    ;; Regression, user report in this Vis session: the full C-x s box was too short.
+    (it "grows a full list 4 rows past the shared dialog inset, with the top in place"
+        (let [rows
+              (mapv (fn [n]
+                      {"id" (str n) "title" (str "Session " n) "turn_count" 1 "modified_at" n})
+                    (range 60))
+
+              lines
+              (-> (capture-navigator! 160 50 {:sessions rows} [])
+                  :frames
+                  first
+                  :text
+                  str/split-lines)
+
+              corners
+              (keep-indexed (fn [i line]
+                              (when (re-find #"[┌└]" line) i))
+                            lines)]
+
+          (expect (= [3 45] [(first corners) (last corners)]))
+          (expect (= [3 3 152 39] (#'dlg/dialog-rect 160 50 100 200))
+                  "Other dialogs keep the shared inset"))))
   (describe "gateway paging"
             (it "uses the gateway recents cursor, not starred or grouped windows"
                 (let [requests

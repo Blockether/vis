@@ -983,21 +983,42 @@
 (defn- dialog-rect
   "Golden box `[left top box-w box-h]` for `content-w`x`content-h` content in a
    `cols`x`rows` layout area. The terminal centers the box with a generous inset,
-   nudged up and left. A `*dialog-region*` band keeps a compact inset, leaves room
-   for the drop shadow and anchors the box to the region's row."
-  [^long cols ^long rows ^long content-w ^long content-h]
-  (if-let [region *dialog-region*]
-    (let [[golden-w golden-h] (render/golden-dialog-size (+ cols 8) (+ rows 11) content-w content-h)
-          box-w (max 1 (min (long golden-w) (- cols (long region-inset) 3)))
-          box-h (max 1 (min (long golden-h) (- rows 2)))]
+   nudged up and left. `extra-rows` lets a terminal box grow that many rows down
+   into the bottom inset; its top stays put. A `*dialog-region*` band keeps a
+   compact inset, leaves room for the drop shadow and anchors the box to the region's row."
+  ([cols rows content-w content-h] (dialog-rect cols rows content-w content-h 0))
+  ([cols rows content-w content-h extra-rows]
+   (let [cols
+         (long cols)
 
-      [(max (long region-inset) (quot (- cols box-w 2) 2))
-       (region-top rows box-h (:anchor-row region)) box-w box-h])
-    (let [[box-w box-h] (render/golden-dialog-size cols rows content-w content-h)
-          box-w (long box-w)
-          box-h (long box-h)]
+         rows
+         (long rows)
 
-      [(max 3 (- (quot (- cols box-w) 2) 3)) (max 2 (- (quot (- rows box-h) 2) 2)) box-w box-h])))
+         content-w
+         (long content-w)
+
+         content-h
+         (long content-h)
+
+         extra-rows
+         (long extra-rows)]
+
+     (if-let [region *dialog-region*]
+       (let [[golden-w golden-h]
+             (render/golden-dialog-size (+ cols 8) (+ rows 11) content-w content-h)
+             box-w (max 1 (min (long golden-w) (- cols (long region-inset) 3)))
+             box-h (max 1 (min (long golden-h) (- rows 2)))]
+
+         [(max (long region-inset) (quot (- cols box-w 2) 2))
+          (region-top rows box-h (:anchor-row region)) box-w box-h])
+       (let [[box-w box-h] (render/golden-dialog-size cols (+ rows extra-rows) content-w content-h)
+             box-w (long box-w)
+             box-h (long box-h)
+             ;; The top is placed for the height that the shared inset allows.
+             placed-h (min box-h (max 3 (- rows 11)))]
+
+         [(max 3 (- (quot (- cols box-w) 2) 3)) (max 2 (- (quot (- rows placed-h) 2) 2)) box-w
+          box-h])))))
 
 (defn- wrap-width
   "Columns that dialog text wraps at before its box is sized: the shared estimate,
@@ -1011,6 +1032,108 @@
                                  (adaptive-content-height rows min-adaptive-content-h))]
     (max 1 (min (- (default-content-width cols) 2) (- (long box-w) 4)))))
 
+(defn- draw-boxed-chrome!
+  "Paint the `draw-dialog-chrome!` box for `content-w`x`content-h` content. Both
+   explicit arities call it, so a wrapper of the public var sees each call once."
+  [g cols rows title content-w content-h extra-rows]
+  (let [cols
+        (long cols)
+
+        rows
+        (long rows)
+
+        content-w
+        (long content-w)
+
+        content-h
+        (long content-h)
+
+        [box-left box-top box-w box-h]
+        (dialog-rect cols rows content-w content-h extra-rows)
+
+        box-left
+        (long box-left)
+
+        box-top
+        (long box-top)
+
+        box-w
+        (long box-w)
+
+        box-h
+        (long box-h)
+
+        box-right
+        (+ box-left box-w -1)
+
+        box-bottom
+        (+ box-top box-h -1)
+
+        inner-w
+        (- box-w 2)]
+
+    (prepare-modal-background! (frame/screen-column box-left)
+                               box-top
+                               (frame/screen-column (min (dec cols) (+ box-right 2)))
+                               (min (dec rows) (inc box-bottom)))
+    ;; Shadow - clipped to terminal bounds
+    (let [shd-left
+          (+ box-left 2)
+
+          shd-top
+          (inc box-top)
+
+          shd-w
+          (min box-w (- cols shd-left))
+
+          shd-h
+          (min box-h (- rows shd-top))]
+
+      ;; In a band the two cells beside each shadow end show the rows under the box.
+      ;; Clear them, so that no cut-off text from those rows touches the box.
+      (when *dialog-region*
+        (p/set-bg! g t/terminal-bg)
+        (when (< (inc box-right) cols)
+          (p/fill-rect! g (inc box-right) box-top (min 2 (- cols box-right 1)) 1))
+        (when (< (inc box-bottom) rows) (p/fill-rect! g box-left (inc box-bottom) 2 1)))
+      (when (and (pos? shd-w) (pos? shd-h))
+        (p/set-bg! g t/dialog-shadow)
+        (p/fill-rect! g shd-left shd-top shd-w shd-h)))
+    ;; Background
+    (p/set-bg! g t/dialog-bg)
+    (p/fill-rect! g box-left box-top box-w box-h)
+    (p/set-colors! g t/dialog-border t/dialog-bg)
+    (p/draw-box! g box-left box-top box-w box-h)
+    ;; Title bar - full-width accent stripe with centered title
+    (let [title-row
+          (inc box-top)
+
+          title-text
+          (ellipsize (or title "") (max 0 (- inner-w 2)))
+
+          tx
+          (+ box-left 1 (quot (- inner-w (p/display-width title-text)) 2))]
+
+      ;; Accent bar background
+      (p/set-bg! g t/dialog-title-bg)
+      (p/fill-rect! g (inc box-left) title-row inner-w 1)
+      ;; Title text - BOLD, matching the Blockether 700-weight header
+      (p/set-fg! g t/dialog-title-fg)
+      (p/styled g [p/BOLD] (p/put-str! g tx title-row title-text))
+      (draw-dialog-close-button! g box-right title-row)
+      ;; Top separator - below title bar
+      (p/set-colors! g t/dialog-border t/dialog-bg)
+      (p/draw-separator! g box-left box-right (inc title-row))
+      ;; Bottom separator - above hint bar
+      (let [bot-sep (- box-bottom 2)]
+        (when (> bot-sep (+ box-top 3)) (p/draw-separator! g box-left box-right bot-sep))))
+    {:left box-left
+     :top box-top
+     :right box-right
+     :bottom box-bottom
+     :inner-w inner-w
+     :inner-h (- box-h 2)}))
+
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.
 
@@ -1020,6 +1143,8 @@
      `content-h` for the shared full-height footprint.
    - `(g cols rows title content-w content-h)` - fully explicit. Use
      only when a dialog genuinely needs a non-default width.
+   - `(g cols rows title content-w content-h opts)` - explicit, with
+     `:extra-rows`: rows a terminal box can grow down into the bottom inset.
 
    Returns {:left :top :right :bottom :inner-w :inner-h}."
   ([g cols rows title content-h]
@@ -1030,103 +1155,9 @@
                         (default-content-width cols)
                         (adaptive-content-height rows content-h)))
   ([g cols rows title content-w content-h]
-   (let [cols
-         (long cols)
-
-         rows
-         (long rows)
-
-         content-w
-         (long content-w)
-
-         content-h
-         (long content-h)
-
-         [box-left box-top box-w box-h]
-         (dialog-rect cols rows content-w content-h)
-
-         box-left
-         (long box-left)
-
-         box-top
-         (long box-top)
-
-         box-w
-         (long box-w)
-
-         box-h
-         (long box-h)
-
-         box-right
-         (+ box-left box-w -1)
-
-         box-bottom
-         (+ box-top box-h -1)
-
-         inner-w
-         (- box-w 2)]
-
-     (prepare-modal-background! (frame/screen-column box-left)
-                                box-top
-                                (frame/screen-column (min (dec cols) (+ box-right 2)))
-                                (min (dec rows) (inc box-bottom)))
-     ;; Shadow - clipped to terminal bounds
-     (let [shd-left
-           (+ box-left 2)
-
-           shd-top
-           (inc box-top)
-
-           shd-w
-           (min box-w (- cols shd-left))
-
-           shd-h
-           (min box-h (- rows shd-top))]
-
-       ;; In a band the two cells beside each shadow end show the rows under the box.
-       ;; Clear them, so that no cut-off text from those rows touches the box.
-       (when *dialog-region*
-         (p/set-bg! g t/terminal-bg)
-         (when (< (inc box-right) cols)
-           (p/fill-rect! g (inc box-right) box-top (min 2 (- cols box-right 1)) 1))
-         (when (< (inc box-bottom) rows) (p/fill-rect! g box-left (inc box-bottom) 2 1)))
-       (when (and (pos? shd-w) (pos? shd-h))
-         (p/set-bg! g t/dialog-shadow)
-         (p/fill-rect! g shd-left shd-top shd-w shd-h)))
-     ;; Background
-     (p/set-bg! g t/dialog-bg)
-     (p/fill-rect! g box-left box-top box-w box-h)
-     (p/set-colors! g t/dialog-border t/dialog-bg)
-     (p/draw-box! g box-left box-top box-w box-h)
-     ;; Title bar - full-width accent stripe with centered title
-     (let [title-row
-           (inc box-top)
-
-           title-text
-           (ellipsize (or title "") (max 0 (- inner-w 2)))
-
-           tx
-           (+ box-left 1 (quot (- inner-w (p/display-width title-text)) 2))]
-
-       ;; Accent bar background
-       (p/set-bg! g t/dialog-title-bg)
-       (p/fill-rect! g (inc box-left) title-row inner-w 1)
-       ;; Title text - BOLD, matching the Blockether 700-weight header
-       (p/set-fg! g t/dialog-title-fg)
-       (p/styled g [p/BOLD] (p/put-str! g tx title-row title-text))
-       (draw-dialog-close-button! g box-right title-row)
-       ;; Top separator - below title bar
-       (p/set-colors! g t/dialog-border t/dialog-bg)
-       (p/draw-separator! g box-left box-right (inc title-row))
-       ;; Bottom separator - above hint bar
-       (let [bot-sep (- box-bottom 2)]
-         (when (> bot-sep (+ box-top 3)) (p/draw-separator! g box-left box-right bot-sep))))
-     {:left box-left
-      :top box-top
-      :right box-right
-      :bottom box-bottom
-      :inner-w inner-w
-      :inner-h (- box-h 2)})))
+   (draw-boxed-chrome! g cols rows title content-w content-h 0))
+  ([g cols rows title content-w content-h {:keys [extra-rows]}]
+   (draw-boxed-chrome! g cols rows title content-w content-h (or extra-rows 0))))
 
 (defn draw-flat-dialog-chrome!
   "Flat variant of `draw-dialog-chrome!`: no drop shadow, no accent title
@@ -7624,6 +7655,10 @@
    matching messages even when there are only a few sessions."
   24)
 
+(def ^:private navigator-extra-rows
+  "Rows the picker box grows past the shared terminal inset, toward the bottom."
+  4)
+
 (def ^:private navigator-min-preview-cols
   "Columns the message preview keeps before the session list grows past its 60% share."
   32)
@@ -8397,7 +8432,8 @@
                                        rows-n
                                        "Sessions"
                                        (- cols 4)
-                                       (max (long navigator-min-height) (+ (long desired-lines) 3)))
+                                       (max (long navigator-min-height) (+ (long desired-lines) 3))
+                                       {:extra-rows navigator-extra-rows})
 
                   {:keys [left right inner-w]}
                   bounds
