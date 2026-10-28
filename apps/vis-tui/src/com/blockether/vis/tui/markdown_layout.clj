@@ -1831,6 +1831,11 @@
     ;; :p, nil, anything else → plain text marker
     (:plain marker-set)))
 
+(defn blank-entry
+  "One blank row in the marker set of `(:mode opts)`: the row that stands between two blocks."
+  [opts]
+  {:line (block-marker-for (marker-set-for (:mode opts)) :p nil) :meta nil})
+
 (defn- run->sentinel-segment
   "Wrap a run's text with the inline-span sentinels its style flags
    demand. Bold / italic / code / link each get an ON…OFF pair.

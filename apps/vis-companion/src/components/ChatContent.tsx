@@ -617,6 +617,18 @@ function localFilename(path: string): string {
   }
 }
 
+/** The picture a `vis-image` fence names: summary, host path, mime, `WxH` and size, one per line. */
+function imageFence(body: string): { name: string; path: string; meta: string } {
+  const [summary = '', path = '', mime = '', dims = '', size = ''] = body
+    .split('\n')
+    .map((line) => line.trim());
+  const name =
+    /^\[Image(?: #\d+)?: (.+?)(?: \d+[×x]\d+)?(?:,[^\]]*)?\]$/.exec(summary)?.[1] ||
+    localFilename(path);
+  const meta = [mediaMeta({ filename: name, media_type: mime }), dims, size].filter(Boolean);
+  return { name, path, meta: meta.join(' · ') };
+}
+
 export const Markdown = memo(function Markdown({
   children,
   compact = false,
@@ -876,6 +888,28 @@ export const Markdown = memo(function Markdown({
             // fence too put the same file on screen twice — the fence itself is
             // rendered as nothing.
             if (language === 'vis-doc') return null;
+            // A picture fence names a file on the gateway host, which this app cannot load.
+            // Like the TUI card, it is its own block with the name and size, apart from the prose.
+            if (language === 'vis-image') {
+              const picture = imageFence(stripMarks(raw));
+              const attachmentId =
+                artifactLinks?.byName.get(picture.name) ||
+                artifactLinks?.byName.get(localFilename(picture.path));
+              return (
+                <div
+                  role="group"
+                  aria-label={picture.name}
+                  className={`${compact ? 'my-2' : 'my-3'} border border-code-edge bg-code px-3 py-2 font-mono text-meta text-code-foreground`}
+                >
+                  <div className="font-semibold">
+                    {attachmentId
+                      ? artifactButton(attachmentId, picture.name, undefined, true)
+                      : picture.name}
+                  </div>
+                  <div className="text-dialog-hint">{picture.meta}</div>
+                </div>
+              );
+            }
             return (
               <SyntaxCodeBlock
                 value={raw}

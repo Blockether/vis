@@ -6292,6 +6292,39 @@
           (expect (str/includes? text "PNG · 1600x900 · 1.2 MB"))
           (expect (str/includes? text
                                  "Click a thumbnail or press Ctrl+X Shift+I to view pictures."))))
+    (it "keeps one blank row between the card and the prose above and below it"
+        ;; User report (screenshots): the card touched the sentence above and below it.
+        (let [{:keys [text line-meta]}
+              (data :kitty (str "look\n" (fence 1 1600 900) "\nafter"))
+
+              lines
+              (str/split-lines text)
+
+              parts
+              (mapv :card-part line-meta)
+
+              top
+              (.indexOf parts :top)
+
+              bottom
+              (.lastIndexOf parts :bottom)]
+
+          (expect (= ["look" ""] (subvec lines 0 top)))
+          (expect (= ["" "after"] (subvec lines (inc bottom))))))
+    (it "keeps two pastes together, like the rows of a list"
+        (let [paste
+              (fn [i]
+                (str "````vis-paste\n[Pasted #" i ": 2 lines, 4B]\na\nb\n````"))
+
+              lines
+              (str/split-lines (:text (data :kitty (str "x\n\n" (paste 1) "\n\n" (paste 2)))))
+
+              row
+              (fn [needle]
+                (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))]
+
+          (expect (= ["x" ""] (subvec lines 0 (row "[Pasted #1"))))
+          (expect (= 1 (- (long (row "[Pasted #2")) (long (row "[Pasted #1")))))))
     (it "gives a wide and a tall picture one thumbnail size, each cut to its shape"
         (let [[wide tall] (map :img
                                (filter #(= :image (:kind %))

@@ -538,6 +538,36 @@ describe('Markdown attachment links', () => {
     expect(open).toHaveBeenCalledExactlyOnceWith(id);
   });
 
+  // User report (screenshots): a picture fence stood against the prose, and the app
+  // painted its host path and metadata as a code block.
+  it('shows a picture fence as its own block, apart from the prose', () => {
+    const open = vi.fn();
+    const id = '0b1c2d3e-4f50-4617-8899-aabbccddeeff';
+    const fence = [
+      '````vis-image',
+      '[Image: tui-card.png 1100×400, 27.9 KB]',
+      '/Users/me/.vis/cache/display/att-5c8e9329e774d421.png',
+      'image/png',
+      '1100x400',
+      '27.9 KB',
+      '````',
+    ].join('\n');
+    const view = render(
+      <ArtifactLinkContext.Provider value={{ byName: new Map([['tui-card.png', id]]), open }}>
+        <Markdown>{`The card:\n${fence}\n\nAfter the card.`}</Markdown>
+      </ArtifactLinkContext.Provider>,
+    );
+
+    const card = view.getByRole('group', { name: 'tui-card.png' });
+    expect(card).toHaveClass('my-3');
+    expect(card.previousElementSibling?.tagName).toBe('P');
+    expect(card.nextElementSibling?.tagName).toBe('P');
+    expect(card).toHaveTextContent('PNG · 1100x400 · 27.9 KB');
+    expect(view.container).not.toHaveTextContent('/Users/me');
+    fireEvent.click(view.getByRole('button', { name: 'tui-card.png' }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(id);
+  });
+
   it('names an unknown local image instead of painting a broken frame', () => {
     const view = render(
       <Markdown>{'![Chart](/tmp/missing.png) ![](./plots/loss%20curve.png) ![Logo](https://example.com/logo.png)'}</Markdown>,

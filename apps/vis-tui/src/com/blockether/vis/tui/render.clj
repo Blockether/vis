@@ -5946,32 +5946,62 @@
                   (assoc fold :session-id session-id)))
           (conj {:line ""})))))
 
+(defn- gap-entry?
+  "Whether `entry` is a blank row: only markers and spaces, and no click meta."
+  [{:keys [line meta]}]
+  (and (nil? meta) (str/blank? (str/replace (str line) #"[\p{Cf}\p{Co}]" ""))))
+
+(defn- join-pieces
+  "Join `[kind entries]` pieces with one blank row `gap` between two neighbours, so a card
+   never touches the prose above or below it. Two `:paste` disclosures stay together, like
+   the rows of a list. A piece that already starts or ends with a blank row gets no second one."
+  [pieces gap]
+  (:out (reduce (fn [{:keys [out prev] :as acc} [kind entries]]
+                  (if (empty? entries)
+                    acc
+                    (let [gap? (and prev
+                                    (not (and (= :paste prev) (= :paste kind)))
+                                    (not (gap-entry? (peek out)))
+                                    (not (gap-entry? (first entries))))]
+                      {:out (cond-> out
+                              gap?
+                              (conj gap)
+
+                              true
+                              (into entries))
+                       :prev kind})))
+                {:out [] :prev nil}
+                pieces)))
+
 (defn- paste-aware-ast->entries
   "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
    a collapsible paste disclosure instead of an inline code chip. Falls
-   back to the plain walker (zero overhead) when the IR carries no paste."
+   back to the plain walker (zero overhead) when the IR carries no paste.
+   A blank row separates each card and disclosure from the prose around it."
   [answer content-w opts]
   (let [blocks (vec (drop 2 answer))]
     (if (not-any? disclosure-code-block? blocks)
       (vec (layout/ast->entries answer content-w opts))
-      (->> (partition-by disclosure-code-block? blocks)
-           (mapcat (fn [run]
-                     (if (disclosure-code-block? (first run))
-                       ;; Adjacent pictures share one image table card.
-                       (mapcat (fn [nodes]
-                                 (if (image-code-block? (first nodes))
-                                   (image-table-entries nodes content-w opts)
-                                   (mapcat (fn [node]
-                                             (cond (table-code-block? node)
-                                                   (table-disclosure-entries node content-w opts)
-                                                   (doc-code-block? node)
-                                                   (doc-disclosure-entries node content-w opts)
-                                                   :else
-                                                   (paste-disclosure-entries node content-w opts)))
-                                           nodes)))
-                               (partition-by image-code-block? run))
-                       (layout/ast->entries (into [:ast {}] run) content-w opts))))
-           vec))))
+      (join-pieces
+        (->> (partition-by disclosure-code-block? blocks)
+             (mapcat
+               (fn [run]
+                 (if (disclosure-code-block? (first run))
+                   ;; Adjacent pictures share one image table card.
+                   (mapcat (fn [nodes]
+                             (if (image-code-block? (first nodes))
+                               [[:card (image-table-entries nodes content-w opts)]]
+                               (map (fn [node]
+                                      (cond (table-code-block? node)
+                                            [:card (table-disclosure-entries node content-w opts)]
+                                            (doc-code-block? node)
+                                            [:card (doc-disclosure-entries node content-w opts)]
+                                            :else [:paste
+                                                   (paste-disclosure-entries node content-w opts)]))
+                                    nodes)))
+                           (partition-by image-code-block? run))
+                   [[:markdown (layout/ast->entries (into [:ast {}] run) content-w opts)]]))))
+        (layout/blank-entry opts)))))
 
 ;;; Inline markdown links and images
 ;; Strip link destinations with a small scanner before tokenizing inline styles.
