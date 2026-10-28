@@ -651,6 +651,8 @@
           (expect (= 1 (count text)) "The dock is one line")
           (expect (str/starts-with? line "Agents   "))
           (expect (str/includes? line "3 RUNNING"))
+          ;; The team time follows the head: from the first spawn to now while agents work.
+          (expect (str/starts-with? line "Agents   1m 04s   3 RUNNING"))
           (expect (not (str/includes? line "waiting")))
           (expect (not (str/includes? line "asking")))
           (expect (str/ends-with? line "C-x T details")))
@@ -666,7 +668,10 @@
                 "A narrow line drops the counts and the hint"))
       (with-redefs [team/summary (constantly {:agents (drop 4 every-state)})]
         (expect (zero? (team/dock-height "leader" nil 120)) "No dock after a finished team")
-        (expect (= 1 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock"))
+        (expect (= 1 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock")
+        ;; A team without a working agent stops its time at the last end.
+        (expect (str/starts-with? (first (team/dock-text "leader" "turn-1" 120 (+ now-ms 60000)))
+                                  "Agents   1m 04s   ")))
       (with-redefs [team/summary (constantly {:agents []})]
         (expect (zero? (team/dock-height "leader" "turn-1" 120)) "An empty team has no dock"))))
 

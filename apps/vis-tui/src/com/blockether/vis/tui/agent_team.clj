@@ -735,19 +735,46 @@
 
 (defn- summary-hint [expanded?] (if expanded? "C-x T hide details" "C-x T details"))
 
+(defn team-span
+  "The time span of the team of `agents`: `{:start :end}` in epoch ms. `:start` is the first
+   spawn. `:end` is the last end, or nil while an agent works or waits. Nil without a spawn."
+  [agents]
+  (let [marks (fn [k]
+                (keep #(let [v (get % k)] (when (number? v) (long v))) agents))]
+    (when-let [starts (seq (marks "created_at"))]
+      {:start (reduce min starts)
+       :end (when-not (some active? agents)
+              (some->> (seq (marks "finished_at"))
+                       (reduce max)))})))
+
+(defn span-time
+  "The time of team span `span` at `now-ms`, such as `3m 20s`: to its end, or to now while the
+   team works. Nil without a span, or for an ended team without an end time."
+  [{:keys [start end]} now-ms active?]
+  (when start
+    (cond end (duration-text (- (long end) (long start)))
+          active? (duration-text (- (long now-ms) (long start))))))
+
 (defn summary-segments
   "The painted parts of the dock summary line at `width` cells: `[col text part]` vectors.
-   `part` is `:head`, `:counts` or `:hint`. Long counts shorten first, so the hint stays. A
-   line too narrow for both drops the hint, then shortens the counts."
-  [{:keys [counts expanded?]} width]
+   `part` is `:head`, `:time`, `:counts` or `:hint`. The time of the team follows the head.
+   Long counts shorten first, so the hint stays. A line too narrow for both drops the hint,
+   then shortens the counts."
+  [{:keys [counts expanded? span active?]} width now-ms]
   (let [width
         (long width)
 
         head
         "Agents"
 
-        counts-col
+        time
+        (span-time span now-ms active?)
+
+        time-col
         (+ (count head) 3)
+
+        counts-col
+        (if time (+ time-col (long (p/display-width time)) 3) time-col)
 
         hint
         (summary-hint expanded?)
@@ -762,6 +789,9 @@
         (- (if hint? (- hint-col 3) width) counts-col)]
 
     (cond-> [[0 head :head]]
+      (and time (<= (+ time-col (long (p/display-width time))) width))
+      (conj [time-col time :time])
+
       (and (seq counts) (pos? room))
       (conj [counts-col (p/ellipsize counts room) :counts])
 
@@ -792,8 +822,15 @@
             expanded?
             (dock-expanded? sid)
 
+            team
+            (filterv #(contains? docked (get % "team_id")) agents)
+
             head
-            {:line {:kind :summary :counts (summary-counts rows) :expanded? expanded?}}]
+            {:line {:kind :summary
+                    :counts (summary-counts rows)
+                    :expanded? expanded?
+                    :span (team-span team)
+                    :active? (boolean (some active? team))}}]
 
         (if expanded?
           (let [columns (table-columns rows (dock-width cols))]
@@ -813,14 +850,14 @@
   [sid running-turn cols now-ms]
   (mapv (fn [{:keys [line columns]}]
           (segments-text (if (= :summary (:kind line))
-                           (summary-segments line (dock-width cols))
+                           (summary-segments line (dock-width cols) now-ms)
                            (table-segments line columns now-ms))))
         (dock-lines sid running-turn cols)))
 
 (defn- paint-summary-line!
   "Paint the dock summary line at screen row `y` from column `left` across `width` cells."
-  [^TextGraphics g left y width line]
-  (doseq [[col text part] (summary-segments line width)]
+  [^TextGraphics g left y width line now-ms]
+  (doseq [[col text part] (summary-segments line width now-ms)]
     (let [x (+ (long left) (long col))]
       (p/set-colors! g (if (= :head part) t/code-block-fg t/dialog-hint) t/terminal-bg)
       (if (= :head part) (p/styled g [p/BOLD] (p/put-str! g x y text)) (p/put-str! g x y text))))
@@ -844,7 +881,7 @@
       (p/set-colors! g t/code-block-fg t/terminal-bg)
       (p/fill-rect! g 0 y (max 1 (long cols)) 1)
       (if (= :summary (:kind line))
-        (do (paint-summary-line! g 2 y width line)
+        (do (paint-summary-line! g 2 y width line now)
             ;; A click on the summary line shows or hides the agent table, like C-x T.
             (.register interactions/hit-map
                        {:bounds {:row y :col 0 :width (max 1 (long cols))}

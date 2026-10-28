@@ -17,6 +17,7 @@ import {
   dockTeams,
   formatAgentTime,
   teamCounts,
+  teamTime,
   useAgentTeam,
 } from './AgentTeam';
 
@@ -249,19 +250,36 @@ describe('agent timeline', () => {
 });
 
 describe('team line', () => {
-  it('counts the agents by role in contract order and by status, the work first', () => {
-    const { roles, statuses } = teamCounts([
+  // The team line shows no role counts: the table names each role.
+  it('counts the agents by status, the work first', () => {
+    const statuses = teamCounts([
       { ...child, role: 'verify' },
       { ...child, session_id: 'b', role: 'research', status: 'completed' },
       { ...child, session_id: 'c', role: 'research', status: 'cancelled' },
       { ...child, session_id: 'd' },
       { ...child, session_id: 'e', role: 'audit', status: 'queued' },
     ]);
-    expect(roles.map(({ count, text }) => `${count} ${text}`)).toEqual(['2 research', '1 verify', '1 audit', '1 agent']);
     expect(statuses.map(({ count, text }) => `${count} ${text}`)).toEqual(['2 running', '1 queued', '1 done', '1 failed']);
-    expect(roles[0].ink).toBe('text-role-research');
     expect(statuses[0].ink).toBe('text-accent-ink');
-    expect(teamCounts([])).toEqual({ roles: [], statuses: [] });
+    expect(teamCounts([])).toEqual([]);
+  });
+
+  it('times the team from its first spawn to now while it works, else to its last end', () => {
+    const ended = { ...child, status: 'completed' as const };
+    expect(teamTime([], T0)).toBeUndefined();
+    expect(teamTime([{ ...child, created_at: T0 + 5_000 }, { ...child, session_id: 'b', status: 'queued' }], T0 + 90_000)).toBe(90_000);
+    expect(teamTime([ended, { ...ended, session_id: 'b', created_at: T0 + 1, finished_at: T0 + 40_000 }], T0 + 999_000)).toBe(40_000);
+    expect(teamTime([ended], T0 + 999_000)).toBeUndefined();
+  });
+
+  it('ticks the team time on the team line while an agent runs', () => {
+    vi.useFakeTimers({ now: T0 + 200_000 });
+    render(<TurnAgents {...props} agents={[{ ...child, role: 'research' }]} />);
+    const line = () => screen.getByRole('region', { name: 'Subagents' }).querySelector('[data-team-line]');
+    expect(line()).toHaveTextContent(/^team3m 20s1 running$/);
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(line()).toHaveTextContent(/^team3m 22s1 running$/);
+    vi.useRealTimers();
   });
 
   it('frames the table of a turn under its team line, with the column headings', () => {
@@ -272,7 +290,7 @@ describe('team line', () => {
     const team = screen.getByRole('region', { name: 'Subagents' });
     expect(team).toHaveClass('border');
     expect(team).toHaveAttribute('data-transcript-part');
-    expect(team.querySelector('[data-team-line]')).toHaveTextContent('team1 research1 verify1 running1 done');
+    expect(team.querySelector('[data-team-line]')).toHaveTextContent(/^team\d+[hms][\d ms]*1 running1 done$/);
     expect(team.querySelector('[aria-hidden]')).toHaveTextContent('roletitleupdatestatustime');
   });
 });

@@ -7,7 +7,7 @@ import { Button, DialogFrame, Modal } from './ui';
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
 
-// The word of an agent without a role, in its row and in the team counts.
+// The word of an agent without a role, in its row.
 const NO_ROLE = 'agent';
 
 // The ink of each contract role. A role that the Companion does not know reads like no role.
@@ -103,7 +103,7 @@ export function agentUpdate(agent: Subagent): string | undefined {
   return agent.note ?? agent.activity ?? (agent.task.trim().split('\n', 1)[0].trim() || undefined);
 }
 
-/** One count of a team line, such as `2 research` or `1 running`, with its ink. */
+/** One count of a team line, such as `1 running`, with its ink. */
 export interface TeamCount {
   text: string;
   count: number;
@@ -120,12 +120,24 @@ function counted(words: readonly { text: string; ink: string }[], order: readonl
   return [...counts.values()].sort((a, b) => rank(a.text) - rank(b.text));
 }
 
-/** The agents counted by role, in the order of the contract, and by status word. */
-export function teamCounts(agents: readonly Subagent[]): { roles: TeamCount[]; statuses: TeamCount[] } {
-  return {
-    roles: counted(agents.map(agentRole), [...ROLES.map((role) => role.const), NO_ROLE]),
-    statuses: counted(agents.map(agentStatus), STATUS_ORDER),
-  };
+/** The agents counted by status word, the work first. */
+export function teamCounts(agents: readonly Subagent[]): TeamCount[] {
+  return counted(agents.map(agentStatus), STATUS_ORDER);
+}
+
+const marks = (values: readonly (number | null | undefined)[]) => values.filter((mark): mark is number => typeof mark === 'number');
+
+/**
+ * The time of a team in ms: from the spawn of its first agent to now while one of its agents
+ * works or waits, else to the end of its last agent. Undefined without a spawn or an end.
+ */
+export function teamTime(agents: readonly Subagent[], now: number): number | undefined {
+  const starts = marks(agents.map((agent) => agent.created_at));
+  if (starts.length === 0) return undefined;
+  const start = Math.min(...starts);
+  if (agents.some(isLive)) return Math.max(0, now - start);
+  const ends = marks(agents.map((agent) => agent.finished_at));
+  return ends.length ? Math.max(0, Math.max(...ends) - start) : undefined;
 }
 
 function Counts({ counts, className = '' }: { counts: readonly TeamCount[]; className?: string }) {
@@ -138,19 +150,20 @@ function Counts({ counts, className = '' }: { counts: readonly TeamCount[]; clas
   );
 }
 
-/** The counts of a team on one line: `TEAM  2 RESEARCH  1 VERIFY  1 RUNNING  2 DONE`. */
+/** A team on one line: its time, then its counts by status: `TEAM  3m 20s  1 RUNNING  2 DONE`. */
 export function TeamLine({ agents }: { agents: readonly Subagent[] }) {
-  const { roles, statuses } = teamCounts(agents);
+  const now = useNow(agents.some(isLive));
+  const time = teamTime(agents, now);
   return (
     <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-4" data-team-line>
       <span className="font-bold uppercase text-white">team</span>
-      <Counts counts={roles} />
-      <Counts counts={statuses} className="sm:ml-auto" />
+      {time !== undefined && <span className="whitespace-nowrap text-dialog-hint tabular-nums" data-team-time>{formatAgentTime(time)}</span>}
+      <Counts counts={teamCounts(agents)} className="sm:ml-auto" />
     </span>
   );
 }
 
-// The clock of the rows. It ticks once a second only while an agent runs.
+// The clock of the rows and of the team time. It ticks once a second only while `ticking`.
 function useNow(ticking: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

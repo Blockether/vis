@@ -26,10 +26,10 @@ describe('AgentDock', () => {
     expect(dock([{ ...base, status: 'completed' }]).container).toBeEmptyDOMElement();
   });
 
-  it('folds the whole team of the running turn to one line of counts by role and by status', () => {
+  it('folds the whole team of the running turn to one line: its time and its counts by status', () => {
     dock([{ ...base, status: 'completed', result: 'Found 3 routes' }, { ...asking, title: 'Fix it' }], 'turn-1');
     const line = within(region()).getByRole('button', { expanded: false });
-    expect(line).toHaveTextContent('team1 research1 implement1 running1 done');
+    expect(line).toHaveTextContent(/^team(\d+[hms][\d ms]*)?1 running1 done$/);
     expect(rows()).toEqual([]);
     expect(region().querySelectorAll('svg')).toHaveLength(1);
   });
@@ -53,7 +53,7 @@ describe('AgentDock', () => {
   it('keeps a team after its turn while one of its agents still works, and only that team', () => {
     dock([base, { ...base, session_id: 'old', team_id: 'turn-0', status: 'completed' }], 'turn-2');
     const line = within(region()).getByRole('button', { expanded: false });
-    expect(line).toHaveTextContent('team1 research1 running');
+    expect(line).toHaveTextContent(/^team(\d+[hms][\d ms]*)?1 running$/);
     fireEvent.click(line);
     expect(rows()).toHaveLength(1);
     expect(rows()[0]).toHaveTextContent(/^research#1Read the logsrunning$/);

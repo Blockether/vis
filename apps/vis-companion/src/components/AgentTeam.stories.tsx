@@ -29,7 +29,7 @@ export const Finished: Story = {
     const canvas = within(canvasElement);
     const team = canvas.getByRole('region', { name: 'Subagents' });
     await expect(team.querySelector('[data-team-line]')).toHaveTextContent(
-      'team2 research2 implement2 verify1 audit3 done4 failed',
+      /^team1h 02m3 done4 failed$/,
     );
     // A cancel without a result names its end in the update; the status only says failed.
     await expect(canvas.getByText('cancelled')).toBeVisible();
@@ -47,7 +47,7 @@ export const DockFolded: Story = {
   play: async ({ canvasElement }) => {
     const dock = within(canvasElement).getByRole('region', { name: 'Subagents of this turn' });
     const line = within(dock).getByRole('button', { expanded: false });
-    await expect(line).toHaveTextContent('team1 research2 implement2 verify1 audit4 running1 queued1 done');
+    await expect(line).toHaveTextContent(/^team\d+[hms][\d ms]*4 running1 queued1 done$/);
     await expect(within(dock).queryByRole('button', { name: /Map the agents routes/ })).toBeNull();
   },
 };

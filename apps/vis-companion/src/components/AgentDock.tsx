@@ -4,8 +4,8 @@ import { TeamLine, TurnAgents, dockTeams, type TeamProps } from './AgentTeam';
 import { ChevronIcon, MARK_NUDGE } from './icons';
 
 /**
- * The subagents of the running turn, above the composer, folded to one line: the counts
- * by role and by status. The line opens the table of the team. A team stays here while
+ * The subagents of the running turn, above the composer, folded to one line: the time of
+ * the team and its counts by status. The line opens the table of the team. A team stays here while
  * one of its agents still works after its turn ended; then it stands in that turn of the
  * transcript.
  */

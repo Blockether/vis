@@ -46,7 +46,7 @@ export const Running: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const dock = await page.findByRole('region', { name: 'Subagents of this turn' });
-    await expect(within(dock).getByRole('button', { expanded: false })).toHaveTextContent(/^team1 research/);
+    await expect(within(dock).getByRole('button', { expanded: false })).toHaveTextContent(/^team\d+m \d{2}s4 running1 queued1 done$/);
     await userEvent.click(within(dock).getByRole('button', { expanded: false }));
     await expect(within(dock).getByText('Sign in to the store')).toBeVisible();
     await expect(within(dock).queryByText(/more iterations/)).toBeNull();
