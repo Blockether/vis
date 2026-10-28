@@ -77,7 +77,7 @@ describe('agent rows', () => {
     expect([0, 45_999, 184_000, 3_725_000].map(formatAgentTime)).toEqual(['0s', '45s', '3m 04s', '1h 02m']);
   });
 
-  it('gives each agent one table row: role, title, update, time, status; without icons', () => {
+  it('gives each agent one table row: role, title, update, status, time; without icons', () => {
     vi.useFakeTimers({ now: T0 + 65_000 });
     const { container } = render(<TurnAgents {...props} agents={[
       { ...child, role: 'research', activity: 'Search files AgentTeam' },
@@ -86,18 +86,20 @@ describe('agent rows', () => {
       { ...child, session_id: 'q', status: 'queued', created_at: T0 + 2 },
     ]} />);
     expect(rowTexts()).toEqual([
-      'research#1Search files AgentTeam1m 05srunning',
-      'verifyGateway tests2 of 40 tests fail29sfailed',
+      'research#1Search files AgentTeamrunning1m 05s',
+      'verifyGateway tests2 of 40 tests failfailed29s',
       'agent#3Verify the contractqueued',
     ]);
     expect(container.querySelector('svg')).toBeNull();
-    const [role, , , , status] = container.querySelector('[data-agent-row="v"]')!.children;
+    // The status stands right before the time.
+    const [role, , , status, time] = container.querySelector('[data-agent-row="v"]')!.children;
     expect(role).toHaveClass('uppercase', 'text-role-verify');
     expect(status).toHaveClass('uppercase', 'text-err-ink');
+    expect(time).toHaveTextContent('29s');
     expect(screen.getByText('Gateway tests')).toHaveAttribute('title', 'Verify the contract');
     // The time ticks while an agent runs; no message is needed for it.
     act(() => { vi.advanceTimersByTime(2000); });
-    expect(rowTexts()[0]).toBe('research#1Search files AgentTeam1m 07srunning');
+    expect(rowTexts()[0]).toBe('research#1Search files AgentTeamrunning1m 07s');
   });
 
   it('shows what a working agent does now: its newest note, its activity or its task, then its result', () => {
@@ -141,7 +143,7 @@ describe('agent rows', () => {
       { ...child, session_id: 'late', created_at: T0 + 5, pending_input: true },
       { ...child, session_id: 'early', created_at: T0 + 1, status: 'completed' },
     ]} />);
-    expect(rowTexts()).toEqual([expect.stringMatching(/^agent#1done$/), expect.stringMatching(/^agent#2Verify the contract.*running$/)]);
+    expect(rowTexts()).toEqual([expect.stringMatching(/^agent#1done$/), expect.stringMatching(/^agent#2Verify the contract.*running\d+[hms]/)]);
   });
 
   // A form of a subagent opens in the form prompt of the leader session, like any
@@ -204,7 +206,7 @@ describe('agent timeline', () => {
       `${clockTime(T0 + 61_000)}Finisheddone · All 40 tests pass`,
     ]);
     expect(clockTime(T0)).toBe('14:03:07');
-    expect(sheet).toHaveTextContent('verify1m 01sdone');
+    expect(sheet).toHaveTextContent('verifydone1m 01s');
     expect(sheet.querySelectorAll('svg')).toHaveLength(1);
     expect(within(sheet).queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
     fireEvent.click(within(sheet).getByRole('button', { name: 'Open session' }));
@@ -271,7 +273,7 @@ describe('team line', () => {
     expect(team).toHaveClass('border');
     expect(team).toHaveAttribute('data-transcript-part');
     expect(team.querySelector('[data-team-line]')).toHaveTextContent('team1 research1 verify1 running1 done');
-    expect(team.querySelector('[aria-hidden]')).toHaveTextContent('roletitleupdatetimestatus');
+    expect(team.querySelector('[aria-hidden]')).toHaveTextContent('roletitleupdatestatustime');
   });
 });
 

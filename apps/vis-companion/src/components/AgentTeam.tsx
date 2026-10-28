@@ -162,11 +162,11 @@ function useNow(ticking: boolean): number {
   return now;
 }
 
-// The columns of the team table: ROLE, TITLE, UPDATE, TIME and STATUS. ROLE, TITLE and STATUS fit
-// the longest word of the team, and TIME fits `59m 59s`, so a ticking time never moves a column.
-// TITLE takes at most a third of the row; a longer title wraps. On a phone, UPDATE and TIME are
-// the second line.
-const COLUMNS = 'grid-cols-[var(--role)_minmax(0,1fr)_auto] sm:grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_var(--status)]';
+// The columns of the team table: ROLE, TITLE, UPDATE, STATUS and TIME, so the status stands
+// right before the time. ROLE, TITLE and STATUS fit the longest word of the team, and TIME fits
+// `59m 59s`, so a ticking time never moves a column. TITLE takes at most a third of the row; a
+// longer title wraps. On a phone, UPDATE and TIME are the second line.
+const COLUMNS = 'grid-cols-[var(--role)_minmax(0,1fr)_auto] sm:grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_var(--status)_7ch]';
 const ROW = `w-full min-w-0 items-baseline gap-x-3 py-1 text-left ${COLUMNS}`;
 const ROW_BUTTON = `group grid rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${ROW}`;
 
@@ -194,8 +194,8 @@ function AgentTable({ rows, now, error, onSelect }: {
         <span>role</span>
         <span>title</span>
         <span>update</span>
-        <span className="text-right">time</span>
         <span>status</span>
+        <span className="text-right">time</span>
       </div>
       <ul className="divide-y divide-dialog-edge/40">
         {rows.map((agent) => {
@@ -216,10 +216,10 @@ function AgentTable({ rows, now, error, onSelect }: {
                 >
                   {update ?? ''}
                 </span>
+                <span className={`order-3 whitespace-nowrap text-right uppercase sm:order-none sm:text-left ${status.ink}`}>{status.text}</span>
                 <span className="order-5 col-start-3 whitespace-nowrap text-right text-dialog-hint tabular-nums sm:order-none sm:col-start-auto">
                   {time === undefined ? '' : formatAgentTime(time)}
                 </span>
-                <span className={`order-3 whitespace-nowrap text-right uppercase sm:order-none sm:text-left ${status.ink}`}>{status.text}</span>
               </button>
             </li>
           );
@@ -340,8 +340,8 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
         <div className="space-y-3 px-4 py-3 font-mono text-meta text-white sm:text-ui" data-agent-timeline>
           <p className="flex flex-wrap gap-x-3">
             <span className={`uppercase ${role.ink}`}>{role.text}</span>
-            {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
             <span className={`uppercase ${status.ink}`}>{status.text}</span>
+            {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
           </p>
           <p className="whitespace-pre-wrap break-words text-dialog-hint">{agent.task}</p>
           {steps === null ? (

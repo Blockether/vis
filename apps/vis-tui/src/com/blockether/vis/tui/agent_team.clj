@@ -50,6 +50,12 @@
   [agent]
   (some #(when (= (get % "const") (get agent "role")) (get % "const")) (roles)))
 
+(defn role-word
+  "The role of `agent` as the views write it, in capitals, such as `IMPLEMENT`, or nil."
+  [agent]
+  (some-> (role-name agent)
+          str/upper-case))
+
 (defn- active? [agent] (contains? #{"queued" "running"} (get agent "status")))
 
 (defn- role-rank
@@ -158,27 +164,27 @@
   (or (not-empty (one-line (get agent "title"))) (str "#" n)))
 
 (defn status-word
-  "The status of `agent` in one of four words: `queued`, `running`, `done` or `failed`. An agent
-   that waits for the reply of its parent still runs. A failed verdict, a cancel and a spent
-   budget are all `failed`: the row text tells which."
+  "The status of `agent` in one of four words, in capitals: `QUEUED`, `RUNNING`, `DONE` or
+   `FAILED`. An agent that waits for the reply of its parent still runs. A failed verdict, a
+   cancel and a spent budget are all `FAILED`: the row text tells which."
   [agent]
   (case (get agent "status")
     "queued"
-    "queued"
+    "QUEUED"
 
     "running"
-    "running"
+    "RUNNING"
 
     "completed"
-    (if (= "failed" (get agent "outcome")) "failed" "done")
+    (if (= "failed" (get agent "outcome")) "FAILED" "DONE")
 
     ("failed" "cancelled" "budget_limited")
-    "failed"
+    "FAILED"
 
-    (str/replace (str (get agent "status")) "_" " ")))
+    (str/upper-case (str/replace (str (get agent "status")) "_" " "))))
 
 (defn- end-reason
-  "The end that `failed` hides, for an agent without a result: `cancelled` or `out of budget`."
+  "The end that `FAILED` hides, for an agent without a result: `cancelled` or `out of budget`."
   [agent]
   (case (get agent "status")
     "cancelled"
@@ -192,13 +198,13 @@
 (defn- tone
   [word]
   (case word
-    "done"
+    "DONE"
     :ok
 
-    "failed"
+    "FAILED"
     :bad
 
-    "running"
+    "RUNNING"
     :running
 
     :muted))
@@ -232,7 +238,7 @@
     {:n n
      :team-id (get agent "team_id")
      :session-id (get agent "session_id")
-     :role (or (role-name agent) "")
+     :role (or (role-word agent) "")
      :label (agent-label n agent)
      :status word
      :tone (tone word)
@@ -266,7 +272,7 @@
   [{:keys [start end active? status]} now-ms]
   (cond (nil? start) nil
         end (duration-text (- (long end) (long start)))
-        (and active? (not= "queued" status)) (duration-text (- (long now-ms) (long start)))))
+        (and active? (not= "QUEUED" status)) (duration-text (- (long now-ms) (long start)))))
 
 (defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))
 
@@ -323,11 +329,12 @@
         label-w
         (max 4 (min (long (:label columns)) (- time-col 1 label-col 2 (long (:status columns)))))
 
-        status-col
+        now-col
         (+ label-col label-w 2)
 
-        now-col
-        (+ status-col (long (:status columns)) 2)
+        ;; The status stands right before the time, after the now or result text.
+        status-col
+        (max now-col (- time-col 2 (long (:status columns))))
 
         head
         (cond-> []
@@ -356,8 +363,8 @@
            (and (seq (:now row)) (< now-at width))
            (conj [now-at (p/ellipsize (:now row) (max 1 (- width now-at))) :now]))])
       [(cond-> head
-         (and (seq (:now row)) (> (- time-col now-col 2) 3))
-         (conj [now-col (p/ellipsize (:now row) (- time-col now-col 2)) :now])
+         (and (seq (:now row)) (> (- status-col now-col 2) 3))
+         (conj [now-col (p/ellipsize (:now row) (- status-col now-col 2)) :now])
 
          (> time-col (+ status-col (long (:status columns))))
          (conj time-part))])))
@@ -428,8 +435,9 @@
 
 (defn table-columns
   "The columns of the agent table for `rows` at `width` cells: `[{:key :w}]` in paint order.
-   The detail column takes the free room, so the table fills `width`. A narrow table drops
-   the role, detail and time columns in that order, and then the title takes the room."
+   The order is role, title, detail, status and time. The detail column takes the free room,
+   so the table fills `width`. A narrow table drops the role, detail and time columns in that
+   order, and then the title takes the room."
   [rows width]
   (let [width
         (long width)
@@ -454,7 +462,9 @@
         (fn [columns]
           (let [room (- width (table-width (conj columns {:w 0})))]
             (when (>= room (long detail-min-width))
-              (conj (pop columns) {:key :now :w room} (peek columns)))))]
+              ;; The detail goes before the status, so the status stands right before the time.
+              (into (conj (vec (drop-last 2 columns)) {:key :now :w room})
+                    (take-last 2 columns)))))]
 
     (or (with-detail [role label status time])
         (with-detail [label status time])
@@ -710,10 +720,10 @@
 
 (def ^:private summary-words
   "The status words of the dock summary line, in their order."
-  ["running" "queued" "done" "failed"])
+  ["RUNNING" "QUEUED" "DONE" "FAILED"])
 
 (defn summary-counts
-  "The status counts of `rows`, such as `2 running · 1 queued · 1 done`."
+  "The status counts of `rows`, such as `2 RUNNING · 1 QUEUED · 1 DONE`."
   [rows]
   (let [counts (frequencies (map :status rows))]
     (str/join " · "
@@ -864,7 +874,7 @@
 ;; ── Breadcrumb ──────────────────────────────────────────────────────────────
 
 (defn breadcrumb
-  "Header path of child session `sid` from its cached team, such as `Leader → implement Fix
+  "Header path of child session `sid` from its cached team, such as `Leader → IMPLEMENT Fix
    parser`: `{:text :parent-id}`, or nil when the TUI does not know the parent."
   [sid]
   (let [pairs
@@ -872,7 +882,7 @@
 
         name-of
         (fn [[n agent]]
-          (str (some-> (role-name agent)
+          (str (some-> (role-word agent)
                        (str " "))
                (agent-label n agent)))]
 
@@ -1015,7 +1025,7 @@
           (or (agent-of sid child-id) [nil {"session_id" child-id}])
 
           title
-          (str (some-> (role-name agent)
+          (str (some-> (role-word agent)
                        (str " "))
                (if n (agent-label n agent) "Agent")
                " · "
@@ -1041,39 +1051,49 @@
         nil
         (when choice (recur))))))
 
+(def ^:private ^:const modal-row-width "The most cells of one agent row in the team modal." 200)
+
+(defn- modal-row-cells
+  "Cells of one agent row in the team modal at `cols` terminal columns. The list content is
+   at most `cols - 8` cells, and a label takes 5 of them for the gutter, so the status and
+   time at the end of a row stay in view."
+  ^long [cols]
+  (max 24 (min (long modal-row-width) (- (long cols) 13))))
+
 (defn items
   "The team modal items of `rows`: one section for each turn team, newest first, with one
-   row for each agent."
-  [rows parent-id]
-  (let [now
-        (System/currentTimeMillis)
+   row for each agent. A row is `width` cells wide."
+  ([rows parent-id] (items rows parent-id modal-row-width))
+  ([rows parent-id width]
+   (let [now
+         (System/currentTimeMillis)
 
-        teams
-        (->> (numbered rows)
-             (group-by #(get (second %) "team_id"))
-             (sort-by (fn [[_ pairs]]
-                        (- (long (reduce max 0 (keep #(get (second %) "created_at") pairs)))))))]
+         teams
+         (->> (numbered rows)
+              (group-by #(get (second %) "team_id"))
+              (sort-by (fn [[_ pairs]]
+                         (- (long (reduce max 0 (keep #(get (second %) "created_at") pairs)))))))]
 
-    (into (cond-> [{:label "Refresh team" :action :refresh}]
-            parent-id
-            (conj {:label "Open parent" :action :parent :session-id parent-id}))
-          (mapcat (fn [[team-id _]]
-                    (let [team
-                          (team-rows team-id rows)
+     (into (cond-> [{:label "Refresh team" :action :refresh}]
+             parent-id
+             (conj {:label "Open parent" :action :parent :session-id parent-id}))
+           (mapcat (fn [[team-id _]]
+                     (let [team
+                           (team-rows team-id rows)
 
-                          columns
-                          (row-columns team)]
+                           columns
+                           (row-columns team)]
 
-                      (into [{:section? true
-                              :label (str "Turn · "
-                                          (count team)
-                                          (if (= 1 (count team)) " agent" " agents"))}]
-                            (map (fn [row]
-                                   {:label (first (row-lines row columns 200 now))
-                                    :search-text (str (:role row) " " (:label row))
-                                    :agent-id (:session-id row)}))
-                            team))))
-          teams)))
+                       (into [{:section? true
+                               :label (str "Turn · "
+                                           (count team)
+                                           (if (= 1 (count team)) " agent" " agents"))}]
+                             (map (fn [row]
+                                    {:label (first (row-lines row columns width now))
+                                     :search-text (str (:role row) " " (:label row))
+                                     :agent-id (:session-id row)}))
+                             team))))
+           teams))))
 
 (defn component
   "Production list component. Snapshot is read off-thread; the modal remains dismissible."
@@ -1094,7 +1114,7 @@
                             (empty? agents)
                             (into [{:label "No subagents yet. Delegate a task to create one."}]
                                   (items [] parent-id))
-                            :else (let [all (items agents parent-id)]
+                            :else (let [all (items agents parent-id (modal-row-cells cols))]
                                     (vec (concat (remove :action all) (filter :action all)))))]
 
           ((:measure (dlg/select-modal-component title entries {:filter? true :height :content}))

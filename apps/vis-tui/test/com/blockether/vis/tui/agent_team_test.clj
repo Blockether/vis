@@ -99,12 +99,12 @@
 
                    (expect (some #(str/starts-with? % "Turn · 1 agent") labels))
                    (expect (some #(and (str/includes? % "Verify routing")
-                                       (str/includes? % "failed")
+                                       (str/includes? % "FAILED")
                                        (str/includes? % "Stopped at the budget")
                                        (str/ends-with? % "1m 04s"))
                                  labels))
                    (expect (= :parent (:action (second (team/items [] "parent")))))
-                   (expect (some #(str/starts-with? % "audit  #1")
+                   (expect (some #(str/starts-with? % "AUDIT  #1")
                                  (map :label
                                       (team/items [(dissoc (assoc row "role" "audit") "title")]
                                                   nil)))))))
@@ -222,9 +222,10 @@
             [snapshot text]
             [[{:loading? true} "Loading"] [{:agents []} "No subagents"]
              [{:error "Could not load team. Refresh to retry."} "Unavailable"]
-             [{:agents [(assoc review-agent "status" "completed")]} "done"]
-             [{:agents [(assoc review-agent "status" "budget_limited")]} "failed"]
-             [{:agents [(assoc review-agent "pending_input" true)]} "running"]]]
+             ;; The status stands at the end of the row and stays in view at 40 columns.
+             [{:agents [(assoc review-agent "status" "completed")]} "DONE"]
+             [{:agents [(assoc review-agent "status" "budget_limited")]} "FAILED"]
+             [{:agents [(assoc review-agent "pending_input" true)]} "RUNNING"]]]
 
       (let [rows
             20
@@ -365,19 +366,19 @@
   (it
     "counts the rows of each status in a fixed order"
     (doseq [[agents label]
-            [[nil ""] [[{"status" "completed"}] "1 done"]
+            [[nil ""] [[{"status" "completed"}] "1 DONE"]
              [[{"status" "completed"} {"status" "running" "iterations_used" 3 "iteration_budget" 20}
                {"status" "running" "pending_input" true "pending_input_count" 2}
-               {"status" "queued"}] "2 running · 1 queued · 1 done"]
+               {"status" "queued"}] "2 RUNNING · 1 QUEUED · 1 DONE"]
              ;; A question goes to the leader, not to the person, so its agent still runs.
              [[{"status" "running" "role" "verify"} {"status" "running" "question" "Keep it?"}
                {"status" "running" "role" "research"} {"status" "completed" "role" "implement"}]
-              "3 running · 1 done"]
+              "3 RUNNING · 1 DONE"]
              ;; Four status words only: a passed verdict is done; a failed verdict, a cancel and
              ;; a spent budget are failed.
              [[{"status" "completed" "outcome" "passed"} {"status" "completed" "outcome" "failed"}
                {"status" "failed"} {"status" "cancelled"} {"status" "budget_limited"}]
-              "1 done · 4 failed"]]]
+              "1 DONE · 4 FAILED"]]]
       (expect (= label (team/summary-counts (map-indexed #(team/team-row (inc %1) %2) agents)))))))
 
 (defdescribe old-tab-response-does-not-repaint-new-tab-test
@@ -458,7 +459,7 @@
              ;; The leader answers questions and grant requests. The person never sees them.
              (it "shows no question or grant request of a waiting agent"
                  (let [rows (team/team-rows "turn-1" waiting-team)]
-                   (expect (= ["running" "running" "running"] (mapv :status rows)))
+                   (expect (= ["RUNNING" "RUNNING" "RUNNING"] (mapv :status rows)))
                    (expect (= ["" "" ""] (mapv :now rows))))
                  (with-redefs [team/summary (constantly {:agents waiting-team})]
                    (let [text (str/join "\n" (team/dock-text "leader" nil 120 0))]
@@ -521,9 +522,9 @@
               "finished_at" now-ms)])
 
 (defdescribe status-word-test
-             (it "names each status with one of four words, without icons"
-                 (expect (= ["queued" "running" "running" "running" "done" "done" "failed" "failed"
-                             "failed" "failed"]
+             (it "names each status with one of four words in capitals, without icons"
+                 (expect (= ["QUEUED" "RUNNING" "RUNNING" "RUNNING" "DONE" "DONE" "FAILED" "FAILED"
+                             "FAILED" "FAILED"]
                             (mapv team/status-word every-state)))))
 
 (defdescribe
@@ -540,29 +541,30 @@
           (mapv #(first (team/row-lines % columns 100 now-ms)) rows)]
 
       (expect (= (range 1 11) (map :n rows)) "Rows keep their start order")
-      (expect (str/starts-with? (nth lines 0) "research   Map the gateway routes  queued"))
+      (expect (str/starts-with? (nth lines 0) "RESEARCH   Map the gateway routes  "))
+      ;; The status is the last text column, right before the time.
+      (expect (str/ends-with? (nth lines 0) "QUEUED"))
       (expect (not (re-find #"\d+s$" (nth lines 0))) "A queued agent shows no time")
-      (expect (str/includes? (nth lines 1) "running"))
-      (expect (str/includes? (nth lines 1) "Patched src/a.clj"))
+      (expect (re-find #"Patched src/a\.clj +RUNNING +1m 04s$" (nth lines 1)))
       (expect (str/ends-with? (nth lines 1) "1m 04s") "Running time counts from the start")
       (expect (str/includes? (nth lines 2) "#3"))
       ;; The newest note wins over the Activity line. The question goes to the leader only.
-      (expect (str/includes? (nth lines 2) "running  "))
+      (expect (str/includes? (nth lines 2) "RUNNING  "))
       (expect (str/includes? (nth lines 2) "Two routes left to map"))
       (expect (not (str/includes? (nth lines 2) "Read src/routes.clj")))
       (expect (not (str/includes? (nth lines 2) "Keep the old API?")))
       ;; A form of a subagent opens in the leader session, so its row only runs.
-      (expect (str/includes? (nth lines 3) "running"))
+      (expect (str/includes? (nth lines 3) "RUNNING"))
       (expect (not (str/includes? (nth lines 3) "needs you")))
       (expect (str/includes? (nth lines 4) "Found 3 routes"))
       (expect (str/ends-with? (nth lines 4) "1m 00s") "A finished agent shows its duration")
-      (expect (str/includes? (nth lines 5) "done"))
+      (expect (str/includes? (nth lines 5) "DONE"))
       (expect (str/includes? (nth lines 5) "All 120 tests pass"))
-      (expect (str/includes? (nth lines 6) "failed"))
-      ;; Without a result, the row text gives the end that `failed` hides.
-      (expect (re-find #"failed +cancelled" (nth lines 8)))
+      (expect (str/includes? (nth lines 6) "FAILED"))
+      ;; Without a result, the row text gives the end that `FAILED` hides.
+      (expect (re-find #"cancelled +FAILED" (nth lines 8)))
       (expect (str/ends-with? (nth lines 9) "30s") "A resumed task counts from the resume")
-      (expect (re-find #"failed +out of budget" (nth lines 9)))
+      (expect (re-find #"out of budget +FAILED +30s$" (nth lines 9)))
       (expect (every? #(re-matches #"[\x20-\x7e]*" %) lines) "Rows hold no icons or marks")))
   (it "ends a long title and a long result with an ellipsis"
       (let [long-agent
@@ -594,10 +596,10 @@
             (team/row-lines running columns 40 now-ms)]
 
         (expect (team/narrow? 40))
-        (expect (str/includes? head "running"))
+        (expect (re-find #"RUNNING +1m 04s$" head) "The status stands right before the time")
         (expect (str/ends-with? head "1m 04s"))
         (expect (str/starts-with? head "Fix the parser") "The title gets the first line")
-        (expect (= "  implement  Patched src/a.clj" now)
+        (expect (= "  IMPLEMENT  Patched src/a.clj" now)
                 "The role and the text share the second line")
         (expect (= 2 (team/row-line-count (first rows) 40)) "A queued row keeps its role")
         (expect
@@ -648,7 +650,7 @@
         (let [[line :as text] (team/dock-text "leader" "turn-1" 120 now-ms)]
           (expect (= 1 (count text)) "The dock is one line")
           (expect (str/starts-with? line "Agents   "))
-          (expect (str/includes? line "3 running"))
+          (expect (str/includes? line "3 RUNNING"))
           (expect (not (str/includes? line "waiting")))
           (expect (not (str/includes? line "asking")))
           (expect (str/ends-with? line "C-x T details")))
@@ -703,9 +705,9 @@
 
             (expect (= [[:get "/v1/sessions/leader/agents/s+1/timeline"]] @calls))
             (expect (= ["22:13:20  started  Fix the parser" "22:13:25  note  Read tests"
-                        "22:14:24  done  All pass"]
+                        "22:14:24  DONE  All pass"]
                        (mapv #(team/timeline-line % utc) items)))
-            (expect (= "22:14:24  failed  out of budget"
+            (expect (= "22:14:24  FAILED  out of budget"
                        (team/timeline-line
                          {"at" 1700000064000 "kind" "finished" "status" "budget_limited"}
                          utc)))
@@ -720,8 +722,8 @@
   child-breadcrumb-test
   (it "names the path from the leader to the child session"
       (with-redefs [team/summary (constantly {:agents waiting-team})]
-        (expect (= {:parent-id "leader" :text "Leader → research #1"} (team/breadcrumb "c1")))
+        (expect (= {:parent-id "leader" :text "Leader → RESEARCH #1"} (team/breadcrumb "c1")))
         (with-redefs [team/summary (constantly {:agents
                                                 (assoc-in waiting-team [1 "title"] "Fix parser")})]
-          (expect (= "Leader → implement Fix parser" (:text (team/breadcrumb "c2")))))
+          (expect (= "Leader → IMPLEMENT Fix parser" (:text (team/breadcrumb "c2")))))
         (expect (nil? (team/breadcrumb "unknown"))))))
