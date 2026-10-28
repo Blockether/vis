@@ -858,6 +858,52 @@
                    (expect (nil? (hi/pending-request rid)))
                    (expect (signal? signals :error ::hi/request-undeliverable rid)))))
 
+(defdescribe ask-gate-test
+             ;; A managed subagent may not ask the person: its leader answers for it. The gate
+             ;; refuses its form before any surface sees it.
+             (it "refuses a session that may not ask, at once and without a trace on any channel"
+                 (let [rid
+                       (str "refused-" (random-uuid))
+
+                       chan
+                       (fresh-channel)
+
+                       events
+                       (atom [])
+
+                       previous
+                       @(var-get #'hi/ask-gate)]
+
+                   (ce/add-channel-event-listener! chan ::refused-collector #(swap! events conj %))
+                   (hi/set-ask-gate! #(not= "subagent-session" %))
+                   (try (let [{answer :value signals :signals}
+                              (tel/with-signals (hi/request! {:id rid
+                                                              :session-id "subagent-session"
+                                                              :title "Deploy"
+                                                              :timeout-ms 2000
+                                                              :nodes [{:id "env"}]
+                                                              :channel-ids [chan]}))]
+                          (expect (= {:is-submitted false :reason "undeliverable" :request-id rid}
+                                     answer))
+                          (expect (empty? @events))
+                          (expect (nil? (hi/pending-request rid)))
+                          (expect (signal? signals :warn ::hi/request-refused rid)))
+                        (finally (hi/set-ask-gate! previous)
+                                 (ce/remove-channel-event-listener! chan ::refused-collector)))))
+             (it "opens the form of a session that may ask, and also when the gate fails"
+                 (let [previous @(var-get #'hi/ask-gate)]
+                   (doseq [gate [#(not= "subagent-session" %)
+                                 (fn [_]
+                                   (throw (ex-info "store down" {})))]]
+                     (hi/set-ask-gate! gate)
+                     (try (let [{:keys [future request-id detach!]}
+                                (start-request! {:title "Deploy" :nodes [{:id "env"}]})]
+                            (try (expect (some? (hi/pending-request request-id)))
+                                 (expect (true? (hi/cancel! request-id)))
+                                 (expect (= "cancelled" (:reason (deref future 5000 ::blocked))))
+                                 (finally (detach!))))
+                          (finally (hi/set-ask-gate! previous)))))))
+
 (defdescribe
   range-field-test
   (it "defaults its bounds to 0..100 by 1"

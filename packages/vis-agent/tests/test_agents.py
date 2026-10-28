@@ -296,6 +296,14 @@ def test_child_response_is_validated():
         Subagent.from_wire({**CHILD, "status": "invented"})
 
 
+def test_child_progress_note_is_read_and_validated():
+    child = Subagent.from_wire({**CHILD, "note": "Reading the parser"})
+    assert child.note == "Reading the parser"
+    assert Subagent.from_wire(CHILD).note is None
+    with pytest.raises(ValueError):
+        Subagent.from_wire({**CHILD, "note": ""})
+
+
 @pytest.mark.parametrize("usage", ["invalid", [], 1, True])
 def test_child_usage_response_is_validated(usage):
     with pytest.raises(ValueError):

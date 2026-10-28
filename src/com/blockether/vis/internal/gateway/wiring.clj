@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.view :as gateway-view]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.provider.service :as providers]
@@ -44,6 +45,8 @@
     ;; A live View a human stops after its block returned has no collector left;
     ;; the gateway owns the database, so it files the late artifact.
     (view/set-late-artifact-filer! #'state/append-iteration-attachment!)
+    ;; A managed subagent never asks the person: its leader answers for it.
+    (view/set-ask-gate! #'gateway-view/person-may-answer?)
     ;; Provider and default-model changes rebuild the shared router and reseed
     ;; every cached session environment, not only `/reload`.
     (providers/set-router-rebuild-hook! #'loop-env/reload-router!)

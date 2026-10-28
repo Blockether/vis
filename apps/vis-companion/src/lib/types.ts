@@ -80,6 +80,8 @@ export interface Subagent {
   files_request?: { files?: AgentFiles; reason?: string };
   /** The latest Activity line of a queued or running agent, such as `Patched ~/src/a.clj`. */
   activity?: string;
+  /** The newest progress note of a queued or running agent, as its leader reads it. */
+  note?: string;
   usage?: SessionUsage | null;
   /** A one-line label from `council.run`, 1-40 characters. Without it, people see `#N`. */
   title?: string;

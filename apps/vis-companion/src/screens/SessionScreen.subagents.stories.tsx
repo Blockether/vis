@@ -38,12 +38,18 @@ async function wakeHidden(canvasElement: HTMLElement) {
   await expect(page.queryByText(/Thread #58/)).toBeNull();
 }
 
-/** The running turn: its team in the dock above the composer. The rows only read: no control for child requests. */
+/**
+ * The running turn: its team in the dock above the composer, folded to the team line. The
+ * line opens the table. The rows only read: a subagent asks its leader, never the person.
+ */
 export const Running: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const dock = await page.findByRole('region', { name: 'Subagents of this turn' });
+    await expect(within(dock).getByRole('button', { expanded: false })).toHaveTextContent(/^team1 research/);
+    await userEvent.click(within(dock).getByRole('button', { expanded: false }));
     await expect(within(dock).getByText('Sign in to the store')).toBeVisible();
+    await expect(within(dock).queryByText(/more iterations/)).toBeNull();
     await expect(within(dock).queryByText('needs you')).toBeNull();
     await expect(page.queryByRole('region', { name: 'Questions' })).toBeNull();
     await expect(within(dock).queryByRole('button', { name: /^(Answer|Grant|Deny|Later)/ })).toBeNull();
@@ -69,6 +75,7 @@ export const Timeline: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const dock = await page.findByRole('region', { name: 'Subagents of this turn' });
+    await userEvent.click(within(dock).getByRole('button', { expanded: false }));
     await userEvent.click(within(dock).getByRole('button', { name: /Map the agents routes/ }));
     const sheet = await within(document.body).findByRole('dialog', { name: 'Map the agents routes' });
     await expect(await within(sheet).findByRole('list', { name: 'Timeline' })).toBeVisible();

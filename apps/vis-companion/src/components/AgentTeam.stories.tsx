@@ -20,50 +20,56 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** The finished team in its turn of the transcript: final statuses, results and durations. */
+/**
+ * The finished team in its turn of the transcript: a table in a frame, under the team line
+ * with the counts by role and by status. Long titles and results wrap, with no ellipsis.
+ */
 export const Finished: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    const team = canvas.getByRole('region', { name: 'Subagents' });
+    await expect(team.querySelector('[data-team-line]')).toHaveTextContent(
+      'team2 research2 implement2 verify1 audit2 done1 passed2 failed1 out of budget1 cancelled',
+    );
     await expect(canvas.getByText('out of budget')).toBeVisible();
-    await expect(canvas.getByText('passed')).toBeVisible();
+    await expect(canvas.getByText('Rebuild every subagent view of the app')).toBeVisible();
     await expect(canvas.getByText('#3')).toBeVisible();
     await expect(canvasElement.querySelector('svg')).toBeNull();
   },
 };
 
-/** The dock above the composer while the turn runs: one row for each agent of the turn. */
+/** The dock above the composer while the turn runs, folded to the team line. */
+export const DockFolded: Story = {
+  render: (args) => (
+    <AgentDock {...args} agents={STORY_LIVE_TEAM} sid={STORY_AGENT_LEADER} runningTurnId={STORY_AGENT_LIVE_TURN} />
+  ),
+  play: async ({ canvasElement }) => {
+    const dock = within(canvasElement).getByRole('region', { name: 'Subagents of this turn' });
+    const line = within(dock).getByRole('button', { expanded: false });
+    await expect(line).toHaveTextContent('team1 research2 implement2 verify1 audit4 running1 queued1 passed');
+    await expect(within(dock).queryByRole('button', { name: /Map the agents routes/ })).toBeNull();
+  },
+};
+
+/**
+ * The dock line opens the table of the team. A subagent asks only its leader: its row shows
+ * its newest note, never the question, and has no control to answer it.
+ */
 export const Dock: Story = {
   render: (args) => (
     <AgentDock {...args} agents={STORY_LIVE_TEAM} sid={STORY_AGENT_LEADER} runningTurnId={STORY_AGENT_LIVE_TURN} />
   ),
   play: async ({ canvasElement }) => {
     const dock = within(canvasElement).getByRole('region', { name: 'Subagents of this turn' });
+    await userEvent.click(within(dock).getByRole('button', { expanded: false }));
+    await expect(within(dock).getByRole('button', { expanded: true })).toBeVisible();
     for (const word of ['queued', 'passed']) await expect(within(dock).getByText(word)).toBeVisible();
-    await expect(within(dock).getAllByText('running')[0]).toBeVisible();
-    await expect(within(dock).queryByText('needs you')).toBeNull();
-    await expect(within(dock).getAllByText('asking')).toHaveLength(2);
-    await expect(dock.querySelector('svg')).toBeNull();
-  },
-};
-
-const waiting = STORY_LIVE_TEAM.filter((agent) => agent.question || agent.budget_request || agent.files_request);
-
-/**
- * Agents that wait on their leader: asking, with the question as the line. The rows
- * only read; the leader answers. A form of an agent opens in the form prompt.
- */
-export const AskingRow: Story = {
-  render: (args) => (
-    <AgentDock {...args} agents={waiting} sid={STORY_AGENT_LEADER} runningTurnId={STORY_AGENT_LIVE_TURN} />
-  ),
-  play: async ({ canvasElement }) => {
-    const dock = within(canvasElement).getByRole('region', { name: 'Subagents of this turn' });
-    await expect(within(dock).getAllByText('asking').length).toBeGreaterThan(0);
+    await expect(within(dock).getByText(/12 of 40 native tests ran/)).toBeVisible();
+    await expect(within(dock).queryByText(/more iterations/)).toBeNull();
     for (const control of [/Answer/, /Grant/, /Deny/, /Later/]) {
       await expect(within(dock).queryByRole('button', { name: control })).toBeNull();
     }
-    await userEvent.click(within(dock).getAllByRole('button', { name: /asking/ })[0]);
-    await expect(await within(document.body).findByRole('dialog')).toBeVisible();
+    await expect(dock.querySelectorAll('svg')).toHaveLength(1);
   },
 };
 

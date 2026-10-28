@@ -31,25 +31,34 @@ const member = (team: string, id: string, minutesAgo: number, row: Partial<Subag
 
 const ended = (row: Subagent, minutes: number): Subagent => ({ ...row, finished_at: (row.created_at ?? NOW) + minutes * MINUTE + 4_000 });
 
-/** The team of the running turn: one agent in each live state, and one that already passed. */
+/**
+ * The team of the running turn: one agent in each live state, and one that already passed.
+ * The native tests agent asks its leader for iterations. Its row shows its newest note: only
+ * the leader reads and answers the question.
+ */
 export const STORY_LIVE_TEAM: Subagent[] = [
   member(STORY_AGENT_LIVE_TURN, 'live-routes', 1.1, {
     role: 'research', title: 'Map the agents routes', task: 'List every gateway route that the subagent views read.',
+    note: 'Found the list, cancel and timeline routes. Now I read the wait route.',
     activity: 'Search files agents route',
   }),
   member(STORY_AGENT_LIVE_TURN, 'live-dock', 1.05, {
     role: 'implement', task: 'Rebuild the dock above the composer.', iterations_used: 31,
-    question: 'The dock and the questions both list asking agents. Keep both?', question_entry_id: 51,
+    activity: 'Patched AgentDock.tsx',
   }),
   member(STORY_AGENT_LIVE_TURN, 'live-native', 1.0, {
     role: 'verify', title: 'Native tests', task: 'Run the native tests against the built image.', iterations_used: 120,
+    note: 'The image builds. 12 of 40 native tests ran, and all of them pass.',
     question: 'I used my budget. Can I have 10 more iterations?', question_entry_id: 49,
     budget_request: { iterations: 10, reason: 'The native tests are slow' },
   }),
   member(STORY_AGENT_LIVE_TURN, 'live-store', 0.9, {
     role: 'implement', title: 'Sign in to the store', task: 'Upload the build to the store.', pending_input: true, pending_input_count: 1,
   }),
-  member(STORY_AGENT_LIVE_TURN, 'live-links', 0.2, { role: 'audit', title: 'Docs links', status: 'queued', iterations_used: 0 }),
+  member(STORY_AGENT_LIVE_TURN, 'live-links', 0.2, {
+    role: 'audit', title: 'Docs links', task: 'Check every link in the docs.\nReport the dead links with their pages.',
+    status: 'queued', iterations_used: 0,
+  }),
   ended(member(STORY_AGENT_LIVE_TURN, 'live-contract', 0.95, {
     role: 'verify', title: 'Contract tests', status: 'completed', outcome: 'passed', result: 'All 85 SDK tests pass',
   }), 0.6),
@@ -88,8 +97,7 @@ export function storyTimeline(agent: Subagent): AgentTimeline {
     { at: start, kind: 'started', text: agent.task },
     { at: start + 9_000, kind: 'note', text: 'Read the contract and the current views first.' },
   ];
-  if (agent.question) items.push({ at: start + 20_000, kind: 'message', text: agent.question });
-  else items.push({ at: start + 20_000, kind: 'note', text: agent.activity ?? 'Changed the rows and ran the checks.' });
+  items.push({ at: start + 20_000, kind: 'note', text: agent.note ?? agent.activity ?? 'Changed the rows and ran the checks.' });
   if (agent.finished_at) {
     items.push({
       at: agent.finished_at,

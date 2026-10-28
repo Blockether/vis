@@ -247,6 +247,12 @@
   --color-footer-error: var(--footer-error);
   --color-cancelled: var(--cancelled-bg);
   --color-cancelled-foreground: var(--cancelled-fg);
+  /* The roles of agents.json. Each role reads in its own ink in the team table. */
+  --color-role-research: var(--code-syntax-number);
+  --color-role-implement: var(--code-syntax-string);
+  --color-role-verify: var(--code-syntax-keyword);
+  /* The special ink of tokyonight-storm reads at 4.37:1 on its paper. Mix in text ink for 4.5:1. */
+  --color-role-audit: color-mix(in oklab, var(--code-syntax-special) 70%, var(--fg));
   /* Other palettes derive machine and project depth by mixing their own ink into paper.
      Default light gives the machine switcher a flatter surface below. */
   --color-level-machine: var(--level-machine, color-mix(in oklab, var(--fg) 9%, var(--surface)));

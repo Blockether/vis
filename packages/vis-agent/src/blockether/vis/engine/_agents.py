@@ -28,6 +28,7 @@ class Subagent:
     budget_request: dict[str, Any] | None = None
     files_request: dict[str, Any] | None = None
     activity: str | None = None
+    note: str | None = None
     usage: dict[str, Any] | None = None
     files: dict[str, list[str]] | None = None
     title: str | None = None

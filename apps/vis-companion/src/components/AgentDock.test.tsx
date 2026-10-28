@@ -7,6 +7,7 @@ import { AgentDock } from './AgentDock';
 
 const base: Subagent = { session_id: 'a1', parent_id: 'lead', leader_id: 'lead', team_id: 'turn-1',
   task: 'Read the logs', role: 'research', status: 'running', iteration_budget: 30, iterations_used: 12 };
+// A subagent that asks its leader. The leader answers it; the person never sees the question.
 const asking: Subagent = { ...base, session_id: 'a2', task: 'Fix the bug', role: 'implement',
   question: 'Keep the old API?', question_entry_id: 40 };
 
@@ -16,6 +17,8 @@ describe('AgentDock', () => {
   const timeline = vi.fn(async () => ({ session_id: 'a1', items: [] }));
   const dock = (agents: Subagent[], runningTurnId?: string) =>
     render(<AgentDock agents={agents} sid="lead" runningTurnId={runningTurnId} pending={null} onOpen={vi.fn()} onCancel={vi.fn()} timeline={timeline} />);
+  const region = () => screen.getByRole('region', { name: 'Subagents of this turn' });
+  const rows = () => within(region()).queryAllByRole('button').filter((button) => button.hasAttribute('data-agent-row'));
 
   it('shows nothing for an empty team, or a finished team after its turn', () => {
     expect(dock([]).container).toBeEmptyDOMElement();
@@ -23,22 +26,37 @@ describe('AgentDock', () => {
     expect(dock([{ ...base, status: 'completed' }]).container).toBeEmptyDOMElement();
   });
 
-  it('keeps the whole team of the running turn, finished agents too, one row each', () => {
+  it('folds the whole team of the running turn to one line of counts by role and by status', () => {
     dock([{ ...base, status: 'completed', result: 'Found 3 routes' }, { ...asking, title: 'Fix it' }], 'turn-1');
-    const section = screen.getByRole('region', { name: 'Subagents of this turn' });
-    const rows = within(section).getAllByRole('button');
-    expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringMatching(/^research#1doneFound 3 routes/),
-      expect.stringMatching(/^implementFix itaskingKeep the old API\?/),
+    const line = within(region()).getByRole('button', { expanded: false });
+    expect(line).toHaveTextContent('team1 research1 implement1 running1 done');
+    expect(rows()).toEqual([]);
+    expect(region().querySelectorAll('svg')).toHaveLength(1);
+  });
+
+  it('opens the table of the team from its line, and folds it again', () => {
+    dock([{ ...base, status: 'completed', result: 'Found 3 routes' }, { ...asking, title: 'Fix it' }], 'turn-1');
+    const line = within(region()).getByRole('button', { expanded: false });
+    fireEvent.click(line);
+    expect(line).toHaveAttribute('aria-expanded', 'true');
+    expect(document.getElementById(line.getAttribute('aria-controls')!)).toBeVisible();
+    expect(rows().map((row) => row.textContent)).toEqual([
+      'research#1Found 3 routesdone',
+      'implementFix itFix the bugrunning',
     ]);
-    expect(section.querySelector('svg')).toBeNull();
+    expect(within(region()).queryByText(/old API/)).not.toBeInTheDocument();
+    fireEvent.click(line);
+    expect(line).toHaveAttribute('aria-expanded', 'false');
+    expect(rows()).toEqual([]);
   });
 
   it('keeps a team after its turn while one of its agents still works, and only that team', () => {
     dock([base, { ...base, session_id: 'old', team_id: 'turn-0', status: 'completed' }], 'turn-2');
-    const rows = within(screen.getByRole('region', { name: 'Subagents of this turn' })).getAllByRole('button');
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toHaveTextContent(/research#1running/);
+    const line = within(region()).getByRole('button', { expanded: false });
+    expect(line).toHaveTextContent('team1 research1 running');
+    fireEvent.click(line);
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent(/^research#1Read the logsrunning$/);
   });
 });
 
@@ -47,7 +65,8 @@ describe('AgentCrumb', () => {
     const onOpen = vi.fn();
     render(<AgentCrumb sid="a2" parentId="lead" agents={[base, asking]} onOpen={onOpen} />);
     const crumb = screen.getByRole('navigation', { name: 'Agent' });
-    expect(crumb).toHaveTextContent(/Leaderimplement#2asking/);
+    expect(crumb).toHaveTextContent(/Leaderimplement#2running/);
+    expect(within(crumb).getByText('implement')).toHaveClass('uppercase', 'text-role-implement');
     expect(within(crumb).getByText('#2')).toHaveAttribute('title', 'Fix the bug');
     expect(crumb.querySelectorAll('svg')).toHaveLength(1);
     fireEvent.click(within(crumb).getByRole('button', { name: /Leader/ }));

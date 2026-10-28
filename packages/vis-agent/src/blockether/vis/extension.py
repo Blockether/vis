@@ -4041,6 +4041,8 @@ def ask(title, nodes, **options):
     # `reason == 'undeliverable'` means no surface was mounted to show the
     # dialog: the host logged an error and gave up at once instead of parking
     # you — even an indefinite ask cannot wait on a human who was never asked.
+    # A managed subagent gets it too, at once: it may not ask the person, so
+    # no surface ever shows its dialog. Its leader answers for it.
     import json
 
     validators = {}

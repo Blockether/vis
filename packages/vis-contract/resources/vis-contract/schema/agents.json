@@ -312,7 +312,7 @@
     },
     "role": {
       "description": "Choose the role by the result that you need: facts, changed files, a pass or fail, or findings.",
-      "$comment": "A role is a label for people and the leader. It sets no tool, file or model limit. The TUI writes the role name. The Companion draws a Lucide icon for each role.",
+      "$comment": "A role is a label for people and the leader. It sets no tool, file or model limit. The TUI writes the role name. The Companion writes it in capitals, in the ink of the role.",
       "oneOf": [
         {
           "const": "research",
@@ -482,6 +482,11 @@
         },
         "activity": {
           "$comment": "The latest Activity line of a queued or running agent, such as Patched ~/src/a.clj.",
+          "type": "string",
+          "minLength": 1
+        },
+        "note": {
+          "$comment": "The newest progress note of a queued or running agent: the prose of its newest step, as its leader reads it.",
           "type": "string",
           "minLength": 1
         },

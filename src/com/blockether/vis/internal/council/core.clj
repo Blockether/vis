@@ -690,7 +690,7 @@
   (if (and (seq pending)
            (agents/interactive? env)
            ;; A subagent has no person: its questions go to its parent.
-           (nil? (agents/info (:db-info env) (str (:session-id env)))))
+           (agents/person-answers? (:db-info env) (:session-id env)))
     (set (filter (open-child-questions (:db-info env) (str (:session-id env)))
                  (map :entry_id pending)))
     #{}))

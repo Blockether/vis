@@ -49,6 +49,8 @@
       (expect (= agents/max-team-children (get schema "x-vis-max-team-children") 128))
       (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 16))
       (expect (document/valid? "agents" agent))
+      (expect (document/valid? "agents" (assoc agent "note" "Reading the parser")))
+      (expect (not (document/valid? "agents" (assoc agent "note" ""))))
       (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
       (expect (not (document/valid? "agents" (assoc agent "iteration_budget" -1))))
       (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 65536 "x"))}))
@@ -213,6 +215,27 @@
                    (expect (= other (agents/leader-id db other))
                            "An independent session keeps its own key")
                    (expect (nil? (agents/leader-id db nil))))))
+
+;; A subagent may not ask the person: its leader answers its questions and decides its grants.
+(defdescribe person-answers-test
+             (it "answers for a leader and an independent session, never for a managed subagent"
+                 (let [db
+                       (h/store)
+
+                       leader
+                       (str (h/store-session! db {:channel :api}))
+
+                       other
+                       (str (h/store-session! db {:channel :api}))
+
+                       child
+                       (child! db leader {})]
+
+                   (expect (true? (agents/person-answers? db leader)))
+                   (expect (true? (agents/person-answers? db other)))
+                   (expect (false? (agents/person-answers? db child)))
+                   (expect (false? (agents/person-answers? db (parse-uuid child))))
+                   (expect (true? (agents/person-answers? nil child))))))
 
 ;; ctb edits2-vis (openai, 20 trials): every first request read 0 of about 4.4k prefix
 ;; tokens from the cache, because each one-shot session sent its own key. A workspace key
@@ -2109,6 +2132,57 @@
           (expect (document/valid-json? "agents" "timeline" (walk/stringify-keys view)))
           (expect (= :session-not-found (outcome #(agents/timeline db child child)))
                   "Only the parent reads the timeline of its child"))))))
+
+;; The team rows show what a running child does now: its newest progress note.
+(defdescribe
+  latest-note-test
+  (it
+    "gives the newest note of the current task, clipped, and ignores older tasks"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:title "Check docs"})
+
+          row
+          (agents/info db child)
+
+          t0
+          (:created_at row)
+
+          note-of
+          (fn [turns iterations]
+            (with-redefs [ps/db-list-session-turns-meta
+                          (fn [_ _]
+                            turns)
+
+                          ps/db-list-session-turn-iterations
+                          (fn [_ turn-id]
+                            (get iterations turn-id []))]
+
+              (agents/latest-note db row (+ t0 100))))
+
+          old
+          {:id "old" :created-at (- t0 60000)}
+
+          current
+          {:id "t1" :created-at (+ t0 10)}]
+
+      (expect (= "I read the docs."
+                 (note-of [old current]
+                          {"old" [{:position 0 :assistant-prose "Old task"}]
+                           "t1" [{:position 1 :assistant-prose "I read the docs."}
+                                 {:position 2 :assistant-prose " "}
+                                 {:position 0 :assistant-prose "I start."}]})))
+      (expect (nil? (note-of [old] {"old" [{:position 0 :assistant-prose "Old task"}]}))
+              "A note of an older task never shows")
+      (expect (nil? (note-of [] {})))
+      (expect (= (str (apply str (repeat 300 "a")) "…")
+                 (note-of [current]
+                          {"t1" [{:position 0 :assistant-prose (apply str (repeat 400 "a"))}]}))))))
 
 ;; A subagent question that only the person can decide: the leader ends its turn suspended to ask
 ;; the person. The child keeps waiting for the reply of the next leader turn.

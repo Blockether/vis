@@ -6512,26 +6512,44 @@
 
 (defn- agent-activity
   "The latest Activity line of session `sid` in its replay ring, such as `Patched ~/a.clj`, or
-   nil. A running row wins over a finished one."
+   nil. A running row wins over a finished one. The ring holds event descriptors, so the line
+   comes from the stored event. The read holds the event lock, so no append retires the file."
   [sid]
-  (let [pick (fn [m k]
-               (when (map? m) (or (get m k) (get m (keyword k)))))]
-    (some (fn [event]
-            (when (= "block.activity" (get event "type"))
-              (let [rows (pick (pick event "activity") "rows")
-                    row (or (last (filter #(= "running" (pick % "state")) rows)) (last rows))
-                    view (pick row "presentation")]
+  (let [lock
+        (event-store/lock-for sid)
 
-                (not-empty (str/join " "
-                                     (remove str/blank?
-                                       (map #(str/trim (str (or % "")))
-                                            [(pick view "headline") (pick view "summary")])))))))
-          (reverse (seq (:events (session-entry sid)))))))
+        pick
+        (fn [m k]
+          (when (map? m) (or (get m k) (get m (keyword k)))))
+
+        line
+        (fn [event]
+          (let [rows
+                (pick (pick event "activity") "rows")
+
+                row
+                (or (last (filter #(= "running" (pick % "state")) rows)) (last rows))
+
+                view
+                (pick row "presentation")]
+
+            (not-empty (str/join " "
+                                 (remove str/blank?
+                                   (map #(str/trim (str (or % "")))
+                                        [(pick view "headline") (pick view "summary")]))))))]
+
+    (locking lock
+      (some (fn [descriptor]
+              (when (= "block.activity" (get descriptor "type"))
+                ;; A damaged file only hides its own line; an older snapshot can still answer.
+                (some-> (try (event-store/read-event descriptor) (catch Exception _ nil))
+                        line)))
+            (reverse (seq (:events (session-entry sid))))))))
 
 (defn- agent-view
   "One team row. `question` is the open question that the child asks its parent, with its
-   `question_entry_id` and any budget or file request. `activity` is the latest Activity line
-   of a queued or running child."
+   `question_entry_id` and any budget or file request. `note` is the newest progress note of a
+   queued or running child, and `activity` its latest Activity line."
   [db child]
   (let [sid
         (:session_id child)
@@ -6539,8 +6557,14 @@
         request
         (agents/open-request sid)
 
+        live?
+        (contains? #{"queued" "running"} (:status child))
+
+        note
+        (when live? (agents/latest-note db child (util/now-ms)))
+
         activity
-        (when (contains? #{"queued" "running"} (:status child)) (agent-activity sid))]
+        (when live? (agent-activity sid))]
 
     (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint)
                    (smodel/model-of db sid)
@@ -6558,6 +6582,9 @@
 
       (:files request)
       (assoc :files_request (:files request))
+
+      note
+      (assoc :note note)
 
       activity
       (assoc :activity activity))))

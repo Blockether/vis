@@ -20,6 +20,8 @@
             [com.blockether.vis.internal.gateway.server.views :as views-api]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gw-hi]
+            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.view.core :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.view.sink :as sink]
@@ -129,12 +131,12 @@
                   (expect (= "submitted" (get-in event ["result" "reason"]))))
                 (finally (hi/cancel! rid "cleanup")))))))))
 
-;; Issue #392: a form raised in a subagent showed only in the subagent session, with
-;; no origin. The person who watched the leader saw a run that hung for hours.
+;; Issue #392: a form raised in a subagent hung its run for hours. A subagent may not
+;; ask the person, because its leader answers for it: the engine refuses the form at once.
 (defdescribe
-  subagent-form-reaches-the-parent-session-test
+  subagent-never-asks-the-person-test
   (it
-    "a subagent form reaches its ancestors, names its origin and is answerable there"
+    "refuses a subagent form at once and shows it in no session; a leader form stays its own"
     (gw-hi/install!)
     (let [leader
           (str (random-uuid))
@@ -142,61 +144,50 @@
           child
           (str (random-uuid))
 
-          grandchild
-          (str (random-uuid))
-
-          stranger
-          (str (random-uuid))
-
-          rid
+          child-rid
           (str "req-" (random-uuid))
 
-          links
-          {leader {:title "Deploy DEV13"}
-           child {:title "Read logs" :parent-id leader}
-           grandchild {:title "Fetch" :parent-id child}}
+          leader-rid
+          (str "req-" (random-uuid))
 
-          sessions
-          #{leader child grandchild}]
+          db
+          (Object.)
 
-      (with-redefs-fn {#'gw-hi/session-link links}
-        (fn []
-          (with-events
-            (fn [seen]
-              (let [answer (future (hi/request! (spec :id rid :session-id grandchild)))]
-                (try (expect (await-true #(= 3 (count (events-of seen "view.open" rid)))))
-                     (expect (= sessions (set (map first (events-of seen "view.open" rid)))))
-                     (let [[_ event] (first (events-of seen "view.open" rid))]
-                       (expect (= {"session_id" grandchild
-                                   "title" "Fetch"
-                                   "parent_session_id" child
-                                   "parent_title" "Read logs"}
-                                  (get-in event ["view" "origin"])))
-                       ;; a process that rebuilds the form from the event keeps the origin
-                       (expect (= {:session-id grandchild
-                                   :title "Fetch"
-                                   :parent-session-id child
-                                   :parent-title "Read logs"}
-                                  (:origin (hi/view<-wire (get event "view"))))))
-                     ;; the leader lists the form and can answer it; a stranger cannot
-                     (expect (= [rid] (filterv #{rid} (mapv :id (gw-hi/input-views leader)))))
-                     (expect (= {:session-id grandchild
-                                 :title "Fetch"
-                                 :parent-session-id child
-                                 :parent-title "Read logs"}
-                                (:origin (first (filterv #(= rid (:id %))
-                                                  (gw-hi/input-views leader))))))
-                     (expect (empty? (filterv #(= rid (:id %)) (gw-hi/input-views stranger))))
-                     (expect (some? (gw-hi/input-view-of leader rid)))
-                     (expect (nil? (gw-hi/input-view-of stranger rid)))
-                     (expect (true? (:is-accepted (gw-hi/action! rid
-                                                                 {:action :submit
-                                                                  :values {"confirm" true}}))))
-                     (expect (true? (:is-submitted (deref answer 2000 ::timeout))))
-                     ;; every session that showed the form drops it
-                     (expect (await-true #(= 3 (count (events-of seen "view.close" rid)))))
-                     (expect (= sessions (set (map first (events-of seen "view.close" rid)))))
-                     (finally (hi/cancel! rid "cleanup")))))))))))
+          previous
+          @(var-get #'hi/ask-gate)]
+
+      (hi/set-ask-gate! #'gw-hi/person-may-answer?)
+      (try (with-redefs-fn {#'lp/db-info (constantly db)
+                            #'agents/info (fn [d sid]
+                                            (when (and (identical? db d) (= child sid))
+                                              {:parent_id leader :leader_id leader}))}
+             (fn []
+               (with-events
+                 (fn [seen]
+                   (let [answer (future (hi/request! (spec :id child-rid :session-id child)))]
+                     (try (expect
+                            (= {:is-submitted false :reason "undeliverable" :request-id child-rid}
+                               (deref answer 1000 ::timeout)))
+                          (expect (empty? (events-of seen "view.open" child-rid)))
+                          (expect (nil? (hi/pending-request child-rid)))
+                          (expect (empty? (filterv #(= child-rid (:id %))
+                                            (into (gw-hi/input-views leader)
+                                                  (gw-hi/input-views child)))))
+                          (finally (hi/cancel! child-rid "cleanup"))))
+                   (let [answer (future (hi/request! (spec :id leader-rid :session-id leader)))]
+                     (try (expect (await-true #(seq (events-of seen "view.open" leader-rid))))
+                          (expect (= #{leader}
+                                     (set (map first (events-of seen "view.open" leader-rid)))))
+                          (expect (nil? (gw-hi/input-view-of child leader-rid)))
+                          (expect (true? (:is-accepted (gw-hi/action! leader-rid
+                                                                      {:action :submit
+                                                                       :values {"confirm" true}}))))
+                          (expect (true? (:is-submitted (deref answer 2000 ::timeout))))
+                          (expect (await-true #(seq (events-of seen "view.close" leader-rid))))
+                          (expect (= #{leader}
+                                     (set (map first (events-of seen "view.close" leader-rid)))))
+                          (finally (hi/cancel! leader-rid "cleanup"))))))))
+           (finally (hi/set-ask-gate! previous))))))
 
 (defdescribe rejected-answer-keeps-the-request-open-test
              (it "rejected answer keeps the request open"

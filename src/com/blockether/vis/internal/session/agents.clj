@@ -22,6 +22,12 @@
 
 (defn info [db sid] (when (and db sid) (ps/db-agent-info db sid)))
 
+(defn person-answers?
+  "True when a person answers the questions of session `sid`. A managed subagent has no
+   person: its leader answers its questions and decides its grants."
+  [db sid]
+  (nil? (info db (when sid (str sid)))))
+
 (defn leader-id
   "The leader of session `sid` as a string: the team leader for a subagent, else `sid`."
   [db sid]
@@ -815,6 +821,14 @@
        (vec (sort-by #(long (or (:position %) 0))
                      (ps/db-list-session-turn-iterations db (:id turn))))
        [])]))
+
+(defn latest-note
+  "The newest progress note of child `row` in its current task, clipped, or nil. The leader reads
+   the same notes when it waits, and the team rows show the newest one."
+  [db row now]
+  (let [[_ steps] (current-steps db row now)]
+    (some-> (some #(when-not (str/blank? (:assistant-prose %)) (:assistant-prose %)) (rseq steps))
+            (clip 300))))
 
 (defn- fresh-steps
   "The steps of `turn` after the last step that a wait showed."

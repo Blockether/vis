@@ -4091,6 +4091,46 @@
                     (when-not (:is-app entry) id))
                   @pending)))))
 
+(defonce ^:private ask-gate
+  ;; Decides whether a session may ask the person at all. The layer that knows the
+  ;; session tree installs it; this namespace cannot reach that layer.
+  (atom nil))
+
+(defn set-ask-gate!
+  "Install what decides whether a session may ask the person: called
+   `[session-id]`, truthy when it may. Without a gate, every session may ask.
+
+   The composition root installs a gate that refuses a managed subagent. Its
+   leader answers its questions and decides its grants, so the person never sees
+   a form that a subagent raises."
+  [f]
+  (reset! ask-gate f))
+
+(defn- may-ask?
+  "Whether session `session-id` may ask the person. A gate that throws allows the
+   request and logs the failure: a broken lookup must not take a form from a
+   session that may ask."
+  [session-id]
+  (if-let [f @ask-gate]
+    (try (boolean (f session-id))
+         (catch Throwable t
+           (tel/log! {:level :error
+                      :id ::ask-gate-failed
+                      :data {:session-id session-id :error (ex-message t)}
+                      :msg "The ask gate failed, so the human-input request goes out unchecked"})
+           true))
+    true))
+
+(defn- refused
+  "The answer of a request that its session may not raise. Nothing was published,
+   so no surface shows it and nobody can answer it."
+  [entry]
+  (tel/log! {:level :warn
+             :id ::request-refused
+             :data {:request-id (:id entry) :title (:title entry) :session-id (:session-id entry)}
+             :msg "Human-input request refused: this session may not ask the person"})
+  {:is-submitted false :reason "undeliverable" :request-id (:id entry)})
+
 (defn request!
   "Ask the operator for typed values and BLOCK until they answer.
 
@@ -4118,6 +4158,9 @@
    dialog can be drawn and nobody can answer. That returns AT ONCE and logs an
    error naming the request — parking the caller for the full timeout would
    report a run nobody was ever shown as if a human had ignored it.
+
+   A session that may not ask the person also gets `\"undeliverable\"` at once.
+   No surface ever sees its request; [[set-ask-gate!]] decides it.
 
    `:timeout-ms` is the wait this call is willing to bill: [[default-timeout-ms]]
    when the spec says nothing, or [[no-timeout-ms]] (0) to wait INDEFINITELY. A
@@ -4152,56 +4195,62 @@
                              "from an extension environment that carries one")))
     (when (contains? @pending request-id)
       (invalid-request! (str "request id " request-id " is already pending")))
-    (swap! pending assoc request-id entry)
-    (tel/log! {:level :debug
-               :id ::request-opened
-               :data {:request-id request-id
-                      :fields (mapv :id (input-fields (:nodes entry)))
-                      :timeout-ms (:timeout-ms entry)}
-               :msg "Human-input request opened"})
-    (if (zero? (long (publish! (:channel-ids entry)
-                               (lifecycle-event :view/open entry {:view (request->view entry)}))))
-      (do (tel/log! {:level :error
-                     :id ::request-undeliverable
-                     :data {:request-id request-id
-                            :title (:title entry)
-                            :channel-ids (:channel-ids entry)
-                            :session-id (:session-id entry)}
-                     :msg (str "Human-input request reached no channel — nothing is mounted on "
-                               (pr-str (:channel-ids entry))
-                               ", so no dialog can be drawn and nobody can answer")})
-          (settle! request-id {:is-submitted false :reason "undeliverable" :request-id request-id})
-          ;; `settle!` delivered, unless a racing submit! got there first.
-          @(:promise entry))
-      (let [timeout-ms
-            (:timeout-ms entry)
-
-            result
-            ;; Waiting on a human is NOT wall-clock work an enclosing timeout may
-            ;; bill: park the Python evaluation watchdog for as long as the operator
-            ;; wall kills the thread at `Timeout` with the dialog still up.
-            (rt/park-blocking-wall (fn []
-                                     (try (if (indefinite-timeout? timeout-ms)
-                                            ;; No deadline at all: only an answer, a cancel or an
-                                            ;; interrupt gets this thread back.
-                                            @(:promise entry)
-                                            (deref (:promise entry) timeout-ms ::timeout))
-                                          (catch Throwable t
-                                            ;; Interrupt/cancel of the surrounding turn: release the entry
-                                            ;; and close the dialog, never leave a zombie pending request.
-                                            (force-cancel! request-id "interrupted")
-                                            (throw t)))))]
-
-        (if (identical? ::timeout result)
-          (do (tel/log! {:level :warn
-                         :id ::request-timed-out
-                         :data {:request-id request-id :title (:title entry) :timeout-ms timeout-ms}
-                         :msg
-                         "Human-input request timed out — nobody answered, resuming without one"})
-              (settle! request-id {:is-submitted false :reason "timeout" :request-id request-id})
-              ;; `settle!` delivered, or a submit! that won the race already did.
+    (if-not (may-ask? (:session-id entry))
+      (refused entry)
+      (do
+        (swap! pending assoc request-id entry)
+        (tel/log! {:level :debug
+                   :id ::request-opened
+                   :data {:request-id request-id
+                          :fields (mapv :id (input-fields (:nodes entry)))
+                          :timeout-ms (:timeout-ms entry)}
+                   :msg "Human-input request opened"})
+        (if (zero? (long (publish!
+                           (:channel-ids entry)
+                           (lifecycle-event :view/open entry {:view (request->view entry)}))))
+          (do (tel/log! {:level :error
+                         :id ::request-undeliverable
+                         :data {:request-id request-id
+                                :title (:title entry)
+                                :channel-ids (:channel-ids entry)
+                                :session-id (:session-id entry)}
+                         :msg (str "Human-input request reached no channel — nothing is mounted on "
+                                   (pr-str (:channel-ids entry))
+                                   ", so no dialog can be drawn and nobody can answer")})
+              (settle! request-id
+                       {:is-submitted false :reason "undeliverable" :request-id request-id})
+              ;; `settle!` delivered, unless a racing submit! got there first.
               @(:promise entry))
-          result)))))
+          (let [timeout-ms
+                (:timeout-ms entry)
+
+                result
+                ;; Waiting on a human is NOT wall-clock work an enclosing timeout may
+                ;; bill: park the Python evaluation watchdog for as long as the operator
+                ;; wall kills the thread at `Timeout` with the dialog still up.
+                (rt/park-blocking-wall (fn []
+                                         (try (if (indefinite-timeout? timeout-ms)
+                                                ;; No deadline at all: only an answer, a cancel or an
+                                                ;; interrupt gets this thread back.
+                                                @(:promise entry)
+                                                (deref (:promise entry) timeout-ms ::timeout))
+                                              (catch Throwable t
+                                                ;; Interrupt/cancel of the surrounding turn: release the entry
+                                                ;; and close the dialog, never leave a zombie pending request.
+                                                (force-cancel! request-id "interrupted")
+                                                (throw t)))))]
+
+            (if (identical? ::timeout result)
+              (do (tel/log!
+                    {:level :warn
+                     :id ::request-timed-out
+                     :data {:request-id request-id :title (:title entry) :timeout-ms timeout-ms}
+                     :msg "Human-input request timed out — nobody answered, resuming without one"})
+                  (settle! request-id
+                           {:is-submitted false :reason "timeout" :request-id request-id})
+                  ;; `settle!` delivered, or a submit! that won the race already did.
+                  @(:promise entry))
+              result)))))))
 
 ;; Strings-only boundary — what a Python extension actually calls
 
