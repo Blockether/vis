@@ -867,6 +867,49 @@ function tableShape(columns: LiveTableNode['columns']) {
   return { valueAt, detailAt };
 }
 
+/**
+ * The widths a column after the name can take, from `sm`, in steps of four characters
+ * and its cell inset. A step, not the exact count, so a duration that ticks from `9m 59s`
+ * to `10m 00s` moves nothing. The last step caps a long cell, which then wraps.
+ */
+const COLUMN_WIDTH = [
+  'sm:w-[calc(4ch+2*var(--live-view-inset))]',
+  'sm:w-[calc(8ch+2*var(--live-view-inset))]',
+  'sm:w-[calc(12ch+2*var(--live-view-inset))]',
+  'sm:w-[calc(16ch+2*var(--live-view-inset))]',
+  'sm:w-[calc(20ch+2*var(--live-view-inset))]',
+  'sm:w-[calc(24ch+2*var(--live-view-inset))]',
+  'sm:w-[calc(28ch+2*var(--live-view-inset))]',
+] as const;
+/** The longest state word, and two characters for the mark and the gap before it. */
+const STATE_CHARS = Math.max(...Object.values(TONE_WORD).map((word) => word.length)) + 2;
+
+/** The `COLUMN_WIDTH` step that holds `chars` characters. */
+function widthStep(chars: number): number {
+  return Math.min(COLUMN_WIDTH.length - 1, Math.max(0, Math.ceil(chars / 4) - 1));
+}
+
+/**
+ * The width step of each column after the name, measured over EVERY row, the folded
+ * legs too. The browser sized the columns from the rows on screen, so folding a group
+ * moved every column.
+ */
+function columnSteps(columns: LiveTableNode['columns'], rows: LiveRow[], hasState: boolean) {
+  const chars = columns
+    .slice(1)
+    .map((column, at) =>
+      rows.reduce((most, row) => Math.max(most, (row.cells[at + 1] ?? '').length), column.label.length),
+    );
+  return (hasState ? [...chars, STATE_CHARS] : chars).map(widthStep);
+}
+
+/** The wider of two measures, column by column; `was` itself when no column grew. */
+function widerSteps(was: number[], now: number[]): number[] {
+  return now.some((step, at) => step > (was[at] ?? 0))
+    ? now.map((step, at) => Math.max(step, was[at] ?? 0))
+    : was;
+}
+
 /** The row as a phone reads it: the name, the value beside it, the rest beneath. */
 function RowFace({ columns, row }: { columns: LiveTableNode['columns']; row: LiveRow }) {
   const { valueAt, detailAt } = tableShape(columns);
@@ -1198,6 +1241,13 @@ function TableRows({
     rows.some((row) => row.tone !== 'idle') &&
     !node.columns.some((column) => /^(state|status)$/i.test(column.label.trim()));
   const span = Math.max(1, node.columns.length + (hasState ? 1 : 0));
+  // A column only GROWS while the run lasts. A job that settles turns `in progress` into
+  // `success`, and a column that shrank with it moved the whole table under the reader.
+  const columnKey = [...node.columns.map((column) => column.id), hasState].join('\u0000');
+  const measured = columnSteps(node.columns, rows, hasState);
+  const [widest, setWidest] = useState({ key: columnKey, steps: measured });
+  const steps = widest.key === columnKey ? widerSteps(widest.steps, measured) : measured;
+  if (widest.key !== columnKey || steps !== widest.steps) setWidest({ key: columnKey, steps });
   const chunks = chunked(visible, TABLE_CHUNK);
   useEffect(() => {
     if (shownChunks >= chunks.length) return;
@@ -1215,6 +1265,14 @@ function TableRows({
             : '[&_td:first-child]:pl-0 [&_td:last-child]:pr-0 [&_th:first-child]:pl-0 [&_th:last-child]:pr-0'
         }`}
       >
+        {/* The name takes the width that the measured columns leave. A width holds only
+            from `sm`: below it, the cells after the name are hidden. */}
+        <colgroup>
+          <col />
+          {steps.map((step, at) => (
+            <col key={at} className={COLUMN_WIDTH[step]} />
+          ))}
+        </colgroup>
         <thead className="hidden sm:table-header-group">
           <tr className="border-b border-dialog-edge/40">
             {node.columns.map((column) => (

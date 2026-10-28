@@ -361,6 +361,37 @@ describe('selecting a table row', () => {
     fireEvent.click(parent);
     expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeVisible();
   });
+  // Regression, reported with desktop screenshots: the browser sized the columns from the
+  // rows on screen, so folding a group moved every column. A settled job moved them again.
+  it('keeps every column width when a group folds and when a cell gets shorter', () => {
+    const slow = 'waiting for a runner';
+    const view = (now: string): LiveView => {
+      const next = matrixView([]);
+      hostsTable(next).rows = [
+        { id: 'ios', cells: ['iOS', now], tone: 'running', parent: 'Release apps' },
+        { id: 'android', cells: ['Android', 'running'], tone: 'running', parent: 'Release apps' },
+        { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
+        { id: 'long', cells: ['Notes', 'ok', 'x'.repeat(80)], tone: 'ok', parent: 'Lint' },
+      ];
+      return next;
+    };
+    const widths = () =>
+      [...screen.getByRole('table').querySelectorAll('col')].map((col) => col.className);
+    const { rerender } = render(<LiveViewPanel view={view(slow)} onSelect={vi.fn()} />);
+
+    // The name column takes the rest, and each other column has a width.
+    const folded = widths();
+    expect(folded[0]).toBe('');
+    expect(folded).toHaveLength(hostsTable(view(slow)).columns.length);
+    // A folded leg still counts, and one long cell stops at the cap.
+    expect(folded[1]).toBe(`sm:w-[calc(${slow.length}ch+2*var(--live-view-inset))]`);
+    expect(folded[2]).toBe('sm:w-[calc(28ch+2*var(--live-view-inset))]');
+    fireEvent.click(screen.getByRole('button', { name: 'Lint' }));
+    expect(widths()).toEqual(folded);
+
+    rerender(<LiveViewPanel view={view('success')} onSelect={vi.fn()} />);
+    expect(widths()).toEqual(folded);
+  });
   // Regression, session c6473f43-3b3b-48f0-b309-64b7b37e8a21: every poll re-sent the
   // running jobs as the selection, which sprang open the parent the reader had closed.
   it('keeps a parent closed until the reader opens it, poll after poll', () => {
