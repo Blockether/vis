@@ -888,13 +888,16 @@
 
 (def ^:private context-bindings-python
   "# The defaults keep the builtins of the definition time, so a block global `set` cannot break a refresh.
-def __vis_bind_ctx__(g, data, fallback, Path=__import__('pathlib').Path, set=set, sorted=sorted,
-                     builtin_names=frozenset(dir(__import__('builtins')))):
+def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, set=set,
+                     sorted=sorted, builtin_names=frozenset(dir(__import__('builtins')))):
+    # The host shortened these paths with its own home, which can differ from the worker HOME.
+    def expand(text):
+        return Path(home + text[1:]) if text == '~' or text.startswith('~/') else Path(text)
     workspace = data.get('workspace') or {}
-    paths = {entry['python_name']: Path(entry['cwd']).expanduser()
+    paths = {entry['python_name']: expand(entry['cwd'])
              for entry in (workspace.get('filesystem_roots') or [])
              if entry.get('python_name') and not entry.get('is_denied')}
-    paths['project_root_path'] = Path(workspace.get('root') or fallback).expanduser()
+    paths['project_root_path'] = expand(workspace.get('root') or fallback)
     old = set(g.get('__vis_path_names__', ['project_root_path']))
     names = set(paths)
     protected = set(g.get('__vis_protected_names__') or [])
@@ -920,15 +923,21 @@ def __vis_bind_ctx__(g, data, fallback, Path=__import__('pathlib').Path, set=set
    Each filesystem root's `python_name` binds its working `cwd`, sharing the prompt's
    exact entries. Removed names disappear; new names cannot overwrite tools or user
    variables.
-   All are host-owned: block-local shadows cannot replace later blocks' bindings."
-  [session data]
-  (py-exec! session
-            (str "__vis_bind_ctx__(globals(), "
-                 (py-json-literal data)
-                 ", "
-                 (py-json-literal (str (workspace/cwd)))
-                 ")"))
-  nil)
+   All are host-owned: block-local shadows cannot replace later blocks' bindings.
+
+   A `~/…` path expands against `home`, the home that shortened it: `user.home` by default.
+   The worker HOME can differ, for example under `-Duser.home`."
+  ([session data] (bind-ctx! session data (System/getProperty "user.home")))
+  ([session data home]
+   (py-exec! session
+             (str "__vis_bind_ctx__(globals(), "
+                  (py-json-literal data)
+                  ", "
+                  (py-json-literal (str (workspace/cwd)))
+                  ", "
+                  (py-json-literal (str home))
+                  ")"))
+   nil))
 
 (defn seed-cli-runtime!
   "Seed a standalone `vis-agent python` CLI session with script `argv` (bound to

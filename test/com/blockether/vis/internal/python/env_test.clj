@@ -669,6 +669,19 @@
                   " library_path.is_absolute(), session['workspace']['root'])"))]
           (expect (nil? (:error result)))
           (expect (= "True True ~/projects/main\n" (:stdout result))))))
+  (it "expands home-relative paths against the host home, not the worker HOME"
+      ;; Native tests run with -Duser.home=<temp>; ~/ must not resolve to the runner's HOME.
+      (tpc/with-own
+        [ctx {}]
+        (ep/bind-ctx! ctx
+                      {"workspace" {"root" "~/workspace"
+                                    "filesystem_roots" [{"cwd" "~" "python_name" "home_path"}
+                                                        {"cwd" "~other/x"
+                                                         "python_name" "other_path"}]}}
+                      "/elsewhere/home")
+        (let [result (ep/run-python-block ctx "print(project_root_path, home_path, other_path)")]
+          (expect (nil? (:error result)))
+          (expect (= "/elsewhere/home/workspace /elsewhere/home ~other/x\n" (:stdout result))))))
   (it "answers a ctx field by attribute as well as by key"
       ;; `session` is read the way a tool result is, so the dot must not be the one
       ;; spelling that fails; a miss names the keys this map does carry.
