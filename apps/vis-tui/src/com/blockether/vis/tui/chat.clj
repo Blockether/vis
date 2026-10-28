@@ -161,17 +161,22 @@
         ;; Sentinel block when the iteration ran no forms (eval timeout,
         ;; pre-eval rejection, etc.). Keep the iteration visible with
         ;; whatever code text we have so the bubble doesn't collapse to
-        ;; nothing on restore.
+        ;; nothing on restore. A failed model call (a provider 401, for
+        ;; example) has no code and no error on its row, because the turn's
+        ;; error block reports it. It ran nothing, so it gets no block:
+        ;; an empty block made the step digest say RAW EXECUTION.
         fallback-blocks
-        [(cond-> {:position 0 :code iter-code}
-           (some? (get it "render_segments"))
-           (assoc :render-segments (get it "render_segments"))
+        (if (and (str/blank? iter-code) (nil? (get it "error")))
+          []
+          [(cond-> {:position 0 :code iter-code}
+             (some? (get it "render_segments"))
+             (assoc :render-segments (get it "render_segments"))
 
-           (some? (get it "duration_ms"))
-           (assoc :duration-ms (get it "duration_ms"))
+             (some? (get it "duration_ms"))
+             (assoc :duration-ms (get it "duration_ms"))
 
-           (some? (get it "error"))
-           (assoc :error (hydrate-error (get it "error"))))]
+             (some? (get it "error"))
+             (assoc :error (hydrate-error (get it "error"))))])
 
         envelope->block
         (fn [idx env]

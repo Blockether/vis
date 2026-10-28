@@ -2836,6 +2836,18 @@ describe('steps between progress notes', () => {
     expect(painted.container.textContent).not.toContain(thought);
   });
 
+  // Regression, user report: a provider 401 showed an empty RAW EXECUTION step above its error.
+  it('paints no execution step for a failed model call', () => {
+    const failed = { id: 'failed', position: 1, status: 'error', code: '', duration_ms: 0 };
+    const painted = render(<IterationTrace whole showCode iterations={[failed]} />);
+    expect(painted.container.querySelectorAll('[data-step-digest]')).toHaveLength(0);
+    painted.rerender(
+      <IterationTrace whole showCode iterations={[{ ...failed, thinking: 'Plan the call.' }]} />,
+    );
+    expect(painted.getByRole('button', { name: 'Expand steps: THINKING' })).toBeInTheDocument();
+    expect(painted.container.textContent).not.toContain('RAW EXECUTION');
+  });
+
   it('opens a digest to show the thinking, code and Activity of its steps', () => {
     const observed = iterations.map((step) =>
       step.id === 'step-2'

@@ -1389,6 +1389,20 @@
           (expect (= [] (chat/iteration-rows->trace slash false)))
           (expect (not (chat/slash-turn-rows? bang)))
           (expect (= 1 (count (chat/iteration-rows->trace bang false))))))
+    (it "a failed model call projects to a step without forms"
+        ;; User report: a provider 401 showed an empty RAW EXECUTION step above its error.
+        (let [[failed thought kept timed-out]
+              (chat/iteration-rows->trace
+                [{"id" "it-1" "position" 1 "status" "error" "code" ""}
+                 {"id" "it-2" "position" 2 "status" "error" "code" "" "thinking" "Plan."}
+                 {"id" "it-3" "position" 3 "code" "x = 1"}
+                 {"id" "it-4" "position" 4 "code" "" "error" "eval timeout"}]
+                false)]
+          (expect (= [] (:forms failed)))
+          (expect (= [] (:forms thought)))
+          (expect (= "Plan." (:thinking thought)))
+          (expect (= ["x = 1"] (mapv :code (:forms kept))))
+          (expect (= ["eval timeout"] (mapv :error (:forms timed-out))))))
     (it "the live tracker keeps the messages on the step the chunk names"
         (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
           (on-chunk {:phase :user-input :iteration 2 :messages rows})
