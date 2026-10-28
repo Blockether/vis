@@ -36,6 +36,46 @@
 
 (defn- version [] (str/trim (slurp "../../VIS_VERSION")))
 
+(defn- native-lib-token
+  "Host-platform suffix of the imaging native artifact: darwin-arm64, linux-x64 and so on."
+  []
+  (let [os
+        (str/lower-case (System/getProperty "os.name"))
+
+        arch
+        (str/lower-case (System/getProperty "os.arch"))
+
+        a
+        (cond (#{"aarch64" "arm64"} arch) "arm64"
+              (#{"x86_64" "amd64" "x64"} arch) "x64"
+              :else arch)]
+
+    (str (if (str/includes? os "mac") "darwin" "linux") "-" a)))
+
+(defn- imaging-native-jars
+  "The host `imaging-native-<platform>` jars at the version of `com.blockether/imaging` in
+   `basis`. A native image cannot download the library at run time, so without these jars
+   every transcoded picture is blank. A missing jar fails the build."
+  [basis]
+  (let [artifact
+        (symbol "com.blockether" (str "imaging-native-" (native-lib-token)))
+
+        version
+        (or (get-in basis [:libs 'com.blockether/imaging :mvn/version])
+            (throw (ex-info "vis-tui native build requires com.blockether/imaging." {})))
+
+        jars
+        (->> (get-in (b/create-basis {:project nil
+                                      :extra {:deps {artifact {:mvn/version version}}}})
+                     [:libs artifact :paths])
+             (filter #(str/ends-with? % ".jar"))
+             vec)]
+
+    (when (empty? jars)
+      (throw (ex-info "vis-tui native build requires the imaging native library for its platform."
+                      {:artifact artifact :version version})))
+    jars))
+
 (defn- prepare!
   []
   (b/delete {:path class-dir})
@@ -54,7 +94,8 @@
         (prepare!)
 
         jars
-        (filter #(str/ends-with? % ".jar") (:classpath-roots basis))
+        (concat (filter #(str/ends-with? % ".jar") (:classpath-roots basis))
+                (imaging-native-jars basis))
 
         classpath
         (str/join java.io.File/pathSeparator (cons class-dir jars))

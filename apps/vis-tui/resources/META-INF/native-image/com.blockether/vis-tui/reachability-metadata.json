@@ -99,5 +99,23 @@
     {
       "glob": "META-INF/services/javax.sound.sampled.spi.MixerProvider"
     }
-  ]
+  ],
+  "foreign": {
+    "downcalls": [
+      {
+        "returnType": "void*",
+        "parameterTypes": [
+          "void*",
+          "jint"
+        ]
+      },
+      {
+        "returnType": "void*",
+        "parameterTypes": [
+          "void*",
+          "void*"
+        ]
+      }
+    ]
+  }
 }

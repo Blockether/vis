@@ -14,6 +14,7 @@ import sys
 import tempfile
 import termios
 import time
+import zlib
 from pathlib import Path
 
 
@@ -33,6 +34,22 @@ def win32_text(text):
 WIN32_SHIFT_ENTER = (
     b"\x1b[16;42;0;1;16;1_" + win32_key(13, 13, 16) + b"\x1b[16;42;0;0;0;1_"
 )
+
+
+def png_size_and_color(png):
+    """The pixel size of `png` and the dominant channel of its first pixel."""
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height, depth, kind = struct.unpack(">IIBB", png[16:26])
+    assert depth == 8 and kind in (2, 6), (depth, kind)
+    pos, idat = 8, b""
+    while pos < len(png):
+        (length,) = struct.unpack(">I", png[pos : pos + 4])
+        if png[pos + 4 : pos + 8] == b"IDAT":
+            idat += png[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+    # Every PNG filter leaves the first pixel of the first row as it is.
+    red, _, blue = zlib.decompress(idat)[1:4]
+    return (width, height), "red" if red > blue else "blue"
 
 
 def check_resize(binary, home, gateway, mode=None):
@@ -312,7 +329,7 @@ def check_resize(binary, home, gateway, mode=None):
                 os.write(master, b"\x1b[<65;20;8M")
                 await_bottom(0.2, idle=True)
             uploads, placed, placement_owners = {}, {}, {}
-            visible_sizes = set()
+            upload_sizes, visible_colors = set(), set()
             saw_both = False
             deletes = 0
             upload_id, payload = None, b""
@@ -333,22 +350,23 @@ def check_resize(binary, home, gateway, mode=None):
                     payload += data
                     if fields.get(b"m", b"0") == b"0":
                         png = base64.b64decode(payload, validate=True)
-                        assert png[:8] == b"\x89PNG\r\n\x1a\n"
-                        uploads[upload_id] = struct.unpack(">II", png[16:24])
+                        size, color = png_size_and_color(png)
+                        uploads[upload_id] = size + (color,)
+                        upload_sizes.add(size)
                         upload_id = None
                 elif action == b"p":
                     image_id, placement_id = int(fields[b"i"]), int(fields[b"p"])
                     assert image_id in uploads, f"Placement without upload: {fields}"
                     previous_owner = placement_owners.setdefault(placement_id, image_id)
                     assert previous_owner == image_id, "Two images share a placement ID"
-                    width, height = uploads[image_id]
+                    width, height, color = uploads[image_id]
                     assert (
                         int(fields.get(b"y", 0)) + int(fields.get(b"h", height))
                         <= height
                     )
                     assert int(fields.get(b"w", width)) <= width
-                    placed[image_id, placement_id] = (width, height)
-                    visible_sizes.add((width, height))
+                    placed[image_id, placement_id] = color
+                    visible_colors.add(color)
                 elif action == b"d" and fields.get(b"d") == b"i":
                     assert b"p" in fields, "Deletion must target one placement"
                     pair = int(fields[b"i"]), int(fields[b"p"])
@@ -362,12 +380,12 @@ def check_resize(binary, home, gateway, mode=None):
                 elif action == b"d" and fields.get(b"d") == b"A":
                     placed.clear()
                     uploads.clear()
-            assert visible_sizes == {(1358, 1030), (702, 648)}, visible_sizes
+            # The image table cuts every thumbnail to one cell box (red first, blue second).
+            assert visible_colors == {"red", "blue"}, visible_colors
+            assert len(upload_sizes) == 1, f"Thumbnails differ in size: {upload_sizes}"
             assert saw_both, "Never placed both images in a viewport transition"
             assert deletes, "Scrolling did not remove departed placements"
-            assert (702, 648) in placed.values(), (
-                "Second image is blank after scrolling"
-            )
+            assert "blue" in placed.values(), "Second image is blank after scrolling"
             print("native Kitty image scrolling verified", flush=True)
             return
         if theme_mode:
