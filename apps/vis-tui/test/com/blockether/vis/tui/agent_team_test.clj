@@ -369,10 +369,10 @@
              [[{"status" "completed"} {"status" "running" "iterations_used" 3 "iteration_budget" 20}
                {"status" "running" "pending_input" true "pending_input_count" 2}
                {"status" "queued"}] "2 running · 1 queued · 1 done"]
-             ;; An agent with a question waits for its leader, not for the person.
+             ;; A question goes to the leader, not to the person, so its agent still runs.
              [[{"status" "running" "role" "verify"} {"status" "running" "question" "Keep it?"}
                {"status" "running" "role" "research"} {"status" "completed" "role" "implement"}]
-              "2 running · 1 waiting · 1 done"]]]
+              "3 running · 1 done"]]]
       (expect (= label (team/summary-counts (map-indexed #(team/team-row (inc %1) %2) agents)))))))
 
 (defdescribe old-tab-response-does-not-repaint-new-tab-test
@@ -444,15 +444,21 @@
     "status" "completed"
     "role" "audit"}])
 
-(defdescribe waiting-agents-first-test
-             (it "puts waiting agents first and keeps numbers per team"
+(defdescribe waiting-agents-test
+             (it "keeps role order and numbers per team"
+                 (expect (= [[1 "c1"] [2 "c2"] [3 "c3"] [1 "c4"]]
+                            (mapv (fn [[n agent]]
+                                    [n (get agent "session_id")])
+                                  (team/numbered waiting-team)))))
+             ;; The leader answers questions and grant requests. The person never sees them.
+             (it "shows no question or grant request of a waiting agent"
+                 (let [rows (team/team-rows "turn-1" waiting-team)]
+                   (expect (= ["running" "running" "running"] (mapv :status rows)))
+                   (expect (= ["" "" ""] (mapv :now rows))))
                  (with-redefs [team/summary (constantly {:agents waiting-team})]
-                   (expect (= [[2 "c2"] [3 "c3"] [1 "c1"] [1 "c4"]]
-                              (mapv (fn [[n agent]]
-                                      [n (get agent "session_id")])
-                                    (team/numbered waiting-team))))
-                   (expect (not-any? #(str/includes? % "asking")
-                                     (team/dock-text "leader" nil 120 0))))))
+                   (let [text (str/join "\n" (team/dock-text "leader" nil 120 0))]
+                     (doseq [hidden ["asking" "waiting" "Keep the old API?" "Asks for"]]
+                       (expect (not (str/includes? text hidden)) hidden))))))
 
 (def ^:private now-ms 1700000100000)
 
@@ -474,7 +480,11 @@
               "role" "implement"
               "title" "Fix the parser"
               "activity" "Patched src/a.clj")
-   (agent-row 3 "running" "role" "research" "question" "Keep the old API?" "question_entry_id" 7)
+   (agent-row 3 "running"
+              "role" "research"
+              "note" "Two routes left to map"
+              "activity" "Read src/routes.clj"
+              "question" "Keep the old API?")
    (agent-row 4 "running" "role" "implement" "pending_input" true)
    (agent-row 5 "completed"
               "role" "research"
@@ -507,7 +517,7 @@
 
 (defdescribe status-word-test
              (it "names each status in words, without icons"
-                 (expect (= ["queued" "running" "waiting" "running" "done" "passed" "failed"
+                 (expect (= ["queued" "running" "running" "running" "done" "passed" "failed"
                              "failed" "cancelled" "out of budget"]
                             (mapv team/status-word every-state)))))
 
@@ -530,8 +540,11 @@
         (expect (str/includes? (nth lines 1) "Patched src/a.clj"))
         (expect (str/ends-with? (nth lines 1) "1m 04s") "Running time counts from the start")
         (expect (str/includes? (nth lines 2) "#3"))
-        (expect (str/includes? (nth lines 2) "waiting  "))
-        (expect (str/includes? (nth lines 2) "Keep the old API?"))
+        ;; The newest note wins over the Activity line. The question goes to the leader only.
+        (expect (str/includes? (nth lines 2) "running  "))
+        (expect (str/includes? (nth lines 2) "Two routes left to map"))
+        (expect (not (str/includes? (nth lines 2) "Read src/routes.clj")))
+        (expect (not (str/includes? (nth lines 2) "Keep the old API?")))
         ;; A form of a subagent opens in the leader session, so its row only runs.
         (expect (str/includes? (nth lines 3) "running"))
         (expect (not (str/includes? (nth lines 3) "needs you")))
@@ -625,7 +638,8 @@
         (let [[line :as text] (team/dock-text "leader" "turn-1" 120 now-ms)]
           (expect (= 1 (count text)) "The dock is one line")
           (expect (str/starts-with? line "Agents   "))
-          (expect (str/includes? line "1 waiting"))
+          (expect (str/includes? line "3 running"))
+          (expect (not (str/includes? line "waiting")))
           (expect (not (str/includes? line "asking")))
           (expect (str/ends-with? line "C-x T details")))
         (try (expect (true? (team/toggle-dock! "leader")))

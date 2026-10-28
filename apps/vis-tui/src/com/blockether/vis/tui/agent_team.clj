@@ -50,14 +50,7 @@
   [agent]
   (some #(when (= (get % "const") (get agent "role")) (get % "const")) (roles)))
 
-(defn waiting?
-  "Whether `agent` waits for its parent: an open question, budget request or file request. The
-   parent answers it, not the person. When only the person can decide, the parent asks the
-   person, so the row shows no attention state."
-  [agent]
-  (boolean (or (get agent "question") (get agent "budget_request") (get agent "files_request"))))
-
-(defn- active? [agent] (or (waiting? agent) (contains? #{"queued" "running"} (get agent "status"))))
+(defn- active? [agent] (contains? #{"queued" "running"} (get agent "status")))
 
 (defn- role-rank
   [agent]
@@ -66,8 +59,8 @@
 
 (defn numbered
   "`[n agent]` pairs. `n` is the start order from 1 inside the agent's team (`team_id`), so it
-   never changes. Agents that wait for their parent come first. Then rows of one role stand
-   together in contract order, and a row without a role comes last."
+   never changes. Rows of one role stand together in contract order, and a row without a role
+   comes last."
   [agents]
   (let [numbers (second (reduce (fn [[seen out] agent]
                                   (let [team (get agent "team_id")
@@ -77,7 +70,7 @@
                                 [{} []]
                                 agents))]
     (sort-by (fn [[_ agent]]
-               [(if (waiting? agent) 0 1) (role-rank agent)])
+               (role-rank agent))
              (map vector numbers agents))))
 
 (defn summary
@@ -165,37 +158,36 @@
   (or (not-empty (one-line (get agent "title"))) (str "#" n)))
 
 (defn status-word
-  "The status of `agent` in words: `queued`, `running`, `waiting`, `done`, `passed`, `failed`,
-   `cancelled` or `out of budget`. `waiting` is an agent that waits for its parent's reply."
+  "The status of `agent` in words: `queued`, `running`, `done`, `passed`, `failed`, `cancelled`
+   or `out of budget`. An agent that waits for the reply of its parent still runs."
   [agent]
-  (cond (waiting? agent) "waiting"
-        :else (case (get agent "status")
-                "queued"
-                "queued"
+  (case (get agent "status")
+    "queued"
+    "queued"
 
-                "running"
-                "running"
+    "running"
+    "running"
 
-                "completed"
-                (case (get agent "outcome")
-                  "passed"
-                  "passed"
+    "completed"
+    (case (get agent "outcome")
+      "passed"
+      "passed"
 
-                  "failed"
-                  "failed"
+      "failed"
+      "failed"
 
-                  "done")
+      "done")
 
-                "failed"
-                "failed"
+    "failed"
+    "failed"
 
-                "cancelled"
-                "cancelled"
+    "cancelled"
+    "cancelled"
 
-                "budget_limited"
-                "out of budget"
+    "budget_limited"
+    "out of budget"
 
-                (str/replace (str (get agent "status")) "_" " "))))
+    (str/replace (str (get agent "status")) "_" " ")))
 
 (defn- tone
   [word]
@@ -217,18 +209,12 @@
 
     :muted))
 
-(defn- request-line
-  [agent]
-  (cond (get agent "question") (one-line (get agent "question"))
-        (get agent "budget_request")
-        (str "Asks for " (get-in agent ["budget_request" "iterations"]) " more iterations")
-        (get agent "files_request") "Asks for file access"))
-
 (defn- now-text
-  "What the agent does now while it works, its request while it waits, else its result."
+  "The newest progress note or Activity line of a working agent, else its result. The questions
+   and grant requests of an agent go to its leader, never to the person, so no row shows them."
   [agent]
-  (one-line
-    (or (request-line agent) (when (active? agent) (get agent "activity")) (get agent "result"))))
+  (one-line (or (when (active? agent) (or (get agent "note") (get agent "activity")))
+                (get agent "result"))))
 
 (defn- start-ms
   [agent]
@@ -734,10 +720,10 @@
 
 (def ^:private summary-words
   "The status words of the dock summary line, in their order."
-  ["running" "waiting" "queued" "done" "passed" "failed" "cancelled" "out of budget"])
+  ["running" "queued" "done" "passed" "failed" "cancelled" "out of budget"])
 
 (defn summary-counts
-  "The status counts of `rows`, such as `2 running · 1 waiting · 1 done`."
+  "The status counts of `rows`, such as `2 running · 1 queued · 1 done`."
   [rows]
   (let [counts (frequencies (map :status rows))]
     (str/join " · "
