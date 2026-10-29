@@ -8521,6 +8521,21 @@
 (defonce extensions-reload-listener
   (python-extensions/add-reload-listener! ::extensions-reloaded #'broadcast-extensions-reload!))
 
+(defn- broadcast-notification!
+  "Send one `vis.notify` of a session to every client of that session. The notice is
+   live only: the replay ring and a reconnect never show it again."
+  [{:keys [session-id text level extension]}]
+  (when (and (session-entry session-id) (not (str/blank? text)))
+    (append-event! session-id
+                   "notification"
+                   (cond-> {:text text :level (name level)}
+                     extension
+                     (assoc :extension (str extension)))
+                   {:store? false})))
+
+(defonce notification-listener
+  (python-extensions/add-notification-listener! ::notification #'broadcast-notification!))
+
 (defonce title-listener
   ;; Registered ONCE at namespace load: loop.clj's single title mutation
   ;; point (`set-title-with-broadcast!`) fires this for host renames

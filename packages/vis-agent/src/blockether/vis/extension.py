@@ -2802,7 +2802,7 @@ def _keybinding_rules():
 
 @dataclass(frozen=True, slots=True)
 class Keybinding:
-    """A TUI key binding: C-x, a group key and this key run a slash command or a TUI verb.
+    """A TUI key binding: C-x, a group key and this key run a command, a verb or a function.
 
     Args:
         key: One printable ASCII character from `!` to `~`.
@@ -2810,14 +2810,20 @@ class Keybinding:
             the person typed it and pressed Enter. Give it with `label`.
         action: A built-in TUI verb id in kebab case, such as `new-session`. The
             verb moves to `key`.
-        label: The key menu and palette label. Required with `command`.
+        label: The key menu and palette label. Required with `command` and `run`.
         group: The C-x group of the key. A built-in group name, such as `Session`,
-            places the key there, in any case. A command binding without a group
-            uses `Extensions` (C-x e). Any other name makes a group of its own
-            under C-x e, opened by the first free letter of the name. An action
-            binding without a group stays in the group of its verb.
+            places the key there, in any case. A command or run binding without a
+            group uses `Extensions` (C-x e). Any other name makes a group of its
+            own under C-x e, opened by the first free letter of the name. An
+            action binding without a group stays in the group of its verb.
+        run: A function that the gateway calls when the person presses the key.
+            It adds no turn to the transcript. It receives a dict with `key`,
+            `group`, `channel`, `session_id`, `workspace_root` and `project_root`.
+            It returns None, a text, `vis.ok(...)` or `vis.err(...)`, and the TUI
+            shows the title. Call `vis.notify(...)` in it to tell every client of
+            the session.
 
-    Give exactly one of `command` and `action`.
+    Give exactly one of `command`, `action` and `run`.
 
     Raises:
         ValueError: A field breaks these rules.
@@ -2828,6 +2834,7 @@ class Keybinding:
     action: str | None = None
     label: str | None = None
     group: str | None = None
+    run: Callable[..., Any] | None = None
 
     def __post_init__(self):
         rules = _keybinding_rules()
@@ -2837,10 +2844,16 @@ class Keybinding:
             raise ValueError(
                 "vis.Keybinding key must be one printable ASCII character from ! to ~"
             )
-        if (self.command is None) == (self.action is None):
+        if [self.command, self.action, self.run].count(None) != 2:
             raise ValueError(
-                "vis.Keybinding requires exactly one of command=... and action=..."
+                "vis.Keybinding requires exactly one of command=..., action=... "
+                "and run=..."
             )
+        if self.run is not None:
+            if not callable(self.run):
+                raise ValueError("vis.Keybinding run must be callable")
+            if self.label is None:
+                raise ValueError("vis.Keybinding requires label=... with run=...")
         if self.command is not None:
             limit = rules["command"]["maxLength"]
             if (
@@ -2880,7 +2893,7 @@ class Keybinding:
             "marker": "keybinding",
             **{
                 name: getattr(self, name)
-                for name in ("key", "command", "action", "label", "group")
+                for name in ("key", "command", "action", "label", "group", "run")
                 if getattr(self, name) is not None
             },
         }

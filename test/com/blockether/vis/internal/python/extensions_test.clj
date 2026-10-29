@@ -3276,6 +3276,53 @@ vis.register_extension(vis.Extension(
                                   (expect (true? (get out "raised")))
                                   (expect (= [] (get out "cleared"))))))))
 
+(def ^:private deploy-py
+  "import blockether.vis.extension as vis
+
+def _deploy(ctx):
+    vis.notify('Deploy of ' + ctx['group'] + ' ' + ctx['key'], level='success')
+    return vis.ok('Deployed')
+
+vis.register_extension(vis.Extension(
+    name='deploy',
+    description='Run binding fixture.',
+    keybindings=[vis.Keybinding('d', run=_deploy, label='Deploy', group='Release')],))
+")
+
+(defdescribe
+  keybinding-run-test
+  ;; A key binding runs an extension function without a turn, and its vis.notify
+  ;; reaches the gateway for the session that pressed the key.
+  (it "runs the function in the session and announces its vis.notify for that session"
+      (with-loaded {"deploy.py" deploy-py}
+                   (fn [_ _]
+                     (let [notices
+                           (atom [])
+
+                           run!
+                           (:run-fn (first (:ext/keybindings (registered "deploy"))))]
+
+                       (pyx/add-notification-listener! ::notices #(swap! notices conj %))
+                       (try (binding [extension/*current-environment*
+                                      (assoc extension/*current-environment*
+                                        :session-id "session-1")]
+                              (expect (= {"status" "ok" "title" "Deployed"}
+                                         (run! {:key "d" :group "Release" :channel :tui}))))
+                            (expect (= [{:session-id "session-1"
+                                         :text "Deploy of Release d"
+                                         :level :success
+                                         :extension "deploy"}]
+                                       @notices))
+                            (finally (pyx/add-notification-listener! ::notices
+                                                                     (fn [_]
+                                                                       nil))))))))
+  (it "lists the run binding without its function"
+      (with-loaded
+        {"deploy.py" deploy-py}
+        (fn [_ _]
+          (expect (= [{:key "d" :label "Deploy" :group "Release" :run true :extension "deploy"}]
+                     (filterv #(= "deploy" (:extension %)) (extension/keybindings))))))))
+
 (defdescribe prompt-and-slash-test
              (it "a string prompt normalizes into :ext/prompt-fn"
                  (with-loaded {"counter.py" counter-py}

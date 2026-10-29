@@ -248,32 +248,45 @@
                       (update :moved conj verb))))))
 
 (defn- add-command
-  "Phase 2 of the merge: binding `b` runs a slash command from a free key."
+  "Phase 2 of the merge: binding `b` runs a slash command or, with `:run`, an
+   extension function from a free key. A run command keeps in `:run` what the
+   gateway needs to find the function: the extension, the listed group and the key."
   [{:keys [commands] :as acc} b]
   (let [c
         (binding-char (:key b))
 
+        run?
+        (true? (:run b))
+
         command
-        (str/trim (str (:command b)))
+        (when-not run? (str/trim (str (:command b))))
 
         group
         (binding-group b nil)]
 
     (cond (nil? c) (update acc :refused conj (refuse b "the key is not one printable character"))
           (reserved-prefix-keys c) (update acc :refused conj (refuse b "the key is reserved"))
-          (not (str/starts-with? command "/"))
+          (and (not run?) (not (str/starts-with? command "/")))
           (update acc :refused conj (refuse b "the command does not start with /"))
           (some #(= [group c] [(:group %) (:key %)]) commands)
           (update acc :refused conj (refuse b "the key is taken"))
           :else (update acc
                         :commands
                         conj
-                        (with-group {:action (keyword "keybinding"
+                        (with-group (cond-> {:action
+                                             (keyword "keybinding"
                                                       (str/join "-" (concat (flatten [group]) [c])))
-                                     :key c
-                                     :label (or (not-empty (str (:label b))) command)
-                                     :command command
-                                     :extension (:extension b)}
+                                             :key c
+                                             :label (or (not-empty (str (:label b))) command)
+                                             :extension (:extension b)}
+                                      run?
+                                      (assoc :run
+                                        (cond-> {:extension (:extension b) :key (:key b)}
+                                          (:group b)
+                                          (assoc :group (:group b))))
+
+                                      (not run?)
+                                      (assoc :command command))
                                     group
                                     b)))))
 
@@ -315,17 +328,17 @@
       :commands (mapv #(cond-> % (keyless (:group %)) (dissoc :key)) commands)
       :refused (into (:refused acc)
                      (keep #(when (keyless (:group %))
-                              (refuse (select-keys % [:key :label :command :extension])
+                              (refuse (select-keys % [:key :label :command :run :extension])
                                       "the Extensions group has no free key")))
                      commands))))
 
 (defn merge-keybindings
-  "PURE: the C-x commands after extension `bindings` (maps with `:key`, `:command`
-   or `:action`, `:label`, `:group` and `:extension`, in gateway order).
+  "PURE: the C-x commands after extension `bindings` (maps with `:key`, `:command`,
+   `:action` or `:run`, `:label`, `:group` and `:extension`, in gateway order).
 
    First every `:action` binding moves its built-in verb to its key, in the verb's
    own group unless `:group` names another one. A built-in verb that had that key
-   keeps only the palette. Then every `:command` binding takes a free key in its
+   keeps only the palette. Then every `:command` or `:run` binding takes a free key in its
    group, Extensions by default. Last, each Extensions subgroup gets a key
    (`assign-subgroups`). A reserved, taken or malformed binding is refused.
    Answers `{:commands [...] :refused [{:binding b :reason text}] :subgroups [...]}`."

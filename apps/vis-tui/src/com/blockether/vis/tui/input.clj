@@ -1025,8 +1025,8 @@
   [^KeyStroke key c group state]
   (let [cmd (keymap/prefix-command-for group c)]
     (cond
-      ;; An extension key binding that runs a slash command.
-      (:command cmd) {:action :run-keybinding :keybinding cmd :state state}
+      ;; An extension key binding that runs a slash command or a function.
+      (or (:command cmd) (:run cmd)) {:action :run-keybinding :keybinding cmd :state state}
       cmd {:action (:action cmd) :state state}
       ;; C-x e <key> → an Extensions subgroup: the NEXT key picks one of its commands.
       (and (= keymap/default-binding-group group) (keymap/subgroup-for c))
@@ -1054,7 +1054,7 @@
      • C-x <key> of a top-level verb → the verb.
      • C-x TAB or C-x S-TAB → toggle every disclosure.
    In a group:
-     • <key> of an extension command binding → `:run-keybinding` with
+     • <key> of an extension command or run binding → `:run-keybinding` with
        `:keybinding`, the merged command (`keymap/merge-keybindings`).
      • <key> of a vis verb → the verb.
      • C-x e <key> of an Extensions subgroup → keeps the prefix and opens it.

@@ -249,6 +249,17 @@
                                (fn []
                                  (expect (= :new-session (:action (press \e \f \n))))
                                  (expect (= "C-x e f n" (keymap/label-for :new-session))))))
+  (it "a run binding resolves to its function, named as the gateway lists it"
+      (with-extension-bindings
+        [{:key "d" :run true :label "Deploy" :group "Release" :extension "acme"}
+         {:key "x" :run true :label "Check" :group "Extensions" :extension "acme"}]
+        (fn []
+          (let [r (press \e \r \d)]
+            (expect (= :run-keybinding (:action r)))
+            (expect (= {:extension "acme" :group "Release" :key "d"}
+                       (get-in r [:keybinding :run]))))
+          (expect (= {:extension "acme" :group "Extensions" :key "x"}
+                     (get-in (press \e \x) [:keybinding :run]))))))
   (it "C-x e and the bound key resolve to the command, as typed"
       (with-extension-bindings [{:key "E" :command "/review now" :label "Review" :extension "acme"}]
                                (fn []

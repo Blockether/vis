@@ -598,6 +598,17 @@
              (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/keybindings")) "keybindings"))
        (catch clojure.lang.ExceptionInfo e (if (= 404 (:http-status (ex-data e))) [] (throw e)))))
 
+(defn run-session-keybinding
+  "POST one extension run binding of `sid`: `run` is the `{:extension :group :key}`
+   that `keymap/merge-keybindings` keeps. Answers the function's result,
+   `{:status \"ok\"|\"error\" :title :body}`."
+  [sid {:keys [extension group key]}]
+  (wire/->engine (send-json! "POST"
+                             (str "/v1/sessions/" (enc sid) "/keybindings/run")
+                             (cond-> {:extension extension :key key}
+                               group
+                               (assoc :group group)))))
+
 (defn soul
   [sid]
   (try (send-json! "GET" (str "/v1/sessions/" (enc sid)))
@@ -2650,6 +2661,8 @@
 (def gateway-session-slashes session-slashes)
 
 (def gateway-session-keybindings session-keybindings)
+
+(def gateway-run-session-keybinding run-session-keybinding)
 
 (def gateway-session-workspace session-workspace-info)
 

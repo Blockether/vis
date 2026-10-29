@@ -956,7 +956,7 @@ built-in `/goal` command is saveable.
 ## Key bindings
 
 ```python
-vis.Keybinding(key, command=None, action=None, label=None, group=None)
+vis.Keybinding(key, command=None, action=None, label=None, group=None, run=None)
 ```
 
 A key binding gives your extension a key in the terminal. The person presses Ctrl+X, a group
@@ -976,16 +976,18 @@ vis.Extension(
 ```
 
 - `key` is one printable ASCII character from `!` to `~`. A letter is case-sensitive.
-- Give exactly one of `command` and `action`.
+- Give exactly one of `command`, `action` and `run`.
 - `command` is a slash command line that starts with `/`, at most 200 characters. The terminal
   runs it as if the person typed it and pressed Enter. Give it with `label`.
 - `action` moves a built-in terminal verb to `key` in the group of the verb, for example
   `new-session`. [Keys from extensions](keyboard-shortcuts.md#keys-from-extensions) lists the verb
   ids.
+- `run` is a Python function that the gateway calls when the person presses the key. Give it with
+  `label`. [Run a function on a key](#run-a-function-on-a-key) describes it.
 - `label` holds at most 40 characters and shows in the key menu and the command palette.
 - `group` holds at most 24 characters and selects the group of the key. A built-in group name,
   such as `Session` or `Model`, puts the key in that group. Case does not matter. Without `group`,
-  a `command` binding uses `Extensions`.
+  a `command` or `run` binding uses `Extensions`.
 - Any other `group` name makes a group of your own under Ctrl+X e. Its key is the first free
   letter of its name. Names that differ only in case share one group.
 
@@ -1005,6 +1007,34 @@ refuses a binding whose key is taken in its group or reserved, and shows one not
 [`Agent` extension](python-sdk.md) of your own program cannot declare key bindings.
 `session.keybindings()` returns the bindings of a session, as [Sessions
 API](sessions-api.md#read-the-key-bindings) describes.
+
+### Run a function on a key
+
+Use `run` when a key must do work without a new turn in the transcript. Examples are a deploy, a
+cache refresh or a status check.
+
+```python
+def deploy(ctx):
+    vis.notify("Deploy started", "info")
+    # ... do the work ...
+    return vis.ok("Deployed to staging")
+
+
+vis.Extension(
+    name="deploy",
+    description="Deploy tools.",
+    keybindings=[vis.Keybinding("D", run=deploy, label="Deploy to staging")],
+)
+```
+
+Here Ctrl+X e D calls `deploy`. The terminal stays free while the function runs.
+
+- The function gets one dict with `key`, `group`, `channel`, `session_id`, `workspace_root` and
+  `project_root`.
+- Return `None` for no message, or a text for a short success message.
+- Return `vis.ok(title, body)` or `vis.err(title, body)` for a message with a level.
+- An exception shows as an error message with the extension name.
+- Call `vis.notify` for progress while the function runs. Each open client of the session shows it.
 
 ## Op hooks
 
@@ -1101,7 +1131,9 @@ vis.notify("Rules reloaded", "success")  # info, success, warn, error
 
 `vis.log` writes to the gateway log in `~/.vis/logs/YYYY-MM-DD/`. See
 [Logs and diagnostics](logging.md) for filenames, retention and sharing.
-`vis.notify` shows a toast in the active channel.
+`vis.notify` shows a toast in the active channel. When the extension runs for a session, each
+client that shows the session also gets the toast: the terminal and the Companion app. The toast
+is live only, and the transcript does not keep it.
 
 ## Asking the human and showing live work
 

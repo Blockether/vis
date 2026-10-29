@@ -1562,6 +1562,10 @@
       "extensions.reloaded"
       {:phase :extensions-reloaded :reload-id (event-get event :reload-id)}
 
+      ;; `vis.notify` of an extension that ran for this session, live only.
+      "notification"
+      {:phase :notification :text (event-get event :text) :level (event-get event :level)}
+
       ;; The session's model preference was changed in ANOTHER channel (the
       ;; companion app, a sibling TUI, an embedded caller). Project it so the
       ;; footer chip tracks the shared pref live instead of this process's last

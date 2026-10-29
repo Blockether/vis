@@ -529,9 +529,13 @@
 
 (defn- keybinding?
   "True when `x` is one valid TUI key binding: the gateway `keybinding` shape
-   without its `extension` key, which the catalog adds."
+   without its `extension` key, which the catalog adds. A `:run` binding also
+   holds its `:run-fn`, which never crosses the wire."
   [x]
-  (and (map? x) (not (contains? x :extension)) (contract-document/valid? "gateway" "keybinding" x)))
+  (and (map? x)
+       (not (contains? x :extension))
+       (= (true? (:run x)) (ifn? (:run-fn x)))
+       (contract-document/valid? "gateway" "keybinding" (dissoc x :run-fn))))
 
 (defn slash-path
   "Canonical full path vector of a slash declaration."
@@ -3056,15 +3060,30 @@
 (defn keybindings
   "The TUI key bindings of the registered extensions: each `:ext/keybindings`
    entry with its `:extension` name, in extension order, then declaration order.
-   A command binding without a `:group` gets the `Extensions` group."
+   A command or run binding without a `:group` gets the `Extensions` group. The
+   wire shape keeps no `:run-fn`."
   ([] (keybindings (workspace/cwd-root)))
   ([root]
    (into []
          (mapcat (fn [ext]
-                   (map #(cond-> (assoc % :extension (:ext/name ext)) (and (:command %)
-                                                                           (not (:group %)))
-                           (assoc :group "Extensions"))
+                   (map (fn [b]
+                          (cond-> (assoc (dissoc b :run-fn) :extension (:ext/name ext))
+                            (and (or (:command b) (:run b)) (not (:group b)))
+                            (assoc :group "Extensions")))
                         (:ext/keybindings ext))))
+         (registered-extensions root))))
+
+(defn run-keybinding-fn
+  "The `:run-fn` of the run binding that `extension` declares for `key` in
+   `group`, or nil. `group` is the group that `keybindings` lists, so `Extensions`
+   matches a binding that names no group."
+  ([extension group key] (run-keybinding-fn (workspace/cwd-root) extension group key))
+  ([root extension group key]
+   (some (fn [ext]
+           (when (= extension (:ext/name ext))
+             (some #(when (and (:run-fn %) (= key (:key %)) (= group (or (:group %) "Extensions")))
+                      (:run-fn %))
+                   (:ext/keybindings ext))))
          (registered-extensions root))))
 
 (defn current-extension-grants

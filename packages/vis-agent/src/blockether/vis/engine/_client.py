@@ -1815,6 +1815,25 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def post_session_keybindings_run(
+        self,
+        sid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/sessions/:sid/keybindings/run — json response."""
+        response = self._request(
+            "POST",
+            "/v1/sessions/:sid/keybindings/run",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def get_session_snapshot(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
     ) -> Response:
@@ -3639,11 +3658,28 @@ class Session:
         """Read the TUI key bindings that the extensions of this session declare.
 
         Each binding has `key`, `extension` and `command` with `label` and
-        `group`, or `action`. The list is in extension order, then declaration
-        order.
+        `group`, `run` with `label` and `group`, or `action`. The list is in
+        extension order, then declaration order.
         """
         answer = self._call("GET", "/keybindings")
         return list(_field(answer, "keybindings", list))
+
+    def run_keybinding(
+        self, extension: str, key: str, group: str | None = None
+    ) -> dict[str, Any]:
+        """Run the function of one run binding, as if the person pressed its key.
+
+        Give the `extension`, `key` and `group` that `keybindings()` lists. The
+        run adds no turn. The answer is `{"status": "ok" | "error", "title",
+        "body"}`; a function that fails answers `status` `error`.
+        """
+        body = {"extension": extension, "key": key}
+        if group is not None:
+            body["group"] = group
+        answer = self._call("POST", "/keybindings/run", body=body)
+        if not isinstance(answer, dict):
+            raise ProtocolError("invalid key binding run result")
+        return dict(answer)
 
     def answer(self, view_id, values):
         """Submit input values to a view, returning the engine's response.

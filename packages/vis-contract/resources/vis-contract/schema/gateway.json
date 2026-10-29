@@ -1103,6 +1103,18 @@
     {
       "audience": "sdk",
       "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "request_schema": "keybinding_run",
+          "response_schema": "keybinding_run_result"
+        }
+      },
+      "path": "/v1/sessions/:sid/keybindings/run"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "get": {
           "request": "none",
           "response": "binary",
@@ -2340,7 +2352,7 @@
     },
     "keybinding": {
       "type": "object",
-      "description": "One TUI key binding that an extension declares: the key after C-x runs a slash command or a built-in TUI verb.",
+      "description": "One TUI key binding that an extension declares: the key after C-x runs a slash command, a built-in TUI verb or an extension function.",
       "properties": {
         "key": {
           "type": "string",
@@ -2360,17 +2372,22 @@
           "maxLength": 64,
           "description": "A built-in TUI verb id in kebab case, such as new-session. The verb moves to this key."
         },
+        "run": {
+          "type": "boolean",
+          "const": true,
+          "description": "The key runs a function of the extension in the gateway. Run it with POST /v1/sessions/:sid/keybindings/run."
+        },
         "label": {
           "type": "string",
           "minLength": 1,
           "maxLength": 40,
-          "description": "The hydra and palette label. Required with command."
+          "description": "The hydra and palette label. Required with command and run."
         },
         "group": {
           "type": "string",
           "minLength": 1,
           "maxLength": 24,
-          "description": "The hydra heading. A command binding uses Extensions when it gives none."
+          "description": "The hydra heading. A command or run binding uses Extensions when it gives none."
         },
         "extension": {
           "type": "string",
@@ -2389,8 +2406,17 @@
             "label"
           ],
           "not": {
-            "required": [
-              "action"
+            "anyOf": [
+              {
+                "required": [
+                  "action"
+                ]
+              },
+              {
+                "required": [
+                  "run"
+                ]
+              }
             ]
           }
         },
@@ -2399,11 +2425,136 @@
             "action"
           ],
           "not": {
-            "required": [
-              "command"
+            "anyOf": [
+              {
+                "required": [
+                  "command"
+                ]
+              },
+              {
+                "required": [
+                  "run"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "run",
+            "label"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "command"
+                ]
+              },
+              {
+                "required": [
+                  "action"
+                ]
+              }
             ]
           }
         }
+      ]
+    },
+    "keybinding_run": {
+      "type": "object",
+      "description": "The run binding that the person pressed: its extension, its declared group and its key.",
+      "properties": {
+        "extension": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[!-~]$"
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        }
+      },
+      "required": [
+        "extension",
+        "key"
+      ],
+      "additionalProperties": false
+    },
+    "keybinding_run_result": {
+      "type": "object",
+      "description": "The result of one run binding. The function returns it, or the gateway reports its failure.",
+      "properties": {
+        "status": {
+          "enum": [
+            "ok",
+            "error"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "notification_event": {
+      "type": "object",
+      "description": "A short live notice for the people of one session. Extensions send it with vis.notify. The gateway never replays it.",
+      "properties": {
+        "schema": {
+          "type": "integer",
+          "const": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "notification"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "level": {
+          "enum": [
+            "info",
+            "success",
+            "warn",
+            "error"
+          ]
+        },
+        "extension": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema",
+        "seq",
+        "ts",
+        "session_id",
+        "type",
+        "text",
+        "level"
       ]
     },
     "keybinding_list": {
@@ -2582,6 +2733,9 @@
         {
           "const": "iteration.error",
           "x-vis-turn-stream": true
+        },
+        {
+          "const": "notification"
         },
         {
           "const": "provider.retry",

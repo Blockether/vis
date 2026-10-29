@@ -89,6 +89,25 @@ describe('running-turn replay buffer', () => {
   });
 });
 
+// A `vis.notify` notice is live only: a screen that mounts during the turn must not show it again.
+describe('session notifications', () => {
+  it('reach the live screen once and never the replay of a running turn', () => {
+    const { client, streams } = streamClient();
+    hub = new SessionSubscriptionHub(client);
+    hub.watchSessions(['s']);
+    const live: SseEvent[] = [];
+    const stopLive = hub.subscribeSession('s', (event) => live.push(event));
+    streams.at(-1)!.emit(frame({ type: 'turn.started', seq: 1 }));
+    streams.at(-1)!.emit(frame({ type: 'notification', seq: 2, text: 'Deployed', level: 'success' }));
+    streams.at(-1)!.emit(frame({ type: 'notification', seq: 2, text: 'Deployed', level: 'success' }));
+    stopLive();
+    expect(live.map((event) => event.type)).toEqual(['turn.started', 'notification']);
+    const replayed: SseEvent[] = [];
+    hub.subscribeSession('s', (event) => replayed.push(event))();
+    expect(replayed.map((event) => event.type)).toEqual(['turn.started']);
+  });
+});
+
 // Regression, Vis session 034e287e-9fcc-4a95-b993-65bea2053f60: one ended turn marked the
 // whole session as ended, so a later running turn was settled as cancelled on re-entry.
 describe('ended turns', () => {

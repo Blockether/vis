@@ -24,6 +24,20 @@ def test_action_binding_moves_a_tui_verb():
     }
 
 
+def test_run_binding_hands_its_function_to_the_host():
+    def deploy(ctx):
+        return None
+
+    spec = vis.Keybinding("d", run=deploy, label="Deploy", group="Release")._spec()
+    assert spec == {
+        "marker": "keybinding",
+        "key": "d",
+        "label": "Deploy",
+        "group": "Release",
+        "run": deploy,
+    }
+
+
 @pytest.mark.parametrize(
     ("args", "kwargs", "message"),
     [
@@ -37,6 +51,9 @@ def test_action_binding_moves_a_tui_verb():
         (("t",), {"action": "NewSession"}, "kebab case"),
         (("t",), {"command": "/test", "label": "x" * 41}, "at most 40"),
         (("t",), {"action": "new-session", "group": "x" * 25}, "at most 24"),
+        (("t",), {"run": print}, "requires label"),
+        (("t",), {"run": print, "command": "/x", "label": "X"}, "exactly one"),
+        (("t",), {"run": "deploy", "label": "X"}, "callable"),
     ],
 )
 def test_binding_refuses_a_broken_field(args, kwargs, message):

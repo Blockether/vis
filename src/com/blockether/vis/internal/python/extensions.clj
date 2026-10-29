@@ -616,6 +616,27 @@
 
 (def ^:private notify-levels {"info" :info "success" :success "warn" :warn "error" :error})
 
+;; Notification listeners — fired for each `vis.notify` that runs for a session. The gateway
+;; sends the notice to every client of that session.
+(defonce ^:private notification-listeners (atom {}))
+
+(defn add-notification-listener!
+  "Subscribe `f` to session notifications. `f` receives `{:session-id :text :level
+   :extension}`. Re-registering the same `listener-id` replaces the old listener."
+  [listener-id f]
+  (swap! notification-listeners assoc listener-id f)
+  listener-id)
+
+(defn- announce-notification!
+  "Give one session notification to every listener. A failing listener is logged."
+  [notice]
+  (doseq [[id f] @notification-listeners]
+    (try (f notice)
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::notification-listener-failed
+                      :data {:listener id :error (ex-message t)}})))))
+
 (def ^:private ^:dynamic *suspended-contexts*
   "Contexts whose Python waits in a `vis.tools` call further up this call chain.
 
@@ -1093,7 +1114,16 @@
     (put! g
           "__vis_host_notify__"
           (fn [text level]
-            (notifications/notify! (str text) :level (get notify-levels (str level) :info))
+            (let [level (get notify-levels (str level) :info)]
+              (notifications/notify! (str text) :level level)
+              (when-let [sid (some-> (or (:session-id extension/*current-environment*)
+                                         (:session-id bound-session))
+                                     str)]
+                (announce-notification! {:session-id sid
+                                         :text (str text)
+                                         :level level
+                                         :extension (or (:ext/name extension/*current-extension*)
+                                                        label)})))
             nil))
     (put! g
           "__vis_host_call_tool__"
@@ -1844,6 +1874,23 @@
              {:level :warn :id ::ctx-failed :data {:extension ext-name :error (ex-message t)}})
            {}))))
 
+(defn- py-result->slash
+  "The slash result of a Python callback's return: None, a text, a
+   `vis.ok(...)`/`vis.err(...)` map or any other value."
+  [ext-name res]
+  (cond (nil? res) {:slash/status :ok :slash/title (str ext-name ": done")}
+        (string? res) {:slash/status :ok :slash/title res}
+        (map? res) (cond-> {:slash/status (if (= "error" (get res "status")) :error :ok)}
+                     (get res "title")
+                     (assoc :slash/title (str (get res "title")))
+
+                     (string? (get res "body"))
+                     (assoc :slash/body (get res "body"))
+
+                     (some? (get res "data"))
+                     (assoc :slash/data (get res "data")))
+        :else {:slash/status :ok :slash/title (pr-str res)}))
+
 (defn- slash-adapter
   "`:slash/run-fn` for one `vis.SlashCommand(...)` entry. The Python callable
    receives `{'channel', 'args', 'raw', 'session_id', 'workspace_root',
@@ -1871,18 +1918,47 @@
           res
           (call-py-ext ext-name env ctx pyfn [payload])]
 
-      (cond (nil? res) {:slash/status :ok :slash/title (str ext-name ": done")}
-            (string? res) {:slash/status :ok :slash/title res}
-            (map? res) (cond-> {:slash/status (if (= "error" (get res "status")) :error :ok)}
-                         (get res "title")
-                         (assoc :slash/title (str (get res "title")))
+      (py-result->slash ext-name res))))
 
-                         (string? (get res "body"))
-                         (assoc :slash/body (get res "body"))
+(defn- keybinding-adapter
+  "`:run-fn` for one `vis.Keybinding(run=...)` entry. The gateway calls it inside the
+   session's extension context with `{:key :group :channel}`. The Python callable
+   receives `{'key', 'group', 'channel', 'session_id', 'workspace_root',
+   'project_root'}`. Its return reads like a slash command's: None, a text,
+   `vis.ok(...)` or `vis.err(...)`; None gives no title. Returns the wire
+   `keybinding_run_result`."
+  [ext-name ctx pyfn]
+  (fn [{:keys [key group channel]}]
+    (let [env
+          extension/*current-environment*
 
-                         (some? (get res "data"))
-                         (assoc :slash/data (get res "data")))
-            :else {:slash/status :ok :slash/title (pr-str res)}))))
+          {:strs [workspace_root project_root session_id]}
+          (slim-env env ctx)
+
+          res
+          (call-py-ext ext-name
+                       env
+                       ctx
+                       pyfn
+                       [{"key" (str key)
+                         "group" (some-> group
+                                         str)
+                         "channel" (some-> channel
+                                           name)
+                         "session_id" session_id
+                         "workspace_root" workspace_root
+                         "project_root" project_root}])
+
+          ;; None shows nothing: the function tells the person with vis.notify.
+          {:slash/keys [status title body]}
+          (if (nil? res) {:slash/status :ok} (py-result->slash ext-name res))]
+
+      (cond-> {"status" (name status)}
+        title
+        (assoc "title" title)
+
+        body
+        (assoc "body" body)))))
 
 (defn- op-preview
   "What the call would write, when its op can say so before it runs (`patch` puts
@@ -2514,11 +2590,15 @@
 
         keybindings
         (mapv (fn [binding]
-                (into {}
-                      (keep (fn [k]
-                              (when-some [v (get binding k)]
-                                [(keyword k) v])))
-                      ["key" "command" "action" "label" "group"]))
+                (cond-> (into {}
+                              (keep (fn [k]
+                                      (when-some [v (get binding k)]
+                                        [(keyword k) v])))
+                              ["key" "command" "action" "label" "group"])
+                  (some? (get binding "run"))
+                  (assoc :run
+                    true :run-fn
+                    (keybinding-adapter ext-name ctx (get binding "run")))))
               (get reg "keybindings"))
 
         op-hooks

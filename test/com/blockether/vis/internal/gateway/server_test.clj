@@ -2151,6 +2151,73 @@
                              {:path-params {:sid (str (java.util.UUID/randomUUID))}})))))))
 
 (defdescribe
+  run-keybinding-route-test
+  ;; A run binding calls an extension function from a key, without a turn.
+  (let [calls
+        (atom [])
+
+        extensions
+        [{:ext/name "forge"
+          :ext/keybindings [{:key "d"
+                             :run true
+                             :label "Deploy"
+                             :run-fn (fn [ctx]
+                                       (swap! calls conj ctx)
+                                       {"status" "ok" "title" "Deployed"})}
+                            {:key "x"
+                             :run true
+                             :label "Explode"
+                             :group "Lab"
+                             :run-fn (fn [_]
+                                       (throw (ex-info "boom" {})))}]}]
+
+        run
+        (fn [body]
+          (reset! calls [])
+          (with-redefs [state/session-workspace-info
+                        (constantly {"root" "/tmp/vis-keys-project"})
+
+                        python-extensions/ensure-python-extensions-loaded!
+                        (constantly {:loaded 0 :failed 0 :changed? false})
+
+                        extension/registered-extensions
+                        (constantly extensions)]
+
+            (let [response (#'sessions-api/run-keybinding-handler
+                            (merge {:request-method :post
+                                    :path-params {:sid (str (java.util.UUID/randomUUID))}}
+                                   (json-body body)))]
+              [(:status response) (wire/parse-json (:body response))])))]
+
+    (it "lists a run binding in Extensions, without its function"
+        (with-redefs [state/session-workspace-info
+                      (constantly {"root" "/tmp/vis-keys-project"})
+
+                      python-extensions/ensure-python-extensions-loaded!
+                      (constantly {:loaded 0 :failed 0 :changed? false})
+
+                      extension/registered-extensions
+                      (constantly extensions)]
+
+          (expect (=
+                    {"key" "d" "run" true "label" "Deploy" "group" "Extensions" "extension" "forge"}
+                    (get-in (wire/parse-json (:body (#'sessions-api/keybindings-handler
+                                                     {:path-params
+                                                      {:sid (str (java.util.UUID/randomUUID))}})))
+                            ["keybindings" 0])))))
+    (it "runs the function of the listed group and key, and answers its result"
+        (expect (= [200 {"status" "ok" "title" "Deployed"}]
+                   (run {"extension" "forge" "group" "Extensions" "key" "d"})))
+        (expect (= [{:key "d" :group "Extensions" :channel :tui}] @calls)))
+    (it "answers a failing function as an error result"
+        (expect (= [200 {"status" "error" "title" "forge: boom"}]
+                   (run {"extension" "forge" "group" "Lab" "key" "x"}))))
+    (it "refuses a key that no run binding has"
+        (expect (= 404 (first (run {"extension" "forge" "group" "Lab" "key" "d"})))))
+    (it "refuses a body that is no keybinding run"
+        (expect (= 400 (first (run {"extension" "forge" "key" "dd"})))))))
+
+(defdescribe
   app-door-route-test
   ;; Live apps C2: an SDK program opens and drives its apps over POST /v1/sessions/:sid/apps.
   (it

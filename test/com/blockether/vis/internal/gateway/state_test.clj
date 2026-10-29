@@ -517,6 +517,28 @@
                      (expect (= [:db "audit-session" before after :gateway] @recorded))))))
 
 (defdescribe
+  session-notification-broadcast-test
+  ;; vis.notify of an extension that runs for a session reaches every client of it.
+  ;; It is live only, so a reconnect never shows an old notice again.
+  (let [broadcasts (fn [notice entry]
+                     (let [appended (atom [])]
+                       (with-redefs-fn {#'state/append-event! (fn [& args]
+                                                                (swap! appended conj (vec args)))
+                                        #'state/session-entry (constantly entry)}
+                         #(#'state/broadcast-notification! notice))
+                       @appended))]
+    (it "sends the notice live only, with its extension"
+        (expect (= [["sess-1" "notification" {:text "Deployed" :level "success" :extension "forge"}
+                     {:store? false}]]
+                   (broadcasts
+                     {:session-id "sess-1" :text "Deployed" :level :success :extension "forge"}
+                     {:next-seq 0}))))
+    (it "sends nothing for a session that this gateway does not hold"
+        (expect (= [] (broadcasts {:session-id "gone" :text "Deployed" :level :info} nil))))
+    (it "sends nothing for a blank text"
+        (expect (= [] (broadcasts {:session-id "sess-1" :text " " :level :info} {:next-seq 0}))))))
+
+(defdescribe
   session-model-broadcast-test
   ;; The pin is shared, but every attached surface renders its OWN copy: the TUI
   ;; footer chip (`chat/gateway-event->chunk` -> `:sync-session-model`) and the

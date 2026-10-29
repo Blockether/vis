@@ -652,6 +652,21 @@ def test_extensions_reload_preserves_request_and_response():
         assert json.loads(calls[-1][3]) == body
 
 
+def test_run_keybinding_sends_the_contract_body_and_reads_the_result():
+    reply = {"status": "ok", "title": "Deployed"}
+    with endpoint(lambda *_: (200, reply)) as (url, calls):
+        session = GatewayClient(url).session("s")
+        assert session.run_keybinding("forge", "d") == reply
+        assert calls[-1][:2] == ("POST", "/v1/sessions/s/keybindings/run")
+        assert json.loads(calls[-1][3]) == {"extension": "forge", "key": "d"}
+        session.run_keybinding("forge", "d", group="Release")
+        assert json.loads(calls[-1][3]) == {
+            "extension": "forge",
+            "key": "d",
+            "group": "Release",
+        }
+
+
 def test_dedicated_methods_cover_every_public_nonstreaming_operation():
     import inspect
 

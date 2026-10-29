@@ -109,6 +109,7 @@ import {
   queuedTurnFromWire,
   type QueueDelta,
 } from '../lib/gateway';
+import { NOTICE_MS, noticeOf, type SessionNotice } from '../lib/notification';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   collapsePastePlaceholders,
@@ -837,6 +838,23 @@ export function SessionScreen({
   // being written under the new session's key.
   const draftMessageReadyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  // The last `vis.notify` of an extension of this session. It hides after NOTICE_MS.
+  const [notice, setNotice] = useState<SessionNotice | null>(null);
+  useEffect(() => {
+    let timer: number | null = null;
+    const stop = subscriptions.subscribeSession(sid, (event) => {
+      const next = noticeOf(event);
+      if (!next) return;
+      setNotice(next);
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => setNotice(null), NOTICE_MS);
+    });
+    return () => {
+      stop();
+      if (timer !== null) window.clearTimeout(timer);
+      setNotice(null);
+    };
+  }, [subscriptions, sid]);
   // The session's provider/model pick. Seeded from the client's snapshot so the
   // header chip names the model on the FIRST frame instead of reading "model"
   // until the gateway answers, then written through by authoritative events and picks.
@@ -5451,6 +5469,15 @@ export function SessionScreen({
                 }`}
               >
                 {error && <Banner kind="err">{error}</Banner>}
+                {notice && (
+                  <div className="pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top)+4rem)] z-50 flex justify-center px-4">
+                    <div className="pointer-events-auto w-full max-w-md">
+                      <Banner kind={notice.kind} dismiss={{ label: 'Dismiss', onClick: () => setNotice(null) }}>
+                        {notice.text}
+                      </Banner>
+                    </div>
+                  </div>
+                )}
 
                 <>
                   {/* Keep the new-session cue fluid: it shares the scroller's available

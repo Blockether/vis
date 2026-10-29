@@ -507,6 +507,15 @@ export class SessionSubscriptionHub {
       for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
       return;
     }
+    // A `notification` is live only. The gateway never replays it, so the hub never
+    // buffers it: a screen that mounts later must not show an old notice again.
+    if (event.type === 'notification') {
+      const seq = typeof event.seq === 'number' ? event.seq : null;
+      if (seq !== null && seq <= (this.delivered.get(sid) ?? -1)) return;
+      if (seq !== null) this.delivered.set(sid, seq);
+      for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
+      return;
+    }
 
     // The buffer replays the turn that is STILL STREAMING to a screen that was
     // reopened mid-flight. A FINISHED turn must never be replayed: its

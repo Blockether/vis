@@ -508,10 +508,35 @@
                                           (state/dispatch [:reset-input]))
         :else (do (state/dispatch [:send-message text wid]) (state/dispatch [:reset-input]))))))
 
+(defn- run-keybinding-fn!
+  "Run the extension function of the C-x run binding `kb` in the gateway, off the
+   input thread. It adds no turn, so a busy session runs it at once. The result
+   title shows as a notice; an `error` result or a failed request shows as an error."
+  [db kb]
+  (if-let [sid (get-in db [:session :id])]
+    (vis/worker-future
+      "tui-keybinding-run"
+      (fn []
+        (try (let [{:keys [status title body]} (vis/gateway-run-session-keybinding sid (:run kb))
+                   text (or (not-empty title)
+                            (some-> body
+                                    str/split-lines
+                                    first
+                                    not-empty))]
+
+               (cond (= "error" status)
+                     (vis/notify! (or text (str (:label kb) " failed")) :level :error)
+                     text (vis/notify! text :level :info)))
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::keybinding-run-failed :data {:error (ex-message t)}})
+               (vis/notify! (str (:label kb) " failed: " (ex-message t)) :level :error)))))
+    (vis/notify! "The session is not ready yet" :level :warn)))
+
 (defn- run-keybinding!
-  "Run the slash command of the C-x key binding `kb` as if the human typed it and
-   pressed Enter, without touching the draft: a bare send carries no draft pastes
-   or attachments. A busy session queues it, like Enter does."
+  "Run the C-x extension key binding `kb`. A run binding calls its function
+   (`run-keybinding-fn!`). A command binding sends its slash command as if the human
+   typed it and pressed Enter, without touching the draft: a bare send carries no
+   draft pastes or attachments. A busy session queues it, like Enter does."
   [kb]
   (let [db
         @state/app-db
@@ -522,7 +547,8 @@
         wid
         (or (:active-tab-id db) (:id (some #(when (:active? %) %) (:tabs db))))]
 
-    (cond (str/blank? text) nil
+    (cond (:run kb) (run-keybinding-fn! db kb)
+          (str/blank? text) nil
           (nil? (:session db)) (vis/notify! "The session is not ready yet" :level :warn)
           (:cancelling? db) (vis/notify!
                               "Cancelling current turn — press the key again once it stops"
@@ -5921,6 +5947,15 @@
                   :extensions-reloaded
                   (refresh-slash-commands-after-reload! session-id (:reload-id chunk))
 
+                  ;; An extension of this session called vis.notify.
+                  :notification
+                  (when-not (str/blank? (str (:text chunk)))
+                    (vis/notify! (str (:text chunk))
+                                 :level
+                                 (get {"success" :success "warn" :warn "error" :error}
+                                      (str (:level chunk))
+                                      :info)))
+
                   ;; Model preference changed for THIS session somewhere else —
                   ;; keep the tab's chip in sync with the shared store.
                   :model-sync
@@ -10362,8 +10397,8 @@
                              (state/dispatch [:bump-render-version])
                              (recur))
 
-                         ;; C-x <key> of an extension binding: run its slash command as if
-                         ;; the human typed it and pressed Enter. The draft stays as it is.
+                         ;; C-x <key> of an extension binding: run its function, or its slash
+                         ;; command as if the human typed it. The draft stays as it is.
                          :run-keybinding
                          (do (run-keybinding! keybinding) (recur))
 

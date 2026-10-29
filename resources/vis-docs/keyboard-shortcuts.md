@@ -86,6 +86,9 @@ a key in a group of the table above, or make a group of its own under **Ctrl+X e
 **Ctrl+X e r** can open a `Release` group, and its next key runs one of its commands. Such a key runs its command as if you typed it and pressed
 Enter. Your draft stays as it is.
 
+A key can also run a function of the extension, for example a deploy. Such a key adds no message
+to the transcript. When the function ends, Vis shows its result as a notice.
+
 - A key that an extension moves replaces the key on this page. The old key then does nothing, and
   the command palette still has the command.
 - An extension cannot use **g** or a digit as a key in a group.

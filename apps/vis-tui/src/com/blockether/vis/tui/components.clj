@@ -277,9 +277,10 @@
   "The help rows of the C-x commands that the session's extensions bind."
   []
   (into []
-        (keep (fn [{:keys [action key label command]}]
-                (when (and key command)
-                  [(keymap/label-for action) (str label " — runs " command)])))
+        (keep (fn [{:keys [action key label command run extension]}]
+                (cond (and key command) [(keymap/label-for action) (str label " — runs " command)]
+                      (and key run) [(keymap/label-for action)
+                                     (str label " — runs a function of " extension)])))
         (keymap/current-prefix-commands)))
 
 (defn- help-sections

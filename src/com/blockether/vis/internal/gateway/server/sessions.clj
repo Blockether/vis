@@ -3,6 +3,7 @@
    session's metadata, model, usage, context, forks, alerts, slash commands,
    suggestions and background resources."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.channel.file-picker :as file-picker]
             [com.blockether.vis.internal.channel.slash :as slash]
@@ -67,6 +68,45 @@
                                 (http/json-response {:keybindings (extension/keybindings)})))
       (http/session-404 (get-in request [:path-params :sid])))
     (http/session-404 (get-in request [:path-params :sid]))))
+
+(defn- run-keybinding-handler
+  "POST /v1/sessions/:sid/keybindings/run — run the function of one extension run
+   binding in the session's extension context. The body names the `extension`, the
+   listed `group` and the `key`. The answer is the function's result; a failure of
+   the function is an `error` result, not an HTTP error. The run adds no turn."
+  [request]
+  (let [sid
+        (http/path-sid request)
+
+        info
+        (when sid (state/session-workspace-info sid))
+
+        body
+        (http/body-json request)]
+
+    (cond (nil? info) (http/session-404 (get-in request [:path-params :sid]))
+          (not (document/valid-json? "gateway" "keybinding_run" body))
+          (http/error-response 400 :invalid-request "Supply a valid keybinding run")
+          :else (let [{:strs [extension key group]}
+                      body
+
+                      group
+                      (or group "Extensions")]
+
+                  (extension/with-context
+                    {:env {:session-id sid :workspace/root (get info "root") :channel :tui}}
+                    (python-extensions/ensure-python-extensions-loaded!)
+                    (if-let [run! (extension/run-keybinding-fn extension group key)]
+                      (http/json-response
+                        (try (run! {:key key :group group :channel :tui})
+                             (catch Throwable t
+                               {"status" "error"
+                                "title"
+                                (str extension ": " (or (ex-message t) (.getName (class t))))})))
+                      (http/error-response 404
+                                           :keybinding-not-found "no such run key binding"
+                                           :extension extension
+                                           :key key)))))))
 
 (defn- trimmed
   "The trimmed text of `value`, or nil when it is blank."
@@ -957,6 +997,7 @@
    [:put "/v1/sessions/:sid/read"] mark-session-read-handler
    [:get "/v1/sessions/:sid/slashes"] slashes-handler
    [:get "/v1/sessions/:sid/keybindings"] keybindings-handler
+   [:post "/v1/sessions/:sid/keybindings/run"] run-keybinding-handler
    [:post "/v1/sessions/:sid/release"] release-session-handler
    [:get "/v1/sessions/:sid/alert"] session-alert-handler
    [:get "/v1/sessions/:sid/context"] context-handler

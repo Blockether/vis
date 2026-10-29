@@ -333,12 +333,13 @@ bindings](extension-api.md#key-bindings) explains how an extension declares them
 
 ```python
 for binding in client.session(session_id).keybindings():
-    print(binding["key"], binding.get("command") or binding["action"], binding["extension"])
+    print(binding["key"], binding.get("command") or binding.get("action"), binding["extension"])
 ```
 
 `keybindings()` returns dicts in extension order, then declaration order. Each has `key` and
-`extension`, and `command` with `label` and `group`, or `action`. A `command` binding without a
-`group` has the group `Extensions`. `get_session_keybindings(session_id)` returns the same JSON.
+`extension`, and `command` with `label` and `group`, or `action`. A function binding has `run`
+set to `True` with `label` and `group`. A `command` or `run` binding without a `group` has the
+group `Extensions`. `get_session_keybindings(session_id)` returns the same JSON.
 
 </div>
 
@@ -349,8 +350,39 @@ vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/keybindings"
 ```
 
 `GET /v1/sessions/{sid}/keybindings` answers `keybindings`, in extension order, then declaration
-order. Each has `key` and `extension`, and `command` with `label` and `group`, or `action`. An
-unknown session returns 404.
+order. Each has `key` and `extension`, and `command` with `label` and `group`, or `action`. A
+function binding has `run` set to `true` with `label` and `group`. An unknown session returns 404.
+
+</div>
+
+### Run a key binding
+
+Run a function binding when your program must do what its key does, without a terminal.
+
+<div data-variant="python">
+
+```python
+result = client.session(session_id).run_keybinding("deploy", "D", group="Extensions")
+print(result["status"], result.get("title"))
+```
+
+`run_keybinding(extension, key, group=None)` calls the function of the binding in the session and
+returns its result. `status` is `ok` or `error`. `title` and `body` are present when the function
+returns them. `post_session_keybindings_run(session_id, body=...)` sends the same request.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/keybindings/run" \
+  -H 'Content-Type: application/json' \
+  -d '{"extension": "deploy", "key": "D", "group": "Extensions"}'
+```
+
+`POST /v1/sessions/{sid}/keybindings/run` calls the function of one binding and answers its
+result: `status` is `ok` or `error`, with an optional `title` and `body`. Give `group` as the
+listing shows it. An unknown session or binding returns 404, and an invalid body returns 400.
 
 </div>
 
