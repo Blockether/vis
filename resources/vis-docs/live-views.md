@@ -735,7 +735,7 @@ vis.ui.plaintext("port", label="Port",
 
 People find panel views in these places:
 
-- **Terminal.** Ctrl+X V opens the side panel, then moves the focus between the panel and the
+- **Terminal.** Ctrl+X b p opens the side panel, then moves the focus between the panel and the
   transcript. The panel docks at the right when the chat keeps 60 columns, else it opens over the
   chat. [Keyboard shortcuts](keyboard-shortcuts.md) lists the keys of the panel.
 - **Companion app on a desktop or tablet.** The side panel docks at the right of the session, and
@@ -776,7 +776,7 @@ app = vis.attach(vis.ui.app(
 
 ### Use an app
 
-- **Terminal.** Click the app row in the transcript, or press Ctrl+X i and open the app there.
+- **Terminal.** Click the app row in the transcript, or press Ctrl+X a i and open the app there.
   Select a line, press Enter to write a comment and press Ctrl+S to save it. Press s to send.
   [Use an app](keyboard-shortcuts.md#use-an-app) lists every key.
 - **Companion app.** Tap the app row in the transcript, or open the **Artifacts** sheet from the

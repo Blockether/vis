@@ -959,8 +959,9 @@ built-in `/goal` command is saveable.
 vis.Keybinding(key, command=None, action=None, label=None, group=None)
 ```
 
-A key binding gives your extension a key in the terminal. The person presses Ctrl+X, then the
-key. Declare the bindings in `vis.Extension(keybindings=[...])`.
+A key binding gives your extension a key in the terminal. The person presses Ctrl+X, a group
+key, then your key. By default, the key is in the extensions group, so the person presses Ctrl+X e,
+then the key. Declare the bindings in `vis.Extension(keybindings=[...])`.
 
 ```python
 vis.Extension(
@@ -978,13 +979,16 @@ vis.Extension(
 - Give exactly one of `command` and `action`.
 - `command` is a slash command line that starts with `/`, at most 200 characters. The terminal
   runs it as if the person typed it and pressed Enter. Give it with `label`.
-- `action` moves a built-in terminal verb to `key`, for example `new-session`. [Keys from
-  extensions](keyboard-shortcuts.md#keys-from-extensions) lists the verb ids.
+- `action` moves a built-in terminal verb to `key` in the group of the verb, for example
+  `new-session`. [Keys from extensions](keyboard-shortcuts.md#keys-from-extensions) lists the verb
+  ids.
 - `label` holds at most 40 characters and shows in the key menu and the command palette.
-- `group` holds at most 24 characters and names the heading in the key menu. A `command` binding
-  uses `Extensions` by default.
+- `group` holds at most 24 characters and selects the group of the key. A built-in group name,
+  such as `Session` or `Model`, puts the key in that group. Case does not matter. Any other name
+  puts the key in `Extensions`. Without `group`, a `command` binding uses `Extensions`.
 
-The terminal refuses a binding whose key is taken or reserved, and shows one notice. An
+In the example, Ctrl+X e R starts a release and Ctrl+X s N starts a new session. The terminal
+refuses a binding whose key is taken in its group or reserved, and shows one notice. An
 [`Agent` extension](python-sdk.md) of your own program cannot declare key bindings.
 `session.keybindings()` returns the bindings of a session, as [Sessions
 API](sessions-api.md#read-the-key-bindings) describes.

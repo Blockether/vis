@@ -38,7 +38,7 @@ apps and the command line.
 
 ## Start a new session
 
-In the terminal, press **Ctrl+X n**. In the desktop or phone app, choose **New session**. To start
+In the terminal, press **Ctrl+X s n**. In the desktop or phone app, choose **New session**. To start
 it inside a group, use the **+** on the group's band in the app. You can also choose **＋ New session
 here** in the group's **g** menu in [Projects](#find-a-saved-session). The session then opens at the
 top of that group.
@@ -94,9 +94,8 @@ Use this when the running turn must read your message before it finishes, for ex
 a correction or a fact that changes the next step. By default a queued message waits
 for the turn end.
 
-- **Terminal:** press **Ctrl+X k** to send the whole queue now. To send one message,
-  click **Send it now** at the end of its row, or press **Ctrl+X z** and type the label of
-  that button.
+- **Terminal:** press **Ctrl+X q s** to send the whole queue now. To send one message,
+  click **Send it now** at the end of its row, or press **Ctrl+X q** and its row number.
 - **Desktop or phone app:** choose **Send all now** in the queue header to send the whole
   queue. To send one message, choose **Send it now** on its row.
 
@@ -144,7 +143,7 @@ groups searches any of them. A project and group selection narrows both together
 
 ### In the terminal
 
-Press **Ctrl+X s** to open the session switcher. Before you type, it lists your
+Press **Ctrl+X s s** to open the session switcher. Before you type, it lists your
 recent sessions. Type to search session titles and conversation text, choose a
 session with **↑** and **↓**, and press **Enter** to open it.
 
@@ -169,7 +168,7 @@ The switcher also has these keys:
 | Ctrl+D | Delete the selected session after you confirm |
 | Esc | Close the switcher |
 
-To browse by project, press **Ctrl+X w** to open **Projects**. It lists saved
+To browse by project, press **Ctrl+X b w** to open **Projects**. It lists saved
 sessions from the connected gateway, including ones you have not opened in this
 terminal. Use **↑** and **↓** to choose a project, group or session, and press
 **Enter** to expand it or to resume a session. Press **g** on a row for its menu.
@@ -243,7 +242,7 @@ not change. You can fork a session once it has a turn.
 
 ### Fork the whole conversation
 
-- **Terminal:** press **Ctrl+X y**. Vis opens the fork and switches to it. To fork
+- **Terminal:** press **Ctrl+X s f**. Vis opens the fork and switches to it. To fork
   another session, select it in the session switcher and press **Ctrl+F**.
 - **Desktop or phone app:** open the session's actions in the session list and
   choose **Fork**. The app opens the fork.
@@ -253,7 +252,7 @@ not change. You can fork a session once it has a turn.
 A turn is one message you sent and the work Vis did to answer it. The fork keeps
 the turn you choose and every turn before it.
 
-- **Terminal:** press **Ctrl+X t** to open **Fork session at…**, which lists the
+- **Terminal:** press **Ctrl+X s t** to open **Fork session at…**, which lists the
   message that started each turn. Type to filter the list, choose the last turn to
   keep and press **Enter**.
 - **Desktop or phone app, or a terminal that reports mouse clicks:** choose **Fork
@@ -291,7 +290,7 @@ other in [Council](council.md#groups-and-settings).
   project, **Groups** or **Sessions** row. A group's own **g** menu renames it,
   changes its colour, archives it or deletes it. To file sessions, use **g** on a
   session row, or mark several with **Space** and use the group's **g** menu.
-  **Ctrl+X d** moves the session you are in.
+  **Ctrl+X s m** moves the session you are in.
 
 Deleting a group asks whether to keep its sessions, which return to the project
 ungrouped, or to delete them with the group.

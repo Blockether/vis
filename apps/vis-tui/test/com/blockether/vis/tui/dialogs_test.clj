@@ -1596,7 +1596,7 @@
         (expect (= [["Session" true] ["New Session" nil] ["Agent team" nil] ["Settings" true]
                     ["Settings" nil] ["More" true] ["Custom" nil]]
                    (mapv (juxt :label :section?) items)))
-        (expect (= "C-x n" (:hint (second items))))
+        (expect (= "C-x s n" (:hint (second items))))
         (expect (str/includes? (:search-text (second items)) "Start"))))
   (it "filters on the description and keeps only sections with a match"
       (let [items

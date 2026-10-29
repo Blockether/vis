@@ -9119,7 +9119,7 @@ h = 8"
             [marked-line marked-meta]
             (row-with d "third queued message")]
 
-        (expect (= {:session-id "s1" :label "Send all now" :chord "C-x k"}
+        (expect (= {:session-id "s1" :label "Send all now" :chord "C-x q s"}
                    (:queue-send-all hdr-meta)))
         ;; The header counts the queue, as the Companion header does.
         (expect (str/includes? hdr-line "Queued · 4"))
@@ -9130,7 +9130,7 @@ h = 8"
                     :label "Send it now"
                     :turn-id "t1"
                     :marked? false
-                    :chord "C-x 1"
+                    :chord "C-x q 1"
                     :deliver "next_iteration"}
                    (:queue-send first-meta)))
         (expect (str/includes? cmd-line "2. /help"))
@@ -9142,7 +9142,7 @@ h = 8"
         (expect (str/includes? marked-line "4. third queued message · next iter"))
         (expect (= {:session-id "s1"
                     :label "Send later"
-                    :chord "C-x 4"
+                    :chord "C-x q 4"
                     :turn-id "t3"
                     :marked? true
                     :deliver "turn_end"}
@@ -9229,10 +9229,10 @@ h = 8"
 
         (expect (= 1 (count (:queue-send-all-now by-kind))))
         (expect (= "s1" (:session-id send-all)))
-        (expect (= (count "Send all now  C-x k") (long (:width (:bounds send-all)))))
+        (expect (= (count "Send all now  C-x q s") (long (:width (:bounds send-all)))))
         ;; One button per markable row (t1, t3): not the command, not the local row.
         ;; Every button ends at the same right edge as the header button.
-        (expect (= [(count "Send it now  C-x 1") (count "Send later  C-x 4")]
+        (expect (= [(count "Send it now  C-x q 1") (count "Send later  C-x q 4")]
                    (mapv #(long (:width (:bounds %))) sends)))
         (let [right-edge (fn [region]
                            (+ (long (:col (:bounds region))) (long (:width (:bounds region)))))]
@@ -9246,7 +9246,7 @@ h = 8"
         (expect (= 3 (count (interactions/assign-labels regions))))))))
 
 (defdescribe queue-focus-render-test
-             ;; C-x e: the hint names the focus keys, the selected row is marked for the painter, a
+             ;; C-x q e: the hint names the focus keys, the selected row is marked for the painter, a
              ;; marked row shows a check and the row buttons go, so the keys are the only controls.
              (let [rows
                    [{:text "first" :turn-id "t1"} {:text "second" :turn-id "t2"}]

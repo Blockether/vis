@@ -277,8 +277,9 @@
   "The help rows of the C-x commands that the session's extensions bind."
   []
   (into []
-        (keep (fn [{:keys [key label command]}]
-                (when (and key command) [(str "C-x " key) (str label " — runs " command)])))
+        (keep (fn [{:keys [action key label command]}]
+                (when (and key command)
+                  [(keymap/label-for action) (str label " — runs " command)])))
         (keymap/current-prefix-commands)))
 
 (defn- help-sections
@@ -291,7 +292,12 @@
     [{:title "Command palette"
       :rows
       [[keymap/palette-chord
-        "Every command (new session, search, providers, sessions, voice, files…); type to filter"]]}
+        "Every command (new session, search, providers, sessions, voice, files…); type to filter"]
+       ["C-x <group> <key>"
+        (str "Groups: "
+             (str/join " · "
+                       (map #(str (:key %) " " (str/lower-case (:title %)))
+                            keymap/prefix-groups)))]]}
      {:title "Session, model & tools"
       :rows [[(keymap/label-for :cycle-model) "Cycle model"]
              [(keymap/label-for :pick-model) "Pick model (search)"]
@@ -309,7 +315,8 @@
              ["Esc · C-g"
               "Abort — cancel turn (queued msgs return to draft) · close dialog · clear draft"]
              ["C-c" "Quit — clears a draft, cancels a running turn, quits again while cancelling"]
-             ["M-> · C-x j · C-l · C-End" "Jump to the bottom (or click the ↓ messages chip)"]
+             [(str "M-> · " (keymap/label-for :recenter) " · C-l · C-End")
+              "Jump to the bottom (or click the ↓ messages chip)"]
              ["M-<" "Jump to the top — beginning-of-buffer"]
              ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
              [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
@@ -349,7 +356,7 @@
              ["Copy / paste" "Use your terminal — select to copy, its paste key"]
              ["Mouse" "Click a session in Projects · ↓ messages jumps down"]]}]
     (seq (extension-help-rows))
-    (conj {:title keymap/default-binding-group :rows (extension-help-rows)})))
+    (conj {:title "Extension keys" :rows (extension-help-rows)})))
 
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!

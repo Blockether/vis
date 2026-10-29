@@ -2,7 +2,7 @@
 
 `/apps` opens the gallery; `/apps <name> ...` opens each named app. Run it again after a
 restart: the app comes back with the same id and its saved state. In the TUI,
-C-x L opens the gallery and C-x i the incident app. The attachments key moves to C-x e.
+C-x e L opens the gallery and C-x a i the incident app. The attachments key moves to C-x a e.
 """
 
 import logging
@@ -77,12 +77,14 @@ vis.register_extension(
             )
         ],
         keybindings=[
-            # A new key on a free key.
+            # A new key in the Extensions group: C-x e L.
             vis.Keybinding("L", command="/apps", label="Live apps"),
-            # A changed key: the built-in attachments verb moves from C-x i to C-x e.
+            # A changed key: the attachments verb moves from C-x a i to C-x a e.
             vis.Keybinding("e", action="focus-attachments"),
             # The key that the move frees. The TUI applies moves before commands.
-            vis.Keybinding("i", command="/apps incident", label="Incidents"),
+            vis.Keybinding(
+                "i", command="/apps incident", label="Incidents", group="Attachments"
+            ),
         ],
     )
 )

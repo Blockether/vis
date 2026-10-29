@@ -148,11 +148,12 @@
                         (expect (nil? (get-in @state/app-db [:session :id])))
                         (expect (false? (future-done? runner)))
                         (expect (nil? @error))
-                        ;; The user adds a provider and reopens Providers with C-x o: startup is
+                        ;; The user adds a provider and reopens Providers with C-x m p: startup is
                         ;; retried from the live screen instead of a restart.
                         (reset! fail? false)
                         (.addInput terminal (KeyStroke. (Character/valueOf \x) true false false))
-                        (.addInput terminal (term/keystroke \o))
+                        (.addInput terminal (term/keystroke \m))
+                        (.addInput terminal (term/keystroke \p))
                         (expect (= session-id (await-value #(get-in @state/app-db [:session :id]))))
                         (finally (close!)))
                    (expect (not= ::running @closed))

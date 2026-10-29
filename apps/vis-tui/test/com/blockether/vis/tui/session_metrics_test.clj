@@ -267,7 +267,8 @@
       (expect (= {::dlg/done nil} (handle initial (cap/key-stroke :esc) geom)))
       (expect (= {::dlg/done nil} (handle initial (KeyStroke. \g true false) geom)))
       (expect (= :session-metrics
-                 (:action (input/resolve-prefix-key (cap/key-stroke \u) {:prefix :cx}))))
+                 (:action (input/resolve-prefix-key (cap/key-stroke \u)
+                                                    {:prefix :cx :prefix-group :session}))))
       (expect (some #(= :session-metrics (:id %)) dlg/palette-commands))
       (doseq [cols [40 60 80 120]]
         (let [small ((:measure component)

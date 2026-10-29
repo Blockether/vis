@@ -3,6 +3,7 @@
    clipboard integration, and attachment helpers. Lanterna owns terminal protocol decoding."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.tty :as tty]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.input DefaultKeyDecodingProfile InputDecoder KeyStroke KeyType]
@@ -81,48 +82,57 @@
       (let [plain (char-key (Character. \g))]
         (expect (identical? plain (input/normalize-abort-key plain))))
       (expect (nil? (input/normalize-abort-key nil))))
-  (it "C-x 1-9 presses the Send button of that queue row and keeps the draft"
+  (it "C-x q 1-9 presses the Send button of that queue row and keeps the draft"
       (let [state
             (-> (input/empty-input)
                 (input/paste-text "draft"))
 
             armed
-            (:state (input/handle-key (ctrl-key (Character. \x)) state))]
+            (->> state
+                 (input/handle-key (ctrl-key (Character. \x)))
+                 :state
+                 (input/handle-key (char-key (Character. \q)))
+                 :state)]
 
         (expect (= {:action :queue-send-nth :queue-index 3 :state state}
                    (input/handle-key (char-key (Character. \3)) armed)))
-        ;; C-x 0 binds nothing: the prefix aborts as for any unknown key.
+        ;; C-x q 0 binds nothing: the prefix aborts as for any unknown key.
         (expect (= {:action :continue :state state}
                    (input/handle-key (char-key (Character. \0)) armed)))))
-  (it "C-x e focuses the queue, and the focus keys name their queue events"
-      (let [state
-            (-> (input/empty-input)
-                (input/paste-text "draft"))
+  (it
+    "C-x q e focuses the queue, and the focus keys name their queue events"
+    (let [state
+          (-> (input/empty-input)
+              (input/paste-text "draft"))
 
-            armed
-            (:state (input/handle-key (ctrl-key (Character. \x)) state))
+          armed
+          (->> state
+               (input/handle-key (ctrl-key (Character. \x)))
+               :state
+               (input/handle-key (char-key (Character. \q)))
+               :state)
 
-            special
-            #(com.googlecode.lanterna.input.KeyStroke. ^com.googlecode.lanterna.input.KeyType %)]
+          special
+          #(com.googlecode.lanterna.input.KeyStroke. ^com.googlecode.lanterna.input.KeyType %)]
 
-        (expect (= {:action :queue-edit :state state}
-                   (input/handle-key (char-key (Character. \e)) armed)))
-        (doseq [[key event]
-                [[(special com.googlecode.lanterna.input.KeyType/ArrowUp) [:queue-focus-move -1]]
-                 [(special com.googlecode.lanterna.input.KeyType/ArrowDown) [:queue-focus-move 1]]
-                 [(char-key (Character. \2)) [:queue-focus-select 2]]
-                 [(char-key (Character. \space)) [:queue-focus-mark]]
-                 [(special com.googlecode.lanterna.input.KeyType/Enter) [:queue-focus-edit]]
-                 [(char-key (Character. \s)) [:queue-focus-deliver "next_iteration"]]
-                 [(char-key (Character. \l)) [:queue-focus-deliver "turn_end"]]
-                 [(special com.googlecode.lanterna.input.KeyType/Delete) [:queue-focus-remove]]
-                 [(char-key (Character. \u)) [:queue-focus-undo]]
-                 [(special com.googlecode.lanterna.input.KeyType/Escape) [:queue-blur]]]]
-          (expect (= event (input/queue-focus-event key))))
-        ;; Row 0, another letter and C-g end the focus and go on, so C-g still cancels.
-        (doseq [key [(char-key (Character. \0)) (char-key (Character. \x))
-                     (ctrl-key (Character. \g))]]
-          (expect (nil? (input/queue-focus-event key))))))
+      (expect (= {:action :queue-edit :state state}
+                 (input/handle-key (char-key (Character. \e)) armed)))
+      (doseq [[key event]
+              [[(special com.googlecode.lanterna.input.KeyType/ArrowUp) [:queue-focus-move -1]]
+               [(special com.googlecode.lanterna.input.KeyType/ArrowDown) [:queue-focus-move 1]]
+               [(char-key (Character. \2)) [:queue-focus-select 2]]
+               [(char-key (Character. \space)) [:queue-focus-mark]]
+               [(special com.googlecode.lanterna.input.KeyType/Enter) [:queue-focus-edit]]
+               [(char-key (Character. \s)) [:queue-focus-deliver "next_iteration"]]
+               [(char-key (Character. \l)) [:queue-focus-deliver "turn_end"]]
+               [(special com.googlecode.lanterna.input.KeyType/Delete) [:queue-focus-remove]]
+               [(char-key (Character. \u)) [:queue-focus-undo]]
+               [(special com.googlecode.lanterna.input.KeyType/Escape) [:queue-blur]]]]
+        (expect (= event (input/queue-focus-event key))))
+      ;; Row 0, another letter and C-g end the focus and go on, so C-g still cancels.
+      (doseq [key [(char-key (Character. \0)) (char-key (Character. \x))
+                   (ctrl-key (Character. \g))]]
+        (expect (nil? (input/queue-focus-event key))))))
   (it "C-x C-g aborts the prefix instead of running a C-x verb"
       (let [state
             (-> (input/empty-input)
@@ -150,18 +160,18 @@
             armed
             (:state (input/handle-key (ctrl-key (Character. \x)) state))]
 
-        ;; C-x arms the prefix; the next key runs the verb (with or without Ctrl).
+        ;; C-x arms the prefix; a group key opens the group and the next key runs the verb.
         (expect (= :cx (:prefix armed)))
-        (expect (= :cycle-model (:action (input/handle-key (char-key (Character. \m)) armed))))
-        (expect (= :pick-reasoning (:action (input/handle-key (char-key (Character. \r)) armed))))
-        (expect (= :toggle-codex-fast
-                   (:action (input/handle-key (char-key (Character. \q)) armed))))
-        (expect (= :cycle-verbosity (:action (input/handle-key (char-key (Character. \l)) armed))))
-        (expect (= :search-open (:action (input/handle-key (char-key (Character. \f)) armed))))
-        (expect (= :pick-file (:action (input/handle-key (char-key (Character. \a)) armed))))
-        (expect (= :toggle-voice-recording
-                   (:action (input/handle-key (char-key (Character. \v)) armed))))
-        (expect (= :session-group (:action (input/handle-key (char-key (Character. \d)) armed))))
+        (doseq [[group key action] [[\m \m :cycle-model] [\m \r :pick-reasoning]
+                                    [\m \f :toggle-codex-fast] [\m \l :cycle-verbosity]
+                                    [\b \f :search-open] [\a \a :pick-file]
+                                    [\v \v :toggle-voice-recording] [\s \m :session-group]]]
+          (let [opened (:state (input/handle-key (char-key (Character. group)) armed))]
+            (expect (= group
+                       (:key (first (filter #(= (:prefix-group opened) (:id %))
+                                            keymap/prefix-groups)))))
+            (expect (= {:action action :state state}
+                       (input/handle-key (char-key (Character. key)) opened)))))
         (expect (= :toggle-help (:action (input/handle-key (char-key (Character. \h)) armed))))
         ;; WITHOUT the prefix the same Ctrl letters are Emacs keys / abort — NOT verbs:
         (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \h)) state))))      ; C-h inert (help is C-x C-h)
@@ -190,37 +200,42 @@
                    (input/handle-key (ctrl-key (Character. \c)) state)))
         (expect (= {:action :cancel :state state}
                    (input/handle-key (special-key KeyType/Escape) state)))))
-  (it "C-x p (and C-x C-p) open the palette; C-x n is new-session; bare Ctrl+P/N are line motion"
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "keep"))]
-        ;; C-x C-p — the primary trigger: C-x arms the prefix, then Ctrl+P fires the
-        ;; palette (the second key is consumed by the prefix, not line motion).
-        (let [armed (input/handle-key (ctrl-key (Character. \x)) state)]
-          (expect (= :continue (:action armed)))
-          (expect (= :cx (:prefix (:state armed))))
-          (expect (= :show-palette
-                     (:action (input/handle-key (ctrl-key (Character. \p)) (:state armed)))))
-          ;; C-x p — the ADVERTISED trigger: a PLAIN p after the prefix.
-          (expect (= :show-palette
-                     (:action (input/handle-key (char-key (Character. \p)) (:state armed)))))
-          ;; C-x n — start a fresh session.
-          (expect (= :new-session
-                     (:action (input/handle-key (char-key (Character. \n)) (:state armed))))))
-        ;; M-x — the Emacs command-launcher alias, in the Meta keyspace.
-        (expect (= {:action :show-palette :state state}
-                   (input/handle-key (alt-key (Character. \x)) state)))
-        ;; Plain x types; Alt+x does NOT touch the Ctrl editing keys.
-        (expect (= :continue (:action (input/handle-key (char-key (Character. \x)) state))))
-        ;; BARE Ctrl+P prev-line, Ctrl+N next-line (no prefix armed) — on a
-        ;; single-line draft they are a no-op on the TEXT (action :continue, draft
-        ;; intact), NOT an app verb and NOT the palette.
-        (let [p (input/handle-key (ctrl-key (Character. \p)) state)
-              n (input/handle-key (ctrl-key (Character. \n)) state)]
+  (it
+    "C-x p (and C-x C-p) open the palette; C-x n is new-session; bare Ctrl+P/N are line motion"
+    (let [state (-> (input/empty-input)
+                    (input/paste-text "keep"))]
+      ;; C-x C-p — the primary trigger: C-x arms the prefix, then Ctrl+P fires the
+      ;; palette (the second key is consumed by the prefix, not line motion).
+      (let [armed (input/handle-key (ctrl-key (Character. \x)) state)]
+        (expect (= :continue (:action armed)))
+        (expect (= :cx (:prefix (:state armed))))
+        (expect (= :show-palette
+                   (:action (input/handle-key (ctrl-key (Character. \p)) (:state armed)))))
+        ;; C-x p — the ADVERTISED trigger: a PLAIN p after the prefix.
+        (expect (= :show-palette
+                   (:action (input/handle-key (char-key (Character. \p)) (:state armed)))))
+        ;; C-x s n — start a fresh session.
+        (expect (= :new-session
+                   (->> (:state armed)
+                        (input/handle-key (char-key (Character. \s)))
+                        :state
+                        (input/handle-key (char-key (Character. \n)))
+                        :action))))
+      ;; M-x — the Emacs command-launcher alias, in the Meta keyspace.
+      (expect (= {:action :show-palette :state state}
+                 (input/handle-key (alt-key (Character. \x)) state)))
+      ;; Plain x types; Alt+x does NOT touch the Ctrl editing keys.
+      (expect (= :continue (:action (input/handle-key (char-key (Character. \x)) state))))
+      ;; BARE Ctrl+P prev-line, Ctrl+N next-line (no prefix armed) — on a
+      ;; single-line draft they are a no-op on the TEXT (action :continue, draft
+      ;; intact), NOT an app verb and NOT the palette.
+      (let [p (input/handle-key (ctrl-key (Character. \p)) state)
+            n (input/handle-key (ctrl-key (Character. \n)) state)]
 
-          (expect (= :continue (:action p)))
-          (expect (= :continue (:action n)))
-          (expect (= (:lines state) (:lines (:state p))))
-          (expect (= (:lines state) (:lines (:state n)))))))
+        (expect (= :continue (:action p)))
+        (expect (= :continue (:action n)))
+        (expect (= (:lines state) (:lines (:state p))))
+        (expect (= (:lines state) (:lines (:state n)))))))
   (it "C-x C-h opens help; a lone Ctrl+H is inert"
       ;; Lanterna decodes Ctrl+H. Vis decides that it is an app verb only after C-x.
       (expect (= :continue
@@ -243,9 +258,12 @@
         (expect (= unchanged (input/handle-key (KeyStroke. KeyType/Tab false false true) state)))
         (expect (= unchanged (input/handle-key (special-key KeyType/ArrowLeft) armed)))
         (expect (= unchanged (input/handle-key (special-key KeyType/ArrowRight) armed)))
-        ;; C-x 1 presses queue row 1 now; it still never changes sessions.
+        ;; C-x q 1 presses queue row 1 now; it still never changes sessions.
         (expect (= {:action :queue-send-nth :queue-index 1 :state state}
-                   (input/handle-key (char-key (Character. \1)) armed)))
+                   (->> armed
+                        (input/handle-key (char-key (Character. \q)))
+                        :state
+                        (input/handle-key (char-key (Character. \1))))))
         (expect (= unchanged (input/handle-key (alt-key (Character. \3)) state)))
         (expect (= :continue
                    (:action (input/handle-key (ctrl-special-key KeyType/ArrowLeft) state))))

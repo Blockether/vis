@@ -412,9 +412,9 @@
                                                     "verbosity_style" nil
                                                     "thinking_display_style" nil}]}])]
         (doseq [[provider model session-settings expected]
-                [["anthropic" "claude-opus-5" nil [" thinking: summarized (C-x x) "]]
+                [["anthropic" "claude-opus-5" nil [" thinking: summarized (C-x m t) "]]
                  ["anthropic" "claude-opus-5" {:thinking-summary false}
-                  [" thinking: omitted (C-x x) "]] ["zai-coding-plan" "glm-5.2" nil []]]]
+                  [" thinking: omitted (C-x m t) "]] ["zai-coding-plan" "glm-5.2" nil []]]]
           (let [db {:messages []
                     :session {:id "s1"}
                     :session-settings {"s1" session-settings}
@@ -446,8 +446,8 @@
                                                                    :model "gpt-5.6-sol"}}
                                              0)
                              (mapv :text))]
-              (expect (= [" reasoning: deep (C-x r) " "verbosity: medium"]
-                         (filterv #{" reasoning: deep (C-x r) " "verbosity: medium"} texts))))))))
+              (expect (= [" reasoning: deep (C-x m r) " "verbosity: medium"]
+                         (filterv #{" reasoning: deep (C-x m r) " "verbosity: medium"} texts))))))))
   (it "resolves the SESSION's model, falling back to the router root without a pick"
       ;; The plumbing under the chips: the same GitHub Copilot provider serves an
       ;; Anthropic wire for Claude and a Responses wire for GPT, so asking the

@@ -1020,55 +1020,73 @@
 
 ;;; ── Key handling ───────────────────────────────────────────────────────────
 
+(defn- resolve-group-key
+  "The result of `key` pressed in C-x `group`; `c` is its character or nil."
+  [^KeyStroke key c group state]
+  (let [cmd (keymap/prefix-command-for group c)]
+    (cond
+      ;; An extension key binding that runs a slash command.
+      (:command cmd) {:action :run-keybinding :keybinding cmd :state state}
+      cmd {:action (:action cmd) :state state}
+      ;; C-x q 1-9 → send that queue row at the next step, or take its mark back.
+      (and (= :queue group) (keymap/queue-row-index c))
+      {:action :queue-send-nth :queue-index (keymap/queue-row-index c) :state state}
+      ;; The Mac delete key sends Backspace; a PC keyboard can send either.
+      (and (= :session group) (#{KeyType/Backspace KeyType/Delete} (.getKeyType key)))
+      {:action :delete-session :state state}
+      :else {:action :continue :state state})))
+
 (defn resolve-prefix-key
-  "Resolve the keystroke pressed AFTER the C-x prefix (state carries `:prefix`).
-   PUBLIC because the C-x hydra band (`dialogs/prefix-band!`) reads that
-   keystroke on the screen's behalf and resolves it HERE — the band paints the
-   chord, it never re-implements it.
-   The prefix is cleared either way:
+  "Resolve the keystroke pressed AFTER the C-x prefix (state carries `:prefix`, and
+   `:prefix-group` once a group is open). PUBLIC because the C-x band
+   (`dialogs/prefix-band!`) reads that keystroke on the screen's behalf and resolves
+   it HERE — the band paints the chord, it never re-implements it.
+   On the top level:
      • C-x p (or C-x C-p) (`keymap/prefix-palette-key`) → the Command Palette.
-     • C-x <key> of an extension command binding → `:run-keybinding` with
+     • C-x <group key> (`keymap/prefix-group-for`) → keeps the prefix and opens
+       that group, so the NEXT key picks one of its verbs.
+     • C-x <key> of a top-level verb → the verb.
+     • C-x TAB or C-x S-TAB → toggle every disclosure.
+   In a group:
+     • <key> of an extension command binding → `:run-keybinding` with
        `:keybinding`, the merged command (`keymap/merge-keybindings`).
-     • C-x <letter> in `keymap/current-prefix-commands` → the vis verb.
-     • C-x 1-9 → toggle that queue row for the next step (`keymap/queue-row-index`).
-     • C-x Backspace or Delete → the C-x D verb: delete the current session.
-     • anything else → abort the prefix (no-op), so a stray C-x never swallows
-       the next keystroke."
+     • <key> of a vis verb → the verb.
+     • C-x q 1-9 → toggle that queue row for the next step.
+     • C-x s Backspace or Delete → delete the current session.
+   Anything else, C-g included, aborts the prefix (no-op), so a stray C-x never
+   swallows the next keystroke."
   [^KeyStroke key state]
-  (let [state
-        (dissoc state :prefix)
+  (let [group
+        (:prefix-group state)
+
+        state
+        (dissoc state :prefix :prefix-group)
 
         c
         (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))]
 
     (cond
-      ;; C-g right after C-x is Emacs `keyboard-quit`: it aborts the PREFIX and
-      ;; does nothing else. Without this clause the Ctrl'd `g` fell through to the
-      ;; `C-x <letter>` verb clause below - the opposite of an abort.
+      ;; C-g after C-x is Emacs `keyboard-quit`: it aborts the PREFIX and does
+      ;; nothing else.
       (abort-key? key) {:action :continue :state state}
+      group (resolve-group-key key c group state)
       ;; C-x p → command palette. A PLAIN `p` is the advertised trigger; a Ctrl'd
       ;; second key (C-x C-p) is also accepted for old muscle memory.
       (and c (= (Character/toLowerCase ^char c) keymap/prefix-palette-key)) {:action :show-palette
                                                                              :state state}
-      ;; C-x <key> → an extension key binding that runs a slash command.
-      (and c (:command (keymap/prefix-command-for c)))
-      {:action :run-keybinding :keybinding (keymap/prefix-command-for c) :state state}
-      ;; C-x <letter> → a vis verb (plain second key).
-      (and c (keymap/prefix-action-for c)) {:action (keymap/prefix-action-for c) :state state}
-      ;; C-x 1-9 → send that queue row at the next step, or take its mark back.
-      (keymap/queue-row-index c)
-      {:action :queue-send-nth :queue-index (keymap/queue-row-index c) :state state}
+      (and c (keymap/prefix-group-for c)) {:action :continue
+                                           :state (assoc state
+                                                    :prefix :cx
+                                                    :prefix-group (keymap/prefix-group-for c))}
+      (and c (keymap/prefix-action-for nil c)) {:action (keymap/prefix-action-for nil c)
+                                                :state state}
       ;; C-x TAB / C-x S-TAB toggle every disclosure without binding bare Tab.
       (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType key)) {:action :toggle-all-details
                                                              :state state}
-      ;; C-x D has two key aliases: the Mac delete key sends Backspace; a PC keyboard
-      ;; can send either.
-      (#{KeyType/Backspace KeyType/Delete} (.getKeyType key))
-      {:action (keymap/prefix-action-for keymap/prefix-delete-key) :state state}
       :else {:action :continue :state state})))
 
 (defn queue-focus-event
-  "The event of `key` while C-x e focuses the queue, or nil for a key that ends the focus
+  "The event of `key` while C-x q e focuses the queue, or nil for a key that ends the focus
    and goes on, C-g included. Arrows and 1-9 select, Space marks, Enter edits, `s` and `l`
    send now or later, Delete removes, `u` brings removed rows back and Esc ends the focus."
   [^KeyStroke key]
@@ -1139,9 +1157,9 @@
             ;; (dialog inputs) uses, so the chords behave identically in every
             ;; input. They take precedence over app verbs / the prefix.
             emacs {:action :continue :state emacs}
-            ;; ── Ctrl+X: the Emacs PREFIX key. Arm it — the NEXT (PLAIN) key runs a
-            ;; vis command (C-x m model · r reasoning · l length · f search · a
-            ;; attach · v voice · d dirs · s resources · h help) or C-x C-p palette.
+            ;; ── Ctrl+X: the Emacs PREFIX key. Arm it — the NEXT (PLAIN) key opens a
+            ;; group (C-x s session · m model · b view · a attachments · v voice ·
+            ;; q queue · e extensions), runs C-x h help or opens the C-x p palette.
             ;; Plain second keys so Ctrl-byte collisions (Ctrl+S=flow, Ctrl+M=Enter)
             ;; can't eat them. Resolved at the top of `handle-key` via :prefix.
             (and ctrl (= (Character/toLowerCase c) keymap/prefix-key))

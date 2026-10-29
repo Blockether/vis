@@ -10,6 +10,7 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t])
   (:import [com.googlecode.lanterna.graphics TextGraphics]
@@ -753,7 +754,9 @@
 
                 (str n " " word)))))
 
-(defn- summary-hint [expanded?] (if expanded? "C-x T hide details" "C-x T details"))
+(defn- summary-hint
+  [expanded?]
+  (str (keymap/label-or-palette :toggle-agent-dock) (if expanded? " hide details" " details")))
 
 (defn team-span
   "The time span of the team of `agents`: `{:start :end}` in epoch ms. `:start` is the first
@@ -902,7 +905,7 @@
       (p/fill-rect! g 0 y (max 1 (long cols)) 1)
       (if (= :summary (:kind line))
         (do (paint-summary-line! g 2 y width line now)
-            ;; A click on the summary line shows or hides the agent table, like C-x T.
+            ;; A click on the summary line shows or hides the agent table, like C-x b a.
             (.register interactions/hit-map
                        {:bounds {:row y :col 0 :width (max 1 (long cols))}
                         :kind :agent-dock-toggle

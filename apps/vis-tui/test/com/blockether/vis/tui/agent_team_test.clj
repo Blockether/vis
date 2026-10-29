@@ -632,7 +632,7 @@
 
 (defdescribe
   dock-test
-  (it "shows one summary line, and the agent table only after C-x T"
+  (it "shows one summary line, and the agent table only after C-x b a"
       (with-redefs [team/summary (constantly {:agents every-state})]
         (expect (not (team/dock-expanded? "leader")))
         (let [[line :as text] (team/dock-text "leader" "turn-1" 120 now-ms)]
@@ -643,15 +643,15 @@
           (expect (str/starts-with? line "Agents   1m 04s   3 RUNNING"))
           (expect (not (str/includes? line "waiting")))
           (expect (not (str/includes? line "asking")))
-          (expect (str/ends-with? line "C-x T details")))
+          (expect (str/ends-with? line "C-x b a details")))
         (try (expect (true? (team/toggle-dock! "leader")))
              (let [text (team/dock-text "leader" "turn-1" 120 now-ms)]
-               (expect (str/ends-with? (first text) "C-x T hide details"))
+               (expect (str/ends-with? (first text) "C-x b a hide details"))
                (expect (= 11 (count text)) "The table caps its rows and counts the rest")
                (expect (some #(str/includes? % "+5 more") text))
                (expect (= 11 (team/dock-height "leader" "turn-1" 120))))
              (finally (team/toggle-dock! "leader")))
-        (expect (= 1 (team/dock-height "leader" "turn-1" 120)) "C-x T again hides the table")
+        (expect (= 1 (team/dock-height "leader" "turn-1" 120)) "C-x b a again hides the table")
         (expect (= ["Agents"] (team/dock-text "leader" "turn-1" 6 now-ms))
                 "A narrow line drops the counts and the hint"))
       (with-redefs [team/summary (constantly {:agents (drop 4 every-state)})]

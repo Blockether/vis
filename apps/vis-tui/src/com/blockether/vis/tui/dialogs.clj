@@ -1627,7 +1627,12 @@
         {:keys [cols rows bounds content-w content-h-req content-top content-h hint-row text-w
                 lines]}]
      (let [{:keys [left inner-w]} bounds]
-       (draw-dialog-chrome! g cols rows "Session metrics · C-x u" content-w content-h-req)
+       (draw-dialog-chrome! g
+                            cols
+                            rows
+                            (str "Session metrics · " (keymap/label-or-palette :session-metrics))
+                            content-w
+                            content-h-req)
        (doseq [[i {:keys [text tone toggle label value value-col indent]}]
                (map-indexed vector (take content-h (drop scroll lines)))]
          (let [y (+ (long content-top) (long i))

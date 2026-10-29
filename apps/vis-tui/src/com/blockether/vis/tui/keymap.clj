@@ -15,8 +15,8 @@
    (enforced by `keymap-test`).
 
    Chord labels use ONE format everywhere: Emacs notation, lower-cased —
-   `C-c`, `C-g`, `C-l`, and `C-x <key>` (plain second key) for the prefixed vis
-   commands (e.g. `C-x m`, `C-x s`). `chord` / `label-for` / `palette-chord` all
+   `C-c`, `C-g`, `C-l`, and `C-x <group> <key>` (plain keys) for the prefixed vis
+   commands (e.g. `C-x m m`, `C-x s n`). `chord` / `label-for` / `palette-chord` all
    emit this shape, so a hint never drifts between `Ctrl+X` and `C-x`.
 
    Tiers:
@@ -73,109 +73,80 @@
 ;; `bindings` (direct chords) is now EMPTY.
 
 (def ^:const prefix-key
-  "The Emacs prefix key for vis commands: C-x, then one of `prefix-commands`.
-   C-x is Emacs's own command prefix, so this is the faithful home for vis verbs."
+  "The Emacs prefix key for vis commands: C-x, then a `prefix-groups` key or a
+   top-level key of `prefix-commands`. C-x is Emacs's own command prefix, so this
+   is the faithful home for vis verbs."
   \x)
 
-(def ^:const prefix-delete-key
-  "C-x D (Shift+d) — delete the current session after a confirmation. `D` also
-   deletes the row in the project sidebar. C-x Backspace and C-x Delete do the same.
-   Every lower-case letter after C-x is taken."
-  \D)
+(def prefix-groups
+  "The C-x groups, in band order. C-x and a group key open the band of that group;
+   the next key runs one of its verbs. Two levels give each group its own letters,
+   so the C-x keys no longer run out. The Extensions group shows only when an
+   extension binds a key."
+  [{:id :session :key \s :title "Session"} {:id :model :key \m :title "Model"}
+   {:id :view :key \b :title "View"} {:id :attachments :key \a :title "Attachments"}
+   {:id :voice :key \v :title "Voice"} {:id :queue :key \q :title "Queue"}
+   {:id :extensions :key \e :title "Extensions"}])
+
+(def ^:private group-by-id (into {} (map (juxt :id identity)) prefix-groups))
+
+(def default-binding-group
+  "The C-x group of an extension binding whose `:group` names no built-in group."
+  :extensions)
 
 (def prefix-commands
-  "C-x <key> → app verb. `:key` is the SECOND key pressed after the C-x prefix,
-   displayed and pressed as a PLAIN letter (`C-x s`, `C-x m`, …). A Ctrl'd second
-   key is NOT reliable: `Ctrl+S`/`Ctrl+Q` are tty flow-control (eaten before the
-   app) and `Ctrl+M` == Enter (byte 0x0D). The dispatcher still ALSO accepts a
-   Ctrl'd second key where it survives (so `C-x C-f` == `C-x f`), but the plain
-   form is the one we advertise because it works for EVERY letter.
+  "C-x <group key> <key> → app verb. `:group` is a `prefix-groups` id; a verb
+   without `:group` sits on the top level, so C-x and its key run it. `:key` is
+   pressed as a PLAIN character: a Ctrl'd key is not reliable, because `Ctrl+S` and
+   `Ctrl+Q` are tty flow control and `Ctrl+M` is Enter. Keys are case-sensitive
+   inside a group: an exact match wins, then the lower-case key.
 
-   `:group` is the heading the verb sits under in the C-x HYDRA (`prefix-spec`)
-   and must be one of `prefix-groups`; order inside a group is declaration order.
-   An optional `:show-when` tag (`:multi-tab`, `:has-turns`, `:codex`) gates the verb's
-   HYDRA row to the context where it can act; `:never` keeps it palette-only. The
-   chord, palette, and help still list every verb."
-  [{:action :cycle-model :key \m :label "model" :group "Model"}
-   {:action :pick-model :key \c :label "choose model" :group "Model"}
-   {:action :pick-reasoning :key \r :label "reasoning" :group "Model"}
+   An optional `:show-when` tag gates the band row to the context where the verb can
+   act (`verb-available?`). The chord, the palette and help still list every verb."
+  [{:action :toggle-help :key \h :label "help"}
+   {:action :new-session :key \n :label "new session" :group :session}
+   {:action :show-sessions :key \s :label "switch session" :group :session}
+   ;; C-x s Backspace and C-x s Delete also delete (`input/resolve-prefix-key`).
+   {:action :delete-session :key \d :label "delete session" :group :session}
+   {:action :archive-session :key \a :label "archive session" :group :session}
+   {:action :fork-session :key \f :label "fork session" :group :session :show-when :has-turns}
+   {:action :fork-at-turn :key \t :label "fork at turn" :group :session :show-when :has-turns}
+   ;; BLO-167: file the session under one of its project's groups.
+   {:action :session-group :key \m :label "move to group" :group :session}
+   {:action :session-metrics :key \u :label "session metrics" :group :session}
+   {:action :cycle-model :key \m :label "next model" :group :model}
+   {:action :pick-model :key \c :label "choose model" :group :model}
+   {:action :pick-reasoning :key \r :label "reasoning" :group :model}
    ;; Fast mode acts only on OpenAI Codex, so other sessions do not see it (#333).
-   {:action :toggle-codex-fast :key \q :label "fast mode" :group "Model" :show-when :codex}
-   {:action :cycle-verbosity :key \l :label "length" :group "Model" :show-when :never}
-   ;; `x` = show or omit the Claude thinking summary. Palette-only: the Model band
-   ;; keeps four rows, and the footer chip carries the chord.
-   {:action :toggle-thinking-summary
-    :key \x
-    :label "thinking summary"
-    :group "Model"
-    :show-when :never}
-   {:action :search-open :key \f :label "search" :group "Buffer" :show-when :never}
-   {:action :pick-file :key \a :label "attach file" :group "Tools"}
-   {:action :focus-attachments
-    :key \i
-    :label "inspect attachments"
-    :group "Tools"
-    :show-when :never}
-   ;; C-x I (Shift+i) shows every picture of the session in the image viewer, next to
-   ;; `i` for the attachment inspector. Only a graphical terminal can show the viewer, so the
-   ;; hydra lists it only there, and only when the session has a picture.
-   {:action :view-images :key \I :label "view images" :group "Tools" :show-when :image-viewer}
-   ;; C-x O (Shift+o) opens the newest picture of the session in the system viewer. It works
-   ;; on every terminal, also where the TUI cannot show pictures.
-   {:action :open-newest-image :key \O :label "open picture" :group "Tools" :show-when :has-images}
-   {:action :toggle-voice-recording :key \v :label "voice" :group "Tools"}
-   ;; `b` = the conversation MODE, next to `v` = one recording. Arming is not a
-   ;; setting: it says SPEAK THE ANSWERS OF THIS CONVERSATION, and only this one.
-   ;; Palette-only because the Tools pane is FULL: a fifth verb there re-packs the
-   ;; hydra and costs six rows of transcript in a 30-row terminal (screen-test pins
-   ;; the band's top row). The chord, the palette and help still carry it, and while
-   ;; the mode is armed the header banner says so.
-   {:action :toggle-voice-conversation
-    :key \b
-    :label "voice conversation"
-    :group "Tools"
-    :show-when :never} {:action :toggle-help :key \h :label "help" :group "Buffer"}
-   {:action :new-session :key \n :label "new session" :group "Session"}
-   {:action :show-sessions :key \s :label "switch session" :group "Session"}
-   {:action :delete-session :key prefix-delete-key :label "delete session" :group "Session"}
-   ;; C-x A (Shift+a) archives the current session or restores it, like `A` in the sidebar.
-   {:action :archive-session :key \A :label "archive session" :group "Session"}
-   {:action :session-metrics :key \u :label "session metrics" :group "Session"}
-   ;; `k` = kick the queue: mark every queued message for the running turn's next
-   ;; step (the header's Send all now button). Palette-only — the Session band is full.
-   {:action :queue-send-all-now :key \k :label "send queue now" :group "Session" :show-when :never}
-   ;; `e` = edit: the keys act on the Queued block until Esc, so a queued message can be
-   ;; edited, sent, removed or merged (`input/queue-focus-event`).
-   ;; Palette-only for the same reason; the hint under the queue shows the chord.
-   {:action :queue-edit :key \e :label "edit queued" :group "Session" :show-when :never}
-   ;; C-x T (Shift+t) shows or hides the agent table under the one-line agent dock. The dock
-   ;; line shows the chord, so the hydra does not list it.
-   {:action :toggle-agent-dock :key \T :label "agent details" :group "Session" :show-when :never}
-   ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.
-   {:action :fork-session :key \y :label "fork session" :group "Session" :show-when :has-turns}
-   {:action :fork-at-turn :key \t :label "fork at turn" :group "Session" :show-when :has-turns}
-   {:action :switch-project :key \w :label "project sidebar" :group "Session"}
-   ;; A group is the folder a session is filed in, so `d` (Emacs' dired letter)
-   ;; carries it: `g` can never be a prefix key, because C-g is the abort.
-   ;; Palette-only — the Session band of the hydra is full, and the project rail
-   ;; advertises its own `g` menu.
-   {:action :session-group :key \d :label "move to group" :group "Session" :show-when :never}
-   {:action :recenter :key \j :label "jump to bottom" :group "Buffer"}
-   ;; C-x V (Shift+v) opens the side panel, then moves the focus between it and the
-   ;; transcript.
-   {:action :live-panel :key \V :label "side panel" :group "Buffer" :show-when :has-panel}
-   ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
-   {:action :toggle-detail-labels :key \z :label "label folds" :group "Buffer"}
-   ;; C-x Z (Shift+z) turns Zen mode on and off: the screen shows only the transcript
-   ;; and the prompt, without the header and the footer.
-   {:action :toggle-zen-mode :key \Z :label "zen mode" :group "Buffer"}
-   {:action :providers :key \o :label "providers" :group "Tools"}])
-
-(def prefix-groups
-  "Heading order of the C-x hydra. A band taller than the terminal loses its LAST
-   rows (`transient/band-geometry`), so the groups are ordered by how often the
-   verb under them is the one being reached for."
-  ["Session" "Model" "Buffer" "Tools"])
+   {:action :toggle-codex-fast :key \f :label "fast mode" :group :model :show-when :codex}
+   {:action :cycle-verbosity :key \l :label "length" :group :model}
+   {:action :toggle-thinking-summary :key \t :label "thinking summary" :group :model}
+   {:action :providers :key \p :label "providers" :group :model}
+   {:action :search-open :key \f :label "search" :group :view}
+   {:action :recenter :key \j :label "jump to bottom" :group :view}
+   ;; `z` = vim's fold prefix: the jump-label overlay toggles folds.
+   {:action :toggle-detail-labels :key \z :label "label folds" :group :view}
+   ;; Zen mode shows only the transcript and the prompt.
+   {:action :toggle-zen-mode :key \Z :label "zen mode" :group :view}
+   {:action :live-panel :key \p :label "side panel" :group :view :show-when :has-panel}
+   {:action :switch-project :key \w :label "project sidebar" :group :view}
+   {:action :toggle-agent-dock :key \a :label "agent details" :group :view}
+   {:action :pick-file :key \a :label "attach file" :group :attachments}
+   {:action :focus-attachments :key \i :label "inspect attachments" :group :attachments}
+   ;; Only a graphical terminal can show the image viewer.
+   {:action :view-images :key \v :label "view images" :group :attachments :show-when :image-viewer}
+   ;; The system viewer works on every terminal.
+   {:action :open-newest-image
+    :key \o
+    :label "open picture"
+    :group :attachments
+    :show-when :has-images} {:action :toggle-voice-recording :key \v :label "record" :group :voice}
+   ;; The conversation MODE speaks the answers of this conversation, and only this one.
+   {:action :toggle-voice-conversation :key \c :label "conversation" :group :voice}
+   ;; Mark every queued message for the running turn's next step.
+   {:action :queue-send-all-now :key \s :label "send all now" :group :queue}
+   ;; The keys act on the Queued block until Esc (`input/queue-focus-event`).
+   {:action :queue-edit :key \e :label "edit queued" :group :queue}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
@@ -193,7 +164,7 @@
   [commands refused]
   {:commands commands
    :refused refused
-   :by-char (into {} (keep #(when (:key %) [(:key %) %])) commands)
+   :by-key (into {} (keep #(when (:key %) [[(:group %) (:key %)] %])) commands)
    :by-action (into {} (map (juxt :action identity)) commands)})
 
 (defonce ^:private merged-keymap
@@ -201,11 +172,9 @@
   (atom (index-commands prefix-commands [])))
 
 (def reserved-prefix-keys
-  "Keys after C-x that no extension can bind: the palette, the abort key and the
-   queue digits."
-  (into #{\p \g} (map char) (range (int \0) (inc (int \9)))))
-
-(def default-binding-group "The C-x heading of an extension command." "Extensions")
+  "Keys inside a C-x group that no extension can bind: the abort key and the queue
+   digits."
+  (into #{\g} (map char) (range (int \0) (inc (int \9)))))
 
 (defn- binding-char
   "The one printable ASCII character of binding key `k`, or nil."
@@ -213,6 +182,21 @@
   (when (and (string? k) (= 1 (count k)))
     (let [c (.charAt ^String k 0)]
       (when (<= 33 (long (int c)) 126) c))))
+
+(defn- named-group
+  "The id of the built-in group that `title` names, case-insensitively, or nil."
+  [title]
+  (let [t (str/lower-case (str/trim (str title)))]
+    (some #(when (= t (str/lower-case (:title %))) (:id %)) prefix-groups)))
+
+(defn- binding-group
+  "The C-x group of binding `b`. A `:group` that names a built-in group places the
+   key there; any other name places it in Extensions. Without `:group`, the key
+   stays in `fallback`."
+  [b fallback]
+  (if (str/blank? (str (:group b)))
+    (or fallback default-binding-group)
+    (or (named-group (:group b)) default-binding-group)))
 
 (defn- refuse [b reason] {:binding b :reason reason})
 
@@ -226,24 +210,31 @@
         (keyword (str (:action b)))
 
         idx
-        (first (keep-indexed #(when (= verb (:action %2)) %1) commands))]
+        (first (keep-indexed #(when (= verb (:action %2)) %1) commands))
+
+        group
+        (when idx (binding-group b (:group (nth commands idx))))]
 
     (cond (nil? c) (update acc :refused conj (refuse b "the key is not one printable character"))
           (reserved-prefix-keys c) (update acc :refused conj (refuse b "the key is reserved"))
           (nil? idx) (update acc :refused conj (refuse b "the TUI has no such verb"))
           (contains? (:moved acc) verb)
           (update acc :refused conj (refuse b "the verb moved already"))
-          (contains? claimed c) (update acc :refused conj (refuse b "another binding has the key"))
-          :else (let [commands
-                      (mapv #(if (and (= c (:key %)) (not= verb (:action %))) (dissoc % :key) %)
-                            commands)]
+          (contains? claimed [group c])
+          (update acc :refused conj (refuse b "another binding has the key"))
+          :else (let [commands (mapv #(if (and (= [group c] [(:group %) (:key %)])
+                                               (not= verb (:action %)))
+                                        (dissoc % :key)
+                                        %)
+                                     commands)]
                   (-> acc
                       (assoc :commands (update commands
                                                idx
-                                               #(cond-> (assoc % :key c) (:label b) (assoc :label
-                                                                                      (:label b))
-                                                  (:group b) (assoc :group (:group b)))))
-                      (update :claimed conj c)
+                                               #(cond-> (assoc %
+                                                          :key c
+                                                          :group group) (:label b) (assoc :label
+                                                                                     (:label b)))))
+                      (update :claimed conj [group c])
                       (update :moved conj verb))))))
 
 (defn- add-command
@@ -253,20 +244,24 @@
         (binding-char (:key b))
 
         command
-        (str/trim (str (:command b)))]
+        (str/trim (str (:command b)))
+
+        group
+        (binding-group b nil)]
 
     (cond (nil? c) (update acc :refused conj (refuse b "the key is not one printable character"))
           (reserved-prefix-keys c) (update acc :refused conj (refuse b "the key is reserved"))
           (not (str/starts-with? command "/"))
           (update acc :refused conj (refuse b "the command does not start with /"))
-          (some #(= c (:key %)) commands) (update acc :refused conj (refuse b "the key is taken"))
+          (some #(= [group c] [(:group %) (:key %)]) commands)
+          (update acc :refused conj (refuse b "the key is taken"))
           :else (update acc
                         :commands
                         conj
-                        {:action (keyword "keybinding" (str c))
+                        {:action (keyword "keybinding" (str (name group) "-" c))
                          :key c
                          :label (or (not-empty (str (:label b))) command)
-                         :group (or (not-empty (str (:group b))) default-binding-group)
+                         :group group
                          :command command
                          :extension (:extension b)}))))
 
@@ -274,10 +269,11 @@
   "PURE: the C-x commands after extension `bindings` (maps with `:key`, `:command`
    or `:action`, `:label`, `:group` and `:extension`, in gateway order).
 
-   First every `:action` binding moves its built-in verb to its key. A built-in verb
-   that had that key keeps only the palette. Then every `:command` binding takes a
-   free key. A reserved, taken or malformed binding is refused. Answers
-   `{:commands [...] :refused [{:binding b :reason text}]}`."
+   First every `:action` binding moves its built-in verb to its key, in the verb's
+   own group unless `:group` names another one. A built-in verb that had that key
+   keeps only the palette. Then every `:command` binding takes a free key in its
+   group, Extensions by default. A reserved, taken or malformed binding is refused.
+   Answers `{:commands [...] :refused [{:binding b :reason text}]}`."
   [bindings]
   (let [moved
         (reduce move-verb
@@ -301,20 +297,21 @@
   []
   (:refused @merged-keymap))
 
-(defn free-prefix-letters
-  "The letters after C-x that an extension can still bind, as one string: lower case
-   first, then upper case."
-  []
-  (let [taken (set (keep :key (:commands @merged-keymap)))]
-    (apply str
-      (remove #(or (taken %) (reserved-prefix-keys %))
-        (concat (map char (range (int \a) (inc (int \z))))
-                (map char (range (int \A) (inc (int \Z)))))))))
-
 (defn current-prefix-commands
   "Every C-x command after the extension bindings, built-in verbs first."
   []
   (:commands @merged-keymap))
+
+(defn free-prefix-letters
+  "The letters that an extension can still bind in C-x `group` (Extensions by
+   default), as one string: lower case first, then upper case."
+  ([] (free-prefix-letters default-binding-group))
+  ([group]
+   (let [taken (set (keep #(when (= group (:group %)) (:key %)) (current-prefix-commands)))]
+     (apply str
+       (remove #(or (taken %) (reserved-prefix-keys %))
+         (concat (map char (range (int \a) (inc (int \z))))
+                 (map char (range (int \A) (inc (int \Z))))))))))
 
 (defn action-for
   "The action bound to a DIRECT Ctrl + `ch` chord, or nil — always nil now (verbs
@@ -322,49 +319,61 @@
   [ch]
   (when ch (action-by-char (Character/toLowerCase ^char ch))))
 
+(defn- exact-or-lower
+  "The value of `f` for `ch`, else for lower-case `ch`."
+  [f ch]
+  (when ch (or (f ch) (f (Character/toLowerCase ^char ch)))))
+
 (defn prefix-command-for
-  "The C-x command bound to `ch`, or nil. An exact match wins, so C-x D is not
-   C-x d; any other key is lower-cased."
-  [ch]
-  (when ch
-    (let [by-char (:by-char @merged-keymap)]
-      (or (by-char ch) (by-char (Character/toLowerCase ^char ch))))))
+  "The C-x command bound to `ch` in `group` (nil = the top level), or nil. An exact
+   match wins, so C-x b Z is not C-x b z; any other key is lower-cased."
+  [group ch]
+  (let [by-key (:by-key @merged-keymap)]
+    (exact-or-lower #(by-key [group %]) ch)))
 
 (defn prefix-action-for
-  "The verb action bound to the C-x prefix followed by `ch`, or nil. An exact match
-   wins, so C-x D is not C-x d; any other key is lower-cased."
+  "The verb action bound to `ch` in C-x `group` (nil = the top level), or nil."
+  [group ch]
+  (:action (prefix-command-for group ch)))
+
+(defn prefix-group-for
+  "The id of the C-x group that `ch` opens, or nil. A group without a command, such
+   as Extensions with no extension binding, opens nothing."
   [ch]
-  (:action (prefix-command-for ch)))
+  (let [live (set (keep :group (current-prefix-commands)))]
+    (exact-or-lower #(some (fn [g]
+                             (when (and (= % (:key g)) (live (:id g))) (:id g)))
+                           prefix-groups)
+                    ch)))
+
+(defn group-chord
+  "The chord that opens C-x `group`, such as `C-x s`."
+  [group]
+  (str "C-x " (:key (group-by-id group))))
 
 (defn queue-row-index
-  "The 1-based queue row that C-x followed by `ch` toggles for the next step, or nil.
-   Only the digits 1-9 bind; row 1 is the next message to send."
+  "The 1-based queue row that C-x q followed by `ch` toggles for the next step, or
+   nil. Only the digits 1-9 bind; row 1 is the next message to send."
   [ch]
   (when (and ch (Character/isDigit ^char ch) (not= \0 ch)) (long (Character/digit ^char ch 10))))
 
 (defn queue-row-chord
   "The chord label that toggles queue row `n` (1-based), or nil past row 9."
   [n]
-  (when (<= 1 (long n) 9) (str "C-x " n)))
+  (when (<= 1 (long n) 9) (str (group-chord :queue) " " n)))
 
 (defn label-for
-  "Display label for `action`'s shortcut, or nil. Direct chord → `C-l`; a C-x
-   prefix command → `C-x <key>` with a PLAIN second key (e.g. `C-x s`).
-
-   The second key is PLAIN, never `C-x C-<key>`: a Ctrl'd second key is unusable
-   for several letters — `Ctrl+S`/`Ctrl+Q` are tty flow-control (XOFF/XON, eaten
-   before the app sees them) and `Ctrl+M` is byte 0x0D = Enter (indistinguishable
-   from Return). A plain letter byte always reaches the app, so `C-x s`,
-   `C-x m`, … work everywhere. (`resolve-prefix-key` still ALSO accepts a Ctrl'd
-   second key for the letters where it survives, so old muscle memory keeps
-   working — the displayed hint is just the reliable one.) palette-only → nil."
+  "Display label for `action`'s shortcut, or nil. A top-level verb → `C-x h`; a
+   group verb → `C-x <group key> <key>`, such as `C-x s n`. Every key is PLAIN,
+   never `C-x C-<key>`: `Ctrl+S`/`Ctrl+Q` are tty flow control and `Ctrl+M` is
+   Enter, while a plain letter always reaches the app. A palette-only verb → nil."
   [action]
   (or (when (= action :toggle-all-details) "C-x TAB")
       (some-> (binding-by-action action)
               :key
               chord)
-      (when-let [k (get-in @merged-keymap [:by-action action :key])]
-        (str "C-x " k))))
+      (when-let [{:keys [key group]} (get-in @merged-keymap [:by-action action])]
+        (when key (str (if group (group-chord group) "C-x") " " key)))))
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else
@@ -493,14 +502,13 @@
 
 (defn verb-available?
   "Does a prefix-command's `:show-when` tag hold for the current `db`? Untagged
-   verbs always apply; the tagged ones surface in the hydra ONLY where they can
+   verbs always apply; the tagged ones surface in the band ONLY where they can
    act — `:multi-tab` needs a second tab to close, `:has-turns` needs a turn to
    fork at, `:codex` needs a session on OpenAI Codex (the screen marks it as
    `:codex-session?`), `:has-images` needs a picture in the session (the screen
    marks it as `:has-images?`), `:image-viewer` also needs a graphical terminal (the
-   screen marks it as `:graphical-terminal?`), `:has-panel` needs a panel view, and `:never` is
-   palette-only. Resolving a chord
-   does not bypass its handler's feature gate."
+   screen marks it as `:graphical-terminal?`) and `:has-panel` needs a panel view.
+   Resolving a chord does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
     :multi-tab
@@ -521,45 +529,50 @@
     :has-panel
     (boolean (some #(= :panel (get-in % [:view :placement])) (:live-views db)))
 
-    :never
-    false
-
     true))
 
 (defn available-prefix-commands
-  "`prefix-commands` filtered to the verbs that can act in `db`, in declaration
-   order."
-  [db]
-  (filterv #(and (:key %) (verb-available? db %)) (current-prefix-commands)))
+  "The C-x commands of `group` (nil = the top level) that can act in `db`, in
+   declaration order."
+  [db group]
+  (filterv #(and (:key %) (= group (:group %)) (verb-available? db %)) (current-prefix-commands)))
+
+(defn- band-row
+  "The band row of C-x command `cmd`."
+  [{:keys [action key label]}]
+  {:key (str key) :type :action :id action :label label})
 
 (defn prefix-spec
-  "PURE: the `transient/run!` spec for the C-x hydra in `db` — one group per
-   `prefix-groups` heading that has a verb to show. The palette is a TOOL like
-   any other — it sits at the end of the Tools column instead of buying a
-   heading of its own — and it is the way to every verb this band had no room
-   or no context for.
+  "PURE: the `transient/run!` spec of a C-x band in `db`. Without `group`, the top
+   band lists the groups that have a verb to show, then the palette and the
+   top-level verbs. With `group`, the band lists the verbs of that group. Queue also
+   lists its row digits as one `1` row.
 
    Rows are display-only: the band paints them and hands the raw keystroke back
    to `input/resolve-prefix-key`, so the label and the key can never drift from
    the chord that actually fires."
-  [db]
-  (let [by-group
-        (group-by :group (available-prefix-commands db))
-
-        palette
-        {:key (str prefix-palette-key) :type :action :id :show-palette :label "command palette…"}]
-
-    {:title (str (chord prefix-key) " — vis commands")
-     :groups (into []
-                   (keep (fn [g]
-                           (let [items
-                                 (cond-> (mapv
-                                           (fn [{:keys [action key label]}]
-                                             {:key (str key) :type :action :id action :label label})
-                                           (get by-group g))
-                                   (= g "Tools")
-                                   (conj palette))]
-                             (when (seq items) {:title g :items items}))))
-                   (into prefix-groups
-                         (comp (map :group) (distinct) (remove (set prefix-groups)))
-                         (current-prefix-commands)))}))
+  ([db]
+   {:title (str (chord prefix-key) " — vis commands")
+    :groups
+    [{:title "Groups"
+      :items
+      (into []
+            (keep
+              (fn [{:keys [id key title]}]
+                (when (seq (available-prefix-commands db id))
+                  {:key (str key) :type :action :id id :label (str (str/lower-case title) "…")})))
+            prefix-groups)}
+     {:title "Commands"
+      :items
+      (into
+        [{:key (str prefix-palette-key) :type :action :id :show-palette :label "command palette…"}]
+        (map band-row)
+        (available-prefix-commands db nil))}]})
+  ([db group]
+   (let [{:keys [title]} (group-by-id group)]
+     {:title (str (group-chord group) " — " title)
+      :groups [{:title title
+                :items
+                (cond-> (mapv band-row (available-prefix-commands db group))
+                  (= group :queue)
+                  (conj {:key "1" :type :action :id :queue-send-nth :label "send row 1-9"}))}]})))

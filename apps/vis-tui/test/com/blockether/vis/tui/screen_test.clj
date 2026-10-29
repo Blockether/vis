@@ -1560,39 +1560,40 @@ therapy line 2"
                    20))))
   ;; Regression (session 6b6f8d70): each scroll frame cleaned every viewport row of a
   ;; large Activity bubble again with several regular expressions.
-  (it "cleans each row of a large bubble once while it scrolls"
-      (let [layout
-            {:visible [{:top -1000
-                        :height 2002
-                        :projected {:role :assistant
-                                    :prewrapped-lines (mapv #(str "row " %) (range 2000))}}]}
+  (it
+    "cleans each row of a large bubble once while it scrolls"
+    (let [layout
+          {:visible [{:top -1000
+                      :height 2002
+                      :projected {:role :assistant
+                                  :prewrapped-lines (mapv #(str "row " %) (range 2000))}}]}
 
-            cleans
-            (atom 0)
+          cleans
+          (atom 0)
 
-            real-clean
-            selection/clean-copied-text
+          real-clean
+          selection/clean-copied-text
 
-            ranges
-            (fn []
-              (with-redefs [selection/clean-copied-text (fn [s]
-                                                          (swap! cleans inc)
-                                                          (real-clean s))]
-                (bubble-selectable-ranges layout 4 6 20)))
+          ranges
+          (fn []
+            (with-redefs [selection/clean-copied-text (fn [s]
+                                                        (swap! cleans inc)
+                                                        (real-clean s))]
+              (bubble-selectable-ranges layout 4 6 20)))
 
-            first-frame
-            (ranges)
+          first-frame
+          (ranges)
 
-            first-cleans
-            @cleans
+          first-cleans
+          @cleans
 
-            next-frame
-            (ranges)]
+          next-frame
+          (ranges)]
 
-        (expect (= (range 4 10) (map :row first-frame)))
-        (expect (= 6 first-cleans))
-        (expect (= first-frame next-frame))
-        (expect (= first-cleans @cleans) (str (- @cleans first-cleans) " rows cleaned again"))))
+      (expect (= (range 4 10) (map :row first-frame)))
+      (expect (= 6 first-cleans))
+      (expect (= first-frame next-frame))
+      (expect (= first-cleans @cleans) (str (- @cleans first-cleans) " rows cleaned again"))))
   (it "sorts sessions by real turns, latest modified time, then turn count by default"
       (let [old-with-turns
             {"id" :old
@@ -3216,18 +3217,21 @@ therapy line 2"
                (it "drops a picture the band would sit on top of"
                    (expect (= [] (above [(region 10 4)] 12)))
                    (expect (= [] (above [(region 12 1)] 12))))
-               (it "the C-x band's top row leaves room for the transcript above it"
-                   (let [db
-                         {:layout {:cols 100 :rows 30 :messages-top 1 :input-h 3}}
-
-                         top
-                         ((deref #'screen/band-top-row) db (keymap/prefix-spec db))]
-
-                     ;; The hydra is four PANES, not every row stacked: it must not
-                     ;; measure tall enough to reach the header and swallow every
-                     ;; picture on screen.
-                     (expect (> (long top) 10))
-                     (expect (seq (above [(region 3 4)] top)))))))
+               (it "every C-x band's top row leaves room for the transcript above it"
+                   (let [db {:layout {:cols 100 :rows 30 :messages-top 1 :input-h 3}
+                             :messages [{:role :user}]
+                             :codex-session? true
+                             :has-images? true
+                             :graphical-terminal? true}]
+                     ;; A band must not measure tall enough to reach the header and
+                     ;; swallow every picture on screen.
+                     (doseq [spec (cons (keymap/prefix-spec db)
+                                        (keep #(when (keymap/prefix-group-for (:key %))
+                                                 (keymap/prefix-spec db (:id %)))
+                                              keymap/prefix-groups))]
+                       (let [top ((deref #'screen/band-top-row) db spec)]
+                         (expect (> (long top) 10) (:title spec))
+                         (expect (seq (above [(region 3 4)] top)) (:title spec))))))))
 
 ;; Regression: a modal hid every transcript picture, also a thumbnail far away from the
 ;; modal box. A modal now hides only the pictures that it covers.
@@ -4375,7 +4379,6 @@ therapy line 2"
                                                              nil)}
                      #(#'screen/open-settings-modal! nil))
                    (expect (= [[:refresh-session-settings "s1"]] @events)))))
-
 
 ;; User request: Zen mode hides the header and the footer, so the screen shows only
 ;; the transcript and the prompt. The echo row takes over the header's notification.

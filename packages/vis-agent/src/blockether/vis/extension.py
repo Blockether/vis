@@ -2802,7 +2802,7 @@ def _keybinding_rules():
 
 @dataclass(frozen=True, slots=True)
 class Keybinding:
-    """A TUI key binding: the key after C-x runs a slash command or a TUI verb.
+    """A TUI key binding: C-x, a group key and this key run a slash command or a TUI verb.
 
     Args:
         key: One printable ASCII character from `!` to `~`.
@@ -2810,8 +2810,11 @@ class Keybinding:
             the person typed it and pressed Enter. Give it with `label`.
         action: A built-in TUI verb id in kebab case, such as `new-session`. The
             verb moves to `key`.
-        label: The hydra and palette label. Required with `command`.
-        group: The hydra heading. A command binding uses `Extensions` by default.
+        label: The key menu and palette label. Required with `command`.
+        group: The C-x group of the key. A built-in group name, such as `Session`,
+            places the key there, in any case. Any other name, and a command
+            binding without a group, use `Extensions`. An action binding without
+            a group stays in the group of its verb.
 
     Give exactly one of `command` and `action`.
 

@@ -335,7 +335,7 @@
   project-sidebar-input-test
   (it "project sidebar input"
       (let [db (fixture-db)]
-        (expect (= :switch-project (keymap/prefix-action-for \w)))
+        (expect (= :switch-project (keymap/prefix-action-for :view \w)))
         (expect (= [:add] (projects/key-action db (cap/key-stroke \+))))
         (expect (= [:select project-a] (projects/key-action db (cap/key-stroke :enter))))
         (expect (= [:move 1] (projects/key-action db (cap/key-stroke :down))))
@@ -882,7 +882,7 @@
           (expect
             (nil?
               (#'screen/project-sidebar-key! (cap/key-stroke \a) select! add! refresh! menu! nil)))
-          (let [capture (cap/capture! {:keys [\w]
+          (let [capture (cap/capture! {:keys [\b \w]
                                        :paint! (fn [{:keys [screen]}]
                                                  (#'screen/resolve-prefix!
                                                   screen
@@ -1263,7 +1263,7 @@
             (KeyStroke. \x true false)
 
             capture
-            (cap/capture! {:keys [\w]
+            (cap/capture! {:keys [\b \w]
                            :paint! (fn [{:keys [screen]}]
                                      (#'screen/resolve-prefix!
                                       screen
@@ -4810,11 +4810,11 @@
                                                                                (int row)))))]
 
                    (expect (nil? (:error capture)))
-                   (expect (= [:help :menu :settings :add-project :back] (mapv :command buttons)))
+                   ;; User report: the settings and add project pairs crowded the footer.
+                   ;; The row menu and the s and a keys still reach both.
+                   (expect (= [:help :menu :back] (mapv :command buttons)))
                    (expect (every? #(= 22 (get-in % [:bounds :row])) buttons))
-                   (expect (= [[:help] [:menu entry] [:menu (assoc entry :initial-action :settings)]
-                               [:add] [:blur]]
-                              (mapv click buttons))))))
+                   (expect (= [[:help] [:menu entry] [:blur]] (mapv click buttons))))))
 
 (defdescribe
   sidebar-dialog-anchor-test

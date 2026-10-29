@@ -10,180 +10,179 @@
 ;; first-class in every input, so NO direct app-verb chord may use those letters.
 (def ^:private emacs-letters #{\a \e \b \f \p \n \k \u \w \d \t})
 
+(defn- press
+  "The result of the C-x chord `keys`, pressed one after the other."
+  [& keys]
+  (reduce (fn [r k]
+            (input/resolve-prefix-key (if (char? k) (KeyStroke. ^Character k false false) k)
+                                      (:state r)))
+          {:state {:prefix :cx}}
+          keys))
+
+(defn- ids
+  "Every row id of the C-x band of `group` (nil = the top band) in `db`."
+  [db group]
+  (set (map :id
+            (mapcat :items
+                    (:groups (if group (keymap/prefix-spec db group) (keymap/prefix-spec db)))))))
+
 (defdescribe dispatch-table-test
-             (it "the C-x prefix resolves the vis commands, case-insensitively"
-                 (expect (= :cycle-model (keymap/prefix-action-for \m)))
-                 (expect (= :cycle-model (keymap/prefix-action-for \M)))
-                 (expect (= :pick-reasoning (keymap/prefix-action-for \r)))
-                 (expect (= :toggle-codex-fast (keymap/prefix-action-for \q)))
-                 (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
-                 (expect (= :toggle-thinking-summary (keymap/prefix-action-for \x)))
-                 ;; `d` files a session under one of its project's groups (BLO-167).
-                 (expect (= :session-group (keymap/prefix-action-for \d)))
-                 ;; `p` opens the palette in `input`, so it binds no verb.
-                 (expect (nil? (keymap/prefix-action-for \p)))
-                 (expect (= :pick-model (keymap/prefix-action-for \c)))
-                 (expect (= :show-sessions (keymap/prefix-action-for \s)))
-                 (expect (= :fork-session (keymap/prefix-action-for \y)))
-                 ;; `b` = the voice conversation MODE, one letter from `v` = one recording.
-                 (expect (= :toggle-voice-conversation (keymap/prefix-action-for \b)))
-                 ;; C-x C-f search · C-x C-a attach · C-x C-v voice · C-x C-h help — the
-                 ;; second key resolves the same with or without its own Ctrl.
-                 (expect (= :search-open (keymap/prefix-action-for \f)))
-                 (expect (= :pick-file (keymap/prefix-action-for \a)))
-                 (expect (= :toggle-voice-recording (keymap/prefix-action-for \v)))
-                 (expect (= :toggle-help (keymap/prefix-action-for \h)))
-                 ;; C-x j → jump to bottom (the discoverable keymap for the `↓ latest` chip).
-                 (expect (= :recenter (keymap/prefix-action-for \j)))
-                 ;; C-x t → fork the session AT a chosen turn; C-x z → vim-style jump labels.
-                 (expect (= :fork-at-turn (keymap/prefix-action-for \t)))
-                 (expect (= :toggle-detail-labels (keymap/prefix-action-for \z)))
-                 (expect (= :focus-attachments (keymap/prefix-action-for \i)))
-                 ;; C-x I (Shift+i) opens the image viewer over every session picture.
-                 (expect (= :view-images (keymap/prefix-action-for \I)))
-                 (expect (= \x keymap/prefix-key)))
+             (it "a group key opens its group, and the next key runs one of its verbs"
+                 (let [r (press \s)]
+                   (expect (= :continue (:action r)))
+                   (expect (= {:prefix :cx :prefix-group :session} (:state r))))
+                 (expect (= :new-session (:action (press \s \n))))
+                 (expect (= :cycle-model (:action (press \m \m))))
+                 (expect (= :pick-reasoning (:action (press \m \r))))
+                 (expect (= :search-open (:action (press \b \f))))
+                 (expect (= :pick-file (:action (press \a \a))))
+                 (expect (= :toggle-voice-conversation (:action (press \v \c))))
+                 (expect (= :queue-edit (:action (press \q \e))))
+                 (expect (= {} (:state (press \s \n))) "the verb ends the prefix"))
+             (it "the same letter runs a different verb in each group"
+                 (expect (= [:archive-session :pick-file :toggle-agent-dock]
+                            (mapv #(:action (press % \a)) [\s \a \b]))))
+             (it "the top level keeps help, the palette and the bulk fold"
+                 (expect (= :toggle-help (:action (press \h))))
+                 (expect (= :show-palette (:action (press \p))))
+                 (expect (= :show-palette (:action (press (KeyStroke. \p true false)))))
+                 (expect (= :toggle-all-details (:action (press (KeyStroke. KeyType/Tab))))))
+             (it "a group key is case-insensitive; a verb key is exact first"
+                 (expect (= :new-session (:action (press \S \n))))
+                 (expect (= :toggle-zen-mode (:action (press \b \Z))))
+                 (expect (= :toggle-detail-labels (:action (press \b \z))))
+                 (expect (= :search-open (:action (press \b \F)))))
+             (it "C-g, Esc and an unbound key abort the prefix at either level"
+                 (doseq [r [(press (KeyStroke. \g true false)) (press \s (KeyStroke. \g true false))
+                            (press \s (KeyStroke. KeyType/Escape)) (press \y) (press \s \y)]]
+                   (expect (= {:action :continue :state {}} r))))
              (it "no emacs editing key is a direct app verb (action-for returns nil)"
-                 ;; The C-x prefix's second-keys (m/r/v/s) live behind C-x — a different
-                 ;; keyspace — so they don't shadow the editing chords.
                  (doseq [c emacs-letters]
                    (expect (nil? (keymap/action-for c))))
                  (expect (nil? (keymap/action-for nil)))))
 
 (defdescribe structural-chords-registry-test
-             ;; keymap.clj is the ONE registry for vis-side chords (editing keys are the
-             ;; sole exception — they live in lanterna's TextEditKeymap). Lock the
-             ;; structural keys so nothing drifts into a clash.
-             (it "every C-x prefix key is distinct, including the palette's second key"
-                 (let [keys (mapv :key keymap/prefix-commands)]
-                   (expect (= (count keys) (count (distinct keys))))
-                   (expect (not (contains? (set keys) keymap/prefix-palette-key))))))
+             (it "every key is distinct inside its group, and no group key is a top-level verb"
+                 (let [pairs
+                       (mapv (juxt :group :key) keymap/prefix-commands)
 
-(defdescribe
-  prefix-hydra-test
-  ;; C-x is a TRANSIENT band (an Emacs hydra / doom leader), not a dead prefix
-  ;; waiting in the echo area: the spec is what the band paints, and it may never
-  ;; offer a key the chord itself does not resolve.
-  (let [spec (fn [db]
-               (keymap/prefix-spec db))]
-    (it "is a legal transient the band can paint" (expect (nil? (tr/check (spec {})))))
-    (it "every row is a real C-x chord, and every reachable verb has a row"
-        (let [items (mapcat :items (:groups (spec {})))]
-          (expect (seq items))
-          (doseq [{:keys [key id]} items]
-            (expect
-              (= id
-                 (if (= id :show-palette) :show-palette (keymap/prefix-action-for (first key))))))
-          (expect (= (set (map :action (keymap/available-prefix-commands {})))
-                     (disj (set (map :id items)) :show-palette)))))
-    ;; Regression, issue: the palette used to buy a whole "Everything else"
-    ;; heading of its own — it is a TOOL, and it is the last one in that column.
-    (it "the palette is the last tool, not a heading of its own"
-        (let [tools (first (filter #(= "Tools" (:title %)) (:groups (spec {}))))]
-          (expect (some? tools))
-          (expect (= :show-palette (:id (last (:items tools)))))
-          (expect (= (str keymap/prefix-palette-key) (:key (last (:items tools)))))
-          (expect (= ["Tools"]
-                     (mapv :title
-                           (filter (fn [g]
-                                     (some #(= :show-palette (:id %)) (:items g)))
-                                   (:groups (spec {}))))))))
-    (it "full-session and at-turn forks are distinct, shown only with turns"
-        (let [items (fn [db]
-                      (->> (spec db)
-                           :groups
-                           (filter #(= "Session" (:title %)))
-                           first
-                           :items))
-              by-id (fn [db id]
-                      (first (filter #(= id (:id %)) (items db))))
-              with-turns {:messages [{:role :user}]}]
+                       top
+                       (set (keep #(when-not (:group %) (:key %)) keymap/prefix-commands))
 
-          (expect (nil? (by-id {} :fork-session)))
-          (expect (nil? (by-id {} :fork-at-turn)))
-          (expect (= {:key "y" :type :action :id :fork-session :label "fork session"}
-                     (by-id with-turns :fork-session)))
-          (expect (= {:key "t" :type :action :id :fork-at-turn :label "fork at turn"}
-                     (by-id with-turns :fork-at-turn)))))
-    (it "context-only verbs appear only where they can act"
-        (let [ids (fn [db]
-                    (set (map :id (mapcat :items (:groups (spec db))))))]
-          (expect (not (contains? (ids {}) :close-tab)))
-          (expect (not (contains? (ids {:tabs [{:id :a} {:id :b}]}) :close-tab)))
-          ;; Palette-only verbs are never painted. The voice conversation MODE is
-          ;; one of them ON PURPOSE: a fifth verb in Tools re-packs the hydra and
-          ;; costs six rows of transcript (see `band-top-row` in screen-test).
-          (let [painted (ids {:tabs [{:id :a} {:id :b}] :messages [{:role :user}]})]
-            (expect (not (contains? painted :toggle-voice-conversation))))))
-    (it "every verb declares a heading the hydra knows"
-        (expect (every? (set keymap/prefix-groups) (map :group keymap/prefix-commands))))))
+                       group-keys
+                       (map :key keymap/prefix-groups)]
 
-;; User report: C-x had no key to delete a session, and the hydra's Session pane did
-;; not show one. Every lower-case letter is taken, so Shift+d carries it, like the
-;; sidebar's D. The user rejected a glyph key, and a DEL key column made the hydra
-;; too wide for four panes at 100 columns.
+                   (expect (= (count pairs) (count (distinct pairs))))
+                   (expect (= (count group-keys) (count (distinct group-keys))))
+                   (expect (not-any? top group-keys))
+                   (expect (not-any? #{keymap/prefix-palette-key} (concat top group-keys)))))
+             (it "every verb sits in a group that the keymap knows"
+                 (expect (every? (set (map :id keymap/prefix-groups))
+                                 (keep :group keymap/prefix-commands)))))
+
+(defdescribe prefix-hydra-test
+             ;; C-x is a TRANSIENT band (an Emacs hydra / doom leader), not a dead prefix
+             ;; waiting in the echo area: the spec is what the band paints, and it may never
+             ;; offer a key the chord itself does not resolve.
+             (let [full {:messages [{:role :user}]
+                         :codex-session? true
+                         :has-images? true
+                         :graphical-terminal? true
+                         :tabs [{:id :a} {:id :b}]}]
+               (it "every band is a legal transient the band can paint"
+                   (expect (nil? (tr/check (keymap/prefix-spec {}))))
+                   (doseq [{:keys [id key]} keymap/prefix-groups
+                           :when (keymap/prefix-group-for key)]
+
+                     (expect (nil? (tr/check (keymap/prefix-spec full id))) (str id))))
+               (it "every top row opens its group or runs its verb"
+                   (doseq [{:keys [key id]} (mapcat :items (:groups (keymap/prefix-spec full)))]
+                     (let [r (press (first key))]
+                       (expect (= id (or (get-in r [:state :prefix-group]) (:action r))) key))))
+               (it "every group row runs its verb, and every reachable verb has a row"
+                   (doseq [{group :id gkey :key} keymap/prefix-groups
+                           :when (not= :extensions group)]
+
+                     (let [items (mapcat :items (:groups (keymap/prefix-spec full group)))]
+                       (doseq [{:keys [key id]} items]
+                         (expect (= id (:action (press gkey (first key)))) (str gkey key)))
+                       (expect (= (set (map :action (keymap/available-prefix-commands full group)))
+                                  (disj (set (map :id items)) :queue-send-nth))))))
+               ;; Regression, issue: the palette used to buy a whole "Everything else"
+               ;; heading of its own. It is the first top-level command, never a group.
+               (it "the palette is a top-level command, not a group"
+                   (let [commands (first (filter #(= "Commands" (:title %))
+                                                 (:groups (keymap/prefix-spec {}))))]
+                     (expect (= :show-palette (:id (first (:items commands)))))
+                     (expect (= (str keymap/prefix-palette-key) (:key (first (:items commands)))))))
+               (it "the top band lists Extensions only when an extension binds a key"
+                   (expect (not (contains? (ids {} nil) :extensions)))
+                   (expect (nil? (keymap/prefix-group-for \e))))
+               (it "full-session and at-turn forks are distinct, shown only with turns"
+                   (expect (not (contains? (ids {} :session) :fork-session)))
+                   (expect (not (contains? (ids {} :session) :fork-at-turn)))
+                   (expect (contains? (ids full :session) :fork-session))
+                   (expect (contains? (ids full :session) :fork-at-turn))
+                   (expect (= :fork-session (:action (press \s \f))))
+                   (expect (= :fork-at-turn (:action (press \s \t)))))))
+
+;; User report: C-x had no key to delete a session, and the band's Session pane did
+;; not show one. Backspace and Delete are aliases, because the Mac delete key sends
+;; Backspace.
 (defdescribe delete-session-chord-test
-             (it "C-x D, C-x Backspace and C-x Delete delete the current session; C-x d does not"
-                 (expect (= \D keymap/prefix-delete-key))
-                 (expect (= :session-group (keymap/prefix-action-for \d)))
-                 (doseq [key [(KeyStroke. \D false false true) (KeyStroke. KeyType/Backspace)
-                              (KeyStroke. KeyType/Delete)]]
-                   (expect (= :delete-session
-                              (:action (input/resolve-prefix-key key {:prefix :cx}))))))
-             (it "the hydra shows it under Session, also without turns"
-                 (let [session-ids (fn [db]
-                                     (->> (keymap/prefix-spec db)
-                                          :groups
-                                          (filter #(= "Session" (:title %)))
-                                          first
-                                          :items
-                                          (mapv :id)))]
-                   (expect (some #{:delete-session} (session-ids {})))
-                   (expect (some #{:delete-session} (session-ids {:messages [{:role :user}]}))))))
+             (it "C-x s d, C-x s Backspace and C-x s Delete delete the current session"
+                 (doseq [key [\d (KeyStroke. KeyType/Backspace) (KeyStroke. KeyType/Delete)]]
+                   (expect (= :delete-session (:action (press \s key)))))
+                 (expect (= :session-group (:action (press \s \m)))))
+             (it "Backspace deletes nothing outside the Session group"
+                 (expect (= :continue (:action (press \m (KeyStroke. KeyType/Backspace)))))
+                 (expect (= :continue (:action (press (KeyStroke. KeyType/Backspace))))))
+             (it "the band shows it under Session, also without turns"
+                 (expect (contains? (ids {} :session) :delete-session))
+                 (expect (contains? (ids {:messages [{:role :user}]} :session) :delete-session))))
 
 (defdescribe archive-session-chord-test
-             (it "C-x A archives the current session; C-x a still attaches a file"
-                 (expect (= :archive-session
-                            (:action (input/resolve-prefix-key (KeyStroke. \A false false true)
-                                                               {:prefix :cx}))))
-                 (expect (= :pick-file (keymap/prefix-action-for \a)))))
+             (it "C-x s a archives the current session; C-x a a still attaches a file"
+                 (expect (= :archive-session (:action (press \s \a))))
+                 (expect (= :pick-file (:action (press \a \a))))))
 
 (defdescribe queue-row-chord-test
-             ;; User report: the queue's Send buttons had no keys. C-x 1-9 presses the
-             ;; button of that queue row; C-x k stays the header's Send all now.
+             ;; User report: the queue's Send buttons had no keys. C-x q 1-9 presses the
+             ;; button of that queue row; C-x q s stays the header's Send all now.
              (it "binds the digits 1-9 to queue rows and leaves 0 and letters alone"
                  (expect (= [1 5 9] (mapv keymap/queue-row-index [\1 \5 \9])))
                  (expect (every? nil? (map keymap/queue-row-index [\0 \k \a nil])))
-                 ;; No letter verb uses a digit, so the two keyspaces cannot collide.
-                 (expect (not-any? #(Character/isDigit ^char (:key %)) keymap/prefix-commands))))
+                 (expect (= {:action :queue-send-nth :queue-index 3 :state {}} (press \q \3)))
+                 (expect (= "C-x q 3" (keymap/queue-row-chord 3)))
+                 (expect (nil? (keymap/queue-row-chord 10)))
+                 (expect (= :queue-send-all-now (:action (press \q \s)))))
+             (it "a digit sends no queue row outside the Queue group"
+                 (expect (= :continue (:action (press \3))))
+                 (expect (= :continue (:action (press \s \3))))))
 
 ;; Regression for #333: the hydra offered Fast mode in sessions that do not use Codex.
 (defdescribe codex-fast-hydra-test
              (it "shows Fast mode only in a session on OpenAI Codex"
-                 (let [rows (fn [db]
-                              (set (map :id (mapcat :items (:groups (keymap/prefix-spec db))))))]
-                   (expect (not (contains? (rows {}) :toggle-codex-fast)))
-                   (expect (not (contains? (rows {:codex-session? false}) :toggle-codex-fast)))
-                   (expect (contains? (rows {:codex-session? true}) :toggle-codex-fast))
-                   ;; The chord still resolves; its handler gives the reason.
-                   (expect (= :toggle-codex-fast (keymap/prefix-action-for \q))))))
+                 (expect (not (contains? (ids {} :model) :toggle-codex-fast)))
+                 (expect (not (contains? (ids {:codex-session? false} :model) :toggle-codex-fast)))
+                 (expect (contains? (ids {:codex-session? true} :model) :toggle-codex-fast))
+                 ;; The chord still resolves; its handler gives the reason.
+                 (expect (= :toggle-codex-fast (:action (press \m \f))))))
 
-(defdescribe
-  view-images-hydra-test
-  (let [rows (fn [db]
-               (set (map :id (mapcat :items (:groups (keymap/prefix-spec db))))))]
-    (it "shows View images only in a graphical terminal, in a session with a picture"
-        (expect (not (contains? (rows {}) :view-images)))
-        (expect (not (contains? (rows {:has-images? true}) :view-images))
-                "A plain terminal cannot show the image viewer")
-        (expect (not (contains? (rows {:graphical-terminal? true}) :view-images)))
-        (expect (contains? (rows {:has-images? true :graphical-terminal? true}) :view-images))
-        (expect (= :view-images (keymap/prefix-action-for \I))))
-    (it "shows Open picture in every terminal, in a session with a picture"
-        (expect (not (contains? (rows {}) :open-newest-image)))
-        (expect (contains? (rows {:has-images? true}) :open-newest-image))
-        (expect (contains? (rows {:has-images? true :graphical-terminal? true}) :open-newest-image))
-        (expect (= :open-newest-image (keymap/prefix-action-for \O)))
-        (expect (= :providers (keymap/prefix-action-for \o)) "C-x O stays apart from C-x o"))))
+(defdescribe view-images-hydra-test
+             (it "shows View images only in a graphical terminal, in a session with a picture"
+                 (expect (not (contains? (ids {} :attachments) :view-images)))
+                 (expect (not (contains? (ids {:has-images? true} :attachments) :view-images))
+                         "A plain terminal cannot show the image viewer")
+                 (expect (not (contains? (ids {:graphical-terminal? true} :attachments)
+                                         :view-images)))
+                 (expect (contains? (ids {:has-images? true :graphical-terminal? true} :attachments)
+                                    :view-images))
+                 (expect (= :view-images (:action (press \a \v)))))
+             (it "shows Open picture in every terminal, in a session with a picture"
+                 (expect (not (contains? (ids {} :attachments) :open-newest-image)))
+                 (expect (contains? (ids {:has-images? true} :attachments) :open-newest-image))
+                 (expect (= :open-newest-image (:action (press \a \o))))))
 
 (defn- with-extension-bindings
   "Run `f` with extension `bindings` in the C-x keymap, then restore the built-in
@@ -193,72 +192,81 @@
 
 (defdescribe
   extension-keybindings-test
-  (it "a command binding takes a free key under the Extensions heading"
-      (with-extension-bindings [{:key "E" :command "/review" :label "Review" :extension "acme"}]
-                               (fn []
-                                 (let [cmd (keymap/prefix-command-for \E)]
-                                   (expect (= "/review" (:command cmd)))
-                                   (expect (= "Extensions" (:group cmd)))
-                                   (expect (= "acme" (:extension cmd))))
-                                 (expect (= :queue-edit (:action (keymap/prefix-command-for \e)))
-                                         "C-x E stays apart from C-x e")
-                                 (expect (some #(and (= "Extensions" (:title %))
-                                                     (some (fn [i]
-                                                             (= {:key "E" :label "Review"}
-                                                                (select-keys i [:key :label])))
-                                                           (:items %)))
-                                               (:groups (keymap/prefix-spec {})))))))
-  (it "C-x and the bound key resolve to the command, as typed"
+  (it "a command binding takes a key in the Extensions group by default"
+      (with-extension-bindings
+        [{:key "r" :command "/review" :label "Review" :extension "acme"}]
+        (fn []
+          (let [cmd (keymap/prefix-command-for :extensions \r)]
+            (expect (= "/review" (:command cmd)))
+            (expect (= "acme" (:extension cmd)))
+            (expect (= "C-x e r" (keymap/label-for (:action cmd)))))
+          (expect (= :pick-reasoning (:action (press \m \r))) "C-x m r stays the reasoning picker")
+          (expect (contains? (ids {} nil) :extensions))
+          (expect (= [{:key "r" :label "Review"}]
+                     (mapv #(select-keys % [:key :label])
+                           (mapcat :items (:groups (keymap/prefix-spec {} :extensions)))))))))
+  (it "a group that names a built-in group places the key there; another name, in Extensions"
+      (with-extension-bindings
+        [{:key "x" :command "/x" :label "X" :group "session"}
+         {:key "y" :command "/y" :label "Y" :group "Acme"}]
+        (fn []
+          (expect (= "/x" (:command (keymap/prefix-command-for :session \x))))
+          (expect (= "/y" (:command (keymap/prefix-command-for :extensions \y)))))))
+  (it "C-x e and the bound key resolve to the command, as typed"
       (with-extension-bindings [{:key "E" :command "/review now" :label "Review" :extension "acme"}]
                                (fn []
-                                 (let [r (input/resolve-prefix-key (KeyStroke. \E false false true)
-                                                                   {:prefix :cx})]
+                                 (let [r (press \e \E)]
                                    (expect (= :run-keybinding (:action r)))
                                    (expect (= "/review now" (get-in r [:keybinding :command])))))))
-  (it "an action binding moves a built-in verb; the old holder keeps only the palette"
-      (with-extension-bindings
-        [{:key "s" :action "new-session" :extension "acme"}]
-        (fn []
-          (expect (= :new-session (keymap/prefix-action-for \s)))
-          (expect (= "C-x s" (keymap/label-for :new-session)))
-          (expect (nil? (keymap/label-for :show-sessions)))
-          (expect (nil? (keymap/prefix-action-for \n)) "C-x n is free after the move")
-          (expect (not (some #(= :show-sessions %)
-                             (map :id (mapcat :items (:groups (keymap/prefix-spec {})))))))
-          (expect (empty? (keymap/refused-keybindings))))))
-  (it "a moved verb frees its key for a command"
-      (with-extension-bindings [{:key "e" :action "new-session"}
-                                {:key "n" :command "/notes" :label "Notes"}]
+  (it "an action binding moves a verb inside its group; the old holder keeps only the palette"
+      (with-extension-bindings [{:key "s" :action "new-session" :extension "acme"}]
                                (fn []
-                                 (expect (= :new-session (keymap/prefix-action-for \e)))
-                                 (expect (= "/notes" (:command (keymap/prefix-command-for \n)))))))
-  (it "names the letters that are still free after C-x"
-      (let [free (keymap/free-prefix-letters)]
+                                 (expect (= :new-session (:action (press \s \s))))
+                                 (expect (= "C-x s s" (keymap/label-for :new-session)))
+                                 (expect (nil? (keymap/label-for :show-sessions)))
+                                 (expect (= :continue (:action (press \s \n)))
+                                         "C-x s n is free after the move")
+                                 (expect (not (contains? (ids {} :session) :show-sessions)))
+                                 (expect (empty? (keymap/refused-keybindings))))))
+  (it "an action binding with a group moves the verb to that group"
+      (with-extension-bindings [{:key "n" :action "new-session" :group "Model"}]
+                               (fn []
+                                 (expect (= "C-x m n" (keymap/label-for :new-session)))
+                                 (expect (= :continue (:action (press \s \n)))))))
+  (it "a moved verb frees its key for a command"
+      (with-extension-bindings [{:key "x" :action "new-session"}
+                                {:key "n" :command "/notes" :label "Notes" :group "Session"}]
+                               (fn []
+                                 (expect (= :new-session (:action (press \s \x))))
+                                 (expect (= "/notes"
+                                            (get-in (press \s \n) [:keybinding :command]))))))
+  (it "names the letters that are still free in a group"
+      (let [free (keymap/free-prefix-letters :session)]
         (expect (str/includes? free "E"))
-        (expect (not (str/includes? free "e")) "e focuses the queue")
-        (expect (not (str/includes? free "T")) "T shows the agent table")
-        (expect (str/includes? free "L"))
-        (expect (not (str/includes? free "g")) "g is reserved")
-        (expect (not (str/includes? free "i")) "i inspects attachments"))
+        (expect (not (str/includes? free "n")) "n starts a session")
+        (expect (not (str/includes? free "g")) "g is reserved"))
+      (expect (str/includes? (keymap/free-prefix-letters) "n") "Extensions starts empty")
       (with-extension-bindings [{:key "L" :command "/apps" :label "Live apps"}]
                                (fn []
                                  (expect (not (str/includes? (keymap/free-prefix-letters) "L"))))))
   (it "refuses reserved, taken, malformed and unknown bindings, with a reason"
       (let [{:keys [refused commands]}
             (keymap/merge-keybindings
-              [{:key "p" :command "/x" :label "X"} {:key "5" :command "/x" :label "X"}
-               {:key "m" :command "/x" :label "X"} {:key "ab" :command "/x" :label "X"}
-               {:key "e" :command "x" :label "X"} {:key "e" :action "no-such-verb"}
-               {:key "e" :action "new-session"} {:key "E" :action "new-session"}])]
+              [{:key "g" :command "/x" :label "X"} {:key "5" :command "/x" :label "X"}
+               {:key "m" :command "/x" :label "X" :group "Model"}
+               {:key "ab" :command "/x" :label "X"} {:key "e" :command "x" :label "X"}
+               {:key "e" :action "no-such-verb"} {:key "e" :action "new-session"}
+               {:key "E" :action "new-session"}])]
         ;; Action bindings merge first, then command bindings, each in order.
         (expect (= ["the TUI has no such verb" "the verb moved already" "the key is reserved"
                     "the key is reserved" "the key is taken"
                     "the key is not one printable character" "the command does not start with /"]
                    (mapv :reason refused)))
-        (expect (= :cycle-model (:action (first (filter #(= \m (:key %)) commands)))))))
+        (expect (= :cycle-model
+                   (:action (first (filter #(= [:model \m] [(:group %) (:key %)]) commands)))))))
   (it "an empty binding list restores the built-in keymap"
       (keymap/set-keybindings! [{:key "E" :command "/review" :label "Review"}])
       (keymap/set-keybindings! [])
-      (expect (nil? (:command (keymap/prefix-command-for \E))))
-      (expect (= "C-x n" (keymap/label-for :new-session)))
+      (expect (nil? (keymap/prefix-command-for :extensions \E)))
+      (expect (= "C-x s n" (keymap/label-for :new-session)))
       (expect (empty? (keymap/refused-keybindings)))))

@@ -39,9 +39,9 @@ Each app is one pure model in `src/live_apps/`. The same model runs in an extens
 
 In the TUI, the extension adds keys after `C-x` and changes one built-in key:
 
-- Press `C-x L` to open the gallery.
-- Press `C-x i` to open the incident dashboard.
-- Press `C-x e` to focus the attachments. The extension moves this built-in key from `C-x i` to `C-x e`, so that `C-x i` is free for the incident dashboard.
+- Press `C-x e L` to open the gallery.
+- Press `C-x a i` to open the incident dashboard.
+- Press `C-x a e` to focus the attachments. The extension moves this built-in key from `C-x a i` to `C-x a e`, so that `C-x a i` is free for the incident dashboard.
 
 After a gateway restart, the apps stay in the session but they have no owner. Type `/apps` with their names again. The extension adopts each app by its key, with the same id and its saved state.
 

@@ -59,83 +59,94 @@ not something Vis can change:
 
 ## Run a command
 
-Most commands use **Ctrl+X** and a letter: press **Ctrl+X**, then the letter. After
-**Ctrl+X**, Vis shows the most common choices. The other commands on this page work
-the same way. A command that needs something first, such as a turn to fork, appears
-once it can act.
+Most commands use **Ctrl+X**, a group key and a command key. For example, press **Ctrl+X**, then
+**s** for the session group, then **n** to start a new session. After **Ctrl+X**, Vis shows the
+groups. After the group key, Vis shows the commands of that group. A command that needs something
+first, such as a turn to fork, appears once it can act.
 
-| Keys | What they do |
+| Keys | Group or command |
 |---|---|
+| Ctrl+X s | Sessions: new, switch, delete, archive, fork, group and metrics |
+| Ctrl+X m | Models and answers: model, thinking level, answer length and providers |
+| Ctrl+X b | View: search, jump, folds, zen mode, side panel, **Projects** and agent details |
+| Ctrl+X a | Attachments: attach a file, review attachments and pictures |
+| Ctrl+X v | Voice: recording and voice conversation |
+| Ctrl+X q | Queue: send or edit queued messages |
+| Ctrl+X e | Keys from extensions. This group appears only when an extension adds a key |
 | Ctrl+X p | Open the command palette with every command, then type to filter |
 | Ctrl+X h | Show or hide the keyboard shortcuts |
 
+Press **Esc** or **Ctrl+G** to close the group list without a command.
+
 ### Keys from extensions
 
-An extension can add its own **Ctrl+X** keys, or move a command of this page to another key. The
-keys that extensions add appear under **Extensions** after **Ctrl+X**, and in the help of **Ctrl+X h**.
-Such a key runs its command as if you typed it and pressed Enter. Your draft stays as it is.
+An extension can add its own keys, or move a command of this page to another key. The keys that
+extensions add appear under **Ctrl+X e**, and in the help of **Ctrl+X h**. An extension can also put
+a key in a group of the table above. Such a key runs its command as if you typed it and pressed
+Enter. Your draft stays as it is.
 
 - A key that an extension moves replaces the key on this page. The old key then does nothing, and
   the command palette still has the command.
-- An extension cannot use **Ctrl+X p**, **Ctrl+X g** or **Ctrl+X** with a digit.
+- An extension cannot use **g** or a digit as a key in a group.
 - When two keys conflict, Vis keeps the first one and shows one notice.
 
 To move a command, the extension names its verb id. These are the verb ids and their default keys:
 
 | Verb id | Default key | What it does |
 |---|---|---|
-| `new-session` | Ctrl+X n | Start a new session |
-| `show-sessions` | Ctrl+X s | Switch to another session |
-| `delete-session` | Ctrl+X D | Delete this session |
-| `archive-session` | Ctrl+X A | Archive or restore this session |
-| `session-metrics` | Ctrl+X u | Show session metrics |
-| `queue-send-all-now` | Ctrl+X k | Send the queued messages now |
-| `queue-edit` | Ctrl+X e | Edit, send, remove or merge queued messages |
-| `toggle-agent-dock` | Ctrl+X T (Shift+T) | Show or hide the agent team details |
-| `fork-session` | Ctrl+X y | Fork this session |
-| `fork-at-turn` | Ctrl+X t | Fork from an earlier turn |
-| `switch-project` | Ctrl+X w | Open **Projects** |
-| `session-group` | Ctrl+X d | Move this session to a group |
-| `cycle-model` | Ctrl+X m | Use the next model |
-| `pick-model` | Ctrl+X c | Choose a model |
-| `pick-reasoning` | Ctrl+X r | Choose the reasoning level |
-| `toggle-codex-fast` | Ctrl+X q | Turn fast mode on or off |
-| `cycle-verbosity` | Ctrl+X l | Change the answer length |
-| `toggle-thinking-summary` | Ctrl+X x | Show or hide the thinking summary |
-| `search-open` | Ctrl+X f | Search the conversation |
-| `recenter` | Ctrl+X j | Jump to the bottom |
-| `live-panel` | Ctrl+X V | Show or hide the side panel |
-| `toggle-detail-labels` | Ctrl+X z | Show or hide the fold labels |
+| `new-session` | Ctrl+X s n | Start a new session |
+| `show-sessions` | Ctrl+X s s | Switch to another session |
+| `delete-session` | Ctrl+X s d | Delete this session |
+| `archive-session` | Ctrl+X s a | Archive or restore this session |
+| `session-metrics` | Ctrl+X s u | Show session metrics |
+| `queue-send-all-now` | Ctrl+X q s | Send the queued messages now |
+| `queue-edit` | Ctrl+X q e | Edit, send, remove or merge queued messages |
+| `toggle-agent-dock` | Ctrl+X b a | Show or hide the agent team details |
+| `fork-session` | Ctrl+X s f | Fork this session |
+| `fork-at-turn` | Ctrl+X s t | Fork from an earlier turn |
+| `switch-project` | Ctrl+X b w | Open **Projects** |
+| `session-group` | Ctrl+X s m | Move this session to a group |
+| `cycle-model` | Ctrl+X m m | Use the next model |
+| `pick-model` | Ctrl+X m c | Choose a model |
+| `pick-reasoning` | Ctrl+X m r | Choose the reasoning level |
+| `toggle-codex-fast` | Ctrl+X m f | Turn fast mode on or off |
+| `cycle-verbosity` | Ctrl+X m l | Change the answer length |
+| `toggle-thinking-summary` | Ctrl+X m t | Show or hide the thinking summary |
+| `search-open` | Ctrl+X b f | Search the conversation |
+| `recenter` | Ctrl+X b j | Jump to the bottom |
+| `live-panel` | Ctrl+X b p | Show or hide the side panel |
+| `toggle-detail-labels` | Ctrl+X b z | Show or hide the fold labels |
+| `toggle-zen-mode` | Ctrl+X b Z (Shift+Z) | Show or hide the header and the footer |
 | `toggle-help` | Ctrl+X h | Show or hide the keyboard shortcuts |
-| `pick-file` | Ctrl+X a | Attach a file |
-| `focus-attachments` | Ctrl+X i | Open the attachments and apps |
-| `view-images` | Ctrl+X I (Shift+I) | View the pictures |
-| `open-newest-image` | Ctrl+X O (Shift+O) | Open the newest picture |
-| `toggle-voice-recording` | Ctrl+X v | Start or stop voice input |
-| `toggle-voice-conversation` | Ctrl+X b | Start or stop a voice conversation |
-| `providers` | Ctrl+X o | Open the providers |
+| `pick-file` | Ctrl+X a a | Attach a file |
+| `focus-attachments` | Ctrl+X a i | Open the attachments and apps |
+| `view-images` | Ctrl+X a v | View the pictures |
+| `open-newest-image` | Ctrl+X a o | Open the newest picture |
+| `toggle-voice-recording` | Ctrl+X v v | Start or stop voice input |
+| `toggle-voice-conversation` | Ctrl+X v c | Start or stop a voice conversation |
+| `providers` | Ctrl+X m p | Open the providers |
 
 ### Sessions
 
 | Keys | What they do |
 |---|---|
-| Ctrl+X n | Start a new session |
-| Ctrl+X s | Switch to another session |
-| Ctrl+X D (Shift+D), Ctrl+X Delete or Ctrl+X Backspace | Delete this session permanently. Vis asks you to confirm first |
-| Ctrl+X A (Shift+A) | Archive this session. If the session is archived, restore it. You cannot archive a session while it works |
-| Ctrl+X w | Open **Projects**, the list of saved sessions |
-| Ctrl+X y | Fork this session: open a new session with a copy of the whole conversation |
-| Ctrl+X t | Fork from an earlier turn: choose the last turn the new session keeps |
-| Ctrl+X d | Move this session to a group |
-| Ctrl+X u | Show session metrics: context health, totals and cache |
-| Ctrl+X k | Send the queued messages now: the running turn reads them at its next step |
-| Ctrl+X 1 to 9 | Send that queued message now, or press again to keep it for the turn end |
-| Ctrl+X e | Select the queued messages to edit, send, remove or merge them. See [Queued messages](#queued-messages) |
-| Ctrl+X T (Shift+T) | Show or hide the agent team table under the one-line **Agents** summary. A click on the summary does the same |
+| Ctrl+X s n | Start a new session |
+| Ctrl+X s s | Switch to another session |
+| Ctrl+X s s d, Ctrl+X s s Delete or Ctrl+X s s Backspace | Delete this session permanently. Vis asks you to confirm first |
+| Ctrl+X s a | Archive this session. If the session is archived, restore it. You cannot archive a session while it works |
+| Ctrl+X b w | Open **Projects**, the list of saved sessions |
+| Ctrl+X s f | Fork this session: open a new session with a copy of the whole conversation |
+| Ctrl+X s t | Fork from an earlier turn: choose the last turn the new session keeps |
+| Ctrl+X s m | Move this session to a group |
+| Ctrl+X s u | Show session metrics: context health, totals and cache |
+| Ctrl+X q s | Send the queued messages now: the running turn reads them at its next step |
+| Ctrl+X m f 1 to 9 | Send that queued message now, or press again to keep it for the turn end |
+| Ctrl+X q e | Select the queued messages to edit, send, remove or merge them. See [Queued messages](#queued-messages) |
+| Ctrl+X b a | Show or hide the agent team table under the one-line **Agents** summary. A click on the summary does the same |
 
 ### Queued messages
 
-After **Ctrl+X e**, these keys act on the queued messages until you press **Esc**. The line under
+After **Ctrl+X q e**, these keys act on the queued messages until you press **Esc**. The line under
 the queue shows them. Any other key returns to the prompt and does its usual work.
 
 | Keys | What they do |
@@ -153,21 +164,21 @@ the queue shows them. Any other key returns to the prompt and does its usual wor
 
 | Keys | What they do |
 |---|---|
-| Ctrl+X o | Open **Providers** to add a provider and sign in |
-| Ctrl+X c | Choose a model from a searchable list |
-| Ctrl+X m | Switch to the next model |
-| Ctrl+X r | Change the thinking level |
-| Ctrl+X l | Change the answer length |
-| Ctrl+X q | Turn fast mode on or off for OpenAI Codex models |
-| Ctrl+X x | Show or hide the thinking summary for Claude models |
+| Ctrl+X m p | Open **Providers** to add a provider and sign in |
+| Ctrl+X m c | Choose a model from a searchable list |
+| Ctrl+X m m | Switch to the next model |
+| Ctrl+X m r | Change the thinking level |
+| Ctrl+X m l | Change the answer length |
+| Ctrl+X m f | Turn fast mode on or off for OpenAI Codex models |
+| Ctrl+X m t | Show or hide the thinking summary for Claude models |
 
-To turn the thinking summary on or off for Claude models, press Ctrl+X x or click the thinking
+To turn the thinking summary on or off for Claude models, press Ctrl+X m t or click the thinking
 label in the footer. You can also choose **Thinking Summary** in the command palette. With the
 summary off, Claude still thinks, but Vis shows no thinking text. These controls appear only when
 the current model supports them.
 
-With **Simplified thinking modes** on, Ctrl+X r switches to the next of quick, balanced and deep.
-With the setting off, Ctrl+X r opens a list of every thinking level that the current model offers.
+With **Simplified thinking modes** on, Ctrl+X m r switches to the next of quick, balanced and deep.
+With the setting off, Ctrl+X m r opens a list of every thinking level that the current model offers.
 The setting is in the top section of **Settings**. You can also click the reasoning label in the
 footer.
 
@@ -175,14 +186,14 @@ footer.
 
 | Keys | What they do |
 |---|---|
-| Ctrl+X f | Search in the session |
-| Ctrl+X a | Attach a file |
-| Ctrl+X i | Review your attached files, the files this session produced and its apps. Enter opens the selected app |
-| Ctrl+X I (Shift+I) | Show the pictures in this session one at a time. Only terminals that show pictures have this key. See [View pictures](#view-pictures) |
-| Ctrl+X O (Shift+O) | Open the newest picture of this session in the picture app of your computer |
-| Ctrl+X v | Start or stop a voice recording |
-| Ctrl+X b | Turn voice conversation on or off: Vis reads each answer aloud and sends each recording once it is transcribed |
-| Ctrl+X V (Shift+V) | Show the live view panel at the side, or move the focus to it. In the panel, ↑ and ↓ select a view, ← folds it, → unfolds it, Tab shows the next extension and Esc closes the panel |
+| Ctrl+X b f | Search in the session |
+| Ctrl+X a a | Attach a file |
+| Ctrl+X a i | Review your attached files, the files this session produced and its apps. Enter opens the selected app |
+| Ctrl+X a v | Show the pictures in this session one at a time. Only terminals that show pictures have this key. See [View pictures](#view-pictures) |
+| Ctrl+X a o | Open the newest picture of this session in the picture app of your computer |
+| Ctrl+X v v | Start or stop a voice recording |
+| Ctrl+X v c | Turn voice conversation on or off: Vis reads each answer aloud and sends each recording once it is transcribed |
+| Ctrl+X b p | Show the live view panel at the side, or move the focus to it. In the panel, ↑ and ↓ select a view, ← folds it, → unfolds it, Tab shows the next extension and Esc closes the panel |
 
 ## View pictures
 
@@ -191,13 +202,13 @@ small preview of the picture, its name, type and size, and an **Open externally*
 button opens the picture in your system's picture app. kitty, Ghostty, WezTerm, Warp and iTerm2 can
 show the previews. Other terminals show the same table without previews.
 
-To open the newest picture in your picture app, press **Ctrl+X Shift+O**. This key works in every
-terminal. **Ctrl+X o** without Shift opens the providers.
+To open the newest picture in your picture app, press **Ctrl+X a a o**. This key works in every
+terminal.
 
 To see one picture larger, click its preview. To see every picture in the session, press
-**Ctrl+X Shift+I**. The picture viewer opens and fills most of the window. A terminal that cannot
-show pictures has no picture viewer. There, use **Ctrl+X Shift+O** or the **Open externally**
-buttons. **Ctrl+X i** without Shift lists the attachments of the session.
+**Ctrl+X a a v**. The picture viewer opens and fills most of the window. A terminal that cannot
+show pictures has no picture viewer. There, use **Ctrl+X a a o** or the **Open externally**
+buttons. **Ctrl+X a a i** lists the attachments of the session.
 
 To see a detail, zoom in. Turn the mouse wheel over the picture to zoom at the pointer, or press
 **+** and **-**. The header shows the zoom, for example `250%`. Then drag the picture with the mouse
@@ -218,7 +229,7 @@ or use the arrow keys to move it. Press **0** to see the whole picture again.
 ## Use an app
 
 An app is a screen that the agent or an extension attaches to a session. Examples are a diff to
-review, a form and a game. Click its row in the transcript, or press **Ctrl+X i**, select the app and
+review, a form and a game. Click its row in the transcript, or press **Ctrl+X a i**, select the app and
 press Enter. You can press its buttons, fill in its fields and select its rows. In a review app, you
 write comments on lines and in threads, save them as drafts and send them together.
 
@@ -252,7 +263,7 @@ show `Closed: read only`. [Live views](live-views.md#apps) explains apps for dev
 Connect a microphone before you start the TUI. On macOS, allow microphone access for your terminal
 or Vis when macOS asks.
 
-Press **Ctrl+X v** to start recording. Press it again to transcribe the recording into your message.
+Press **Ctrl+X v v** to start recording. Press it again to transcribe the recording into your message.
 
 Vis first tries Java Sound. If Java Sound cannot capture, macOS can use SoX or FFmpeg.
 Vis checks PATH and both standard Homebrew locations: `/opt/homebrew/bin` and `/usr/local/bin`.
@@ -294,12 +305,12 @@ and what happens to your queued messages.
 
 | Keys | What they do |
 |---|---|
-| Alt+>, Ctrl+X j, Ctrl+L or Ctrl+End | Jump to the latest message |
+| Alt+>, Ctrl+X b j, Ctrl+L or Ctrl+End | Jump to the latest message |
 | Alt+< | Jump to the start of the session |
 | Ctrl+V or Page Down | Scroll down one screen |
 | Alt+V or Page Up | Scroll up one screen |
 | Ctrl+X Tab or Ctrl+X Shift+Tab | Fold or unfold every foldable block, such as thinking and tool calls |
-| Ctrl+X z | Label every fold, then press a label's letter to fold or unfold it |
+| Ctrl+X b z | Label every fold, then press a label's letter to fold or unfold it |
 
 You can also click **↓ messages** when it appears to jump to the latest message.
 
@@ -316,7 +327,7 @@ last area, Vis goes back to the first one. When only the chat is open, Ctrl+O do
 
 ## In Projects
 
-Press **Ctrl+X w** to open **Projects**. While it has focus, these keys act on the selected row.
+Press **Ctrl+X b w** to open **Projects**. While it has focus, these keys act on the selected row.
 Press **?** to see them in Vis.
 
 | Keys | What they do |

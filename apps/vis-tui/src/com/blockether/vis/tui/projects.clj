@@ -1173,8 +1173,7 @@
 (def ^:private footer-commands
   "The footer's sidebar commands in priority order; a narrow rail drops them from
    the end. Each pair is a button that runs the same action as its key."
-  [[:help "keys"] [:menu "menu"] [:settings "settings"] [:add-project "add project"]
-   [:back "chat"]])
+  [[:help "keys"] [:menu "menu"] [:back "chat"]])
 
 (defn- footer-pairs
   "The footer's `[key label command]` triples for the rail's mode, most important

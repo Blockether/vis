@@ -1380,13 +1380,14 @@
     (when (and (seq refused) (not= refused (first (reset-vals! last-refused-keybindings refused))))
       (tel/log! {:level :warn :id ::keybindings-refused :data {:refused refused}}
                 "Extension key bindings refused.")
-      (vis/notify! (str "C-x "
+      (vis/notify! (str "Key bindings "
                         (str/join ", " (map #(get-in % [:binding :key]) refused))
                         ": "
                         (:reason (first refused))
                         (when (next refused) (str " (+" (dec (count refused)) " more)"))
                         (when-let [free (not-empty (keymap/free-prefix-letters))]
-                          (str ". Free keys: " free)))
+                          (str ". Free keys in " (keymap/group-chord keymap/default-binding-group)
+                               ": " free)))
                    :level
                    :warn))
     refused))
@@ -2660,7 +2661,7 @@
          (activate-live-region! @state/app-db choice))))))
 
 (defn- open-live-panel!
-  "C-x V: open the side panel, then move the focus between it and the transcript."
+  "C-x b p: open the side panel, then move the focus between it and the transcript."
   []
   (if (seq (lv/panel-panes (:live-views @state/app-db)))
     (do (state/dispatch [:live-panel-focus]) (state/dispatch [:bump-render-version]))
@@ -2874,7 +2875,12 @@
           (remaining-message-count layout inner-h)
 
           label
-          (str " ↓ " remaining (if (= remaining 1) " message" " messages") " (C-x j) ")
+          (str " ↓ "
+               remaining
+               (if (= remaining 1) " message" " messages")
+               " ("
+               (keymap/label-or-palette :recenter)
+               ") ")
 
           w
           (p/display-width label)
@@ -3131,8 +3137,8 @@
                      (mapcat render/markdown-images texts)))))
 
 (defn- open-session-images!
-  "C-x I: the image viewer over every picture in the session, at the newest one. A terminal
-   that cannot show pictures has no viewer; C-x O opens the newest picture there."
+  "C-x a v: the image viewer over every picture in the session, at the newest one. A terminal
+   that cannot show pictures has no viewer; C-x a o opens the newest picture there."
   [^TerminalScreen screen]
   (let [images (session-images (:messages @state/app-db))]
     (cond (empty? images) (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000)
@@ -3143,7 +3149,7 @@
                   :ttl-ms 3000))))
 
 (defn- open-newest-image!
-  "C-x O: open the newest picture of the session in the system viewer."
+  "C-x a o: open the newest picture of the session in the system viewer."
   []
   (if-let [image (peek (session-images (:messages @state/app-db)))]
     (open-image-externally! (:path image))
@@ -5642,14 +5648,14 @@
           str))
 
 (defn- toggle-agent-dock!
-  "Show or hide the agent table under the dock summary line (C-x T or a click on the line)."
+  "Show or hide the agent table under the dock summary line (C-x b a or a click on the line)."
   []
   (when-let [sid (current-session-id)]
     (agent-team/toggle-dock! sid)
     (state/dispatch [:bump-render-version :full-frame])))
 
 (defn- toggle-zen-mode!
-  "Show or hide the header and the footer (C-x Z). The choice is saved like a Settings row."
+  "Show or hide the header and the footer (C-x b Z). The choice is saved like a Settings row."
   []
   (state/dispatch [:update-settings {:zen-mode (not (get-in @state/app-db [:settings :zen-mode]))}])
   (state/dispatch [:bump-render-version :full-frame]))
@@ -7653,10 +7659,10 @@
   "C-x is a HYDRA, not a dead prefix: the moment `input/handle-key` arms it, the
    band (`keymap/prefix-spec` painted by `dlg/prefix-band!`) goes up over the
    transcript, the NEXT keystroke is read there, and `input/resolve-prefix-key`
-   turns it into the very same `{:action :state}` a blind chord produced. So the
-   verbs are visible while the chord is half-typed, and every C-x binding — the
-   letters the band lists, plus TAB, the arrows and the digits it does not —
-   still resolves in exactly one place.
+   turns it into the very same `{:action :state}` a blind chord produced. A group
+   key keeps the prefix and opens the band of that group, so the loop reads one
+   more key. Every C-x binding — the keys the bands list, plus TAB and Backspace
+   that they do not — still resolves in exactly one place.
 
    `r` is the `handle-key` result; anything that did not arm the prefix passes
    through untouched."
@@ -7669,11 +7675,16 @@
                :codex-session? (state/codex-session? db)
                :has-images? (boolean (seq (session-images (:messages db))))
                :graphical-terminal? (timg/graphical-terminal?))]
-      (if-let [key (with-band-lock
-                     (band-top-row db (keymap/prefix-spec db))
-                     #(dlg/prefix-band! screen (session-band-anchor db) (keymap/prefix-spec db)))]
-        (input/resolve-prefix-key key (:state r))
-        {:action :continue :state (dissoc (:state r) :prefix)}))))
+      (loop [r r]
+        (if-not (:prefix (:state r))
+          r
+          (let [group (:prefix-group (:state r))
+                spec (if group (keymap/prefix-spec db group) (keymap/prefix-spec db))]
+
+            (if-let [key (with-band-lock (band-top-row db spec)
+                                         #(dlg/prefix-band! screen (session-band-anchor db) spec))]
+              (recur (input/resolve-prefix-key key (:state r)))
+              {:action :continue :state (dissoc (:state r) :prefix :prefix-group)})))))))
 
 (defn- terminal-ctrl-c-behaviour
   "Lanterna's 3-arg UnixTerminal constructor defaults to
