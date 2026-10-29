@@ -2769,7 +2769,7 @@
    spec stacked — the stacked count made a four-column C-x hydra look tall enough
    to reach the header and no image survived it."
   ^long [db spec]
-  (let [{:keys [content-top prompt-h]}
+  (let [{:keys [content-top prompt-h dock-h]}
         (state/band-anchor db)
 
         {:keys [cols rows]}
@@ -2778,7 +2778,9 @@
         region
         (tr/band-region (long (or cols 80)) (long (or rows 24)) (long content-top) (long prompt-h))]
 
-    (long (:sep-row (tr/band-geometry region (long (:row-count (tr/layout spec region))))))))
+    ;; The agent dock sits on the rows directly above the band.
+    (- (long (:sep-row (tr/band-geometry region (long (:row-count (tr/layout spec region))))))
+       (long dock-h))))
 
 (defn- with-band-lock
   "`with-dialog-lock` for an in-session BAND: the transcript above it stays on
@@ -3270,7 +3272,9 @@
 
     {:text-rows text-rows
      :input-box-h input-box-h
-     :composer-h (+ input-box-h rail-h dock-h)
+     ;; The prompt and its attachment rail. A band sits directly above them, on the
+     ;; echo row, and the agent dock moves above the band (`state/band-anchor`).
+     :composer-h (+ input-box-h rail-h)
      :input-top input-top
      :rail-top rail-top
      :rail-h rail-h
@@ -3306,6 +3310,22 @@
   "Paint the agent dock of the session at `dock-top`, above the echo row."
   [g db dock-top cols]
   (agent-team/draw-dock! g (get-in db [:session :id]) (running-turn-id db) dock-top cols))
+
+(defn- session-band-anchor
+  "`state/band-anchor` with the painter that puts the agent dock directly above a band."
+  [db]
+  (let [cols (long (or (get-in db [:layout :cols]) 80))]
+    (assoc (state/band-anchor db)
+      :paint-dock! (fn [g top]
+                     (paint-agent-dock! g db top cols)))))
+
+(defn- frame-band-top
+  "First row of the human-input or Live View band that a full frame paints, or nil."
+  [db cols rows content-top prompt-h]
+  (if-let [form (:human-input db)]
+    (first (hi/band-rows cols rows form content-top prompt-h))
+    (when-let [panes (viewer-panes db)]
+      (first (lv/band-rows cols rows panes content-top prompt-h)))))
 
 (defn- paint-attachment-rail!
   "Paint the attachment rail at `rail-top`, directly above the prompt."
@@ -3482,6 +3502,14 @@
         dock-top
         (get-in section-bounds [:dock :row])
 
+        ;; A human-input or Live View band covers the dock's rows; the dock moves
+        ;; directly above that band. The band never climbs over those rows.
+        band-content-top
+        (+ (long messages-top) dock-h)
+
+        band-top
+        (when (pos? dock-h) (frame-band-top db cols rows band-content-top composer-h))
+
         rail-top
         (get-in section-bounds [:attachments :row])
 
@@ -3647,7 +3675,7 @@
                     :header (fn [graphics _]
                               (header/draw-header! graphics db header-top cols))
                     :dock (fn [graphics _]
-                            (paint-agent-dock! graphics db dock-top cols))
+                            (when-not band-top (paint-agent-dock! graphics db dock-top cols)))
                     :attachments (fn [graphics _]
                                    (paint-attachment-rail! graphics db rail-top cols))
                     :composer (fn [graphics _]
@@ -3784,7 +3812,7 @@
                                 cols
                                 rows
                                 human-form
-                                messages-top
+                                band-content-top
                                 composer-h
                                 (count (:human-input-queue db)))]
           (frame/set-cursor! screen pos)
@@ -3796,7 +3824,7 @@
                                    cols
                                    rows
                                    (viewer-panes db)
-                                   messages-top
+                                   band-content-top
                                    composer-h
                                    (System/currentTimeMillis))]
           (state/dispatch [:live-view-painted (:view-id geom) geom])
@@ -3804,6 +3832,8 @@
           ;; missing; the page that lands repaints and asks for the next one.
           (fill-live-log!)
           (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom)))))
+      ;; The agent dock goes ABOVE the band, never between the band and the prompt.
+      (when band-top (paint-agent-dock! g db (- (long band-top) dock-h) cols))
       ;; The side panel spans the whole height when docked; an overlay covers only
       ;; the transcript rows, so the composer stays usable.
       (let [panel-box
@@ -3899,7 +3929,12 @@
           (drop-terminal-images!)
           (paint-terminal-images!
             (let [rail-width (long (or (:width (projects/geometry db screen-cols rows)) 0))]
-              (->> (fitting-image-placements @image-sink messages-top messages-bottom)
+              ;; A band moves the agent dock up over the transcript; no image may
+              ;; cover the dock.
+              (->> (fitting-image-placements
+                     @image-sink
+                     messages-top
+                     (if band-top (- (long band-top) dock-h) messages-bottom))
                    (map #(update % :col frame/screen-column))
                    ;; Native image layers cannot clip behind a narrow overlay rail.
                    (filter #(>= (long (:col %)) rail-width))
@@ -3911,6 +3946,8 @@
        ;; hydra, a human-input form) is anchored directly above it, so it has to
        ;; know how tall the editor grew.
        :input-h composer-h
+       ;; The agent dock's height: every band keeps these rows above it for the dock.
+       :dock-h dock-h
        :rows rows
        :total-h total-h
        :inner-h inner-h
@@ -7531,7 +7568,7 @@
                :graphical-terminal? (timg/graphical-terminal?))]
       (if-let [key (with-band-lock
                      (band-top-row db (keymap/prefix-spec db))
-                     #(dlg/prefix-band! screen (state/band-anchor db) (keymap/prefix-spec db)))]
+                     #(dlg/prefix-band! screen (session-band-anchor db) (keymap/prefix-spec db)))]
         (input/resolve-prefix-key key (:state r))
         {:action :continue :state (dissoc (:state r) :prefix)}))))
 

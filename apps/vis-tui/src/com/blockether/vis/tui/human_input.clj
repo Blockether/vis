@@ -1398,6 +1398,36 @@
 
     (if (and title more) (str title " · " more) (or title more))))
 
+(defn- band-plan
+  "The sizing pass of the form band in `region`: the row `:plan`, the pinned
+   `:actions` bar with its `:actions-h` rows, and the band `:geometry`."
+  [{:keys [inner-w] :as region} form]
+  (let [actions
+        (action-bar form)
+
+        ;; The pinned bar costs its own row plus the blank one above it.
+        actions-h
+        (if actions 2 0)
+
+        ;; The body opens one column inside the rails (see `paint!`).
+        plan
+        (form-rows form (prose-width (dec (long inner-w))))]
+
+    {:plan plan
+     :actions actions
+     :actions-h actions-h
+     ;; The fenced hint bar asks for the rule above it.
+     :geometry (tr/band-geometry region (+ (count plan) (long actions-h) 1) false)}))
+
+(defn band-rows
+  "The rows that the human-input band for `form` covers, inclusive: `[top bottom]`."
+  [cols rows form content-top prompt-h]
+  (let [{:keys [sep-row foot-row]}
+        (:geometry (band-plan
+                     (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
+                     form))]
+    [(long sep-row) (long foot-row)]))
+
 (defn paint!
   "Draw the human-input band for `form` INSIDE the session's own frame. Returns
    the `TerminalPosition` the caller should place the terminal cursor at (the
@@ -1466,16 +1496,11 @@
              body-left (inc left)
              body-w (dec inner-w)
              baz (hint form)
-             actions (action-bar form)
-             ;; The pinned bar costs its own row plus the blank one above it.
-             actions-h (if actions 2 0)
-             plan
              ;; Sizing pass: how many rows the form wants decides where the band's
-             ;; top rule lands. The pinned action bar asks for its two rows, and the
-             ;; fenced hint bar asks for the rule above it.
-             (form-rows form (prose-width body-w))
-             {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
-             (tr/band-geometry region (+ (count plan) (long actions-h) 1) false)
+             ;; top rule lands.
+             {:keys [plan actions actions-h]
+              {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]} :geometry}
+             (band-plan region form)
              ;; The band CLOSES below its footer, exactly like a sideless transient:
              ;; the hint bar takes the row the closing rule used to own and the rule
              ;; drops onto the host's hint row, so the footer is inside the box.

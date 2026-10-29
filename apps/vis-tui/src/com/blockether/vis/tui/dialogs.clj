@@ -8776,12 +8776,34 @@
     (tr/paint! host region spec {:switches #{} :options {}})
     (refresh!)))
 
+(defn- dock-above-restorer
+  "Wrap a band's `restore!` so that the agent dock sits directly ABOVE the band.
+
+   The band covers the dock's own rows above the echo row. Each band repaint gives
+   the rows above it back with `(restore! from to)`. This restores `dock-h` more
+   rows, then paints the dock on the last `dock-h` of them, so a band that shrinks
+   leaves no old dock rows behind. Without a dock painter, `restore!` is unchanged."
+  [restore! g {:keys [dock-h paint-dock!]}]
+  (let [dock-h
+        (long (or dock-h 0))
+
+        restore-rows!
+        (fn [from to]
+          (restore! (- (long from) dock-h) to)
+          (paint-dock! g (- (inc (long to)) dock-h)))]
+
+    (if (and restore! paint-dock! (pos? dock-h))
+      (fn ([] (restore!)) ([from to] (restore-rows! from to)) ([l t r b] (restore! l t r b)))
+      restore!)))
+
 (defn- session-band-instance!
   "ONE band INSTANCE in the LIVE SESSION frame, opened around `body`.
 
    `anchor` is `state/band-anchor`: `:content-top` is the first row the band may
    touch, `:prompt-h` the live height of the prompt it sits above, and
-   `:chat-left` the start of the chat pane. The band is clipped to that pane,
+   `:chat-left` the start of the chat pane. An optional `:paint-dock!`
+   `(fn [g top])` paints the agent dock on the `:dock-h` rows above the band.
+   The band is clipped to that pane,
    leaving a docked project rail untouched. The frame is snapshotted before the
    band paints and put back on the way out — the transcript underneath is never
    repainted from scratch and never blanked.
@@ -8789,7 +8811,7 @@
    `body` is called with `[g region]`, the same two handles every other host of
    `embed-transient!` composes. This is the only place the session screen turns
    an anchor into a band region: a second one is how two bands drift apart."
-  [^TerminalScreen screen {:keys [content-top prompt-h chat-left]} body]
+  [^TerminalScreen screen {:keys [content-top prompt-h chat-left] :as anchor} body]
   (let [size
         (modal-size! screen)
 
@@ -8808,7 +8830,7 @@
 
         region
         (assoc (tr/band-region cols (.getRows size) (or content-top 1) (or prompt-h tr/prompt-rows))
-          :restore! restore!)]
+          :restore! (dock-above-restorer restore! g anchor))]
 
     ;; The band owns the keyboard while it is up, so it owns the CURSOR: left
     ;; where the last session paint parked it, the hardware caret went on

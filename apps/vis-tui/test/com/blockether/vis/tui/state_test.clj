@@ -6001,10 +6001,11 @@
 (defdescribe
   band-anchor-test
   (it "reads the live layout: under the header, above the prompt and beside the rail"
-      (expect (= {:content-top 6 :prompt-h 7 :chat-left 40}
+      (expect (= {:content-top 6 :prompt-h 7 :dock-h 0 :chat-left 40}
                  (state/band-anchor {:layout {:messages-top 6 :input-h 7 :chat-left 40}}))))
   (it "falls back to the resting prompt box when the frame has not published a layout"
-      (expect (= {:content-top 1 :prompt-h tr/prompt-rows :chat-left 0} (state/band-anchor {}))))
+      (expect (= {:content-top 1 :prompt-h tr/prompt-rows :dock-h 0 :chat-left 0}
+                 (state/band-anchor {}))))
   (it "keeps the band ABOVE the prompt however tall the prompt grew"
       (let [rows
             40
@@ -6018,7 +6019,13 @@
         ;; the band's LAST row (its hint bar) still sits above the input box
         (expect (< (long hint-row) (- rows (long prompt-h))))
         ;; and it never climbs over the header
-        (expect (= 4 min-row)))))
+        (expect (= 4 min-row))))
+  (it "keeps the agent dock rows between the header and the band"
+      (let [{:keys [content-top prompt-h dock-h]}
+            (state/band-anchor {:layout {:messages-top 4 :input-h 7 :dock-h 5}})]
+        (expect (= 9 content-top))
+        (expect (= 7 prompt-h))
+        (expect (= 5 dock-h)))))
 
 ;; Reported over the settings screen: the `speech` FEATURE TOGGLE was the wrong shape.
 ;; A machine-wide on/off cannot answer the only question a human asks - should THIS

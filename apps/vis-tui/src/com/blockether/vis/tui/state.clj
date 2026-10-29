@@ -40,18 +40,25 @@
   "WHERE a MAIN-SCREEN transient sits: `{:content-top :prompt-h :chat-left}`,
    read off the layout the renderer published for the live frame.
 
-   Every band on the session screen is anchored the SAME way: it may not climb
-   over the header (`[:layout :messages-top]`), it sits ABOVE the prompt box
-   at its LIVE height (`[:layout :input-h]`), and it stays in the chat pane to
-   the right of the project rail (`[:layout :chat-left]`).
+   Every band on the session screen is anchored the SAME way: it sits ABOVE the
+   prompt box and its attachment rail at their LIVE height (`[:layout :input-h]`),
+   and it stays in the chat pane to the right of the project rail
+   (`[:layout :chat-left]`).
+
+   The agent dock is ALWAYS above the band, never between the band and the
+   prompt. The band covers the dock's own rows, and `:dock-h` rows directly above
+   the band hold the dock instead. So `:content-top`, the first row the band may
+   touch, is the first transcript row (`[:layout :messages-top]`) plus `:dock-h`.
    Read that geometry HERE and hand it to the dialog band renderer as one value.
 
    0-arity reads the live db; the 1-arity is pure and is what tests use."
   ([] (band-anchor @app-db))
   ([db]
-   {:content-top (or (get-in db [:layout :messages-top]) 1)
-    :prompt-h (or (get-in db [:layout :input-h]) tr/prompt-rows)
-    :chat-left (or (get-in db [:layout :chat-left]) 0)}))
+   (let [dock-h (long (or (get-in db [:layout :dock-h]) 0))]
+     {:content-top (+ (long (or (get-in db [:layout :messages-top]) 1)) dock-h)
+      :prompt-h (or (get-in db [:layout :input-h]) tr/prompt-rows)
+      :dock-h dock-h
+      :chat-left (or (get-in db [:layout :chat-left]) 0)})))
 
 (defonce ^:private event-registry (atom {}))
 

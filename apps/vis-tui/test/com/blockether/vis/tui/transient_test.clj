@@ -8,6 +8,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminals :as term]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.transient :as tr])
@@ -882,6 +883,51 @@
         (expect (not-any? #(str/includes? % "│ ")
                           (map #(subs % (inc (long left)) (+ (long left) (long inner-w)))
                                (subvec (vec painted) (inc top) bottom))))))))
+
+;; Regression (user report): the C-x hydra opened ABOVE the agent table, so the table
+;; sat between the commands and the prompt. The agents are always above the band.
+(defdescribe
+  band-agent-dock-test
+  (it
+    "paints the agent dock directly above the C-x hydra, which sits on the echo row"
+    (let [rows
+          30
+
+          ;; 30 rows: footer 28-29, prompt 25-27, echo row 24, dock rows 22-23.
+          anchor
+          (assoc (state/band-anchor {:layout {:messages-top 1 :input-h 3 :dock-h 2 :cols 120}})
+            :paint-dock! (fn [g top]
+                           (doseq [i (range 2)]
+                             (p/put-str! g 2 (+ (long top) i) (str "AGENT ROW " i)))))
+
+          capture
+          (cap/capture! {:cols 120
+                         :rows rows
+                         :keys [\d]
+                         :paint! (fn [{:keys [screen g]}]
+                                   (doseq [row (range rows)]
+                                     (p/put-str! g 0 row (str "transcript " row)))
+                                   (doseq [row [22 23]]
+                                     (p/put-str! g 2 row "OLD DOCK"))
+                                   (dlg/prefix-band! screen anchor leader-spec))})
+
+          shown
+          (vec (str/split-lines (cap/frame-text capture 0)))
+
+          band-top
+          (first (keep-indexed #(when (str/includes? %2 "C-x — vis commands") %1) shown))]
+
+      (expect (nil? (:error capture)))
+      (expect (= \d (.getCharacter (:ret capture))))
+      (expect (some? band-top))
+      (expect (str/includes? (shown (- (long band-top) 2)) "AGENT ROW 0"))
+      (expect (str/includes? (shown (dec (long band-top))) "AGENT ROW 1"))
+      ;; The band closes on the echo row, directly above the prompt.
+      (expect (str/includes? (shown 23) "Esc"))
+      (expect (str/starts-with? (str/triml (shown 25)) "transcript 25"))
+      (expect (not-any? #(str/includes? % "OLD DOCK") shown))
+      ;; Closing the band puts the frame back.
+      (expect (some #(str/includes? % "OLD DOCK") (str/split-lines (cap/frame-text capture)))))))
 
 ;; Regression, issue: a group heading wider than its pane was CUT with an ellipsis —
 ;; the API-key band's own guidance line lost the URL that answers "where do I get
