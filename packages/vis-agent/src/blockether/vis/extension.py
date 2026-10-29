@@ -29,7 +29,14 @@ from dataclasses import MISSING, dataclass, field, fields, is_dataclass, make_da
 from functools import cached_property
 from os import PathLike
 from pathlib import Path
-from types import FunctionType, MappingProxyType, MethodType, ModuleType, UnionType
+from types import (
+    FunctionType,
+    MappingProxyType,
+    MethodType,
+    ModuleType,
+    SimpleNamespace,
+    UnionType,
+)
 from typing import (
     Annotated,
     Any,
@@ -443,12 +450,25 @@ def _tool_value(value):
 
 
 def _tool_data(value) -> Any:
-    """One argument as JSON data. A dataclass instance travels as its public fields."""
+    """One argument as JSON data.
+
+    A dataclass instance travels as its class name and public fields, as from the
+    sandbox. A `types.SimpleNamespace` travels as a dict of its public attributes.
+    """
     if is_dataclass(value) and not isinstance(value, type):
         return {
-            f.name: _tool_data(getattr(value, f.name))
-            for f in fields(value)
-            if not f.name.startswith("_")
+            _RECORD_NAME: type(value).__name__,
+            _RECORD_FIELDS: {
+                f.name: _tool_data(getattr(value, f.name))
+                for f in fields(value)
+                if not f.name.startswith("_")
+            },
+        }
+    if isinstance(value, SimpleNamespace):
+        return {
+            key: _tool_data(item)
+            for key, item in vars(value).items()
+            if not key.startswith("_")
         }
     if isinstance(value, Mapping):
         return {key: _tool_data(item) for key, item in value.items()}
@@ -1732,21 +1752,119 @@ def _callable_contract(fn, name, tag, doc):
     }
 
 
-#: A value that cannot take an argument shape; `_rebuilt_value` keeps it as is.
-_UNFIT = object()
+#: The keys of a record that crossed the host boundary as JSON data: its class name
+#: and its public fields (Blockether/vis#427).
+_RECORD_NAME = "__vis_object__"
+_RECORD_FIELDS = "__vis_attrs__"
+
+
+class _ArgumentMismatch(TypeError):
+    """A host call argument that does not fit the record its parameter declares."""
+
+
+class _Unfit:
+    """Why a value does not take an argument shape, and where in the argument."""
+
+    __slots__ = ("path", "reason")
+
+    def __init__(self, reason, path=""):
+        self.reason = reason
+        self.path = path
+
+    def at(self, step):
+        """This misfit one step deeper: `step` is like `[2]` or `.name`."""
+        return _Unfit(self.reason, step + self.path)
+
+
+def _sent_record(value):
+    """`(class name, fields)` of a record sent across the host boundary, else None."""
+    if isinstance(value, Mapping) and value.keys() == {_RECORD_NAME, _RECORD_FIELDS}:
+        name, attrs = value[_RECORD_NAME], value[_RECORD_FIELDS]
+        if isinstance(name, str) and isinstance(attrs, Mapping):
+            return name, attrs
+    return None
+
+
+def _plain_data(value):
+    """`value` with each sent record read as a dict of its fields, at any depth.
+
+    Data without a sent record stays the same object.
+    """
+    sent = _sent_record(value)
+    if sent is not None:
+        return {key: _plain_data(item) for key, item in sent[1].items()}
+    if isinstance(value, Mapping):
+        items = {key: _plain_data(item) for key, item in value.items()}
+        return value if all(items[key] is value[key] for key in items) else items
+    if isinstance(value, list):
+        items = [_plain_data(item) for item in value]
+        return (
+            value if all(a is b for a, b in zip(items, value, strict=True)) else items
+        )
+    return value
+
+
+def _type_label(cls):
+    """`module.Name` of `cls` for a message. Builtins keep their bare name."""
+    if cls is type(None):
+        return "None"
+    name = getattr(cls, "__qualname__", None) or getattr(cls, "__name__", None)
+    module = getattr(cls, "__module__", None)
+    if name is None:
+        return repr(cls)
+    return name if module in (None, "builtins") else f"{module}.{name}"
+
+
+def _value_label(value):
+    """The type of an argument for a message. Never the value itself."""
+    sent = _sent_record(value)
+    if sent is not None:
+        return f"record {sent[0]}"
+    return _type_label(type(value))
+
+
+def _shape_label(shape):
+    """An argument shape as annotation text for a message."""
+    kind = shape[0]
+    if kind == "any":
+        return "Any"
+    if kind in ("plain", "record"):
+        return _type_label(shape[1])
+    if kind == "literal":
+        return "Literal[" + ", ".join(repr(value) for value in shape[1]) + "]"
+    if kind == "union":
+        return " | ".join(_shape_label(member) for member in shape[1])
+    if kind == "sequence":
+        return f"{shape[1].__name__}[{_shape_label(shape[2])}]"
+    if kind == "fixed":
+        return "tuple[" + ", ".join(_shape_label(item) for item in shape[1]) + "]"
+    return f"dict[str, {_shape_label(shape[1])}]"
+
+
+def _misfit(shape, value):
+    """The plain `_Unfit` of `value` for `shape`: what it expects and what came."""
+    return _Unfit(f"expected {_shape_label(shape)}, got {_value_label(value)}")
 
 
 def _call_arguments(fn, args, kwargs):
     """Rebuild the records a host call carried as JSON data, keeping its call shape.
 
-    An argument crosses the host boundary as JSON, so a record arrives as a dict of its
-    public fields. A parameter annotated with a dataclass gets that dataclass back,
-    built through its constructor. This also works inside a union, list, tuple, set or
-    dict annotation (Blockether/vis#289). One bare string for a sequence of strings
+    An argument crosses the host boundary as JSON, so a record arrives as its class
+    name and its public fields, or as a dict of its fields. A parameter annotated
+    with a dataclass gets that dataclass back, built through its constructor. This
+    also works inside a union, list, tuple, set or dict annotation and in the
+    fields of a nested record (Blockether/vis#289). In a union, the class name of
+    a sent record selects the record member of that name. A dict that fits two
+    record members is ambiguous. One bare string for a sequence of strings
     becomes one item, not one item for each character (Blockether/vis#324).
-    Annotations resolve statically, as for tool contracts. A value that does not fit
-    its annotation stays as it arrived. So does every argument of a call that the
-    signature cannot bind: the call itself reports that mistake.
+    Annotations resolve statically, as for tool contracts.
+
+    An argument that does not fit a parameter that expects a record raises
+    `_ArgumentMismatch` before the call, with its path, the expected type and
+    the type that came, never its value (Blockether/vis#427). A value that does
+    not fit any other annotation stays as it arrived, with sent records read as
+    plain dicts. So does every argument of a call that the signature cannot bind:
+    the call itself reports that mistake.
     """
     try:
         # A wrapper around a bound method must not unwrap past the binding.
@@ -1756,7 +1874,10 @@ def _call_arguments(fn, args, kwargs):
         signature = _inert_signature(target)
         signature.bind(*args, **kwargs)
     except (TypeError, ValueError):
-        return args, kwargs
+        return (
+            [_plain_data(value) for value in args],
+            {key: _plain_data(value) for key, value in kwargs.items()},
+        )
     namespace = getattr(_annotation_target(target), "__globals__", {})
     parameters = list(signature.parameters.values())
     positional = [
@@ -1773,10 +1894,15 @@ def _call_arguments(fn, args, kwargs):
 
     def rebuilt(parameter, value):
         if parameter is None:
-            return value
+            return _plain_data(value)
         if parameter.name not in shapes:
             shapes[parameter.name] = _argument_shape(parameter.annotation, namespace)
-        return _rebuilt_value(shapes[parameter.name], value)
+        result = _rebuilt_value(shapes[parameter.name], value)
+        if isinstance(result, _Unfit):
+            raise _ArgumentMismatch(
+                f"argument `{parameter.name}{result.path}`: {result.reason}"
+            )
+        return result
 
     return (
         [
@@ -1914,110 +2040,196 @@ def _holds_record(shape):
 
 
 def _rebuilt_value(shape, value):
-    """Return `value` with the records that `shape` expects rebuilt.
+    """Return `value` with the records that `shape` expects rebuilt, or an `_Unfit`.
 
-    One bare string for a sequence of strings becomes that sequence with one item.
-    A value that does not fit stays as is.
+    Sent records become plain dicts where `shape` expects no record. One bare string
+    for a sequence of strings becomes that sequence with one item. Only a shape that
+    expects a record refuses a value. Any other value that does not fit stays as is,
+    and the callable judges it.
     """
     if not (_holds_record(shape) or isinstance(value, str)):
-        return value
+        return _plain_data(value)
     result = _fitted_argument(shape, value)
-    return value if result is _UNFIT else result
+    if isinstance(result, _Unfit) and not _holds_record(shape):
+        return value
+    return result
 
 
 def _fitted_argument(shape, value):
-    """`value` in `shape`, or `_UNFIT`. A union takes its first fitting member."""
+    """`value` in `shape`, or an `_Unfit` that says why not and where."""
     kind = shape[0]
     if kind == "any":
-        return value
+        return _plain_data(value)
     if kind == "plain":
+        value = _plain_data(value)
         try:
-            return value if isinstance(value, shape[1]) else _UNFIT
+            fits = isinstance(value, shape[1])
         except TypeError:  # Protocols and TypedDicts refuse isinstance checks.
             return value
+        return value if fits else _misfit(shape, value)
     if kind == "literal":
-        return (
-            value
-            if any(type(v) is type(value) and v == value for v in shape[1])
-            else _UNFIT
-        )
+        if any(type(v) is type(value) and v == value for v in shape[1]):
+            return value
+        return _misfit(shape, value)
     if kind == "record":
         return _rebuilt_record(shape[1], value, shape[2])
     if kind == "union":
-        members = shape[1]
-        if isinstance(value, str):
-            # A member that takes the string as it is wins over one that wraps it.
-            members = sorted(members, key=lambda member: member[0] == "sequence")
-        for member in members:
-            result = _fitted_argument(member, value)
-            if result is not _UNFIT:
-                return result
-        return _UNFIT
+        return _fitted_member(shape, value)
     if kind == "mapping":
+        sent = _sent_record(value)
+        if sent is not None:
+            value = sent[1]
         if not isinstance(value, Mapping):
-            return _UNFIT
+            return _misfit(shape, value)
         if not _holds_record(shape):
-            return value
-        return {key: _rebuilt_value(shape[1], item) for key, item in value.items()}
+            return _plain_data(value)
+        result = {}
+        for key, item in value.items():
+            fitted = _rebuilt_value(shape[1], item)
+            if isinstance(fitted, _Unfit):
+                # A key is caller data: the path names the entry, not the key.
+                return fitted.at("[*]")
+            result[key] = fitted
+        return result
     if kind == "sequence" and isinstance(value, str):
         # A string is a sequence of its characters; the caller named one item. An
         # item of any type also takes the whole string, so it stays as it is.
         if shape[2] in (("any",), ("plain", object)):
-            return _UNFIT
+            return _misfit(shape, value)
         item = _fitted_argument(shape[2], value)
-        return _UNFIT if item is _UNFIT else shape[1]((item,))
+        return item if isinstance(item, _Unfit) else shape[1]((item,))
     if not isinstance(value, (list, tuple)):
-        return _UNFIT
-    if kind == "fixed":
-        if len(value) != len(shape[1]):
-            return _UNFIT
-        if not _holds_record(shape):
-            return value
-        return tuple(
-            _rebuilt_value(s, item) for s, item in zip(shape[1], value, strict=True)
-        )
+        return _misfit(shape, value)
+    if kind == "fixed" and len(value) != len(shape[1]):
+        return _Unfit(f"expected {_shape_label(shape)}, got {len(value)} items")
     if not _holds_record(shape):
-        return value
-    items = [_rebuilt_value(shape[2], item) for item in value]
+        return _plain_data(value)
+    item_shapes = shape[1] if kind == "fixed" else [shape[2]] * len(value)
+    items = []
+    for index, (item_shape, item) in enumerate(zip(item_shapes, value, strict=True)):
+        fitted = _rebuilt_value(item_shape, item)
+        if isinstance(fitted, _Unfit):
+            return fitted.at(f"[{index}]")
+        items.append(fitted)
+    if kind == "fixed":
+        return tuple(items)
     try:
         return shape[1](items)
     except TypeError:  # A set cannot hold unhashable records.
         return items
 
 
-def _rebuilt_record(cls, value, namespace):
-    """A `cls` record from a mapping of its fields, or `_UNFIT` for any other value.
+def _fitted_member(shape, value):
+    """The member of union `shape` that takes `value`, or an `_Unfit`.
+
+    The class name of a sent record selects the record member of that name. Else
+    the record members whose fields the value carries are its candidates. Two
+    candidates are ambiguous, because the value cannot say which record it is
+    (Blockether/vis#427). Otherwise the first fitting member in declared order
+    wins, and a string prefers a member that takes it as it is.
+    """
+    members = _union_members(shape)
+    records = [member for member in members if member[0] == "record"]
+    sent = _sent_record(value)
+    if sent is not None:
+        named = [member for member in records if member[1].__name__ == sent[0]]
+        if len(named) == 1:
+            return _fitted_argument(named[0], value)
+    data = sent[1] if sent is not None else value
+    candidates = [
+        member
+        for member in records
+        if isinstance(data, Mapping) and _record_misfit(member[1], data) is None
+    ]
+    if len(candidates) > 1:
+        names = " and ".join(_shape_label(member) for member in candidates)
+        return _Unfit(
+            f"{_value_label(value)} fits {names}; pass a record of one of them"
+        )
+    if isinstance(value, str):
+        # A member that takes the string as it is wins over one that wraps it.
+        members = sorted(members, key=lambda member: member[0] == "sequence")
+    deeper = None
+    for member in members:
+        result = _fitted_argument(member, value)
+        if not isinstance(result, _Unfit):
+            return result
+        if candidates and member is candidates[0]:
+            deeper = result
+    return deeper or _misfit(shape, value)
+
+
+def _union_members(shape):
+    """The members of union `shape` in declared order, nested unions flattened.
+
+    `A | B | None` parses as `(A | B) | None`, which still declares three members.
+    """
+    return [
+        item
+        for member in shape[1]
+        for item in (_union_members(member) if member[0] == "union" else [member])
+    ]
+
+
+def _record_misfit(cls, value):
+    """Why the keys of mapping `value` do not fit record `cls`, or None.
 
     The mapping may leave out fields with defaults and may carry `init=False`
-    fields and public properties, which the record computes itself. Constructor
-    errors propagate: they are the record's own validation.
+    fields and public properties, which the record computes itself.
+    """
+    declared = {f.name: f for f in fields(cls)}
+    known = declared.keys() | set(_derived_names(cls))
+    missing = [
+        f.name
+        for f in declared.values()
+        if f.init
+        and f.name not in value
+        and f.default is MISSING
+        and f.default_factory is MISSING
+    ]
+    unknown = sorted(
+        str(key) for key in value if not (isinstance(key, str) and key in known)
+    )
+    reasons = []
+    if missing:
+        reasons.append("missing fields " + ", ".join(missing))
+    if unknown:
+        reasons.append("unknown fields " + ", ".join(unknown))
+    return "; ".join(reasons) or None
+
+
+def _rebuilt_record(cls, value, namespace):
+    """A `cls` record from its sent fields, or an `_Unfit` that says why not.
+
+    The fields come as a mapping, or as a sent record of any class name: a record
+    parameter takes every record whose fields fit it. Nested records rebuild from
+    the annotations of their fields. Constructor errors propagate: they are the
+    record's own validation.
     """
     if isinstance(value, cls):
         return value
-    if not isinstance(value, Mapping):
-        return _UNFIT
-    declared = {f.name: f for f in fields(cls)}
-    known = declared.keys() | set(_derived_names(cls))
-    if not all(isinstance(key, str) and key in known for key in value):
-        return _UNFIT
-    initial = [f for f in declared.values() if f.init]
-    if any(
-        f.name not in value and f.default is MISSING and f.default_factory is MISSING
-        for f in initial
-    ):
-        return _UNFIT
+    sent = _sent_record(value)
+    data = sent[1] if sent is not None else value
+    if not isinstance(data, Mapping):
+        return _misfit(("record", cls, namespace), value)
+    misfit = _record_misfit(cls, data)
+    if misfit is not None:
+        return _Unfit(
+            f"expected {_type_label(cls)}, got {_value_label(value)} with {misfit}"
+        )
     module = sys.modules.get(cls.__module__)
     scope = getattr(module, "__dict__", None) or {}
     # An extension file's module may be missing or replaced: use the tool's globals.
     if scope.get(cls.__name__) is not cls:
         scope = namespace
-    return cls(
-        **{
-            f.name: _rebuilt_value(_argument_shape(f.type, scope), value[f.name])
-            for f in initial
-            if f.name in value
-        }
-    )
+    built = {}
+    for f in fields(cls):
+        if f.init and f.name in data:
+            item = _rebuilt_value(_argument_shape(f.type, scope), data[f.name])
+            if isinstance(item, _Unfit):
+                return item.at(f".{f.name}")
+            built[f.name] = item
+    return cls(**built)
 
 
 class _SignatureSource(str):

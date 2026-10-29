@@ -98,17 +98,22 @@ def test_record_constructor_errors_propagate():
 
 
 @pytest.mark.parametrize(
-    "value",
+    ("value", "reason"),
     [
-        {"http_code": 201},
-        {**FIELDS, "extra": 1},
-        "TriggerResult(http_code=201, job_path='a/b')",
-        None,
-        7,
+        ({"http_code": 201}, "with missing fields job_path"),
+        ({**FIELDS, "extra": 1}, "with unknown fields extra"),
+        ("TriggerResult(http_code=201, job_path='a/b')", "got str"),
+        (None, "got None"),
+        (7, "got int"),
     ],
 )
-def test_values_that_are_not_the_record_stay_as_they_arrived(value):
-    assert rebuilt(status, value)[0][0] is value
+def test_values_that_are_not_the_record_fail_before_the_call(value, reason):
+    # Regression #427: a value that is not the record used to reach the callable.
+    with pytest.raises(TypeError, match=reason) as raised:
+        rebuilt(status, value)
+    assert "argument `result`: expected test_record_arguments.TriggerResult" in str(
+        raised.value
+    )
 
 
 def test_unions_take_the_first_fitting_member_in_declared_order():
@@ -126,6 +131,105 @@ def test_unions_take_the_first_fitting_member_in_declared_order():
     assert rebuilt(pick, None)[0] == [None]
     assert rebuilt(keep, {"number": 7})[0] == [{"number": 7}]
     assert rebuilt(optional, {"number": 7})[0] == [Job(7)]
+
+
+def sent(name, fields):
+    """A record as the host sends it: its class name and its fields."""
+    return {"__vis_object__": name, "__vis_attrs__": fields}
+
+
+@dataclass(frozen=True)
+class Work:
+    pass
+
+
+@dataclass(frozen=True)
+class Personal:
+    pass
+
+
+@dataclass(frozen=True)
+class Chat:
+    id: str
+    title: str
+    category: Work | Personal | None = None
+
+
+def update_chat_list(profile: str, *, chats: list[Chat]) -> None:
+    pass
+
+
+def test_sent_records_rebuild_nested_domain_records():
+    # Regression #427: chats from the sandbox, nested categories included.
+    chats = [
+        sent("Chat", {"id": "a", "title": "A", "category": sent("Personal", {})}),
+        {"id": "b", "title": "B", "category": sent("Work", {})},
+        sent("Built", {"id": "c", "title": "C", "category": None}),
+        {"id": "d", "title": "D"},
+    ]
+    args, kwargs = rebuilt(update_chat_list, "p", chats=chats)
+    assert (args, kwargs) == (
+        ["p"],
+        {
+            "chats": [
+                Chat("a", "A", Personal()),
+                Chat("b", "B", Work()),
+                Chat("c", "C"),
+                Chat("d", "D"),
+            ]
+        },
+    )
+    assert [type(chat.category) for chat in kwargs["chats"]] == [
+        Personal,
+        Work,
+        type(None),
+        type(None),
+    ]
+
+
+def test_a_union_refuses_a_dict_that_fits_two_records():
+    # Regression #427: `{}` became the first member, Work, also when it meant Personal.
+    chats = [{"id": "a", "title": "A", "category": {}}]
+    with pytest.raises(TypeError) as raised:
+        rebuilt(update_chat_list, "p", chats=chats)
+    assert str(raised.value) == (
+        "argument `chats[0].category`: dict fits test_record_arguments.Work and "
+        "test_record_arguments.Personal; pass a record of one of them"
+    )
+
+
+def test_a_nested_misfit_names_its_path_and_types_never_its_values():
+    chats = [
+        {"id": "a", "title": "A"},
+        sent("Chat", {"id": "secret-id", "title": "Secret", "unread": 3}),
+    ]
+    with pytest.raises(TypeError) as raised:
+        rebuilt(update_chat_list, "p", chats=chats)
+    message = str(raised.value)
+    assert message == (
+        "argument `chats[1]`: expected test_record_arguments.Chat, got record Chat "
+        "with unknown fields unread"
+    )
+    with pytest.raises(TypeError, match=r"chats\[0\]\.category`: expected "):
+        rebuilt(update_chat_list, "p", chats=[{"id": "a", "title": "A", "category": 5}])
+    with pytest.raises(TypeError, match=r"keyed\[\*\]`: expected "):
+
+        def by_key(keyed: dict[str, Job]) -> None:
+            pass
+
+        rebuilt(by_key, {"secret-key": "no job"})
+
+
+def test_sent_records_read_as_plain_dicts_where_no_record_is_declared():
+    def plain(options: dict, anything, *rest, **named) -> None:
+        pass
+
+    job = sent("Job", {"number": 7})
+    args, kwargs = rebuilt(plain, {"job": job}, [job], job, extra=job)
+    assert (args, kwargs) == (
+        [{"job": {"number": 7}}, [{"number": 7}], {"number": 7}],
+        {"extra": {"number": 7}},
+    )
 
 
 def test_records_inside_containers_are_rebuilt():

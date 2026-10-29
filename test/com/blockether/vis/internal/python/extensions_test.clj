@@ -38,6 +38,7 @@
     [com.blockether.vis.internal.foundation.shell :as shell]
     [com.blockether.vis.internal.python.extensions :as pyx]
     [com.blockether.vis.internal.python.host :as python-host]
+    [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.python.runtime :as python-runtime]
     [com.blockether.vis.internal.python.worker :as worker]
     [com.blockether.vis-python-runtime :as runtime]
@@ -8831,6 +8832,94 @@ vis.register_extension(vis.Extension(
                     ext-dir
                     "record_arguments.py"
                     (str/replace (slurp (io/file ext-dir "record_arguments.py")) "201" "202"))
+                  (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))))
+              (finally (ep/dispose-python-context! ctx)))))))))
+
+(defdescribe
+  python-nested-record-argument-test
+  ;; #427: a typed extension method refused chats that the sandbox passed. A sandbox
+  ;; record keeps its class name, so a nested union member rebuilds as the class sent,
+  ;; and a misfit fails before the call, with types and the loaded source sha only.
+  (it
+    "rebuilds nested domain records from the sandbox in both sandboxes across reload"
+    (doseq [worker? [false true]]
+      (with-fresh-loaded
+        {"chat_records.py"
+         (str
+           "import blockether.vis.extension as vis\n"
+           "from dataclasses import dataclass\n" "@dataclass(frozen=True)\n"
+           "class Work:\n" "    pass\n"
+           "@dataclass(frozen=True)\n" "class Personal:\n"
+           "    pass\n" "@dataclass(frozen=True)\n"
+           "class Chat:\n" "    id: str\n"
+           "    title: str\n" "    category: Work | Personal | None = None\n"
+           "def listed() -> list[Chat]:\n" "    'List chats.'\n"
+           "    return [Chat('a', 'A', Personal()), Chat('b', 'B', Work())]\n" "def render(**_):\n"
+           "    return None\n" "class Teams:\n"
+           "    @vis.method(activity=vis.Activity(label='Tag chats', show_start=False, render=render))\n"
+           "    def update_chat_list(self, profile: str, *, chats: list[Chat]) -> str:\n"
+           "        'Tag chats.'\n" "        assert all(isinstance(chat, Chat) for chat in chats)\n"
+           "        return 'v1 ' + ' '.join(f'{c.id}:{type(c.category).__name__}' for c in chats)\n"
+           "vis.register_extension(vis.Extension(name='chat-records', description='Pass nested records', alias='chat_probe', symbols=[vis.Symbol(listed, name='chats_listed'), vis.Symbol(Teams(), name='teams')]))\n")}
+        (fn [result {:keys [ext-dir]}]
+          (expect (= 1 (:loaded result)))
+          (let [made (ep/create-python-context {} nil {:worker? worker?} nil)
+                ctx (:python-context made)
+                env {:python-context ctx :extensions (atom []) :active-extensions (atom [])}]
+
+            (try
+              (dotimes [iteration 2]
+                (let [ext (registered "chat-records")
+                      sha (subs (util/sha256-hex (slurp (io/file ext-dir "chat_records.py"))) 0 12)]
+
+                  (reset! (:extensions env) [ext])
+                  (if worker?
+                    (loop-env/sync-active-extension-symbols! env [ext])
+                    (loop-env/sync-extension-symbols-into! ctx (dissoc env :python-context) [ext]))
+                  (let
+                    [answer
+                     (ep/run-python-block
+                       ctx
+                       (str
+                         "import dataclasses, re, types\n"
+                         "chats = await chats_listed()\n"
+                         ;; `kept` stays the first load's records, sent to the reloaded tool.
+                         "try:\n"
+                         "    kept\n" "except NameError:\n"
+                         "    kept = chats\n"
+                         "print(await teams.update_chat_list('p', chats=kept))\n"
+                         "@dataclasses.dataclass\n" "class Personal:\n"
+                         "    pass\n"
+                         "print(await teams.update_chat_list('p', chats=[types.SimpleNamespace(id='c', title='C', category=Personal()), {'id': 'd', 'title': 'D'}]))\n"
+                         "for chats in ([{'id': 'e', 'title': 'E', 'category': {}}], [{'id': 'secret-id', 'title': 'T', 'unread': 1}]):\n"
+                         "    try:\n"
+                         "        await teams.update_chat_list('p', chats=chats)\n"
+                         "    except Exception as error:\n"
+                         "        text = str(error)\n"
+                         "        print(text[text.index('argument'):text.index(' (extension')], 'secret' in text, re.search(r'sha256 (\\w+)', text).group(1))\n"))
+                     code (if (zero? iteration) "v1" "v2")]
+
+                    (expect (nil? (:error answer))
+                            (str "worker? " worker? " iteration " iteration " " (pr-str answer)))
+                    (expect
+                      (= (str code
+                              " a:Personal b:Work\n"
+                              code
+                              " c:Personal d:NoneType\n"
+                              "argument `chats[0].category`: dict fits Work and Personal;"
+                              " pass a record of one of them False "
+                              sha
+                              "\n"
+                              "argument `chats[0]`: expected Chat, got dict with unknown"
+                              " fields unread False "
+                              sha
+                              "\n")
+                         (str/replace (:stdout answer) #"[\w.]+\.(Work|Personal|Chat)\b" "$1")))))
+                (when (zero? iteration)
+                  (write-ext!
+                    ext-dir
+                    "chat_records.py"
+                    (str/replace (slurp (io/file ext-dir "chat_records.py")) "'v1 '" "'v2 '"))
                   (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))))
               (finally (ep/dispose-python-context! ctx)))))))))
 

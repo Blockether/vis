@@ -396,18 +396,26 @@ def status(result: TriggerResult) -> str:
 
 Sandbox code can pass the result straight back, as in
 `await status(await trigger("docs/build"))`. Arguments cross the sandbox boundary
-as JSON, so the record travels as a dict of its public fields. Before your function
-runs, Vis rebuilds the record with your dataclass's constructor. A dataclass defined
-in sandbox code, or a dict with the record's field names, is rebuilt the same way.
+as JSON, so the record travels as its class name and its public fields. Before your
+function runs, Vis rebuilds the record with your dataclass's constructor. A
+dataclass defined in sandbox code, a `types.SimpleNamespace` or a dict with the
+record's field names is rebuilt the same way.
 
 - Records are also rebuilt inside `Optional`, unions, `list`, `tuple`, `set`,
-  `frozenset` and `dict` annotations, and in nested record fields. A union uses
-  the first member that fits, in the order you declared.
+  `frozenset` and `dict` annotations, and in nested record fields.
+- In a union, a record whose class name matches a member becomes that member. Other
+  values use the first member that fits, in the order you declared.
+- If a dict fits two record members of a union, the call fails. For example, `{}`
+  fits both `Work` and `Personal`. Pass `Personal()` or a record that a tool returned.
 - The dict can leave out fields that have defaults. Vis skips fields declared with
   `field(init=False)`, because the constructor sets them.
-- A value that does not match the record, such as a dict with unknown keys or
-  without a required field, reaches your function unchanged. An error raised by
-  the constructor, for example in `__post_init__`, fails the call.
+- A value that does not match the record fails the call before your function runs.
+  Examples are a dict with unknown keys or without a required field. The error
+  names the argument path, such as `chats[1].category`, and the expected and
+  received types. It never shows the values.
+- The error also names the sha256 of the extension source that handled the call.
+  Compare it with `shasum -a 256` of your file to see whether Vis runs old code.
+- An error raised by the constructor, for example in `__post_init__`, fails the call.
 - Private fields, whose names start with `_`, do not cross the boundary. Give them
   defaults if the record must be rebuilt.
 - After you reload the extension, a record returned before the reload is rebuilt

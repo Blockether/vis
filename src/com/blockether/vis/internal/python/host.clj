@@ -189,6 +189,25 @@
            (finally (clojure.lang.Var/resetThreadBindingFrame held))))
     (answer tool f args)))
 
+(defn- guest-records
+  "`x` with each record that the guest sent read as a plain map of its fields.
+
+   The guest sends a record as `{\"__vis_object__\" name \"__vis_attrs__\" fields}`.
+   A Clojure tool reads only the fields, as before. The class name stays as
+   `::record` metadata, so an extension worker gets it back (#427)."
+  [x]
+  (cond (map? x) (let [record-name
+                       (get x "__vis_object__")
+
+                       fields
+                       (get x "__vis_attrs__")]
+
+                   (if (and (= 2 (count x)) (string? record-name) (map? fields))
+                     (with-meta (update-vals fields guest-records) {::record record-name})
+                     (update-vals x guest-records)))
+        (sequential? x) (mapv guest-records x)
+        :else x))
+
 (defn call-args
   "The argument vector a tool fn takes for Python `args` and `kwargs`.
 
@@ -225,7 +244,7 @@
         (if (str/blank? (str caller)) nil caller)
 
         args
-        (call-args (get request "args") (get request "kwargs"))
+        (call-args (guest-records (get request "args")) (guest-records (get request "kwargs")))
 
         f
         (or (get-in @registry [session tool]) (get-in @registry [door-session tool]))]

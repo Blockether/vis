@@ -240,10 +240,14 @@
                 (let [nm (str "__vis_host_cb_" (.incrementAndGet ^AtomicLong callback-seq) "__")]
                   (vswap! bound assoc nm v)
                   {host-callable-key nm})
-                (map? v) (into {}
-                               (map (fn [[k x]]
-                                      [k (seal x)]))
-                               v)
+                (map? v) (let [fields (into {}
+                                            (map (fn [[k x]]
+                                                   [k (seal x)]))
+                                            v)]
+                           ;; A record the guest sent gets its class name back (#427).
+                           (if-let [record-name (::python-host/record (meta v))]
+                             {"__vis_object__" record-name "__vis_attrs__" fields}
+                             fields))
                 (sequential? v) (mapv seal v)
                 :else v))]
 
@@ -1437,6 +1441,9 @@
                  (python-string-literal entry-path)
                  "\n"
                  "__cached__ = None\n"
+                 "__vis_source_sha__ = "
+                 (python-string-literal (util/sha256-hex source))
+                 "\n"
                  "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                  "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
                  "__vis_packages__ = "

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+from types import SimpleNamespace
 
 import blockether.vis.extension as vis
 import pytest
@@ -144,8 +145,8 @@ def test_sends_model_properties_and_rebuilds_records_that_carry_them():
     [record] = args
     assert isinstance(record, Status)
     assert (record.env, list(record.phases)) == ("DEV04", [1])
-    args, _ = vis._call_arguments(report, [{**sent, "other": 1}], {})
-    assert args == [{**sent, "other": 1}]
+    with pytest.raises(TypeError, match="unknown fields other"):
+        vis._call_arguments(report, [{**sent, "other": 1}], {})
 
 
 def test_sends_dataclass_arguments_as_their_public_fields(monkeypatch):
@@ -161,7 +162,21 @@ def test_sends_dataclass_arguments_as_their_public_fields(monkeypatch):
     reservation = vis._tool_value(_object("Reservation", {"id": "r-1"}))
 
     assert vis.tools.spel.open(reservation, targets=(Target("https://x.com"),)) is None
-    assert calls == [([{"id": "r-1"}], {"targets": [{"url": "https://x.com"}]})]
+    assert calls == [
+        (
+            [{"__vis_object__": "Reservation", "__vis_attrs__": {"id": "r-1"}}],
+            {
+                "targets": [
+                    {
+                        "__vis_object__": "Target",
+                        "__vis_attrs__": {"url": "https://x.com"},
+                    }
+                ]
+            },
+        )
+    ]
+    assert vis.tools.spel.open(SimpleNamespace(id="r-2", _x=1)) is None
+    assert calls[-1] == ([{"id": "r-2"}], {})
 
 
 def test_needs_a_tool_name():

@@ -120,15 +120,22 @@ def __vis_unseal_host__(value):
 def __vis_call__(cid, args_json, kwargs_json):
     """Invoke a sealed callable, await its completion, then seal the public result.
 
-    A record argument arrives as a dict of its fields; the SDK rebuilds the
-    records the callable's annotations declare before the call.
+    A record argument arrives as its class name and fields; the SDK rebuilds the
+    records the callable's annotations declare before the call. An argument that
+    does not fit its record fails before the call and names the sha256 of the
+    loaded extension source (Blockether/vis#427).
     """
     fn = _vis_callables[cid]
-    args, kwargs = _vis_mod._call_arguments(
-        fn,
-        __vis_unseal_host__(_vis_json.loads(args_json)),
-        __vis_unseal_host__(_vis_json.loads(kwargs_json)),
-    )
+    try:
+        args, kwargs = _vis_mod._call_arguments(
+            fn,
+            __vis_unseal_host__(_vis_json.loads(args_json)),
+            __vis_unseal_host__(_vis_json.loads(kwargs_json)),
+        )
+    except _vis_mod._ArgumentMismatch as error:
+        # Name the loaded source, so a caller can tell stale code from a bad value.
+        source = globals().get("__vis_source_sha__") or "unknown"
+        raise TypeError(f"{error} (extension source sha256 {source[:12]})") from None
     result = fn(*args, **kwargs)
     if _vis_inspect.isawaitable(result):
 
