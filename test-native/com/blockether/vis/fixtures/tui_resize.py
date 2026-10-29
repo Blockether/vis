@@ -395,7 +395,8 @@ def check_resize(binary, home, gateway, mode=None):
                 print("native theme restored after restart", flush=True)
                 return
             output = b""
-            os.write(master, b"\x18o")
+            # C-x m p: the Model group opens Settings on its Providers page.
+            os.write(master, b"\x18mp")
             await_bottom(8, text=b"Settings")
             os.write(master, b"Theme\r")
             await_bottom(8, text=b"Themes")
@@ -500,14 +501,15 @@ def check_resize(binary, home, gateway, mode=None):
             print("native Python syntax colors verified", flush=True)
         if model_key:
             output = b""
-            os.write(master, b"\x18" + model_key.encode())
+            # C-x m opens the Model group: c chooses a model, m cycles to the next.
+            os.write(master, b"\x18m" + model_key.encode())
             if model_key == "c":
                 await_bottom(2, text=b"Session model")
                 os.write(master, b"\x1b[B\r")
             os.write(master, b"responsive-marker")
             await_bottom(2, text=b"responsive-marker")
             print(
-                f"C-x {model_key}: input responsive during slow model HTTP", flush=True
+                f"C-x m {model_key}: input responsive during slow model HTTP", flush=True
             )
     finally:
         os.close(master)

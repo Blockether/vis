@@ -187,8 +187,8 @@
 (defdescribe
   native-tui-model-shortcuts-test
   ;; Model HTTP must never block the keyboard thread, including in native-image.
-  (it "opens C-x c and accepts input while its model PATCH waits" (check-native-tui! "c"))
-  (it "cycles C-x m and accepts input while its model HTTP waits" (check-native-tui! "m")))
+  (it "opens C-x m c and accepts input while its model PATCH waits" (check-native-tui! "c"))
+  (it "cycles C-x m m and accepts input while its model HTTP waits" (check-native-tui! "m")))
 
 (defdescribe native-tui-newline-test
              ;; Regression: Shift+Enter sent the draft. Lanterna decoded the terminal's report as
