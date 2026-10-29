@@ -843,8 +843,9 @@ The reasoning control changes only the current session. A new session starts wit
 Paths and access rows use guided editors. Changes apply on the next turn.
 To edit configuration files directly, use a text editor outside the app or TUI.
 
-Local permissions cannot expand the host's global access policy. Draft settings
-govern future operations. Changing them does not move or delete an existing draft.
+Project access settings cannot expand the host's global access policy. Group and session settings
+can, for example to turn off the process jail for one session. Draft settings govern future
+operations. Changing them does not move or delete an existing draft.
 
 Skill and MCP availability applies to the next lookup or call, including a call
 by an already-known name. An ongoing external call can finish. Disable a skill

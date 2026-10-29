@@ -210,22 +210,38 @@
                                             (fn [_ raw]
                                               (assoc raw "after" false)))
             (expect (= {"after" false} (store/db-scoped-settings db "session" sid))))))
-    (it
-      "enforces the host ceiling before writing any local setting"
-      (with-empty-config
-        (with-redefs [config/load-global-config-raw (constantly {"jail" {"enabled" true
-                                                                         "keychain" false}})]
-          (let [{:keys [db target sid id]} (scope-fixture)
-                failure (failure-data #(edit/apply!
-                                         db
-                                         target
-                                         (edit/revision db target)
-                                         [{"id" id "action" "value" "value" false}
-                                          {"id" "jail_keychain" "action" "value" "value" true}]))]
+    (it "enforces the host ceiling before writing any project setting"
+        (with-empty-config (with-redefs [config/load-global-config-raw
+                                         (constantly {"jail" {"enabled" true "keychain" false}})]
+                             (let [{:keys [db target]} (scope-fixture)
+                                   project (scoped/target db "project" (:project-id target))
+                                   failure (failure-data #(edit/apply! db
+                                                                       project
+                                                                       (edit/revision db project)
+                                                                       [{"id" "jail_keychain"
+                                                                         "action" "value"
+                                                                         "value" true}]))]
 
-            (expect (= 400 (:status failure)))
-            (expect (= :settings/host-policy (:type failure)))
-            (expect (= {} (store/db-scoped-settings db "session" sid))))))))
+                               (expect (= 400 (:status failure)))
+                               (expect (= :settings/host-policy (:type failure)))))))
+    ;; User report 2026-10-29: a session could not turn off a jail that Machine settings
+    ;; turned on. A group or a session always decides its own access.
+    (it "lets a group or a session widen the host policy for its own turns"
+        (with-empty-config (with-redefs [config/load-global-config-raw
+                                         (constantly {"jail" {"enabled" true "keychain" false}})]
+                             (let [{:keys [db target group sid other]} (scope-fixture)
+                                   widen [{"id" "jail_enabled" "action" "value" "value" false}
+                                          {"id" "jail_keychain" "action" "value" "value" true}]]
+
+                               (expect (:jail-enabled (policy/snapshot db sid)))
+                               (edit/apply! db target (edit/revision db target) widen)
+                               (expect (false? (get (store/db-scoped-settings db "session" sid)
+                                                    "config:jail:enabled")))
+                               (expect (not (:jail-enabled (policy/snapshot db sid))))
+                               (expect (nil? (:config-error (policy/snapshot db sid))))
+                               (expect (:jail-enabled (policy/snapshot db other)))
+                               (edit/apply! db group (edit/revision db group) widen)
+                               (expect (not (:jail-enabled (policy/snapshot db other)))))))))
   (describe
     "revisions and inheritance"
     (it "rejects an old revision and allows an explicit retry with the latest revision"

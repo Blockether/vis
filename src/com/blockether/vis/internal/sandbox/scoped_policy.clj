@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.sandbox.scoped-policy
-  "Scoped access settings. Local policy can narrow, never expand, the host ceiling."
+  "Scoped access settings. A project can narrow, never expand, the host ceiling. A group
+   or a session decides its own access, so it can also widen the host policy."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
@@ -145,15 +146,21 @@
 
     (config/deep-merge-config (or yaml {}) (or machine {}))))
 
+(defn- with-definitions
+  "Put the access values of `target` that a scope in `sources` decides over `raw`."
+  [raw db target sources]
+  (reduce (fn [raw section]
+            (reduce (fn [raw {:keys [name value source]}]
+                      (if (sources source) (assoc-in raw (conj section name) value) raw))
+                    raw
+                    (scoped/definitions db target section)))
+          raw
+          sections))
+
 (defn effective-config
   "Resolve access keys independently; unrelated configuration is not session-owned."
   [db target]
-  (reduce (fn [raw section]
-            (assoc-in raw
-              section
-              (into {} (map (juxt :name :value)) (scoped/definitions db target section))))
-          (host-config)
-          sections))
+  (with-definitions (host-config) db target #{"global" "project" "group" "session"}))
 
 (defn- covered?
   [roots path]
@@ -214,13 +221,15 @@
                       (= (get hn "rules") (get dn "rules")))))]
 
     (when-not bounded?
-      (throw (ex-info
-               "Local access settings cannot expand the host policy; change the global policy first"
-               {:status 400 :type :settings/host-policy})))
+      (throw
+        (ex-info
+          "Project access settings cannot expand the host policy; change the global policy first"
+          {:status 400 :type :settings/host-policy})))
     desired))
 
 (defn snapshot
-  "Use the current host ceiling if a later ancestor edit invalidates a local grant. A
+  "Bound the project values by the host ceiling, then apply the group and session values
+   without a bound. Project values that exceed the host give way to the host values. A
    subagent gets its parent's policy, narrowed by its file grant."
   [db session-id]
   (let [agent
@@ -237,15 +246,22 @@
         (host-config)
 
         files
-        (:files agent)]
+        (:files agent)
 
-    (policy/restrict (try (assert-bounded! host (effective-config db target) root)
-                          (catch clojure.lang.ExceptionInfo e
-                            (assoc (policy/snapshot host {:base-dir root})
-                              :config-error
-                              {"message" (ex-message e)
-                               "hint"
-                               "Review local access settings; the host policy is in effect."})))
+        project
+        (with-definitions host db target #{"project"})
+
+        [base error]
+        (try (assert-bounded! host project root)
+             [project nil]
+             (catch clojure.lang.ExceptionInfo e [host e]))]
+
+    (policy/restrict (cond-> (policy/snapshot (with-definitions base db target #{"group" "session"})
+                                              {:base-dir root})
+                       error
+                       (assoc :config-error
+                         {"message" (ex-message error)
+                          "hint" "Review project access settings; the host policy is in effect."}))
                      files)))
 
 (defn settings
@@ -264,47 +280,49 @@
                      [section (scoped/inherited-definitions db target section)]))
               sections)]
 
-    (mapv (fn [{:keys [id section key label default type editor choices applies description]}]
-            (let [{:keys [value source is-override] :or {value default source "default"}}
-                  (get-in layers [section key])
+    (mapv
+      (fn [{:keys [id section key label default type editor choices applies description]}]
+        (let [{:keys [value source is-override] :or {value default source "default"}}
+              (get-in layers [section key])
 
-                  parent
-                  (get-in inherited [section key] {:value default :source "default"})]
+              parent
+              (get-in inherited [section key] {:value default :source "default"})]
 
-              (cond->
-                {:id id
-                 :label label
-                 :type type
-                 :editor editor
-                 :schema (str "config.json#/$defs/" (first section) "/properties/" key)
-                 :scopes ["global" "project" "group" "session"]
-                 :scope (:scope target)
-                 :source source
-                 :is-override (boolean is-override)
-                 :inherited-value (:value parent)
-                 :inherited-source (:source parent)
-                 :own-value (when is-override value)
-                 :applies (or applies "next_turn")
-                 :description
-                 (or
-                   description
-                   "Changes apply to the next turn. Local access cannot exceed host permissions.")}
-                (= type "boolean")
-                (assoc :enabled value)
+          (cond->
+            {:id id
+             :label label
+             :type type
+             :editor editor
+             :schema (str "config.json#/$defs/" (first section) "/properties/" key)
+             :scopes ["global" "project" "group" "session"]
+             :scope (:scope target)
+             :source source
+             :is-override (boolean is-override)
+             :inherited-value (:value parent)
+             :inherited-source (:source parent)
+             :own-value (when is-override value)
+             :applies (or applies "next_turn")
+             :description
+             (or description
+                 (if (= "project" (:scope target))
+                   "Changes apply to the next turn. Project access cannot exceed host permissions."
+                   "Changes apply to the next turn."))}
+            (= type "boolean")
+            (assoc :enabled value)
 
-                (not= type "boolean")
-                (assoc :value value)
+            (not= type "boolean")
+            (assoc :value value)
 
-                choices
-                (assoc :choices choices))))
-          fields)))
+            choices
+            (assoc :choices choices))))
+      fields)))
 
 (defn validate-candidate!
   "Validate a complete staged access configuration before any owner is written."
   [target candidate]
   (when-not (validation/valid? candidate)
     (throw (ex-info "Invalid access configuration" {:status 400})))
-  (when (not= "global" (:scope target))
+  (when (= "project" (:scope target))
     (assert-bounded! (host-config)
                      candidate
                      (or (:root target) (.getCanonicalPath (workspace/cwd)))))
