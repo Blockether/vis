@@ -1,12 +1,8 @@
-import type { GatewayClient } from '../lib/gateway';
-import type { RunningTurn } from '../lib/running-turn';
-import type { AgentTimeline, Session, Subagent, TranscriptTurn } from '../lib/types';
-import { STORY_COMPOSER_CLIENT, STORY_COMPOSER_SESSION } from './story-data';
+import type { AgentTimeline, Subagent } from '../lib/types';
 
 /** Subagent fixtures in the shape of the agents contract: gateway rows and timelines. */
 export const STORY_AGENT_LEADER = 'subagents-story';
-export const STORY_AGENT_DONE_TURN = 'subagents-turn-1';
-export const STORY_AGENT_WAKE_TURN = 'subagents-turn-2';
+const STORY_AGENT_DONE_TURN = 'subagents-turn-1';
 export const STORY_AGENT_LIVE_TURN = 'subagents-turn-3';
 
 // Times count back from the load of the story, so a running row shows a short time.
@@ -108,75 +104,4 @@ export function storyTimeline(agent: Subagent): AgentTimeline {
     });
   }
   return { session_id: agent.session_id, items };
-}
-
-const turn = (id: string, position: number, row: Partial<TranscriptTurn>): TranscriptTurn => ({
-  turn_id: id,
-  position,
-  status: 'completed',
-  created_at: NOW - (40 - position * 10) * MINUTE,
-  iterations: [],
-  model: 'claude-opus-5',
-  provider: 'anthropic',
-  duration_ms: 240_000,
-  ...row,
-});
-
-/** The leader's transcript: a turn with its finished team, then a wake from one of its children. */
-export const STORY_AGENT_TURNS: TranscriptTurn[] = [
-  turn(STORY_AGENT_DONE_TURN, 1, {
-    request: 'Review the subagent routes and run the checks in parallel.',
-    content: [{ id: 'a1', type: 'prose', markdown: 'Six of seven agents finished. The gateway tests found one 404 for a grandchild timeline; the fix stopped on a merge conflict.' }],
-  }),
-  turn(STORY_AGENT_WAKE_TURN, 2, {
-    request: 'Council notification #61. Read the attributed Council input.',
-    request_kind: 'council',
-    council: {
-      entry_id: 61, thread_id: 58, kind: 'informational', author_session_id: 'done-fix',
-      content: 'Fix the 404 stopped: merge conflict in state.clj.',
-    },
-    content: [{ id: 'a2', type: 'prose', markdown: 'I take the conflict over myself and start the next team.' }],
-  }),
-];
-
-const session = (running: boolean): Session => ({
-  ...STORY_COMPOSER_SESSION,
-  id: STORY_AGENT_LEADER,
-  title: 'Subagent views',
-  turn_count: STORY_AGENT_TURNS.length + (running ? 1 : 0),
-  ...(running ? { status: 'running' as const, live: true, current_turn_id: STORY_AGENT_LIVE_TURN } : {}),
-});
-
-const runningTurn: RunningTurn = {
-  id: STORY_AGENT_LIVE_TURN,
-  request: 'Ship the new dock and check it in every theme.',
-  answer: '',
-  iterations: [],
-  startedAt: NOW - 1.2 * MINUTE,
-  status: 'running',
-};
-
-/** A leader session over the agents contract: running with a live team, or idle after it. */
-export function storyAgentClient(running: boolean): GatewayClient {
-  const agents = running ? [...STORY_DONE_TEAM, ...STORY_LIVE_TEAM] : STORY_DONE_TEAM;
-  const answers: Record<string, unknown> = {
-    cachedSession: () => session(running),
-    session: async () => session(running),
-    cachedTranscript: () => STORY_AGENT_TURNS,
-    transcript: async () => STORY_AGENT_TURNS,
-    transcriptWindow: () => ({ offset: 0, total: STORY_AGENT_TURNS.length }),
-    cachedRunningTurn: () => (running ? { turn: runningTurn, seq: 1 } : null),
-    agents: async () => agents,
-    agentTimeline: async (_sid: string, child: string) => {
-      const agent = agents.find((row) => row.session_id === child);
-      return agent ? storyTimeline(agent) : { session_id: child, items: [] };
-    },
-    cancelAgent: async () => undefined,
-  };
-  return new Proxy(answers, {
-    get(target, key) {
-      if (typeof key === 'string' && key in target) return target[key];
-      return Reflect.get(STORY_COMPOSER_CLIENT, key);
-    },
-  }) as unknown as GatewayClient;
 }

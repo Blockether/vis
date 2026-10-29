@@ -24,7 +24,7 @@ export type WireApp = {
 };
 
 /** What an app does with one action. */
-export type AppAnswer =
+type AppAnswer =
   | { nodes: Record<string, unknown>[]; shortcuts?: Record<string, unknown>[] }
   | { ops: Record<string, unknown>[] }
   | { refuse: string; errors?: Record<string, string> };
@@ -274,7 +274,7 @@ export const COUNTER: StoryApp<{ count: number }> = {
 
 // ── Todo: an input, a selectable table and owner validation. ───────────────────
 
-export type TodoState = { items: { id: string; text: string; done: boolean }[]; next: number };
+type TodoState = { items: { id: string; text: string; done: boolean }[]; next: number };
 
 function todoNodes(state: TodoState) {
   const open = state.items.filter((item) => !item.done).length;
@@ -355,74 +355,6 @@ export const TODO: StoryApp<TodoState> = {
   },
 };
 
-// ── Board: three columns of cards in a grid. A card moves on with each press. ───
-
-const COLUMNS = ['Todo', 'Doing', 'Done'] as const;
-export type BoardState = { cards: { id: string; title: string; column: number }[]; next: number };
-
-function boardNodes(state: BoardState) {
-  return {
-    nodes: [
-      {
-        id: 'board',
-        type: 'group',
-        direction: 'grid',
-        max_columns: 3,
-        children: COLUMNS.map((name, column) => {
-          const cards = state.cards.filter((card) => card.column === column);
-          return {
-            id: `col-${column}`,
-            type: 'group',
-            label: `${name} (${cards.length})`,
-            direction: 'column',
-            children:
-              cards.length > 0
-                ? cards.map((card) => ({
-                    id: card.id,
-                    type: 'card',
-                    title: card.title,
-                    meta: column < 2 ? `Press to move to ${COLUMNS[column + 1]}` : 'Press to reopen',
-                    tone: column === 2 ? 'ok' : column === 1 ? 'running' : 'idle',
-                    is_selectable: true,
-                  }))
-                : [{ id: `empty-${column}`, type: 'paragraph', text: 'No cards.' }],
-          };
-        }),
-      },
-    ],
-    shortcuts: [{ key: 'n', action: 'new-card', label: 'New card' }],
-  };
-}
-
-export const BOARD: StoryApp<BoardState> = {
-  id: 'app-board',
-  title: 'Release board',
-  initial: () => ({
-    cards: [
-      { id: 'c1', title: 'Pin the schema', column: 2 },
-      { id: 'c2', title: 'Key legend on phones', column: 1 },
-      { id: 'c3', title: 'Dark theme check', column: 0 },
-      { id: 'c4', title: 'Write the guide with a long title that wraps on a narrow phone', column: 0 },
-    ],
-    next: 5,
-  }),
-  render: boardNodes,
-  act: (state, action) => {
-    if (action.action === 'activate') {
-      const next = {
-        ...state,
-        cards: state.cards.map((card) => (card.id === action.node_id ? { ...card, column: (card.column + 1) % 3 } : card)),
-      };
-      return { state: next, answer: boardNodes(next) };
-    }
-    if (action.action === 'shortcut') {
-      const next = { cards: [...state.cards, { id: `c${state.next}`, title: `Card ${state.next}`, column: 0 }], next: state.next + 1 };
-      return { state: next, answer: boardNodes(next) };
-    }
-    return { state };
-  },
-};
-
 // ── 2048: a 4x4 table and arrow keys. ──────────────────────────────────────────
 
 export type Game = { grid: number[][]; score: number; seed: number; isOver: boolean };
@@ -493,60 +425,6 @@ function slide(grid: number[][], key: string): number[][] {
   });
   return vertical ? transpose(g) : g;
 }
-
-function newGame(seed: number): Game {
-  return spawn(spawn({ grid: [0, 1, 2, 3].map(() => [0, 0, 0, 0]), score: 0, seed, isOver: false }));
-}
-
-function gameNodes(game: Game) {
-  const best = Math.max(...game.grid.flat());
-  return {
-    nodes: [
-      {
-        id: 'score',
-        type: 'stat',
-        stats: [
-          { id: 'score', label: 'Score', value_text: String(game.score) },
-          { id: 'best', label: 'Best tile', value_text: String(best), tone: best >= 2048 ? 'ok' : 'idle' },
-        ],
-      },
-      ...(game.isOver ? [{ id: 'over', type: 'status', text: 'No moves left', tone: 'warn' }] : []),
-      // A monospace block keeps the board square at every width; a table wraps on a phone.
-      {
-        id: 'grid',
-        type: 'code',
-        label: 'Board',
-        text: game.grid.map((row) => row.map((cell) => (cell === 0 ? '·' : String(cell)).padStart(5)).join('')).join('\n\n'),
-      },
-      { id: 'restart', type: 'button', label: 'New game' },
-    ],
-    shortcuts: [
-      { key: 'ArrowUp', action: 'up', label: 'Up' },
-      { key: 'ArrowDown', action: 'down', label: 'Down' },
-      { key: 'ArrowLeft', action: 'left', label: 'Left' },
-      { key: 'ArrowRight', action: 'right', label: 'Right' },
-      { key: 'n', node_id: 'restart' },
-    ],
-  };
-}
-
-export const GAME_2048: StoryApp<Game> = {
-  id: 'app-2048',
-  title: '2048',
-  initial: () => newGame(42),
-  render: gameNodes,
-  act: (game, action) => {
-    if (action.action === 'activate' && action.node_id === 'restart') {
-      const next = newGame(game.seed);
-      return { state: next, answer: gameNodes(next) };
-    }
-    if (action.action === 'shortcut') {
-      const next = move(game, action.key);
-      return { state: next, answer: gameNodes(next) };
-    }
-    return { state: game };
-  },
-};
 
 // ── Dashboard: status, progress, stats, steps and a log that streams. ──────────
 
@@ -654,7 +532,7 @@ export function buildStep(job: Job): { state: Job; ops: Record<string, unknown>[
 
 // ── Deploy wizard: a form across steps, with radios, checkboxes and keys. ──────
 
-export type Wizard = { step: number; env: string; regions: string[]; isChecked: boolean };
+type Wizard = { step: number; env: string; regions: string[]; isChecked: boolean };
 
 const ENVS = ['staging', 'production'];
 
@@ -714,7 +592,7 @@ function wizardNodes(wizard: Wizard) {
   };
 }
 
-export const WIZARD: StoryApp<Wizard> = {
+const WIZARD: StoryApp<Wizard> = {
   id: 'app-wizard',
   title: 'Deploy wizard',
   initial: () => ({ step: 0, env: 'staging', regions: [], isChecked: false }),

@@ -313,9 +313,6 @@ function ParkedTranscript() {
   );
 }
 
-/** The matrix the gallery photographs: the page owns it, the script reads it. */
-export const HUMAN_INPUT_STATES = Object.keys(HUMAN_INPUT_REQUESTS);
-
 /**
  * Every state is the same component under a different request, so a change to
  * the shipped sheet shows up in every photograph at once.
