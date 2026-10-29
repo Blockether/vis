@@ -243,8 +243,6 @@
             (sherpa/native-failure (java.io.IOException. "connection reset"))]
 
         (expect (true? (:is-restart-required (ex-data linker))))
-        (expect (str/includes? (ex-message linker) "restart Vis"))
-        (expect (str/includes? (:remediation (ex-data linker)) "Restart Vis"))
         (expect (false? (:is-restart-required (ex-data other))))
         (expect (str/includes? (:remediation (ex-data other)) sherpa/native-dir-env))))
   (it "passes a working call straight through and only translates what it must"

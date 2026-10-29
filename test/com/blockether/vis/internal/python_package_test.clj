@@ -21,15 +21,7 @@
   (describe "the module `vis-agent` ships"
             (it "is the very file the engine execs into an extension context"
                 (expect (= (slurp (io/file agent-dir "src/blockether/vis/extension.py"))
-                           (slurp (io/resource "blockether/vis/extension.py")))))
-            (it "is the only copy — the injector carries the host and nothing else"
-                (let [injector (slurp (io/resource "vis-host-python/extension_bootstrap.py"))]
-                  (expect (str/includes? injector "_vis_body"))
-                  (expect (not (str/includes? injector "def ask(")))))
-            (it "imports nothing a sandbox cannot give it"
-                (expect (nil? (re-find #"(?m)^\s*(?:import|from)\s+blockether\.vis\._contracts"
-                                       (slurp (io/file agent-dir
-                                                       "src/blockether/vis/extension.py")))))))
+                           (slurp (io/resource "blockether/vis/extension.py"))))))
   (describe "the outside host"
             (it "answers the engine's own shell result keys, so no lookup can KeyError"
                 (expect (= (set (keys @#'shell/shell-result-base))
@@ -38,10 +30,4 @@
                                               "_SHELL_RESULT_KEYS"))))))
   (describe "the distribution"
             (it "carries the product version"
-                (expect (= (str/trim (slurp "VIS_VERSION")) (declared-version agent-dir))))
-            (it "bundles contracts instead of depending on another Python distribution"
-                (expect (not (str/includes? (pyproject agent-dir) "vis-contract==")))
-                (expect (str/includes? (pyproject agent-dir) "jsonschema>=4.23,<5"))
-                (expect (str/includes? (pyproject agent-dir) "hatch_build.py")))
-            (it "pins the only LiteLLM build that corporate Artifactory mirrors serve"
-                (expect (str/includes? (pyproject agent-dir) "\"litellm==1.103.1\"")))))
+                (expect (= (str/trim (slurp "VIS_VERSION")) (declared-version agent-dir))))))

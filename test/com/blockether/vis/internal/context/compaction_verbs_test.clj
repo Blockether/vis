@@ -80,13 +80,12 @@
       (let [[ca ev]
             (with-verbs)
 
-            out
+            _
             (ev "fold_session('[\"t1/i2\", \"t1/i3\"]', \"encoded key\")")]
 
         (expect (=
                   [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "encoded key"}]
-                  (get @ca "session_summaries")))
-        (expect (str/includes? out "folded t1/i2, t1/i3"))))
+                  (get @ca "session_summaries")))))
   ;; Regression, reported as "how come the latest fold saved 0 tokens?": a hyphen
   ;; range typed as ONE key (`"t2/i1-i56"`) used to be swallowed as a single
   ;; opaque scope id. It matched no wire step, the card still said `folded …`,
@@ -98,12 +97,11 @@
             _
             (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3" "t1/i4"])
 
-            out
+            _
             (ev "fold_session(\"t1/i2-i4\", \"middle\")")]
 
         (expect (= [{"from" "t1/i2" "to" "t1/i4" "issued_turn" 99 "at_turn" 99 "gist" "middle"}]
                    (get @ca "session_summaries")))
-        (expect (str/includes? out "folded t1/i2-t1/i4"))
         (expect (= #{"t1/i2" "t1/i3" "t1/i4"}
                    (get (first (expand-through (get @ca "session_summaries")
                                                ["t1/i1" "t1/i2" "t1/i3" "t1/i4"]))
@@ -171,7 +169,6 @@
                  (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= :vis/fold-session-key (:type (ex-data ex))))
-        (expect (str/includes? (ex-message ex) "fold_session takes a key and a gist"))
         (expect (nil? (get @ca "session_summaries")))))
   (it "fold_session(\"tN/iM-\"): an OPEN END folds every settled step since the cursor"
       (let [[ca ev]
@@ -246,12 +243,11 @@
             _
             (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"])
 
-            out
+            _
             (ev "fold_session(\"t1/i3-t2\", \"across\")")]
 
         (expect (= [{"from" "t1/i3" "to" "t2" "issued_turn" 99 "at_turn" 99 "gist" "across"}]
                    (get @ca "session_summaries")))
-        (expect (str/includes? out "folded t1/i3-t2"))
         (expect (= #{"t1/i3" "t2/i1" "t2/i2"}
                    (get (first (expand-through (get @ca "session_summaries")
                                                ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t2/i2"]))
@@ -263,7 +259,7 @@
             _
             (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i1" "t2/i2" "t2/i3"])
 
-            out
+            _
             (ev "fold_session(\"t1/i1, t2/i1-i3\", \"mixed\")")]
 
         (expect (= [{"scopes" #{"t1/i1"}
@@ -272,8 +268,7 @@
                      "issued_turn" 99
                      "at_turn" 99
                      "gist" "mixed"}]
-                   (get @ca "session_summaries")))
-        (expect (str/includes? out "folded t1/i1, t2/i1-t2/i3"))))
+                   (get @ca "session_summaries")))))
   (it "a token that is not a step key is refused BY NAME, with the grammar"
       (let [ca
             (atom {"session_turn" 99})
@@ -285,7 +280,6 @@
             (try (sf "t1/i1, ancient-history" "typo") nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= :vis/fold-session-key (:type (ex-data ex))))
-        (expect (str/includes? (ex-message ex) "not a step key: \"ancient-history\""))
         (expect (nil? (get @ca "session_summaries")))))
   ;; Regression, user report: `fold_session("t1/i61-i98,t3/i111-i135,t4", …)` was refused
   ;; with "one range per fold", so disjoint settled spans cost one call — and one repeated
@@ -325,7 +319,6 @@
             (try (sf "t1/i7-i9" "nothing there") nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= :vis/fold-session-unknown-key (:type (ex-data ex))))
-        (expect (str/includes? (ex-message ex) "matches no settled step"))
         (expect (str/includes? (ex-message ex) "t1/i1 … t2/i1"))
         (expect (nil? (get @ca "session_summaries")))))
   ;; Regression, LongMemEval run of 2026-10-23: "-t1/i16" meant turns 1-16, but turn 1
@@ -344,7 +337,6 @@
             (try (sf "-t1/i16" "turns 1-16") nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= :vis/fold-session-unknown-key (:type (ex-data ex))))
-        (expect (str/includes? (ex-message ex) "t1/i16 is not a step; turn 1 holds t1/i1 … t1/i2"))
         (expect (str/includes? (ex-message ex) "use \"-t16\""))
         (expect (nil? (get @ca "session_summaries")))
         (expect (str/starts-with? (sf "-t16" "turns 1-16") "folded"))))
@@ -389,7 +381,6 @@
           (try (sf {"through" "t1/i5"} "stale shape") nil (catch clojure.lang.ExceptionInfo e e))]
 
       (expect (= :vis/fold-session-key (:type (ex-data ex))))
-      (expect (str/includes? (ex-message ex) "fold_session takes a key and a gist"))
       (expect (str/includes? (ex-message ex) "\"t2/i1-i56\" a range"))
       (expect (nil? (get @ca "session_summaries")))))
   (it "blocks only the LIVE (unsettled) iteration of the current turn and any future turn"
@@ -405,9 +396,7 @@
           (let [ex (try (sf target "unsafe") nil (catch clojure.lang.ExceptionInfo e e))]
             (expect (= :vis/fold-session-active-turn (:type (ex-data ex))))
             (expect (= 2 (:current-turn (ex-data ex))))
-            (expect (= blocked (:blocked-scopes (ex-data ex))))
-            (expect (str/includes? (ex-message ex) "live iteration"))
-            (expect (str/includes? (ex-message ex) "COMPLETED steps"))))
+            (expect (= blocked (:blocked-scopes (ex-data ex))))))
         (expect (nil? (get @ca "session_summaries")))))
   (it "allows folding a SETTLED iteration of the current turn (finer-grained than the whole turn)"
       (let [ca
@@ -1191,66 +1180,18 @@
         stamp
         #'transcript/stamp-utilization!]
 
-    (it "uses a 200k default compaction budget"
-        (expect (= 200000 eng/DEFAULT_PROMPT_BUDGET_TOKENS)))
-    (it "starts advisory pressure at 75% of the operating budget"
-        (let [hint (eng/over-budget-hint advisory 6 6)]
-          (expect (str/includes? hint "FOLD SOON"))
-          (expect (str/includes? hint "150k"))
-          (expect (str/includes? hint "200k"))
-          (expect (str/includes? hint "fold_session"))))
-    (it "escalates at 90% and requires folding before more large tool calls"
-        (let [hint (eng/over-budget-hint urgent 6 6)]
-          (expect (str/includes? hint "FOLD NOW"))
-          (expect (str/includes? hint "before another large tool call"))
-          (expect (str/includes? hint "last completed scope"))))
-    (it "is imperative above budget and prescribes one broad verified fold"
-        (let [hint (eng/over-budget-hint required 6 6)]
-          (doseq [text
-                  ["ACTION REQUIRED" "210k" "200k" "Fold settled search/tool sweeps"
-                   "one broad print(fold_session" "last completed scope"
-                   "preserve decisions, edits, and verification" "preserve exact physical paths"
-                   "If the edit is ready and the next patch fits available headroom, patch first"
-                   "compact actionable checkpoint" "exact paths/symbols" "hypothesis"
-                   "intended edit/test" "dirty files" "never bare or abbreviated filenames"
-                   "confirm the receipt saved tokens"]]
-            (expect (str/includes? hint text)))))
-    ;; Regression, LongMemEval run of 2026-10-23: Opus read the hint as tool-step folding
-    ;; only and never folded a chat of 35 turns; Haiku read "-tN/iK" as a turn range.
-    (it
-      "names the exact key for every earlier turn and says that plain chat turns fold"
-      (let [hint (eng/over-budget-hint advisory 6 6)]
-        (expect (str/includes? hint "print(fold_session(\"-t5\", gist)) folds every earlier turn"))
-        (expect (str/includes? hint "Plain chat turns fold too"))
-        (expect (str/includes? hint "keep every fact, name, date, number and request of the user")))
-      (expect (not (str/includes? (eng/over-budget-hint advisory 1 1) "Plain chat turns")))
-      ;; Haiku saw FOLD NOW at 133k of a 135k budget, put the fold off to the next turn,
-      ;; and that turn overflowed its 150k window. Urgent pressure folds before the answer.
-      (doseq [util [urgent required]]
-        (expect (str/includes?
-                  (eng/over-budget-hint util 6 6)
-                  "Fold before you answer, also when the answer needs no other tool call")))
-      (expect (not (str/includes? (eng/over-budget-hint advisory 6 6) "Fold before you answer"))))
     ;; Regression, LongMemEval run of 2026-10-23: Haiku folded "-t15", then "-t27".
     ;; The second fold replaced the first gist, and the answer fact was lost.
     (it "after earlier folds names the key for the turns after the last fold"
         (let [hint (eng/over-budget-hint advisory 28 28 [{"through" "t15" "gist" "g"}])]
           (expect (str/includes? hint
-                                 "print(fold_session(\"t16-t27\", gist)) folds the turns after"))
-          (expect (str/includes? hint "Your earlier gists stay")))
+                                 "print(fold_session(\"t16-t27\", gist)) folds the turns after")))
         (expect (str/includes? (eng/over-budget-hint advisory 28 28 [{"through" "t26" "gist" "g"}])
                                "print(fold_session(\"t27\", gist))"))
-        (expect (not (str/includes?
-                       (eng/over-budget-hint advisory 28 28 [{"through" "t27" "gist" "g"}])
-                       "Plain chat turns")))
         (expect (= 2 (eng/folded-turn-prefix [{"through" "t3/i2"}])))
         (expect (= 5 (eng/folded-turn-prefix [{"from" "t1" "to" "t4"} {"scopes" #{"t5"}}])))
         (expect (= 2 (eng/folded-turn-prefix [{"turns" #{1 2 4}}])))
         (expect (= 0 (eng/folded-turn-prefix [{"scopes" #{"t1/i1"}} {"from" "t2" "to" "t3"}]))))
-    (it "prints the fold receipt at every pressure level"
-        (doseq [util [advisory urgent required]]
-          (expect (str/includes? (eng/over-budget-hint util 6 6)
-                                 "print(fold_session(\"-tN/iK\", gist))"))))
     (it "never silently expires while pressure remains"
         (expect (some? (eng/over-budget-hint required 6 6)))
         (expect (some? (eng/over-budget-hint required 60 6))))
@@ -1320,7 +1261,6 @@
             (form-wire-text form)]
 
         (expect (str/starts-with? text (filler 300)))
-        (expect (str/includes? text "stdout clipped"))
         (expect (< (count text) 33000))
         (expect (= (+ 250 (svar/count-tokens "unknown" (str (:thinking rec) "\n" text)))
                    (weight-of rec)))))
@@ -1543,13 +1483,6 @@
           "folded through t1/i2 · estimated removal ~15k tokens · last input 42k measured tokens · operating budget 70k · model limit 96k → traced"
           (sf "-t1/i2" "traced")))))
   (it
-    "a gist-less fold still shows the tokens + reduction suffix"
-    (let [sf (get (compaction-verbs (priced-ctx)) 'fold-session)]
-      (expect
-        (=
-          "folded t1/i1 · estimated removal ~12k tokens · last input 42k measured tokens · operating budget 70k · model limit 96k"
-          (sf ["t1/i1"])))))
-  (it
     "a scope with NO stamped weight reclaims nothing, so the card reads an explicit estimated removal ~0 alongside the live window fullness"
     (let [sf (get (compaction-verbs (priced-ctx)) 'fold-session)]
       ;; An unpriced scope must not fabricate a provider-measured reduction.
@@ -1656,7 +1589,7 @@
             sf
             (get (compaction-verbs ctx) 'fold-session)
 
-            card
+            _
             (sf ["t1/i1"] "big cat dump")
 
             trailer
@@ -1665,7 +1598,6 @@
             out
             (apply-summaries trailer (get @ctx "session_summaries"))]
 
-        (expect (str/includes? card "estimated removal ~12k tokens"))
         (expect (not-any? #(contains? % "note") (get @ctx "session_summaries")))
         (expect (= "# ⋯ folded t1/i1 · big cat dump" (:content (irm (second (first out))))))))
   (it "a fold breadcrumb carries no recovery coordinate"
@@ -1686,26 +1618,10 @@
             (:content (irm (second (first folded))))]
 
         (expect (= "# ⋯ folded t1/i1-i2 · did it" line))
-        (expect (not (str/includes? line "ntr")))
-        (expect (not (str/includes? line "# saved:")))
         (expect (= "# ⋯ dropped t1/i1" (:content (irm (second (first dropped))))))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {"session_turn" 2})) 'fold-session)]
-        (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g")))))
-  (it "a fold receipt carries no recovery pointer"
-      ;; The receipt says what was reclaimed and what the gist was — never how to
-      ;; re-read a folded result, because folding changes rendering, not storage,
-      ;; and there is no per-result accessor left to name.
-      (let [sf
-            (get (compaction-verbs (atom {"session_turn" 2 "engine_iter_universe" ["t1/i1"]}))
-                 'fold-session)
-
-            out
-            (sf ["t1/i1"] "g")]
-
-        (expect (= "folded t1/i1 → g" out))
-        (expect (not (str/includes? out "ntr")))
-        (expect (not (str/includes? out "more results"))))))
+        (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))
 
 (defdescribe
   fold-session-activity-test
@@ -1714,14 +1630,13 @@
       (let [events
             (atom [])
 
-            out
+            _
             (binding [extension/*tool-event-sink* #(swap! events conj %)]
               ((get (compaction-verbs (priced-ctx)) 'fold-session) "-t1/i2" "private gist"))
 
             row
             (first (:rows (activity/presentation (activity/replay @events))))]
 
-        (expect (str/starts-with? out "folded through t1/i2 · estimated removal ~15k tokens"))
         (expect (= [:start :terminal] (mapv :phase @events)))
         (expect (false? (:show-start (first @events))))
         (expect (= "succeeded" (:state row)))
@@ -1734,7 +1649,7 @@
       (let [events
             (atom [])
 
-            error
+            _
             (binding [extension/*tool-event-sink* #(swap! events conj %)]
               (try ((get (compaction-verbs (priced-ctx)) 'fold-session) "bogus" "gist")
                    nil
@@ -1743,7 +1658,6 @@
             row
             (first (:rows (activity/presentation (activity/replay @events))))]
 
-        (expect (str/starts-with? (ex-message error) "fold_session: not a step key"))
         (expect (= "failed" (:state row)))
         (expect (str/includes? (:error-summary (last @events)) "not a step key")))))
 

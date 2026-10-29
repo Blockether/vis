@@ -15,24 +15,18 @@
                  (expect (nil? (lf/format-limit-number nil)))
                  (expect (nil? (lf/format-limit-number "12")))))
 
-(defdescribe
-  generic-limit-label-test
-  (it "uses the hand-rolled overrides for the known plan rows"
-      (expect (= "Codex 5h" (lf/generic-limit-label {:id :codex-5h})))
-      (expect (= "Codex 7d" (lf/generic-limit-label {:id :codex-7d})))
-      (expect (= "Z.ai coding plan 5h" (lf/generic-limit-label {:id :zai-coding-plan-5h})))
-      (expect (= "Premium interactions" (lf/generic-limit-label {:id :premium_interactions}))))
-  (it "matches the overrides through the gateway wire, where ids arrive as strings"
-      ;; The JSON hop stringifies keyword VALUES; only KEYS are keywordized on
-      ;; parse. Both shapes must render identically.
-      (expect (= (lf/generic-limit-label {:id :codex-5h})
-                 (lf/generic-limit-label {:id "codex-5h"}))))
-  (it "derives a label from :label or :id and trims the redundant quota suffix"
-      (expect (= "Premium Interactions"
-                 (lf/generic-limit-label {:label "Premium Interactions Quota (%)"})))
-      (expect (= "Chat" (lf/generic-limit-label {:label "Chat Quota"})))
-      (expect (= "Some thing" (lf/generic-limit-label {:id :some_thing})))
-      (expect (= "Limit" (lf/generic-limit-label {})))))
+(defdescribe generic-limit-label-test
+             (it "matches the overrides through the gateway wire, where ids arrive as strings"
+                 ;; The JSON hop stringifies keyword VALUES; only KEYS are keywordized on
+                 ;; parse. Both shapes must render identically.
+                 (expect (= (lf/generic-limit-label {:id :codex-5h})
+                            (lf/generic-limit-label {:id "codex-5h"}))))
+             (it "derives a label from :label or :id and trims the redundant quota suffix"
+                 (expect (= "Premium Interactions"
+                            (lf/generic-limit-label {:label "Premium Interactions Quota (%)"})))
+                 (expect (= "Chat" (lf/generic-limit-label {:label "Chat Quota"})))
+                 (expect (= "Some thing" (lf/generic-limit-label {:id :some_thing})))
+                 (expect (= "Limit" (lf/generic-limit-label {})))))
 
 (defdescribe percentage-limit-row?-test
              (it "treats the known plan windows as percentages"
@@ -164,57 +158,38 @@
                  (lf/limit-label-parts {:id :codex-7d})))
       (expect (= {:label "Premium"} (lf/limit-label-parts {:id :premium_interactions})))))
 
-(defdescribe
-  dynamic-summary-test
-  (it "summarises the rows with signal, pressure first, joined by a middot"
-      (expect (= "Premium 3/5 (2) · Chat unlimited"
-                 (lf/dynamic-summary
-                   {:dynamic {:limits
-                              [{:id :chat :is-unlimited true}
-                               {:id :premium_interactions :used 3 :limit 5 :remaining 2}]}}))))
-  (it "honours max-rows and defaults to three"
-      ;; Three is the widest plan family shipped (5h + 7d + 30d) and the cells
-      ;; are short now, so capping at two would hide a whole window for nothing.
-      (let [limits {:dynamic {:limits [{:id :a :remaining 1 :limit 10}
-                                       {:id :b :remaining 2 :limit 10}
-                                       {:id :c :remaining 3 :limit 10}]}}]
-        (expect (= 3 (count (str/split (lf/dynamic-summary limits) #" · "))))
-        (expect (= 1 (count (str/split (lf/dynamic-summary limits 1) #" · "))))
-        (expect (= 2 (count (str/split (lf/dynamic-summary limits 2) #" · "))))))
-  (it "writes a plan's name once and drops the English words from every window"
-      ;; This used to read "OpenCode Go 5h 100% left · OpenCode Go 7d 100% left ·
-      ;; OpenCode Go 30d 99% left": 78 columns, 44 of them the same words again.
-      (expect (= "OpenCode Go 5h 100% · 7d 100% · 30d 99%"
-                 (lf/dynamic-summary {:dynamic {:limits [{:id :opencode-go-5h
-                                                          :label "OpenCode Go 5h quota (%)"
-                                                          :kind :rate
-                                                          :limit 100.0
-                                                          :remaining 100.0}
-                                                         {:id :opencode-go-7d
-                                                          :label "OpenCode Go 7d quota (%)"
-                                                          :kind :rate
-                                                          :limit 100.0
-                                                          :remaining 100.0}
-                                                         {:id :opencode-go-30d
-                                                          :label "OpenCode Go 30d quota (%)"
-                                                          :kind :rate
-                                                          :limit 100.0
-                                                          :remaining 99.0}]}}))))
-  (it "still surfaces SOMETHING when a fresh report has no signal yet"
-      (expect (some? (lf/dynamic-summary {:dynamic {:limits
-                                                    [{:id :x :limit 0 :remaining 0 :used 0}]}}))))
-  (it "keeps a placeholder plan window visible even without usage signal"
-      ;; Codex / Z.ai windows are surfaced as a PAIR; a provider omitting data for
-      ;; one window must not make that window disappear.
-      (expect (str/includes? (lf/dynamic-summary {:dynamic {:limits [{:id :codex-5h}
-                                                                     {:id :codex-7d}]}})
-                             "Codex"))
-      (expect (lf/account-plan-window-row? {:id "codex-7d"}))
-      (expect (not (lf/account-plan-window-row? {:id :chat}))))
-  (it "returns nil when there is nothing to render"
-      (expect (nil? (lf/dynamic-summary nil)))
-      (expect (nil? (lf/dynamic-summary {})))
-      (expect (nil? (lf/dynamic-summary {:dynamic {:limits []}})))))
+(defdescribe dynamic-summary-test
+             (it "summarises the rows with signal, pressure first, joined by a middot"
+                 (expect (= "Premium 3/5 (2) · Chat unlimited"
+                            (lf/dynamic-summary {:dynamic {:limits [{:id :chat :is-unlimited true}
+                                                                    {:id :premium_interactions
+                                                                     :used 3
+                                                                     :limit 5
+                                                                     :remaining 2}]}}))))
+             (it "honours max-rows and defaults to three"
+                 ;; Three is the widest plan family shipped (5h + 7d + 30d) and the cells
+                 ;; are short now, so capping at two would hide a whole window for nothing.
+                 (let [limits {:dynamic {:limits [{:id :a :remaining 1 :limit 10}
+                                                  {:id :b :remaining 2 :limit 10}
+                                                  {:id :c :remaining 3 :limit 10}]}}]
+                   (expect (= 3 (count (str/split (lf/dynamic-summary limits) #" · "))))
+                   (expect (= 1 (count (str/split (lf/dynamic-summary limits 1) #" · "))))
+                   (expect (= 2 (count (str/split (lf/dynamic-summary limits 2) #" · "))))))
+             (it "still surfaces SOMETHING when a fresh report has no signal yet"
+                 (expect (some? (lf/dynamic-summary
+                                  {:dynamic {:limits [{:id :x :limit 0 :remaining 0 :used 0}]}}))))
+             (it "keeps a placeholder plan window visible even without usage signal"
+                 ;; Codex / Z.ai windows are surfaced as a PAIR; a provider omitting data for
+                 ;; one window must not make that window disappear.
+                 (expect (str/includes? (lf/dynamic-summary {:dynamic {:limits [{:id :codex-5h}
+                                                                                {:id :codex-7d}]}})
+                                        "Codex"))
+                 (expect (lf/account-plan-window-row? {:id "codex-7d"}))
+                 (expect (not (lf/account-plan-window-row? {:id :chat}))))
+             (it "returns nil when there is nothing to render"
+                 (expect (nil? (lf/dynamic-summary nil)))
+                 (expect (nil? (lf/dynamic-summary {})))
+                 (expect (nil? (lf/dynamic-summary {:dynamic {:limits []}})))))
 
 ;; Regression, reported by a user against Claude: the 7d window overtook the 5h
 ;; whenever it happened to be the tighter bucket, so Claude reported

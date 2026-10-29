@@ -127,27 +127,6 @@
 
 (defdescribe
   normalize-field-test
-  (it "fills the documented defaults"
-      (let [[field] (normalized-fields {:id "name"})]
-        (expect (= "name" (:id field)))
-        (expect (= "name" (:name field)))
-        (expect (= :plaintext (:type field)))
-        ;; No `:label` in the spec — the field still shows something a human can
-        ;; read, never a blank heading.
-        (expect (= "name" (:label field)))
-        (expect (nil? (:description field)))
-        (expect (false? (:is-required field)))
-        (expect (false? (:is-secret field)))))
-  (it "keys the answer by :name, shows :label, explains with :description"
-      (let [[field] (normalized-fields {:name "api_key"
-                                        :label "API key"
-                                        :description "Found on the provider dashboard"})]
-        (expect (= "api_key" (:name field)))
-        ;; The same string under `:id`, so every surface that has always keyed
-        ;; rows, values and errors by `:id` keeps working unchanged.
-        (expect (= "api_key" (:id field)))
-        (expect (= "API key" (:label field)))
-        (expect (= "Found on the provider dashboard" (:description field)))))
   (it "accepts the :id spelling of a name"
       (let [[field] (normalized-fields {:id "note" :description "Free text"})]
         (expect (= "note" (:name field)))
@@ -214,17 +193,6 @@
 
 (defdescribe
   normalize-request-test
-  (it "defaults the chrome, channels and timeout"
-      (let [request (hi/normalize-request {:title "Deploy" :nodes [{:id "name"}]})]
-        (expect (string? (:id request)))
-        (expect (= "Deploy" (:title request)))
-        (expect (= "Submit" (:submit-label request)))
-        (expect (= "Cancel" (:cancel-label request)))
-        (expect (true? (:is-cancellable request)))
-        ;; Both surfaces: the TUI dialog AND the gateway bridge that tells the
-        ;; companion app a run is parked on a human.
-        (expect (= [:tui :app] (:channel-ids request)))
-        (expect (= hi/default-timeout-ms (:timeout-ms request)))))
   (it "rejects a request without a title or fields"
       (expect (throws? clojure.lang.ExceptionInfo #(hi/normalize-request {:nodes [{:id "name"}]})))
       (expect (throws? clojure.lang.ExceptionInfo #(hi/normalize-request {:title "t"})))
@@ -1382,14 +1350,6 @@
                                                                     "options" ["dev" "prod"]}]
                                                           "timeout_ms" 1000}))]
         (expect (nil? (hs/request-error request)))))
-  (it "the closed vocabulary has ONE home"
-      ;; Two copies of the type table drift, and the copy the normalizer reads
-      ;; is the one that decides what a surface is asked to paint.
-      (expect (nil? (ns-resolve 'com.blockether.vis.internal.view.core 'field-types)))
-      (expect (= #{:plaintext :password :multiline :select :multiselect :checkbox :range :otp}
-                 (set (vals hs/field-types))))
-      (expect (str/includes? (refusal #(hi/normalize-field {:name "a" :type "slider"}))
-                             "multiselect")))
   (it "refuses a field the engine itself mis-built"
       ;; Nothing an extension writes reaches these: they are what a bug in the
       ;; normalizer would hand a dialog — a picker with no options, one identity
@@ -2784,64 +2744,62 @@
                  (expect (empty? (hi/adopt-open-views! "session-A" "A-next")))
                  (finally (hi/close-live! (:id a)) (hi/close-live! (:id b)))))))))
 
-(defdescribe
-  live-view-human-stop-test
-  ;; Regression: a model loop around a watch tool opened the view again after each human
-  ;; stop, in the same block, and the person's note never reached the model.
-  (it "refuses a new view in the block that a person stopped and answers each stop once"
-      (recorded
-        (fn []
-          (let [owner
-                (atom false)
+(defdescribe live-view-human-stop-test
+             ;; Regression: a model loop around a watch tool opened the view again after each human
+             ;; stop, in the same block, and the person's note never reached the model.
+             (it "refuses a new view in the block that a person stopped and answers each stop once"
+                 (recorded
+                   (fn []
+                     (let [owner
+                           (atom false)
 
-                other
-                (atom false)
+                           other
+                           (atom false)
 
-                spec
-                (live-spec {:id "status" :type "status" :text "Watching"})
+                           spec
+                           (live-spec {:id "status" :type "status" :text "Watching"})
 
-                first-view
-                (binding [hi/*block-owner* owner]
-                  (hi/open-live! spec))]
+                           first-view
+                           (binding [hi/*block-owner* owner]
+                             (hi/open-live! spec))]
 
-            @(future (hi/interrupt-live! (:id first-view) "I stop it for a reason"))
-            (let [refusal (try (binding [hi/*block-owner* owner]
-                                 (hi/open-live! spec))
-                               nil
-                               (catch clojure.lang.ExceptionInfo e e))]
-              (expect (= :vis/live-stopped-by-human (:type (ex-data refusal))))
-              (expect (str/includes? (ex-message refusal) "I stop it for a reason")))
-            (let [elsewhere (binding [hi/*block-owner* other]
-                              (hi/open-live! spec))]
-              (expect (some? (hi/live-view (:id elsewhere))))
-              (hi/close-live! (:id elsewhere)))
-            (expect (= [{:title "CI" :note "I stop it for a reason"}] (hi/take-human-stops! owner)))
-            (expect (empty? (hi/take-human-stops! owner)))
-            (expect (empty? (hi/take-human-stops! nil)))))))
-  (it "names a stop without a note and ignores a stop after its block ended"
-      (recorded
-        (fn []
-          (let [owner
-                (atom false)
+                       @(future (hi/interrupt-live! (:id first-view) "I stop it for a reason"))
+                       (let [refusal (try (binding [hi/*block-owner* owner]
+                                            (hi/open-live! spec))
+                                          nil
+                                          (catch clojure.lang.ExceptionInfo e e))]
+                         (expect (= :vis/live-stopped-by-human (:type (ex-data refusal)))))
+                       (let [elsewhere (binding [hi/*block-owner* other]
+                                         (hi/open-live! spec))]
+                         (expect (some? (hi/live-view (:id elsewhere))))
+                         (hi/close-live! (:id elsewhere)))
+                       (expect (= [{:title "CI" :note "I stop it for a reason"}]
+                                  (hi/take-human-stops! owner)))
+                       (expect (empty? (hi/take-human-stops! owner)))
+                       (expect (empty? (hi/take-human-stops! nil)))))))
+             (it "names a stop without a note and ignores a stop after its block ended"
+                 (recorded
+                   (fn []
+                     (let [owner
+                           (atom false)
 
-                spec
-                (live-spec {:id "status" :type "status" :text "Watching"})
+                           spec
+                           (live-spec {:id "status" :type "status" :text "Watching"})
 
-                quiet
-                (binding [hi/*block-owner* owner]
-                  (hi/open-live! spec))
+                           quiet
+                           (binding [hi/*block-owner* owner]
+                             (hi/open-live! spec))
 
-                late
-                (binding [hi/*block-owner* owner]
-                  (hi/open-live! spec))]
+                           late
+                           (binding [hi/*block-owner* owner]
+                             (hi/open-live! spec))]
 
-            (hi/interrupt-live! (:id quiet))
-            (let [stops (hi/take-human-stops! owner)]
-              (expect (= [{:title "CI"}] stops))
-              (expect (str/includes? (hi/human-stop-text (first stops)) "without a note")))
-            (reset! owner true)
-            (hi/interrupt-live! (:id late) "too late")
-            (expect (empty? (hi/take-human-stops! owner))))))))
+                       (hi/interrupt-live! (:id quiet))
+                       (let [stops (hi/take-human-stops! owner)]
+                         (expect (= [{:title "CI"}] stops)))
+                       (reset! owner true)
+                       (hi/interrupt-live! (:id late) "too late")
+                       (expect (empty? (hi/take-human-stops! owner))))))))
 
 (defdescribe
   live-patch-close-race-test

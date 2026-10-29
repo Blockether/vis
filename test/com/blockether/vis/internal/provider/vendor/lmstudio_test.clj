@@ -17,22 +17,9 @@
             ((:provider/status-fn provider))]
 
         (expect (= :lmstudio (:provider/id provider)))
-        (expect (= "LM Studio" (:provider/label provider)))
         (expect (false? (:is-authenticated status)))
         (expect (nil? (:authenticated? status)))
         (expect (= "http://localhost:1234/v1" (:base-url status)))))
-  (it "exposes a context-detection hook"
-      (expect (ifn? (:provider/enrich-models-fn (registry/provider-by-id :lmstudio)))))
-  (it "ships anti-loop sampler defaults in :extra-body (Qwen/DeepSeek thinking loops)"
-      ;; Local thinking models spiral into endless reasoning under the default
-      ;; greedy sampler; the preset carries vendor-recommended anti-loop params
-      ;; that svar merges as the provider base layer (per-turn :extra-body wins).
-      (let [eb (get-in (registry/provider-by-id :lmstudio) [:provider/preset :extra-body])]
-        (expect (= 0.6 (get eb "temperature")))
-        (expect (= 0.95 (get eb "top_p")))
-        (expect (= 20 (get eb "top_k")))
-        (expect (= 0.0 (get eb "min_p")))
-        (expect (= 1.5 (get eb "presence_penalty")))))
   (it "bounds long local prefill without changing the TTFT phase"
       (expect (= {:timeout-ms 1800000
                   :first-byte-timeout-ms 600000

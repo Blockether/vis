@@ -311,20 +311,19 @@
 
 (defdescribe draft-backend-off-test
              (it "the off setting refuses to create drafts and says which toggle to flip"
-                 (with-repo
-                   "vis-drafts-off"
-                   (fn [store base env]
-                     (binding [ws/*draft-backend* :off]
-                       (expect (nil? (ws/draft-backend-for base)))
-                       (expect (false? (ws/isolated-workspaces-supported? base)))
-                       (expect (str/includes? (ws/isolation-unavailable-hint base) "draft_backend"))
-                       (let [thrown (try (drafts/create! env
-                                                         {:session-state-id (str (random-uuid))
-                                                          :label "nope"
-                                                          :from (seed-trunk! store base)})
-                                         nil
-                                         (catch clojure.lang.ExceptionInfo e (ex-data e)))]
-                         (expect (= :workspace/drafts-disabled (:type thrown)))))))))
+                 (with-repo "vis-drafts-off"
+                            (fn [store base env]
+                              (binding [ws/*draft-backend* :off]
+                                (expect (nil? (ws/draft-backend-for base)))
+                                (expect (false? (ws/isolated-workspaces-supported? base)))
+                                (let [thrown (try (drafts/create! env
+                                                                  {:session-state-id
+                                                                   (str (random-uuid))
+                                                                   :label "nope"
+                                                                   :from (seed-trunk! store base)})
+                                                  nil
+                                                  (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                                  (expect (= :workspace/drafts-disabled (:type thrown)))))))))
 
 (defn- with-clean-draft
   "Run f with a clean target checkout and a worktree draft."

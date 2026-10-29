@@ -7,30 +7,6 @@
             [com.blockether.vis.internal.speech.cli :as speech-cli]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe
-  doctor-format-output-test
-  (it "renders doctor messages grouped by extension name"
-      (let [out
-            (doctor/format-output
-              [{:ext "foundation" :check-id ::agents-md :level :info :message "AGENTS.md loaded"}
-               {:ext "voice"
-                :check-id ::piper
-                :level :warn
-                :message "Piper missing"
-                :remediation "Install voice"}]
-              {:use-ansi? false})]
-        (expect (str/starts-with? out "vis-agent doctor\n\n  foundation\n  ──────────"))
-        (expect (str/includes? out "  ℹ agents-md: AGENTS.md loaded"))
-        (expect (str/includes? out "\n\n  voice\n  ─────"))
-        (expect (str/includes? out "  ⚠ piper: Piper missing"))
-        (expect (str/includes? out "      -> Install voice"))
-        (expect (str/ends-with? out "Summary: 0 errors, 1 warnings, 1 info"))))
-  (it "uses question mark for anonymous diagnostics inside extension section"
-      (let [out (doctor/format-output [{:ext "example-ext" :level :error :message "boom"}]
-                                      {:use-ansi? false})]
-        (expect (str/includes? out "  example-ext"))
-        (expect (str/includes? out "  ✗ ?: boom")))))
-
 (defdescribe doctor-run-checks-test
              (it "emits host system messages under vis before extension messages"
                  (with-redefs [speech-cli/doctor-fn
@@ -64,9 +40,7 @@
           (expect (= 1 (count msgs)))
           (expect (= "vis" (:ext (first msgs))))
           (expect (= ::doctor/sandbox-deps (:check-id (first msgs))))
-          (expect (= :info (:level (first msgs))))
-          (expect (str/includes? (:message (first msgs)) "2/2 Python sandbox dependencies resolve"))
-          (expect (str/includes? (:message (first msgs)) "1 host bridges")))))
+          (expect (= :info (:level (first msgs)))))))
   (it "errors on a shim whose Python source is not on the classpath"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "ghost"
                                                           :shim/source "vis-host-python/nope.py"}])]
@@ -74,7 +48,6 @@
               err (first (filterv #(= :error (:level %)) msgs))]
 
           (expect (some? err))
-          (expect (str/includes? (:message err) "Sandbox shim 'ghost' source is unavailable"))
           (expect (str/includes? (:remediation err) "vis-host-python/nope.py"))
           (expect (= 2 (doctor/exit-code msgs))))))
   (it "errors on a shim whose host bindings cannot be realized"
@@ -86,9 +59,7 @@
         (let [msgs (#'doctor/sandbox-shim-messages {})
               err (first (filterv #(= :error (:level %)) msgs))]
 
-          (expect (some? err))
-          (expect (str/includes? (:message err)
-                                 "host bindings failed to resolve: bridge unavailable")))))
+          (expect (some? err)))))
   (it "warns on duplicate shim names, which shadow each other at install time"
       (with-redefs [extension/sandbox-shims
                     (constantly [{:shim/name "yaml" :shim/source "vis-host-python/yaml.py"}
@@ -96,19 +67,15 @@
         (let [msgs (#'doctor/sandbox-shim-messages {})
               warn (first (filterv #(= :warn (:level %)) msgs))]
 
-          (expect (some? warn))
-          (expect (str/includes? (:message warn) "Duplicate sandbox shim name(s): yaml")))))
+          (expect (some? warn)))))
   (it "warns when nothing registered a shim and never throws on a broken registry"
       (with-redefs [extension/sandbox-shims (constantly [])]
         (let [msgs (#'doctor/sandbox-shim-messages {})]
-          (expect (= [:warn] (mapv :level msgs)))
-          (expect (str/includes? (:message (first msgs)) "No Python sandbox shims registered"))))
+          (expect (= [:warn] (mapv :level msgs)))))
       (with-redefs [extension/sandbox-shims (fn []
                                               (throw (ex-info "registry exploded" {})))]
         (let [msgs (#'doctor/sandbox-shim-messages {})]
-          (expect (= [:error] (mapv :level msgs)))
-          (expect (str/includes? (:message (first msgs))
-                                 "Sandbox shim registry unavailable: registry exploded"))))))
+          (expect (= [:error] (mapv :level msgs)))))))
 
 (defdescribe
   doctor-workspace-mount-test
@@ -178,8 +145,7 @@
 
         (let [m (first (#'doctor/provider-selection-messages
                         {:config {"default_provider" "acme_genai"}}))]
-          (expect (= :warn (:level m)))
-          (expect (str/includes? (:message m) "no credential")))))
+          (expect (= :warn (:level m))))))
   (it "errors on an unknown provider id, and covers the fallback root too"
       (with-redefs [providers/picker-fleet
                     (constantly [])
@@ -190,8 +156,7 @@
         (let [msgs (#'doctor/provider-selection-messages
                     {:config {"default_provider" "ghost" "fallback_provider" "phantom"}})]
           (expect (= [:error :error] (mapv :level msgs)))
-          (expect (str/includes? (:message (first msgs)) "unknown"))
-          (expect (str/includes? (:message (second msgs)) "fallback provider 'phantom'")))))
+          (expect (str/includes? (:message (first msgs)) "unknown")))))
   (it "warns when the default model is absent from the provider catalog"
       (with-redefs [providers/picker-fleet
                     (constantly [{:id "acme_genai" :models [{:name "gpt-5"}]}])

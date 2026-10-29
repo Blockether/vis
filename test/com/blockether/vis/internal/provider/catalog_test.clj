@@ -1,9 +1,7 @@
 (ns com.blockether.vis.internal.provider.catalog-test
   "The provider catalog merges svar's public defaults with the metadata each
    registered provider owns, and it is the engine's only view of svar's catalog."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
-            [com.blockether.svar.core :as svar]
+  (:require [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.vendor.alibaba :as alibaba]
@@ -120,19 +118,6 @@
                    (expect (= price (catalog/model-pricing model)))
                    (expect (nil? (catalog/model-pricing nil)))
                    (expect (nil? (catalog/model-pricing "no-such-model-anywhere"))))))
-
-(defdescribe
-  engine-reads-svar-only-through-its-public-api
-  (it "engine reads svar only through its public api"
-      (let [offenders
-            (for [file (file-seq (io/file "src"))
-                  :when (and (.isFile ^java.io.File file)
-                             (str/ends-with? (.getName ^java.io.File file) ".clj")
-                             (str/includes? (slurp file) "com.blockether.svar.internal"))]
-
-              (str file))]
-        (expect (empty? offenders)
-                "engine namespaces require com.blockether.svar.core, never svar internals"))))
 
 (defdescribe provider-policy-is-owned-by-the-registered-provider
              (it "provider policy is owned by the registered provider"

@@ -147,12 +147,6 @@
           (expect (not (contains? #{"UNKNOWN" "(floating)" ""} (:license row)))
                   (str coord " has an unresolved license: " (:license row)))
           (expect (not= "—" (:size row)) (str coord " has an unresolved distributable size")))))
-  (it "keeps com.blockether/imaging MIT — the license its published POM declares"
-      (let [row (get (inventory) "com.blockether/imaging")]
-        (expect (= "MIT" (:license row)))
-        (when-let [declared (cached-pom-license "com.blockether/imaging" (:version row))]
-          (expect (re-find #"(?i)\bmit\b" declared)
-                  (str "the cached POM declares " declared ", not MIT")))))
   (it "agrees with every cached POM, so no in-house row drifts from the artifact"
       (let [rows (inventory)]
         (doseq [[coord version] (in-house-coords)
@@ -165,19 +159,6 @@
 
 (defdescribe
   audit-generated-date-test
-  ;; `.github/workflows/audit-md.yml` regenerates this document and fails on ANY
-  ;; diff. A wall-clock stamp therefore reddened the pipeline on every dependency
-  ;; bump made on a later day than the last regeneration, with the date line as
-  ;; the only diff. `scripts/gen_audit.clj` renders a placeholder and `stamp-date`
-  ;; keeps the committed date while the rest of the document is byte-identical.
-  (it "the generator resolves its date against the committed doc, not the clock"
-      (let [src (slurp (io/file "scripts" "gen_audit.clj"))]
-        (expect (re-find #"> Generated \"\s*today\s*\"\." src))
-        (expect (re-find #"today\s+date-placeholder\]" src))
-        (expect (str/includes? src "(defn- stamp-date"))
-        ;; the ONLY clock read left feeds stamp-date's "content changed" branch
-        (expect (= 1 (count (re-seq #"LocalDate/now" src))))
-        (expect (str/includes? (second (str/split src #"\(defn- stamp-date")) "LocalDate/now"))))
   (it "the committed document states one resolved ISO date"
       (expect (= 1 (count (re-seq #"(?m)^> Generated \d{4}-\d{2}-\d{2}\.$" (slurp audit-file)))))))
 

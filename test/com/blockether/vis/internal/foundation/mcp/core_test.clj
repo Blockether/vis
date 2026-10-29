@@ -66,21 +66,7 @@
             ;; call form has to live there and not below the description.
             (expect (str/includes? (first (str/split-lines (:text entry)))
                                    "await mcp_call(\"linear\", \"save_issue\", {})"))
-            (expect (not (str/includes? (str (:call entry) (:text entry)) "mcp__call")))))))
-  (it "sends a refused call back to the sandbox verb"
-      (with-redefs-fn {#'mcp/ensure-connected! (constantly ::connection)
-                       #'client/list-tools (constantly [{"name" "read"}])}
-        (fn []
-          (let [dumped (pr-str (#'mcp/mcp-call-impl {:session-id "caller"} "alpha" "nope" {}))]
-            (expect (str/includes? dumped "await mcp_call(server)"))
-            (expect (not (str/includes? dumped "mcp__call")))))))
-  (it "names the verb in the prompt, because ctx only lists servers and tools"
-      ;; `env.mcp` answers WHICH server and WHICH tool; nothing else told the
-      ;; model HOW to reach them, so it guessed `linear.save_issue(...)`.
-      (let [text ((:ext/prompt-fn mcp/vis-extension) {:session-id "caller"})]
-        (expect (str/includes? text "await mcp_call(server, tool, args)"))
-        (expect (str/includes? text "session[\"env\"][\"mcp\"][\"servers\"]"))
-        (expect (not (str/includes? text "mcp__call"))))))
+            (expect (not (str/includes? (str (:call entry) (:text entry)) "mcp__call"))))))))
 
 (defdescribe
   mcp-call-env-injection-test

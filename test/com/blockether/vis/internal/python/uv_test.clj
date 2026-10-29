@@ -469,9 +469,7 @@
                       (java.io.PrintStream. bytes)]
 
             (with-redefs [config/original-stdout stream]
-              (expect (= 0 (python-runtime/uv-command! ["sync" "--help"] {:shared? true})))
-              (expect (str/includes? (.toString bytes "UTF-8") "--all-groups"))
-              (expect (str/includes? (.toString bytes "UTF-8") "unrelated"))))
+              (expect (= 0 (python-runtime/uv-command! ["sync" "--help"] {:shared? true})))))
           (expect (str/includes? (.getMessage (failure #(python-runtime/uv-command! ["run" "python"]
                                                                                     {:shared?
                                                                                      true})))

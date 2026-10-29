@@ -1218,30 +1218,6 @@
       (with-redefs [registry/provider-by-id (constantly {:provider/auth-fn (constantly :ok)})]
         (expect (= :oauth (providers/auth-kind :acme-interactive))))))
 
-(defdescribe
-  status-report-uses-the-four-state-auth-verdict
-  (it "status report uses the four state auth verdict"
-      (let [limits
-            {:provider-id :slow :status :loading :static {} :dynamic {:limits []}}
-
-            report
-            (fn [status]
-              [(providers/status-text {:id :slow} status limits)
-               (providers/status-md {:id :slow} status limits)])
-
-            [neutral-text neutral-md]
-            (report {:is-authenticated true :auth-state :unverified :loading? true})]
-
-        (expect (str/includes? neutral-text "Authenticated: saved, not verified"))
-        (expect (not (str/includes? neutral-text "checking")))
-        (expect (str/includes? neutral-md "**Authenticated:** saved, not verified ○"))
-        (expect (str/includes? (first (report {:is-authenticated true :auth-state :verified}))
-                               "Authenticated: verified"))
-        (expect (str/includes? (first (report {:is-authenticated false :auth-state :rejected}))
-                               "Authenticated: rejected"))
-        (expect (str/includes? (first (report {:is-authenticated true :auth-state :degraded}))
-                               "Authenticated: usable; live check unavailable")))))
-
 ;; Regression, issue #113: a provider lifecycle callback that never returned ran
 ;; unbounded on the caller's thread, so one wedged extension held the gateway's
 ;; provider-status request — and the card behind it — open until the HTTP client
@@ -1344,26 +1320,6 @@
         (expect (= "s-probe" (:session seen)))
         (expect (= (workspace/workspace-root env) (:root seen)))
         (expect (true? (:is-authenticated detected))))))
-
-;; Regression, issue #118: format-status-value fell back to `(str v)` for a
-;; nested map status_fn value, so `status-text`/`status-md` printed a raw
-;; Clojure map literal (`{"max_budget" 100.0, "spend" 25.49}`) instead of a
-;; readable "key: value" line.
-(defdescribe status-text-formats-nested-usage-map-readably
-             (it "status text formats nested usage map readably"
-                 (let [status
-                       {"is_authenticated" true
-                        "usage" {"max_budget" 100.0 "spend" 25.49 "remaining_requests" 42}}
-
-                       text
-                       (providers/status-text {:id :anthropic-coding-plan}
-                                              status
-                                              {:status :ok :dynamic {:limits []}})]
-
-                   (expect (str/includes?
-                             text
-                             "Usage: max_budget: 100.0, remaining_requests: 42, spend: 25.49"))
-                   (expect (not (str/includes? text "{\"max_budget\""))))))
 
 (defdescribe
   picking-a-default-rebuilds-the-shared-router

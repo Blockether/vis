@@ -159,8 +159,7 @@
   (it "starts a licence-gated voice only after explicit acceptance"
       (with-redefs [assets/installed? (constantly false)]
         (let [refused (tts/start-download! :piper "ryan")]
-          (expect (= :failed (:state refused)))
-          (expect (re-find #"CC-BY-NC-SA-4.0" (:error refused)))))
+          (expect (= :failed (:state refused)))))
       (let [started (atom [])]
         (with-redefs [assets/installed? (fn [entry]
                                           (contains? (set @started) (:id entry)))

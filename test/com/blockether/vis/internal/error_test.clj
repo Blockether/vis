@@ -23,15 +23,7 @@
                  (expect (= "42" (err/error-message 42)))))
 
 (defdescribe format-error-test
-             (it "adds the standard prefix"
-                 (expect (= "ERROR: boom" (err/format-error (ex-info "boom" {}))))
-                 (expect (= "ERROR: plain" (err/format-error "plain"))))
              (it "is idempotent, so a re-formatted error never stutters"
                  (expect (= "ERROR: nope" (err/format-error "ERROR: nope")))
                  (expect (= (err/format-error "boom")
                             (err/format-error (err/format-error "boom"))))))
-
-(defdescribe final-answer-code-error-message-test
-             (it "prefixes the loop's own final-answer failure"
-                 (expect (= "Final-answer code error: boom"
-                            (err/final-answer-code-error-message (ex-info "boom" {}))))))

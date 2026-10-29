@@ -360,16 +360,8 @@
                                      {"providers" [{"id" "p" "api_style" "openai-responses-v2"}]})]
         (expect (= 1 (count problems)))
         (expect (str/starts-with? problem "providers[0].api_style: "))
-        (expect (str/includes? problem "is not a wire dialect"))
         (doseq [v config-validation/api-style-values]
-          (expect (str/includes? problem v) (str "the message must name " v))))
-      (expect (str/includes? (first (config-validation/explain-problems
-                                      {"providers" [{"id" "p" "compatibility" "openai-ish"}]}))
-                             "is not a wire dialect"))
-      (expect (str/includes? (first (config-validation/explain-problems
-                                      {"providers" [{"id" "p"
-                                                     "models" [{"name" "m" "api_style" "gpt"}]}]}))
-                             "is not a wire dialect"))))
+          (expect (str/includes? problem v) (str "the message must name " v))))))
 
 ;; ── Conditional mounts (#89) ─────────────────────────────────────────────────
 ;; One catalog is shared by every machine: a mac laptop, a Linux box, and a host

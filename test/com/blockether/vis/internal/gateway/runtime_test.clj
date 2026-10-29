@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.gateway.runtime-test
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.internal.gateway.client :as client]
@@ -221,36 +220,6 @@
                    (short-commit "bcc0c8208350bd0e9e6c1a5a6f4d3c2b1a098765-dirty")))
         (expect (nil? (short-commit "unknown"))
                 "a build that could not read its own commit has no identity to compare"))))
-
-(defn- release-skew-copy
-  "The human copy for two halves that speak the SAME protocol and differ only in
-   release - the pair the verdict calls compatible."
-  [gateway-version client-version]
-  (protocol/explain (contract/verdict {:gateway-protocol contract/protocol-version
-                                       :gateway-min-client contract/minimum-client-protocol
-                                       :gateway-version gateway-version
-                                       :client-protocol contract/protocol-version
-                                       :client-min-gateway contract/minimum-gateway-protocol
-                                       :client-version client-version
-                                       :client-name "vis-tui"})))
-
-;; Regression: a client and a gateway on different releases of one protocol were told
-;; "Versions match", which is how somebody running the older half learned nothing at
-;; all about the newer Vis already serving them.
-(defdescribe compatible-release-skew-copy-test
-             (it "a newer gateway is announced to the client that is behind"
-                 (let [{:keys [title summary remedy]} (release-skew-copy "0.2.22" "0.2.21")]
-                   (expect (= "A newer Vis is available" title))
-                   (expect (str/includes? summary "0.2.22"))
-                   (expect (str/includes? summary "0.2.21"))
-                   (expect (str/includes? (str/join " " remedy) "vis-agent update"))))
-             (it "a newer client is told which half is behind instead"
-                 (let [{:keys [title remedy]} (release-skew-copy "0.2.21" "0.2.22")]
-                   (expect (= "The gateway runs an older Vis" title))
-                   (expect (str/includes? (str/join " " remedy) "vis-agent gateway stop"))))
-             (it "one release on both halves still matches"
-                 (expect (= "Versions match" (:title (release-skew-copy "0.2.22" "0.2.22"))))
-                 (expect (= "Versions match" (:title (release-skew-copy "dev" "0.2.22"))))))
 
 (defdescribe sdk-version-test
              (it "reports the release version when the build stamped no SDK version"

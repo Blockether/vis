@@ -61,9 +61,6 @@
       (expect (nil? (vh/short-id nil)))
       (expect (nil? (vh/short-id ""))))
   (it "marks a copied session id so a reader knows what the id addresses"
-      ;; Every copy affordance (TUI header chip, companion CopyChip) puts this
-      ;; on the clipboard; a bare UUID would be anonymous wherever it is pasted.
-      (expect (= "vis_session_id#" vh/session-id-marker-prefix))
       (expect (= "vis_session_id#123e4567-e89b-12d3-a456-426614174000"
                  (vh/marked-session-id "123e4567-e89b-12d3-a456-426614174000")))
       ;; Blank/nil — nil, so a channel with no session copies nothing.

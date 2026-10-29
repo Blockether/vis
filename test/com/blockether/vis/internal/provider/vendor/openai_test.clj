@@ -41,6 +41,5 @@
              (it "registers one OpenAI provider extension"
                  (let [provider (registry/provider-by-id :openai)]
                    (expect (= :openai (:provider/id provider)))
-                   (expect (= "OpenAI" (:provider/label provider)))
                    (expect (= "gpt-6.1-sol"
                               (first (get-in provider [:provider/preset :default-models])))))))

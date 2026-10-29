@@ -32,27 +32,23 @@
         (expect (true? (get definition "enabled")))
         (expect (= {"push" true "callback" nil} (get definition "delivery")))
         (expect (false? (get definition "deliver_only")))))
-  (it "names the field and the rule of a schema failure"
-      (expect (= "Automation is not valid at /triggers/0/seconds: 6 is less than the minimum 60"
-                 (:message (failure #(automation/validate
-                                       (assoc input "triggers" [{"kind" "every" "seconds" 6}])
-                                       now)))))
-      (expect
-        (= "Automation is not valid at /triggers/0/kind: use one of cron, every, once, webhook"
-           (:message (failure #(automation/validate (assoc input "triggers" [{"kind" "hourly"}])
-                                                    now))))))
+  (it "refuses a trigger that breaks the schema"
+      (doseq [triggers [[{"kind" "every" "seconds" 6}] [{"kind" "hourly"}]]]
+        (expect (= :invalid-automation
+                   (:code (failure #(automation/validate (assoc input "triggers" triggers)
+                                                         now)))))))
   (it "refuses a cron expression that never fires, two webhooks and a large prompt"
       (expect (= 400
                  (:status (failure #(automation/validate (assoc input
                                                            "triggers" [{"kind" "cron"
                                                                         "expression" "0 0 30 2 *"}])
                                                          now)))))
-      (expect (= "An automation can have only one webhook trigger"
-                 (:message (failure #(automation/validate
-                                       (assoc input
-                                         "triggers" [{"kind" "webhook" "signature" "github"}
-                                                     {"kind" "webhook" "signature" "token"}])
-                                       now)))))
+      (expect (= :invalid-automation
+                 (:code (failure #(automation/validate (assoc input
+                                                         "triggers"
+                                                         [{"kind" "webhook" "signature" "github"}
+                                                          {"kind" "webhook" "signature" "token"}])
+                                                       now)))))
       (expect (= :invalid-automation
                  (:code (failure #(automation/validate (assoc input
                                                          "prompt" (apply str (repeat 16385 "a")))

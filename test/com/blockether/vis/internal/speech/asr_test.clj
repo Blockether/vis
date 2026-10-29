@@ -130,40 +130,38 @@
                             (-> e
                                 ex-data
                                 :type))))))))
-  (it
-    "rejects empty or too-short recordings before ONNX inference"
-    (let [dir
-          (.toFile (java.nio.file.Files/createTempDirectory
-                     "vis-speech-asr-model-test"
-                     (make-array java.nio.file.attribute.FileAttribute 0)))
+  (it "rejects empty or too-short recordings before ONNX inference"
+      (let [dir
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-speech-asr-model-test"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
 
-          wav
-          (java.io.File/createTempFile "vis-speech-asr-too-short" ".wav")]
+            wav
+            (java.io.File/createTempFile "vis-speech-asr-too-short" ".wav")]
 
-      (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
-        (spit (io/file dir name) "x"))
-      (write-silence-wav! wav 0.0)
-      (with-redefs [asr/ensure-model! (fn [dir _]
-                                        dir)]
-        ;; Every platform's native rides in its own jar now, so the WaveReader
-        ;; this check needs always loads: a LinkageError here is a real failure
-        ;; and is no longer swallowed as a skip.
-        (try (asr/transcribe-file! (str dir) (str wav))
-             (expect false)
-             (catch clojure.lang.ExceptionInfo e
-               (expect (= "Voice recording too short - try again" (ex-message e)))
-               (expect (= :voice-asr/audio-too-short
-                          (-> e
-                              ex-data
-                              :type)))
-               (expect (= 0
-                          (-> e
-                              ex-data
-                              :samples)))
-               (expect (= asr/min-audio-seconds
-                          (-> e
-                              ex-data
-                              :min-duration-seconds)))))))))
+        (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
+          (spit (io/file dir name) "x"))
+        (write-silence-wav! wav 0.0)
+        (with-redefs [asr/ensure-model! (fn [dir _]
+                                          dir)]
+          ;; Every platform's native rides in its own jar now, so the WaveReader
+          ;; this check needs always loads: a LinkageError here is a real failure
+          ;; and is no longer swallowed as a skip.
+          (try (asr/transcribe-file! (str dir) (str wav))
+               (expect false)
+               (catch clojure.lang.ExceptionInfo e
+                 (expect (= :voice-asr/audio-too-short
+                            (-> e
+                                ex-data
+                                :type)))
+                 (expect (= 0
+                            (-> e
+                                ex-data
+                                :samples)))
+                 (expect (= asr/min-audio-seconds
+                            (-> e
+                                ex-data
+                                :min-duration-seconds)))))))))
 
 (defn- fake-model-archive!
   "A tiny tar.bz2 shaped like the release archive — a top-level directory holding

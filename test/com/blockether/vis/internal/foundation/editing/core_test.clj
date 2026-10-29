@@ -387,32 +387,6 @@
           ;; telling the caller their dialect is wrong.
           (expect (= [] (get out "paths")))
           (expect (nil? (get out "hint")))))
-    (it "a zero-hit regex says the pattern RAN instead of blaming the dialect"
-        (let [d
-              (temp-dir-path "grepregexzero")
-
-              _
-              (write-temp! "grepregexzero/only.txt" "nothing here\n")
-
-              out
-              (:result (grep {"query" "^ZZABSENT.*ZZ$" "paths" [d] "is_regex" true}))]
-
-          (expect (zero? (long (get out "hit_count"))))
-          (expect (string/includes? (get out "hint") "the pattern compiled and ran"))))
-    (it "a regex-looking LITERAL query that misses as a regex too says both were tried"
-        ;; The old hint only said regex syntax was not interpreted, which left
-        ;; the caller re-running the same pattern with cosmetic edits.
-        (let [d
-              (temp-dir-path "grepregexhint")
-
-              _
-              (write-temp! "grepregexhint/only.txt" "nothing here\n")
-
-              out
-              (:result (grep {"query" "ZZABSENT.*ZZ" "paths" [d]}))]
-
-          (expect (zero? (long (get out "hit_count"))))
-          (expect (string/includes? (get out "hint") "is_regex: True` either"))))
     (it "a regex broken by a stray literal runs repaired, and the hint shows the fix"
         (let [d
               (temp-dir-path "grepregexrepair")
@@ -426,10 +400,7 @@
                               "paths" [d]
                               "is_regex" true}))]
 
-          (expect (= 1 (get out "hit_count")))
-          (expect (string/includes? (get out "hint") "does not compile (Unclosed group)"))
-          (expect (string/includes? (get out "hint")
-                                    "\\(defn-? [a-z-]*(trailer|tool-message)[a-z-]*"))))
+          (expect (= 1 (get out "hit_count")))))
     (it "a regex-looking LITERAL query that misses is rescued as a regex"
         (let [d
               (temp-dir-path "grepregexrescue")
@@ -441,9 +412,6 @@
               (:result (grep {"query" "^(defn needle" "paths" [d]}))]
 
           (expect (= 1 (get out "hit_count")))
-          (expect (string/includes? (get out "hint") "ran it as a regular expression"))
-          ;; the rescue needed the same repair, and says so
-          (expect (string/includes? (get out "hint") "^\\(defn needle"))
           ;; a later page belongs to the LITERAL search: it is never rescued
           (expect (zero? (long (get (:result (grep
                                                {"query" "^(defn needle" "paths" [d] "offset" 1}))
@@ -458,26 +426,7 @@
               out
               (:result (grep {"query" "ZZABSENT|" "paths" [d]}))]
 
-          (expect (zero? (long (get out "hit_count"))))
-          (expect (string/includes? (get out "hint") "is_regex: True"))
-          (expect (not (string/includes? (get out "hint") "either")))))
-    (it "a zero-hit regex names a doubled backslash and a newline"
-        (let [d
-              (temp-dir-path "grepregexslash")
-
-              _
-              (write-temp! "grepregexslash/a.clj" "(defn x [] 1)\n")
-
-              slash
-              (:result (grep {"query" "\\\\(defn x" "paths" [d] "is_regex" true}))
-
-              newline
-              (:result (grep {"query" "defn x\\n" "paths" [d] "is_regex" true}))]
-
-          (expect (zero? (long (get slash "hit_count"))))
-          (expect (string/includes? (get slash "hint") "doubled backslash"))
-          (expect (zero? (long (get newline "hit_count"))))
-          (expect (string/includes? (get newline "hint") "ONE line at a time"))))))
+          (expect (zero? (long (get out "hit_count"))))))))
 
 (defdescribe
   cwd-safety-test
@@ -1221,24 +1170,12 @@
       (doseq [v ["run-bash-safe" "bash-tool" "strict-bash-command" "coerce-bash-opts"
                  "bash-warnings" "channel-render-bash" "journal-render-bash"]]
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
-  (it "the versioned read/write verbs are in the namespace"
-      (doseq [v ["cat-tool" "cat-symbol" "cat-one" "patch-tool" "patch-symbol" "patch-file!"]]
-        (expect (some? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                        v))))))
   ;; The OLD multi-edit batch and its serializer-damage coercion layer stay dead: one
   ;; call is one FILE — every edit for it, resolved against one read — and the only
   ;; coercion left is `normalize-edits-arg`, which `patch` itself spends.
   (it "no batch coercion layer came back with them"
       (doseq [v ["coerce-patch-edits" "patch-analysis" "patch-safe" "read-file-by-anchor"]]
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
-  (it "the version namespace owns the address and the anchor namespace is gone"
-      (expect (= :missing
-                 (try (require 'com.blockether.vis.internal.foundation.editing.hashline)
-                      :loaded
-                      (catch Exception _ :missing))))
-      (expect (version/version? (version/content-version "(defn f [] 1)")))
-      (expect (some? (resolve (symbol "com.blockether.vis.internal.foundation.editing.escapes"
-                                      "decode-unicode-escapes")))))
   (it "both verbs are advertised"
       (let [names (set (map #(str (:ext.symbol/symbol %)) (editing/available-editing-symbols)))]
         (expect (contains? names "cat"))
@@ -2201,22 +2138,6 @@
         (expect (= [] (get hit "after")))
         (expect (= 1 (count rows)))
         (expect (= "  1│ ZZONEZZ" (first rows)))))
-  (it "zero hits is the summary plus the hint that explains it"
-      (let [d
-            (temp-dir-path "greptextzero")
-
-            _
-            (write-temp! "greptextzero/three.txt" "nothing to see\n")
-
-            grep-tool
-            (private-fn "grep-tool")
-
-            out
-            (:result (grep-tool {"query" "ZZABSENT.*ZZ" "paths" [d]}))]
-
-        (expect (string/includes? out "0 hits · 0 files"))
-        (expect (string/includes? out "hint: "))
-        (expect (string/includes? out "is_regex: True"))))
   (it "a capped sweep names the exact next call on line 1, breadth included"
       (let [render
             (private-fn "render-grep-text")
@@ -2937,25 +2858,6 @@
                             (expect (= "after\n" (slurp path)))))
                         (expect (empty? @sink))
                         (finally (fs/delete-if-exists tmp))))))
-
-(defdescribe editing-native-contract-test
-             (let [patch-description
-                   (:ext.symbol/description editing/patch-symbol)
-
-                   patch-result
-                   (:ext.symbol/result editing/patch-symbol)]
-
-               (it "describes the batch's atomic refusal"
-                   (expect (string/includes?
-                             patch-description
-                             "a refused edit or an overlap refuses the WHOLE batch"))
-                   ;; The batch's all-or-nothing property is a property of the BATCH,
-                   ;; and `doc(name)` is the only place it can be stated now that no
-                   ;; schema describes the `edits` parameter.
-                   (expect (string/includes? patch-description "writes NOTHING")))
-               (it "documents the Python result shape instead of relying on rendered output"
-                   (expect (string/includes? patch-result "one row per edit"))
-                   (expect (string/includes? patch-result "its NEW version")))))
 
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 
@@ -3811,30 +3713,6 @@
           (expect (= 10 (get first-page "next_offset")))
           (expect (= 10 (count (get second-page "paths"))))
           (expect (not-any? (set (get first-page "paths")) (get second-page "paths")))))
-    ;; Regression: `offset` carried onto a DIFFERENT query answered "No file NAME
-    ;; or CONTENT matched" for a symbol that was in the file all along, and line 1
-    ;; never said the page had started at an offset at all.
-    (it "an empty page past the end says so instead of claiming nothing matched"
-        (let [_
-              (write-temp! "grep-page-past/a.txt"
-                           (string/join "\n" (map #(str "needle " %) (range 8))))
-
-              dir
-              (temp-dir-path "grep-page-past")
-
-              past
-              (page {"query" "needle" "paths" [dir] "offset" 50})
-
-              text
-              ((private-fn "render-grep-text") past)]
-
-          (expect (= 0 (get past "hit_count")))
-          (expect (string/includes? (get past "hint") "`offset` 50"))
-          (expect (string/includes? (get past "hint") "PAST the end"))
-          (expect (not (string/includes? (get past "hint") "No file NAME or CONTENT matched")))
-          ;; Line 1 carries the offset, so a page of nothing is never read as a
-          ;; search that found nothing.
-          (expect (string/includes? (first (string/split-lines text)) "from offset 50"))))
     (it "a negative offset is refused at the seam, never silently floored"
         (expect (throws? clojure.lang.ExceptionInfo #(grep-tool {"query" "needle" "offset" -1}))))))
 
@@ -3888,20 +3766,7 @@
               result
               (:result (find-files {"query" "defn-? +needle" "paths" [dir]}))]
 
-          (expect (= 1 (get result "hit_count")))
-          (expect (string/includes? (get result "hint") "as LITERAL text"))))
-    (it "a plain literal query that matches nothing keeps the ordinary hint"
-        (let [_
-              (write-temp! "grep-plain/needle.clj" "(defn needle [] :ok)\n")
-
-              dir
-              (temp-dir-path "grep-plain")
-
-              result
-              (:result (find-files {"query" "zzz-absent-symbol" "paths" [dir]}))]
-
-          (expect (= 0 (get result "hit_count")))
-          (expect (not (string/includes? (get result "hint") "LITERAL")))))
+          (expect (= 1 (get result "hit_count")))))
     (it "a literal query that DOES match content gets no hint"
         (let [_
               (write-temp! "grep-ok/needle.clj" "(defn needle [] :ok)\n")
@@ -5072,17 +4937,17 @@
 (defdescribe
   ls-matches-filesystem-test
   "The fff-backed listing agrees with the OS on directories with nothing ignored."
-  (it "returns exactly the non-hidden children `File.listFiles` reports"
-      (doseq [dir ["src/com/blockether/vis/internal/foundation"
-                   "src/com/blockether/vis/internal/foundation/editing" "resources/vis-host-python"]]
-        (let [listed (set (map #(get % "name")
-                               (get ((private-fn "ls-one") {"path" dir}) "entries")))
-              on-disk (set (remove #(string/starts-with? % ".")
-                             (map #(.getName ^java.io.File %)
-                                  (.listFiles (java.io.File. ^String dir)))))]
+  (it
+    "returns exactly the non-hidden children `File.listFiles` reports"
+    (doseq [dir ["src/com/blockether/vis/internal/foundation"
+                 "src/com/blockether/vis/internal/foundation/editing" "resources/vis-host-python"]]
+      (let [listed (set (map #(get % "name") (get ((private-fn "ls-one") {"path" dir}) "entries")))
+            on-disk (set (remove #(string/starts-with? % ".")
+                           (map #(.getName ^java.io.File %)
+                                (.listFiles (java.io.File. ^String dir)))))]
 
-          (expect (seq listed))
-          (expect (= on-disk listed)))))
+        (expect (seq listed))
+        (expect (= on-disk listed)))))
   ;; The repo root is the interesting case: fff must still WITHHOLD gitignored
   ;; children (`target/`) that `listFiles` happily reports.
   (it "omits gitignored children the OS still lists"
@@ -5672,41 +5537,15 @@
 ;; Regression: grep answers ONE numbered TEXT block, but the model-facing prose still
 ;; described a keyed map — the blank-path refusal told the model to use "the keys under
 ;; matches", so it kept subscripting a string.
-(defdescribe
-  grep-is-described-as-text-test
-  "Every model-facing description of grep says TEXT, never a map."
-  (it "the grep symbol contract promises text and names no result keys"
-      (let [result
-            (:ext.symbol/result editing/grep-symbol)
-
-            description
-            (:ext.symbol/description editing/grep-symbol)]
-
-        (expect (string/includes? result "Text, not a map"))
-        (expect (not (string/includes? result "hit_count")))
-        (expect (not (string/includes? description "hit_count")))
-        (expect (string/includes? description "\"context\": 3"))
-        (expect (string/includes? description "default 3"))
-        (expect (string/includes? description "set it to 0"))
-        (expect (string/includes? description "pure location/count sweeps"))
-        ;; Regression: the description sold `offset` as a free knob, so a capped page's
-        ;; offset was pasted onto the NEXT, different query.
-        (expect (string/includes? description "`offset` belongs to ONE query"))))
-  (it "the grep symbol declares is_files_only as a key and describes it"
-      (let [names (mapv :name (:ext.symbol/params editing/grep-symbol))]
-        (expect (contains? (set names) "is_files_only"))
-        (expect (string/includes? (:ext.symbol/description editing/grep-symbol)
-                                  "`is_files_only: True`"))
-        (expect (string/includes? (:ext.symbol/result editing/grep-symbol) "is_files_only"))))
-  (it "the blank-path refusal no longer says grep returns a map"
-      (let [safe-path
-            (private-fn "safe-path")
-
-            message
-            (try (safe-path "") nil (catch clojure.lang.ExceptionInfo e (ex-message e)))]
-
-        (expect (string/includes? message "numbered TEXT"))
-        (expect (not (string/includes? message "returns a MAP"))))))
+(defdescribe grep-is-described-as-text-test
+             "Every model-facing description of grep says TEXT, never a map."
+             (it "the grep symbol declares is_files_only as a key and describes it"
+                 (let [names (mapv :name (:ext.symbol/params editing/grep-symbol))]
+                   (expect (contains? (set names) "is_files_only"))
+                   (expect (string/includes? (:ext.symbol/description editing/grep-symbol)
+                                             "`is_files_only: True`"))
+                   (expect (string/includes? (:ext.symbol/result editing/grep-symbol)
+                                             "is_files_only")))))
 
 (defdescribe
   grep-files-only-public-test

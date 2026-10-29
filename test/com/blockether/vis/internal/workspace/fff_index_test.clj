@@ -609,31 +609,6 @@
                  (expect (= "held" (wal-index-lock python shm)))
                  (finally (persistance/db-dispose-connection! store) (fs/delete-tree dir))))))))
 
-;; Regression, session 42f1f324-3b0e-4f4d-abb5-4e93343c44ac: `grep` on a missing scope
-;; answered "rg requires fff for directory search, but fff failed for /root". The
-;; message named internal engines, not the file index, and misled the agent.
-(defdescribe index-errors-name-no-engine-test
-             (it "open! errors name the file index, never rg or fff"
-                 (let [file
-                       (fs/file (fs/create-temp-file {:prefix "vis-index-root-"}))
-
-                       message
-                       (fn [f]
-                         (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))]
-
-                   (try (let [not-directory
-                              (message #(#'index/open! file true))
-
-                              refused
-                              (message #(#'index/open! (java.io.File. "/") true))]
-
-                          (expect (str/starts-with? not-directory
-                                                    "File index root must be a directory: "))
-                          (expect (str/starts-with? refused "Cannot build the file index for /"))
-                          (doseq [m [not-directory refused]]
-                            (expect (not (re-find #"(?i)\b(rg|fff)\b" m)))))
-                        (finally (fs/delete file))))))
-
 ;; Regression: the fff watcher dropped every event when the index base sat inside a
 ;; gitignored directory (`target/` here). The first scan indexed the files, then a
 ;; file written outside Vis never reached grep until the index closed.

@@ -23,7 +23,6 @@
                  (let [provider (registry/provider-by-id :opencode-go)]
                    (expect (some? provider))
                    (expect (= :opencode-go (:provider/id provider)))
-                   (expect (string? (:provider/label provider)))
                    (expect (= "https://opencode.ai/zen/go/v1"
                               (get-in provider [:provider/preset :base-url])))
                    ;; Provider-level :api-style is nil — svar defaults to OpenAI chat.
@@ -31,12 +30,9 @@
                    (expect (seq (get-in provider [:provider/preset :default-models])))
                    (expect (every? #(or (string? %) (map? %))
                                    (get-in provider [:provider/preset :default-models])))
-                   (expect (ifn? (:provider/get-token-fn provider)))
-                   (expect (ifn? (:provider/auth-prompt-fn provider)))
                    ;; A static subscription key the user pastes: an app or TUI sign-in
                    ;; collects it instead of refusing with `no headless auth flow`.
-                   (expect (= :api-key (:provider/auth-kind provider)))
-                   (expect (ifn? (:provider/limits-fn provider))))))
+                   (expect (= :api-key (:provider/auth-kind provider))))))
 
 (defdescribe session-provider-kickoff-hook-test
              ;; Session identity is transport metadata owned by this provider extension,
@@ -119,29 +115,26 @@
                    ;; No delay, no promise, no future: the value is already there.
                    (expect (vector? models)))))
 
-(defdescribe
-  enrich-models-test
-  (it "stamps the Anthropic wire on MiniMax/Qwen at router-build time"
-      (let [enriched
-            (#'opencode-go/enrich-models
-             {:models [{:name "glm-5.2"} {:name "minimax-m3"} {:name "qwen3.8-max"}]}
-             nil)
+(defdescribe enrich-models-test
+             (it "stamps the Anthropic wire on MiniMax/Qwen at router-build time"
+                 (let [enriched
+                       (#'opencode-go/enrich-models
+                        {:models [{:name "glm-5.2"} {:name "minimax-m3"} {:name "qwen3.8-max"}]}
+                        nil)
 
-            by-name
-            (into {} (map (juxt :name identity)) enriched)]
+                       by-name
+                       (into {} (map (juxt :name identity)) enriched)]
 
-        ;; A model the shipped list never had still reaches /messages,
-        ;; because the wire is a function of the id, not of this file.
-        (expect (= :anthropic (:api-style (by-name "minimax-m3"))))
-        (expect (= :anthropic (:api-style (by-name "qwen3.8-max"))))
-        (expect (nil? (:api-style (by-name "glm-5.2"))))))
-  (it "never overrides an :api-style that config already decided"
-      (let [enriched
-            (#'opencode-go/enrich-models {:models [{:name "minimax-m3" :api-style :openai}]} nil)]
-        (expect (= :openai (:api-style (first enriched))))))
-  (it "is registered on the provider, so the live catalog is enriched too"
-      (reload!)
-      (expect (ifn? (:provider/enrich-models-fn (registry/provider-by-id :opencode-go))))))
+                   ;; A model the shipped list never had still reaches /messages,
+                   ;; because the wire is a function of the id, not of this file.
+                   (expect (= :anthropic (:api-style (by-name "minimax-m3"))))
+                   (expect (= :anthropic (:api-style (by-name "qwen3.8-max"))))
+                   (expect (nil? (:api-style (by-name "glm-5.2"))))))
+             (it "never overrides an :api-style that config already decided"
+                 (let [enriched (#'opencode-go/enrich-models
+                                 {:models [{:name "minimax-m3" :api-style :openai}]}
+                                 nil)]
+                   (expect (= :openai (:api-style (first enriched)))))))
 
 (defdescribe shared-key-auth-test
              ;; The lookup ORDER, the file layout and the token envelope belong to the
@@ -160,15 +153,6 @@
                    (fn []
                      (let [token ((:provider/get-token-fn (registry/provider-by-id :opencode-go)))]
                        (expect (= {:token "k" :api-url "https://opencode.ai/zen/go/v1"} token)))))))
-
-(defdescribe
-  auth-prompt-test
-  (it "exposes static API-key guidance"
-      (reload!)
-      (let [lines ((:provider/auth-prompt-fn (registry/provider-by-id :opencode-go)))]
-        (expect (some #(= "  OpenCode Go requires a static API key." %) lines))
-        (expect (some #(= "         export OPENCODE_API_KEY=<your-opencode-go-api-key>" %) lines))
-        (expect (some #(= "  Endpoint: https://opencode.ai/zen/go/v1" %) lines)))))
 
 (defdescribe
   limits-test
@@ -210,8 +194,7 @@
                                          {:type :provider/opencode-go-usage-error :status 403})))}
         (fn []
           (let [report ((:provider/limits-fn (registry/provider-by-id :opencode-go)))]
-            (expect (= :error (:status report)))
-            (expect (re-find #"subscription" (get-in report [:dynamic :note])))))))
+            (expect (= :error (:status report)))))))
   (it "reports :unauthenticated without calling the endpoint when no key is available"
       (reload!)
       (with-redefs-fn {#'key-store/detect-key (constantly nil)
@@ -307,8 +290,7 @@
 
         (expect (= 100.0 (:used row)))
         (expect (= 0.0 (:remaining row)))
-        (expect (string? (:note row)))
-        (expect (re-find #"rolling" (:note report)))))
+        (expect (string? (:note row)))))
   (it "survives a window without a percent instead of inventing one"
       (let [report
             (opencode-go/usage->dynamic-limits

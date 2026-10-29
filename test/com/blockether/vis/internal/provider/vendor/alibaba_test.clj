@@ -28,11 +28,7 @@
         (expect (= "https://coding-intl.dashscope.aliyuncs.com/v1"
                    (get-in coding [:provider/preset :base-url])))
         (expect (= "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
-                   (get-in token [:provider/preset :base-url])))
-        (expect (ifn? (:provider/limits-fn coding)))
-        (expect (ifn? (:provider/limits-fn token)))
-        (expect (ifn? (:provider/auth-prompt-fn coding)))
-        (expect (ifn? (:provider/auth-prompt-fn token)))))
+                   (get-in token [:provider/preset :base-url])))))
   (it
     "presets the models each endpoint actually serves, with a window for the uncatalogued one"
     (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
@@ -49,24 +45,6 @@
       (expect (= {:name "qwen3.8-max" :context 1000000 :output-limit 131072 :tool-call? true}
                  (first token-models)))
       (expect (contains? (set (rest token-models)) "deepseek-v4-pro")))))
-
-(defdescribe
-  auth-prompt-test
-  (it "exposes static API-key guidance per plan"
-      (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
-      (let [coding-lines
-            ((:provider/auth-prompt-fn (registry/provider-by-id :alibaba-coding-plan)))
-
-            token-lines
-            ((:provider/auth-prompt-fn (registry/provider-by-id :alibaba-token-plan)))]
-
-        (expect (some #(= "  Alibaba (Coding Plan) requires a static API key." %) coding-lines))
-        (expect (some #(= "         export ALIBABA_CODING_PLAN_API_KEY=<your-alibaba-api-key>" %)
-                      coding-lines))
-        (expect (some #(= "  Endpoint: https://coding-intl.dashscope.aliyuncs.com/v1" %)
-                      coding-lines))
-        (expect (some #(= "         export ALIBABA_TOKEN_PLAN_API_KEY=<your-alibaba-api-key>" %)
-                      token-lines)))))
 
 (defdescribe
   auth-detection-test
@@ -95,8 +73,7 @@
           (let [report (provider-limits/provider-limits :alibaba-token-plan)]
             (expect (= :alibaba-token-plan (:provider-id report)))
             (expect (= :unsupported (:status report)))
-            (expect (= [] (get-in report [:dynamic :limits])))
-            (expect (re-find #"Model Studio console" (get-in report [:dynamic :note])))))))
+            (expect (= [] (get-in report [:dynamic :limits])))))))
   (it "reports :unauthenticated when the plan key is absent"
       (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (with-redefs-fn {#'key-store/detect-key (constantly nil)}

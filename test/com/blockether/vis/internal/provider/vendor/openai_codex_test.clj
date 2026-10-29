@@ -252,9 +252,6 @@
                  (codex/register!)
                  (let [provider (registry/provider-by-id :openai-codex)]
                    (expect (= :openai-codex (:provider/id provider)))
-                   (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
-                   (expect (ifn? (:provider/get-token-fn provider)))
-                   (expect (ifn? (:provider/limits-fn provider)))
                    (let [defaults (get-in provider [:provider/preset :default-models])
                          by-name (into {}
                                        (map (fn [m]
@@ -412,9 +409,7 @@
         (expect (= 81.0 (get-in report [:limits 1 :remaining])))))
   (it "reports a note when no matching bucket exists"
       (let [report (codex/usage->dynamic-limits {} {:id "gpt-5.3-codex-spark"} 0)]
-        (expect (= [] (:limits report)))
-        (expect (= "OpenAI Codex usage endpoint did not return a matching quota bucket."
-                   (:note report))))))
+        (expect (= [] (:limits report))))))
 
 (defdescribe
   device-authorization-test

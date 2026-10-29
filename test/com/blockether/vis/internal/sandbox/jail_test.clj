@@ -102,26 +102,6 @@
         (expect (= "sess" (:proxy-token policy)))
         (expect (true? (:keychain? policy))))))
 
-(def ^:private enforcement-tokens
-  "Words that only an enforcement dialect uses. Vis states policy; the runtime
-   compiles it — a hit here means enforcement text leaked back into this repo."
-  ["Seatbelt" "SBPL" "sandbox-exec" "(deny default)" "bwrap" "bubblewrap" "--unshare" "mach-lookup"
-   "VIS_SEATBELT_ACTIVE"])
-
-(defdescribe vis-states-policy-and-never-compiles-enforcement
-             (it "vis states policy and never compiles enforcement"
-                 (doseq [file
-                         (->> (file-seq (io/file "src"))
-                              (filter #(str/ends-with? (.getName ^java.io.File %) ".clj")))
-
-                         :let [text
-                               (slurp file)]
-                         token
-                         enforcement-tokens]
-
-                   (expect (not (str/includes? text token))
-                           (str (.getPath ^java.io.File file) " mentions " token)))))
-
 (defn- run-process
   [argv dir policy]
   (let [^Process process

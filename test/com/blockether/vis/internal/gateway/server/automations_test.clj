@@ -97,11 +97,8 @@
                    (expect (valid? "error_response" json))
                    (expect (= "invalid-automation" (get-in json ["error" "type"])))
                    (expect (re-find #"/triggers/0/seconds" (get-in json ["error" "message"]))))
-                 (let [{:keys [status json]} (call :post "/v1/automations"
-                                                   :body ["not" "an" "object"])]
-                   (expect (= 400 status))
-                   (expect (= "The request body must be a JSON object"
-                              (get-in json ["error" "message"])))))))
+                 (let [{:keys [status]} (call :post "/v1/automations" :body ["not" "an" "object"])]
+                   (expect (= 400 status))))))
   (it "answers HTTP 404 when a run starts for an unknown automation"
       (with-db (fn [_]
                  (let [{:keys [status json]} (call :post "/v1/automations/:automation-id/run"

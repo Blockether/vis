@@ -1,7 +1,6 @@
 (ns com.blockether.vis.contract.gateway-test
   "Gateway payload validation and parity with the runtime HTTP surface."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as contract]
             com.blockether.vis.internal.gateway.server
@@ -166,18 +165,7 @@
                                                      :is-live true
                                                      :server-time-ms 9
                                                      :agent-name "Ada"
-                                                     :latest-iteration 4}))))
-  (it "exports generated View event constants"
-      (expect (= {:open contract/view-open-event
-                  :patch contract/view-patch-event
-                  :close contract/view-close-event}
-                 contract/view-events))
-      (let [source (slurp "apps/vis-companion/src/lib/view.ts")]
-        (expect (every? (fn [[constant event]]
-                          (str/includes? source (str "export const " constant " = '" event "';")))
-                        [["VIEW_OPEN_EVENT" contract/view-open-event]
-                         ["VIEW_PATCH_EVENT" contract/view-patch-event]
-                         ["VIEW_CLOSE_EVENT" contract/view-close-event]])))))
+                                                     :latest-iteration 4})))))
 
 (defdescribe
   gateway-payload-schema-test

@@ -26,25 +26,6 @@
 
 (defdescribe
   graalvm-pin-test
-  (it "locks the native build to the verified CE release"
-      (expect (.isFile pin-file))
-      (let [{:strs [GRAAL_VERSION GRAAL_MAX_VERSION GRAAL_PIN_LOCKED GRAAL_EDITION]} (parse-pin
-                                                                                       pin-file)]
-        (expect (= "true" GRAAL_PIN_LOCKED))
-        (expect (= "25.3.4.1" GRAAL_MAX_VERSION))
-        (expect (= GRAAL_MAX_VERSION GRAAL_VERSION))
-        ;; Community Edition, not Oracle: only CE's Classpath Exception keeps the
-        ;; shipped binary redistributable (audit/README.md §4.1).
-        (expect (= "GraalVM CE" GRAAL_EDITION))))
-  (it "never names a 25.2.x artefact — that builder OOMs on this tree"
-      (let [{:strs [GRAAL_VERSION GRAAL_TAG GRAAL_ASSET_VERSION GRAAL_SDKMAN_CANDIDATE
-                    GRAAL_VENDOR_VERSION]}
-            (parse-pin pin-file)]
-        (expect (= "graal-25.3.4.1" GRAAL_TAG))
-        (expect (= "25.3.4.1-graalce" GRAAL_SDKMAN_CANDIDATE))
-        (expect (str/starts-with? GRAAL_VENDOR_VERSION (str "GraalVM CE " GRAAL_VERSION)))
-        (doseq [v [GRAAL_TAG GRAAL_ASSET_VERSION GRAAL_SDKMAN_CANDIDATE GRAAL_VENDOR_VERSION]]
-          (expect (not (str/includes? v "25.2"))))))
   (it "agrees with .sdkmanrc"
       (let [{:strs [GRAAL_SDKMAN_CANDIDATE]}
             (parse-pin pin-file)

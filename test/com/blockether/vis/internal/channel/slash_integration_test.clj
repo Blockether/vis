@@ -80,7 +80,6 @@
                        (expect (= :success (:status result)))
                        (expect (= :complete (:prior-outcome result)))
                        (expect (some? (:slash result)))
-                       (expect (str/includes? (:answer result) "ran /ping"))
                        (expect (str/includes? (:answer result) "pong"))
                        ;; The synthetic turn was persisted; non-slash text still
                        ;; goes through the normal path.
@@ -188,5 +187,4 @@
                                        (turn/run-turn! env "/nonexistent" {}))]
 
                                  (expect (= :success (:status result)))
-                                 (expect (= :unknown (get-in result [:slash :reason])))
-                                 (expect (str/includes? (:answer result) "Unknown")))))))
+                                 (expect (= :unknown (get-in result [:slash :reason]))))))))

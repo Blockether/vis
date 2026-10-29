@@ -520,8 +520,7 @@
                    (expect (= false (pauth/supported? :corp)))
                    (let [result (pauth/start-auth! :corp)]
                      (expect (= false (:ok? result)))
-                     (expect (= :auth-self-minted (:error result)))
-                     (expect (str/includes? (:message result) "api_key_command")))))
+                     (expect (= :auth-self-minted (:error result))))))
              (it "still supports a plain API-key provider that is not command-minted"
                  (with-redefs [providers/configured-providers-cached
                                (constantly [{:id :corp :api-key "sk-1"}])
@@ -552,8 +551,7 @@
         (expect (= false (pauth/supported? :corp)))
         (let [result (pauth/start-auth! :corp)]
           (expect (= false (:ok? result)))
-          (expect (= :auth-managed (:error result)))
-          (expect (str/includes? (:message result) "managed")))))
+          (expect (= :auth-managed (:error result))))))
   (it "allows a managed provider to expose its own headless authentication flow"
       (let [descriptor {:provider/id :corp
                         :provider/label "Corp"

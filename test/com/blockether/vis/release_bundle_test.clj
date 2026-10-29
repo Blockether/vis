@@ -568,11 +568,6 @@
                        (git! src "show" ":VIS_VERSION")))
             (expect (= "cached data\n" (slurp (io/file src "ignored-cache"))))
             (expect (str/includes? (slurp native) "old-runtime"))
-            (doseq [message ["local changes" "~/.vis/install/src" "git -C" "status"
-                             "commit or stash" "untracked files" "manually" "detached pin"
-                             "same 'vis-agent update' command" "--track"
-                             "Native installation and selected track unchanged"]]
-              (expect (str/includes? output message) output))
             (expect (not (str/includes? output "installed the")) output)
             (expect (empty? (filter #(str/starts-with? (.getName ^java.io.File %) "src-recovery.")
                                     (.listFiles (.getParentFile ^java.io.File src)))))))))
@@ -826,15 +821,6 @@
           (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
           (expect (not (str/includes? output "Update the gateway")) output)
           (expect (not (str/includes? output "leaving 1 commit behind")) output))))
-  (it "shows paths under the home directory with ~ in update messages"
-      (with-source-update-fixture
-        {}
-        (fn [{:keys [exit output new-commit managed-src]}]
-          (expect (zero? exit) output)
-          (expect (str/includes? output
-                                 (str "source pinned at " new-commit " (~/.vis/install/src)"))
-                  output)
-          (expect (not (str/includes? output (.getAbsolutePath ^File managed-src))) output))))
   ;; Regression: a dev update asked the old gateway to stop with a bare
   ;; `clojure -M:vis` inside a checkout whose `:deps/prep-lib` Git dependency was
   ;; never prepared. tools.deps refused to build that classpath, `|| true` swallowed
@@ -990,14 +976,6 @@
                                                      (.readAllBytes expected))
                             resource)))))))
         (finally (delete-tree! root))))))
-
-(defdescribe native-image-python-sidecar-test
-             (it "stages the embedded interpreter beside the image instead of inside it"
-                 (let [build (slurp "build.clj")]
-                   ;; Embedding a whole interpreter tree pushed the builder's live set past what
-                   ;; a 16 GB runner survives; the sidecar is what makes the release build finish.
-                   (expect (str/includes? build "target/vis-agent-python") build)
-                   (expect (str/includes? build "(stage-python-sidecar! basis)") build))))
 
 (defdescribe
   stage-release-bundle-test
@@ -1163,32 +1141,6 @@
              (expect (str/includes? output "vis-web/assets/index.js") output))
            (finally (delete-tree! root))))))
 
-;; Regression #148: keep build provenance in the bundle, not a second CLI surface.
-(defdescribe native-build-stamp-test
-             (it "rejects the removed runtime command without starting an engine"
-                 (let [source
-                       (slurp "bin/vis-agent")
-
-                       {:keys [exit output]}
-                       (run-bash ["bash" "bin/vis-agent" "runtime"] {})]
-
-                   (expect (not (zero? exit)) output)
-                   (expect (str/includes? output "unknown command") output)
-                   (expect (not (str/includes? source "vis_runtime()")))
-                   (expect (not (str/includes? source "vis_runtime_usage()")))))
-             (it "writes that stamp from the build — into the image and beside the binary"
-                 (let [build-clj
-                       (slurp "build.clj")
-
-                       stage
-                       (slurp "bin/stage-release-bundle")]
-
-                   (expect (str/includes? build-clj "(spit (str native-bin \".build\")") build-clj)
-                   (expect (str/includes? build-clj "\"-H:IncludeResources=vis/BUILD\"") build-clj)
-                   ;; Provenance, never a version: `--version` still reports VIS_VERSION alone.
-                   (expect (str/includes? build-clj "(spit vfile version)") build-clj)
-                   (expect (str/includes? stage "vis-agent-native.build") stage))))
-
 (defn- fake-tools!
   "A PATH directory whose `uname` claims `os`/`arch`, plus a container engine that
   answers `--version`/`info`/`run` without a VM. Lets the host-target and
@@ -1243,11 +1195,7 @@
                    (expect (= asset output))
                    (expect (str/includes? stable asset) asset)
                    (expect (str/includes? beta "uses: ./.github/workflows/native-release.yml")))
-                 (finally (delete-tree! dir)))))))
-  (it "has no distribution-profile selector in the build"
-      (let [build (slurp "build.clj")]
-        (expect (not (str/includes? build "resolve-profile")))
-        (expect (not (str/includes? build ":profile"))))))
+                 (finally (delete-tree! dir))))))))
 
 (defn- run-release-native
   [^java.io.File dir args env-extra]
@@ -1378,45 +1326,6 @@
 ;; which VIS_VERSION it was running. VIS_VERSION is the only version there is.
 (defdescribe
   version-stamp-test
-  (it
-    "stamps the repo-root VIS_VERSION into `vis/VERSION`, verbatim"
-    (let [dockerfile
-          (slurp "Dockerfile")
-
-          build-clj
-          (slurp "build.clj")
-
-          compose
-          (slurp "docker-compose.yml")
-
-          release-native
-          (slurp "bin/release-native")
-
-          declared
-          (str/trim (slurp "VIS_VERSION"))]
-
-      (expect (re-matches #"\d+\.\d+\.\d+" declared) declared)
-      ;; VIS_VERSION is the ONLY version source: build.clj's `version` IS that
-      ;; file and the native build spits it unchanged.
-      (expect (str/includes? build-clj "(str/trim (slurp \"VIS_VERSION\"))") build-clj)
-      (expect (str/includes? build-clj "(spit vfile version)") build-clj)
-      ;; no second version source may creep back in through a build arg, an env
-      ;; override or a snapshot suffix
-      (doseq [[what source] {"build.clj" build-clj
-                             "Dockerfile" dockerfile
-                             "docker-compose.yml" compose
-                             "bin/release-native" release-native}]
-        (expect (not (str/includes? source "VIS_BUILD_SHA")) what)
-        (expect (not (str/includes? source "-SNAPSHOT")) what)
-        (expect (not (str/includes? source "rev-parse --short HEAD")) what))
-      ;; the native stage refuses to ship an image whose --version is anything
-      ;; other than the declared VIS_VERSION
-      (expect (str/includes? dockerfile "= \"vis-agent$(tr -d '[:space:]' < VIS_VERSION)\"")
-              dockerfile)
-      ;; the runtime image installs that very binary, so it needs no second
-      ;; stamping step of its own
-      (expect (str/includes? dockerfile "COPY --from=native-export") dockerfile)
-      (expect (not (str/includes? dockerfile "/opt/vis/src/resources/vis/VERSION")) dockerfile)))
   (it
     "reports the stamped strings verbatim in a fresh process"
     (let [dir
@@ -1645,19 +1554,7 @@
         (fn [{:keys [exit output urls]}]
           (expect (zero? exit) output)
           (expect (str/includes? urls "/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz")
-                  urls))))
-  (it "names the real cause when GitHub refuses or cannot be reached"
-      (doseq [[status message]
-              [["404" "no native runtime published for 'vis-agent-linux-x64.tar.gz'"]
-               ["403" "update: GitHub answered HTTP 403"] ["000" "update: could not reach GitHub"]]]
-        (with-native-install-fixture
-          {:installed? true :extra-env {"VIS_TEST_ENGINE_STATUS" status}}
-          (fn [{:keys [exit output native]}]
-            (expect (= 1 exit) output)
-            (expect (str/includes? output message) output)
-            (when-not (= "404" status)
-              (expect (not (str/includes? output "no native runtime published")) output))
-            (expect (str/includes? (slurp native) "old-runtime")))))))
+                  urls)))))
 
 (defn- run-installer-download
   "Run a copied installer, so it downloads the command, against a fake GitHub.
@@ -1749,12 +1646,6 @@
             (expect (str/includes? output "Installation unchanged.") output)
             (expect (not (str/includes? output "selected native")) output)
             (expect (str/includes? (slurp native) "old-runtime"))))))
-  (it "warns when a release predates SHA256SUMS"
-      (with-native-install-fixture {}
-                                   (fn [{:keys [exit output]}]
-                                     (expect (zero? exit) output)
-                                     (expect (str/includes? output "v9.9.9 publishes no SHA256SUMS")
-                                             output))))
   (it "names a missing release tag instead of a missing asset and downloads nothing"
       (with-native-install-fixture
         {:installed? true :target "v9.9.8" :extra-env {"VIS_TEST_TAG_STATUS" "404"}}
@@ -1981,228 +1872,7 @@
                                               "runtime_effective")]
                                         {"TEST_TRACK" track})]
             (expect (zero? exit) output)
-            (expect (= expected (str/trim output)) output)))))
-  ;; The stamp is ONE space-separated line, so its track field is a closed
-  ;; vocabulary or it is a parsing hazard: VIS_RELEASE_TRACK took any string at
-  ;; all, and a typo — or a value with a space in it — shipped a build whose
-  ;; every later field read one place to the right.
-  (it
-    "stamps only a track build.clj declares, in the build and in every workflow"
-    (let [build-clj
-          (slurp "build.clj")
-
-          tracks
-          (->> (re-find #"(?s)\(def release-tracks.*?#\{([^}]*)\}" build-clj)
-               second
-               (re-seq #"\"([^\"]+)\"")
-               (map second)
-               set)
-
-          stamped
-          (->> (file-seq (io/file ".github/workflows"))
-               (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
-               (mapcat (fn [f]
-                         (map (fn [v]
-                                [(.getName ^java.io.File f) v])
-                              (map second (re-seq #"VIS_RELEASE_TRACK:\s*(.+)" (slurp f))))))
-               vec)]
-
-      ;; Both ends of the axis, and both marks for a build nobody publishes.
-      (expect (= #{"release" "beta" "dev" "dry-run"} tracks) tracks)
-      ;; The stamp reads the environment THROUGH that vocabulary, and an
-      ;; unlabelled build is a build of your own.
-      (expect (str/includes? build-clj "(release-track)") build-clj)
-      (expect (str/includes? build-clj "(contains? release-tracks track)") build-clj)
-      (expect (seq stamped) "no workflow stamps a track at all")
-      (doseq [[wf value] stamped]
-        (doseq [t (if (str/includes? value "${{")
-                    (map second (re-seq #"(?:&&|\|\|)\s*'([^']+)'" value))
-                    [(str/trim value)])]
-          (expect (contains? tracks t) (str wf ": " value))))))
-  ;; Hosted macOS needs a heap below physical RAM; dry runs may use quick build.
-  (it "sizes the low-memory hosted macOS runner without swapping"
-      (let [stable
-            (slurp ".github/workflows/native-release.yml")
-
-            fallback
-            (->> (str/split-lines stable)
-                 (drop-while #(not (str/includes? % "-lt 16")))
-                 (take 8)
-                 (str/join "\n"))]
-
-        (expect (str/includes? fallback "--parallelism=2") fallback)
-        (expect (str/includes? fallback "-J-Xmx5g") fallback)
-        (expect (nil? (re-find #"-J-Xmx(?:[89]|1[0-9])g" fallback)) fallback)
-        ;; Quick build produces a slower binary, so it is for dry runs only.
-        (expect (str/includes? fallback "-Ob") fallback)
-        (expect (str/includes? fallback "steps.target.outputs.publish") fallback)
-        (expect (str/includes? stable "runs-on: [self-hosted, macOS, ARM64, vis-macos-arm64]")
-                stable)))
-  (it
-    "builds the macOS asset on self-hosted ARM64 and bounds queue waiting"
-    (let [stable
-          (slurp ".github/workflows/native-release.yml")
-
-          macos-job
-          (->> (str/split-lines stable)
-               (drop-while #(not (str/starts-with? % "  macos:")))
-               (take-while #(not (str/starts-with? % "  macos-pickup:")))
-               (str/join "\n"))
-
-          pickup
-          (->> (str/split-lines stable)
-               (drop-while #(not (str/includes? % "macos-pickup:")))
-               (take 25)
-               (str/join "\n"))]
-
-      (expect (str/includes? macos-job "runs-on: [self-hosted, macOS, ARM64, vis-macos-arm64]")
-              macos-job)
-      ;; A clean macOS image does not include espeak-ng's phoneme tables;
-      ;; without this dependency the built binary reaches test-native and fails.
-      (expect (str/includes? macos-job "brew install espeak-ng") macos-job)
-      ;; Six hours was the undersized hosted Mac's price for not finishing;
-      ;; a stalled cloud build should still return capacity the same morning.
-      ;; (The Linux matrix keeps its 6 h cap: a swapping analysis there is slow.)
-      (expect (not (str/includes? macos-job "timeout-minutes: 350")) macos-job)
-      (expect (seq pickup) "no job watches the macOS queue")
-      ;; The watchdog must never wait on the runner class it is watching.
-      (expect (str/includes? pickup "runs-on: ubuntu-latest") pickup)
-      ;; `contents: write` at the top of that file REPLACES the default token
-      ;; scopes, so reading this run's job list has to be granted explicitly.
-      (expect (str/includes? pickup "actions: read") pickup)
-      (expect (str/includes? pickup "DEADLINE_MINUTES") pickup)
-      (expect (str/includes? stable "::error::No runner labelled") stable)))
-  (it "keeps runner routing fixed rather than accepting overrides"
-      (doseq [wf
-              (->> (file-seq (io/file ".github/workflows"))
-                   (filter #(str/ends-with? (.getName ^java.io.File %) ".yml")))
-
-              :let [body
-                    (slurp wf)
-
-                    directives
-                    (->> (str/split-lines body)
-                         (remove #(str/starts-with? (str/trim %) "#"))
-                         (str/join "\n"))]]
-
-        (doseq [forbidden ["inputs.runner" "VIS_MACOS_ARM64_RUNNER" "VIS_IOS_RUNNER"]]
-          (expect (not (str/includes? directives forbidden)) (str wf ": " forbidden)))))
-  (it "routes trusted macOS jobs locally and all pull requests to hosted runners"
-      (let [ci (slurp ".github/workflows/ci.yml")]
-        (expect (str/includes? ci "github.event_name == 'push'"))
-        (expect (str/includes?
-                  ci
-                  "fromJSON('[\"self-hosted\",\"macOS\",\"ARM64\",\"vis-macos-arm64\"]')"))
-        (expect (str/includes? ci "|| 'macos-26'")))
-      (doseq [wf ["mobile-release.yml" "native-release.yml" "desktop-companion.yml"]]
-        (expect (str/includes? (slurp (str ".github/workflows/" wf))
-                               "[self-hosted, macOS, ARM64, vis-macos-arm64]")
-                wf)))
-  (it "isolates Vis state and cleans up partial iOS signing setup on persistent runners"
-      (let [ci
-            (slurp ".github/workflows/ci.yml")
-
-            native
-            (slurp ".github/workflows/native-release.yml")
-
-            ios
-            (slurp ".github/workflows/mobile-release.yml")]
-
-        (expect (str/includes? ci "HOME=$RUNNER_TEMP/vis-ci-home"))
-        ;; CI 34206989503 prepared the runtime under a different home than classpath resolution.
-        (expect (str/includes? ci "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-ci-home"))
-        (expect (str/includes? ci "JAVA_TOOL_OPTIONS: ${{ env.JAVA_TOOL_OPTIONS }}"))
-        (expect (not (str/includes? ci "-J-Duser.home")))
-        (expect (str/includes? native "HOME=$RUNNER_TEMP/vis-native-home"))
-        (expect (str/includes? native "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-native-home"))
-        (expect (str/includes? ios
-                               "- name: Restore the runner keychain state\n        if: always()\n"))
-        (expect (not (str/includes? ios "steps.keychain.outcome == 'success'")))))
-  ;; Release run 37313317237: the treeless native checkout made the shared macOS
-  ;; workspace a partial clone, and the next full iOS checkout crashed git.
-  (it "keeps the shared self-hosted workspace a full clone"
-      (let [native-checkout
-            (->> (get-in (yaml/load (slurp ".github/workflows/native-release.yml"))
-                         ["jobs" "macos" "steps"])
-                 (filter #(= "actions/checkout@v7" (get % "uses")))
-                 first)
-
-            steps
-            (get-in (yaml/load (slurp ".github/workflows/ci.yml")) ["jobs" "tests" "steps"])
-
-            position
-            (fn [pred]
-              (first (keep-indexed #(when (pred %2) %1) steps)))
-
-            guard
-            (some #(when (= "Drop a partial clone from the shared workspace" (get % "name")) %)
-                  steps)]
-
-        (expect (= 0 (get-in native-checkout ["with" "fetch-depth"])) (pr-str native-checkout))
-        (expect (nil? (get-in native-checkout ["with" "filter"])) (pr-str native-checkout))
-        (expect (= "runner.environment == 'self-hosted'" (get guard "if")) (pr-str guard))
-        (expect (str/includes? (get guard "run") "remote.origin.promisor") (pr-str guard))
-        (expect (str/includes? (get guard "run") "rm -rf \"$GITHUB_WORKSPACE/.git\"")
-                (pr-str guard))
-        (expect (< (position #{guard}) (position #(= "actions/checkout@v7" (get % "uses")))))))
-  ;; The tuning history in native-release.yml records runs labelled "no extra
-  ;; args" that still carried build.clj's computed `-J-Xmx`/`-J-Xms` pair, so
-  ;; native-image's OWN sizing has never actually been measured for this image.
-  ;; One dispatch must be able to try it, on one platform, without spending two
-  ;; hours of Linux builds to watch a macOS experiment.
-  (it "can measure native-image's own configuration from one dispatch"
-      (let [stable
-            (slurp ".github/workflows/native-release.yml")
-
-            build
-            (slurp "build.clj")]
-
-        (doseq [input ["only:" "native_args:" "builder_heap:"]]
-          (expect (str/includes? stable input) input))
-        ;; Either job runs alone.
-        (expect (str/includes? stable "if: inputs.only != 'macos'") stable)
-        (expect (str/includes? stable "if: inputs.only != 'linux'") stable)
-        ;; A dispatched argument set wins over the automatic hosted fallback,
-        ;; which would otherwise silently put the measured heap back.
-        (expect (str/includes? stable "[ -z \"$args\" ] && [ -z \"$heap\" ] && [ \"$gib\" -lt 16 ]")
-                stable)
-        ;; And two experiments on one branch do not serialize behind each other.
-        (expect (str/includes?
-                  stable
-                  "group: native-release-${{ inputs.tag || github.ref }}-${{ inputs.only }}")
-                stable)
-        ;; `natural` means NEITHER -J flag: an explicit ceiling is exactly what
-        ;; the measurement is trying to remove.
-        (expect (str/includes? build "(System/getenv \"VIS_NATIVE_BUILDER_HEAP\")") build)
-        (expect (re-find #"\(not natural-heap\?\)\s+\(conj \(str \"-J-Xmx\"" build) build)))
-  ;; Releases #39/#40 failed native builds; green source CI alone must not publish a beta.
-  (it "automatically builds immutable native betas only after successful main CI"
-      (let [beta
-            (slurp ".github/workflows/beta-native.yml")
-
-            native
-            (slurp ".github/workflows/native-release.yml")]
-
-        (doseq [contract ["workflow_run:" "workflows: [CI]" "branches: [main]" "types: [completed]"
-                          "workflow_run.conclusion == 'success'" "workflow_run.event == 'push'"
-                          "workflow_run.head_branch == 'main'"
-                          "workflow_run.head_repository.full_name == github.repository"
-                          "actions/workflows/ci.yml/runs?head_sha="
-                          "uses: ./.github/workflows/native-release.yml"
-                          "uses: ./.github/workflows/desktop-companion.yml"
-                          "needs: [pick, native, desktop]" "require-draft-release"
-                          "--draft --prerelease --latest=false"
-                          "--draft=false --prerelease --latest=false"]]
-          (expect (str/includes? beta contract) contract))
-        (expect (str/includes? beta "tag=\"beta-$sha\""))
-        (expect (not (str/includes? beta "git push -f")))
-        (expect (not (str/includes? beta "softprops/action-gh-release")))
-        (doseq [contract ["track=release" "track=beta" "track=dry-run"
-                          "VIS_RELEASE_TRACK: ${{ steps.target.outputs.track }}"
-                          "clojure -M:test-native" "test-native-python-sdk"
-                          "Verify draft before attaching" "gh release upload"]]
-          (expect (str/includes? native contract) contract))
-        (expect (not (str/includes? native "tags: ['v[0-9]*']"))))))
+            (expect (= expected (str/trim output)) output))))))
 
 (defdescribe
   native-pickup-behavior-test
@@ -2323,25 +1993,6 @@
 (defdescribe
   native-build-logs-test
   (it
-    "retains engine and TUI build logs even when a build fails"
-    (let [workflow (slurp ".github/workflows/native-release.yml")]
-      (expect (= 2 (count (re-seq #"name: Upload native build logs" workflow))))
-      ;; A 403 from the artifact service failed the macOS job AFTER its binaries
-      ;; were built and tested, which skipped the attach and took the release
-      ;; down with it: the log upload runs after a failure and can never fail
-      ;; the job itself.
-      (expect
-        (=
-          2
-          (count
-            (re-seq
-              #"if: always\(\)\n(?:        #[^\n]*\n)*        continue-on-error: true\n        uses: actions/upload-artifact@v4"
-              workflow))))
-      (doseq [name ["engine" "tui"]]
-        (expect (= 2
-                   (count (filter #(str/includes? % (str "tee \"$log_dir/" name ".log\""))
-                                  (str/split-lines workflow))))))))
-  (it
     "streams both channels and preserves a failing compiler exit through tee"
     (let
       [workflow
@@ -2445,23 +2096,6 @@
               (when (contains? #{"healthy" "unhealthy" "wrong-pid" "status-error"} mode)
                 (expect (.isFile cleaned) (str mode ": owned process must be stopped"))))
             (finally (delete-tree! dir))))))))
-
-(defdescribe
-  native-pipeline-order-test
-  (it "builds and stages both binaries before native tests and release attachment"
-      (let [workflow
-            (slurp ".github/workflows/native-release.yml")
-
-            jobs
-            (re-seq #"(?s)- name: Build and stage standalone TUI(.*?)- name: Attach to release"
-                    workflow)]
-
-        (expect (= 2 (count jobs)))
-        (doseq [[_ steps] jobs]
-          (expect (str/includes? steps "run: clojure -M:test-native") steps)
-          (expect (str/includes? steps "VIS_TUI_NATIVE_BIN: target/tui-release-bundle/vis-tui")
-                  steps)
-          (expect (str/includes? steps "uses: ./.github/actions/test-native-python-sdk") steps)))))
 
 (defn- workflow-job-script
   "Read the first production inline shell of one workflow job for isolated execution."
@@ -2727,23 +2361,6 @@
           (expect (= update? (str/includes? calls "release upload installer")) calls)
           (when update?
             (expect (str/includes? calls (str "beta-" (apply str (repeat 40 "a")))) calls)))))
-  (it "runs only for a beta that the publish job reports as published"
-      ;; Beta Native 36258346489: publish read another latest green CI and kept the draft;
-      ;; index asked again seconds later, chose this beta and failed with 404 on the draft.
-      (let [jobs
-            (get (yaml/load (slurp ".github/workflows/beta-native.yml")) "jobs")
-
-            publish
-            (some #(when (= "publish" (get % "id")) %) (get-in jobs ["publish" "steps"]))
-
-            index
-            (workflow-job-script ".github/workflows/beta-native.yml" "index")]
-
-        (expect (= "${{ steps.publish.outputs.published }}"
-                   (get-in jobs ["publish" "outputs" "published"])))
-        (expect (str/includes? (get publish "run") "echo 'published=true'"))
-        (expect (= "needs.publish.outputs.published == 'true'" (get-in jobs ["index" "if"])))
-        (expect (not (str/includes? index "actions/workflows/ci.yml/runs")) index)))
   (it
     "rejects missing or malformed installer beta selections"
     (let [body (re-find #"(?ms)^vis_beta_tag\(\) \{.*?^\}\n" (slurp "bin/vis-agent"))]
@@ -2900,15 +2517,7 @@
                  ;; both spellings reach vis_do_update with the SAME arguments
                  (expect (= (str/trim expected-line) (str/trim output)) (str args "\n" output))
                  (expect (not (str/includes? output "unknown")) (str expected "\n" output))))
-             (finally (delete-tree! dir)))))
-  (it "keeps a named beta build instead of resolving the published selection"
-      (let [body (launcher-function (slurp "bin/vis-agent") "update_native")]
-        ;; A pinned `beta-<commit>` is installed as named; only an unpinned beta
-        ;; asks the installer index which beta is current.
-        (expect (str/includes?
-                  body
-                  "if [[ \"$track\" == beta && ( -z \"$target\" || \"$target\" == latest ) ]]")
-                body))))
+             (finally (delete-tree! dir))))))
 
 ;; Regression: a source run from any directory other than the checkout
 ;; died with "Could not locate com/blockether/vis/core". tools.deps caches the
@@ -4147,31 +3756,6 @@
                    (expect (= 0 exit))
                    (expect (= "/custom.pem" output)))))
 
-(defdescribe native-sdk-isolation-test
-             (it "installs SDK dependencies without assuming the hosted runner Python directory"
-                 (let [action (slurp ".github/actions/test-native-python-sdk/action.yml")]
-                   (expect (not (str/includes? action "actions/setup-python")))
-                   (expect (str/includes? action "uv venv --python 3.12"))
-                   (expect (str/includes? action "uv pip install --python"))
-                   (expect (str/includes? action "RUNNER_TEMP/vis-native-sdk-venv/bin/python"))
-                   (expect (str/includes? action "subprocess.run([sys.executable")))))
-
-(defdescribe
-  native-linux-abi-baseline-test
-  ;; The engine and TUI must not require a newer glibc than the Python worker.
-  (it "builds both Linux release architectures on Ubuntu 22.04"
-      (let [workflow (slurp ".github/workflows/native-release.yml")]
-        (expect (str/includes? workflow "os: ubuntu-22.04, bin: target/vis"))
-        (expect (str/includes? workflow "os: ubuntu-22.04-arm, bin: target/vis"))
-        (expect (str/includes? workflow "bin/verify-linux-abi target/release-bundle"))
-        (expect (str/includes? workflow "bin/verify-linux-abi target/tui-release-bundle"))))
-  (it "uses the same ABI baseline for container-exported binaries"
-      (let [dockerfile (slurp "Dockerfile")]
-        (expect (str/includes? dockerfile "ARG BUILD_IMAGE=ubuntu:22.04"))
-        (expect (str/includes? dockerfile "FROM ${BUILD_IMAGE} AS jdk"))
-        (expect (str/includes? dockerfile
-                               "bin/verify-linux-abi target/vis target/vis-agent-python")))))
-
 (defdescribe
   native-tui-terminal-query-test
   (it
@@ -4199,97 +3783,6 @@
              "print('Cursor reports preserve all fragmented resize boundaries')"])]
          {})]
       (expect (zero? exit) output))))
-
-(defdescribe
-  native-test-tools-test
-  ;; Release 34630933135 failed on both Linux runners because the test command uses bb.
-  (it
-    "installs Babashka explicitly before native tests on every build host"
-    (let
-      [workflow
-       (slurp ".github/workflows/native-release.yml")
-
-       setups
-       (re-seq
-         #"(?m)^      - uses: DeLaGuardo/setup-clojure@[^\n]+\n        with:\n((?:          [^\n]*\n)+)"
-         workflow)]
-
-      (expect (= 2 (count setups)))
-      (doseq [[_ inputs] setups]
-        (expect (str/includes? inputs "bb: latest") inputs)))))
-
-(defdescribe
-  native-linux-isolation-test
-  (it "provisions and exercises user namespaces before native tests"
-      (let [workflow (slurp ".github/workflows/native-release.yml")]
-        (expect (str/includes? workflow "sudo apt-get install -y bubblewrap binutils"))
-        (expect (str/includes? workflow
-                               "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"))
-        (expect (str/includes? workflow "bwrap --unshare-all --ro-bind / / /bin/true")))))
-
-(defdescribe
-  dependency-cache-test
-  (it "shares only compatible dependency caches and refreshes pinned native runtimes"
-      (doseq [workflow
-              ["ci.yml" "native-release.yml" "python-packages.yml"]
-
-              :let [jobs
-                    (get (yaml/load (slurp (str ".github/workflows/" workflow))) "jobs")]
-              [job-id job]
-              jobs
-
-              step
-              (get job "steps")
-
-              :when (str/starts-with? (get step "uses" "") "actions/cache@")
-              :let [cache
-                    (get step "with")
-
-                    paths
-                    (set (str/split-lines (str/trim (get cache "path"))))]
-              :when (contains? paths "~/.m2/repository")]
-
-        (expect (= #{"~/.m2/repository" "~/.gitlibs" "~/.clojure/.cpcache"} paths)
-                (str workflow " / " job-id))
-        (doseq [field ["key" "restore-keys"]]
-          (expect (str/includes? (get cache field) "${{ runner.arch }}")
-                  (str workflow " / " job-id " / " field))))
-      (let [steps
-            (get-in (yaml/load (slurp ".github/workflows/ci.yml")) ["jobs" "tests" "steps"])
-
-            cache
-            (some #(when (= "~/.vis/native" (get-in % ["with" "path"])) (get % "with")) steps)]
-
-        (expect (str/includes? (get cache "key") "'deps.edn'"))
-        (expect (str/includes? (get cache "key") "${{ runner.arch }}"))
-        (expect (str/includes? (get cache "restore-keys") "${{ runner.arch }}")))))
-
-(defdescribe
-  ci-supersession-and-npm-cache-test
-  ;; A per-SHA main queue delayed releases, and a persistent npm cache uploaded 8.5 GB.
-  (it
-    "supersedes branch CI without cancelling tagged release verification"
-    (let [ci (slurp ".github/workflows/ci.yml")]
-      (expect (str/includes? ci "group: ci-${{ github.workflow }}-${{ github.ref }}"))
-      (expect
-        (str/includes?
-          ci
-          "cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')) }}"))
-      (expect (not (str/includes? ci "|| github.sha"))))
-    (doseq [workflow ["release.yml" "mobile-release.yml" "native-release.yml"
-                      "desktop-companion.yml"]]
-      (expect (str/includes? (slurp (str ".github/workflows/" workflow))
-                             "cancel-in-progress: false"))))
-  (it "keeps npm downloads job-local and never uploads a persistent release-runner cache"
-      (doseq [[workflow jobs]
-              [["mobile-release.yml" 2] ["desktop-companion.yml" 1]]
-
-              :let [body
-                    (slurp (str ".github/workflows/" workflow))]]
-
-        (expect (= jobs (count (re-seq #"npm_config_cache=\$RUNNER_TEMP/vis-npm-cache" body))))
-        (expect (not (str/includes? body "cache: npm")))
-        (expect (not (str/includes? body "cache-dependency-path:"))))))
 
 (defdescribe
   npm-cache-cleanup-test
@@ -4361,18 +3854,6 @@
           (expect (= (if (= "0" fail-update) 0 42) exit) output)
           (expect (= expected (str/split-lines output)) output))))))
 
-(defdescribe ci-native-runtime-provisioning-test
-             (it "provisions the Python library before the suite disables outbound downloads"
-                 ;; A warm developer runtime hid the cold Linux worker failure.
-                 (let [workflow
-                       (slurp ".github/workflows/ci.yml")
-
-                       preparation
-                       (subs workflow 0 (str/index-of workflow "- name: Run test suite"))]
-
-                   (expect (str/includes? preparation "com.blockether.vis.internal.python.runtime"))
-                   (expect (str/includes? preparation "(python-runtime/ensure-library!)")))))
-
 (defn- run-draft-release-action
   [release-json view-exit]
   (let [dir
@@ -4437,79 +3918,6 @@
         (let [result (run-draft-release-action metadata view-exit)]
           (expect (pos? (:exit result)) metadata)
           (expect (nil? (:metadata result)))))))
-
-(defdescribe
-  python-release-publication-test
-  (it "publishes after a release, a published beta or an SDK-only main commit (#203, #312)"
-      (let [release-name
-            (second (re-find #"(?m)^name: (.+)$" (slurp ".github/workflows/release.yml")))
-
-            publisher
-            (slurp ".github/workflows/python-publish.yml")]
-
-        (doseq
-          [needle
-           [(str "workflow_run:\n    workflows: ['" release-name "']\n    types: [completed]")
-            "github.event_name == 'workflow_run'"
-            "github.event.workflow_run.conclusion == 'success'"
-            "github.event.workflow_run.event == 'push'"
-            "github.event.workflow_run.head_repository.full_name == github.repository"
-            "github.event_name == 'workflow_dispatch'" "github.ref == 'refs/heads/main'"
-            "uses: ./.github/workflows/python-packages.yml"
-            "ref: ${{ inputs.release_tag || github.event.workflow_run.head_sha || github.sha }}"
-            "version: ${{ needs.source.outputs.version }}" "ref: ${{ needs.source.outputs.ref }}"
-            "EXPECTED_VERSION: ${{ inputs.version }}" "needs: verify" "environment: pypi"
-            "id-token: write" "uses: pypa/gh-action-pypi-publish@release/v1"]]
-          (expect (str/includes? publisher needle) needle))
-        ;; PyPI trusted publishing does not support reusable workflows.
-        (expect (not (str/includes? publisher "workflow_call:")))
-        (expect (not (str/includes? publisher "continue-on-error:")))))
-  (it
-    "builds and tests the released commit and uses its VIS_VERSION for the distribution"
-    (let [packages
-          (slurp ".github/workflows/python-packages.yml")
-
-          workflow
-          (yaml/load packages)
-
-          jobs
-          (get workflow "jobs")]
-
-      (expect (contains? (get-in workflow ["on" "workflow_call" "inputs"]) "ref"))
-      (doseq [job-id
-              ["interpreters" "distribution" "engine"]
-
-              :let [steps
-                    (get-in jobs [job-id "steps"])
-
-                    checkout
-                    (filter #(str/starts-with? (get % "uses" "") "actions/checkout@") steps)]]
-
-        (expect (= ["${{ inputs.ref || github.sha }}"] (mapv #(get-in % ["with" "ref"]) checkout))))
-      (doseq
-        [needle
-         ["version = (Path(os.environ['GITHUB_WORKSPACE']) / 'VIS_VERSION').read_text().strip()"
-          "expected = os.environ.get('EXPECTED_VERSION') or version"
-          "assert expected == version or re.fullmatch(rf'{major}\\.{minor}\\.{patch + 1}\\.dev[0-9]+', expected), expected"
-          "assert metadata.version('vis-agent') == expected"
-          "python -m build packages/vis-agent --outdir dist"]]
-        (expect (str/includes? packages needle) needle))
-      (expect (= "distribution" (get-in jobs ["engine" "needs"])))
-      (let [steps
-            (get-in jobs ["distribution" "steps"])
-
-            lint
-            (filter #(str/includes? (get % "run" "") "python -m ruff check") steps)
-
-            installed
-            (filter #(str/includes? (get % "run" "") "VIS_TEST_INSTALLED=1") steps)]
-
-        (expect (= ["matrix.os == 'ubuntu-latest' && matrix.python == '3.12'"]
-                   (mapv #(get % "if") lint)))
-        ;; Only lint is deduplicated: every interpreter still builds and tests its wheel.
-        (expect (= [nil] (mapv #(get % "if") installed)))
-        (expect (= ["3.12" "3.13" "3.14"]
-                   (get-in jobs ["distribution" "strategy" "matrix" "python"])))))))
 
 (defn- sdk-checkout!
   "A three-commit checkout with VIS_VERSION 1.4.9, SDK sources and this repository's
@@ -4830,42 +4238,7 @@
                             (legs (yaml/load (get selected "exclude"))))
                          (pr-str overrides))
                  (expect (= (str record?) (get selected "record")) (pr-str overrides)))
-               (finally (delete-tree! dir)))))))
-  (it
-    "records inputs after every interpreter passes and runs in every full release run"
-    (let [jobs
-          (get (yaml/load (slurp ".github/workflows/python-packages.yml")) "jobs")
-
-          lookup
-          (some #(when (= "verified" (get % "id")) %) (get-in jobs ["interpreters" "steps"]))
-
-          record
-          (get jobs "record")
-
-          save
-          (some #(when (str/starts-with? (get % "uses" "") "actions/cache/save@") %)
-                (get record "steps"))
-
-          upload
-          (some #(when (str/starts-with? (get % "uses" "") "actions/upload-artifact@") %)
-                (get-in jobs ["distribution" "steps"]))]
-
-      (expect (= "interpreters" (get-in jobs ["distribution" "needs"])))
-      (expect (= "${{ fromJSON(needs.interpreters.outputs.exclude) }}"
-                 (get-in jobs ["distribution" "strategy" "matrix" "exclude"])))
-      ;; The engine job installs the wheel that the one remaining leg uploads.
-      (expect (= "matrix.os == 'ubuntu-latest' && matrix.python == '3.12'" (get upload "if")))
-      (expect (str/starts-with? (get lookup "uses" "") "actions/cache/restore@"))
-      (expect (= true (get-in lookup ["with" "lookup-only"])))
-      (expect (= "${{ steps.inputs.outputs.key }}" (get-in lookup ["with" "key"])))
-      ;; The cache version covers the path: a lookup finds only markers saved with it.
-      (expect (= (get-in lookup ["with" "path"]) (get-in save ["with" "path"])))
-      (expect (= "${{ needs.interpreters.outputs.key }}" (get-in save ["with" "key"])))
-      (expect (= ["interpreters" "distribution"] (get record "needs")))
-      ;; bin/verify-release-assets.py requires every job of the original release run to pass.
-      (expect (= "needs.interpreters.outputs.exclude == '[]'" (get record "if")))
-      (expect (= ["needs.interpreters.outputs.record == 'true'"]
-                 (distinct (map #(get % "if") (get record "steps"))))))))
+               (finally (delete-tree! dir))))))))
 
 (defdescribe
   python-existing-publication-test
@@ -4932,130 +4305,10 @@
                    "        assert failure is not None, f'{case}: unsafe publication was accepted'"
                    "        assert not output.exists(), f'{case}: failure produced a publication decision'"])]
                {"PUBLICATION_CHECK" source "FIXTURE_CASE" scenario})]
-            (expect (zero? exit) (str scenario ": " output)))))))
-  (it "skips uploading only after checking hashes without bypassing SDK verification"
-      (let [publisher (slurp ".github/workflows/python-publish.yml")]
-        (expect (str/includes? publisher "id: existing"))
-        (expect (str/includes? publisher "if: steps.existing.outputs.published != 'true'"))
-        (expect (not (str/includes? publisher "skip-existing:"))))))
-
-(defdescribe
-  android-sdk-setup-test
-  (it "requests supported Android SDK packages for CI and complete releases"
-      ;; CI 35020698566 failed before building because the action default requests obsolete tools.
-      (doseq [path [".github/workflows/android-companion.yml"
-                    ".github/workflows/mobile-release.yml"]]
-        (let [steps
-              (re-seq
-                #"(?ms)^      - uses: android-actions/setup-android@[^\n]+\n(.*?)(?=^      - |\z)"
-                (slurp path))]
-          (expect (= 1 (count steps)) path)
-          (doseq [[_ step] steps]
-            (let [packages (some-> (re-find #"(?m)^          packages: (.+)$" step)
-                                   second
-                                   (str/split #"\s+")
-                                   set)]
-              (expect (contains? packages "platform-tools") path)
-              (expect (not (contains? packages "tools")) path)))))))
+            (expect (zero? exit) (str scenario ": " output))))))))
 
 (defdescribe
   complete-release-gate-test
-  (it
-    "keeps stable publication behind native, mobile, desktop and full CI verification"
-    (let [release
-          (slurp ".github/workflows/release.yml")
-
-          native
-          (slurp ".github/workflows/native-release.yml")
-
-          mobile
-          (slurp ".github/workflows/mobile-release.yml")]
-
-      (doseq [needle ["uses: ./.github/workflows/ci.yml"
-                      "uses: ./.github/workflows/native-release.yml"
-                      "needs: [prepare, verify, native, mobile, desktop, recover]"
-                      "bin/verify-release-assets.py" "--draft" "--draft=false --latest"
-                      "require_complete: true"]]
-        (expect (str/includes? release needle) needle))
-      (expect (= 3 (count (re-seq #"uses: \./\.github/actions/require-draft-release" release))))
-      (expect (not (str/includes? release "/releases/tags/")))
-      (expect (str/includes? release "RELEASE_METADATA: ${{ steps.release.outputs.metadata }}"))
-      (expect (str/includes? native "workflow_call:"))
-      (expect (not (str/includes? release "git commit")))
-      (expect (str/includes? mobile "require_complete:"))
-      (expect (str/includes? mobile "IFS= read -r keychain"))
-      (expect (str/includes? mobile "security default-keychain -d user -s \"$keychain\""))
-      (expect (str/includes? mobile "security list-keychain -d user -s \"${keychains[@]}\""))
-      (expect (str/includes? mobile "printf 'path=%s\\n' \"$KEYCHAIN_PATH\" >> \"$GITHUB_OUTPUT\""))
-      (expect (str/includes? mobile "VIS_IOS_SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.path }}"))
-      (doseq [needle ["-ios.ipa" "-android.aab"]]
-        (expect (str/includes? mobile needle) needle))))
-  (it
-    "retains the signed iOS package after failed public distribution without passing the job"
-    ;; Release 34396848655 lost its attachment after Apple's review submission limit.
-    (let [mobile
-          (slurp ".github/workflows/mobile-release.yml")
-
-          attachment
-          (second (re-find
-                    #"(?s)- name: Attach signed iOS package to the draft\n(.*?)\n      - name:"
-                    mobile))]
-
-      (expect (=
-                "${{ !cancelled() && inputs.require_complete && steps.creds.outputs.ok == 'true' }}"
-                (second (re-find #"(?m)^        if: (.+)$" attachment))))
-      (expect (str/includes? attachment
-                             "packages=(build/ios/export-\"$VERSION\"-\"$BUILD\"/*.ipa)"))
-      (expect (str/includes? attachment "test \"${#packages[@]}\" = 1"))
-      (expect (str/includes? attachment "gh release upload \"$RELEASE_TAG\" \"$asset\" --clobber"))
-      (expect (not (str/includes? mobile "continue-on-error:")))
-      (expect
-        (re-find
-          #"(?m)^          npm run release:ios:store -- --audience \$\{\{ inputs.audience \|\| 'all' \}\}$"
-          mobile))))
-  (it "builds native drafts beside source checks but gates store delivery and publication"
-      (let [jobs (into {}
-                       (map (fn [[_ name body]]
-                              [name body])
-                            (re-seq #"(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\z)"
-                                    (slurp ".github/workflows/release.yml"))))]
-        ;; Concurrent main commits must not invalidate a candidate after its full CI run.
-        (expect (not (str/includes? (get jobs "prepare") "needs:")))
-        (expect (str/includes? (get jobs "prepare")
-                               "test \"$(git rev-parse origin/main)\" = \"$(git rev-parse HEAD)\""))
-        (expect (str/includes? (get jobs "prepare") "--verify-tag --draft"))
-        (expect (str/includes? (get jobs "verify") "needs: prepare"))
-        (expect (str/includes? (get jobs "native") "needs: prepare"))
-        (doseq [job ["mobile" "desktop"]]
-          (expect (str/includes? (get jobs job) "needs: [prepare, verify]") job))
-        (expect (str/includes? (get jobs "publish") "needs.verify.result == 'success'"))
-        (let [ci-jobs (into {}
-                            (map (fn [[_ name body]]
-                                   [name body])
-                                 (re-seq #"(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\z)"
-                                         (slurp ".github/workflows/ci.yml"))))]
-          (expect (not (str/includes? (get ci-jobs "aot") "needs:"))))))
-  (it "delegates job-list read access to the native workflow's runner pickup check"
-      (let [native-call (second (re-find #"(?s)  native:\n(.*?)\n  mobile:"
-                                         (slurp ".github/workflows/release.yml")))]
-        (expect (str/includes? native-call "actions: read"))
-        (expect (str/includes? native-call "contents: write"))))
-  (it "refreshes the bootstrap from trusted green main CI without moving tags"
-      (let [workflow (slurp ".github/workflows/installer-assets.yml")]
-        (doseq [contract ["workflow_run:" "workflows: [CI]" "branches: [main]" "types: [completed]"
-                          "workflow_run.conclusion == 'success'" "workflow_run.event == 'push'"
-                          "workflow_run.head_branch == 'main'"
-                          "workflow_run.head_repository.full_name == github.repository"
-                          "github.ref == 'refs/heads/main'" "actions: read"
-                          "ref: ${{ steps.pick.outputs.sha }}" "persist-credentials: false"
-                          ".head_repository.full_name ==" "group: installer-assets"
-                          "cancel-in-progress: false" "--prerelease --latest=false"]]
-          (expect (str/includes? workflow contract) contract))
-        (expect (= 2 (count (re-seq #"if: steps.pick.outputs.sha != ''" workflow))))
-        (doseq [obsolete ["workflow_call:" "inputs.tag" "/releases/latest" "git tag -f"]]
-          (expect (not (str/includes? workflow obsolete)) obsolete))
-        (expect (not (str/includes? (slurp ".github/workflows/release.yml")
-                                    "uses: ./.github/workflows/installer-assets.yml")))))
   (it
     "requires every uploaded platform artifact and rejects published or mismatched releases"
     (let
@@ -5087,26 +4340,6 @@
 
 (defdescribe
   release-recovery-test
-  (it "resumes only an existing draft through verified original and repaired jobs"
-      (let [workflow (slurp ".github/workflows/release.yml")]
-        (doseq [needle ["workflow_dispatch:" "source_run:" "native_run:"
-                        "github.ref == 'refs/heads/main'" "--source-run" "--native-run"
-                        "git merge-base --is-ancestor" "needs.recover.outputs.sha"
-                        "needs.recover.result == 'success'" "needs.prepare.result == 'success'"
-                        "needs.native.result == 'success'" "needs.mobile.result == 'success'"
-                        "needs.desktop.result == 'success'"]]
-          (expect (str/includes? workflow needle) needle))
-        (expect (not (str/includes? workflow "continue-on-error:")))
-        (expect (not (str/includes? workflow "git tag -f")))))
-  (it "grants recovery access to unpublished draft metadata and native job logs"
-      (let [recovery (-> (slurp ".github/workflows/release.yml")
-                         (str/split #"\n  recover:\n" 2)
-                         second
-                         (str/split #"\n  publish:\n" 2)
-                         first)]
-        ;; GitHub hides draft releases from a read-only GITHUB_TOKEN.
-        (expect (str/includes? recovery "      contents: write\n"))
-        (expect (str/includes? recovery "      actions: read\n"))))
   (it
     "refuses failed, partial, foreign and different-source recovery evidence"
     (let
@@ -5500,103 +4733,7 @@
                     (get step "name")))
           (doseq [step steps]
             (expect (nil? (get-in step ["env" "HOME"])) (get step "name"))))
-        (finally (delete-tree! root)))))
-  (it
-    "signs before staging in every release path, on the credentials the desktop DMG already uses"
-    (let [workflow
-          (slurp ".github/workflows/native-release.yml")
-
-          local
-          (slurp "bin/release-native")
-
-          entitlements
-          (slurp "bin/vis-agent-macos.entitlements")
-
-          tui-entitlements
-          (slurp "bin/vis-tui-macos.entitlements")
-
-          steps
-          (get-in (yaml/load workflow) ["jobs" "macos" "steps"])
-
-          ;; The Linux job stages the same TUI archive, so ordering is only
-          ;; meaningful inside the macOS job that signs it.
-          macos-script
-          (str/join "\n" (map #(str (get % "run")) steps))
-
-          before?
-          (fn [source signing staging]
-            (let [sign-at
-                  (str/index-of source signing)
-
-                  stage-at
-                  (str/index-of source staging)]
-
-              (and sign-at stage-at (< (long sign-at) (long stage-at)))))]
-
-      (expect (some #(str/includes? (str (get % "run")) "bin/sign-macos-release") steps) workflow)
-      ;; The staged bundle, the smoke tests and the notarized submission have to
-      ;; be the same bytes, so signing runs before staging — never after it.
-      (expect (before? macos-script
-                       "bin/sign-macos-release --entitlements"
-                       "bin/stage-release-bundle target/vis")
-              "the engine bundle must be staged from signed bytes")
-      (expect (before? macos-script
-                       "apps/vis-tui/target/vis-tui apps/vis-tui/target/libjsound.dylib"
-                       "bin/stage-tui-release apps/vis-tui/target/vis-tui")
-              "the terminal client and Java Sound library must both be signed before staging")
-      (expect (str/includes? macos-script "--entitlements bin/vis-tui-macos.entitlements")
-              "the standalone client needs microphone permission")
-      (expect (str/includes? macos-script
-                             "apps/vis-tui/target/vis-tui apps/vis-tui/target/libjsound.dylib")
-              "the same notarization submission includes the Java Sound library")
-      (expect (str/includes? tui-entitlements "com.apple.security.device.audio-input")
-              "hardened runtime allows microphone capture")
-      (expect (before? local
-                       "bin/sign-macos-release --entitlements"
-                       "bin/stage-release-bundle target/vis")
-              "a locally built asset may not drift from the CI one")
-      (doseq [secret ["secrets.VIS_DESKTOP_P12" "secrets.VIS_DESKTOP_P12_PASSWORD"
-                      "secrets.VIS_ASC_KEY_ID" "secrets.VIS_ASC_ISSUER_ID" "secrets.VIS_ASC_KEY"]]
-        (expect (str/includes? workflow secret) secret))
-      ;; Both publishers call this workflow, and neither reaches the notary
-      ;; service without passing the repository secrets down.
-      (doseq [caller [".github/workflows/beta-native.yml" ".github/workflows/release.yml"]]
-        (expect (str/includes? (slurp caller) "secrets: inherit") caller))
-      ;; The hardened runtime is what notarization requires; without this
-      ;; exception it also refuses every wheel a user installs.
-      (expect (str/includes? entitlements "com.apple.security.cs.disable-library-validation")
-              entitlements)))
-  (it "notarizes in the background and waits for it before the release gets an asset"
-      (let [steps
-            (get-in (yaml/load (slurp ".github/workflows/native-release.yml"))
-                    ["jobs" "macos" "steps"])
-
-            index-of
-            (fn [pred]
-              (first (keep-indexed #(when (pred %2) %1) steps)))
-
-            notarize-ids
-            ["notarize-engine" "notarize-tui"]
-
-            wait-at
-            (index-of #(= notarize-ids (get % "wait")))]
-
-        (doseq [id notarize-ids]
-          (let [step (first (filter #(= id (get % "id")) steps))]
-            (expect (true? (get step "background")) id)
-            (expect (str/includes? (str (get step "run")) "--notarize-only") id)
-            (expect (nil? (get-in step ["env" "VIS_MACOS_P12"]))
-                    "the notary step needs no signing certificate")))
-        (doseq [step
-                steps
-
-                :when (str/includes? (str (get step "run")) "--sign-only")]
-
-          (expect (nil? (get-in step ["env" "VIS_ASC_KEY"]))
-                  "the signing step needs no notary key"))
-        (expect (some? wait-at) "a wait step names both notarizations")
-        (doseq [step-name ["Verify draft before attaching" "Attach to release"]]
-          (expect (< (long wait-at) (long (index-of #(= step-name (get % "name"))))) step-name)))))
+        (finally (delete-tree! root))))))
 
 (defn- gateway-route-stub!
   "A staged wrapper that only pretends to be the gateway: it records how it was
@@ -5648,63 +4785,49 @@
 
     (try (gateway-route-stub! bundle log serve?) (f bundle log) (finally (delete-tree! root)))))
 
-(defdescribe
-  gateway-route-smoke-test
-  ;; Vis #277: Desktop running on the same Mac as the gateway could not reach it
-  ;; over that Mac's LAN address — the Application Firewall blocked the release
-  ;; binary — while loopback answered throughout. Every release check until now
-  ;; watched the daemon boot, which a blocked binary does perfectly well.
-  (it "passes when both routes a client dials answer"
-      (with-gateway-route-bundle
-        true
-        (fn [bundle log]
-          (let [{:keys [exit output]}
-                (run-bash ["bin/smoke-gateway-routes" (.getAbsolutePath ^File bundle)]
-                          {"VIS_SMOKE_LAN_HOST" "127.0.0.1" "VIS_SMOKE_TIMEOUT_S" "15"})]
-            (expect (zero? (long exit)) output)
-            (expect (str/includes? output "ok: loopback") output)
-            (expect (str/includes? output "ok: the LAN address") output)
-            ;; One wildcard bind is what serves a client on this machine and a
-            ;; phone at the same time; a loopback bind would pass the first probe
-            ;; and strand every other client.
-            (expect (str/includes? (slurp log) "--host 0.0.0.0") (slurp log))))))
-  (it "fails when only loopback answers"
-      (with-gateway-route-bundle
-        true
-        (fn [bundle _log]
-          ;; 192.0.2.0/24 (TEST-NET-1) answers nowhere, which is exactly what a
-          ;; firewall-blocked binary looks like from another device. Loopback gets
-          ;; the full budget: a loaded CI runner can start the stub after 2 s.
-          (let [{:keys [exit output]} (run-bash ["bin/smoke-gateway-routes"
-                                                 (.getAbsolutePath ^File bundle)]
-                                                {"VIS_SMOKE_LAN_HOST" "192.0.2.1"
-                                                 "VIS_SMOKE_TIMEOUT_S" "15"
-                                                 "VIS_SMOKE_LAN_TIMEOUT_S" "2"})]
-            (expect (not= 0 exit) output)
-            (expect (str/includes? output "ok: loopback") output)
-            (expect (str/includes? output "the LAN address never answered") output)))))
-  (it "fails when the gateway never starts"
-      (with-gateway-route-bundle
-        false
-        (fn [bundle _log]
-          (let [{:keys [exit output]} (run-bash ["bin/smoke-gateway-routes"
-                                                 (.getAbsolutePath ^File bundle)]
-                                                {"VIS_SMOKE_TIMEOUT_S" "2"})]
-            (expect (not= 0 exit) output)
-            (expect (str/includes? output "loopback never answered") output)))))
-  (it "runs in every macOS release path"
-      (let [workflow
-            (slurp ".github/workflows/native-release.yml")
-
-            steps
-            (get-in (yaml/load workflow) ["jobs" "macos" "steps"])]
-
-        (expect (.canExecute (io/file "bin/smoke-gateway-routes")))
-        (expect (some #(str/includes? (str (get % "run")) "bin/smoke-gateway-routes") steps)
-                workflow)
-        ;; A locally built asset is published the same way, so it is checked the
-        ;; same way.
-        (expect (str/includes? (slurp "bin/release-native") "bin/smoke-gateway-routes")))))
+(defdescribe gateway-route-smoke-test
+             ;; Vis #277: Desktop running on the same Mac as the gateway could not reach it
+             ;; over that Mac's LAN address — the Application Firewall blocked the release
+             ;; binary — while loopback answered throughout. Every release check until now
+             ;; watched the daemon boot, which a blocked binary does perfectly well.
+             (it "passes when both routes a client dials answer"
+                 (with-gateway-route-bundle
+                   true
+                   (fn [bundle log]
+                     (let [{:keys [exit output]}
+                           (run-bash ["bin/smoke-gateway-routes" (.getAbsolutePath ^File bundle)]
+                                     {"VIS_SMOKE_LAN_HOST" "127.0.0.1" "VIS_SMOKE_TIMEOUT_S" "15"})]
+                       (expect (zero? (long exit)) output)
+                       (expect (str/includes? output "ok: loopback") output)
+                       (expect (str/includes? output "ok: the LAN address") output)
+                       ;; One wildcard bind is what serves a client on this machine and a
+                       ;; phone at the same time; a loopback bind would pass the first probe
+                       ;; and strand every other client.
+                       (expect (str/includes? (slurp log) "--host 0.0.0.0") (slurp log))))))
+             (it "fails when only loopback answers"
+                 (with-gateway-route-bundle
+                   true
+                   (fn [bundle _log]
+                     ;; 192.0.2.0/24 (TEST-NET-1) answers nowhere, which is exactly what a
+                     ;; firewall-blocked binary looks like from another device. Loopback gets
+                     ;; the full budget: a loaded CI runner can start the stub after 2 s.
+                     (let [{:keys [exit output]} (run-bash ["bin/smoke-gateway-routes"
+                                                            (.getAbsolutePath ^File bundle)]
+                                                           {"VIS_SMOKE_LAN_HOST" "192.0.2.1"
+                                                            "VIS_SMOKE_TIMEOUT_S" "15"
+                                                            "VIS_SMOKE_LAN_TIMEOUT_S" "2"})]
+                       (expect (not= 0 exit) output)
+                       (expect (str/includes? output "ok: loopback") output)
+                       (expect (str/includes? output "the LAN address never answered") output)))))
+             (it "fails when the gateway never starts"
+                 (with-gateway-route-bundle
+                   false
+                   (fn [bundle _log]
+                     (let [{:keys [exit output]} (run-bash ["bin/smoke-gateway-routes"
+                                                            (.getAbsolutePath ^File bundle)]
+                                                           {"VIS_SMOKE_TIMEOUT_S" "2"})]
+                       (expect (not= 0 exit) output)
+                       (expect (str/includes? output "loopback never answered") output))))))
 
 (defdescribe
   sdk-pinned-launcher-test

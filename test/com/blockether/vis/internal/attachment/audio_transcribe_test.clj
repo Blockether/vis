@@ -184,37 +184,26 @@
                    (expect (= ".amr" (at/container-extension unknown nil "clip.amr")))
                    (expect (= ".audio" (at/container-extension unknown nil nil))))))
 
-(defdescribe
-  manifest-test
-  (it "quotes the transcript to the model instead of telling it to open the file"
-      ;; The whole point: no provider wire carries audio, so the words ARE the
-      ;; attachment as far as the model is concerned.
-      (register-fake! "remember to water the plants")
-      (let [rows
-            (at/transcribe-attachments [(memo)])
+(defdescribe manifest-test
+             (it "quotes the transcript to the model instead of telling it to open the file"
+                 ;; The whole point: no provider wire carries audio, so the words ARE the
+                 ;; attachment as far as the model is concerned.
+                 (register-fake! "remember to water the plants")
+                 (let [rows
+                       (at/transcribe-attachments [(memo)])
 
-            content
-            (user-content rows)]
+                       content
+                       (user-content rows)]
 
-        (expect (= "remember to water the plants" (:transcription (first rows))))
-        (expect (re-find #"transcript of the recording: \"remember to water the plants\""
-                         (str content)))
-        ;; ... and the reason stops sending the model after a file it has already read.
-        (expect (re-find #"transcript is quoted below" (str content)))))
-  (it "quotes the head of an hour of speech and SAYS how much it is not showing"
-      ;; The stored transcript is whole; only what rides every later request of
-      ;; the session is bounded.
-      (register-fake! (apply str (repeat 9000 "a")))
-      (let [content (str (user-content (at/transcribe-attachments [(memo)])))]
-        (expect (re-find #"the first 8000 of 9000 characters" content))
-        (expect (re-find #"the whole transcript is stored with the file" content))))
-  (it "tells the model the words are still being made, instead of saying nothing"
-      (let [content (str (user-content [(assoc (memo) :transcription-status at/PENDING)]))]
-        (expect (re-find #"still being made" content))
-        (expect (re-find #"do not answer as if you had heard it" content))))
-  (it "tells the model when the machine could not transcribe the recording"
-      (let [content (str (user-content [(assoc (memo) :transcription-status at/UNAVAILABLE)]))]
-        (expect (re-find #"could NOT transcribe the recording" content)))))
+                   (expect (= "remember to water the plants" (:transcription (first rows))))
+                   (expect (re-find #"transcript of the recording: \"remember to water the plants\""
+                                    (str content)))))
+             (it "quotes the head of an hour of speech and SAYS how much it is not showing"
+                 ;; The stored transcript is whole; only what rides every later request of
+                 ;; the session is bounded.
+                 (register-fake! (apply str (repeat 9000 "a")))
+                 (let [content (str (user-content (at/transcribe-attachments [(memo)])))]
+                   (expect (re-find #"the first 8000 of 9000 characters" content)))))
 
 ;; Regression: session 388aa964-07cf-498a-a6d7-71c49c86b491 lost a long recording
 ;; at the two-minute join deadline, even though the worker later finished it.

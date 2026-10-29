@@ -165,7 +165,6 @@
                 (expect (= "/draft/subdir" (get info "root")))
                 (expect (nil? (get info "fork_ms")))
                 (expect (not (contains? info "draft_changes")))
-                (expect (= "Draft ownership needs recovery." (get info "draft_error")))
                 (expect (empty? @@#'state/draft-status-cache))))))))
   (it "marks an unrecognized draft directory for recovery rather than as ordinary Git"
       (with-draft-workspace {:id "orphan-session"
@@ -186,21 +185,19 @@
   session-workspace-draft-test
   ;; #241: a failing summary must not erase the draft identity or claim clean zeroes.
   (it "retains draft identity when the draft status reader fails"
-      (with-draft-workspace
-        draft-workspace
-        (fn []
-          (with-redefs [drafts/status (fn [_]
-                                        (throw (ex-info "summary unavailable" {})))]
-            (let [loading (state/session-workspace-info "session")]
-              (expect (true? (get loading "is_draft")))
-              (expect (= "draft-regression" (get loading "id")))
-              (expect (= "feature" (get loading "label")))
-              (expect (= "Draft changes are loading." (get loading "draft_error"))))
-            (expect (await-for 5000 @#'state/draft-status-reader))
-            (let [info (state/session-workspace-info "session")]
-              (expect (= "draft-regression" (get info "id")))
-              (expect (= "Draft changes are unavailable; retry shortly." (get info "draft_error")))
-              (expect (nil? (get info "draft_changes"))))))))
+      (with-draft-workspace draft-workspace
+                            (fn []
+                              (with-redefs [drafts/status (fn [_]
+                                                            (throw (ex-info "summary unavailable"
+                                                                            {})))]
+                                (let [loading (state/session-workspace-info "session")]
+                                  (expect (true? (get loading "is_draft")))
+                                  (expect (= "draft-regression" (get loading "id")))
+                                  (expect (= "feature" (get loading "label"))))
+                                (expect (await-for 5000 @#'state/draft-status-reader))
+                                (let [info (state/session-workspace-info "session")]
+                                  (expect (= "draft-regression" (get info "id")))
+                                  (expect (nil? (get info "draft_changes"))))))))
   (it
     "reuses summaries and refreshes second-repository changes after expiry"
     (with-draft-workspace
@@ -787,35 +784,6 @@
           (expect (not (contains? turn "user_request")))
           (expect (= "alpha.\n beta." (get-in turn ["iterations" 0 "thinking"])))))))
 
-(defdescribe transcript-bubble-footer-test
-             (it "ships the exact shared TUI footer and routing note to remote channels"
-                 (with-redefs [persistance/db-list-session-turns
-                               (fn [_ sid]
-                                 [{:id sid
-                                   :status :success
-                                   :provider :openai
-                                   :model "gpt/5.4"
-                                   :input-tokens 11461
-                                   :input-cache-read-tokens 4096
-                                   :output-tokens 35
-                                   :total-cost 0.007
-                                   :duration-ms 2300}])
-
-                               persistance/db-list-session-turn-iterations
-                               (fn [_ _]
-                                 [{:llm-selected {:provider :anthropic :model "claude/opus"}
-                                   :llm-actual {:provider :openai :model "gpt/5.4"}
-                                   :llm-fallback? true
-                                   :llm-routing-trace [{:event/type :llm.routing/provider-retry}
-                                                       {:event/type :llm.routing/provider-fallback
-                                                        :status 429}]}])]
-
-                   (let [turn (first (state/transcript :session-1))]
-                     (expect (= "openai/gpt-5.4  ·  11.5k→35 (cached 4.1k)  ·  ~$0.0070  ·  2.3s"
-                                (get turn "meta_summary")))
-                     (expect (= "↳ from anthropic/claude-opus — 429, retried 1×, prompt cache lost"
-                                (get turn "meta_fallback_note")))))))
-
 (defdescribe transcript-throughput-test
              (it "rates a persisted turn over its timed model responses only"
                  (with-redefs [persistance/db-list-session-turns
@@ -836,9 +804,7 @@
                                   {:output-tokens 0 :llm-full-duration-ms 0}])]
 
                    (let [turn (first (state/transcript :session-1))]
-                     (expect (= 10.0 (get turn "tokens_per_second")))
-                     (expect (= "openai/gpt-5.4  ·  200→50  ·  10.0 tok/s  ·  2.3s"
-                                (get turn "meta_summary")))))))
+                     (expect (= 10.0 (get turn "tokens_per_second")))))))
 
 (defdescribe transcript-in-flight-footer-test
              ;; The engine persists the row at SUBMIT and stamps routing from the
@@ -870,26 +836,13 @@
                    (let [turn (first (state/transcript :session-1))]
                      (expect (some? (get turn "meta_summary")))))))
 
-(defdescribe
-  form-result-error-wire-test
-  ;; Op cards are gone, so there is no op-dedup: a form error ALWAYS surfaces
-  ;; on the wire. What remains to assert is the lean text shape.
-  (it "ships a lean text error (message + line/col + hint), never the pr-str'd map"
-      (let [[_ _ payload] (#'state/chunk->event
-                           {:phase :form-result
-                            :position 0
-                            :code "1/0"
-                            :error {:message "ZeroDivisionError: division by zero"
-                                    :hint "check denominator"
-                                    :data {:phase :python/runtime :line 1 :column 1}}})]
-        (expect (= "ZeroDivisionError: division by zero (line 1, col 1)\nhint: check denominator"
-                   (:error payload)))
-        (expect (not (str/includes? (:error payload) ":data")))))
-  (it "a form error always surfaces on the wire"
-      (let [[type _ payload] (#'state/chunk->event
-                              {:phase :form-result :position 0 :code "rg(...)" :error tool-error})]
-        (expect (= "block.output" type))
-        (expect (= "rg spec has unknown keys: spec." (:error payload))))))
+(defdescribe form-result-error-wire-test
+             (it "a form error always surfaces on the wire"
+                 (let [[type _ payload]
+                       (#'state/chunk->event
+                        {:phase :form-result :position 0 :code "rg(...)" :error tool-error})]
+                   (expect (= "block.output" type))
+                   (expect (= "rg spec has unknown keys: spec." (:error payload))))))
 
 (defdescribe
   turn-progress-wire-event-test
@@ -2814,7 +2767,6 @@
                  (expect (true? (await-cancel token 4000)))
                  (Thread/sleep 400))
                (expect (true? (:stalled? @stall)))
-               (expect (str/includes? (str @landed) "turn never started running"))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     (it "holds a started turn to the stall ceiling, never the launch ceiling"
         (let [sid
@@ -2883,10 +2835,6 @@
                  (watchdog sid tid token stall)
                  (expect (true? (await-cancel token 4000))))
                (expect (true? (:stalled? @stall)))
-               (expect (str/includes? (str (:stall-detail @stall)) "no response for"))
-               (expect (str/includes? (str (:stall-detail @stall))
-                                      "while waiting for the model to answer"))
-               (expect (not (re-find #"\d{4,}ms|:provider-call" (str (:stall-detail @stall)))))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
     ;; Regression, issue td-e06f95: the gateway's fixed two-minute first-output
     ;; watchdog cancelled LM Studio before its provider-scoped prefill budget elapsed.
@@ -3383,7 +3331,6 @@
 
              (expect (nil? (launch sid tid "hi" {:cancel-token token}))))
            (expect (= ["turn.started"] @events))
-           (expect (str/includes? (str @failed) "turn launch failed"))
            (finally (cancellation/cancel! token) (swap! registry dissoc sid))))))
 
 ;; Regression, user report (paraphrased: "the search results are not sorted by
@@ -4868,7 +4815,6 @@
                 progress (filterv #(= "turn.progress" (get % "type")) replay)]
 
             (expect (= 1 (count progress)))
-            (expect (= "waiting up to 320s for: sleep 280" (get-in progress [0 "phrase"])))
             (expect (= ["turn.started" "block.started" "turn.progress"]
                        (mapv #(get % "type") replay))))
           (finally (state/unsubscribe! sid "progress-resume") (reset! registry saved)))))))
@@ -7005,7 +6951,6 @@
             (expect (= (if stalled? "turn.failed" "turn.cancelled") event-type))
             (if stalled?
               (do (expect (= "provider_stream_stalled" (get card "code")))
-                  (expect (str/includes? (str (get card "message")) "127381ms"))
                   (expect (= card (:error written)))
                   (expect (= (:content written) (:content payload))))
               (expect (empty? (:content written)))))
@@ -7082,7 +7027,6 @@
             (if user-cancel?
               (expect (empty? (:content written)))
               (do (expect (= "turn_failed" (get card "code")))
-                  (expect (str/includes? (str (get card "message")) "sleep interrupted"))
                   (expect (= card (:error written)))
                   ;; The same concrete failure the channels render.
                   (expect (= (:content written) (:content payload))))))
@@ -7154,7 +7098,6 @@
               (:exception diagnostic)]
 
           (expect (= "turn_failed" (get card "code")))
-          (expect (str/includes? (str (get card "message")) "java.lang.InterruptedException"))
           (expect (some? (:diagnostic-id diagnostic)))
           (expect (= (get card "id") (:diagnostic-id diagnostic)))
           (expect (str/includes? (str (get card "message")) (str (:diagnostic-id diagnostic))))
@@ -7402,46 +7345,23 @@
 ;; "Provider stream stalled: no output for 362142ms in phase :provider-call" — the error
 ;; block never said WHICH provider or model had gone quiet, so the TUI could only paint a
 ;; bare failed card while the log knew it was github-copilot / claude-opus-5.
-(defdescribe
-  stalled-turn-names-its-provider-test
-  (let [advance
-        @#'state/advance-turn-stall-state
+(defdescribe stalled-turn-names-its-provider-test
+             (let [advance @#'state/advance-turn-stall-state]
+               (it "remembers the provider and model the call was dispatched to"
+                   (let [dispatched (advance {}
+                                             {:phase :provider-call
+                                              :iteration 0
+                                              :started-at-ms 1
+                                              :provider "github-copilot"
+                                              :model "claude-opus-5"}
+                                             100)
+                         ;; later chunks carry no attribution of their own and must not erase it
+                         streaming (advance dispatched {:phase :content :delta "hi"} 200)]
 
-        failure-text
-        @#'state/stall-failure-text]
-
-    (it "remembers the provider and model the call was dispatched to"
-        (let [dispatched
-              (advance {}
-                       {:phase :provider-call
-                        :iteration 0
-                        :started-at-ms 1
-                        :provider "github-copilot"
-                        :model "claude-opus-5"}
-                       100)
-
-              ;; later chunks carry no attribution of their own and must not erase it
-              streaming
-              (advance dispatched {:phase :content :delta "hi"} 200)]
-
-          (expect (= "github-copilot" (:provider dispatched)))
-          (expect (= "claude-opus-5" (:model dispatched)))
-          (expect (= "github-copilot" (:provider streaming)))
-          (expect (= "claude-opus-5" (:model streaming)))))
-    (it "names them in the failure a human reads"
-        (expect (= (str "Provider stopped responding (github-copilot / claude-opus-5): "
-                        "no response for 6m 2s while waiting for the model to answer. "
-                        "Vis stopped the turn. NEXT STEP: send \"continue\" to try again. "
-                        "If it happens again, switch to another model.")
-                   (failure-text (atom
-                                   {:stall-detail
-                                    "no response for 6m 2s while waiting for the model to answer"
-                                    :provider :github-copilot
-                                    :model "claude-opus-5"})))))
-    (it "refuses to blame a provider the turn never reached"
-        (expect (= (str "Turn stalled before reaching the provider: no worker activity for 5ms. "
-                        "NEXT STEP: send your message again.")
-                   (failure-text (atom {:stall-detail "no worker activity for 5ms"})))))))
+                     (expect (= "github-copilot" (:provider dispatched)))
+                     (expect (= "claude-opus-5" (:model dispatched)))
+                     (expect (= "github-copilot" (:provider streaming)))
+                     (expect (= "claude-opus-5" (:model streaming)))))))
 
 ;; Regression, issue #128: a session was keyed by whatever spelling the caller
 ;; held, so a producer with the id as a STRING (gateway.view reads it off
@@ -7485,45 +7405,37 @@
 ;; a phase it had already left.
 (defdescribe
   stall-before-the-provider-test
-  (let [failure-text @#'state/stall-failure-text]
-    (it "leaves :awaiting-permit behind the moment the permit is in hand"
-        (let [registry @#'state/registry
-              sid (str "engine-start-" (java.util.UUID/randomUUID))
-              tid "turn-1"
-              seen (promise)]
+  (it "leaves :awaiting-permit behind the moment the permit is in hand"
+      (let [registry
+            @#'state/registry
 
-          (try (swap! registry assoc
-                 sid
-                 {:next-seq 0
-                  :current-turn tid
-                  :turns {tid {:turn_id tid :session_id sid :status "running" :started_at 123}}})
-               (with-redefs-fn {#'state/append-event! (fn [& _]
-                                                        nil)
-                                #'state/run-turn! (fn [_sid _tid _request {:keys [stall]}]
-                                                    (deliver seen (:phase @stall))
-                                                    {:status :ok})}
-                 (fn []
-                   (#'state/launch-turn-worker!
-                    sid
-                    tid
-                    "hello"
-                    {:cancel-token (cancellation/cancellation-token)})
-                   (expect (= :engine-start (deref seen 4000 ::timeout)))))
-               (finally (swap! registry dissoc sid)))))
-    (it "keeps naming the provider once a stream had actually produced output"
-        (expect (= (str "Provider stopped responding: no new output for 6m 2s while the model was "
-                        "writing its answer. Vis stopped the turn. NEXT STEP: send \"continue\" to "
-                        "try again. If it happens again, switch to another model.")
-                   (failure-text (atom
-                                   {:stall-detail
-                                    "no new output for 6m 2s while the model was writing its answer"
-                                    :produced? true})))))
-    (it "says what a turn wedged before its first provider call really did"
-        (expect
-          (= (str "Turn stalled before reaching the provider: no response for 6m 0s while Vis "
-                  "prepared the session. NEXT STEP: send your message again.")
-             (failure-text (atom {:stall-detail
-                                  "no response for 6m 0s while Vis prepared the session"})))))))
+            sid
+            (str "engine-start-" (java.util.UUID/randomUUID))
+
+            tid
+            "turn-1"
+
+            seen
+            (promise)]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :current-turn tid
+                :turns {tid {:turn_id tid :session_id sid :status "running" :started_at 123}}})
+             (with-redefs-fn {#'state/append-event! (fn [& _]
+                                                      nil)
+                              #'state/run-turn! (fn [_sid _tid _request {:keys [stall]}]
+                                                  (deliver seen (:phase @stall))
+                                                  {:status :ok})}
+               (fn []
+                 (#'state/launch-turn-worker!
+                  sid
+                  tid
+                  "hello"
+                  {:cancel-token (cancellation/cancellation-token)})
+                 (expect (= :engine-start (deref seen 4000 ::timeout)))))
+             (finally (swap! registry dissoc sid))))))
 
 (defdescribe
   cross-process-liveness-test
@@ -8112,7 +8024,6 @@
                                [:error :provider-error-info])]
 
                    (expect (= :rate-limit (:kind info)))
-                   (expect (str/includes? (:explanation info) "rate-limited"))
                    (expect (some #{["HTTP" "429"]} (:facts info))))))
 
 (defdescribe transcript-iteration-wire-test

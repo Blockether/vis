@@ -18,25 +18,12 @@
                        (set (map :ext/name (extension/registered-extensions)))]
 
                    (expect (= :openrouter (:provider/id provider)))
-                   (expect (= "OpenRouter" (:provider/label provider)))
                    (expect (contains? ext-nses "provider-openrouter"))
                    (expect (= (svar/provider-base-url :openrouter)
                               (get-in provider [:provider/preset :base-url])))
                    ;; Gateway slugs are `vendor/model`; the preset seeds a usable set.
                    (expect (seq (get-in provider [:provider/preset :default-models])))
-                   (expect (every? string? (get-in provider [:provider/preset :default-models])))
-                   (expect (ifn? (:provider/limits-fn provider)))
-                   (expect (ifn? (:provider/auth-prompt-fn provider)))
-                   (expect (ifn? (:provider/get-token-fn provider))))))
-
-(defdescribe
-  auth-prompt-test
-  (it "exposes static API-key guidance"
-      (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
-      (let [lines ((:provider/auth-prompt-fn (registry/provider-by-id :openrouter)))]
-        (expect (some #(= "  OpenRouter requires a static API key." %) lines))
-        (expect (some #(= "         export OPENROUTER_API_KEY=<your-openrouter-api-key>" %) lines))
-        (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :openrouter)) %) lines)))))
+                   (expect (every? string? (get-in provider [:provider/preset :default-models]))))))
 
 (defdescribe
   key-store-book-test

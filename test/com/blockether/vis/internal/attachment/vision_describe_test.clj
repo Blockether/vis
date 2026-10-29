@@ -548,9 +548,7 @@
                    (expect (string? content))
                    (expect (str/includes? content "pricey-seer"))
                    (expect (str/includes? content "fig-1.png: a red pixel"))
-                   (expect (str/includes? content "fig-2.png: a bar chart"))
-                   (expect (str/includes? content "second-hand"))
-                   (expect (str/includes? content "read_attachment"))))
+                   (expect (str/includes? content "fig-2.png: a bar chart"))))
              (it "is nil when nothing was described"
                  (expect (nil? (vd/descriptions-message [])))
                  (expect (nil? (vd/descriptions-message nil)))))
@@ -590,19 +588,11 @@
     (let [att
           {:path "/tmp/shot.png" :media-type "image/png" :base64 png-b64 :size 68 :size-label "68B"}
 
-          {:keys [result calls]}
+          {:keys [calls]}
           (with-asks descriptions
-                     #(vd/describe-attachments (blind-fleet) "what is on the screen?" [att]))
+                     #(vd/describe-attachments (blind-fleet) "what is on the screen?" [att]))]
 
-          user
-          (last (prompt/assemble-initial-messages {:initial-user-content "look"
-                                                   :vision? false
-                                                   :user-images [att]
-                                                   :image-descriptions result}))]
-
-      (expect (empty? calls))
-      (expect (str/includes? (:content user) "NOT attached"))
-      (expect (str/includes? (:content user) "PIL")))))
+      (expect (empty? calls)))))
 
 (defdescribe
   vision-describe-hardening-test

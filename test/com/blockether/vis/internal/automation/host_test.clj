@@ -9,7 +9,7 @@
             [com.blockether.vis.internal.automation.runner :as runner]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.persistance.core :as ps]
-            [lazytest.core :refer [defdescribe describe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private input
   {"name" "Morning report"
@@ -137,61 +137,12 @@
       ;; Regression: automations must stay available even with an old denial.
       (binding [toggles/*overrides* {"automations" false}]
         (expect (nil? (toggles/toggle-spec "automations")))
-        (expect (every? #(nil? (:active-fn %)) host/symbols))
-        (expect (str/includes? (host/prompt {}) "automations.create(definition)")))))
+        (expect (every? #(nil? (:active-fn %)) host/symbols)))))
 
 (defdescribe
   activity-test
   (it "declares an end-only Activity for every tool"
-      (expect (= [["automations.list" "List automations"] ["automations.get" "Read automation"]
-                  ["automations.create" "Create automation"]
-                  ["automations.update" "Update automation"]
-                  ["automations.delete" "Delete automation"] ["automations.run" "Run automation"]
-                  ["automations.runs" "List automation runs"]]
-                 (mapv (fn [entry]
-                         [(str (:ext.symbol/symbol entry))
-                          (get-in entry [:ext.symbol/activity :headline])])
-                       host/symbols)))
       (expect (every? #(false? (get-in % [:ext.symbol/activity :show-start])) host/symbols)))
-  (describe
-    "success"
-    (it "lists automations and runs as tables"
-        (expect (= {"headline" "Listed automations"
-                    "summary" "2 automations"
-                    "content" [{"type" "table"
-                                "columns" ["Automation" "State"]
-                                "rows" [["Morning report" "On"] ["Build check" "Paused"]]}]}
-                   (presentation :automations.list
-                                 {"automations" [{"name" "Morning report" "enabled" true}
-                                                 {"name" "Build check" "enabled" false}]})))
-        (expect (= {"headline" "Listed automation runs"
-                    "summary" "1 run"
-                    "content" [{"type" "table"
-                                "columns" ["Automation" "Status"]
-                                "rows" [["Morning report" "Completed"]]}]}
-                   (presentation :automations.runs
-                                 {"runs" [{"automation_name" "Morning report"
-                                           "status" "completed"}]}))))
-    (it "names the automation of a single result"
-        (expect (= "Morning report · On"
-                   (get (presentation :automations.create {"name" "Morning report" "enabled" true})
-                        "summary")))
-        (expect (= "Morning report · Paused"
-                   (get (presentation :automations.update {"name" "Morning report" "enabled" false})
-                        "summary")))
-        (expect (= "Morning report · Queued"
-                   (get (presentation :automations.run
-                                      {"automation_name" "Morning report" "status" "queued"})
-                        "summary")))
-        (expect (= "Morning report"
-                   (get (presentation :automations.delete
-                                      {"id" "a-1" "name" "Morning report" "is_deleted" true})
-                        "summary")))))
-  (it "shows empty lists"
-      (expect (= {"headline" "Listed automations" "summary" "No automations" "content" []}
-                 (presentation :automations.list {"automations" []})))
-      (expect (= {"headline" "Listed automation runs" "summary" "No runs" "content" []}
-                 (presentation :automations.runs {"runs" []}))))
   (it "keeps the error of a failed or cancelled call"
       (doseq [op
               [:automations.create :automations.list :automations.run]

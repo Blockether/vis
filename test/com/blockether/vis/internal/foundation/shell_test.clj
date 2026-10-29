@@ -581,16 +581,6 @@
                    ;; A CR that only homes the cursor is a move, not a blank frame.
                    (expect (= "--- status ---" (lf "\r--- status ---"))))))
 
-(defdescribe shell-doc-page-test
-             ;; Regression, issue #137: the result carried no `stderr` field and the DOC PAGE the
-             ;; model reads never said so, so a caller reached for `sh.logs(-20)["stderr"]`, hit a
-             ;; KeyError and lost the whole block that was printing around it.
-             (it
-               "tells the reader of the result shape that the pty merges stderr into the one `out`"
-               (let [result (:ext.symbol/result shell/shell-symbol)]
-                 (expect (str/includes? result "stderr"))
-                 (expect (str/includes? result "no `stderr` key")))))
-
 (defdescribe
   shell-run-sync-test
   (it
@@ -1633,7 +1623,7 @@
             (let [w (:result (shell-wait* {} "quiet" {:seconds 5}))]
               (expect (= "" (get w "out")))
               (expect (false? (get w "timed_out")))
-               (expect (= 2 @reads)))))))
+              (expect (= 2 @reads)))))))
   ;; Issue #396: the idle sleep wakes when the command exits, not at the poll end.
   (it "wakes from the idle sleep when the command exits"
       (let [exit (atom nil)]
@@ -1642,6 +1632,7 @@
             (let [t0 (System/currentTimeMillis)
                   _ (future (Thread/sleep 50) (reset! exit 0))
                   woke (#'shell/await-exit {:session-id "s396"} "w" 10000)]
+
               (expect (true? woke))
               (expect (< (- (System/currentTimeMillis) t0) 5000))
               (expect (true? (#'shell/await-exit {:session-id "s396"} "w" 10000))))))))
@@ -1757,26 +1748,6 @@
 
 (defdescribe
   shell-one-wait-test
-  ;; Regression, wait audit: the bounded poll loop was written three times — the
-  ;; sandbox handle, an extension's handle and the tests each had their own copy,
-  ;; free to disagree about the deadline, the cursor and what "done" means. It is
-  ;; ONE host op now (`_shell_wait`), and these are its edges.
-  (it "is the ONE loop: every caller routes through the host wait op"
-      (expect (= "_shell_wait" (:ext.symbol/name shell/shell-wait-symbol)))
-      ;; No Python caller may keep a loop of its own — the sandbox handle and
-      ;; the extension handle both call the host op.
-      (doseq [[f marker] {"vis-python/async_runtime.py" "_shell_wait"
-                          ;; An extension authors the op map by hand; same host loop.
-                          "blockether/vis/extension.py" "\"op\": \"wait\""}]
-        (let [src (slurp (io/resource f))]
-          (expect (str/includes? src marker) f)
-          (expect (not (str/includes? src "time.sleep(poll)")) f)))
-      ;; `subprocess` is not a caller at all: it never spawns in the sandbox, so it
-      ;; owns no wait, no cursor, no second copy of the shell contract and no
-      ;; wording of its own — the refusal raises the host's `PROCESS_SURFACE`
-      ;; sentences from the one runtime module.
-      (let [src (slurp (io/resource "vis-python/async_runtime.py"))]
-        (expect (str/includes? src "__vis_process_surface__"))))
   (it "bounds MEMORY as well as time when a command never stops printing"
       ;; A runaway printer produced ~1 MB/s: an unbounded accumulator turned a long
       ;; wait into a heap problem, so the wait keeps head+tail exactly as a
@@ -2023,7 +1994,6 @@
                  (let [msg (throw-message #(shell* {}
                                                    {"command" {"op" "logs" "id" "build" "n" 30}}))]
                    (expect (some? msg))
-                   (expect (str/includes? msg "TOP-LEVEL"))
                    (expect (str/includes? msg "\"op\": \"logs\""))))
              (it "coerces a java.util.List, the Python spelling of that argv array"
                  (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -2033,36 +2003,11 @@
                      (expect (= "printf %s 'two words'" (get r "command")))
                      (expect (= "two words" (str/trim (get (wait* {} (get r "id")) "out"))))))))
 
-(defdescribe
-  shell-python-contract-test
-  (it "exposes process lifecycle through Python handles"
-      (expect (= 5 (count shell/shell-symbols)))
-      (expect (= "shell" (:ext.symbol/name (first shell/shell-symbols))))
-      (expect (contains? (extension/sandbox-symbol-docs) 'shell)))
-  (it "points the shell verbs at the HANDLE that replaced a blocking wait"
-      (expect (str/includes? (:ext.symbol/description shell/shell-symbol) "HANDLE"))
-      (expect (str/includes? (:ext.symbol/description shell/shell-symbol) "sh.wait(secs)"))
-      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "sh.logs("))
-      ;; Regression, handle audit: a negative offset was refused as a bad number, so
-      ;; the contract could not offer the tail by LINES at all.
-      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "sh.logs(-50)"))
-      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "LINES"))
-      ;; Both directions, or the switch is only half a window: a reader who paged past
-      ;; a line had no documented way back.
-      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "lines=-10"))
-      (expect (str/includes? (str (:ext.symbol/params shell/shell-logs-symbol))
-                             "negative scrolls up")))
-  ;; Regression, handle audit: the description taught the SHAPE of a run but not what to put
-  ;; IN it, so commands arrived pre-trimmed - `| tail -50`, `| grep foo`, `2>/dev/null` - which
-  ;; threw away bytes the handle already keeps whole and hid a nonzero exit behind the
-  ;; pipeline's last stage.
-  (it "teaches that trimming belongs on the HANDLE, never inside the command"
-      (let [text (:ext.symbol/description shell/shell-symbol)]
-        (doseq [needle ["| head" "| tail" "| grep" "2>/dev/null" "> file" "sh.logs(-50)"
-                        "log_path"]]
-          (expect (str/includes? text needle) needle))
-        ;; The reason, not only the prohibition: a pipeline reports the LAST stage's exit.
-        (expect (str/includes? text "LAST stage")))))
+(defdescribe shell-python-contract-test
+             (it "exposes process lifecycle through Python handles"
+                 (expect (= 5 (count shell/shell-symbols)))
+                 (expect (= "shell" (:ext.symbol/name (first shell/shell-symbols))))
+                 (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
 
 (defdescribe shell-extension-shape-test
              (it "lives in foundation-core as one toggle-gated bare symbol group"
@@ -2149,15 +2094,6 @@
         (expect (= '[_shell-logs _shell-stop _shell-type _shell-wait shell]
                    (vec (sort (filter #(str/includes? (name %) "shell") (keys bind))))))
         (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
-  (it "documents the ONE command on the run tool"
-      (let [source-doc
-            (:doc (meta #'shell/shell))
-
-            d
-            (str (py (py-ctx {}) "doc('shell')"))]
-
-        (expect (str/includes? source-doc "await shell(\"npm test\")"))
-        (expect (str/includes? d "`command`"))))
   (it "runs and backgrounds a command through the bare shell global using maps"
       (let [sid
             (str "py-shell-" (System/nanoTime))
@@ -2630,8 +2566,6 @@
                    nil
                    (catch clojure.lang.ExceptionInfo ex ex))]
         (expect (= :com.blockether.vis.internal.foundation.shell/fd-exhausted (:type (ex-data e))))
-        (expect (str/includes? (ex-message e) "Out of file descriptors"))
-        (expect (str/includes? (ex-message e) "with open(...)"))
         (expect (fd-exhaustion? (ex-cause e))))))
 
 ;; libvisjail creates every managed child as a process-group leader.

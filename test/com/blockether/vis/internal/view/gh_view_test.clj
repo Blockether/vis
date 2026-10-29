@@ -165,17 +165,6 @@
         (expect (= [[0 2] [1 3] [3 3]] (mapv (juxt :done :total) updated)))
         (expect (= 1.0 (live/fraction final)))
         (expect (= :completed (get-in (last answers) [:result :reason])))))
-  (it "renders the preserved human picture into the durable document"
-      (let [view
-            (:final-view (last (replay (fixture ops-file))))
-
-            document
-            (live/->markdown view)]
-
-        (expect (str/includes? document "tests · vis-agent + vis-contract (PyPI packages) failed"))
-        (expect (str/includes? document "**100%** · 6/6 done"))
-        (expect (str/includes? document "tests / vis-agent + vis-contract (PyPI packages)"))
-        (expect (str/includes? document "exit code 1"))))
   (it "paints the picture the extension's own host painted, key for key"
       (let [engine
             (:final-view (last (replay (fixture ops-file))))

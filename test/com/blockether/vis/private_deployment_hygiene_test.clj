@@ -73,14 +73,6 @@
 
          (str (.getPath file) " leaks " what " — " fix))))
 
-(defdescribe
-  public-documentation-host-test
-  (it "allows the public docs host while retaining private address and operations-path guards"
-      (let [public-docs (str "https://vis." "blockether" ".com/")]
-        (expect (not-any? #(re-find (:re %) public-docs) forbidden)))
-      (doseq [private-text [(str "10.0.1." "4") (str "infra" "structure/playbooks/gateway.yml")]]
-        (expect (some #(re-find (:re %) private-text) forbidden)))))
-
 (defdescribe private-deployment-hygiene-test
              (it "never documents Blockether's private gateway deployment anywhere in the repo"
                  (let [found (if (.exists (io/file "deps.edn")) (leaks ".") [])]

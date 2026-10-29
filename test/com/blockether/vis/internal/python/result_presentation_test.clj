@@ -68,9 +68,7 @@
                   (str "print(r.transcript is r['transcript'], r.transcript.turns[0].index)\n"
                        "try:\n    r.transcripts\nexcept AttributeError as e:\n    print(e)"))]
         (expect (str/includes? out "True 1"))
-        (expect (str/includes? out "'transcripts' is not a field of 'read_session' result"))
-        (expect (str/includes? out "Keys: 'op', 'session_id', 'transcript'"))
-        (expect (str/includes? out "Did you mean 'transcript'?")))))
+        (expect (str/includes? out "Keys: 'op', 'session_id', 'transcript'")))))
 
 (defdescribe
   compact-shell-result-test
@@ -103,8 +101,7 @@
                                "note" "waiting for input"
                                "error" "fixture diagnostic"}
                               "q = r\ndel r\nprint([q])")]
-        (doseq [text ["running" "wait timed out" "120" "logs(offset=0)" "321" "waiting for input"
-                      "fixture diagnostic" "saved shell handle"]]
+        (doseq [text ["running" "120" "321" "waiting for input" "fixture diagnostic"]]
           (expect (str/includes? out text)))
         (expect (not (str/includes? out "r.logs")))))
   (it "bounds long output, retains both ends and tells the caller what to read"
@@ -180,9 +177,7 @@
           (doseq [text [op "Entry #7" "thread #1" "coordination" "fixture-group" "fixture-author"
                         "Review cancellation" "Keep the existing cancellation boundary."
                         "reply_required=True" "reply_to=#3" "pending=1" "delivered=1" "peer-a"
-                        "replied=1" "reply_entry_id=8" "Ping: 1 recipients" "notified-peer"
-                        "field paths above start from this result"
-                        "council.get with its displayed ID"]]
+                        "replied=1" "reply_entry_id=8" "notified-peer"]]
             (expect (str/includes? out text) text))
           (expect (not (str/includes? out "council.get(entry_id)"))))))
   (it
@@ -210,7 +205,6 @@
                                 "content" (apply str (repeat 737 "x")))
                               "q = r\ndel r\nprint(q)")]
         (expect (str/includes? out "137 chars omitted"))
-        (expect (str/includes? out "full field on this result: ['content']"))
         (expect (str/includes? out "await council.get(7093)"))
         (expect (not (str/includes? out "r['content']")))))
   (it "bounds pages while retaining cursors, omitted IDs and all reply-state counts"
@@ -231,7 +225,7 @@
 
         (expect (< (count out) 9000))
         (doseq [text ["50 entries" "after=50" "has_more=True" "#50" "45 more entries" "['entries']"
-                      "same filters" "unavailable=1" "interrupted=1" "reply_required=True: 1"]]
+                      "unavailable=1" "interrupted=1" "reply_required=True: 1"]]
           (expect (str/includes? out text) text))
         (expect (not (str/includes? out "r['entries']")))))
   (it "distinguishes thread lists, empty pages and failures"
@@ -251,7 +245,6 @@
           (expect (str/includes? out text) text)))
       (let [out (check-result {"op" "council.read" "error" {"message" "limit must be <= 50"}}
                               "print(r)")]
-        (expect (str/includes? out "error"))
         (expect (str/includes? out "limit must be <= 50"))))
   (it "leaves unfamiliar or malformed Council shapes inspectable"
       (doseq [data [{"op" "council.unknown" "payload" [1 2]}

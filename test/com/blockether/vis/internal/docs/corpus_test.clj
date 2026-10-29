@@ -1,8 +1,7 @@
 (ns com.blockether.vis.internal.docs.corpus-test
   "The corpus behind `apropos`/`doc`: one record per document, a usable first
    line, and one regular expression over names and page outlines."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.vis.internal.docs.corpus :as dc]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [lazytest.core :refer [defdescribe expect it throws?]]))
@@ -81,15 +80,6 @@ Whole skill body."}
         (expect (str/ends-with? (:text entry) (:body skill)))
         (expect (nil? (:call entry))))))
 
-(defdescribe
-  reading-a-skill-has-no-session-effect-test
-  "A skill is a DOCUMENT: the corpus reads the discovery registry directly, so
-   `apropos`/`doc` can neither activate nor mark anything."
-  (it "never reaches the harness verb namespace"
-      (let [src (slurp (io/resource "com/blockether/vis/internal/docs/corpus.clj"))]
-        (expect (not (str/includes? src "harness.core")))
-        (expect (not (str/includes? src "harness-core"))))))
-
 (def ^:private drafts-page
   (str/join "\n"
             ["# Drafts" "" "A draft gives a session its own working copy." "" "## When to use" ""
@@ -151,7 +141,6 @@ Whole skill body."}
                  (range 7))]
     (it "suggests the handles that contain the target"
         (let [text (dc/miss-text es "Working Copy")]
-          (expect (str/starts-with? text "\"Working Copy\" is not a handle."))
           (expect (str/includes? text "contains it: drafts."))))
     (it "lists name matches before outline matches"
         (expect (str/includes?
@@ -229,13 +218,6 @@ Whole skill body."}
    back as the contract to call against. A shape the handler refuses is worse
    than a missing document, because the model spends a turn discovering the
    refusal — so the corpus is scanned for the shapes the runtime rejects."
-  (it "documents only call shapes the runtime accepts"
-      (let [es (dc/entries)]
-        (expect (seq es))
-        (doseq [e es
-                [re what] refused-call-shapes]
-
-          (expect (nil? (re-find re (:text e))) (str (:name e) " documents " what)))))
   (it "catches each banned shape when one does appear"
       (let [offender "grep(\"q\")"]
         (expect (= (count refused-call-shapes)

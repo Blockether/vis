@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
-            [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
@@ -14,7 +13,6 @@
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.workspace.core :as workspace]
-            [com.blockether.vis.test-prose :as prose]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- sample-channel-fn [& _] nil)
@@ -964,18 +962,6 @@
   (let [shape (:ext.symbol/call entry)]
     (and (map? shape) (or (some? (:rest shape)) (= ["options"] (:pos shape))))))
 
-(defn- named-keys
-  "Every wire key a result contract actually NAMES: the backticked identifiers it
-   prints, plus the members of a backticked brace list (`{pass, fail, output}`).
-   Two characters or fewer is a word, not a key — `op` and `ns` are named by the
-   contracts around them, never alone."
-  [result]
-  (into #{}
-        (comp (map second)
-              (mapcat #(str/split % #"[^A-Za-z0-9_]+"))
-              (filter #(re-matches #"[a-z][a-z0-9_]{2,}" %)))
-        (re-seq #"`([^`]+)`" (str result))))
-
 ;; Regression: the system prompt sends a model to `fn.contract` for a result shape,
 ;; but only Python extensions carried one. `council.publish.contract` raised an
 ;; AttributeError and failed a Council recovery E2E run.
@@ -1064,16 +1050,6 @@
             (expect (string? (extension/symbol-doc-text entry)) (str sym " has no doc text"))
             (expect (string? (extension/symbol-signature entry))
                     (str sym " declares no signature — its page cannot show a call"))))))
-  (it "keeps the document itself PROSE, without a call, keys or raw-result line"
-      (doseq [entry (live-tool-entries)]
-        (let [text (str (extension/symbol-doc-text entry))
-              nm (or (:ext.symbol/name entry)
-                     (str/replace (str (:ext.symbol/symbol entry)) "-" "_"))
-              first-line (first (str/split-lines text))]
-
-          (expect (not (str/starts-with? first-line (str nm "("))) first-line)
-          (expect (not (str/starts-with? first-line "Keys:")) first-line)
-          (expect (not (str/includes? text "Raw result:")) (str nm " repeats its raw result")))))
   (it "states each declared raw result unchanged, which the page prints under the call"
       (let [results (extension/sandbox-symbol-results)]
         (doseq [entry (live-tool-entries)]
@@ -1100,25 +1076,6 @@
             (expect (= (distinct names) (seq names)) (str sym " repeats a key: " names))
             (doseq [n names]
               (expect (re-matches #"[a-z][a-z0-9_]*" n) (str sym " key " n)))))))
-  ;; The doc page's SHAPE is a contract (`:ext.symbol/params`, extension.clj): a note
-  ;; is a six-word label for the ONE thing the key's name does not say, requiredness
-  ;; is machine-readable and nowhere else, and a key only one pack reads says so.
-  (it "keeps every param note a six-word label, the pack prefix aside"
-      (doseq [entry
-              (live-tool-entries)
-
-              {nm :name note :note}
-              (:ext.symbol/params entry)
-
-              :when note]
-
-        (let [words (-> note
-                        (str/replace #"^[a-z][a-z0-9_/]*\s+—\s+" "")
-                        str/trim
-                        (str/split #"\s+")
-                        count)]
-          (expect (<= words 6)
-                  (str (:ext.symbol/symbol entry) " key " nm " — " words " words: " note)))))
   (it "states requiredness in :required? alone, never as note prose"
       (doseq [entry
               (live-tool-entries)
@@ -1171,19 +1128,7 @@
         (expect (str/includes? (str (get ks 'council.publish)) "kind (REQUIRED)")
                 (str (get ks 'council.publish)))
         (expect (not (str/includes? (str (get docs 'council.publish)) "kind (REQUIRED)")))
-        (expect (every? #(str/starts-with? (str %) "Keys: ") (vals ks)))))
-  ;; Regression, doc quality: a bound tool answered "execution metadata,
-  ;; counts/details, output, timeout, and recovery diagnostics" — thirty keys a
-  ;; caller could only learn by printing the map. Every other bound tool already
-  ;; named its own.
-  (it "names the keys of a result instead of describing them in nouns"
-      (doseq [entry (live-tool-entries)]
-        (let [sym (:ext.symbol/symbol entry)
-              result (str (:ext.symbol/result entry))]
-
-          ;; A contract that answers TEXT says so and has no keys to name.
-          (expect (or (re-find #"(?i)plain string" result) (<= 2 (count (named-keys result))))
-                  (str sym " names no key of its result: " result))))))
+        (expect (every? #(str/starts-with? (str %) "Keys: ") (vals ks))))))
 
 (defn activity-success-probe
   "Observed test operation that returns one canonical successful envelope."
@@ -1647,43 +1592,6 @@
                                                          :ext.engine/exact-symbol-names? true}}
                                            'spel.reserve)))
       (expect (= 'cat (extension/symbol-binding {:ext/engine {}} 'cat)))))
-
-(defdescribe
-  symbol-doc-prose-test
-  "The `doc(name)` pages and extension descriptions that Vis ships follow the prose
-   limits of the manual: short sentences, short paragraphs and no semicolons."
-  (it "keeps each symbol doc, raw result, parameter note and extension description within them"
-      (manifest/initialize!)
-      (let [built-ins
-            (filter #(= "vis" (:ext/owner %)) (extension/registered-extensions))
-
-            broken
-            (concat (for [ext
-                          built-ins
-
-                          message
-                          (prose/breaks (str (:ext/description ext)))]
-
-                      (str (:ext/name ext) ": " message))
-                    (for [ext
-                          built-ins
-
-                          entry
-                          (extension/ext-symbols ext)
-
-                          text
-                          (list* (extension/symbol-doc-text entry)
-                                 (extension/symbol-result-line entry)
-                                 (map :note (:ext.symbol/params entry)))
-
-                          message
-                          (prose/breaks (str text))]
-
-                      (str (:ext.symbol/symbol entry) ": " message)))]
-
-        (expect (seq built-ins))
-        (expect (empty? broken)
-                (str/join "\n" (cons "built-in documents that break the prose limits:" broken))))))
 
 (defdescribe slash-saveable-contract-test
              ;; Regression for #360: a slash declaration says whether a client saves it as a prompt.

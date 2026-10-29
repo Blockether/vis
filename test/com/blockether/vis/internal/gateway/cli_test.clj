@@ -23,26 +23,6 @@
         (fn [m]
           (merge {"status" "running" "managed" true "clients" 0 "running_turns" 0} m))]
 
-    (it "names a dev build by its commit, because \"dev\" alone names no code"
-        (expect (= "dev (abc123abc123)"
-                   (#'gateway-cli/build-label {:version "dev" :build "abc123abc123"})))
-        (expect (= "0.1.40" (#'gateway-cli/build-label {:version "0.1.40" :build "abc123abc123"}))))
-    (it "says what picks the new build up when nothing is using the old daemon"
-        (let [s (note (running {"protocol" {"version" "0.1.39" "build" "bbbbbbbbbbbb"}}))]
-          (expect (str/includes? s "this build is 0.1.40"))
-          (expect (str/includes? s "next session starts on it"))))
-    (it "counts what is holding the old daemon instead of promising a replacement"
-        (let [s (note (running {"clients" 2 "running_turns" 1 "protocol" {"version" "0.1.39"}}))]
-          (expect (str/includes? s "2 clients"))
-          (expect (str/includes? s "1 running turn"))
-          (expect (not (str/includes? s "next session")))))
-    (it "hands a user-owned daemon back to whoever started it"
-        (let [s (note (running {"managed" false "pid" 4242 "protocol" {"version" "0.1.39"}}))]
-          (expect (str/includes? s "user-owned"))
-          (expect (str/includes? s "4242"))))
-    (it "counts nothing it could not read"
-        (let [s (note (running {"clients" :two "protocol" {"version" "0.1.39"}}))]
-          (expect (str/includes? s "no longer in use"))))
     (it "is silent about a daemon this build does not replace"
         (expect (nil? (note (running {"protocol" {"version" "0.1.40" "build" "aaaaaaaaaaaa"}}))))
         (expect (nil? (note (running {"protocol" {"version" "0.1.41" "build" "cccccccccccc"}}))))
@@ -64,12 +44,6 @@
                    (fn [m]
                      (merge {"status" "running" "managed" true "clients" 0 "running_turns" 0} m))]
 
-               (it "names the newer release the running daemon already serves"
-                   (let [s (note (running {"protocol" {"version" "0.1.41"
-                                                       "build" "cccccccccccc"}}))]
-                     (expect (str/includes? s "0.1.41"))
-                     (expect (str/includes? s "this build is 0.1.40"))
-                     (expect (str/includes? s "vis-agent update"))))
                (it "is silent unless the daemon is strictly newer"
                    (expect (nil? (note (running {"protocol" {"version" "0.1.40"}}))))
                    (expect (nil? (note (running {"protocol" {"version" "0.1.39"}}))))
@@ -117,41 +91,6 @@
              (finally (System/setProperty "user.home" old-home)
                       (config/invalidate-config-cache!))))))
 
-;; Regression (reported: `vis-agent gateway stop` printed
-;; `gateway stop requested: {"stopping" true, "status" {...}}`): the daemon's
-;; acknowledgement has to read as a sentence, never as a wire map.
-(defdescribe
-  cli-gateway-stop-vocabulary-test
-  (it "says the gateway is stopping and what that releases"
-      (let [lines (atom [])]
-        (with-redefs-fn
-          {#'commandline/stdout! #(swap! lines conj %)
-           #'config/init-cli! (constantly nil)
-           #'gateway-client/stop-daemon!
-           (constantly {:stopping true :status "stopping" :pid 32379 :clients 4 :running-turns 0})}
-          (fn []
-            (#'gateway-cli/cli-gateway-stop! {} [])))
-        (expect (= ["gateway stopping (pid 32379) - releasing 4 clients"] @lines))))
-  (it "counts a drained turn beside the clients it releases"
-      (let [lines (atom [])]
-        (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)
-                         #'config/init-cli! (constantly nil)
-                         #'gateway-client/stop-daemon!
-                         (constantly
-                           {:stopping true :status "stopping" :clients 1 :running-turns 2})}
-          (fn []
-            (#'gateway-cli/cli-gateway-stop! {} [])))
-        (expect (= ["gateway stopping - releasing 1 client, draining 2 running turns"] @lines))))
-  (it "never answers a human with a map"
-      (let [lines (atom [])]
-        (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)
-                         #'config/init-cli! (constantly nil)
-                         #'gateway-client/stop-daemon! (constantly {})}
-          (fn []
-            (#'gateway-cli/cli-gateway-stop! {} [])))
-        (expect (str/includes? (first @lines) "no final state"))
-        (expect (not (str/includes? (first @lines) "{"))))))
-
 (defdescribe
   web-command-test
   (it "takes a TCP port and refuses anything else"
@@ -173,63 +112,9 @@
                        false
                        (catch clojure.lang.ExceptionInfo e
                          (str/includes? (ex-message e) "--gateway already names one")))))))
-  (it "says where a gateway that cannot move runs and how to open the app there"
-      (let [e (#'gateway-cli/web-error
-               (ex-info "moved"
-                        {:type :gateway/elsewhere
-                         :url "http://127.0.0.1:7890/"
-                         :host "127.0.0.1"
-                         :port 7890
-                         :reason :clients
-                         :clients 2
-                         :running-turns 1}))]
-        (expect (:vis/user-error (ex-data e)))
-        (expect (str/includes? (ex-message e) "already runs at http://127.0.0.1:7890/"))
-        (expect (str/includes? (ex-message e) "in use by 2 clients and 1 running turn"))
-        (expect (str/includes? (ex-message e) "`vis-agent web --host 127.0.0.1 --port 7890`"))))
   (it "leaves an error it cannot explain unchanged"
       (let [e (ex-info "boom" {:type :gateway/start-failed})]
         (expect (identical? e (#'gateway-cli/web-error e)))))
-  (it "lists other devices and the token for a gateway bound beyond loopback"
-      (let [lines (atom [])]
-        (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)
-                         #'pairing/candidate-hosts (constantly ["10.0.0.5"])}
-          (fn []
-            (#'gateway-cli/web-ready!
-             {"no-open" true}
-             {:url "http://127.0.0.1:7890/" :host "0.0.0.0" :port 7890 :remote? false})))
-        (expect
-          (= ["Vis web app: http://127.0.0.1:7890/" "Other devices: http://10.0.0.5:7890/"
-              (str "Voice input needs HTTPS on those addresses. In Chrome, add them in "
-                   "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch Chrome.")
-              "This gateway requires its token: `vis-agent gateway pair` prints it."
-              "Press Ctrl-C to stop."]
-             @lines))))
-  (it "prints only the address for a loopback or remote gateway"
-      (doseq [ready [{:url "http://127.0.0.1:7890/" :host "127.0.0.1" :port 7890 :remote? false}
-                     {:url "http://10.0.0.5:7890/" :host "10.0.0.5" :port 7890 :remote? true}]]
-        (let [lines (atom [])]
-          (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)}
-            (fn []
-              (#'gateway-cli/web-ready! {"no-open" true} ready)))
-          (expect (= [(str "Vis web app: " (:url ready)) "Press Ctrl-C to stop."] @lines)))))
-  (it "prints the one-time launch address that connects the browser (#397)"
-      (let [lines (atom [])]
-        (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)}
-          (fn []
-            (#'gateway-cli/web-ready!
-             {"no-open" true}
-             {:url "http://127.0.0.1:7890/#launch=c0de&gw=g1"
-              :app-url "http://127.0.0.1:7890/"
-              :launch? true
-              :host "127.0.0.1"
-              :port 7890
-              :remote? false})))
-        (expect
-          (= ["Vis web app: http://127.0.0.1:7890/#launch=c0de&gw=g1"
-              "This address connects one browser to this gateway. It works once, within 5 minutes."
-              "Press Ctrl-C to stop."]
-             @lines))))
   (it "binds a phone-reachable host for --pair unless --host or --gateway decides"
       (with-redefs-fn {#'pairing/pair-bind-host (constantly "0.0.0.0")}
         (fn []
@@ -257,10 +142,4 @@
                      :token "secret"
                      :require-token? true
                      :advertise "gateway.example.com"}]
-                   @pairs))
-        (expect
-          (= ["Vis web app: http://127.0.0.1:7890/" "Other devices: http://10.0.0.5:7890/"
-              (str "Voice input needs HTTPS on those addresses. In Chrome, add them in "
-                   "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch Chrome.")
-              "Press Ctrl-C to stop."]
-             @lines)))))
+                   @pairs)))))

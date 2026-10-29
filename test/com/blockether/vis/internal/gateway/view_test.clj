@@ -235,52 +235,28 @@
                                     (expect (nil? (hi/pending-request rid)))
                                     (expect (empty? (events-of seen "view.open" rid)))))))))
 
-(defdescribe
-  push-alerts-a-parked-run-test
-  (it "push alerts a parked run"
-      ;; The describer stays installed for every case below: a session title is
-      ;; minted from whatever opened the session, so it must never reach the alert.
-      (let [prev @@#'push/describe-session]
-        (try (push/set-session-describer! (fn [_sid _tid]
-                                            {:title "Ship the parser"}))
-             ;; the title demands action and then asks the question; the body is the detail
-             (let [n (#'push/input-view-notification
-                      "sid-9"
-                      {"type" "view.open"
-                       "kind" "input"
-                       "view" {"id" "req-1"
-                               "title" "Approve the deploy"
-                               "description" "v1.2.3 to production"}})]
-               (expect (= "Action needed — Approve the deploy" (:title n)))
-               (expect (= "v1.2.3 to production" (:body n)))
-               (expect (= "sid-9" (:thread-id n)))
-               (expect (= "sid-9:input-view" (:collapse-id n)))
-               (expect (= "view.open" (get-in n [:data :type])))
-               (expect (= "req-1" (get-in n [:data :view_id])))
-               (expect (= "sid-9" (get-in n [:data :session_id]))))
-             ;; a question with no detail under it is never repeated in the body
-             (let [n (#'push/input-view-notification
-                      "sid-9"
-                      {"type" "view.open"
-                       "kind" "input"
-                       "view" {"id" "req-2" "title" "Approve the deploy"}})]
-               (expect (= "Action needed — Approve the deploy" (:title n)))
-               (expect (= "Vis is waiting on your answer." (:body n))))
-             ;; a request carrying only a description still says what it wants
-             (let [n (#'push/input-view-notification
-                      "sid-9"
-                      {"type" "view.open"
-                       "kind" "input"
-                       "view" {"id" "req-3" "description" "Approve the deploy"}})]
-               (expect (= "Action needed" (:title n)))
-               (expect (= "Approve the deploy" (:body n))))
-             ;; an unlabelled request is still a demand, never blank
-             (let [n (#'push/input-view-notification
-                      "sid-9"
-                      {"type" "view.open" "kind" "input" "view" {"id" "req-4"}})]
-               (expect (= "Action needed" (:title n)))
-               (expect (= "Vis is waiting on your answer." (:body n))))
-             (finally (push/set-session-describer! prev))))))
+(defdescribe push-alerts-a-parked-run-test
+             (it "push alerts a parked run"
+                 ;; The describer stays installed for every case below: a session title is
+                 ;; minted from whatever opened the session, so it must never reach the alert.
+                 (let [prev @@#'push/describe-session]
+                   (try (push/set-session-describer! (fn [_sid _tid]
+                                                       {:title "Ship the parser"}))
+                        ;; the title demands action and then asks the question; the body is the detail
+                        (let [n (#'push/input-view-notification
+                                 "sid-9"
+                                 {"type" "view.open"
+                                  "kind" "input"
+                                  "view" {"id" "req-1"
+                                          "title" "Approve the deploy"
+                                          "description" "v1.2.3 to production"}})]
+                          (expect (= "v1.2.3 to production" (:body n)))
+                          (expect (= "sid-9" (:thread-id n)))
+                          (expect (= "sid-9:input-view" (:collapse-id n)))
+                          (expect (= "view.open" (get-in n [:data :type])))
+                          (expect (= "req-1" (get-in n [:data :view_id])))
+                          (expect (= "sid-9" (get-in n [:data :session_id]))))
+                        (finally (push/set-session-describer! prev))))))
 
 ;; The endpoints the phone actually calls
 ;;

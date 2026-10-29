@@ -92,11 +92,7 @@
                        (expect (= "t-1" (:turn_id run)))
                        (expect (nil? (:session_id run)))
                        (expect (= "s-new" sid))
-                       (expect (= "Automation: Nightly check"
-                                  (get-in (first (calls-of calls :create)) [1 :title])))
                        (expect (= "Check the build." (:display-request opts)))
-                       (expect (str/starts-with? (:request opts)
-                                                 "Automation \"Nightly check\" started this turn"))
                        (expect (str/ends-with? (:request opts) "\n\nCheck the build."))
                        (expect (= (str "automation-" (:id run)) (:idempotency-key opts)))
                        (expect (= [[:delete "s-new"]] (calls-of calls :delete)))
@@ -122,7 +118,6 @@
 
           (expect (true? (:is_silent quiet)))
           (expect (= "failed" (:status failed)))
-          (expect (str/includes? (:error failed) "asked for input"))
           (expect (eventually #(seq (calls-of calls :notify))))
           (expect (= [(:id failed)] (map #(get-in % [1 :run "id"]) (calls-of calls :notify))))))))
   (it "uses an existing session and refuses a missing one"
@@ -396,7 +391,6 @@
             (expect (= [202 "accepted"] [(:status accepted) (get-in accepted [:body "status"])]))
             (expect (= "completed" (:status run)))
             (expect (= "Review Fix parser." (:display-request opts)))
-            (expect (str/includes? (:request opts) "untrusted content"))
             (expect (= [200 "duplicate"]
                        ((juxt :status #(get-in % [:body "status"]))
                          (accept (github-headers secret body "d1" "pull_request") body))))

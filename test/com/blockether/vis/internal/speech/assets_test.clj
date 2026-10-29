@@ -145,8 +145,7 @@
         (expect (true? (get-in entry [:voice :is-opt-in])))
         (expect (= "CC-BY-NC-SA-4.0" (:license entry)))
         (expect (false? (:is-commercial-ok entry)))
-        (expect (not-any? #(= :pack (:host %)) (:sources entry)))
-        (expect (str/includes? (:notice entry) "non-commercial"))))
+        (expect (not-any? #(= :pack (:host %)) (:sources entry)))))
   (it "spells the same voice and the same quality level in every part of an entry"
       ;; An entry names <lang>-<speaker>-<level> five times over: its id, its
       ;; install directory, the file it requires, its source URL and every

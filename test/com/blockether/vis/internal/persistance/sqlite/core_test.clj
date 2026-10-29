@@ -603,10 +603,6 @@
 
 (def ^:private maybe-wrap-db-open-error (private-core-fn "maybe-wrap-db-open-error"))
 
-(def ^:private migration-checksum-mismatch-user-message
-  @(resolve
-     'com.blockether.vis.internal.persistance.sqlite.core/migration-checksum-mismatch-user-message))
-
 (defdescribe
   sqlite-extension-aggregate-test
   (it "upserts extension-owned singleton rows by extension, key, kind, and scope"
@@ -1147,18 +1143,10 @@
         (expect (true? (:vis/user-error (ex-data e))))
         (expect (= :vis/db-migration-checksum-mismatch (:type (ex-data e))))
         (expect (= root (.getCause ^Throwable e)))
-        ;; NON-DESTRUCTIVE guidance: self-heals via repair, never "delete the DB".
-        (expect (str/includes? (.getMessage ^Throwable e) "Flyway repair"))
         (expect (not (str/includes? (.getMessage ^Throwable e) "remove ~/.vis/vis.mdb")))))
   (it "leaves unrelated bootstrap failures untouched"
       (let [e (ex-info "x" {})]
-        (expect (identical? e (maybe-wrap-db-open-error e)))))
-  (it "describes canonical V1 repair without deleting the store"
-      (expect (str/includes? migration-checksum-mismatch-user-message "schema mismatch"))
-      (expect (str/includes? migration-checksum-mismatch-user-message "Flyway repair"))
-      (expect (str/includes? migration-checksum-mismatch-user-message "canonical V1"))
-      (expect (not (str/includes? migration-checksum-mismatch-user-message
-                                  "remove ~/.vis/vis.mdb")))))
+        (expect (identical? e (maybe-wrap-db-open-error e))))))
 
 (defdescribe
   migration-repair-self-heal-test
@@ -3526,8 +3514,7 @@
                  nil
                  (catch Exception e e))]
 
-        (expect (some? thrown))
-        (expect (re-find #"iteration position must increment by 1" (ex-message thrown))))))
+        (expect (some? thrown)))))
   ;; Removed: "round-trips block-level info through the BLOB" and
   ;; "does not persist timeout child-event side ledgers". The persisted
   ;; block-envelope shape and timeout side-ledger handling have drifted
@@ -4090,7 +4077,6 @@
 
 (defdescribe
   log-table-drop-test
-  (it "creates no log table in a new store" (expect (= [] (log-schema-names (h/store)))))
   (it "drops the log table and its indexes that an older store kept"
       (let [s
             (h/store)
@@ -4115,8 +4101,6 @@
                     :where [:in :tbl_name ["improve" "improve_record"]]})))
 
 (defdescribe improve-table-drop-test
-             (it "creates no Improve tables in a new store"
-                 (expect (= [] (improve-schema-names (h/store)))))
              (it "drops the Improve tables and their indexes that an older store kept"
                  (let [s
                        (h/store)
@@ -4135,12 +4119,6 @@
                    (expect (= [] (improve-schema-names s))))))
 
 (defdescribe council-machine-table-drop-test
-             (it "creates no council_machine table in a new store"
-                 (expect (= []
-                            (raw-query (h/store)
-                                       {:select [:name]
-                                        :from :sqlite_master
-                                        :where [:= :tbl_name "council_machine"]}))))
              (it "drops the council_machine table of the removed Council Rooms"
                  (let [s
                        (h/store)

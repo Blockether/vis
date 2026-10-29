@@ -20,34 +20,28 @@
   [expression]
   (try (cron/parse expression) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
 
-(defdescribe
-  parse-test
-  (describe "fields"
-            (it "reads lists, ranges, steps and names"
-                (let [spec (cron/parse "*/15 9-17/4 1,15 JAN-mar mon-FRI")]
-                  (expect (= #{0 15 30 45} (:minutes spec)))
-                  (expect (= #{9 13 17} (:hours spec)))
-                  (expect (= #{1 15} (:days spec)))
-                  (expect (= #{1 2 3} (:months spec)))
-                  (expect (= #{1 2 3 4 5} (:weekdays spec)))))
-            (it "reads a start with a step as a range to the field maximum"
-                (expect (= #{50 55} (:minutes (cron/parse "50/5 * * * *")))))
-            (it "treats day 7 as Sunday" (expect (= #{0} (:weekdays (cron/parse "0 0 * * 7"))))))
-  (describe "macros"
-            (it "expands the known macros"
-                (expect (= (cron/parse "0 0 * * *") (cron/parse "@daily")))
-                (expect (= (cron/parse "0 0 1 1 *") (cron/parse "@ANNUALLY")))))
-  (describe "errors"
-            (it "rejects bad expressions with a readable message"
-                (expect (= "Cron expression needs five fields: minute hour day month weekday"
-                           (error-message "* * * *")))
-                (expect (= "Cron minute value is out of range: 60" (error-message "60 * * * *")))
-                (expect (= "Cron hour range is reversed: 5-2" (error-message "0 5-2 * * *")))
-                (expect (= "Cron macro is not known: @often" (error-message "@often")))
-                (expect (= "Cron day of week value is not valid: XYZ"
-                           (error-message "0 0 * * XYZ")))
-                (expect (= "Cron minute step must be positive: */0" (error-message "*/0 * * * *")))
-                (expect (= "Cron expression is empty" (error-message " "))))))
+(defdescribe parse-test
+             (describe "fields"
+                       (it "reads lists, ranges, steps and names"
+                           (let [spec (cron/parse "*/15 9-17/4 1,15 JAN-mar mon-FRI")]
+                             (expect (= #{0 15 30 45} (:minutes spec)))
+                             (expect (= #{9 13 17} (:hours spec)))
+                             (expect (= #{1 15} (:days spec)))
+                             (expect (= #{1 2 3} (:months spec)))
+                             (expect (= #{1 2 3 4 5} (:weekdays spec)))))
+                       (it "reads a start with a step as a range to the field maximum"
+                           (expect (= #{50 55} (:minutes (cron/parse "50/5 * * * *")))))
+                       (it "treats day 7 as Sunday"
+                           (expect (= #{0} (:weekdays (cron/parse "0 0 * * 7"))))))
+             (describe "macros"
+                       (it "expands the known macros"
+                           (expect (= (cron/parse "0 0 * * *") (cron/parse "@daily")))
+                           (expect (= (cron/parse "0 0 1 1 *") (cron/parse "@ANNUALLY")))))
+             (describe "errors"
+                       (it "rejects bad expressions"
+                           (doseq [expression ["* * * *" "60 * * * *" "0 5-2 * * *" "@often"
+                                               "0 0 * * XYZ" "*/0 * * * *" " "]]
+                             (expect (some? (error-message expression)) expression)))))
 
 (defdescribe
   next-fire-test

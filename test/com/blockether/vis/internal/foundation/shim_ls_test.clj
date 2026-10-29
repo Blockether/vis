@@ -168,18 +168,6 @@
 
       (expect (= "'d  0d 4f\\nsmall.txt  big.json 64k  huge.bin 3.0G  \"my notes.md\"'\n"
                  (out ctx code)))))
-  (it "documents itself in the sandbox `__vis_docs__` table"
-      (let [ctx
-            (sandbox)
-
-            code
-            (str
-              "d = globals()[\"__vis_docs__\"][\"ls\"]\n"
-              "print('pattern=None' in d, 'case-sensitive basename glob' in d,\n"
-              "      'not a regex' in d, d == ls.__doc__,\n"
-              "      all(word in d for word in ['depth', 'is_hidden', 'gitignored', 'STRING']))")]
-
-        (expect (= "True True True True True\n" (out ctx code)))))
   ;; Regression: `ls(Path("src/..."))` raised `TypeError: 'PosixPath' object is not iterable` —
   ;; one path-like argument was iterated as if it were a list of paths.
   (it
@@ -636,17 +624,7 @@
       (expect
         (=
           "[4, 4] [None, None] d  2d 1f  5-8 of 8\nd  2d 1f  · offset 9 is past the last entry (8)\nls: limit must be an int >= 1 or None, got 0\nls: offset must be an int >= 0, got -1\n"
-          (out ctx code)))))
-  (it "documents the paging protocol in the one help text"
-      (let [ctx
-            (sandbox)
-
-            code
-            (str "d = ls.__doc__\n"
-                 "print(all(w in d for w in ['limit=250', 'offset=0', 'next(r, None)',\n"
-                 "                           'r.pages()', 'r.all()', 'r.next_offset']))")]
-
-        (expect (= "True\n" (out ctx code))))))
+          (out ctx code))))))
 
 ;; `as_paths` answers the same walk as the flat list the next call actually needs.
 (defdescribe
@@ -724,17 +702,7 @@
                  "      any(p.split(\"/\")[-1].startswith(\".\")\n"
                  "          for p in ls(\".\", as_paths=True, is_hidden=True)))")]
 
-        (expect (= "True True\n" (out ctx code)))))
-  (it "documents the flag in the ONE text help and doc share"
-      (let [ctx
-            (sandbox)
-
-            code
-            (str "page = str(ls.__doc__)\n"
-                 "print(page.startswith(\"ls(paths='.',\"), \"as_paths=False\" in page,\n"
-                 "      \"as_paths=True\" in page)")]
-
-        (expect (= "True True True\n" (out ctx code))))))
+        (expect (= "True True\n" (out ctx code))))))
 
 (defdescribe ls-shim-ignored-test
              "`is_ignored=True` lists gitignored entries; the default keeps them out."

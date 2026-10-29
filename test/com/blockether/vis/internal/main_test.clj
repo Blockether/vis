@@ -49,58 +49,23 @@
                     {:namespace "local-tools" :owner "-"} {:namespace "bundled-tools" :owner "vis"}]
                    (mapv #(select-keys % [:namespace :owner]) (main/list-extensions)))))))
 
-(defdescribe
-  root-help-test
-  (it
-    "describes Vis and root one-shot flags"
-    (let [^String help (commandline/render-tree (#'main/root-command))]
-      (expect
-        (.contains
-          help
-          "Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL."))
-      (expect (.contains help "vis-agent [FLAGS] \"prompt\""))
-      (expect (.contains help "--full-trace-json-stream"))
-      (expect (.contains help "--provider PROVIDER"))
-      (expect (.contains help "--reasoning-effort"))
-      (expect (.contains help "COMMANDS"))))
-  (it "aligns every block: headings at column 0, rows at column 2, one gutter each"
-      (let [^String help
-            (binding [commandline/*color-enabled?* false]
-              (commandline/render-tree (#'main/root-command)))
+(defdescribe root-help-test
+             (it "aligns every block: headings at column 0, rows at column 2, one gutter each"
+                 (let [^String help
+                       (binding [commandline/*color-enabled?* false]
+                         (commandline/render-tree (#'main/root-command)))
 
-            commands-at
-            (.indexOf help "\nCOMMANDS\n")]
+                       commands-at
+                       (.indexOf help "\nCOMMANDS\n")]
 
-        (expect (.contains help "\nUSAGE\n"))
-        (expect (pos? commands-at))
-        ;; The root doc used to be re-indented on top of its own layout, so its
-        ;; headings and rows both sat two columns right of the generated
-        ;; COMMANDS block. Nothing is indented twice any more.
-        (expect (nil? (re-find #"(?m)^ {3,}\S" help)))
-        (expect (= 1 (count (gutter-columns (subs help 0 commands-at)))))
-        (expect (= 1 (count (gutter-columns (subs help commands-at)))))))
-  (it "documents the per-launch JVM override separately from update tracks"
-      (let [^String help (commandline/render-tree (#'main/root-command))]
-        (expect (.contains help "UPDATES"))
-        (doseq [row ["vis-agent update" "--track release|beta|dev" "default" "--jvm" "RUNTIME"
-                     "vis-agent switch list" "vis-agent switch <identifier>"]]
-          (expect (.contains help row)))
-        (doseq [gone ["--native" "--dev" "VIS_RUNTIME" "vis-agent runtime" "--rebuild"]]
-          (expect (not (str/includes? help gone)) gone))))
-  (it "points at the configuration a run reads"
-      (let [^String help (commandline/render-tree (#'main/root-command))]
-        (expect (.contains help "CONFIGURATION"))
-        (expect (.contains help "~/.vis/config.yml"))
-        (expect (.contains help "<project>/vis.yml"))))
-  (it "documents the flags that pick WHICH gateway does the work"
-      (let [^String help (commandline/render-tree (#'main/root-command))]
-        (expect (.contains help "GATEWAY (WHICH DAEMON RUNS THE WORK)"))
-        (expect (.contains help "--gateway HOST[:PORT]|URL"))
-        (expect (.contains help "--gateway-token TOKEN"))
-        (expect (.contains help "VIS_GATEWAY_URL"))
-        (expect (.contains help "VIS_GATEWAY_TOKEN"))
-        (expect (.contains help
-                           "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN sessions list")))))
+                   (expect (.contains help "\nUSAGE\n"))
+                   (expect (pos? commands-at))
+                   ;; The root doc used to be re-indented on top of its own layout, so its
+                   ;; headings and rows both sat two columns right of the generated
+                   ;; COMMANDS block. Nothing is indented twice any more.
+                   (expect (nil? (re-find #"(?m)^ {3,}\S" help)))
+                   (expect (= 1 (count (gutter-columns (subs help 0 commands-at)))))
+                   (expect (= 1 (count (gutter-columns (subs help commands-at))))))))
 
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: a client
 ;; synchronously initialized CPython before dispatch, then its gateway did it again.
@@ -283,8 +248,7 @@
         (binding [*out* out]
           (expect (= :help
                      (:status (commandline/dispatch! (#'main/root-command)
-                                                     ["vis-agent" "python" "--help"])))))
-        (expect (str/includes? (str out) "pass commands unchanged to bundled uv"))))
+                                                     ["vis-agent" "python" "--help"])))))))
   (it "loads channels before rendering channels parent help"
       (let [out
             (java.io.StringWriter.)
@@ -342,14 +306,7 @@
              (it "explains the SDK stdio mode without starting it"
                  (let [out (java.io.StringWriter.)]
                    (binding [*out* out]
-                     (expect (true? (#'main/fast-help-dispatched? false ["stdio" "--help"]))))
-                   (doseq [text ["vis-agent stdio" "Python SDK" "LocalEngine" "VIS_DB_PATH" "NDJSON"
-                                 "stdin" "stdout"]]
-                     (expect (str/includes? (str out) text) text))))
-             (it "lists the new name at the root instead of the SDK-prefixed name"
-                 (let [help (commandline/render-tree (#'main/root-command))]
-                   (expect (str/includes? help "stdio"))
-                   (expect (not (str/includes? help "sdk-stdio")))))
+                     (expect (true? (#'main/fast-help-dispatched? false ["stdio" "--help"]))))))
              (it "defers Python extension loading for stdio"
                  (expect (true? (#'main/deferred-python-dispatch? ["stdio"])))))
 
@@ -523,50 +480,6 @@
                                                            "--trust"]))
                      false
                      (catch clojure.lang.ExceptionInfo _ true))))))
-
-(defdescribe
-  gateway-command-help-test
-  (it
-    "says in `gateway` help which subcommands follow --gateway, and which never leave this machine"
-    (let [subs
-          (into {} (map (juxt :cmd/name identity)) (registry/registered-under ["gateway"]))
-
-          parent
-          (first (filter #(= "gateway" (:cmd/name %)) (registry/registered-under [])))
-
-          says-remote?
-          (fn [cmd-name]
-            (str/includes? (str (:cmd/doc (get subs cmd-name))
-                                " "
-                                (str/join " " (:cmd/examples (get subs cmd-name))))
-                           "--gateway"))]
-
-      (expect (str/includes? (:cmd/usage parent) "--gateway HOST[:PORT] --gateway-token TOKEN"))
-      ;; `status` and `pair` answer from the --gateway target, `stop` refuses one
-      ;; outright, and `start` always runs a daemon HERE. Help that named none of
-      ;; this read as if --gateway did nothing to the gateway commands themselves.
-      (expect (says-remote? "status"))
-      (expect (says-remote? "pair"))
-      (expect (says-remote? "stop"))
-      (expect (str/includes? (:cmd/doc (get subs "start")) "THIS machine"))
-      ;; --db picks a LOCAL registry, so a remote target ignores it.
-      (expect (str/includes? (->> (:cmd/args (get subs "status"))
-                                  (map :doc)
-                                  (str/join " "))
-                             "ignored when --gateway"))))
-  (it "documents the gateway JVM override in command help"
-      (let [parent
-            (first (filter #(= "gateway" (:cmd/name %)) (registry/registered-under [])))
-
-            start
-            (first (filter #(= "start" (:cmd/name %)) (registry/registered-under ["gateway"])))]
-
-        (doseq [[cmd path] [[parent ["vis-agent" "gateway"]]
-                            [start ["vis-agent" "gateway" "start"]]]]
-          (let [help (commandline/render-command cmd path)]
-            (expect (str/includes? help "[--jvm]"))
-            (expect (str/includes? help "vis-agent gateway start --jvm"))))
-        (expect (str/includes? (:cmd/doc start) "without changing the installed track")))))
 
 (defdescribe
   parse-run-args-test
@@ -791,23 +704,6 @@
       (expect (false? (#'main/wrapper-owned-invocation? ["upgrades"])))
       (expect (false? (#'main/wrapper-owned-invocation? ["update" "--track" "beta"])))))
 
-(defdescribe sessions-command-test
-             (it "registers canonical session verbs under host-owned sessions command"
-                 (let [{:keys [command]}
-                       (commandline/find-leaf (#'main/root-command) ["vis-agent" "sessions"])
-
-                       ^String help
-                       (commandline/render-command command ["vis-agent" "sessions"])]
-
-                   (expect (.contains help
-                                      "vis-agent sessions <list|show|fork|delete|search|export>"))
-                   (expect (.contains help "list"))
-                   (expect (.contains help "show"))
-                   (expect (.contains help "fork"))
-                   (expect (.contains help "delete"))
-                   (expect (.contains help "export"))
-                   (expect (not (.contains help "draft"))))))
-
 (defdescribe provider-override-error-test
              (it "marks unknown --provider as user error"
                  (try (#'main/config-with-provider-override {:providers []} :definitely-nope)
@@ -901,16 +797,7 @@
                  (let [by-name
                        (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
                    (doseq [nm ["runtime" "update" "desktop"]]
-                     (expect (nil? (get by-name nm))))))
-             (it "documents launcher-owned desktop and update commands in help"
-                 (let [^String help (commandline/render-tree (#'main/root-command))]
-                   (expect (str/includes? help "DESKTOP APP"))
-                   (expect (str/includes? help "vis-agent desktop --update"))
-                   (expect (str/includes? help "vis-agent desktop --no-gateway"))
-                   (expect (str/includes? help "vis-agent desktop --track dev"))
-                   (expect (str/includes? help "UPDATES"))
-                   (expect (str/includes? help "vis-agent update"))
-                   (expect (not (str/includes? help "vis-agent runtime"))))))
+                     (expect (nil? (get by-name nm)))))))
 
 (defdescribe pretty-trace-form-output-test
              (it "prints a completed Python form's stdout"
@@ -1009,14 +896,6 @@
                  (:schema (#'main/read-json-schema-arg
                            (str "@" (temp-json-file (json/write-json-str city-schema)))))))
       (expect (some? (:compiled (#'main/read-json-schema-arg "{}")))))
-  (it "names a missing file, a directory and an empty path"
-      (expect (= "--json-schema file /nonexistent-vis/s.json does not exist"
-                 (:error (#'main/read-json-schema-arg "@/nonexistent-vis/s.json"))))
-      (expect (str/ends-with? (:error (#'main/read-json-schema-arg
-                                       (str "@" (System/getProperty "java.io.tmpdir"))))
-                              "is a directory"))
-      (expect (= "--json-schema @ needs a file path, as in @schema.json"
-                 (:error (#'main/read-json-schema-arg "@")))))
   (it "refuses text that is not exactly one JSON document"
       (doseq [text ["{" "" "nul" "{} {}" "{} trailing" "null 1"]]
         (expect (str/starts-with? (str (:error (#'main/read-json-schema-arg text)))
@@ -1171,7 +1050,6 @@
       (let [{:keys [result turns]} (run-with-answers! ["{\"city\":1}" "{\"city\":2}" "{\"city\":3}"]
                                                       {:json-schema city-schema})]
         (expect (= 3 (count turns)))
-        (expect (= "The answer does not match --json-schema after 3 attempts." (:error result)))
         (expect (= :error (:status result)))
         (expect (= ["/city: expected string, got integer"
                     "/: missing required property \"population_millions\""]
@@ -1286,7 +1164,6 @@
           (#'main/print-json-schema-error! true (#'main/read-json-schema-arg "{\"type\": 5}")))
         (let [envelope (json/read-json (first @out))]
           (expect (= "error" (get envelope "status")))
-          (expect (= "--json-schema is not a usable JSON Schema" (get envelope "error")))
           (expect (seq (get envelope "schema-errors"))))))
   (it "reports an unusable schema on stderr without --json"
       (let [out

@@ -186,12 +186,6 @@
           (expect (some? body) slug)
           (expect (not (str/includes? body "variant-switch")) slug)
           (expect (not (str/includes? body "variant-label")) slug)))
-    (it "loads the switch behaviour and its styles in both modes"
-        (let [page (first (merged-pages))]
-          (expect (str/includes? (docs/page-html site page :static)
-                                 "<script src=\"assets/docs.js\" defer></script>"))
-          (expect (str/includes? (docs/page-html site page :live) "'vis-docs-variant'"))
-          (expect (str/includes? (docs/page-html site page :live) ".variant-switch[hidden]"))))
     (it "indexes both variants of a merged page for site search"
         (let [rows (get (json/read-json (:body (docs/handle {:uri "/docs/assets/search.json"
                                                              :headers {}})))

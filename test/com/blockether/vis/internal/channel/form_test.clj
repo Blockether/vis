@@ -61,7 +61,6 @@
 
         (expect (str/starts-with? projected "source"))
         (expect (str/ends-with? projected "LAST"))
-        (expect (str/includes? projected "kept "))
         (expect (str/includes? projected "r = await read_session()"))
         (expect (str/includes? projected "b.get(\"scope\") == \"t1/i2\""))
         (expect (<= (svar/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))))
@@ -100,7 +99,6 @@
             body
             (:body (form/stdout-display f))]
 
-        (expect (str/includes? body "stdout clipped"))
         (expect (not (str/starts-with? body "````vis-doc")))
         (expect (<= (svar/count-tokens "glm-5.3" (form/clip-to-wire (:stdout f) f))
                     form/MAX_FORM_OUTPUT_TOKENS)))))

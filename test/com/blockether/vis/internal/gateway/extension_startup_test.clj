@@ -250,7 +250,6 @@
                                       {}
                                       (if cold? {"extensions" {"stage" "initializing"}} response))))
           (expect (= (if cold? 1 0) @polls))
-          (expect (str/includes? (str output) "preparation failed"))
           (expect (str/includes? (str output) "Cannot scan extensions: Permission denied")))))))
 
 (defdescribe

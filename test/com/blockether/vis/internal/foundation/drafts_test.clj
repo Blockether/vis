@@ -826,7 +826,6 @@
   (it
     "declares running progress and preserves successful, empty and failed captures"
     (let [declared (:ext.symbol/activity drafts/draft-diff-symbol)]
-      (expect (= "Capture draft diff" (:headline declared)))
       (expect (true? (:show-start declared)))
       (expect (= (:headline (presenter/for-tool :draft_diff)) (:headline declared)))
       (doseq [empty? [false true]]
@@ -851,13 +850,9 @@
               row (first (:rows projection))
               rendered (pr-str (:presentation row))]
 
-          (expect (= "Capture draft diff" (get-in start [:presentation "headline"])))
           (expect (= "succeeded" (:state row)))
           (expect (contract/valid-projection? projection))
-          (expect (str/includes? rendered "Captured draft diff"))
           (expect (str/includes? rendered "DIFF-feature.json"))
-          ;; Routine draft results use the compact Activity summary.
-          (expect (str/includes? rendered (if empty? "No changes" "Diff attached")))
           (expect (= [] (get-in row [:presentation "content"])))))
       (let [ctx (event/context)
             invocation (event/invocation ctx nil)

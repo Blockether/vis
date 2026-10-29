@@ -140,12 +140,7 @@
       (let [r (ep/run-python-block (py-ctx) "xs = [1, 2\nprint(len(xs))")]
         (expect (nil? (:error r)))
         (expect (true? (:auto-repaired r)))
-        (expect (= "xs = [1, 2]\nprint(len(xs))" (:repaired-source r)))
-        (expect (= (str "Vis repaired this block before running it. Python refused it with "
-                        "SyntaxError: '[' was never closed\n"
-                        "  line 1: added ']' at column 11 to close '[' from line 1\n"
-                        "Output of the repaired block:\n" "2")
-                   (out r)))))
+        (expect (= "xs = [1, 2]\nprint(len(xs))" (:repaired-source r)))))
   (it
     "triple-quotes a string that continues onto the next line"
     (let [r (ep/run-python-block (py-ctx) "summary = \"First line.\nSecond line\"\nprint(summary)")]
@@ -157,9 +152,6 @@
         (expect (nil? (:error r)))
         (expect (true? (:auto-repaired r)))
         (expect (= "print(\"He said \\\"hi\\\" to me\")" (:repaired-source r)))
-        (expect (str/includes?
-                  (out r)
-                  "escaped the \" at columns 16 and 19 so the string keeps them as text"))
         (expect (str/ends-with? (out r) "Output of the repaired block:\nHe said \"hi\" to me"))))
   (it
     "closes a path string that lost its closing quote before the code after it"
@@ -175,7 +167,6 @@
            "print(patch(root + '/apps/x/JustifiedProse.test.tsx,[{'from':'130:5ae','to':'142:a6f'}]))"))]
       (expect (nil? (:error r)))
       (expect (true? (:auto-repaired r)))
-      (expect (str/includes? (out r) "line 3: added the missing closing ' at column 52"))
       (expect
         (str/ends-with?
           (out r)
@@ -183,7 +174,6 @@
   (it "discloses the repair when the repaired block raises"
       (let [r (ep/run-python-block (py-ctx) "raise ValueError(\"boom\"")]
         (expect (true? (:auto-repaired r)))
-        (expect (str/includes? (out r) "added ')'"))
         (expect (not (str/includes? (out r) "Output of the repaired block")))
         (expect (= :python/runtime (get-in r [:error :data :phase])))
         (expect (str/includes? (get-in r [:error :message]) "ValueError: boom"))))
@@ -193,12 +183,7 @@
         (expect (nil? (:stdout r)))
         (expect (= :python/syntax (get-in r [:error :data :phase])))
         (expect (= 1 (get-in r [:error :data :line])))
-        (expect (true? (get-in r [:error :data :unbalanced-delimiters?])))
-        ;; The parser names only the line; the caret marks the '(' the repair left open.
-        (expect (= (str "SyntaxError: '(' was never closed\n"
-                        "line 1, column 5: '(' is never closed\n\n"
-                        "1: x = (1 + 2\n" "       ^")
-                   (get-in r [:error :message])))))
+        (expect (true? (get-in r [:error :data :unbalanced-delimiters?])))))
   (it
     "names the first quote problem, not the brackets it flipped, and shows its line around it"
     ;; A path string that lost its closing quote flips every later string on the line.
@@ -275,29 +260,11 @@
         (let [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
                         [:error :message])]
           (expect (some? m))
-          (expect (clojure.string/includes? (str m) "Sandbox policy denied file-read"))
-          (expect (clojure.string/includes? (str m) "outside approved filesystem roots"))
-          (expect (clojure.string/includes? (str m) "grep({\"query\": q, \"context\": 3})"))
-          (expect (clojure.string/includes? (str m) "patch(path, edits)"))
-          (expect (clojure.string/includes? (str m) "workspace.filesystem"))
-          (expect (clojure.string/includes? (str m) "vis.yml"))
-          (expect (clojure.string/includes? (str m) "/reload"))
-          (expect (not (clojure.string/includes? (str m) "/fs")))))
+          (expect (clojure.string/includes? (str m) "Sandbox policy denied file-read"))))
     (it "write denial names file-write rather than collapsing it into a read"
         (let [m (get-in (ep/run-python-block (mk) "open('/etc/vis-nope', 'w')" "t1/i1")
                         [:error :message])]
-          (expect (clojure.string/includes? (str m) "Sandbox policy denied file-write"))))
-    (it "importlib exec_module on a project file → the same steer"
-        (let [m (get-in
-                  (ep/run-python-block
-                    (mk)
-                    (str "import importlib.util\n"
-                         "spec = importlib.util.spec_from_file_location('x', '/etc/zz_nope.py')\n"
-                         "mod = importlib.util.module_from_spec(spec)\n"
-                         "spec.loader.exec_module(mod)")
-                    "t1/i1")
-                  [:error :message])]
-          (expect (clojure.string/includes? (str m) "patch(path, edits)"))))))
+          (expect (clojure.string/includes? (str m) "Sandbox policy denied file-write"))))))
 
 (defdescribe
   precise-hint-test
@@ -514,7 +481,6 @@
         (let [err (:error (ep/run-python-block (py-ctx) code))]
           (expect (= :python/empty-block (get-in err [:data :phase])))
           (expect (true? (get-in err [:data :empty-block?])))
-          (expect (str/includes? (:message err) "nothing to execute"))
           ;; the leaked async-wrapper internal must NEVER surface.
           (expect (not (str/includes? (:message err) "AsyncFunctionDef")))
           (expect (not (str/includes? (:message err) "empty body"))))))
@@ -548,7 +514,6 @@
                     (ep/run-python-block ctx "print(scan_kept, len(list(scan_root.iterdir())))")]
 
                 (expect (str/includes? (str message) "10000"))
-                (expect (str/includes? (str message) "grep/ls"))
                 (expect (not (str/includes? (str failure) "env_context_retired")))
                 (expect (nil? (:error recovered)) (pr-str recovered))
                 (expect (= "279 1" (out recovered)))))

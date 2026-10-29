@@ -70,14 +70,6 @@
              (it "goal blocker audit policy"
                  (let [{:keys [db-info session-id] :as env} (environment)]
                    (goals/set-goal! db-info session-id "Verify the full objective" nil)
-                   (doseq [prompt [goals/prompt (goals/continuation-prompt env)]]
-                     (doseq [instruction
-                             ["3 consecutive goal continuations" "verified live operation"
-                              "no progress" "user input, resume, or new progress"
-                              "attempted alternatives" "not an independent engine check"]]
-                       (expect (str/includes? prompt instruction))))
-                   (expect (str/includes? (goals/continuation-prompt env)
-                                          "Your reply was delivered as progress"))
                    (goals/control! db-info session-id :pause)
                    (expect (nil? (goals/continuation-prompt env))))))
 

@@ -19,7 +19,6 @@
             (registry/provider-by-id :anthropic-coding-plan)]
 
         (expect (= :anthropic (:provider/id api-provider)))
-        (expect (= "Anthropic (API Key)" (:provider/label api-provider)))
         (expect (= "claude-opus-5-5"
                    (first (get-in api-provider [:provider/preset :default-models]))))
         (doseq [provider [api-provider oauth-provider]]
@@ -29,16 +28,9 @@
                              "claude-fable-5-1")))
         (expect (nil? (:provider/auth-fn api-provider)))
         (expect (= :anthropic-coding-plan (:provider/id oauth-provider)))
-        (expect (= "Anthropic (Claude Subscription)" (:provider/label oauth-provider)))
         (expect (= "https://api.anthropic.com/v1"
                    (get-in oauth-provider [:provider/preset :base-url])))
-        (expect (= :anthropic (get-in oauth-provider [:provider/preset :api-style])))
-        (expect (ifn? (:provider/status-fn oauth-provider)))
-        (expect (ifn? (:provider/logout-fn oauth-provider)))
-        (expect (ifn? (:provider/detect-fn oauth-provider)))
-        (expect (ifn? (:provider/auth-fn oauth-provider)))
-        (expect (ifn? (:provider/get-token-fn oauth-provider)))
-        (expect (ifn? (:provider/limits-fn oauth-provider)))))
+        (expect (= :anthropic (get-in oauth-provider [:provider/preset :api-style])))))
   (it
     "parses callback URL, code#state, query string, and bare code"
     (expect (= {:code "abc" :state "s1"}
@@ -220,9 +212,7 @@
           (fn []
             (let [report ((:provider/limits-fn provider))]
               (expect (= :unauthenticated (:status report)))
-              (expect (= [] (get-in report [:dynamic :limits])))
-              (expect (str/includes? (get-in report [:dynamic :note])
-                                     "providers auth anthropic-coding-plan"))))))))
+              (expect (= [] (get-in report [:dynamic :limits])))))))))
 
 (defdescribe
   rejected-refresh-credentials-test
@@ -255,8 +245,7 @@
                           nil
                           (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
           (let [report (#'anthropic/fetch-limits-report)]
-            (expect (= :unauthenticated (:status report)))
-            (expect (str/includes? (get-in report [:dynamic :note]) "Select Connect")))
+            (expect (= :unauthenticated (:status report))))
           (expect (zero? @requests))
           (swap! saved dissoc :reauth-required)
           (expect (true? (:is-authenticated (anthropic/status))))

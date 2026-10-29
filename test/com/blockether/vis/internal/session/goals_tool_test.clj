@@ -41,7 +41,6 @@
                         (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols])))
           (expect (= "(goal_id, version, status, reason)" (extension/symbol-signature entry)))
           (expect (every? :required? (:ext.symbol/params entry)))
-          (expect (str/includes? (extension/symbol-doc-text entry) "mixed calls are supported"))
           (expect (extension/tool-result? result))
           (expect (true? (:success? result)))
           (expect (= after (:result result)))

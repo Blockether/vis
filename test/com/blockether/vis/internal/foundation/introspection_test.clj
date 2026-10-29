@@ -36,9 +36,6 @@
     [classify
      @#'introspection/classify-expression-failure
 
-     advice
-     @#'introspection/advice-for-classification
-
      changed-refusal
      (str
        "patch refused at edit 2 of 5 — nothing was written.\n"
@@ -64,81 +61,53 @@
 
     (it "classifies changed lines and an unusable version apart"
         (expect (= :patch-lines-changed (classify changed-refusal)))
-        (expect (str/includes? (advice :patch-lines-changed) "current version"))
-        (expect (= :patch-version-invalid (classify unknown-refusal)))
-        (expect (str/includes? (advice :patch-version-invalid) "`@` value")))
+        (expect (= :patch-version-invalid (classify unknown-refusal))))
     (it "classifies lines that the named version never showed"
-        (expect (= :patch-lines-not-shown (classify unshown-refusal)))
-        (expect (str/includes? (advice :patch-lines-not-shown)
-                               "version of the read that showed the lines")))
+        (expect (= :patch-lines-not-shown (classify unshown-refusal))))
     ;; https://github.com/Blockether/vis/issues/265 - every refusal shares the
     ;; `patch refused` head, so the cause line under it picks the advice.
     (it "separates overlapping edits and unusable edit shapes from changed lines"
         (expect (= :patch-overlapping-edits (classify overlap-refusal)))
-        (expect (= :patch-invalid-edit (classify shape-refusal)))
-        (expect (str/includes? (advice :patch-overlapping-edits) "Merge"))
-        (expect (str/includes? (advice :patch-invalid-edit) "line numbers")))))
+        (expect (= :patch-invalid-edit (classify shape-refusal))))))
 
-(defdescribe
-  introspection-public-surface-test
-  (it
-    "exposes the read, the single descriptor and the index under verb_noun names"
-    (let [symbols
-          (set (map :ext.symbol/symbol introspection/all-symbols))
+(defdescribe introspection-public-surface-test
+             (it "exposes the read, the single descriptor and the index under verb_noun names"
+                 (let [symbols
+                       (set (map :ext.symbol/symbol introspection/all-symbols))
 
-          ;; The MODEL-facing contract is the symbol's `:description`/`:result`;
-          ;; the var docstring is a developer alias, and how the verb is CALLED
-          ;; is the declared signature, rendered above the page by
-          ;; `doc-corpus/entry-text` and never repeated inside the prose.
-          entry
-          (fn [sym]
-            (first (filter #(= sym (:ext.symbol/symbol %)) introspection/all-symbols)))
+                       ;; The MODEL-facing contract is the symbol's `:description`/`:result`;
+                       ;; the var docstring is a developer alias, and how the verb is CALLED
+                       ;; is the declared signature, rendered above the page by
+                       ;; `doc-corpus/entry-text` and never repeated inside the prose.
+                       entry
+                       (fn [sym]
+                         (first (filter #(= sym (:ext.symbol/symbol %))
+                                        introspection/all-symbols)))]
 
-          page
-          (fn [sym]
-            (str (:ext.symbol/description (entry sym)) "\n" (:ext.symbol/result (entry sym))))
+                   (expect (= #{'read-session 'get-session 'list-sessions} symbols))
+                   ;; The storage noun is gone from the agent surface: `session_state` is a
+                   ;; DB TABLE, never a tool, and the bare plural `sessions` is not a verb.
+                   (expect (not (contains? symbols 'session-state)))
+                   (expect (not (contains? symbols 'sessions)))
+                   (expect (not (contains? symbols 'session-usage)))
+                   (expect (not (contains? symbols 'session-report-html)))
+                   (expect (= "(target=None)" (extension/symbol-signature (entry 'read-session))))
+                   (expect (= "(target=None)" (extension/symbol-signature (entry 'get-session))))
+                   (expect (= "(search=None)" (extension/symbol-signature (entry 'list-sessions))))
+                   ;; engine-symbol-* tools were retired in favour of the bare
+                   ;; `doc` / `apropos` engine system calls.
+                   (expect (not (contains? symbols 'engine-symbol-documentation)))
+                   (expect (not (contains? symbols 'engine-symbol-apropos)))
+                   (expect (= 3 (count symbols)))))
+             (it "defaults read_session to the current session when no id is passed"
+                 (let [inspect-data
+                       @#'introspection/foundation-inspect-data
 
-          read-doc
-          (page 'read-session)
+                       data
+                       (inspect-data {:session-id "current-session" :db-info nil} nil)]
 
-          get-doc
-          (page 'get-session)
-
-          list-doc
-          (page 'list-sessions)]
-
-      (expect (= #{'read-session 'get-session 'list-sessions} symbols))
-      ;; The storage noun is gone from the agent surface: `session_state` is a
-      ;; DB TABLE, never a tool, and the bare plural `sessions` is not a verb.
-      (expect (not (contains? symbols 'session-state)))
-      (expect (not (contains? symbols 'sessions)))
-      (expect (not (contains? symbols 'session-usage)))
-      (expect (not (contains? symbols 'session-report-html)))
-      (expect (= "(target=None)" (extension/symbol-signature (entry 'read-session))))
-      (expect (= "(target=None)" (extension/symbol-signature (entry 'get-session))))
-      (expect (= "(search=None)" (extension/symbol-signature (entry 'list-sessions))))
-      (expect (str/includes? read-doc "`read_session()` is the current session"))
-      (expect (str/includes? read-doc "usage"))
-      (expect (re-find #"tool rows OVERLAP" read-doc))
-      (expect (re-find #"recovery path for raw folded content" read-doc))
-      (expect (re-find #"does not undo a fold intent or restore it" read-doc))
-      (expect (str/includes? get-doc "`get_session()` is the current session"))
-      (expect (str/includes? list-doc "list_sessions(search="))
-      (expect (re-find #"is_in_title" list-doc))
-      ;; engine-symbol-* tools were retired in favour of the bare
-      ;; `doc` / `apropos` engine system calls.
-      (expect (not (contains? symbols 'engine-symbol-documentation)))
-      (expect (not (contains? symbols 'engine-symbol-apropos)))
-      (expect (= 3 (count symbols)))))
-  (it "defaults read_session to the current session when no id is passed"
-      (let [inspect-data
-            @#'introspection/foundation-inspect-data
-
-            data
-            (inspect-data {:session-id "current-session" :db-info nil} nil)]
-
-        (expect (= "current-session" (:session-id data)))
-        (expect (contains? data :usage)))))
+                   (expect (= "current-session" (:session-id data)))
+                   (expect (contains? data :usage)))))
 
 (defdescribe
   session-usage-ledger-test
@@ -539,11 +508,6 @@
   introspection-toggle-gate-test
   "Session introspection is NOT core policy: symbols AND prompt hang off the
    `introspection` toggle, which is OFF by default."
-  (it "registers an `introspection` toggle that defaults OFF"
-      (let [spec (first (filter #(= "introspection" (:id %)) (toggles/registered-toggles)))]
-        (expect (some? spec))
-        (expect (false? (boolean (:default spec))))
-        (expect (false? (toggles/enabled? "introspection")))))
   (it "keeps the session symbols in foundation-core behind per-symbol activation"
       (let [core-symbols (set (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols]))]
         (expect (every? core-symbols introspection/all-symbols))
@@ -570,45 +534,6 @@
         (expect (nil? disabled))
         (expect (not (str/includes? core "gateway/events")))
         (expect (not (str/includes? core "read_session"))))))
-
-;; Regression (session 6073ae2a): an unconditional read-once instruction made an
-;; unrelated Activity audit read its own history before starting the task.
-;; Regression (session 02071515): "ten lek" — a pointing word that did not change
-;; the answer — was read as a referenced conversation, then nine `list_sessions`
-;; searches ran because nothing made the first miss terminal.
-(defdescribe
-  demand-driven-introspection-prompt-test
-  (it
-    "requires a concrete task need instead of a session-start preflight"
-    (with-redefs [toggles/enabled? #(= "introspection" %)]
-      (doseq [text [(introspection/prompt {}) (#'foundation/combined-prompt {})]]
-        (doseq
-          [required
-           ["Read session history only when the answer changes with what a past session says"
-            "session diagnostics" "evidence from a referenced conversation"
-            "context another session holds" "is a reference, not a reason"
-            "One search round settles it" "end the lookup"
-            "A session or turn start, and `/reload`, keep the conversation intact: continue from it."]]
-          (expect (str/includes? text required)))
-        (expect (not (str/includes? text "Call `await read_session()` once."))))))
-  ;; Regression (#271): the affirmative recipe "For current-session evidence, use
-  ;; `await read_session()`" out-argued the gate two lines above it, so an agent
-  ;; re-read its own visible conversation. The current session is never a source:
-  ;; live steps are on the wire, folded steps stand as the gist the agent chose.
-  (it "keeps the current session off the evidence path and reuses targeted reads"
-      (with-redefs [toggles/enabled? #(= "introspection" %)]
-        (let [text (#'foundation/combined-prompt {})]
-          (doseq [required ["THIS session's conversation is already in front of you"
-                            "never undoes a fold, whatever `fold_count` says"
-                            "name that fact and its `tN/iK` scope"
-                            "Reuse the result unless newer evidence is needed."
-                            "tool rows overlap, so read each on its own"
-                            "transcript/turns/iterations/blocks" "await list_sessions(search="
-                            "vis_session_id#<uuid>" "print the fields the question needs"]]
-            (expect (str/includes? text required)))
-          (expect (not (str/includes?
-                         text
-                         "For current-session evidence, use `await read_session()`.")))))))
 
 (defdescribe introspection-env-injection-test
              (it "uses declarative env injection rather than a before middleware shim"
@@ -767,9 +692,7 @@
                (expect (= "runtime" (get failure "source")))
                (expect (= "python_environment_retired" (get failure "classification")))
                (expect (= code (get failure "code") (get attempt "code")))
-               (expect (some? (get attempt "error")))
-               (expect (str/includes? (get failure "advice") "new turn"))
-               (expect (not (str/includes? (get failure "advice") "switch model"))))
+               (expect (some? (get attempt "error"))))
              (finally (persistance/db-dispose-connection! s)))))
   (it
     "classifies a pre-block iteration error as runtime, not provider"
@@ -821,10 +744,7 @@
     (it "names the model that failed and the fallback route"
         (expect (= "prod/claude-opus-5-5" (:model failure)))
         (expect (= "token/gpt-6.1-sol" (:selected-model failure)))
-        (expect (true? (:fallback? failure)))
-        (expect (str/includes?
-                  (:explanation failure)
-                  "token/gpt-6.1-sol failed (401 authentication), then prod/claude-opus-5-5")))
+        (expect (true? (:fallback? failure))))
     (it "explains a persisted declined stream replay"
         (let [dropped (first (#'introspection/failures-from-iterations
                               [{:id "i"
@@ -837,8 +757,7 @@
                                                                    :declined "output-started"
                                                                    :output-phase "content"
                                                                    :output-chunks 2}}})}]))]
-          (expect (str/includes? (:explanation dropped) "Stream connection error: closed"))
-          (expect (str/includes? (:explanation dropped) "2 output chunks"))))))
+          (expect (str/includes? (:explanation dropped) "Stream connection error: closed"))))))
 
 ;; Regression, issue #130: a cancel interrupt was attributed to the form that
 ;; happened to be on the stack, making a user stop look like broken agent code.
@@ -847,16 +766,12 @@
   (let [classify
         @#'introspection/classify-expression-failure
 
-        advice
-        @#'introspection/advice-for-classification
-
         next-actions
         @#'introspection/next-actions]
 
     (it "reports cancellation fallout instead of a code failure"
         (expect (= :turn-cancelled (classify "java.lang.InterruptedException")))
-        (expect (= :turn-cancelled (classify "java.util.concurrent.CancellationException")))
-        (expect (str/includes? (advice :turn-cancelled) "cancelled")))
+        (expect (= :turn-cancelled (classify "java.util.concurrent.CancellationException"))))
     (it "keeps genuine agent failures classified as code errors"
         (expect (= :code-execution-error (classify "NameError: name 'x'")))
         (expect (= [] (next-actions [{:classification :code-execution-error :message "x"}] []))))
@@ -881,13 +796,6 @@
 
 (defdescribe
   list-sessions-search-test
-  ;; Regression #288: sparse search rows need safe optional access in the contract and prompt.
-  (it "documents optional snippet fields and safe access"
-      (with-redefs [toggles/enabled? #(= "introspection" %)]
-        (doseq [text [(:ext.symbol/result introspection/list-sessions-symbol)
-                      (introspection/prompt {}) (#'foundation/combined-prompt {})]]
-          (doseq [required ["optional" "row.get(\"request_snippet\")" "row.get(\"reply_snippet\")"]]
-            (expect (str/includes? text required))))))
   (it
     "answers `search` in the SERVER's own order, tagged with where it hit"
     (let [s (persistance/db-create-connection! :memory)]

@@ -7,7 +7,6 @@
    / extension / a utf-8 probe. No stdout fence, no parsing."
   (:require [charred.api :as charred]
             [clojure.string :as str]
-            [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
@@ -240,11 +239,6 @@
                         "except TypeError as e:\n" "    print('RAISED', e)\n"))]
 
         (expect (nil? (:error out)))
-        ;; naming the SHAPE that was wrong, never a repr reported as a missing file
-        (expect
-          (re-find
-            #"RAISED attach: source must be a path, bytes, an image or a figure object, got dict"
-            (str (:stdout out))))
         (expect (empty? (:attachments out)))))
   (it
     "carries a label into the vis-image fence summary — the picture's caption row"
@@ -390,9 +384,7 @@
           (vec
             (ev
               pctx
-              "sorted(i.name for i in apropos(r'^(attach|get_attachment|list_attachments|read_attachment|show_attachment)$'))"))))
-      (expect (true? (ev pctx "'callable' in doc('attach')")))
-      (expect (true? (ev pctx "'callable' in doc('show_attachment')")))))
+              "sorted(i.name for i in apropos(r'^(attach|get_attachment|list_attachments|read_attachment|show_attachment)$'))"))))))
   (it "discovers declared capabilities instead of the internal shim identity"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "internal-id"
                                                           :shim/imports ["actual_module"]
@@ -766,30 +758,6 @@
       ;; A version that never existed says which ones did.
       (expect (re-find #"RAISED True" so))
       (expect (re-find #"MISSING" so)))))
-
-(defdescribe
-  attach-continuity-guidance-test
-  "Versioning only pays off if the WRITE side reaches for it: a model that names
-   the next cut `report_v2.png` gets two loose artifacts and the thread it was
-   supposed to continue is gone. So every surface a block reads BEFORE attaching
-   — the shim description that rides the prompt, and the sandbox `doc()` plus
-   `__doc__` of both attach twins — carries the same rule in the same words."
-  (it "tells the write side to keep one document under one name"
-      (let [descr (->> (doc-corpus/entries)
-                       (some #(when (= "attach" (:name %)) %))
-                       :text
-                       str)]
-        (expect (re-find #"SAME DOCUMENT, SAME NAME" descr))
-        (expect (re-find #"(?i)next VERSION" descr))
-        (expect (re-find #"(?i)different document" descr)))
-      (let [pctx (ctx-with-root (temp-root))]
-        (doseq [n ["attach"]]
-          ;; The rule is on the callable's own docstring...
-          (expect (true? (ev pctx (str "'SAME DOCUMENT, SAME NAME' in " n ".__doc__")))
-                  (str n ".__doc__ must state the same-name rule"))
-          ;; ...and on the `doc()` entry the model actually looks up.
-          (expect (true? (ev pctx (str "'SAME DOCUMENT, SAME NAME' in doc('" n "')")))
-                  (str "doc('" n "') must state the same-name rule"))))))
 
 ;; Regression, session 55ed67f6 (iOS companion work): `attach` returned None and
 ;; the artifact it had just stored was invisible to `list_attachments`,

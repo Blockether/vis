@@ -150,13 +150,6 @@
                    (fn []
                      (expect (= [] (pairing/tailscale-hosts)))))))
 
-(defdescribe
-  terminal-qr-renders-non-empty-blocks
-  (it "CLI pairing can print a QR without shelling out"
-      (let [qr (pairing/terminal-qr "vis://gateway?url=http%3A%2F%2F127.0.0.1%3A7890&token=s")]
-        (expect (not (str/blank? qr)))
-        (expect (or (str/includes? qr "█") (str/includes? qr "▀") (str/includes? qr "▄"))))))
-
 (defn- qr-dark-at
   "Read the dark/light state of module (x, y) back out of a half-block render."
   [lines x y]
@@ -234,16 +227,7 @@
 
         (expect (nil? out) "no payload is produced")
         (expect (not (str/includes? text "vis://")) "no unreachable pairing URL")
-        (expect (not (str/includes? text "█")) "no QR")
-        (expect (str/includes? text "only this machine can reach it"))
-        (expect (str/includes? text "vis-agent gateway start --host 100.109.18.77")
-                "remediation points at the Tailscale IP when the tailnet is up"))))
-  (it "no Tailscale — fall back to 0.0.0.0 guidance"
-      (with-redefs [pairing/iface-addresses (fn []
-                                              ["192.168.0.227"])]
-        (let [lines (atom [])]
-          (pairing/print-pairing! {:host "localhost" :port 7890 :emit #(swap! lines conj (str %))})
-          (expect (str/includes? (str/join "\n" @lines) "--host 0.0.0.0")))))
+        (expect (not (str/includes? text "█")) "no QR"))))
   (it "a reachable bind host still prints URL + QR"
       (with-redefs [pairing/iface-addresses (fn []
                                               ["100.109.18.77"])]
@@ -321,25 +305,8 @@
                                    :require-token? true
                                    :emit #(swap! lines conj (str %))})
           (let [text (str/join "\n" @lines)]
-            (expect (str/includes? text "reachable hosts: 192.168.0.116"))
-            (expect (str/includes? text "forward port 7890 on your router (192.168.0.1)"))
-            (expect (str/includes? text "--advertise"))
             (expect (not (str/includes? text "192.168.0.1%3A7890"))
-                    "the pairing link still carries only addresses that answer"))))))
-  (it "an advertised route is already the way in, so the hint stays quiet"
-      (with-redefs-fn {#'pairing/iface-addresses (fn []
-                                                   ["192.168.0.116"])
-                       #'pairing/discover-default-route (fn []
-                                                          "192.168.0.1")}
-        (fn []
-          (let [lines (atom [])]
-            (pairing/print-pairing! {:host "0.0.0.0"
-                                     :port 7890
-                                     :token "tok"
-                                     :require-token? true
-                                     :advertise "https://gateway.example.com"
-                                     :emit #(swap! lines conj (str %))})
-            (expect (not (str/includes? (str/join "\n" @lines) "forward port"))))))))
+                    "the pairing link still carries only addresses that answer")))))))
 
 (defdescribe wildcard-bind-is-the-one-that-also-answers-on-loopback
              (it

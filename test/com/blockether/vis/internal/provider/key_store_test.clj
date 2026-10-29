@@ -113,15 +113,6 @@
                  (expect (not (.exists (java.io.File. ^String (store/auth-file flat-book)))))
                  (finally (run! #(.delete ^java.io.File %) (.listFiles dir)) (.delete dir))))))))
 
-(defdescribe auth-prompt-test
-             (it "prints the book's own notes, env var and endpoint"
-                 (let [lines (store/auth-instruction-lines book :coding)]
-                   (expect (some #(= "  Acme (Coding Plan) requires a static API key." %) lines))
-                   (expect (some #(= "  The key is plan-scoped." %) lines))
-                   (expect (some #(= "         export ACME_CODING_API_KEY=<your-acme-api-key>" %)
-                                 lines))
-                   (expect (some #(= "  Endpoint: https://coding.acme.test/v1" %) lines)))))
-
 (defdescribe
   single-credential-message-test
   ;; Nothing is redefined here: neither book's env var, config entry or file

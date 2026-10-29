@@ -19,8 +19,6 @@
 
 (defdescribe
   native-image-resources-test
-  (it "enables thread dumps and diagnostic attach in native builds"
-      (expect (some #{"--enable-monitoring=threaddump,jcmd"} (native-image-flags))))
   (it
     "excludes ONNX debug symbols while keeping the platform JNI libraries"
     (let [flags

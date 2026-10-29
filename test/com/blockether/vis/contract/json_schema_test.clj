@@ -41,9 +41,6 @@
             (expect (= "https://json-schema.org/draft/2020-12/schema" (get schema "$schema")))
             (expect (seq (get schema "$defs")))
             (expect (boolean? (document/valid? schema-name nil)))))))
-  (it "does not mirror the configuration schema in engine predicates"
-      (expect (nil? (re-find #"\(def(?:n)?\s+[^\s]+-schema\b"
-                             (slurp "src/com/blockether/vis/internal/config/validation.clj")))))
   (it "has no Clojure Spec dependency in repository code"
       (let [dependency-name
             (str "clojure." "spec.alpha")

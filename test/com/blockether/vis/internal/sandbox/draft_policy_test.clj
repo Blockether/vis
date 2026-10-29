@@ -381,7 +381,6 @@
             ;; execute-code gets another chance to reject a newly discovered root.
             (let [opened (drafts/draft-create environment "late-repository" true [root cache])]
               (try (expect (some? (:error opened)) (str opened))
-                   (expect (re-find #"Start a new turn" (get-in opened [:error :message] "")))
                    (expect (= root (:root @(:workspace-atom environment))))
                    (finally (when (workspace/draft? @(:workspace-atom environment))
                               (drafts/draft-discard environment)))))

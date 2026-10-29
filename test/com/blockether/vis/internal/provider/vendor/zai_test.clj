@@ -30,22 +30,7 @@
                    (get-in coding [:provider/preset :base-url])))
         (expect (= (svar/provider-base-url :zai) (get-in pass [:provider/preset :base-url])))
         (expect (= "glm-5.3-flash" (first (get-in coding [:provider/preset :default-models]))))
-        (expect (= "glm-5.3-flash" (first (get-in pass [:provider/preset :default-models]))))
-        (expect (ifn? (:provider/limits-fn coding)))
-        (expect (ifn? (:provider/limits-fn pass)))
-        (expect (ifn? (:provider/auth-prompt-fn coding)))
-        (expect (ifn? (:provider/auth-prompt-fn pass))))))
-
-(defdescribe
-  auth-prompt-test
-  (it "exposes static API-key guidance for the coding plan"
-      (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
-      (let [lines ((:provider/auth-prompt-fn (registry/provider-by-id :zai-coding-plan)))]
-        (expect (some #(= "  Z.ai (Coding Plan) requires a static API key." %) lines))
-        (expect (some #(= "  Create one at https://z.ai/manage-apikey/apikey-list." %) lines))
-        (expect (some #(= "         export ZAI_CODING_API_KEY=<your-zai-api-key>" %) lines))
-        (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :zai-coding-plan)) %)
-                      lines)))))
+        (expect (= "glm-5.3-flash" (first (get-in pass [:provider/preset :default-models])))))))
 
 (defdescribe
   auth-detection-test

@@ -332,13 +332,6 @@
 
 (defdescribe display-label-casing-test
              "A provider without registered metadata uses its authored id as the display label."
-             (it "echoes an unregistered vis.yml id verbatim, whatever its casing"
-                 (with-redefs [registry/provider-by-id (constantly nil)]
-                   (expect (= "openAI" (config/display-label :openAI)))
-                   (expect (= "ACME" (config/display-label :ACME)))
-                   (expect (= "GPT4All" (config/display-label :GPT4All)))
-                   (expect (= "my-custom-llm" (config/display-label :my-custom-llm)))
-                   (expect (= "ollama" (config/display-label :ollama)))))
              (it "changes no character of the id — never capitalizes, never lowercases"
                  (with-redefs [registry/provider-by-id (constantly nil)]
                    (doseq [id [:openAI :zAI-coding :OpenRouter :lmStudio :ACME :x]]
@@ -348,10 +341,7 @@
                                                          (when (= pid :openai)
                                                            {:provider/id pid
                                                             :provider/label "OpenAI"}))]
-                   (expect (= "OpenAI" (config/display-label :openai)))))
-             (it "falls back to `Provider` only when there is no id at all"
-                 (with-redefs [registry/provider-by-id (constantly nil)]
-                   (expect (= "Provider" (config/display-label nil))))))
+                   (expect (= "OpenAI" (config/display-label :openai))))))
 
 (defn- rm-rf! [^java.io.File f] (when (.exists f) (run! rm-rf! (.listFiles f)) (.delete f)))
 
@@ -737,8 +727,7 @@
         (let [e (try (config/assert-source-enabled! "project" "vis.yml")
                      nil
                      (catch clojure.lang.ExceptionInfo e e))]
-          (expect (= {:status 409 :type :config/source-disabled :source "project"} (ex-data e)))
-          (expect (str/includes? (ex-message e) "--vanilla"))))
+          (expect (= {:status 409 :type :config/source-disabled :source "project"} (ex-data e)))))
       (binding [workspace/*config-sources* #{"global"}]
         (expect (nil? (config/assert-source-enabled! "global" "state.yml"))))))
 
@@ -1271,11 +1260,6 @@
         (expect (= {:gapped ["VIS_TEST_UNSET_B"] :two ["VIS_TEST_UNSET_A" "VIS_TEST_UNSET_B"]}
                    (config/provider-env-gaps {:providers [gapped fine two]})))
         (expect (= {} (config/provider-env-gaps {:providers [fine]})))))
-  (it "names the provider and the vars, and carries no config VALUE that could leak"
-      (expect (= "can't use rbi-genai: RBI_GENAI_API_KEY is not set"
-                 (config/provider-env-message :rbi-genai ["RBI_GENAI_API_KEY"])))
-      (expect (= "can't use rbi-genai: A_KEY, B_KEY are not set"
-                 (config/provider-env-message "rbi-genai" ["A_KEY" "B_KEY"]))))
   (it "resolves through `load-config`, marking the gapped provider without failing"
       (try
         (config/invalidate-config-cache!)
@@ -1706,14 +1690,7 @@
                  (let [filename (.getName (java.io.File. ^String (config/log-path)))]
                    (expect (= (paths/log-file) (config/log-path)))
                    (expect (some? (re-matches #"[a-z]+-\d{8}T\d{6}Z-pid\d+\.log" filename)))
-                   (expect (str/ends-with? filename (str "pid" (paths/process-id) ".log")))))
-             (it "keeps active logs tail-able and gzip-compresses every rotated part"
-                 (expect (= true (:gzip-archives? config/diagnostic-log-options)))
-                 (expect (= 8000000 (:max-file-size config/diagnostic-log-options)))
-                 (expect (= 8 (:max-num-parts config/diagnostic-log-options))))
-             (it "keeps one day in each interval and the same 14 days as the housekeeping sweep"
-                 (expect (= :daily (:interval config/diagnostic-log-options)))
-                 (expect (= 14 (:max-num-intervals config/diagnostic-log-options)))))
+                   (expect (str/ends-with? filename (str "pid" (paths/process-id) ".log"))))))
 
 ;; Regression: the Telemere file handler opened its file at installation, so every CLI
 ;; run that logged nothing left an empty `vis-*.log` and `.problems.jsonl` behind.

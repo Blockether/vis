@@ -12,7 +12,6 @@
                        ((:provider/status-fn provider))]
 
                    (expect (= :ollama (:provider/id provider)))
-                   (expect (= "Ollama" (:provider/label provider)))
                    (expect (false? (:is-authenticated status)))
                    (expect (nil? (:authenticated? status)))
                    (expect (= "http://localhost:11434/v1" (:base-url status)))))

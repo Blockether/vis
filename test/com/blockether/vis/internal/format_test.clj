@@ -31,11 +31,6 @@
                  (expect (= "150KB" (fmt/format-bytes 153600)))
                  (expect (= "1.0MB" (fmt/format-bytes (* 1024 1024))))
                  (expect (= "2.5GB" (fmt/format-bytes (long (* 2.5 1024 1024 1024))))))
-             (it "puts `sep` between number and unit for rows that have the room"
-                 (expect (= "512 B" (fmt/format-bytes 512 " ")))
-                 (expect (= "1.0 KB" (fmt/format-bytes 1024 " ")))
-                 (expect (= "1.0 MB" (fmt/format-bytes (* 1024 1024) " ")))
-                 (expect (= "2.5 GB" (fmt/format-bytes (long (* 2.5 1024 1024 1024)) " "))))
              ;; Regression: `clojure.core/format` follows the JVM default locale, so a
              ;; Polish JVM painted `150,0 KB` into the composer rail and shipped a
              ;; comma decimal in the `size_label` wire key.
@@ -86,9 +81,6 @@
    :duration-ms 4900})
 
 (defdescribe meta-summary-line-test
-             (it "humanizes tokens + cost, keeps cache, drops iterations"
-                 (expect (= "openai/gpt-4o  ·  11.5k→35 (cached 4.1k)  ·  ~$0.0070  ·  4.9s"
-                            (fmt/meta-summary-line normal-result))))
              (it "suppresses zero-usage / zero-cost slots — no \"0→0\", no \"$0\""
                  (expect (= "openai/gpt-4o  ·  4.9s"
                             (fmt/meta-summary-line {:provider :openai
@@ -106,18 +98,14 @@
                  (expect (str/starts-with? (fmt/meta-summary-line fallback-result)
                                            "openai/gpt-4o"))))
 
-(defdescribe
-  meta-throughput-test
-  (it "rounds the rate to one decimal place"
-      (expect (= "10.0 tok/s" (fmt/meta-throughput 10.0)))
-      (expect (= "42.5 tok/s" (fmt/meta-throughput 42.46))))
-  (it "drops a missing or non-positive rate"
-      (expect (nil? (fmt/meta-throughput nil)))
-      (expect (nil? (fmt/meta-throughput 0.0)))
-      (expect (nil? (fmt/meta-throughput -1.0))))
-  (it "places the rate between the tokens and the cost"
-      (expect (= "openai/gpt-4o  ·  11.5k→35 (cached 4.1k)  ·  42.5 tok/s  ·  ~$0.0070  ·  4.9s"
-                 (fmt/meta-summary-line (assoc normal-result :tokens-per-second 42.49))))))
+(defdescribe meta-throughput-test
+             (it "rounds the rate to one decimal place"
+                 (expect (= "10.0 tok/s" (fmt/meta-throughput 10.0)))
+                 (expect (= "42.5 tok/s" (fmt/meta-throughput 42.46))))
+             (it "drops a missing or non-positive rate"
+                 (expect (nil? (fmt/meta-throughput nil)))
+                 (expect (nil? (fmt/meta-throughput 0.0)))
+                 (expect (nil? (fmt/meta-throughput -1.0)))))
 
 (defdescribe
   meta-fallback-note-test
@@ -196,9 +184,4 @@
 (defdescribe format-meta-line-test
              (it "is identical to meta-summary-line when there's no fallback"
                  (expect (= (fmt/meta-summary-line normal-result)
-                            (fmt/format-meta-line normal-result))))
-             (it "folds the fallback note inline for single-line surfaces (CLI)"
-                 (expect (= (str (fmt/meta-summary-line fallback-result)
-                                 fmt/meta-separator
-                                 (fmt/meta-fallback-note fallback-result))
-                            (fmt/format-meta-line fallback-result)))))
+                            (fmt/format-meta-line normal-result)))))

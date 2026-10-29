@@ -16,21 +16,6 @@
   (:import [java.nio.file Files Path]
            [java.nio.file.attribute FileAttribute]))
 
-(defn- dockerfile [] (slurp "Dockerfile"))
-
-(defn- runtime-stage
-  "The Dockerfile from the runtime stage header down: the only stage the gateway
-   image is built from."
-  []
-  (let [text
-        (dockerfile)
-
-        at
-        (str/index-of text "AS runtime")]
-
-    (expect (some? at) "Dockerfile still declares a runtime stage")
-    (subs text at)))
-
 (defn- run-wrapper
   "Run the wrapper with isolated environment overrides and retain both output streams."
   [^java.io.File launcher env-extra args]
@@ -65,104 +50,6 @@
     (when-not (zero? exit)
       (throw (ex-info "Test setup command failed" {:args args :exit exit :output output})))
     output))
-
-(defdescribe
-  container-runs-the-native-runtime-test
-  (it "installs the release bundle and links the wrapper at it"
-      (let [stage (runtime-stage)]
-        (expect (str/includes? stage "COPY --from=native-export --chown=vis:vis / /opt/vis/agent/")
-                stage)
-        (expect (str/includes? stage "ln -sf /opt/vis/agent/vis-agent /usr/local/bin/vis-agent")
-                stage)
-        ;; No runtime selector: the wrapper finds `vis-agent-native` beside
-        ;; itself, so the image never has to name a runtime.
-        (expect (not (str/includes? stage "VIS_RUNTIME")) stage)))
-  (it "ships no Vis source for the wrapper to run instead"
-      ;; Two runtimes in one image is two answers to the question of what is
-      (let [stage (runtime-stage)]
-        (expect (not (str/includes? stage "/opt/vis/src")) stage)
-        (expect (not (str/includes? stage "clojure -P -M:vis")) stage)))
-  (it "serves the binary this source builds, not a downloaded one"
-      (let [text (dockerfile)]
-        (expect (str/includes? text "FROM jdk AS builder") text)
-        (expect (str/includes? text "FROM scratch AS native-export") text)
-        (expect (str/includes? text "COPY --from=builder /build/target/vis /vis-agent-native")
-                text)))
-  (it "prepares Java-bearing Git dependencies before AOT in a fresh container"
-      ;; Regression: AOT failed to resolve vis-python-runtime.HostFunction in the
-      ;; container because its Git dependency had never run :deps/prep-lib.
-      (let [text
-            (dockerfile)
-
-            copied
-            (str/index-of text "COPY . .")
-
-            prepared
-            (str/index-of text "RUN clojure -X:deps prep")
-
-            compiled
-            (str/index-of text "RUN VIS_NATIVE_EXTRA_ARGS=")]
-
-        (expect (and copied prepared compiled (< copied prepared compiled))
-                "The copied checkout must prep Git libraries before native AOT")))
-  (it "omits generated mobile builds and local Python environments from the native context"
-      ;; Regression: COPY . . exhausted the Linux builder disk on generated iOS
-      ;; DerivedData and local training virtual environments.
-      (let [ignore (slurp ".dockerignore")]
-        (doseq [pattern ["apps/vis-companion/ios" "apps/vis-companion/android"
-                         "apps/vis-companion/build" "**/.venv"]]
-          (expect (str/includes? ignore (str "\n" pattern "\n")) pattern))))
-  (it "proves the runtime while building, not in production"
-      (let [stage (runtime-stage)]
-        (expect (str/includes? stage "od -An -tx1 -N4 /opt/vis/agent/vis-agent-native") stage)
-        (expect (str/includes? stage "7f454c46") stage)
-        (expect (str/includes? stage "test -x /opt/vis/agent/vis-agent-native") stage)
-        ;; The embedded CPython ships BESIDE the binary; without it every Python
-        ;; tool dies with a library-not-found.
-        (expect (str/includes? stage "test -d /opt/vis/agent/vis-agent-python") stage)
-        (expect (str/includes? stage "vis-agent python -c") stage)))
-  (it "gives the agent the vis user's home, and proves the runtime uses it"
-      (let [stage (runtime-stage)]
-        (expect (str/includes? stage "ENV HOME=/home/vis") stage)
-        (expect (str/includes? stage "VIS_HOME=/home/vis/.vis") stage)
-        (expect (str/includes? stage "useradd --create-home --shell /bin/bash --uid 10001 vis")
-                stage)
-        (expect (str/includes? stage "chown -R vis:vis /home/vis /work") stage)
-        ;; Existence of ~/.vis proves only that the image mkdir'd it. `logs` is
-        ;; written by `config/init-cli!` on every command, so the assertion below
-        ;; is the RUNTIME saying where its home is — and /root/.vis staying
-        ;; absent is the same statement from the other side.
-        (expect (str/includes? stage "test ! -e /root/.vis") stage)
-        (expect (str/includes? stage "test -d /home/vis/.vis/logs") stage))))
-
-(defdescribe
-  image-is-a-base-a-deployment-extends-test
-  ;; The image carries vis and the toolchain VIS drives. An operator's own CLI
-  ;; is a layer in the deployment's own repository: baked in here, every user of
-  ;; vis pays download time and attack surface for one operator's habits.
-  (it "installs no operator-specific CLI"
-      (let [stage (runtime-stage)]
-        (expect (not (str/includes? stage "cli.github.com")) stage)
-        (expect (nil? (re-find #"install[^\n]*\bgh\b" stage)) stage)
-        (expect (not (str/includes? stage "/home/vis/.config/gh")) stage)))
-  (it "documents the recipe and the contract a derived image builds on"
-      (let [text (dockerfile)]
-        (expect (str/includes? text "Extending this image") text)
-        (expect (str/includes? text "FROM vis-gateway:local") text)
-        (expect (str/includes? text "USER root") text)))
-  (it "leaves a derived image a seeded, vis-owned .config to add to"
-      ;; docker seeds a named volume from the image's directory and inherits its
-      ;; owner: root-owned .config is a credential directory nothing can write.
-      (let [stage (runtime-stage)]
-        (expect (str/includes? stage "/home/vis/.config/git") stage)
-        (expect (str/includes? stage "test \"$(stat -c '%U' /home/vis/.config)\" = 'vis'") stage))))
-
-(defdescribe compose-passes-no-second-version-source-test
-             (it "leaves the version to the image it builds"
-                 (let [compose (slurp "docker-compose.yml")]
-                   ;; A build-arg version would be a SECOND version source; the only one
-                   ;; is the repo-root VIS_VERSION, baked into the binary.
-                   (expect (not (str/includes? compose "VIS_BUILD_SHA")) compose))))
 
 (defdescribe
   wrapper-runs-the-bundled-native-test

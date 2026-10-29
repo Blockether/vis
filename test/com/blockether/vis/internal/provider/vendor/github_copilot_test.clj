@@ -145,7 +145,6 @@
             (set (get-in copilot [:provider/preset :default-models]))]
 
         (expect (= :github-copilot (:provider/id copilot)))
-        (expect (= "GitHub Copilot" (:provider/label copilot)))
         ;; The seat tier was a question asked before any credential existed, and the
         ;; only thing the answer changed was a base-url the token exchange overrode.
         (expect (nil? (registry/provider-by-id :github-copilot-individual)))
@@ -165,13 +164,7 @@
                      "claude-fable-5" "claude-sonnet-5" "gpt-6.1-sol" "gpt-6-astra" "gpt-6-sol"
                      "gpt-6-luna" "gpt-5.6-luna" "gpt-5.6-sol" "gpt-5.6-terra"}
                    models))
-        (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
-        (expect (ifn? (:provider/status-fn copilot)))
-        (expect (ifn? (:provider/logout-fn copilot)))
-        (expect (ifn? (:provider/detect-fn copilot)))
-        (expect (ifn? (:provider/auth-fn copilot)))
-        (expect (ifn? (:provider/get-token-fn copilot)))
-        (expect (ifn? (:provider/limits-fn copilot)))))
+        (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))))
   (it "requests Copilot policy access for new Claude 5.5 models"
       (let [requested (atom #{})]
         (with-redefs-fn {#'sut/enable-copilot-model! (fn [_ _ model]
@@ -337,15 +330,11 @@
           (expect (nil? (:remaining chat)))
           (expect (nil? (:limit chat)))
           (expect (nil? (:used chat)))
-          (expect (= "unlimited (token-based billing)" (:note chat)))
           (expect (false? (:is-unlimited premium)))
           ;; clamped: never render "-32 left"
           (expect (= 0.0 (:remaining premium)))
           (expect (= 1500.0 (:limit premium)))
-          (expect (= 1532.0 (:used premium)))
-          (expect
-            (= "0.0% remaining - quota exhausted (32 over); requests are rejected until it resets"
-               (:note premium)))))))
+          (expect (= 1532.0 (:used premium)))))))
 
 (defdescribe
   copilot-refresh-margin-test

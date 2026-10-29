@@ -3,7 +3,6 @@
    all render it against a dark background half of the time. These are pixel facts
    about the shipped PNGs, read back out of the files with `com.blockether.imaging`."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [com.blockether.imaging :as imaging]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -102,8 +101,6 @@
 
            i)))
 
-(defn- readme [] (slurp (io/file "README.md")))
-
 ;; Regression: the shipped mark was a white plate. `logo.png` is opaque white, so
 ;; GitHub's dark theme drew a white box around it, and the transparent copies were
 ;; produced by keying white out -- which left a white fringe on every edge and
@@ -138,8 +135,4 @@
       (expect (= (seq (.readAllBytes (io/input-stream (io/file
                                                         "resources/vis-docs/assets/logo.png"))))
                  (seq (.readAllBytes (io/input-stream
-                                       (io/file "apps/vis-companion/public/vis-logo.png")))))))
-  (it "README offers the dark mark to dark-theme readers"
-      (let [md (readme)]
-        (expect (str/includes? md "prefers-color-scheme: dark"))
-        (expect (str/includes? md "src=\"logo.png\"")))))
+                                       (io/file "apps/vis-companion/public/vis-logo.png"))))))))

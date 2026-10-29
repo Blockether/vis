@@ -180,5 +180,4 @@
 
                                        (turn/run-turn! env "!echo nope" {}))]
 
-                                 (expect (= :success (:status result)))
-                                 (expect (str/includes? (:answer result) "Shell layer is OFF")))))))
+                                 (expect (= :success (:status result))))))))

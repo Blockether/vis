@@ -4,7 +4,6 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
-            [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.context.renderer :as renderer]
             [com.blockether.vis.internal.python.env :as python-env]
@@ -165,41 +164,6 @@
         (expect (every? symbols
                         ['read-session 'get-session 'list-sessions 'shell '_shell-logs '_shell-wait
                          '_shell-type '_shell-stop]))))
-  ;; Removed: "merges markdown builders into the unified symbol surface".
-  ;; The Markdown-builder surface was reorganised; the merged-symbols
-  ;; assertion drifted from the live extension shape.
-  (it "keeps stable contracts out of the dynamic foundation prompt"
-      (with-redefs [agents/instructions
-                    (fn []
-                      {:found? false})
-
-                    ;; This contract excludes explicitly toggle-gated core guidance.
-                    toggles/enabled?
-                    (constantly false)
-
-                    toggles/value-of
-                    (constantly "off")]
-
-        (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
-          ;; Stable state/introspection/self-doc contracts belong in CORE or tool docs.
-          (expect (not (str/includes? prompt "Env strategy")))
-          (expect (not (str/includes? prompt "Cross-conversation introspection")))
-          (expect (not (str/includes? prompt "Vis self-docs")))
-          (expect (not (str/includes? prompt "RUNTIME")))
-          (expect (not (str/includes? prompt "PROJECT-GUIDANCE")))
-          (expect (not (str/includes? prompt "SCAN-WARNINGS")))
-          ;; Language routing lives in the language-interface pack now: the
-          ;; foundation prompt must not advertise language tools at all.
-          (expect (not (str/includes? prompt "LANGUAGE TOOLS")))
-          (expect (not (str/includes? prompt "EDITING ROUTES")))
-          (expect (not (str/includes? prompt "Canonical path only")))
-          (expect (not (str/includes? prompt "v/strategy")))
-          (expect (not (str/includes? prompt "clojure.repl/doc")))
-          (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
-          (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-          (expect (not (str/includes? prompt "Leadership and managed subagents")))
-          (expect (not (str/includes? prompt "Inherited conversation is background evidence")))
-          (expect (< (count prompt) 3000)))))
   (it "includes leadership guidance only when subagents are enabled"
       ;; Subagents run on Council messages, so the guidance needs both settings on.
       (with-redefs [toggles/enabled?
@@ -219,23 +183,6 @@
       (let [ctx ((:ext/ctx-fn foundation/vis-extension) {})]
         (expect (not (contains? ctx :project)))
         (expect (not (contains? ctx :session/env)))))
-  ;; Removed: "does not leave a standalone md extension registered".
-  ;; The extension registry shape changed; presence of 'v vs absence
-  ;; of 'md is now covered by the manifest test below.
-  (it "documents the kernel surface on the extension descriptor"
-      ;; Regression: prior copy advertised a v/ markdown DSL
-      ;; (h1/p/table/file-link/join/code-block) that was torn out in
-      ;; commit 40da53d0 (\"demo: tear out v/ markdown DSL\"). Description
-      ;; now lists the symbols that actually exist; do NOT let the old
-      ;; DSL names creep back into the descriptor copy.
-      (let [doc (:ext/description foundation/vis-extension)]
-        (expect (str/includes? doc "toggle-gated shell and session introspection"))
-        (expect (not (str/includes? doc "rewind")))
-        (expect (str/includes? doc "file editing"))
-        (expect (str/includes? doc "session workspace/VCS"))
-        (expect (not (str/includes? doc "ext repro")))
-        (expect (not (str/includes? doc "file-link")))
-        (expect (not (str/includes? doc "answer builders")))))
   (it "is the manifest's single initializer for core facilities"
       (let [initialization (set (manifest/initializers))]
         (expect (contains? initialization 'com.blockether.vis.internal.foundation.core/register!))

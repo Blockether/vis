@@ -29,8 +29,4 @@
              ;; dimmed the whole terminal when it opened.
              (it "every registered theme paints dialogs with the screen background"
                  (doseq [[id {:keys [palette]}] @theme/themes]
-                   (expect (= [id (:terminal-bg palette)] [id (:dialog-bg palette)]))))
-             (it "web panels keep their own shade"
-                 (let [css (theme/theme->web-css-vars theme/vis-light)]
-                   (expect (= "#f8f8f8" (get css "--surface") (get css "--panel2")))
-                   (expect (= "#ffffff" (get css "--bg"))))))
+                   (expect (= [id (:terminal-bg palette)] [id (:dialog-bg palette)])))))

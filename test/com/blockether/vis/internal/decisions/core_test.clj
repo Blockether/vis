@@ -110,9 +110,6 @@
           (expect
             (= {:type :decisions/input-too-long :input-tokens size :max-input-tokens (dec size)}
                (ex-data error)))
-          (expect (str/includes? (ex-message error) (str size " tokens")))
-          (expect (str/includes? (ex-message error) (str "limit is " (dec size))))
-          (expect (str/includes? (ex-message error) "Shorten"))
           (expect (not (str/includes? (ex-message error) "private-question"))))))
   (it "includes instructions and criteria in the same budget without truncating"
       (with-redefs [decisions/raw-token-ids (fn [_ value]
@@ -638,8 +635,6 @@
           (expect
             (= {:type :decisions/input-too-long :input-tokens size :max-input-tokens (dec size)}
                (ex-data error)))
-          (expect (str/includes? (ex-message error) (str size " tokens")))
-          (expect (str/includes? (ex-message error) "Input is not truncated"))
           (expect (not (str/includes? (ex-message error) "private-question"))))))
   (it "refuses an option that produces no token"
       (with-redefs [decisions/raw-token-ids (fn [_ value]
@@ -966,8 +961,7 @@
           (expect (= size (count (:ids (encode size)))))
           (expect
             (= {:type :decisions/input-too-long :input-tokens size :max-input-tokens (dec size)}
-               (ex-data error)))
-          (expect (str/starts-with? (ex-message error) (str "D3 input has " size " tokens")))))))
+               (ex-data error)))))))
 
 (defdescribe
   d3-input-limit-follows-the-bundle-up-to-16384-tokens

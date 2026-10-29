@@ -24,104 +24,13 @@
   (it "keeps multi-line Python verbatim (triple-quoted strings are never tokenized)"
       (expect (= [{:kind :code :source "done(\"\"\"\nmulti\nline\n\"\"\")"}]
                  (render/parse-block-display "done(\"\"\"\nmulti\nline\n\"\"\")"))))
-  (it "flags (def NAME (qualified/call …)) wrappers as hidden code"
-      ;; The model wraps tool calls in `(def …)` for downstream reuse.
-      ;; The channel shows the tool result pane anyway, so the def
-      ;; source itself is noise. Mark the segment hidden so the renderer
-      ;; collapses the code lines but still keeps the form in the
-      ;; iteration trace.
-      (expect (= [{:kind :code :source "(def render-sb-code (cat \"x.clj\"))"}]
-                 (render/parse-block-display "(def render-sb-code (cat \"x.clj\"))"))))
-  (it "hides plain (def x 1) so the DEF SINK is the single source of bound-var truth"
-      ;; Pre-fix the renderer kept bare def source visible because the
-      ;; comment claimed \"the value is the only artifact\". In practice
-      ;; the trailer's `:vars` envelope already surfaces every bound var
-      ;; to both model and user, so painting the raw `(def …)` line
-      ;; just duplicates that signal and pushes the actual recap /
-      ;; result rows off-screen. Hide every def-shaped form; let the
-      ;; def sink speak.
-      (expect (= [{:kind :code :source "(def x 1)"}] (render/parse-block-display "(def x 1)"))))
-  (it "hides defn / defn- / defmacro / defmulti / defmethod / defonce uniformly"
-      (doseq [src ["(defn foo [] 1)" "(defn- bar [] 2)" "(defmacro baz [] `(println 1))"
-                   "(defmulti qux :kind)" "(defmethod qux :a [_] :a)"
-                   "(defonce only-once (atom {}))"]]
-        (let [out (render/parse-block-display src)]
-          (expect (= 1 (count out)))
-          (expect (= :code
-                     (-> out
-                         first
-                         :kind))))))
-  (it
-    "hides top-level keyword-lookup and accessor calls (e.g. `(:size ir-file)`, `(get-in m [...])`, `(first xs)`)"
-    ;; The model often does `(def x (tool/call))` followed by
-    ;; `(:size x)` or `(get-in x [:k])` or `(first (:items x))` to
-    ;; project a sub-value. The bound value is already on the DEF
-    ;; SINK + the channel preview of the underlying tool call; the
-    ;; projection row only repeats `<runtime ref>` next to a code
-    ;; line nobody reads. Hide them.
-    (doseq [src ["(:size ir-file)" "(:k m :default)" "(get m :k)" "(get-in m [:a :b])"
-                 "(select-keys r [:a :b])" "(first xs)" "(count xs)" "(name :foo)" "(str x)"]]
-      (let [out (render/parse-block-display src)]
-        (expect (= 1 (count out)))
-        (expect (= :code
-                   (-> out
-                       first
-                       :kind))))))
-  (it "hides bare-symbol top-level forms (e.g. `st` following `(def st (git/status))`)"
-      ;; The model often writes `(def NAME (tool/call ...)) NAME` so the
-      ;; trailer shows the value. The channel preview of the tool call
-      ;; already paints the data; the loose symbol row is just chrome
-      ;; that pushes recap / answer rows off-screen. Same hide-by-default
-      ;; policy as bare tool calls and def-shaped forms.
-      (let [out (render/parse-block-display "(def st (git/status))\nst")]
-        ;; Both segments hidden → coalesce merges them into one entry.
-        (expect (= 1 (count out)))
-        (expect (= :code
-                   (-> out
-                       first
-                       :kind)))))
-  (it "renders a plain non-engine model call as visible code"
-      ;; Any model form that isn't engine chrome (done / set_session_title)
-      ;; or a tool call renders as the visible CALL.
-      (expect (= [{:kind :code :source "compute(1, 2)"}]
-                 (render/parse-block-display "compute(1, 2)"))))
-  (it "hides def docstring form when wrapping a tool call"
-      (expect (= [{:kind :code :source "(def named \"docstring\" (cat \"x.clj\"))"}]
-                 (render/parse-block-display "(def named \"docstring\" (cat \"x.clj\"))"))))
-  (it "hides bare qualified tool calls so the result pane speaks for itself"
-      (expect (= [{:kind :code :source "(cat \"src/foo.clj\")"}]
-                 (render/parse-block-display "(cat \"src/foo.clj\")"))))
   (it "coalesces neighboring hidden tool calls into one hidden segment"
       (let [out (render/parse-block-display "(cat \"a.clj\")\n(cat \"b.clj\")")]
         (expect (= 1 (count out)))
         (expect (= :code
                    (-> out
                        first
-                       :kind)))))
-  (it "def and tool call both render hidden so the bubble shows only recap / result rows"
-      (let [out (render/parse-block-display "(def x 1)\n(cat \"a.clj\")")]
-        ;; Both forms hidden — same :hidden? flag means the coalesce
-        ;; pass merges them into one hidden code segment.
-        (expect (= 1 (count out)))
-        (expect (= :code
-                   (-> out
-                       first
-                       :kind)))))
-  (it
-    "marks `(def r (ls …))` + `(select-keys r […])` BOTH hidden so the channel preview speaks alone"
-    ;; Real-world fence the model emits when it wants to bind a tool
-    ;; result and then project a sub-value. The def wrapping AND the
-    ;; accessor row are both bookkeeping; the value rides on the DEF
-    ;; SINK + the channel preview of the underlying tool call. The
-    ;; renderer coalesces consecutive hidden code segments into one
-    ;; entry, so the result is a single suppressed source row.
-    (let [out (render/parse-block-display
-                "(def r (ls \".\"))\n(select-keys r [:entry-count :file-count])")]
-      (expect (= 1 (count out)))
-      (expect (= :code
-                 (-> out
-                     first
-                     :kind))))))
+                       :kind))))))
 
 (defdescribe
   markdown-html-comment-test

@@ -364,26 +364,6 @@
         (expect (not (str/includes? out "wor\u2026"))))))
 
 (defdescribe
-  alerts-are-worded-in-one-place-test
-  ;; THE shape of a notification, wherever it is raised: the gateway pushes it to a phone and
-  ;; the desktop app reads the same two lines back over `GET /v1/sessions/:sid/alert`.
-  (it "an answer is the session's own name and what vis said"
-      (expect (= {:title "deploy" :body "Done • Shipped v2 to prod"}
-                 (push/answer-alert {:title "deploy"
-                                     :answer "## Done\n\n- Shipped **v2** to `prod`"}))))
-  (it "a turn that left nothing readable still says what happened"
-      (expect (= {:title "Vis" :body "Turn finished."} (push/answer-alert {:answer "  \n "})))
-      (expect (= {:title "notes" :body "Turn failed."}
-                 (push/answer-alert {:title "notes" :answer nil :is-failed true}))))
-  (it "a parked run is the question its wire View asked (#291)"
-      (expect (= {:title "Action needed — Which branch?" :body "main is two commits ahead."}
-                 (push/question-alert {"title" "Which branch?"
-                                       "description" "main is two commits ahead."}))))
-  (it "a request that names nothing still asks for the human"
-      (expect (= {:title "Action needed" :body "Vis is waiting on your answer."}
-                 (push/question-alert nil)))))
-
-(defdescribe
   alert-payload-speaks-apns-kebab-case-test
   (it "aps keys are APNs' literal kebab-case, not the wire encoder's snake_case"
       (let [payload

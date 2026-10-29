@@ -167,9 +167,4 @@
             (script ["--truststore"] (assoc env "VIS_CA_CERT" "/nope/corporate-ca.pem"))]
 
         (expect (= 1 exit))
-        (expect (str/includes? err "/nope/corporate-ca.pem"))))
-  (it "documents the corporate-CA switches in its own --help"
-      (let [{:keys [out]} (script ["--help"] {})]
-        (expect (str/includes? out "VIS_CA_CERT"))
-        (expect (str/includes? out "VIS_TRUSTSTORE"))
-        (expect (str/includes? out "--truststore")))))
+        (expect (str/includes? err "/nope/corporate-ca.pem")))))

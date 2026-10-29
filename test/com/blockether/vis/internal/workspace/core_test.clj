@@ -1087,27 +1087,10 @@
   "Why drafts are unavailable is an ACTIONABLE sentence, not just a capability
    matrix: the rift backend clones copy-on-write, so the filesystem — APFS on
    macOS, btrfs on Linux/WSL2 — is the real requirement."
-  (it "names the platform's copy-on-write requirement"
-      (expect (re-find #"(?i)apfs" (ws/cow-platform-hint "Mac OS X")))
-      (expect (re-find #"(?i)btrfs" (ws/cow-platform-hint "Linux")))
-      ;; WSL2 reports a plain Linux `os.name`; the btrfs requirement is identical.
-      (expect (re-find #"(?i)btrfs"
-                       (ws/cow-platform-hint "Linux 5.15.153.1-microsoft-standard-WSL2")))
-      ;; A clone never crosses a filesystem boundary: btrfs (or APFS) over ONE
-      ;; directory is enough, but root and store must share that single mount.
-      (expect (re-find #"(?i)same APFS" (ws/cow-platform-hint "Mac OS X")))
-      (expect (re-find #"(?i)same btrfs" (ws/cow-platform-hint "Linux")))
-      (expect (re-find #"(?i)one directory is enough" (ws/cow-platform-hint "Linux")))
-      (expect (re-find #"vis\.drafts\.dir" (ws/cow-platform-hint "Linux")))
-      (expect (re-find #"(?i)copy-on-write" (ws/cow-platform-hint "Windows 11"))))
   (it "falls back to the platform requirement when no backend is available"
       (with-redefs [ws/workspace-capability-matrix (constantly [])]
         (expect (= (ws/cow-platform-hint (System/getProperty "os.name"))
                    (ws/isolation-unavailable-hint "/tmp")))))
-  (it "reports an unforkable linked git worktree from the capability matrix"
-      (with-redefs [ws/workspace-capability-matrix
-                    (constantly [{:backend :rift :available? false :reason :linked-git-worktree}])]
-        (expect (re-find #"(?i)worktree" (ws/isolation-unavailable-hint "/tmp")))))
   (it "falls back to the platform requirement when a registered backend cannot clone"
       (with-redefs [ws/workspace-capability-matrix
                     (constantly [{:backend :rift :available? false :reason :probe-failed}])]

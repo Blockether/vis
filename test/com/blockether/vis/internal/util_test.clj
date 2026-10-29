@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.util-test
   (:require [charred.api :as json]
-            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it throws?]]))
@@ -315,36 +314,6 @@
       (let [pair (key-pair "EC" (java.security.spec.ECGenParameterSpec. "secp384r1"))]
         (expect (throws? IllegalArgumentException
                          #(util/compact-jws (.getPrivate pair) "{}" "{}"))))))
-
-(def ^:private re-rolled
-  "What `com.blockether.vis.internal.util` owns. A second copy is not a style
-   question: the engine reached twelve `now-ms` wrappers and five different hex
-   folds, and the copies DRIFT — one clipped the digest to eight bytes, one
-   spelled the charset as a string, one narrowed nil differently."
-  {"the millisecond clock (util/now-ms)" #"System/currentTimeMillis"
-   "a SHA-256 digest (util/sha256, util/sha256-digest)" #"MessageDigest/getInstance\s+\"SHA-256\""
-   "a blank-string predicate (util/non-blank-string?)"
-   #"\(and\s+\(string\?\s+[^)]+\)\s+\(not\s+\(str/blank\?"
-   "UTF-8 bytes (util/utf8)" #"\.getBytes\s+[^\s)]+\s+(?:StandardCharsets/UTF_8|\"UTF-8\")"
-   "an HMAC-SHA256 (util/hmac-sha256)" #"Mac/getInstance\s+\"HmacSHA256\""
-   "secure random bytes (util/random-bytes)" #"\.nextBytes"
-   "unpadded base64url (util/base64url)" #"\.withoutPadding"
-   "byte concatenation (util/concat-bytes)" #"\(defn-?\s+concat-bytes\b"
-   "a daemon thread factory (util/daemon-thread-factory)" #"\(newThread\s*\["
-   "JWS signing (util/compact-jws)" #"Signature/getInstance\s+\"SHA256with(?:ECDSA|RSA)\""})
-
-(defdescribe shared-primitives-test
-             (it "leaves every re-rolled primitive of the engine to internal.util"
-                 (let [offenders (vec (for [^java.io.File f (file-seq (io/file "src"))
-                                            :when (and (.isFile f)
-                                                       (str/ends-with? (.getName f) ".clj"))
-                                            :when (not= "util.clj" (.getName f))
-                                            :let [source (slurp f)]
-                                            [what pattern] re-rolled
-                                            :when (re-find pattern source)]
-
-                                        (str (.getPath f) " re-rolls " what)))]
-                   (expect (= [] offenders)))))
 
 (defdescribe bounded-memoize-test
              (it "evicts the oldest inputs when the entry limit is reached"

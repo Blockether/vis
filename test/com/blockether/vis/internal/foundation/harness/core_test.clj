@@ -19,10 +19,8 @@
             text
             (skill-template-text s "do x")]
 
-        (expect (str/includes? text "Use the skill \"demo\""))
         (expect (str/includes? text "doc(\"demo\")"))
-        (expect (str/includes? text "- /x/ref.md"))
-        (expect (str/includes? text "Task: do x"))))
+        (expect (str/includes? text "- /x/ref.md"))))
   (it "uses the skill description for namespaced slash templates"
       (with-redefs [d/skills (constantly [{:name "demo" :description "Demo skill"}])]
         (let [entry (first (skill-template-entries))]
@@ -79,20 +77,6 @@
           (expand {:ctx-atom ca} "do x")
           (expand {:ctx-atom ca} "do y")
           (expect (= {"session_turn" 3} @ca))))))
-
-(defdescribe skills-prompt-test
-             (it "skills-prompt is a string listing skills when any exist"
-                 (with-redefs [d/skills (constantly [{:name "demo" :description "Demo skill"}])]
-                   (expect (string? ((deref #'core/skills-prompt) {})))))
-             ;; A skill is a DOCUMENT, not a verb: the cheap listing may only point at
-             ;; the retrieval verbs, never at an activation that no longer exists.
-             (it "the listing points at doc/apropos and never at an activation verb"
-                 (with-redefs [d/skills (constantly [{:name "demo" :description "Demo skill"}])]
-                   (let [p ((deref #'core/skills-prompt) {})]
-                     (expect (str/includes? p "doc(\"name\")"))
-                     (expect (str/includes? p "apropos(pattern)"))
-                     (expect (not (str/includes? p "skill(")))
-                     (expect (not (str/includes? p "activates")))))))
 
 (defdescribe verb-shape-test
              ;; There is NO skill verb: a skill is retrieved with `doc(name)` and

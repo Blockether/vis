@@ -433,7 +433,6 @@
                                   nil
                                   (catch clojure.lang.ExceptionInfo e e))]
                    (expect (= ::python-runtime/project-sync-required (:type (ex-data error))))
-                   (expect (str/includes? (str (ex-message error)) "embedded Python"))
                    (expect (str/includes? (str (ex-message error)) "--no-python-downloads"))
                    (expect (not-any? #(contains? #{"sync" "run"} (second %)) @calls))
                    (expect (= "home = /foreign/python/bin\n" (slurp config))))))

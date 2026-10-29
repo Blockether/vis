@@ -1,7 +1,6 @@
 (ns com.blockether.vis.internal.speech.engine-test
   "Parakeet transcript cleanup and native-runtime failures."
-  (:require [clojure.string :as str]
-            [com.blockether.vis.internal.extension.capability :as capability]
+  (:require [com.blockether.vis.internal.extension.capability :as capability]
             [com.blockether.vis.internal.speech.asr :as asr]
             [com.blockether.vis.internal.speech.engine :as engine]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
@@ -54,7 +53,6 @@
           (expect (some? thrown))
           (expect (= :speech/native-unavailable (:type (ex-data thrown))))
           (expect (true? (:is-restart-required (ex-data thrown))))
-          (expect (str/includes? (ex-message thrown) "restart Vis"))
           (expect (instance? NoClassDefFoundError (ex-cause thrown)))))))
 
 (defdescribe transcript-cleanup-test

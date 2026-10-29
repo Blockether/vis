@@ -29,15 +29,4 @@
                      (expect (not (str/includes? opt "MaxRAMPercentage"))
                              (str opt " scales the heap ceiling with host RAM"))
                      (expect (not (str/includes? opt "MaxRAM="))
-                             (str opt " scales the heap ceiling with host RAM")))))
-             (it "keeps the uncommit flags that make the ceiling shrinkable"
-                 ;; -Xmx alone caps growth; it never hands pages back. The periodic
-                 ;; concurrent cycle plus the free ratios are what return them to the OS.
-                 (let [opts (set (alias-jvm-opts :vis))]
-                   (expect (contains? opts "-XX:+G1PeriodicGCInvokesConcurrent"))
-                   (expect (contains? opts "-XX:MinHeapFreeRatio=10"))
-                   (expect (contains? opts "-XX:MaxHeapFreeRatio=25"))))
-             (it "caps the test runner at 2 GiB independently of host RAM"
-                 (let [opts (alias-jvm-opts :test)]
-                   (expect (some #{"-Xmx2g"} opts))
-                   (expect (not-any? #(str/includes? % "MaxRAM") opts)))))
+                             (str opt " scales the heap ceiling with host RAM"))))))

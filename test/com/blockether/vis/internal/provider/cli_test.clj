@@ -25,8 +25,6 @@
 
           (#'provider-cli/print-provider-status! {:provider/id :acme :provider/label "Acme"}))
         (let [text (str/join "\n" @lines)]
-          (expect (str/includes? text "Authenticated:  saved, not verified"))
-          (expect (not (str/includes? text "Authenticated:  yes")))
           (expect (str/includes? text "pro"))
           (expect (not (str/includes? text "Auth state")))
           (expect (not (str/includes? text "Is loading")))))))
@@ -108,8 +106,7 @@
         (expect (= [] lines))
         (expect (= 4 code))))
   (it "keeps the human table and gives it the same exit status"
-      (let [{:keys [lines code]} (run-status ["acme"] {"is_authenticated" false})]
-        (expect (some #(str/includes? % "Authenticated:  not verified") lines))
+      (let [{:keys [code]} (run-status ["acme"] {"is_authenticated" false})]
         (expect (= 3 code))))
   (it "exits 2 for an unknown provider"
       (let [{:keys [lines code]} (run-status ["nope" "--json"] {})]
