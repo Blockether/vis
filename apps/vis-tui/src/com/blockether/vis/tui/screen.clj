@@ -3335,6 +3335,47 @@
                (and (:human-input db)
                     (zero? (long (or (:chat-left (projects/geometry db cols 0)) 0)))))))
 
+(def ^:private zen-min-cols
+  "The narrowest Zen column. A narrower chat pane keeps its full width."
+  60)
+
+(defn- zen-column
+  "The Zen mode column of a `cols`-wide chat pane as `[left width]`, or nil.
+   Its width is the pane width divided by the golden ratio, and it is centred."
+  [db cols]
+  (when (get-in db [:settings :zen-mode])
+    (let [cols
+          (long cols)
+
+          width
+          (min cols
+               (max (long zen-min-cols)
+                    (Math/round (/ (double cols) (/ (+ 1.0 (Math/sqrt 5.0)) 2.0)))))]
+
+      (when (< width cols) [(quot (- cols width) 2) width]))))
+
+(defn- chat-pane
+  "The chat pane in screen columns: `{:left :cols}` for the transcript and the prompt,
+   and `{:base-left :base-cols}` for the area right of a docked project rail.
+   Zen mode narrows the pane to its centred golden ratio column."
+  [db cols rows]
+  (let [locked?
+        (project-sidebar-locked? db cols)
+
+        base-left
+        (if locked? 0 (long (or (:chat-left (projects/geometry db cols rows)) 0)))
+
+        base-cols
+        (long (if locked? cols (projects/chat-cols db cols)))
+
+        [zen-left zen-cols]
+        (zen-column db base-cols)]
+
+    {:left (+ base-left (long (or zen-left 0)))
+     :cols (long (or zen-cols base-cols))
+     :base-left base-left
+     :base-cols base-cols}))
+
 (defn- project-sidebar-key-allowed?
   "Keep sidebar help keys available to dismiss help while other rail actions are locked."
   [db cols key]
@@ -3470,7 +3511,7 @@
         (long cols)
 
         cols
-        (long (if (project-sidebar-locked? db cols) cols (projects/chat-cols db cols)))
+        (long (:cols (chat-pane db cols rows)))
 
         ;; A docked side panel takes its columns from the chat; an overlay keeps them.
         live-panel
@@ -4006,12 +4047,18 @@
        :overlay-selectable-ranges overlay-selectable-ranges})))
 
 (defn- render-frame!
-  "Paint the chat in its local surface and the project rail in screen coordinates."
+  "Paint the chat in its local surface and the project rail in screen coordinates.
+   The Zen column leaves blank margins at its sides."
   [screen cols rows db now-ms]
-  (binding [frame/*column-offset* (if (project-sidebar-locked? db cols)
-                                    0
-                                    (long (or (:chat-left (projects/geometry db cols rows)) 0)))]
-    (render-frame-content! screen cols rows db now-ms)))
+  (let [{:keys [left base-left base-cols]} (chat-pane db cols rows)]
+    (when (not= left base-left)
+      (binding [frame/*column-offset* base-left]
+        (let [g (frame/surface-graphics screen base-cols rows)]
+          (p/clear-styles! g)
+          (p/set-colors! g t/text-fg t/terminal-bg)
+          (p/fill-rect! g 0 0 base-cols rows))))
+    (binding [frame/*column-offset* left]
+      (render-frame-content! screen cols rows db now-ms))))
 
 (defn- repaint-chat-frame!
   "Repaint the full chat frame (background, transcript, working-area outline,
@@ -5087,8 +5134,11 @@
   (let [sidebar?
         (get-in db [:project-sidebar :open?])
 
+        pane
+        (chat-pane db cols rows)
+
         chat-cols
-        (projects/chat-cols db cols)
+        (:cols pane)
 
         ;; The side panel repaints with every full frame; a docked one also narrows
         ;; the composer that the cheap typing path paints.
@@ -5117,8 +5167,17 @@
           :full
           path)
 
+        ;; A full frame finds the chat pane itself. Every cheap path paints only the
+        ;; chat pane, so the Zen column keeps its place.
         cols
-        (if (and (or sidebar? live-panel) (= path :input)) chat-cols cols)
+        (case path
+          :full
+          cols
+
+          :input
+          chat-cols
+
+          (:cols pane))
 
         started-ns
         (System/nanoTime)
@@ -5127,7 +5186,12 @@
         (volatile! nil)
 
         result
-        (binding [*frame-metrics* phases]
+        (binding [*frame-metrics*
+                  phases
+
+                  frame/*column-offset*
+                  (:left pane)]
+
           (case path
             :header-hover
             (do (render-header-hover-frame! screen cols rows db) [last-layout false])
@@ -5650,8 +5714,7 @@
 (defn- session-column-offset
   "Left column of the live session pane, so that a picker stays in that pane."
   [cols rows]
-  (let [db @state/app-db]
-    (if (project-sidebar-locked? db cols) 0 (or (:chat-left (projects/geometry db cols rows)) 0))))
+  (:left (chat-pane @state/app-db cols rows)))
 
 (defn- pick-session-model!
   "Open the model picker in the live session pane and apply its choice."
