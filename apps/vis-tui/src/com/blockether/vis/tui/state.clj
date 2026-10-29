@@ -258,8 +258,9 @@
                             :id
                             str)]))))
 
-(defn session-draft-ids
-  "Session ids holding unsent composer work, including sessions without an open tab."
+(defn session-drafts
+  "Unsent composer work by session id, including sessions without an open tab.
+   An open view answers for its own session; a closed one keeps its saved draft."
   [db]
   (let [active-id
         (current-tab-id db)
@@ -284,10 +285,17 @@
         open-ids
         (keep sid views)
 
-        dirty-ids
-        (keep #(when (composer-draft (second %)) (sid %)) views)]
+        open-drafts
+        (keep #(when-let [draft (composer-draft (second %))] (when-let [id (sid %)]
+                                                               [id draft]))
+              views)]
 
-    (into (reduce disj (set (keys (:session-drafts db))) open-ids) dirty-ids)))
+    (into (apply dissoc (or (:session-drafts db) {}) open-ids) open-drafts)))
+
+(defn session-draft-ids
+  "Session ids holding unsent composer work, including sessions without an open tab."
+  [db]
+  (set (keys (session-drafts db))))
 
 (defn- active-tab-entry
   [db]

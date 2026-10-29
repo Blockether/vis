@@ -3381,7 +3381,7 @@
              (it "marks running sessions even when the current session is focused"
                  (let [row
                        (fn [active session]
-                         ((var-get #'dlg/navigator-session-row) active {} session))
+                         ((var-get #'dlg/navigator-session-row) active {} nil session))
 
                        live
                        {"id" "s-live" "title" "Deploy" "turn_count" 3 "live" true}]
@@ -3398,7 +3398,7 @@
   (it "carries the gateway's rank onto the row"
       (let [row
             (fn [session]
-              ((var-get #'dlg/navigator-session-row) nil {} session))
+              ((var-get #'dlg/navigator-session-row) nil {} nil session))
 
             starred
             (row {"id" "s-star" "title" "Deploy" "favorite_rank" 3})]
@@ -3467,7 +3467,7 @@
    session, and this list is exactly where its operator goes looking for it."
   (it "reports the demand instead of the turn count"
       (let [row (fn [active session]
-                  ((var-get #'dlg/navigator-session-row) active {} session))]
+                  ((var-get #'dlg/navigator-session-row) active {} nil session))]
         (expect
           (= "HITL"
              (:status
@@ -3485,7 +3485,7 @@
                                   "awaiting_input_count" 2}))))))
   (it "shows idle status on quiet rows, including the current session"
       (let [row (fn [active session]
-                  ((var-get #'dlg/navigator-session-row) active {} session))]
+                  ((var-get #'dlg/navigator-session-row) active {} nil session))]
         (expect (= "Idle" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
         (expect (= "Idle"
                    (:status (row "s-quiet" {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
@@ -3499,7 +3499,7 @@
   "The session list paints the gateway's read mark and its interrupted verdict."
   (it "badges the answers that landed since this reader last read"
       (let [row (fn [session]
-                  ((var-get #'dlg/navigator-session-row) nil {} session))]
+                  ((var-get #'dlg/navigator-session-row) nil {} nil session))]
         (expect (= "New"
                    (:status (row {"id" "s-new"
                                   "title" "Deploy"
@@ -3519,7 +3519,7 @@
     "says a run Stopped instead of letting it read as Idle"
     (let [row
           (fn [session]
-            ((var-get #'dlg/navigator-session-row) nil {} session))
+            ((var-get #'dlg/navigator-session-row) nil {} nil session))
 
           cut
           {"id" "s-cut" "title" "Deploy" "turn_count" 3 "was_interrupted" true "unread_answers" 1}]

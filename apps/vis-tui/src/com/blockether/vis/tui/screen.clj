@@ -6099,6 +6099,7 @@
                                 (fn []))))
           :active-session-id active-id
           :db db
+          :drafts (state/session-drafts db)
           :recent-messages vis/fork-points
           :search-sessions
           (fn [q scope]

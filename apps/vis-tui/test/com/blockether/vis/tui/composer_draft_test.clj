@@ -2,6 +2,7 @@
   "Regression coverage for unsent work that belongs to a session, not its tab."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as client]
+            [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.screen :as screen]
@@ -177,6 +178,35 @@
         (expect (= #{"a"} (state/session-draft-ids closed)))
         (expect (= "Dirty" (:status row)))
         (expect (= [file] (:attachments reopened)))))
+  ;; User report: the C-x s picker did not show sessions holding unsent drafts.
+  (it "lists draft sessions in the session picker as dirty, open or closed"
+      (let [sessions
+            [{"id" "a" "title" nil "turn_count" 0 "modified_at" 1}
+             {"id" "empty" "title" nil "turn_count" 0 "modified_at" 2}
+             {"id" "b" "title" "Current" "turn_count" 1 "modified_at" 0}]
+
+            picker-rows
+            (fn [db]
+              (#'dlg/navigator-all-rows
+               {:active-session-id "b" :drafts (state/session-drafts db) :sessions sessions}))
+
+            open-rows
+            (picker-rows (draft-db))
+
+            closed-rows
+            (picker-rows (step (draft-db) :close-tab :tab-1))
+
+            titled
+            (#'dlg/navigator-all-rows
+             {:active-session-id "b"
+              :drafts (state/session-drafts (draft-db))
+              :sessions [{"id" "a" "title" "Plan" "turn_count" 3}]})]
+
+        (doseq [rows [open-rows closed-rows]]
+          (expect (= ["a" "b"] (mapv (comp :id :target) rows)))
+          (expect (= ["Unsent first message" "Dirty"] ((juxt :title :status) (first rows))))
+          (expect (= "Idle" (:status (second rows)))))
+        (expect (= ["Plan" "Dirty"] ((juxt :title :status) (first titled))))))
   (it "does not call an untouched or whitespace-only session dirty"
       (let [db (-> (draft-db)
                    (assoc-in [:tab-locals :tab-1 :input] (draft-input "  \n  ")))]

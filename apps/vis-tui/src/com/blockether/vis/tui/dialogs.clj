@@ -7052,12 +7052,31 @@
   [status]
   (str/replace (str/upper-case (str status)) #" X(\d+)$" " x$1"))
 
+(defn- navigator-draft-title
+  "The first line of an unsent `draft`, else its attachment count, else nil."
+  [draft]
+  (let [line
+        (some-> (input/input->text (:input draft))
+                str/split-lines
+                first
+                str/trim
+                not-empty)
+
+        n
+        (count (:attachments draft))]
+
+    (or line (when (pos? n) (str n " unsent attachment" (when (not= 1 n) "s"))))))
+
 (defn- navigator-session-row
   "Normalize a session row with explicit project and group names.
-   Group metadata never determines the status or timestamp ink."
-  [active-session-id groups session]
+   Group metadata never determines the status or timestamp ink. `drafts` maps a
+   session id to this terminal's unsent composer work, as the sidebar shows it."
+  [active-session-id groups drafts session]
   (let [id
         (get session "id")
+
+        draft
+        (get drafts (str id))
 
         active?
         (= (str id)
@@ -7107,7 +7126,8 @@
      :awaiting-input? awaiting-input?
      :unread? (pos? unread)
      :stopped? stopped?
-     :title (session-title session)
+     :title (or (when (untitled-session-title? (get session "title")) (navigator-draft-title draft))
+                (session-title session))
      :session (short-session-id session)
      :group (or (not-empty (get session "project_name"))
                 (not-empty (str (get session "project_id")))
@@ -7124,6 +7144,7 @@
                    live? "Live"
                    stopped? "Stopped"
                    (pos? unread) (if (> unread 1) (str "New x" unread) "New")
+                   draft "Dirty"
                    :else "Idle")
      :created (navigator-stamp (get session "created_at"))
      :modified (navigator-stamp (or (get session "modified_at") (get session "created_at")))
@@ -7266,18 +7287,23 @@
       (boolean (when-let [id (and seed-loading? (:id selection))]
                  (not-any? #(= (str id) (str (:id (:target %)))) rows)))))
 
+(defn- navigator-hidden-session?
+  "Is `s` an empty untitled shell? A session holding an unsent draft is never one."
+  [drafts s]
+  (and (empty-untitled-session? s) (not (contains? drafts (str (get s "id"))))))
+
 (defn- navigator-all-rows
   "Build one newest-first list across projects, groups and stars. Empty untitled
-   shells stay hidden by default, but the current session always survives."
-  [{:keys [sessions active-session-id show-empty-untitled? groups]}]
+   shells stay hidden by default, but the current session and drafts always survive."
+  [{:keys [sessions active-session-id show-empty-untitled? groups drafts]}]
   (->> sessions
        (remove #(and (not show-empty-untitled?)
-                     (empty-untitled-session? %)
+                     (navigator-hidden-session? drafts %)
                      (not= (str (get % "id"))
                            (some-> active-session-id
                                    str))))
        (sort-by session-dialog-sort-key)
-       (mapv #(navigator-session-row active-session-id groups %))))
+       (mapv #(navigator-session-row active-session-id groups drafts %))))
 
 (def ^:private navigator-page-slack
   "How near the end of the rows it holds the reader may come before the picker asks the
@@ -8511,7 +8537,8 @@
                   (p/set-colors! g t/dialog-hint t/dialog-bg)
                   (p/put-str! g body-x (inc (long content-top)) (ellipsize page-status body-w)))
                 (if (zero? total)
-                  (let [hidden-count (count (filter empty-untitled-session? @loaded-sessions))
+                  (let [hidden-count (count (filter #(navigator-hidden-session? (:drafts opts) %)
+                                                    @loaded-sessions))
                         message (cond page-status page-status
                                       (not (str/blank? @query)) "No matches"
                                       (and (pos? hidden-count) (not @show-empty-untitled?))
