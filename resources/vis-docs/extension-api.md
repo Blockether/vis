@@ -984,10 +984,23 @@ vis.Extension(
   ids.
 - `label` holds at most 40 characters and shows in the key menu and the command palette.
 - `group` holds at most 24 characters and selects the group of the key. A built-in group name,
-  such as `Session` or `Model`, puts the key in that group. Case does not matter. Any other name
-  puts the key in `Extensions`. Without `group`, a `command` binding uses `Extensions`.
+  such as `Session` or `Model`, puts the key in that group. Case does not matter. Without `group`,
+  a `command` binding uses `Extensions`.
+- Any other `group` name makes a group of your own under Ctrl+X e. Its key is the first free
+  letter of its name. Names that differ only in case share one group.
 
-In the example, Ctrl+X e R starts a release and Ctrl+X s N starts a new session. The terminal
+In the example, Ctrl+X e R starts a release and Ctrl+X s N starts a new session.
+
+```python
+keybindings=[
+    vis.Keybinding("s", command="/release start", label="Start", group="Release"),
+    vis.Keybinding("p", command="/release publish", label="Publish", group="Release"),
+]
+```
+
+Here Ctrl+X e r opens the `Release` group, and then s starts the release. A key that you bind
+directly under Ctrl+X e keeps its letter. A group of your own then takes the next free letter of
+its name. The terminal
 refuses a binding whose key is taken in its group or reserved, and shows one notice. An
 [`Agent` extension](python-sdk.md) of your own program cannot declare key bindings.
 `session.keybindings()` returns the bindings of a session, as [Sessions

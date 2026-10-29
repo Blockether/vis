@@ -2812,9 +2812,10 @@ class Keybinding:
             verb moves to `key`.
         label: The key menu and palette label. Required with `command`.
         group: The C-x group of the key. A built-in group name, such as `Session`,
-            places the key there, in any case. Any other name, and a command
-            binding without a group, use `Extensions`. An action binding without
-            a group stays in the group of its verb.
+            places the key there, in any case. A command binding without a group
+            uses `Extensions` (C-x e). Any other name makes a group of its own
+            under C-x e, opened by the first free letter of the name. An action
+            binding without a group stays in the group of its verb.
 
     Give exactly one of `command` and `action`.
 

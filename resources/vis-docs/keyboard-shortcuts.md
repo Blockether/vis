@@ -82,7 +82,8 @@ Press **Esc** or **Ctrl+G** to close the group list without a command.
 
 An extension can add its own keys, or move a command of this page to another key. The keys that
 extensions add appear under **Ctrl+X e**, and in the help of **Ctrl+X h**. An extension can also put
-a key in a group of the table above. Such a key runs its command as if you typed it and pressed
+a key in a group of the table above, or make a group of its own under **Ctrl+X e**. For example,
+**Ctrl+X e r** can open a `Release` group, and its next key runs one of its commands. Such a key runs its command as if you typed it and pressed
 Enter. Your draft stays as it is.
 
 - A key that an extension moves replaces the key on this page. The old key then does nothing, and

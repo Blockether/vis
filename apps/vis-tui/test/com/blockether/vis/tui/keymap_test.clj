@@ -205,13 +205,50 @@
           (expect (= [{:key "r" :label "Review"}]
                      (mapv #(select-keys % [:key :label])
                            (mapcat :items (:groups (keymap/prefix-spec {} :extensions)))))))))
-  (it "a group that names a built-in group places the key there; another name, in Extensions"
+  (it "a group that names a built-in group places the key there, in any case"
+      (with-extension-bindings [{:key "x" :command "/x" :label "X" :group "session"}
+                                {:key "y" :command "/y" :label "Y" :group "EXTENSIONS"}]
+                               (fn []
+                                 (expect (= "/x" (get-in (press \s \x) [:keybinding :command])))
+                                 (expect (= "/y" (get-in (press \e \y) [:keybinding :command]))))))
+  (it "any other group name makes a subgroup of C-x e with the first letter of its name"
       (with-extension-bindings
-        [{:key "x" :command "/x" :label "X" :group "session"}
-         {:key "y" :command "/y" :label "Y" :group "Acme"}]
+        [{:key "s" :command "/release start" :label "Start" :group "Release" :extension "acme"}
+         {:key "p" :command "/release publish" :label "Publish" :group "release"}]
         (fn []
-          (expect (= "/x" (:command (keymap/prefix-command-for :session \x))))
-          (expect (= "/y" (:command (keymap/prefix-command-for :extensions \y)))))))
+          (let [opened (press \e \r)]
+            (expect (= :continue (:action opened)))
+            (expect (= [:extensions "release"] (get-in opened [:state :prefix-group]))))
+          (expect (= "/release start" (get-in (press \e \r \s) [:keybinding :command])))
+          (expect (= "/release publish" (get-in (press \e \r \p) [:keybinding :command]))
+                  "names that differ only in case share one subgroup")
+          (expect (= "C-x e r s"
+                     (keymap/label-for (:action (keymap/prefix-command-for [:extensions "release"]
+                                                                           \s)))))
+          (expect (contains? (ids {} nil) :extensions) "a subgroup alone shows C-x e")
+          (expect (= [{:key "r" :label "Release…"}]
+                     (mapv #(select-keys % [:key :label])
+                           (mapcat :items (:groups (keymap/prefix-spec {} :extensions))))))
+          (let [spec (keymap/prefix-spec {} [:extensions "release"])]
+            (expect (nil? (tr/check spec)))
+            (expect (= "C-x e r — Release" (:title spec)))
+            (expect (= ["s" "p"] (mapv :key (mapcat :items (:groups spec)))))))))
+  (it "a subgroup takes the next free letter of its name; a direct C-x e key wins"
+      (with-extension-bindings
+        [{:key "r" :command "/review" :label "Review"}
+         {:key "a" :command "/rel" :label "Rel" :group "Release"}
+         {:key "a" :command "/rep" :label "Rep" :group "Reports"}]
+        (fn []
+          (expect (= "/review" (get-in (press \e \r) [:keybinding :command])))
+          (expect (= "/rel" (get-in (press \e \e \a) [:keybinding :command])))
+          (expect (= "/rep" (get-in (press \e \p \a) [:keybinding :command])))
+          (expect (not (str/includes? (keymap/free-prefix-letters) "e"))
+                  "a subgroup key is not free"))))
+  (it "an action binding with an extension group moves the verb into that subgroup"
+      (with-extension-bindings [{:key "n" :action "new-session" :group "Flow"}]
+                               (fn []
+                                 (expect (= :new-session (:action (press \e \f \n))))
+                                 (expect (= "C-x e f n" (keymap/label-for :new-session))))))
   (it "C-x e and the bound key resolve to the command, as typed"
       (with-extension-bindings [{:key "E" :command "/review now" :label "Review" :extension "acme"}]
                                (fn []

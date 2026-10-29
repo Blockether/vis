@@ -1028,6 +1028,12 @@
       ;; An extension key binding that runs a slash command.
       (:command cmd) {:action :run-keybinding :keybinding cmd :state state}
       cmd {:action (:action cmd) :state state}
+      ;; C-x e <key> → an Extensions subgroup: the NEXT key picks one of its commands.
+      (and (= keymap/default-binding-group group) (keymap/subgroup-for c))
+      {:action :continue
+       :state (assoc state
+                :prefix :cx
+                :prefix-group (keymap/subgroup-for c))}
       ;; C-x q 1-9 → send that queue row at the next step, or take its mark back.
       (and (= :queue group) (keymap/queue-row-index c))
       {:action :queue-send-nth :queue-index (keymap/queue-row-index c) :state state}
@@ -1051,6 +1057,7 @@
      • <key> of an extension command binding → `:run-keybinding` with
        `:keybinding`, the merged command (`keymap/merge-keybindings`).
      • <key> of a vis verb → the verb.
+     • C-x e <key> of an Extensions subgroup → keeps the prefix and opens it.
      • C-x q 1-9 → toggle that queue row for the next step.
      • C-x s Backspace or Delete → delete the current session.
    Anything else, C-g included, aborts the prefix (no-op), so a stray C-x never

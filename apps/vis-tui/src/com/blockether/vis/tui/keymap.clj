@@ -91,7 +91,8 @@
 (def ^:private group-by-id (into {} (map (juxt :id identity)) prefix-groups))
 
 (def default-binding-group
-  "The C-x group of an extension binding whose `:group` names no built-in group."
+  "The C-x group of an extension binding without `:group`. A `:group` that names no
+   built-in group makes a subgroup of it, such as `[:extensions \"release\"]`."
   :extensions)
 
 (def prefix-commands
@@ -160,16 +161,19 @@
 (def ^:private binding-by-action (into {} (map (juxt :action identity)) bindings))
 
 (defn- index-commands
-  "The lookup maps of the merged C-x commands `commands`."
-  [commands refused]
+  "The lookup maps of the merged C-x commands `commands` and the extension
+   `subgroups`."
+  [commands refused subgroups]
   {:commands commands
    :refused refused
+   :subgroups subgroups
+   :subgroup-by-id (into {} (map (juxt :id identity)) subgroups)
    :by-key (into {} (keep #(when (:key %) [[(:group %) (:key %)] %])) commands)
    :by-action (into {} (map (juxt :action identity)) commands)})
 
 (defonce ^:private merged-keymap
   ;; The C-x commands after the key bindings of the session's extensions.
-  (atom (index-commands prefix-commands [])))
+  (atom (index-commands prefix-commands [] [])))
 
 (def reserved-prefix-keys
   "Keys inside a C-x group that no extension can bind: the abort key and the queue
@@ -191,12 +195,20 @@
 
 (defn- binding-group
   "The C-x group of binding `b`. A `:group` that names a built-in group places the
-   key there; any other name places it in Extensions. Without `:group`, the key
-   stays in `fallback`."
+   key there. Any other name places it in an Extensions subgroup; names that differ
+   only in case share one. Without `:group`, the key stays in `fallback`."
   [b fallback]
-  (if (str/blank? (str (:group b)))
-    (or fallback default-binding-group)
-    (or (named-group (:group b)) default-binding-group)))
+  (let [title (str/trim (str (:group b)))]
+    (cond (str/blank? title) (or fallback default-binding-group)
+          (named-group title) (named-group title)
+          :else [default-binding-group (str/lower-case title)])))
+
+(defn- with-group
+  "`cmd` placed in `group`. A subgroup also keeps the title that `b` gives it."
+  [cmd group b]
+  (cond-> (assoc cmd :group group)
+    (vector? group)
+    (assoc :group-title (str/trim (str (:group b))))))
 
 (defn- refuse [b reason] {:binding b :reason reason})
 
@@ -230,10 +242,8 @@
                   (-> acc
                       (assoc :commands (update commands
                                                idx
-                                               #(cond-> (assoc %
-                                                          :key c
-                                                          :group group) (:label b) (assoc :label
-                                                                                     (:label b)))))
+                                               #(cond-> (with-group (assoc % :key c) group b)
+                                                  (:label b) (assoc :label (:label b)))))
                       (update :claimed conj [group c])
                       (update :moved conj verb))))))
 
@@ -258,12 +268,56 @@
           :else (update acc
                         :commands
                         conj
-                        {:action (keyword "keybinding" (str (name group) "-" c))
-                         :key c
-                         :label (or (not-empty (str (:label b))) command)
-                         :group group
-                         :command command
-                         :extension (:extension b)}))))
+                        (with-group {:action (keyword "keybinding"
+                                                      (str/join "-" (concat (flatten [group]) [c])))
+                                     :key c
+                                     :label (or (not-empty (str (:label b))) command)
+                                     :command command
+                                     :extension (:extension b)}
+                                    group
+                                    b)))))
+
+(def ^:private key-letters
+  "The letters that a key can use, lower case first."
+  (concat (map char (range (int \a) (inc (int \z)))) (map char (range (int \A) (inc (int \Z))))))
+
+(defn- subgroup-key
+  "The key of the subgroup `title`: its first letter that is not `taken`, else the
+   first free letter, or nil."
+  [title taken]
+  (some #(when-not (or (taken %) (reserved-prefix-keys %)) %)
+        (concat (filter #(Character/isLetter (char %)) (str/lower-case title)) key-letters)))
+
+(defn- assign-subgroups
+  "Phase 3 of the merge: give each Extensions subgroup a key, in the order that its
+   first binding comes. The direct C-x e keys claim their keys first. A subgroup
+   without a free key keeps its commands for the palette only."
+  [{:keys [commands] :as acc}]
+  (let [direct
+        (set (keep #(when (= default-binding-group (:group %)) (:key %)) commands))
+
+        groups
+        (reduce (fn [gs {:keys [group group-title]}]
+                  (if (or (not (vector? group)) (some #(= group (:id %)) gs))
+                    gs
+                    (conj gs
+                          {:id group
+                           :title group-title
+                           :key (subgroup-key group-title (into direct (keep :key) gs))})))
+                []
+                commands)
+
+        keyless
+        (set (keep #(when-not (:key %) (:id %)) groups))]
+
+    (assoc acc
+      :subgroups (filterv :key groups)
+      :commands (mapv #(cond-> % (keyless (:group %)) (dissoc :key)) commands)
+      :refused (into (:refused acc)
+                     (keep #(when (keyless (:group %))
+                              (refuse (select-keys % [:key :label :command :extension])
+                                      "the Extensions group has no free key")))
+                     commands))))
 
 (defn merge-keybindings
   "PURE: the C-x commands after extension `bindings` (maps with `:key`, `:command`
@@ -272,8 +326,9 @@
    First every `:action` binding moves its built-in verb to its key, in the verb's
    own group unless `:group` names another one. A built-in verb that had that key
    keeps only the palette. Then every `:command` binding takes a free key in its
-   group, Extensions by default. A reserved, taken or malformed binding is refused.
-   Answers `{:commands [...] :refused [{:binding b :reason text}]}`."
+   group, Extensions by default. Last, each Extensions subgroup gets a key
+   (`assign-subgroups`). A reserved, taken or malformed binding is refused.
+   Answers `{:commands [...] :refused [{:binding b :reason text}] :subgroups [...]}`."
   [bindings]
   (let [moved
         (reduce move-verb
@@ -283,13 +338,13 @@
         added
         (reduce add-command moved (remove :action bindings))]
 
-    (select-keys added [:commands :refused])))
+    (select-keys (assign-subgroups added) [:commands :refused :subgroups])))
 
 (defn set-keybindings!
   "Use extension `bindings` for C-x from now on. Answers the refused bindings."
   [bindings]
-  (let [{:keys [commands refused]} (merge-keybindings bindings)]
-    (reset! merged-keymap (index-commands commands refused))
+  (let [{:keys [commands refused subgroups]} (merge-keybindings bindings)]
+    (reset! merged-keymap (index-commands commands refused subgroups))
     refused))
 
 (defn refused-keybindings
@@ -307,11 +362,10 @@
    default), as one string: lower case first, then upper case."
   ([] (free-prefix-letters default-binding-group))
   ([group]
-   (let [taken (set (keep #(when (= group (:group %)) (:key %)) (current-prefix-commands)))]
-     (apply str
-       (remove #(or (taken %) (reserved-prefix-keys %))
-         (concat (map char (range (int \a) (inc (int \z))))
-                 (map char (range (int \A) (inc (int \Z))))))))))
+   (let [taken (cond-> (set (keep #(when (= group (:group %)) (:key %)) (current-prefix-commands)))
+                 (= default-binding-group group)
+                 (into (map :key) (:subgroups @merged-keymap)))]
+     (apply str (remove #(or (taken %) (reserved-prefix-keys %)) key-letters)))))
 
 (defn action-for
   "The action bound to a DIRECT Ctrl + `ch` chord, or nil — always nil now (verbs
@@ -340,16 +394,31 @@
   "The id of the C-x group that `ch` opens, or nil. A group without a command, such
    as Extensions with no extension binding, opens nothing."
   [ch]
-  (let [live (set (keep :group (current-prefix-commands)))]
+  (let [live (set (keep #(let [g (:group %)] (if (vector? g) (first g) g))
+                        (current-prefix-commands)))]
     (exact-or-lower #(some (fn [g]
                              (when (and (= % (:key g)) (live (:id g))) (:id g)))
                            prefix-groups)
                     ch)))
 
-(defn group-chord
-  "The chord that opens C-x `group`, such as `C-x s`."
+(defn subgroup-for
+  "The id of the Extensions subgroup that `ch` opens after C-x e, or nil."
+  [ch]
+  (let [subgroups (:subgroups @merged-keymap)]
+    (exact-or-lower #(some (fn [g]
+                             (when (= % (:key g)) (:id g)))
+                           subgroups)
+                    ch)))
+
+(defn- group-info
+  "The `{:id :key :title}` of `group`: a built-in group or an Extensions subgroup."
   [group]
-  (str "C-x " (:key (group-by-id group))))
+  (if (vector? group) (get-in @merged-keymap [:subgroup-by-id group]) (group-by-id group)))
+
+(defn group-chord
+  "The chord that opens C-x `group`, such as `C-x s`, or `C-x e r` for a subgroup."
+  [group]
+  (str (if (vector? group) (group-chord (first group)) "C-x") " " (:key (group-info group))))
 
 (defn queue-row-index
   "The 1-based queue row that C-x q followed by `ch` toggles for the next step, or
@@ -542,11 +611,22 @@
   [{:keys [action key label]}]
   {:key (str key) :type :action :id action :label label})
 
+(defn- visible-subgroups
+  "The Extensions subgroups that have a command to show in `db`."
+  [db]
+  (filterv #(seq (available-prefix-commands db (:id %))) (:subgroups @merged-keymap)))
+
+(defn- group-visible?
+  "Does C-x `group` have a row to show in `db`?"
+  [db group]
+  (boolean (or (seq (available-prefix-commands db group))
+               (and (= default-binding-group group) (seq (visible-subgroups db))))))
+
 (defn prefix-spec
   "PURE: the `transient/run!` spec of a C-x band in `db`. Without `group`, the top
    band lists the groups that have a verb to show, then the palette and the
    top-level verbs. With `group`, the band lists the verbs of that group. Queue also
-   lists its row digits as one `1` row.
+   lists its row digits as one `1` row, and Extensions also lists its subgroups.
 
    Rows are display-only: the band paints them and hands the raw keystroke back
    to `input/resolve-prefix-key`, so the label and the key can never drift from
@@ -559,7 +639,7 @@
       (into []
             (keep
               (fn [{:keys [id key title]}]
-                (when (seq (available-prefix-commands db id))
+                (when (group-visible? db id)
                   {:key (str key) :type :action :id id :label (str (str/lower-case title) "…")})))
             prefix-groups)}
      {:title "Commands"
@@ -569,10 +649,14 @@
         (map band-row)
         (available-prefix-commands db nil))}]})
   ([db group]
-   (let [{:keys [title]} (group-by-id group)]
+   (let [{:keys [title]} (group-info group)]
      {:title (str (group-chord group) " — " title)
       :groups [{:title title
-                :items
-                (cond-> (mapv band-row (available-prefix-commands db group))
-                  (= group :queue)
-                  (conj {:key "1" :type :action :id :queue-send-nth :label "send row 1-9"}))}]})))
+                :items (cond-> (mapv band-row (available-prefix-commands db group))
+                         (= group :queue)
+                         (conj {:key "1" :type :action :id :queue-send-nth :label "send row 1-9"})
+
+                         (= group default-binding-group)
+                         (into (map (fn [{:keys [id key title]}]
+                                      {:key (str key) :type :action :id id :label (str title "…")}))
+                               (visible-subgroups db)))}]})))
