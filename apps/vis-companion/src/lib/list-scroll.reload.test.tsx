@@ -85,7 +85,11 @@ describe('the sessions list across a reload', () => {
     const { getByTestId, rerender, unmount } = render(<List />);
     const list = getByTestId('list');
     scrolledToRow(list, 900);
+    vi.useFakeTimers();
     fireEvent.scroll(list);
+    // The reader stops the list before tapping the row that covers it.
+    vi.advanceTimersByTime(1000);
+    vi.useRealTimers();
 
     rerender(<List isVisible={false} />);
     list.scrollTop = 0;

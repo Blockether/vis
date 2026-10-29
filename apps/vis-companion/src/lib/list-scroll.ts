@@ -40,6 +40,11 @@ const AT_TOP_PX = 2;
 
 const PARKED_KEY = 'vis.listScroll';
 
+// A fling sends one scroll event in each frame. A search for the top row in each one
+// forced a layout and a query over every row: 83% of the script time of a list scroll
+// on a 4x slower CPU. The pixel offset costs nothing, so the row waits for this rest.
+const ANCHOR_REST_MS = 150;
+
 function reviveMark(raw: unknown): ListScrollMark | null {
   if (!raw || typeof raw !== 'object') return null;
   const row = raw as { top?: unknown; anchor?: unknown };
@@ -150,9 +155,10 @@ export function rowOffset(viewport: HTMLElement | null, id: string): number | nu
 /**
  * Keep the list's last visible place across screen changes and reloads.
  *
- * A scroll event records the position without a storage write. When the list
- * goes behind another screen, the browser may reset its hidden scroll box, so
- * park that last visible reading position rather than measuring the hidden DOM.
+ * A scroll event records the pixel offset without a storage write. The row under
+ * the top edge is found once, when the list rests. When the list goes behind
+ * another screen, the browser may reset its hidden scroll box, so park that last
+ * visible reading position rather than measuring the hidden DOM.
  * Pagehide and backgrounding also park the live position for a reload; an
  * unmount captures it only while the list was still visible.
  *
@@ -188,8 +194,19 @@ export function useListScrollPark(
       lastVisible.current = currentMark();
       rememberListScroll(lastVisible.current);
     };
+    let rest: number | null = null;
+    const onRest = () => {
+      rest = null;
+      // A list that went behind a screen in the meantime has only hidden rows to measure.
+      if (!visible.current || !element.isConnected) return;
+      if (element.checkVisibility?.({ visibilityProperty: true }) === false) return;
+      lastVisible.current = currentMark();
+    };
     const onScroll = () => {
-      if (visible.current) lastVisible.current = currentMark();
+      if (!visible.current) return;
+      lastVisible.current = markListScroll(element, null);
+      if (rest !== null) window.clearTimeout(rest);
+      rest = window.setTimeout(onRest, ANCHOR_REST_MS);
     };
     const abandon = () => {
       if (!visible.current) return;
@@ -211,6 +228,7 @@ export function useListScrollPark(
       element.removeEventListener('touchstart', abandon);
       window.removeEventListener('pagehide', onHide);
       document.removeEventListener('visibilitychange', onVisibility);
+      if (rest !== null) window.clearTimeout(rest);
       // A layout cleanup still runs against the live DOM when the list unmounts.
       capture();
     };

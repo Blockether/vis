@@ -60,13 +60,17 @@ afterEach(() => forgetListScroll());
 // Regression, user report: scrolling with every group expanded slowed down as the reader
 // moved down the list. Each scroll measured every preceding session to remember its anchor.
 describe('scrolling a long expanded sessions list', () => {
+  afterEach(() => vi.useRealTimers());
+
   it('finds the row near the end without measuring every preceding session', () => {
+    vi.useFakeTimers();
     const { getByTestId, rerender } = render(<List />);
     const list = getByTestId('list');
     const { measured, starts } = layout(list);
     list.scrollTop = starts[960] + 10;
 
     fireEvent.scroll(list);
+    vi.advanceTimersByTime(1000);
 
     expect(measured.mock.calls.length).toBeLessThanOrEqual(11);
     rerender(<List isVisible={false} />);
@@ -74,6 +78,40 @@ describe('scrolling a long expanded sessions list', () => {
       top: starts[960] + 10,
       anchor: { id: 's960', offset: -10 },
     });
+  });
+
+  // Regression, user report: a fast scroll of the web session list left white patches
+  // under load. Each frame of a fling searched every row for the anchor.
+  it('measures no row while a fling moves the list, and searches once when it rests', () => {
+    vi.useFakeTimers();
+    const { getByTestId } = render(<List />);
+    const list = getByTestId('list');
+    const { measured, starts } = layout(list);
+
+    for (let frame = 0; frame < 60; frame += 1) {
+      list.scrollTop = starts[16 * frame] + 10;
+      fireEvent.scroll(list);
+      vi.advanceTimersByTime(16);
+    }
+
+    expect(measured).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    expect(measured.mock.calls.length).toBeLessThanOrEqual(11);
+  });
+
+  it('parks the exact pixel offset when the list hides before it rests', () => {
+    vi.useFakeTimers();
+    const { getByTestId, rerender } = render(<List />);
+    const list = getByTestId('list');
+    const { measured, starts } = layout(list);
+    list.scrollTop = starts[500] + 10;
+
+    fireEvent.scroll(list);
+    rerender(<List isVisible={false} />);
+    vi.advanceTimersByTime(1000);
+
+    expect(parkedListScroll()).toEqual({ top: starts[500] + 10, anchor: null });
+    expect(measured).not.toHaveBeenCalled();
   });
 
   it('does not measure rows when scrolling back to the top', () => {
