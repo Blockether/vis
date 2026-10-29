@@ -1170,6 +1170,20 @@
             (+ (long start) (long row))))
         (rseq messages)))
 
+(defn- first-row-at
+  "Index of the first `[row key]` in sorted `rows` whose row is at least `target`."
+  ^long [rows ^long target]
+  (loop [lo
+         0
+
+         hi
+         (count rows)]
+
+    (if (< lo hi)
+      (let [mid (quot (+ lo hi) 2)]
+        (if (< (long (nth (nth rows mid) 0)) target) (recur (inc mid) hi) (recur lo mid)))
+      lo)))
+
 (defn- anchor-rows
   "Keep a visible transcript line fixed through regrouping and live-to-retained transitions."
   [result previous scroll inner-h]
@@ -1200,15 +1214,22 @@
     (assoc result
       :eff-scroll corrected
       :visible (mapv #(update % :top + shift) (:visible result))
-      ;; Only the rows in the viewport become anchor maps.
-      :row-anchors (into []
-                         (mapcat (fn [{:keys [start anchors]}]
-                                   (keep (fn [[i key]]
-                                           (let [row (+ (long start) (long i))]
-                                             (when (and (<= (long corrected) row) (< row bottom))
-                                               {:key key :row row})))
-                                         (:rows anchors))))
-                         messages))))
+      ;; Only the rows in the viewport become anchor maps. A binary search finds
+      ;; them, so a frame does not walk every row of a large bubble.
+      :row-anchors
+      (into []
+            (mapcat (fn [{:keys [start anchors]}]
+                      (let [rows
+                            (:rows anchors)
+
+                            start
+                            (long start)]
+
+                        (eduction (map (fn [[i key]]
+                                         {:key key :row (+ start (long i))}))
+                                  (take-while #(< (long (:row %)) bottom))
+                                  (subvec rows (first-row-at rows (- (long corrected) start)))))))
+            messages))))
 
 (defn layout
   "Plan a paint of `messages` into a vertical viewport of `inner-h`

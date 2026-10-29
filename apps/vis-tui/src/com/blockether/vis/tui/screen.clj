@@ -58,6 +58,7 @@
            [com.googlecode.lanterna.terminal.html HtmlMedia HtmlMedia$Kind HtmlTerminal]
            [java.io PrintWriter StringWriter]
            [java.nio.charset Charset]
+           [java.util IdentityHashMap]
            [java.util.concurrent TimeUnit]
            [java.util.concurrent.locks ReentrantLock]
            [sun.misc Signal SignalHandler]))
@@ -1744,14 +1745,38 @@
   [message content-w]
   (or (:prewrapped-lines message) (render/wrap-text (or (:text message) "") content-w)))
 
-(defn- selectable-line-visible-text
-  "Visible on-screen text of a transcript row, with structural markers and any
-   tool-output indent stripped, so its width matches what the wrap step saw."
+(defn- selectable-line-visible-text*
   [line]
   (let [visible (selection/clean-copied-text line)]
     (if (and (output-indented-row? line) (str/starts-with? visible selection-output-indent))
       (subs visible (count selection-output-indent))
       visible)))
+
+;; Identity memo for `selectable-line-visible-text*`. Each frame cleans every row in
+;; the viewport with several regular expressions. A bubble keeps its row strings, so
+;; a scroll tick cleans only the rows that are new. Cleared on overflow.
+(defonce ^:private ^IdentityHashMap selectable-text-memo (IdentityHashMap. 1024))
+
+(defn- selectable-line-visible-text
+  "Visible on-screen text of a transcript row, with structural markers and any
+   tool-output indent stripped, so its width matches what the wrap step saw."
+  [line]
+  (if (string? line)
+    (or (locking selectable-text-memo (.get ^IdentityHashMap selectable-text-memo line))
+        (let [visible (selectable-line-visible-text* line)]
+          (locking selectable-text-memo
+            (when (> (.size ^IdentityHashMap selectable-text-memo) 16384)
+              (.clear ^IdentityHashMap selectable-text-memo))
+            (.put ^IdentityHashMap selectable-text-memo line visible))
+          visible))
+    (selectable-line-visible-text* line)))
+
+(defn- viewport-indexes
+  "Indexes of a bubble's rows that fall in `[top-limit, bottom-limit)`.
+   `content-top` is the screen row of index 0 and `n` is the row count."
+  [content-top top-limit bottom-limit n]
+  (range (max 0 (- (long top-limit) (long content-top)))
+         (min (long n) (max 0 (- (long bottom-limit) (long content-top))))))
 
 (defn- line-first-token-width
   "Display width of the first whitespace-delimited token of `s`."
@@ -1833,10 +1858,16 @@
 
                     content-top
                     (bubble-content-top message top-limit top)]
-              [idx line]
-              (map-indexed vector (projected-content-lines message content-w))
+              :let [lines
+                    (vec (projected-content-lines message content-w))]
+              ;; Walk only the rows in the viewport, not the whole bubble.
+              idx
+              (viewport-indexes content-top top-limit bottom-limit (count lines))
 
-              :let [row
+              :let [line
+                    (nth lines idx)
+
+                    row
                     (+ content-top (long idx))]
               :when (and (<= top-limit row) (< row bottom-limit) (copyable-transcript-line? line))]
 
@@ -2131,8 +2162,11 @@
                     content-top
                     (bubble-content-top projected top-limit top)]
               :when (sequential? line-meta)
+              :let [line-meta
+                    (vec line-meta)]
+              ;; Walk only the rows in the viewport, not the whole bubble.
               i
-              (range (count line-meta))
+              (viewport-indexes content-top top-limit bottom-limit (count line-meta))
 
               :let [m
                     (nth line-meta i nil)

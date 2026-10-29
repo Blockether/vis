@@ -1558,6 +1558,41 @@ therapy line 2"
                    4
                    6
                    20))))
+  ;; Regression (session 6b6f8d70): each scroll frame cleaned every viewport row of a
+  ;; large Activity bubble again with several regular expressions.
+  (it "cleans each row of a large bubble once while it scrolls"
+      (let [layout
+            {:visible [{:top -1000
+                        :height 2002
+                        :projected {:role :assistant
+                                    :prewrapped-lines (mapv #(str "row " %) (range 2000))}}]}
+
+            cleans
+            (atom 0)
+
+            real-clean
+            selection/clean-copied-text
+
+            ranges
+            (fn []
+              (with-redefs [selection/clean-copied-text (fn [s]
+                                                          (swap! cleans inc)
+                                                          (real-clean s))]
+                (bubble-selectable-ranges layout 4 6 20)))
+
+            first-frame
+            (ranges)
+
+            first-cleans
+            @cleans
+
+            next-frame
+            (ranges)]
+
+        (expect (= (range 4 10) (map :row first-frame)))
+        (expect (= 6 first-cleans))
+        (expect (= first-frame next-frame))
+        (expect (= first-cleans @cleans) (str (- @cleans first-cleans) " rows cleaned again"))))
   (it "sorts sessions by real turns, latest modified time, then turn count by default"
       (let [old-with-turns
             {"id" :old
