@@ -7719,11 +7719,14 @@ h = 8"
           (expect (= (and root-open? failure-open?) (str/includes? text "Complete failure")))
           (expect (= (if root-open? ["sections:session:section:0" "sections:session:section:1"] [])
                      (mapv #(get-in % [:meta :node-id]) section-heads)))
+          ;; One blank row parts the row's own body from its sections; the sections
+          ;; then follow one another as one list.
           (when root-open?
-            (doseq [heading ["Turn details" "Failure details" "Empty details"]]
+            (doseq [[heading blank?] [["Turn details" true] ["Failure details" false]
+                                      ["Empty details" false]]]
               (let [index (first (keep-indexed #(when (str/includes? (:line %2) heading) %1)
                                                entries))]
-                (expect (= p/MARKER_ACTIVITY (:line (get entries (dec index))))))))))))
+                (expect (= blank? (= p/MARKER_ACTIVITY (:line (get entries (dec index)))))))))))))
   (it "does not offer an inert chevron for a summary-only presentation"
       (let [entry (nth (#'render/activity-detail-entries
                         {:node-id "summary"
@@ -7847,7 +7850,41 @@ h = 8"
                 2)]
 
           (expect (str/includes? (:line entry) caption))
-          (expect (str/includes? (:line entry) "42ms"))))))
+          (expect (str/includes? (:line entry) "42ms")))))
+  ;; User report 2026-10-29: a long failing test name ran into the time column, and
+  ;; the cut hid its own case, its open mark and the reason it failed.
+  (it "fits a long section name inside the right inset and keeps its case, mark and reason"
+      (doseq [width [56 80 100]]
+        (let [row {:id "tests"
+                   :state "failed"
+                   :operation "clj.run_tests"
+                   :duration-ms 24000
+                   :presentation
+                   {:headline "Run Clojure tests"
+                    :summary "2 failed, 12 passed in 24.0 s"
+                    :content []
+                    :sections [{:headline (str "Socket paths fit the Unix domain socket limit"
+                                               " › under the 48-byte macOS default TMPDIR"
+                                               " › keeps the readable path while it fits")
+                                :summary
+                                "daemon_test.clj:89 · Expected: (= 102 (utf8-bytes (path name)))"
+                                :content [{:type "code" :text "Actual: 103"}]}]}}
+              head (first (filter #(some-> (get-in % [:meta :node-id])
+                                           (str/includes? ":section:"))
+                                  (#'render/activity-detail-entries
+                                   {:node-id "width"
+                                    :activity-rows [row]
+                                    :activity-expanded?
+                                    (fn [key default]
+                                      (if (contains? #{"#band" "tests"} key) true default))}
+                                   width
+                                   "width")))
+              ;; The row's leading marker is a sentinel, not a painted column.
+              line (subs (strip-sentinels (:line head)) 1)]
+
+          (expect (<= (p/display-width line) (- (long width) 2)))
+          (expect (str/includes? line "while it fits ▸ · daemon_test.clj:89"))
+          (expect (str/ends-with? (get-in head [:meta :operation-label]) "while it fits"))))))
 
 (defdescribe
   live-artifact-receipt-test

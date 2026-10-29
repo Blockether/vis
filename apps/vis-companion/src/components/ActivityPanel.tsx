@@ -824,15 +824,20 @@ function ActivitySectionView({
   const hasContent = section.content.length > 0;
   // Links cannot sit inside the press target, so a linked summary follows it on the line.
   const linkedSummary = Boolean(section.summary) && section.summary_format === 'markdown';
+  // A NESTED TEST NAME ENDS WITH ITS OWN CASE, the only part that tells two failures of
+  // one describe apart. So a long name loses its FRONT: its outer parts go first, as
+  // in the TUI. The isolated text keeps its own order inside the right-to-left cut.
   const label = (
-    <span className="min-w-0 truncate" title={section.headline}>
-      {section.headline}
+    <span className="min-w-0 truncate [direction:rtl]" title={section.headline}>
+      <bdi dir="ltr">{section.headline}</bdi>
     </span>
   );
+  // The summary says where and why the test failed, so it shares the row with the name
+  // by their widths and never shrinks to nothing behind a long name.
   const summary = section.summary && (
     <span
       data-activity-summary
-      className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
+      className="min-w-0 flex-auto truncate font-normal text-dialog-hint"
       title={section.summary}
     >
       {section.summary_format === 'markdown' ? (
@@ -1096,7 +1101,7 @@ function ActivityStep({
             section={section}
             running={running}
             className={
-              index === 0 && !(open && content?.length) ? 'mt-1' : 'mt-[var(--text-ui--line-height)]'
+              index > 0 ? '' : open && content?.length ? 'mt-[var(--text-ui--line-height)]' : 'mt-1'
             }
           />
         ))}

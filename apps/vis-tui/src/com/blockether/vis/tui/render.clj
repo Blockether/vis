@@ -7051,18 +7051,67 @@
                       (if (= "table" (:type block)) (:columns block) index))
                     (map-indexed vector (activity-content-blocks blocks))))))
 
+(def ^:private section-name-floor
+  "Columns that a cut section name keeps before its summary gives way."
+  24)
+
+(defn- ellipsize-front
+  "Fit `s` into `cols` columns by cutting its FRONT, marked with a leading `…`.
+   Whole words drop first. A last word that is still too long keeps its end."
+  ^String [^String s ^long cols]
+  (if (<= (p/display-width s) cols)
+    s
+    (let [words (str/split s #" ")]
+      (or (some (fn [kept]
+                  (let [cut (str "… " (str/join " " kept))]
+                    (when (<= (p/display-width cut) cols) cut)))
+                (take-while seq (iterate rest (rest words))))
+          (loop [tail (str (peek words))]
+            (cond (str/blank? tail) (p/ellipsize "…" cols)
+                  (<= (p/display-width (str "…" tail)) cols) (str "…" tail)
+                  :else (recur (subs tail (.offsetByCodePoints tail 0 1)))))))))
+
+(defn- fit-section-name
+  "Fit a section name into `cols` columns and keep its end. A nested test name ends
+   with its own case, so its outer parts drop first, each cut at its own separator."
+  ^String [^String headline ^long cols]
+  (if (<= (p/display-width headline) cols)
+    headline
+    (let [m
+          (re-matcher #" › " headline)
+
+          joins
+          (loop [found []]
+            (if (.find ^java.util.regex.Matcher m)
+              (recur (conj found (.start ^java.util.regex.Matcher m)))
+              found))]
+
+      (or (some (fn [at]
+                  (let [cut (str "…" (subs headline at))]
+                    (when (<= (p/display-width cut) cols) cut)))
+                joins)
+          (ellipsize-front (if-let [at (peek joins)]
+                             (subs headline (+ (long at) 3))
+                             headline)
+                           cols)))))
+
 (defn- activity-section-entries
   "Show each section as one closed head line; its body opens only on its own press.
-   Sections take the body inset, so they read as part of the opened row."
-  [sections row-id node-id width col session-id running? expanded?]
+   Sections take the body inset, so they read as part of the opened row. A head keeps
+   the right inset of the step rows, and a long name gives way before its mark."
+  [sections row-id node-id width col session-id running? expanded? after-body?]
   (vec
     (mapcat
       (fn [[index section]]
         (let [inset
               (+ (long col) (long code-block-h-pad))
 
+              ;; Step rows keep two columns free at the right edge, by their time.
+              room
+              (max 0 (- (long width) inset 2))
+
               headline
-              (:headline section)
+              (str (:headline section))
 
               summary-entry
               (activity-summary-entry section)
@@ -7085,27 +7134,55 @@
               mark
               (when openable? (if open? " ▾" " ▸"))
 
+              separator
+              (when summary " · ")
+
+              fixed
+              (+ (p/display-width (str mark)) (p/display-width (str separator)))
+
+              summary-w
+              (p/display-width (str summary))
+
+              name-w
+              (p/display-width headline)
+
+              ;; The summary keeps up to half of the row; the name gets the rest.
+              name-room
+              (if (<= (+ name-w fixed summary-w) room)
+                name-w
+                (min (- room fixed)
+                     (max (min name-w (long section-name-floor))
+                          (- room fixed (min summary-w (quot room 2))))))
+
+              name
+              (fit-section-name headline (max 1 name-room))
+
               lead
-              (str (activity-lead inset) headline mark (when summary " · "))
+              (str (activity-lead inset) name mark separator)
 
               prefix
-              (str lead summary)
+              (str lead
+                   (when summary
+                     (p/ellipsize summary (max 0 (- (long width) 2 (p/display-width lead))))))
 
               head
-              {:line (str activity-marker (ellipsize-cols prefix width))
+              {:line (str activity-marker prefix)
                :meta {:session-id (str session-id)
                       :item-id row-id
                       :kind :activity-row
                       :headline-prefix prefix
                       :summary-prefix prefix
-                      :summary-width width
+                      :summary-width (- (long width) 2)
                       :links (activity-summary-links summary-entry (p/display-width lead))
                       :node-id (when openable? (str node-id ":" section-key))
                       :collapsed? (not open?)
                       :operation-col inset
-                      :operation-label headline}}]
+                      :operation-label name}}]
 
-          (concat [{:line activity-marker :meta nil} head]
+          ;; One blank row parts the step's own body from its sections; the sections
+          ;; themselves follow one another as one list.
+          (concat (when (and after-body? (zero? (long index))) [{:line activity-marker :meta nil}])
+                  [head]
                   (when open? (activity-content-entries content width inset session-id running?)))))
       (map-indexed vector sections))))
 
@@ -7832,7 +7909,8 @@
                                                              col
                                                              session-id
                                                              (= :running state)
-                                                             expanded?))
+                                                             expanded?
+                                                             (boolean (seq content))))
 
                                                      (and open? (or (seq touched) (seq diffs)))
                                                      (into (change-entries id touched diffs col))
