@@ -1,16 +1,17 @@
 """Gallery: one card for each proof app. Press a card (or its number) to open it."""
 
-from live_apps import counter, game2048, incident, kanban, todo, ui, wizard
+from live_apps import asteroids, counter, game2048, incident, kanban, todo, ui, wizard
 
 KEY = "gallery"
 TITLE = "Live apps"
 DESCRIPTION = "Open one of the proof apps."
-APPS = (counter, todo, kanban, game2048, incident, wizard)
+APPS = (counter, todo, kanban, game2048, asteroids, incident, wizard)
 LEVEL = {
     "counter": "Simple",
     "todo": "Simple",
     "kanban": "Medium",
     "2048": "Medium",
+    "asteroids": "Complex",
     "incident": "Complex",
     "wizard": "Complex",
 }

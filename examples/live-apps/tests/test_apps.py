@@ -5,6 +5,7 @@ import re
 import pytest
 from live_apps import (
     apps,
+    asteroids,
     counter,
     game2048,
     incident,
@@ -274,6 +275,129 @@ def test_2048_plays_with_keys_wins_and_loses(recorder):
     assert runner.errors == []
 
 
+# -- asteroids -----------------------------------------------------------------
+
+
+def _patches(recorder):
+    return sum(1 for envelope in recorder.ops() if envelope.get("op") == "patch")
+
+
+def _tick(state, times=1):
+    for _ in range(times):
+        state = asteroids.reduce(state, {"type": "tick"})
+    return state
+
+
+def _playing(**changes):
+    """A started game; `ship` keys in `changes` change the ship."""
+    state = asteroids.reduce(
+        asteroids.initial(), {"type": "activate", "node_id": "pause"}
+    )
+    state["ship"] |= changes.pop("ship", {})
+    return state | changes
+
+
+def test_asteroids_a_held_key_sends_one_patch_for_each_tick(recorder):
+    # Each patch is one durable line in the app record and in the session
+    # journal. A repeating key must not add lines: only the tick paints.
+    runner = start(recorder, asteroids)
+    recorder.press("Space")
+    assert runner.state["status"] == "playing"
+    before = _patches(recorder)
+    for _ in range(30):
+        recorder.press("ArrowLeft")
+    assert _patches(recorder) == before
+    runner.dispatch({"type": "tick"})
+    assert _patches(recorder) == before + 1
+    assert runner.state["ship"]["heading"] == asteroids.HEADINGS - asteroids.MAX_TURN
+    assert runner.errors == []
+
+
+def test_asteroids_sends_no_patch_when_it_does_not_play(recorder):
+    # An open app that nobody plays must not grow its record.
+    runner = start(recorder, asteroids)
+    before = _patches(recorder)
+    for _ in range(5):
+        runner.dispatch({"type": "tick"})
+    assert _patches(recorder) == before
+    recorder.press("Space")
+    recorder.press("p")
+    assert runner.state["status"] == "paused"
+    paused = _patches(recorder)
+    for _ in range(5):
+        runner.dispatch({"type": "tick"})
+    assert _patches(recorder) == paused
+    over = _playing(status="over")
+    assert _tick(over) == over
+
+
+def test_asteroids_pauses_itself_after_idle_seconds_without_a_key():
+    # The ship is safe, so no rock ends the game before the idle clock does.
+    state = _playing(ship={"safe": 10**6})
+    limit = round(asteroids.IDLE_SECONDS / asteroids.TICK_SECONDS)
+    state = _tick(state, limit - 2)
+    state = asteroids.reduce(
+        state, {"type": "shortcut", "action": "thrust", "key": "w"}
+    )
+    state = _tick(state, limit - 1)
+    assert state["status"] == "playing"
+    state = _tick(state)
+    assert (state["status"], state["paused_by"]) == ("paused", "idle")
+    status = next(n for n in asteroids.render(state) if n["id"] == "state")
+    assert status["text"].startswith("Paused after")
+
+
+@pytest.mark.parametrize(("size", "left", "points"), [(3, [2, 2], 20), (1, [], 100)])
+def test_asteroids_a_shot_splits_a_rock_and_scores_it(size, left, points):
+    rock = {"x": 30.0, "y": 6.0, "vx": 0.0, "vy": 0.0, "size": size}
+    state = _playing(rocks=[rock], ship={"heading": asteroids.HEADINGS // 4})
+    state = asteroids.reduce(
+        state, {"type": "shortcut", "action": "fire", "key": "Space"}
+    )
+    state = _tick(state, 4)
+    assert sorted(r["size"] for r in state["rocks"]) == left
+    assert state["score"] == points
+    assert state["bullets"] == []
+
+
+def test_asteroids_a_crash_costs_a_life_and_the_last_one_ends_the_game():
+    def crash(state):
+        ship = state["ship"]
+        rock = {"x": ship["x"], "y": ship["y"], "vx": 0.0, "vy": 0.0, "size": 3}
+        return _tick(state | {"rocks": [rock]})
+
+    state = crash(_playing(ship={"safe": 0}))
+    assert (state["ship"], state["lives"]) == (None, asteroids.LIVES - 1)
+    state = _tick(state, asteroids.RESPAWN_TICKS)
+    assert state["ship"]["safe"] > 0
+    state = crash(_playing(lives=1, best=500, ship={"safe": 0}))
+    state = _tick(state, 10)
+    assert state["status"] == "over"
+    state = asteroids.reduce(
+        state, {"type": "shortcut", "action": "fire", "key": "Space"}
+    )
+    assert (state["status"], state["lives"], state["best"]) == ("playing", 3, 500)
+
+
+def test_asteroids_field_fits_the_companion_code_box_in_every_state():
+    # The Companion shows 14 code lines without a scroll bar. Only ASCII keeps
+    # the columns of the terminal and of every web font in line.
+    state = _playing()
+    controls = ["left", "right", "thrust", "fire", "hyper", "thrust", "fire"]
+    for step in range(600):
+        action = controls[step % len(controls)]
+        state = asteroids.reduce(
+            state, {"type": "shortcut", "action": action, "key": "x"}
+        )
+        state = _tick(state)
+        if state["status"] == "over":
+            state = _playing()
+        lines = asteroids.field(state).split("\n")
+        assert len(lines) == asteroids.HEIGHT + 2 == 14
+        assert {len(line) for line in lines} == {asteroids.WIDTH + 2}
+        assert all(line.isascii() for line in lines)
+
+
 # -- incident ------------------------------------------------------------------
 
 
@@ -479,7 +603,7 @@ def test_extension_adds_and_moves_tui_keys(monkeypatch):
 def test_gallery_opens_apps_by_card_and_number(recorder):
     opened = Apps(open_app)
     gallery = opened.open("gallery")
-    assert len(recorder.shortcuts()) == 6
+    assert len(recorder.shortcuts()) == 7
     recorder.activate("open-counter")
     assert "counter" in opened.runners
     assert gallery.state["opened"] == ["counter"]

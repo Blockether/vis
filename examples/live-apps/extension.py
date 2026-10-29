@@ -67,13 +67,13 @@ def run_apps(ctx):
 vis.register_extension(
     vis.Extension(
         name="vis-live-apps",
-        description="Proof apps for live apps: counter, todo, kanban, 2048, incidents and a deploy wizard.",
+        description="Proof apps for live apps: counter, todo, kanban, 2048, asteroids, incidents and a deploy wizard.",
         slash_commands=[
             vis.SlashCommand(
                 "apps",
                 run_apps,
                 doc="Open the live apps gallery or one app.",
-                usage="/apps [counter|todo|kanban|2048|incident|wizard ...]",
+                usage="/apps [counter|todo|kanban|2048|asteroids|incident|wizard ...]",
             )
         ],
         keybindings=[

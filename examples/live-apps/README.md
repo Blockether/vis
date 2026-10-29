@@ -20,6 +20,7 @@ Each app is one pure model in `src/live_apps/`. The same model runs in an extens
 | Todo | `todo` | An input, a selectable table, filters and a refusal of an empty task. Select rows, then press `x` to mark them done. |
 | Kanban | `kanban` | Three columns with a limit on work in progress. Select a card, then press `ArrowRight` or `ArrowLeft` to move it. |
 | 2048 | `2048` | A game board in a table. Play with the arrow keys or with `h`, `j`, `k` and `l`. |
+| Asteroids | `asteroids` | A real-time game in a code node, 10 frames a second. Turn with `ArrowLeft` and `ArrowRight`, thrust with `ArrowUp`, fire with `Space` and jump with `ArrowDown`. The letters `a`, `d`, `w`, `f` and `h` do the same. Press `p` to pause. A phone uses the buttons. |
 | Incident dashboard | `incident` | Live alerts from a background producer, stats, a status, a log and a notes thread. Select an alert and press `a` to acknowledge it. A Send of a note gets a receipt and an answer in the thread. |
 | Deploy wizard | `wizard` | Steps of inputs: select, multiselect, range, password and checkbox, each with a check. The deploy runs in stages. The password value never shows in the view or in the receipt. |
 | Gallery | `gallery` | A card for each app. Activate a card, or press its number key, to open its app. |

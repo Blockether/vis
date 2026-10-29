@@ -3,9 +3,27 @@
 
 def apps():
     """Every app model by its key, in gallery order, the gallery last."""
-    from live_apps import counter, gallery, game2048, incident, kanban, todo, wizard
+    from live_apps import (
+        asteroids,
+        counter,
+        gallery,
+        game2048,
+        incident,
+        kanban,
+        todo,
+        wizard,
+    )
 
     return {
         app.KEY: app
-        for app in (counter, todo, kanban, game2048, incident, wizard, gallery)
+        for app in (
+            counter,
+            todo,
+            kanban,
+            game2048,
+            asteroids,
+            incident,
+            wizard,
+            gallery,
+        )
     }
