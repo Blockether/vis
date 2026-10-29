@@ -1,7 +1,7 @@
 (ns com.blockether.vis.tui.mermaid.charts
-  "Mermaid charts painted with terminal glyphs: bars for pie, xy, radar,
-   sankey and journey charts, a time grid for gantt charts, point plots for
-   quadrant and Wardley charts, a bit grid for packets, and coloured tables for
+  "Mermaid charts painted with terminal glyphs: a half-block disc for pie
+   charts, bars for xy, radar, sankey and journey charts, a time grid for gantt
+   charts, point plots for quadrant and Wardley charts, a bit grid for packets, and coloured tables for
    Venn, Cynefin and event-modeling diagrams. Series take the palette tones,
    so a chart follows the TUI theme."
   (:require [clojure.string :as str]
@@ -45,62 +45,158 @@
                0)]
     (apply str (repeat full \█))))
 
-(defn- bar-rows
-  "Rows of labelled bars: `items` are `{:label :value :tone :note}`."
-  [items ^long width]
-  (let [label-w
-        (min (quot width 3) (long (apply max 1 (map #(c/width (:label %)) items))))
-
-        value-w
-        (long (apply max 1 (map #(c/width (str (:note %))) items)))
-
-        cells
-        (max 4 (- width label-w value-w 3))
-
-        top
-        (apply max 0.0 (map #(double (:value %)) items))]
-
-    (for [{:keys [label value tone note]} items]
-      [[(c/pad-right (c/clip label label-w) label-w) :text] [" " :none] [(bar value top cells) tone]
-       [(str " " note) :chrome]])))
-
 ;; Pie charts
+
+(defn- slice-ends
+  "`[[slice-index end]]` of the slices with a positive share: `end` is the
+   running share of a full turn, so a slice owns the turns below its end."
+  [values]
+  (let [sum (reduce + 0.0 (map #(max 0.0 (double %)) values))]
+    (when (pos? sum)
+      (->> values
+           (map-indexed vector)
+           (reduce (fn [[ends total] [at value]]
+                     (let [total (+ (double total) (/ (max 0.0 (double value)) sum))]
+                       [(if (pos? (double value)) (conj ends [at total]) ends) total]))
+                   [[] 0.0])
+           first))))
+
+(defn- disc-slice
+  "Index of the slice that owns pixel `x`,`y` of a disc `diameter` pixels wide,
+   or nil outside the disc. Slices run clockwise from twelve o'clock, as in
+   Mermaid."
+  [ends ^long diameter ^long x ^long y]
+  (let [r
+        (/ diameter 2.0)
+
+        dx
+        (- (+ x 0.5) r)
+
+        dy
+        (- (+ y 0.5) r)]
+
+    (when (and (seq ends) (<= (+ (* dx dx) (* dy dy)) (* r r)))
+      (let [angle
+            (Math/atan2 dx (- dy))
+
+            turn
+            (/ (if (neg? angle) (+ angle (* 2.0 Math/PI)) angle) (* 2.0 Math/PI))]
+
+        (or (some (fn [[at end]]
+                    (when (< turn (double end)) at))
+                  ends)
+            (first (peek ends)))))))
+
+(defn- disc-rows
+  "Segment rows of a pie disc `diameter` pixels wide. A cell holds two pixels
+   above each other, so a pixel is about square. A cell takes one foreground
+   tone; where its two pixels differ, the upper pixel wins."
+  [ends ^long diameter]
+  (vec (for [row (range (if (seq ends) (quot diameter 2) 0))]
+         (->> (range diameter)
+              (map (fn [x]
+                     (let [top (disc-slice ends diameter x (* 2 (long row)))
+                           bottom (disc-slice ends diameter x (inc (* 2 (long row))))]
+
+                       (cond (and top bottom) ["█" (c/series-tone top)]
+                             top ["▀" (c/series-tone top)]
+                             bottom ["▄" (c/series-tone bottom)]
+                             :else [" " :none]))))
+              (partition-by second)
+              (mapv (fn [cells]
+                      [(apply str (map first cells)) (second (first cells))]))))))
+
+(defn- legend-rows
+  "Segment rows of a pie legend: a swatch in the slice tone, the label and its
+   share."
+  [items ^long label-w]
+  (vec (for [{:keys [label tone note]} items]
+         [["■ " tone] [(c/pad-right (c/clip label label-w) label-w) :text] [" " :none]
+          [note :chrome]])))
+
+(def ^:private max-diameter
+  "Widest pie disc in pixels, which is columns; it takes half as many rows."
+  20)
+
+(def ^:private min-diameter "Narrowest pie disc that still reads as a circle." 8)
+
+(defn- even-diameter
+  ^long [^long cols]
+  (let [d (min (long max-diameter) cols)]
+    (- d (rem d 2))))
 
 (defn pie
   [{:keys [args lines]} width]
-  (let [lines
+  (let [width
+        (long width)
+
+        lines
         (body-lines lines)
 
         show?
         (or (str/includes? (str args) "showData") (some #(= "showData" %) lines))
 
         slices
-        (for [line
-              lines
+        (vec (for [line
+                   lines
 
-              :let [[_ label value]
-                    (re-matches #"\"([^\"]*)\"\s*:\s*(\S+)" line)]
-              :when label]
+                   :let [[_ label value]
+                         (re-matches #"\"([^\"]*)\"\s*:\s*(\S+)" line)]
+                   :when label]
 
-          [(c/clean-label label) (or (number value) 0.0)])
+               [(c/clean-label label) (or (number value) 0.0)]))
 
         sum
-        (reduce + 0.0 (map second slices))]
+        (reduce + 0.0 (map #(max 0.0 (double (second %))) slices))
+
+        items
+        (map-indexed (fn [at [label value]]
+                       {:label label
+                        :tone (c/series-tone at)
+                        :note (str (format "%.1f%%"
+                                           (* 100.0 (/ (max 0.0 (double value)) (max sum 1e-9))))
+                                   (if show? (str " (" (number-text value) ")") ""))})
+                     slices)
+
+        note-w
+        (long (apply max 1 (map #(c/width (:note %)) items)))
+
+        label-w
+        (min (quot width 3) (long (apply max 1 (map #(c/width (:label %)) items))))
+
+        legend-w
+        (+ 2 label-w 1 note-w)
+
+        side?
+        (<= (long min-diameter) (- width legend-w 2))
+
+        diameter
+        (even-diameter (if side? (- width legend-w 2) width))
+
+        disc
+        (disc-rows (slice-ends (map second slices)) diameter)
+
+        legend
+        (legend-rows items (if side? label-w (max 1 (min label-w (- width 3 note-w)))))
+
+        rows
+        (cond (empty? disc) legend
+              side? (let [height
+                          (max (count disc) (count legend))
+
+                          top
+                          (quot (- height (count legend)) 2)
+
+                          blank
+                          [[(apply str (repeat diameter \space)) :none]]]
+
+                      (for [at (range height)]
+                        (into (get disc at blank) (cons ["  " :none] (get legend (- at top) [])))))
+              :else (concat disc [[]] legend))]
 
     (if (empty? slices)
       {:reason "empty pie chart"}
-      {:title (title-of lines)
-       :rows (mapv c/seg-row
-                   (bar-rows (map-indexed
-                               (fn [at [label value]]
-                                 {:label label
-                                  :value value
-                                  :tone (c/series-tone at)
-                                  :note (str (format "%.1f%%"
-                                                     (* 100.0 (/ (double value) (max sum 1e-9))))
-                                             (if show? (str " (" (number-text value) ")") ""))})
-                               slices)
-                             width))})))
+      {:title (title-of lines) :rows (mapv #(c/seg-row (c/seg-clip % width)) rows)})))
 
 ;; Gantt charts
 

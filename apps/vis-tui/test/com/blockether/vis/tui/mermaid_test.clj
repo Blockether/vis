@@ -257,3 +257,23 @@
                  (expect (= "██████████" (#'charts/bar 100 100 10)))
                  (expect (= "" (#'charts/bar 5 0 10)))
                  (expect (= "" (#'charts/bar -3 100 10)))))
+
+(defdescribe
+  pie-test
+  (it "draws a round disc with the legend beside it"
+      (expect (= ["     ▄▄██████▄▄" "  ▄██████████████▄" " ▄████████████████▄"
+                  "▄██████████████████▄" "████████████████████  ■ A 50.0%"
+                  "████████████████████  ■ B 50.0%" "▀██████████████████▀" " ▀████████████████▀"
+                  "  ▀██████████████▀" "     ▀▀██████▀▀"]
+                 (mapv #(str/replace % "," ".") (rows "pie\n  \"A\" : 1\n  \"B\" : 1\n" 40)))))
+  (it "runs the slices clockwise from twelve o'clock, as Mermaid does"
+      (let [top (first (str/split-lines (tones "pie\n  \"A\" : 1\n  \"B\" : 1\n" 40)))]
+        (expect (str/includes? top "\u001b[31m▄▄███\u001b[0m\u001b[36m███▄▄") top)))
+  (it "puts the legend under the disc when the width has no room beside it"
+      (let [drawn (rows "pie showData\n  \"Alpha\" : 3\n  \"Beta\" : 1\n" 18)]
+        (expect (= ["" "■ Alpha 75.0% (3)" "■ Beta  25.0% (1)"]
+                   (mapv #(str/replace % "," ".") (take-last 3 drawn))))
+        (expect (every? #(<= (c/row-width %) 18) drawn) drawn)))
+  (it "draws only the legend when no slice has a positive share"
+      (expect (= ["■ A 0.0%" "■ B 0.0%"]
+                 (mapv #(str/replace % "," ".") (rows "pie\n  \"A\" : 0\n  \"B\" : 0\n" 40))))))
