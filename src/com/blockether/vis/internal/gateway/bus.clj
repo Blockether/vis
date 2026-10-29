@@ -136,6 +136,12 @@
 
 (defn- session-file ^File [sid] (.toFile (.resolve (events-dir) (str sid ".ndjson"))))
 
+(defn- floor-file
+  "The seq floor of `sid`: the lowest seq a restarted daemon may give, for the
+   events that never reach the journal."
+  ^File [sid]
+  (.toFile (.resolve (events-dir) (str sid ".seq"))))
+
 (defn- ensure-dir!
   []
   (let [dir (events-dir)]
@@ -556,6 +562,43 @@
 
 (defonce ^:private writer (atom nil))
 
+(def ^:private ^:const FLOOR_MARGIN
+  "Seqs that one seq floor covers. The producer writes a new floor when half of
+   them are used, so a crash between two writes cannot leave a seq above it."
+  100000)
+
+(defonce ^:private floors
+  ;; sid -> the floor this process last asked the writer to keep.
+  (atom {}))
+
+(defn- write-floor!
+  "Replace `sid`'s seq floor file with `floor`, atomically. Runs ONLY on the
+   writer thread. Never throws."
+  [sid floor]
+  (try (ensure-dir!)
+       (let [f
+             (floor-file sid)
+
+             tmp
+             (File. (.getParentFile f) (str (.getName f) ".tmp"))]
+
+         (spit tmp (str floor))
+         (Files/move (.toPath tmp)
+                     (.toPath f)
+                     (into-array java.nio.file.CopyOption
+                                 [java.nio.file.StandardCopyOption/ATOMIC_MOVE
+                                  java.nio.file.StandardCopyOption/REPLACE_EXISTING])))
+       (catch Throwable t
+         (tel/log! :warn ["gateway-bus: seq floor write failed" (str sid) (ex-message t)])))
+  nil)
+
+(defn- read-floor
+  "`sid`'s seq floor, or 0 when it has none."
+  [sid]
+  (try (let [f (floor-file sid)]
+         (or (when (.exists f) (parse-long (str/trim (slurp f)))) 0))
+       (catch Throwable _ 0)))
+
 (def ^:private terminal-event-types
   "Turn terminals: the events that retract a session's liveness marker."
   #{"turn.completed" "turn.failed" "turn.cancelled"})
@@ -629,9 +672,9 @@
   (let [t (Thread. ^Runnable
                    (fn []
                      (while (not (Thread/interrupted))
-                       (try (let [{:keys [sid event opts done]} (.take ^ArrayBlockingQueue
-                                                                       writer-queue)]
-                              (write-event! sid event opts)
+                       (try (let [{:keys [sid event opts done floor]} (.take ^ArrayBlockingQueue
+                                                                             writer-queue)]
+                              (if floor (write-floor! sid floor) (write-event! sid event opts))
                               (when done (deliver done true)))
                             (catch InterruptedException _ (.interrupt (Thread/currentThread)))
                             (catch Throwable t
@@ -749,6 +792,29 @@
    (when (contains? terminal-event-types (str (get event "type"))) (retract-live! sid))
    nil))
 
+(defn note-unjournaled!
+  "Keep `sid`'s restart seq above `seq`, an event that is never journaled.
+   Writes a file only when `seq` uses half of the last floor's margin, so a
+   stream of frames costs no disk I/O. Call it under the session's seq lock."
+  [sid seq]
+  (let [k
+        (str sid)
+
+        margin
+        (long FLOOR_MARGIN)
+
+        floor
+        (get @floors k)]
+
+    (when (or (nil? floor) (> (+ (long seq) (quot margin 2)) (long floor)))
+      (let [floor (+ (long seq) margin)]
+        (swap! floors assoc k floor)
+        (start-writer!)
+        (when-not (.offer ^ArrayBlockingQueue writer-queue {:sid sid :floor floor})
+          (swap! floors dissoc k)
+          (tel/log! :debug ["gateway-bus: seq floor deferred; writer queue full" k])))))
+  nil)
+
 (defonce ^:private reaped-turns
   ;; sid -> turn-id this process has already orphan-reaped. The journal terminal
   ;; is the CROSS-process guard, but `publish!` lands it asynchronously, so two
@@ -772,9 +838,11 @@
   "Drop a session's journal (on session close). Never throws."
   [sid]
   (try (.delete (session-file sid)) (catch Throwable _ nil))
+  (try (.delete (floor-file sid)) (catch Throwable _ nil))
   (clear-live! sid)
   (clear-all-waiting! sid)
   (let [k (str sid)]
+    (swap! floors dissoc k)
     (swap! reaped-turns dissoc k)
     (swap! tails dissoc k))
   nil)
@@ -948,17 +1016,19 @@
    cursor and its `seq > cursor` replay filter silently drops the whole new
    turn (the orphan-reap terminal included). Seeding a fresh registry entry
    from this high-water keeps the restarted daemon numbering ABOVE what the
-   client already saw. Never throws."
+   client already saw. The seq floor covers the events that skip the journal.
+   Never throws."
   [sid]
   (try
     (let [f (session-file sid)]
-      (if (.exists f)
-        (->> (str/split-lines (slurp f))
-             (remove str/blank?)
-             (keep wire/parse-json)
-             (map #(long (or (get % "seq") 0)))
-             (reduce max 0))
-        0))
+      (max (long (read-floor sid))
+           (if (.exists f)
+             (->> (str/split-lines (slurp f))
+                  (remove str/blank?)
+                  (keep wire/parse-json)
+                  (map #(long (or (get % "seq") 0)))
+                  (reduce max 0))
+             0)))
     (catch Throwable t (tel/log! :debug ["gateway-bus: high-water read failed" (ex-message t)]) 0)))
 
 (defn hydrate!
@@ -1069,9 +1139,13 @@
          (when (.isDirectory dir)
            (doseq [^File f (.listFiles dir)]
              (let [n (.getName f)]
-               (when (and (str/ends-with? n ".ndjson") (< (.lastModified f) cutoff) (.delete f))
-                 (let [swept (subs n 0 (- (count n) (count ".ndjson")))]
-                   (swap! tails dissoc swept)))))))
+               (cond (and (str/ends-with? n ".ndjson") (< (.lastModified f) cutoff) (.delete f))
+                     (let [swept (subs n 0 (- (count n) (count ".ndjson")))]
+                       (swap! tails dissoc swept))
+                     (and (str/ends-with? n ".seq") (< (.lastModified f) cutoff))
+                     (let [swept (subs n 0 (- (count n) (count ".seq")))]
+                       (.delete f)
+                       (swap! floors dissoc swept)))))))
        (catch Throwable t (tel/log! :debug ["gateway-bus: sweep failed" (ex-message t)]))))
 
 (defn- poll-once!

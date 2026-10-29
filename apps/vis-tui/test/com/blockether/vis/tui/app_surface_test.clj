@@ -258,6 +258,19 @@
                                             :updated-at 1}}]}])
       (expect (= ["sub-1" "sub-3"]
                  (mapv :id (get-in @state/app-db [:app-views "app-1" :view :submissions]))))
+      ;; A frame that coalesces patches 6 and 7 continues seq 5. It applies at once:
+      ;; a game sends such frames all the time, and each one cost a full read.
+      (state/dispatch [:live-view-patch
+                       {:view-id "app-1"
+                        :seq 7
+                        :ops [{:op :submission
+                               :submission {:id "sub-4"
+                                            :idempotency-key "tui-87654321"
+                                            :status "accepted"
+                                            :created-at 2
+                                            :updated-at 2}}]} 6])
+      (expect (= 7 (get-in @state/app-db [:app-views "app-1" :view :seq])))
+      (expect (not (get-in @state/app-db [:app-views "app-1" :is-gap])))
       (state/dispatch [:live-view-patch
                        {:view-id "app-1" :seq 9 :ops [{:op :clear :node-id "diff"}]}])
       (expect (true? (get-in @state/app-db [:app-views "app-1" :is-gap])))

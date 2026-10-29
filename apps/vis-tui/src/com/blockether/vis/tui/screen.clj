@@ -6124,7 +6124,7 @@
 
                   :live-view-patch
                   (when-let [patch (hi/live-patch<-wire (:patch chunk))]
-                    (state/dispatch [:live-view-patch patch]))
+                    (state/dispatch [:live-view-patch patch (:first-seq chunk)]))
 
                   :live-view-close
                   (when-let [view-id (:view-id chunk)]

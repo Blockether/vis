@@ -4109,14 +4109,16 @@
         {:view view :is-gap false}))))
 
 (defn- patch-app-view
-  "Apply `patch` to a held app view. A seq gap marks the copy for a full read."
-  [workspace patch]
+  "Apply `patch` to a held app view. A frame carries the patches `first-seq` to
+   its `:seq`, so only a frame that starts past the next seq is a gap, and a gap
+   marks the copy for a full read."
+  [workspace patch first-seq]
   (if-let [held (get-in workspace [:app-views (:view-id patch)])]
     (let [current (long (or (get-in held [:view :seq]) 0))
           next-seq (long (or (:seq patch) 0))]
 
       (cond (<= next-seq current) workspace
-            (> next-seq (inc current))
+            (> (long (or first-seq next-seq)) (inc current))
             (assoc-in workspace [:app-views (:view-id patch) :is-gap] true)
             :else (assoc-in workspace
                     [:app-views (:view-id patch) :view]
@@ -4154,9 +4156,9 @@
 
 (reg-event-db
   :live-view-patch
-  (fn [db [_ patch]]
+  (fn [db [_ patch first-seq]]
     (across-tabs
-      (across-tabs db #(patch-app-view % patch))
+      (across-tabs db #(patch-app-view % patch first-seq))
       (fn [workspace]
         (if-let [pane (first (filter #(= (:view-id patch) (lv/view-id %)) (:live-views workspace)))]
           (let [next-pane (lv/patched pane patch)]

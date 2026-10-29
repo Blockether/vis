@@ -185,6 +185,37 @@
       (with-temp-journal (fn [_capture _write!]
                            (expect (= 0 (bus/journal-high-water-seq "sid-none")))))))
 
+;; An app frame skips the journal. A restart that seeded only from the journal
+;; numbered below a client's cursor, and the client dropped the next turn.
+(defdescribe
+  unjournaled-seq-floor-test
+  (it "keeps a restart above the seq of an event that skipped the journal"
+      (with-temp-journal (fn [_capture write!]
+                           (reset! (var-get #'bus/floors) {})
+                           (write! "sid-floor" [(turn-started "prod-A" 1 "sid-floor" "T-f")])
+                           (bus/note-unjournaled! "sid-floor" 900)
+                           ;; A durable event waits for the FIFO writer, so the floor is on disk.
+                           (bus/publish! "sid-floor" {"type" "session.title_updated" "seq" 901})
+                           ;; A restart forgets the floors of this process; the file keeps them.
+                           (reset! (var-get #'bus/floors) {})
+                           (expect (< 901 (bus/journal-high-water-seq "sid-floor"))))))
+  (it "writes no floor for a frame that the last floor already covers"
+      (with-temp-journal (fn [_capture _write!]
+                           (reset! (var-get #'bus/floors) {})
+                           (bus/note-unjournaled! "sid-floor-2" 10)
+                           (bus/publish! "sid-floor-2" {"type" "session.title_updated" "seq" 11})
+                           (let [f
+                                 (#'bus/floor-file "sid-floor-2")
+
+                                 floor
+                                 (slurp f)]
+
+                             (.delete ^java.io.File f)
+                             (bus/note-unjournaled! "sid-floor-2" 12)
+                             (bus/publish! "sid-floor-2" {"type" "session.title_updated" "seq" 13})
+                             (expect (not (.exists ^java.io.File f)))
+                             (expect (< 13 (parse-long floor))))))))
+
 (defdescribe
   tail-cursor-race-test
   "`hydrate!` (HTTP thread) and `drain-file!` (tailer thread) own the SAME tail

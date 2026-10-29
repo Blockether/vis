@@ -15,6 +15,7 @@
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.server.views :as views-api]
@@ -1362,6 +1363,106 @@
   [view-id]
   (swap! @#'hi/pending dissoc view-id)
   (swap! @#'hi/closed-apps dissoc view-id))
+
+(defn- stored-patches
+  "The `view.patch` events of `view-id` that the replay of session `sid` keeps."
+  [sid view-id]
+  (filterv #(and (= gateway-contract/view-patch-event (get % "type")) (= view-id (get % "view_id")))
+    (state/events-since sid 0)))
+
+(defn- journal-types
+  "The event types of session `sid` in its cross-process journal file. A durable
+   marker goes in first, so the FIFO writer has written every earlier frame."
+  [sid]
+  (state/append-event! sid "session.title_updated" {:title "marker"})
+  (let [f (#'bus/session-file sid)]
+    (mapv #(get (wire/parse-json %) "type") (str/split-lines (slurp f)))))
+
+;; A game patches its app on every tick. Each frame was stored in the session
+;; journal, so a long game filled the replay of the transcript with its frames.
+(defdescribe
+  app-patches-stay-out-of-the-journal-test
+  (it "streams an app patch live and keeps it out of the replay and the journal"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (with-events
+            (fn [seen]
+              (let [sid
+                    (str (random-uuid))
+
+                    view-id
+                    (open-app! sid)]
+
+                (app-op! {"op" "patch"
+                          "view_id" view-id
+                          "patch" {"ops" [{"op" "set"
+                                           "node_id" "change"
+                                           "patch" app-patch
+                                           "new_revision" "fff0000"}]}})
+                (gw-hi/flush-live-patches!)
+                (expect (await-true
+                          #(seq (live-events-of seen gateway-contract/view-patch-event view-id))))
+                (expect (= [] (stored-patches sid view-id)))
+                (let [types (journal-types sid)]
+                  (expect (some #{"session.title_updated"} types))
+                  (expect (not-any? #{gateway-contract/view-patch-event} types)))
+                (bus/forget! sid)))))))
+  (it "keeps the patch of a live view that is no app in the replay"
+      (gw-hi/install!)
+      (recorded (fn []
+                  (let [sid
+                        (str (random-uuid))
+
+                        view-id
+                        (:id (hi/open-live!
+                               {:title "CI" :session-id sid :nodes [{:id "tail" :type "log"}]}))]
+
+                    (try (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one"]}])
+                         (gw-hi/flush-live-patches!)
+                         (expect (= 1 (count (stored-patches sid view-id))))
+                         (finally (hi/close-live! view-id))))))))
+
+;; A game's app froze in every surface after a few minutes while its record kept
+;; growing: a flush that took the frame during a patch left the next frame without
+;; a scheduled flush, and no later patch scheduled one.
+(defdescribe
+  live-patch-flush-race-test
+  (it
+    "schedules a flush for a frame that a flush emptied during the patch"
+    (let [buffered
+          @#'gw-hi/buffered
+
+          sid
+          (str (random-uuid))
+
+          view-id
+          (str (random-uuid))
+
+          buffer!
+          (fn [n]
+            (#'gw-hi/buffer-patch!
+             sid
+             view-id
+             {:seq n :ops [{:op :set :node-id "state" :text (str n)}]}
+             true))
+
+          coalesce
+          @#'gw-hi/coalesce
+
+          raced
+          (atom false)]
+
+      (buffer! 1)
+      (with-redefs [gw-hi/coalesce (fn [ops op]
+                                     ;; The first fold waits until the scheduled flush has taken
+                                     ;; the frame, as the flusher thread does in a live game.
+                                     (when (compare-and-set! raced false true)
+                                       (await-true #(nil? (get @buffered view-id))))
+                                     (coalesce ops op))]
+        (buffer! 2))
+      (expect (await-true #(nil? (get @buffered view-id))))
+      (bus/forget! sid))))
 
 (defdescribe
   app-attachments-over-http-test

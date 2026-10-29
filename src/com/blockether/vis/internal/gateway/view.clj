@@ -148,7 +148,14 @@
    writer once per line, and the cross-process journal is force-truncated past
    16 MB mid-turn. Nothing is lost by waiting: the engine already accepted and
    RECORDED every patch in the view's sink file before this bridge saw it, and a
-   client that misses a frame repairs from [[live-view-of]]."
+   client that misses a frame repairs from [[live-view-of]].
+
+   An APP frame is not durable at all. An app such as a game patches on every
+   tick, and its record and [[live-view-of]] already keep its current picture, so
+   a copy in the session journal only fills the replay of the transcript. Every
+   app surface reads that picture when it opens and again after a gap. The frame
+   skips the cross-process journal too: only the process that holds the app can
+   serve its picture, so no other process can apply the frame."
   100)
 
 (def ^:private live-merge-cap
@@ -222,7 +229,8 @@
                          {:kind :live
                           :view-id (:view-id frame)
                           :first-seq (:first-seq frame)
-                          :patch {:view-id (:view-id frame) :seq (:seq frame) :ops (:ops frame)}})))
+                          :patch {:view-id (:view-id frame) :seq (:seq frame) :ops (:ops frame)}}
+                         {:store? (not (:is-app frame)) :mirror? (not (:is-app frame))})))
 
 (defn- flush-view!
   "Publish and forget whatever `view-id` has buffered."
@@ -241,20 +249,23 @@
     nil))
 
 (defn- buffer-patch!
-  "Hold one accepted patch for `view-id` and make sure a flush is coming."
-  [sid view-id patch]
-  (let [fresh?
-        (nil? (get @buffered view-id))
-
-        _
-        (swap! buffered update
+  "Hold one accepted patch for `view-id` and make sure a flush is coming. The
+   frame of an app is published live only."
+  [sid view-id patch app?]
+  ;; The swap that STARTS a frame schedules its flush. A freshness read taken
+  ;; before the swap could miss a flush that emptied the buffer in between, and
+  ;; then no later patch scheduled one: the view froze while its record grew.
+  (let [[old _]
+        (swap-vals!
+          buffered
+          update
           view-id
           (fn [frame]
-            (-> (or frame {:session-id sid :view-id view-id :first-seq (:seq patch) :ops []})
+            (-> (or frame
+                    {:session-id sid :view-id view-id :first-seq (:seq patch) :ops [] :is-app app?})
                 (assoc :seq (:seq patch))
                 (update :ops #(reduce coalesce % (:ops patch))))))]
-
-    (when fresh?
+    (when (nil? (get old view-id))
       (.schedule ^ScheduledExecutorService @flusher
                  ^Runnable
                  (fn []
@@ -423,7 +434,7 @@
 
     :view/patch
     (when (= :live (:kind event))
-      (buffer-patch! (session-of event) (:view-id event) (:patch event)))
+      (buffer-patch! (session-of event) (:view-id event) (:patch event) (boolean (:is-app event))))
 
     :view/close
     (let [sid (session-of event)]

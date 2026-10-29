@@ -997,7 +997,8 @@
                     (read-view! box session-id view-id))
          :paste identity}]
 
-    (when-not first-view (read-view! box session-id view-id))
+    ;; The stream keeps no app frame, so the copy it holds can be old: read the app.
+    (read-view! box session-id view-id)
     {:init (initial-state)
      :measure (fn [st cols rows]
                 (measure st cols rows (or (current) {:id view-id :nodes []})))

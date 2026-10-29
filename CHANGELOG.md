@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Live views: a `scene` moves smoothly between ticks in the TUI too. The TUI eases each object at about 60 frames a second and paints the scene about 3.7 times faster.
 - Live views: the Companion fits each scene ease to the measured time between patches, so a late patch does not stop an object.
 - Examples: a live app ticks at a fixed rate. A slow paint or gateway call no longer makes the game slower.
+- Live views: app frames stay out of the session journal and the replay of the transcript. The app record keeps the current picture. A playing game no longer fills the session event files.
+- Live views: an app view no longer freezes after a few minutes. A race let a frame wait for a flush that never came.
+- TUI: an app applies a frame that holds several patches without a full read of the view. A game in the TUI uses about a third of the CPU that it used before.
 
 ## [v0.3.4] - 2026-10-26
 

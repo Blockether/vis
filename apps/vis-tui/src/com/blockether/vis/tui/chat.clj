@@ -1596,7 +1596,9 @@
 
       "view.patch"
       (when (= :live (wire-view-kind event))
-        {:phase :live-view-patch :patch (event-get event :patch)})
+        {:phase :live-view-patch
+         :patch (event-get event :patch)
+         :first-seq (event-get event :first-seq)})
 
       "view.close"
       (case (wire-view-kind event)

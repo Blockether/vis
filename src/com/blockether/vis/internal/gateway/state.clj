@@ -873,9 +873,12 @@
    one. SSE reconnect and `/poll` then recover canonical current state without
    retaining the transient stream.
    A subscriber sink that throws is dropped - one dead SSE connection must never
-   poison the appender or sibling subscribers."
+   poison the appender or sibling subscribers.
+
+   `:mirror? false` keeps a transient event out of the cross-process journal too.
+   Use it only for an event that no other process can apply."
   ([sid type payload] (append-event! sid type payload {:store? true}))
-  ([sid type payload {:keys [store?]}]
+  ([sid type payload {:keys [store? mirror?] :or {mirror? true}}]
    ;; Serialize cursor assignment, disk publication, and local delivery. Disk I/O
    ;; never occurs in a retryable registry update. Shared journals keep their own seq.
    (let [canonical-payload
@@ -918,7 +921,9 @@
                                             (:events (session-entry sid))
                                             descriptor)
              (fan-out! sid event)
-             (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
+             (if (or mirror? store?)
+               (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
+               (bus/note-unjournaled! sid n))
              event))]
 
      ;; Observers can read other sessions; never call them under a replay lock.

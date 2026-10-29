@@ -575,7 +575,7 @@
                      (g->c {"type" "view.open" "kind" "input" "view_id" "input-one" "view" input})))
           (expect (= {:phase :live-view-open :view live}
                      (g->c {"type" "view.open" "kind" "live" "view_id" "live-one" "view" live})))
-          (expect (= {:phase :live-view-patch :patch patch}
+          (expect (= {:phase :live-view-patch :patch patch :first-seq 1}
                      (g->c {"type" "view.patch"
                             "kind" "live"
                             "view_id" "live-one"

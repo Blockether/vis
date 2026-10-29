@@ -2748,7 +2748,13 @@
         (some-> (:node-seqs entry)
                 (swap! merge (patch-node-seqs applied)))
         (when (:owned-key entry) (save-owned-soon!))
-        (publish! (:channel-ids entry) (lifecycle-event :view/patch entry {:patch applied}))
+        ;; An app patch is marked so the gateway keeps it out of the session journal.
+        (publish! (:channel-ids entry)
+                  (lifecycle-event :view/patch
+                                   entry
+                                   (cond-> {:patch applied}
+                                     (:is-app entry)
+                                     (assoc :is-app true))))
         (.notifyAll ^Object cell)
         patched))))
 
