@@ -75,6 +75,7 @@ export const LIVE_OPS = [
   'append',
   'remove',
   'clear',
+  'replace',
   'add-node',
   'remove-node',
   'thread',
@@ -1289,6 +1290,16 @@ function applyClear(node: LiveLeafNode): LiveNode {
   }
 }
 
+/**
+ * `replace` makes the op's rows the whole table (`live/apply-replace`). A selected
+ * row that comes back stays selected, and a row that is gone loses its selection.
+ */
+function applyReplace(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
+  if (node.type !== 'table') return node;
+  const tableRows = upsert([], keyed(op.rows, rowFromWire));
+  return { ...node, rows: tableRows, selected_ids: selectedIds(node.selected_ids, tableRows) };
+}
+
 /** `thread` puts one whole thread in place (`app/upsert-thread`). */
 function applyThread(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   const raw = record(op.thread);
@@ -1459,6 +1470,8 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
         return applyRemove(node, op);
       case 'clear':
         return applyClear(node);
+      case 'replace':
+        return applyReplace(node, op);
       case 'thread':
         return applyThread(node, op);
       default:

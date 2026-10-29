@@ -5009,6 +5009,23 @@ class Table(_KeyedNode):
         # observe it through `LiveView.state()` on its next update.
         return self._op("set", selected_ids=[str(item_id) for item_id in item_ids])
 
+    def replace(self, rows):
+        """Make ``rows`` the whole table, in their order, in one step.
+
+        Each row is a ``vis.ui.table_row(row_id, cells, tone=, parent=)``. Rows not
+        given are dropped. A selected row that comes back stays selected, and a
+        selected row that is gone loses its selection. An empty list empties the table.
+        """
+        if isinstance(rows, (str, dict)) or not hasattr(rows, "__iter__"):
+            raise TypeError("replace takes a list of vis.ui.table_row(...) values")
+        given = list(rows)
+        for row in given:
+            if not isinstance(row, dict) or "id" not in row:
+                raise TypeError(
+                    f"replace takes vis.ui.table_row(row_id, cells) values, got {row!r}"
+                )
+        return self._op("replace", rows=[dict(row) for row in given])
+
 
 class Link(_KeyedNode):
     def add(self, link_id, label, target, target_kind=None, tone=None):
@@ -6405,6 +6422,13 @@ class _LiveRecorder:
                 ]
             node["total_lines"] += len(lines)
             node["lines"] = (node["lines"] + lines)[-node["window_lines"] :]
+        elif action == "replace":
+            if node["type"] != "table":
+                raise AssertionError(f"a {node['type']} node has no rows to replace")
+            from blockether.vis import _contracts
+
+            rows = _contracts.live_items("rows", self._copy(op.get("rows") or []))
+            node["rows"] = self._upsert([], rows)
         elif action == "append":
             key = self._COLLECTION[node["type"]]
             incoming = self._copy(op.get(key) or [])
@@ -6426,6 +6450,10 @@ class _LiveRecorder:
                 )
         else:
             raise AssertionError(f"unsupported test live op: {op!r}")
+        if action in ("clear", "remove", "replace") and "selected_ids" in node:
+            # `live/prune-selected`: a selection names only rows that still exist.
+            kept = {row["id"] for row in node.get("rows") or []}
+            node["selected_ids"] = [i for i in node["selected_ids"] if i in kept]
 
     def picture(self):
         """Return the terminal, layout-free picture surfaces and the model read."""
@@ -6475,6 +6503,14 @@ class _LiveRecorder:
 
         action = envelope.get("op")
         if action == "open":
+            for node in self._nodes(envelope["view"].get("nodes")):
+                # The engine refuses a live group without an id, so a test must too.
+                if node.get("type") == "group" and not node.get("id"):
+                    raise AssertionError(
+                        "a live view group needs an id, because patches and "
+                        "after= name it: write vis.ui.group('actions', ...) "
+                        "or vis.ui.wrap('actions', ...)"
+                    )
             self._view = self._materialize(envelope["view"])
             self._declared = set(envelope.get("validators") or [])
             self._verdicts = {}
@@ -7029,6 +7065,16 @@ def _ui_table(node_id, columns=None, **spec):
     # `is_selectable=True` makes rows controls; `selected_ids` is shared state.
     # `groups` declares the heads rows hang under — see `table_group`; a row
     # whose `parent` names no declared group still gets one, labelled with the id.
+    for index, column in enumerate(columns or []):
+        if not isinstance(column, dict):
+            fix = (
+                f"vis.ui.table_column({column.lower()!r}, {column!r})"
+                if isinstance(column, str)
+                else 'vis.ui.table_column("id", "Label")'
+            )
+            raise TypeError(
+                f"vis.ui.table({node_id!r}): columns[{index}] is {column!r}; use {fix}"
+            )
     return _live_node("table", node_id, dict(spec, columns=columns))
 
 

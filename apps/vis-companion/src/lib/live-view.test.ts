@@ -274,6 +274,47 @@ describe('a patch frame', () => {
     expect(nodeOfType(cleared, 'jobs', 'table').selected_ids).toEqual([]);
   });
 
+  // #428: a refresh replaces every row at once and keeps a selected row that comes back.
+  it('replaces every table row and keeps selection only for rows that remain', () => {
+    const raw = liveViewFromWire({
+      id: 'replace-view',
+      title: 'Chats',
+      nodes: [
+        {
+          id: 'jobs',
+          type: 'table',
+          columns: [{ id: 'job', label: 'Job' }],
+          rows: [
+            { id: 'a', cells: ['A'] },
+            { id: 'b', cells: ['B'] },
+          ],
+          is_selectable: true,
+          selected_ids: ['a', 'b'],
+        },
+      ],
+    });
+    if (!raw) throw new Error('the selectable table must be paintable');
+
+    const replaced = patched(raw, 1, [
+      {
+        op: 'replace',
+        node_id: 'jobs',
+        rows: [
+          { id: 'c', cells: ['C'] },
+          { id: 'b', cells: ['B*'] },
+        ],
+      },
+    ]);
+    const table = nodeOfType(replaced, 'jobs', 'table');
+    expect(table.rows.map((row) => [row.id, row.cells])).toEqual([
+      ['c', ['C']],
+      ['b', ['B*']],
+    ]);
+    expect(table.selected_ids).toEqual(['b']);
+    const emptied = patched(replaced, 2, [{ op: 'replace', node_id: 'jobs', rows: [] }]);
+    expect(nodeOfType(emptied, 'jobs', 'table').rows).toEqual([]);
+  });
+
   it('removes named items and leaves the unnamed ones standing', () => {
     const view = patched(opened(), 1, [
       { op: 'remove', node_id: 'hosts', item_ids: ['db-1', 'never-here'] },

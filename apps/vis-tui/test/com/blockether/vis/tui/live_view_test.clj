@@ -618,6 +618,26 @@
                  (state/dispatch [:live-view-close "never-here"])
                  (expect (empty? (:live-views @state/app-db)))))))
 
+;; Issue #428: a refresh replaces every row at once; the TUI keeps the selection
+;; of a row that comes back, exactly as the engine does.
+(defdescribe
+  live-view-replace-test
+  (it "a replace patch repaints the rows and keeps selection only for rows that remain"
+      (let [p
+            (lv/opened (mounted {} (jobs {:is-selectable true :selected-ids ["job-0" "job-1"]} 2)))
+
+            replaced
+            (patched p
+                     {:op :replace
+                      :node-id "jobs"
+                      :rows [(fixture/table-row "job-9" ["job-9" "queued" "0s"])
+                             (fixture/table-row "job-1" ["job-1" "failure" "2m0s"])]})]
+
+        (expect (= [{:item-id "job-9" :is-selected false} {:item-id "job-1" :is-selected true}]
+                   (mapv #(select-keys % [:item-id :is-selected])
+                         (filterv #(= :trow (:kind %)) (lv/plan replaced 80)))))
+        (expect (= ["job-1"] (:selected-ids (first (:nodes (:view replaced)))))))))
+
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: the live
 ;; surface used half the available terminal and its selectable job rows had no control.
 (defdescribe

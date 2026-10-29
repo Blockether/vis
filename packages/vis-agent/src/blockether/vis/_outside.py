@@ -1367,8 +1367,26 @@ def _live_apply(view, op):
         key = _live_items_key(node, "item_ids")
         dropped = set(op.get("item_ids") or [])
         node[key] = [i for i in (node.get(key) or []) if i.get("id") not in dropped]
-    siblings[index] = _live_bound(node)
+    elif name == "replace":
+        if node.get("type") != "table":
+            raise Refused(f"a {node.get('type')} node has no rows to replace")
+        try:
+            rows = _contracts.live_items("rows", list(op.get("rows") or []))
+        except ValueError as error:
+            raise Refused(str(error)) from None
+        node["rows"] = _live_upsert([], rows)
+    node = _live_bound(node)
+    if name in ("clear", "remove", "replace"):
+        _live_prune_selected(node)
+    siblings[index] = node
     return _live_line(name, op, node)
+
+
+def _live_prune_selected(node):
+    # `live/prune-selected`: a selection names only rows that still exist.
+    if node.get("type") == "table" and "selected_ids" in node:
+        kept = {row.get("id") for row in node.get("rows") or []}
+        node["selected_ids"] = [i for i in node["selected_ids"] if i in kept]
 
 
 def _live_line(name, op, node):
@@ -1376,6 +1394,8 @@ def _live_line(name, op, node):
     kind = node.get("type")
     if name == "clear":
         return f"{label}: cleared"
+    if name == "replace":
+        return "{}: {} rows".format(label, len(node.get("rows") or []))
     if name == "remove":
         return "{}: -{}".format(label, len(op.get("item_ids") or []))
     if name == "append" and kind == "log":

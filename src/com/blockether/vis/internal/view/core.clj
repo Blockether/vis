@@ -1584,6 +1584,8 @@
           (fail! (str article (name kind) " op: " message)))]
 
     (check-keys! (str (name kind) " op") (live-op-decl-keys kind) op op-fail!)
+    (when (and (= :replace kind) (not (sequential? (:rows op))))
+      (op-fail! "needs :rows, the whole row set — an empty list empties the table"))
     (if (= :set-value kind)
       ;; The value domain belongs to the input it lands on, so the materializer
       ;; checks it against that node. Here a nil value is a clear, not a gap.

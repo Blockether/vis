@@ -364,6 +364,41 @@
                                                 {:op :set :node-id "t" :selected-ids ["a"]}))
                              "not selectable")))))
 
+;; Regression, issue #428: a table refreshed with clear and upsert lost the person's
+;; selection, because clear prunes it before the new rows arrive.
+(defdescribe
+  replace-table-test
+  (it "makes the given rows the whole table and keeps selection only for rows that remain"
+      (let [selected
+            (view (assoc (table-node :insertion)
+                    :rows [(row "a" "A" "1") (row "b" "B" "2")]
+                    :is-selectable true
+                    :selected-ids ["a" "b"]))
+
+            replaced
+            (patched selected
+                     {:op :replace :node-id "t" :rows [(row "c" "C" "3") (row "b" "B*" "2")]})
+
+            emptied
+            (patched replaced {:op :replace :node-id "t" :rows []})]
+
+        (expect (= ["c" "b"] (row-ids replaced)))
+        (expect (= ["B*" "2"] (:cells (second (:rows (node replaced "t"))))))
+        (expect (= ["b"] (:selected-ids (node replaced "t"))))
+        (expect (= [] (row-ids emptied)))
+        (expect (= [] (:selected-ids (node emptied "t"))))))
+  (it "refuses a node that is not a table and a row set over the table's bound"
+      (expect (str/includes? (refusal #(patched (view (log-node))
+                                                {:op :replace :node-id "log" :rows []}))
+                             "no rows to replace"))
+      (expect (str/includes? (refusal #(patched (view (table-node :insertion))
+                                                {:op :replace
+                                                 :node-id "t"
+                                                 :rows (mapv (fn [i]
+                                                               (row (str i) "x" "1"))
+                                                             (range 9))}))
+                             "at most 8"))))
+
 ;; A table is the one node whose shape the human keeps reading while it moves,
 ;; so the same script is asserted row by row under each declared order.
 (def ^:private script

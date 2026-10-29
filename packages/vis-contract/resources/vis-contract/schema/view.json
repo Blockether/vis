@@ -2458,6 +2458,32 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "Replace every row of a table at once. Selected ids whose rows are gone are dropped.",
+          "properties": {
+            "op": {
+              "const": "replace"
+            },
+            "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/row"
+              },
+              "minItems": 0,
+              "maxItems": 5000
+            }
+          },
+          "required": [
+            "op",
+            "node_id",
+            "rows"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
             "op": {
               "const": "set-value"

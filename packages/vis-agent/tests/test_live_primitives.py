@@ -166,6 +166,57 @@ def test_raw_declarations_receive_engine_defaults(
         assert expected.items() <= actual.items()
 
 
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_table_replace_keeps_selection_of_rows_that_remain(monkeypatch, host_kind):
+    # #428: a clear-then-upsert refresh lost the selection on the engine, while
+    # these test hosts kept it. Replace swaps the rows and prunes in one step.
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    table = vis.ui.table(
+        "chats",
+        columns=[vis.ui.table_column("chat", "Chat")],
+        rows=[vis.ui.table_row("a", ["A"]), vis.ui.table_row("b", ["B"])],
+        is_selectable=True,
+    )
+    with vis.live("Chats", [table], flush_ms=0) as view:
+        chats = view["chats"]
+        chats.select("a", "b")
+        chats.replace([vis.ui.table_row("c", ["C"]), vis.ui.table_row("b", ["B*"])])
+        node = view.state()["nodes"][0]
+        assert [(row["id"], row["cells"]) for row in node["rows"]] == [
+            ("c", ["C"]),
+            ("b", ["B*"]),
+        ]
+        assert node["selected_ids"] == ["b"]
+        chats.clear()
+        assert view.state()["nodes"][0]["selected_ids"] == []
+        chats.replace([])
+        assert view.state()["nodes"][0]["rows"] == []
+        with pytest.raises(TypeError, match="table_row"):
+            chats.replace([("d", ["D"])])
+
+
+def test_table_builder_refuses_text_columns():
+    # #428: text columns passed every SDK check and failed only when a real app opened.
+    with pytest.raises(
+        TypeError,
+        match=r"columns\[1\] is 'Category'.*table_column\('category', 'Category'\)",
+    ):
+        vis.ui.table("chats", columns=[vis.ui.table_column("chat", "Chat"), "Category"])
+
+
+def test_recorder_refuses_a_live_group_without_an_id(monkeypatch):
+    # #428: the recorder hid the buttons of an unnamed group; the engine refuses it.
+    monkeypatch.setattr(vis, "_host", vis.testing.LiveRecorder(vis._host))
+    with pytest.raises(AssertionError, match="group needs an id"):
+        with vis.live(
+            "Chats", [vis.ui.wrap(vis.ui.button("save", "Save"))], flush_ms=0
+        ):
+            pass
+
+
 def test_outside_refused_patch_leaves_state_unchanged():
     opened = json.loads(
         _outside.live(

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Sandbox: `VIS_RUNTIME_DIR` keeps temporary files and the control socket of each Python worker in a task directory, not in `/tmp` (#423).
+- Live views: `view[id].replace(rows)` sets every row of a table in one step. A selected row that is in the new rows stays selected (#428).
 
 ### Changed
 - Agent: the system prompt tells the model to use `$TMPDIR` or `tempfile`, never a fixed `/tmp` path (#423).
@@ -16,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: settings rows have no leading mark, because the value column gives the state. Each header is bold and has one blank line above it. Subsection names line up with the setting names under them.
 
 ### Fixed
+- Python SDK: `vis.ui.table` refuses text columns where you write them and names the `vis.ui.table_column` fix. The test recorder refuses a live group without an id, as the engine does. Both test hosts drop the selection of rows that a clear or remove takes away (#428).
 - TUI: scrolling a turn with large Activity output and code results is fast again. A frame clips and anchors only the rows that changed.
 
 ## [v0.3.4] - 2026-10-26

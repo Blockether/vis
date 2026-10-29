@@ -429,6 +429,17 @@
         (= :table (:type node))
         prune-selected))))
 
+(defn- apply-replace
+  "A table whose rows are exactly the op's `:rows`, in their order. Selection is
+   pruned in the same step, so a row that comes back stays selected and a row that
+   is gone does not. Only a table has rows to replace."
+  [node op]
+  (when-not (= :table (:type node))
+    (invalid-patch!
+      (:id node)
+      (str "a " (name (:type node)) " node has no rows to replace; only a table has")))
+  (prune-selected (assoc node :rows (checked-count! node (upsert [] (:rows op))))))
+
 (defn- insert-after
   "`nodes` with `node` in the slot right after `idx` — where the eye expects it,
    next to the node the op named."
@@ -541,6 +552,9 @@
 
             :clear
             (apply-clear node)
+
+            :replace
+            (apply-replace node op)
 
             :thread
             (app-rule (:id node) #(app/upsert-thread node (:thread op)))

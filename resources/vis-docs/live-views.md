@@ -327,7 +327,7 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.ui.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.steps(id, steps=[…])` | a checklist | `.set(step_id, label, tone=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines, tone=)`, `.clear()` |
-| `vis.ui.table(id, columns=[vis.ui.table_column(…)], groups=[vis.ui.table_group(…)])` | rows keyed by id, optionally folded into groups | `.upsert(row_id, cells, tone=, parent=)`, `.group(group_id, label=, tone=, order=, is_open=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.table(id, columns=[vis.ui.table_column(…)], groups=[vis.ui.table_group(…)])` | rows keyed by id, optionally folded into groups | `.upsert(row_id, cells, tone=, parent=)`, `.group(group_id, label=, tone=, order=, is_open=)`, `.replace(rows)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
 | `vis.ui.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
 | `vis.ui.heading(id, text, level=2)` | a heading at level 1–6 | `.set(text, level=)` |
@@ -486,6 +486,18 @@ own choice stands. A declared group that holds no rows is not shown.
 
 With `is_selectable=True`, users can select rows. Read the selection with
 `view.state()`.
+
+To show a new set of rows, for example after a filter changes, call `.replace(rows)`. It sets
+every row in one step. A selected row that is in the new set stays selected. Rows that are not in
+the new set disappear, and so does their selection. `.clear()` followed by `.upsert(...)` drops the
+whole selection instead.
+
+```python
+view["chats"].replace([vis.ui.table_row(chat.id, [chat.title, chat.category])
+                       for chat in chats if chat.category == category])
+```
+
+An empty list empties the table. A table holds at most `max_rows` rows, so a larger set is refused.
 
 When a view has exactly one node of a type, its verb is available on the view
 itself: `view.status(...)`, `view.progress(...)`, `view.write(...)`,
@@ -844,7 +856,8 @@ import blockether.vis.extension as vis
 
 app = vis.attach(vis.ui.app(
     "Triage the failures",
-    vis.ui.table("failures", columns=["Test", "Error"]),
+    vis.ui.table("failures", columns=[vis.ui.table_column("test", "Test"),
+                                      vis.ui.table_column("error", "Error")]),
     vis.ui.button("rerun", label="Run again"),
     key="triage",
     shortcuts=[
