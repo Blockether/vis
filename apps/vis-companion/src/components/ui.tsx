@@ -11,8 +11,7 @@
  * 2. THE PROPS NAME A STATE, NEVER A PAINT: `isOn`, `isSelected`, `isBusy`,
  *    `tone`, `density`, `variant`. A caller may not hand paint down — the only
  *    `className` a control accepts POSITIONS it (`flex-1`, `shrink-0`, a grid
- *    cell) and the whole-tree scan in `ui.test.tsx` fails when a paint utility
- *    arrives at one of these components.
+ *    cell).
  * 3. TOKENS ONLY. Tailwind v4 utilities over the tokens in `index.css`: no
  *    component CSS, no inline styles, no hex. Surfaces and controls use square
  *    corners (`rounded-none`), including switches, chips, fields and sheets.
@@ -23,12 +22,12 @@
  *    wears it as `aria-label`, and a state is `aria-pressed` / `aria-expanded` /
  *    `aria-current` — never a colour alone, which a screen reader cannot see and
  *    a colour-blind reader cannot tell apart.
- * 6. IT SHIPS WITH A STORY, in the same commit. `ui.stories.tsx` holds the
- *    vocabulary; a control that needs DATA to say anything gets
- *    `<Component>.stories.tsx` beside it, and the data is `dev/story-data.ts`.
- *    Draw the states that can break it — long name, zero, busy, failed — because
- *    that gallery is where the design is LOOKED at. The suite pins behaviour and
- *    the tree-wide rules; it never pins a size, a spacing or a token.
+ * 6. A STORY SHOWS A STATE THAT CAN BREAK. Draw a new control once in
+ *    `ui.stories.tsx`. A component that needs data gets one story file beside
+ *    it, with its data in `dev/story-data.ts`. Add a story only for a new state,
+ *    such as a long name, zero, busy or failed. Do not add a story for a
+ *    viewport, a theme or a pointer: the toolbar switches those. The suite tests
+ *    behaviour; the gallery is where people LOOK at the design.
  */
 import {
   createContext,
@@ -2928,8 +2927,7 @@ export function Modal({
           a streaming transcript changes on nearly every frame — so the blur dragged the
           dialog and its open lists through the transcript's repaint. The ink wash went
           with it, by the same call: a dialog stands OVER the application without
-          painting on it, and every box carries its own paper.
-          `ui.conventions.test.ts` holds the layer clear. */}
+          painting on it, and every box carries its own paper. */}
       <div
         ref={edgeBack}
         className={`flex w-full flex-col ${boxWidth} ${boxHeight} ${bandPaper}`}

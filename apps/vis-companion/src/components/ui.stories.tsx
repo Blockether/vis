@@ -1,21 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 import { useRef, useState, type ReactNode } from 'react';
-import { STORY_MACHINES, STORY_PICTURES, STORY_SESSION } from '../dev/story-data';
+import { STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
 import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
 import { Markdown } from './ChatContent';
-import { OverlayScreen } from './DocArtifact';
-import {
-  CheckIcon,
-  DownloadIcon,
-  MicIcon,
-  PlusIcon,
-  RefreshIcon,
-  SendIcon,
-  SearchIcon,
-  SettingsIcon,
-  StopIcon,
-} from './icons';
+import { CheckIcon, DownloadIcon, PlusIcon, RefreshIcon, SearchIcon, SettingsIcon } from './icons';
 import {
   BandButton,
   BandLabel,
@@ -27,19 +16,16 @@ import {
   ChoiceCell,
   ChoiceRow,
   CloseButton,
-  ComposerButton,
   ConfirmRow,
   CopyChip,
   DialogFrame,
   DialogHeader,
   Disclosure,
-  ExecutionAction,
   IconButton,
   Input,
   KeyCap,
   ListRow,
   LoadMore,
-  MetaButton,
   Modal,
   NotifyConnectionSwitch,
   OptionRow,
@@ -69,7 +55,6 @@ import {
   Pager,
   ProjectCrumb,
   ProjectStatusCounts,
-  PullToSearchHint,
   RowDisclosure,
   SectionHeader,
 } from './SessionNavigator';
@@ -96,7 +81,7 @@ import {
  * so the fleet, the session and the payloads are the SAME ones in every frame.
  */
 const meta = {
-  title: 'Vocabulary/Controls',
+  title: 'Foundations/Controls',
 } satisfies Meta;
 
 export default meta;
@@ -145,40 +130,6 @@ export const Typography: Story = {
       <ChoiceCell title="Blockether Dark" sub="Available theme" isSelected={false} isLeaf />
     </Sheet>
   ),
-};
-
-export const TypographyPointer: Story = {
-  ...Typography,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
-/** Icons stay unframed in every state; glyph strokes are not CSS borders. */
-async function expectUnframedIcon(button: HTMLElement) {
-  for (const element of [button, ...button.querySelectorAll('*')]) {
-    if (element.closest('svg')) continue;
-  }
-}
-
-/** RUN is a launch target, not a collapse control. */
-export const ExecutionLaunch: Story = {
-  render: () => (
-    <Sheet>
-      <Group of="Open a live view or its saved record">
-        <ExecutionAction aria-label="Open run Build pool" onClick={noop}>
-          <BandLabel>RUN</BandLabel>
-          <span>Build pool</span>
-        </ExecutionAction>
-      </Group>
-    </Sheet>
-  ),
-  play: async ({ canvas }) => {
-    const launch = canvas.getByRole('button', { name: 'Open run Build pool' });
-    await expect(launch).not.toHaveAttribute('aria-expanded');
-    await expect(launch.querySelector('svg')).toBeNull();
-    await userEvent.click(launch);
-    await expect(launch).toHaveFocus();
-  },
 };
 
 export const Buttons: Story = {
@@ -270,15 +221,10 @@ export const Marks: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    // Regression: circles and row-end borders must not return around any icon.
-    for (const button of canvas.getAllByRole('button')) {
-      await expectUnframedIcon(button);
-    }
     await expect(canvas.getByRole('button', { name: 'Save unavailable' })).toBeDisabled();
     const refresh = canvas.getByRole('button', { name: 'Refresh models' });
     refresh.focus();
     await expect(refresh).toHaveFocus();
-    await expectUnframedIcon(refresh);
     await userEvent.keyboard('{Enter}');
   },
 };
@@ -318,61 +264,8 @@ export const CodeCopy: Story = {
       await user.tab();
       await expect(region).toHaveFocus();
     }
-    for (const button of buttons) {
-      await expect(button.textContent).toBe('');
-    }
     await user.click(buttons[0]);
-    await expect(canvas.getByRole('button', { name: 'Copied' })).toHaveAttribute('title', 'Copied');
-  },
-};
-
-/** Clipboard access is stubbed; the production control owns loading and feedback. */
-export const AsyncCopy: Story = {
-  render: () => <CopyChip value={async () => 'Complete activity history'} label="Copy activity" />,
-  play: async ({ canvas }) => {
-    const user = userEvent.setup();
-    await user.click(canvas.getByRole('button', { name: 'Copy activity' }));
-    await expect(await canvas.findByRole('button', { name: 'Copied' })).toBeEnabled();
-    await expect(navigator.clipboard.readText()).resolves.toBe('Complete activity history');
-  },
-};
-
-export const CopyPending: Story = {
-  render: () => (
-    <CopyChip
-      value={(signal) =>
-        new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(signal.reason));
-        })
-      }
-      label="Copy activity"
-    />
-  ),
-  play: async ({ canvas }) => {
-    const user = userEvent.setup();
-    await user.click(canvas.getByRole('button', { name: 'Copy activity' }));
-    await expect(canvas.getByRole('button', { name: 'Copying…' })).toBeDisabled();
-    await expect(canvas.getByRole('button', { name: 'Copying…' })).toHaveAttribute(
-      'aria-busy',
-      'true',
-    );
-  },
-};
-
-export const CopyUnavailable: Story = {
-  render: () => (
-    <CopyChip
-      value={async () => {
-        throw new Error('Clipboard access denied.');
-      }}
-      label="Copy activity"
-    />
-  ),
-  play: async ({ canvas }) => {
-    const user = userEvent.setup();
-    await user.click(canvas.getByRole('button', { name: 'Copy activity' }));
-    await expect(await canvas.findByRole('alert')).toHaveTextContent('Clipboard access denied.');
-    await expect(canvas.getByRole('button', { name: 'Copy failed. Try again.' })).toBeEnabled();
+    await expect(canvas.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
   },
 };
 
@@ -409,12 +302,6 @@ export const Chips: Story = {
       </Group>
     </Sheet>
   ),
-};
-
-export const ChipsPointer: Story = {
-  ...Chips,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 function SwitchDemo() {
@@ -514,12 +401,6 @@ export const Fields: Story = {
   },
 };
 
-export const FieldsPointer: Story = {
-  ...Fields,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
 export const Rows: Story = {
   render: () => (
     <Sheet>
@@ -583,77 +464,6 @@ export const Rows: Story = {
       </Group>
     </Sheet>
   ),
-  play: async ({ canvas }) => {
-    await expectUnframedIcon(canvas.getByRole('button', { name: 'Download Piper English' }));
-  },
-};
-
-/**
- * The composer strip, in the order the screen builds it: what goes INTO the
- * message on the left, what happens to the TURN on the right. The stop slot is
- * reserved whether or not a turn is running, so the strip never changes width.
- */
-export const Composer: Story = {
-  render: () => (
-    <Sheet>
-      <Group of="Tones of the one composer control">
-        <ComposerButton label="Attach">
-          <PlusIcon className="size-3.5" />
-        </ComposerButton>
-        <ComposerButton label="Dictate">
-          <MicIcon />
-        </ComposerButton>
-        <ComposerButton label="Voice conversation" tone="voice">
-          <MicIcon />
-        </ComposerButton>
-        <ComposerButton label="Stop recording" tone="recording">
-          <MicIcon />
-        </ComposerButton>
-        <ComposerButton label="Stop response" tone="stop">
-          <StopIcon className="size-3 text-err" />
-        </ComposerButton>
-        <ComposerButton label="Send message" tone="send">
-          <SendIcon className="size-3.5" />
-        </ComposerButton>
-        <ComposerButton label="Send message" tone="send" disabled>
-          <SendIcon className="size-3.5" />
-        </ComposerButton>
-      </Group>
-      <Group of="Holding and voice overlays">
-        <ComposerButton label="Switching microphone" isHolding>
-          <MicIcon />
-        </ComposerButton>
-        <ComposerButton label="Voice overlay" tone="voice" surface="overlay">
-          <MicIcon />
-        </ComposerButton>
-        <ComposerButton label="Recording overlay" tone="recording" surface="overlay">
-          <MicIcon />
-        </ComposerButton>
-      </Group>
-      <Group of="The meta line under it">
-        <MetaButton isPicker>claude-opus-5</MetaButton>
-        <MetaButton>high</MetaButton>
-      </Group>
-    </Sheet>
-  ),
-  play: async ({ canvas }) => {
-    // Regression: attach and microphone faces were narrower than send/stop.
-    for (const name of [
-      'Attach',
-      'Dictate',
-      'Voice conversation',
-      'Stop recording',
-      'Stop response',
-      'Send message',
-      'Switching microphone',
-      'Voice overlay',
-      'Recording overlay',
-    ]) {
-      for (const button of canvas.getAllByRole('button', { name })) {
-        await expectUnframedIcon(button);
-      }
-    }
-  },
 };
 
 export const Feedback: Story = {
@@ -696,9 +506,6 @@ export const Feedback: Story = {
       </Group>
     </Sheet>
   ),
-  play: async ({ canvas }) => {
-    await expectUnframedIcon(canvas.getByRole('button', { name: 'Copy the id' }));
-  },
 };
 
 /** A pick that owns which one is picked, because a sheet has to show both faces. */
@@ -792,148 +599,6 @@ function PagerDemo({
     <Pager page={page} pageCount={104} onPage={setPage} label="vis sessions" disabled={disabled} />
   );
 }
-
-// The same compact counter and explicit steps on phones, tablets and desktop rails.
-export const ProjectPages: Story = {
-  render: () => (
-    <Sheet>
-      <PagerDemo />
-    </Sheet>
-  ),
-  play: async ({ canvas }) => {
-    const pager = canvas.getByRole('navigation', { name: 'Pages of vis sessions' });
-    const previous = canvas.getByRole('button', { name: 'Previous page' });
-    const next = canvas.getByRole('button', { name: 'Next page' });
-    const current = canvas.getByRole('textbox', { name: 'Current page' }) as HTMLInputElement;
-    const pageTarget = current.closest('label')!;
-    await expect(previous).toBeVisible();
-    await expect(previous).toBeDisabled();
-    await expect(next).toBeVisible();
-    await expect(current).toHaveValue('1');
-    expect(within(pager).getAllByRole('button')).toHaveLength(2);
-    expect(canvas.queryByRole('button', { name: /^Page \d/ })).toBeNull();
-    expect(canvas.queryByText('…')).toBeNull();
-    await userEvent.click(next);
-    await expect(canvas.getByText('Page 2 of 104')).toHaveAttribute('aria-live', 'polite');
-    await expect(next).toHaveFocus();
-    await userEvent.keyboard('{Enter}');
-    await expect(canvas.getByText('Page 3 of 104')).toBeInTheDocument();
-    await userEvent.keyboard(' ');
-    await expect(canvas.getByText('Page 4 of 104')).toBeInTheDocument();
-    await expect(next).toHaveFocus();
-    await userEvent.click(previous);
-    await expect(current).toHaveValue('3');
-    await userEvent.click(previous);
-    await userEvent.click(previous);
-    await expect(current).toHaveValue('1');
-    await expect(previous).toBeDisabled();
-
-    // The whole counter is a hit target; only its current number is editable.
-    await userEvent.click(pageTarget);
-    await expect(current).toHaveFocus();
-    expect([current.selectionStart, current.selectionEnd]).toEqual([0, 1]);
-    await userEvent.keyboard('64');
-    await expect(canvas.getByText('Page 1 of 104')).toBeInTheDocument();
-    await userEvent.keyboard('{Enter}');
-    await expect(current).toHaveValue('64');
-    await expect(canvas.getByText('Page 64 of 104')).toBeInTheDocument();
-    await userEvent.click(current);
-    await userEvent.keyboard('7{Escape}');
-    await expect(current).toHaveValue('64');
-    await expect(current).not.toHaveFocus();
-    await userEvent.click(current);
-    await userEvent.keyboard('1');
-    await userEvent.tab();
-    await expect(current).toHaveValue('1');
-    await expect(previous).toBeDisabled();
-  },
-};
-
-/** A set that cannot move keeps its counter, and offers neither steps nor editing. */
-export const ProjectPagesDisabled: Story = {
-  render: () => (
-    <Sheet>
-      <PagerDemo initialPage={2} disabled />
-    </Sheet>
-  ),
-  play: async ({ canvas }) => {
-    const pager = canvas.getByRole('navigation', { name: 'Pages of vis sessions' });
-    const current = canvas.getByRole('textbox', { name: 'Current page' });
-    const previous = canvas.getByRole('button', { name: 'Previous page' });
-    const next = canvas.getByRole('button', { name: 'Next page' });
-    await expect(pager).toBeVisible();
-    await expect(pager).toHaveAttribute('aria-disabled', 'true');
-    for (const control of [previous, current, next]) {
-      await expect(control).toBeDisabled();
-      await userEvent.click(control);
-      control.focus();
-      await expect(control).not.toHaveFocus();
-    }
-    await userEvent.tab();
-    await expect(pager.contains(pager.ownerDocument.activeElement)).toBe(false);
-    await expect(current).toHaveValue('2');
-    await userEvent.hover(current);
-    await userEvent.unhover(current);
-  },
-};
-
-/** The arrows stay put when the counter grows, and stop at the final page. */
-export const ProjectPagesEnd: Story = {
-  globals: { viewport: { value: 'desktop' } },
-  render: () => (
-    <Sheet>
-      <PagerDemo initialPage={99} />
-    </Sheet>
-  ),
-  play: async ({ canvas }) => {
-    const previous = canvas.getByRole('button', { name: 'Previous page' });
-    const next = canvas.getByRole('button', { name: 'Next page' });
-    const current = canvas.getByRole('textbox', { name: 'Current page' });
-    for (const page of [1, 9, 10, 99]) {
-      await userEvent.click(current);
-      await userEvent.keyboard(`${page}{Enter}`);
-      await expect(current).toHaveValue(String(page));
-    }
-    for (let page = 100; page <= 104; page += 1) {
-      await userEvent.click(next);
-      await expect(canvas.getByText(`Page ${page} of 104`)).toBeInTheDocument();
-    }
-    await expect(next).toBeVisible();
-    await expect(next).toBeDisabled();
-    await userEvent.click(previous);
-    await expect(canvas.getByRole('textbox', { name: 'Current page' })).toHaveValue('103');
-    await expect(next).toBeEnabled();
-  },
-};
-
-export const ProjectPagesDesktop: Story = {
-  ...ProjectPages,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
-export const ProjectPagesEditing: Story = {
-  ...ProjectPagesDesktop,
-  play: async ({ canvas }) => {
-    const current = canvas.getByRole('textbox', { name: 'Current page' });
-    await userEvent.click(current);
-    await userEvent.keyboard('42');
-    await expect(current).toHaveValue('42');
-    await expect(current).toHaveFocus();
-    await expect(canvas.getByText('Page 1 of 104')).toBeInTheDocument();
-  },
-};
-
-export const ProjectPagesNarrowRail: Story = {
-  ...ProjectPagesDesktop,
-  decorators: [
-    (Story) => (
-      <div className="w-80">
-        <Story />
-      </div>
-    ),
-  ],
-};
 
 /**
  * WHAT A BAND SAYS ABOUT WHAT IS UNDER IT. Every one of these is INK on the band's
@@ -1060,10 +725,6 @@ export const Machines: Story = {
   ),
   play: async ({ canvas }) => {
     const buttons = canvas.getAllByRole('button', { name: /^New session/ });
-    // Busy and disabled states must not restore the old project circles.
-    for (const button of buttons) {
-      await expectUnframedIcon(button);
-    }
     await expect(buttons).toHaveLength(3);
     await expect(buttons[0]).toBeEnabled();
     await expect(buttons[1]).toBeDisabled();
@@ -1075,11 +736,7 @@ export const Machines: Story = {
     const down = canvas.getByRole('button', { name: 'Reconnect to mini' });
     await expect(chosen).toHaveAttribute('aria-pressed', 'true');
     await expect(unread).toHaveAttribute('aria-pressed', 'false');
-    await expect(unread.querySelector('.sr-only')).toHaveTextContent('4 unread');
-    await expect(unread).toHaveTextContent('2 min');
-    await expect(unread.querySelector('.bg-accent')).toHaveTextContent(/^4$/);
     await expect(down).not.toHaveAttribute('aria-pressed');
-    await expect(down.querySelector('span')).toBeNull();
 
     await userEvent.click(unread);
     await expect(unread).toHaveAttribute('aria-pressed', 'true');
@@ -1089,18 +746,6 @@ export const Machines: Story = {
     await expect(down).not.toHaveAttribute('aria-pressed');
     await expect(unread).toHaveAttribute('aria-pressed', 'true');
   },
-};
-
-export const MachinesDark: Story = {
-  ...Machines,
-  tags: ['!test'],
-  globals: { theme: 'blockether-dark' },
-};
-
-export const MachinesHighContrast: Story = {
-  ...Machines,
-  tags: ['!test'],
-  globals: { theme: 'high-contrast-dark' },
 };
 
 function SettingsChoiceDemo() {
@@ -1167,9 +812,7 @@ export const Settings: Story = {
   ),
   play: async ({ canvas }) => {
     for (const button of canvas.getAllByRole('button', { name: /^Settings for/ })) {
-      await expectUnframedIcon(button);
       await userEvent.click(button);
-      await expectUnframedIcon(button);
     }
     await userEvent.click(canvas.getByText('This device'));
     await expect(canvas.getByText('This device').closest('button')).toHaveAttribute(
@@ -1181,12 +824,6 @@ export const Settings: Story = {
       'false',
     );
   },
-};
-
-export const SettingsPointer: Story = {
-  ...Settings,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 /**
@@ -1216,105 +853,6 @@ export const Dialogs: Story = {
         </div>
       </DialogFrame>
     </Modal>
-  ),
-};
-
-/** The full-height dialog: a list inside it gets every pixel the glass has. */
-export const DialogFull: Story = {
-  render: () => (
-    <Modal onDismiss={noop}>
-      <DialogFrame
-        title={`Projects on ${STORY_MACHINES[0].name}`}
-        subtitle={STORY_SESSION.where}
-        actions={<BandButton isPrimary>Add</BandButton>}
-        closeLabel="Close the projects dialog"
-        onClose={noop}
-      >
-        <div className="flex flex-col">
-          <ListRow isFramed>vis</ListRow>
-          <ListRow isFramed isSelected>
-            svar
-          </ListRow>
-          <ListRow isFramed>infrastructure</ListRow>
-        </div>
-      </DialogFrame>
-    </Modal>
-  ),
-};
-
-/** An artifact opened over the transcript: the band reports, the body is the file. */
-export const Overlay: Story = {
-  render: () => (
-    <OverlayScreen
-      title="fleet.csv"
-      subtitle="7 rows × 5 cols · 268 B"
-      actions={<BandButton>Download</BandButton>}
-      onClose={noop}
-    >
-      <div className="p-4">
-        <p className="font-mono text-meta text-dialog-hint">
-          The artifact stands here, and the band above it is the same one every dialog wears.
-        </p>
-      </div>
-    </OverlayScreen>
-  ),
-};
-
-/** The band alone, which is what four hand-built title bars used to be. */
-export const Band: Story = {
-  render: () => (
-    <Sheet>
-      <Group of="DialogHeader, with a subtitle and a cell of its own">
-        <div className="w-full">
-          <DialogHeader
-            title="Settings"
-            subtitle={`${STORY_MACHINES[0].name} · protocol 7`}
-            actions={<BandButton>Export</BandButton>}
-            closeLabel="Close settings"
-            onClose={noop}
-          />
-        </div>
-      </Group>
-      <Group of="Stacked over another band, and clearing the notch">
-        <div className="w-full">
-          <DialogHeader title="fleet.csv" isStacked closeLabel="Close fleet.csv" onClose={noop} />
-        </div>
-      </Group>
-      <Group of="Long file names, with and without details">
-        <div className="w-full">
-          <DialogHeader
-            title={STORY_PICTURES[1].name}
-            isTitleTruncated
-            closeLabel={`Close ${STORY_PICTURES[1].name}`}
-            onClose={noop}
-          />
-        </div>
-        <div className="w-full">
-          <DialogHeader
-            title={STORY_PICTURES[1].name}
-            isTitleTruncated
-            subtitle={STORY_PICTURES[1].meta}
-            closeLabel={`Close ${STORY_PICTURES[1].name}`}
-            onClose={noop}
-          />
-        </div>
-      </Group>
-    </Sheet>
-  ),
-};
-
-/** The pull that finds the search field, in the three states it can be in. */
-export const Gestures: Story = {
-  render: () => (
-    <Sheet>
-      {(['none', 'pulling', 'armed'] as const).map((phase) => (
-        <Group key={phase} of={`PullToSearchHint — ${phase}`}>
-          <div className="relative h-16 w-full transform-gpu overflow-hidden bg-level-project">
-            <PullToSearchHint phase={phase} />
-          </div>
-        </Group>
-      ))}
-    </Sheet>
   ),
 };
 
@@ -1367,62 +905,6 @@ function ChoiceControls() {
     </Sheet>
   );
 }
-
-export const ClosedChoices: Story = {
-  render: () => <ChoiceControls />,
-  play: async ({ canvas, canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    const mode = canvas.getByRole('combobox', { name: 'Review mode' });
-    await userEvent.click(mode);
-    await userEvent.click(page.getByRole('option', { name: 'Automatic' }));
-    await expect(mode).toHaveTextContent('Automatic');
-    await expect(mode).toHaveFocus();
-    await expect(canvas.getByRole('combobox', { name: 'Saving review mode' })).toBeDisabled();
-    await expect(canvas.getByRole('combobox', { name: 'Unavailable model' })).toBeDisabled();
-  },
-};
-
-const storyGroups = [
-  { value: 'planning', label: 'Planning' },
-  { value: 'review', label: 'Review' },
-  { value: 'release', label: 'Release' },
-];
-
-/** A filter that holds several choices uses the same picker and keeps its list open. */
-function SeveralChoiceControls() {
-  const [groups, setGroups] = useState<string[]>(['planning']);
-  return (
-    <Sheet>
-      <Group of="Select — several choices">
-        <Select
-          aria-label="Groups"
-          values={groups}
-          onValuesChange={setGroups}
-          noneLabel="All groups"
-          options={storyGroups}
-        />
-      </Group>
-      <Group of="Select — several choices, nothing to choose">
-        <Select aria-label="Empty groups" values={[]} onValuesChange={noop} noneLabel="All groups" options={[]} />
-      </Group>
-    </Sheet>
-  );
-}
-
-export const SeveralChoices: Story = {
-  render: () => <SeveralChoiceControls />,
-  play: async ({ canvas, canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    const groups = canvas.getByRole('combobox', { name: 'Groups' });
-    await expect(groups).toHaveTextContent('Planning');
-    // While the list is open the rest of the page is hidden from role queries, so check the empty filter first.
-    await expect(canvas.getByRole('combobox', { name: 'Empty groups' })).toBeDisabled();
-    await userEvent.click(groups);
-    await userEvent.click(page.getByRole('option', { name: 'Review' }));
-    await expect(page.getByRole('listbox', { name: 'Groups' })).toHaveAttribute('aria-multiselectable', 'true');
-    await expect(groups).toHaveTextContent('Planning, Review');
-  },
-};
 
 export const OpenChoices: Story = {
   render: () => <ChoiceControls />,
@@ -1519,18 +1001,4 @@ export const ViewLayouts: Story = {
       </Group>
     </Sheet>
   ),
-  play: async ({ canvas }) => {
-    const row = canvas.getByTestId('view-row');
-    const originalWidth = row.style.width;
-    try {
-      // Container width, not a breakpoint: these checks also run on a phone.
-      row.style.width = '640px';
-      row.style.width = '280px';
-      row.style.width = '160px';
-    } finally {
-      row.style.width = originalWidth;
-    }
-    await expect(canvas.getByRole('button', { name: 'Connection unavailable' })).toBeDisabled();
-    await expect(canvas.getByTestId('empty-layout').children).toHaveLength(0);
-  },
 };

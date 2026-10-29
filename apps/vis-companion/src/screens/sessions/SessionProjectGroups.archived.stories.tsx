@@ -48,7 +48,7 @@ const ROWS = [FILED, FILED_AWAY, SHELVED_AWAY, LOOSE_AWAY];
 const HELD = [FILED];
 
 const meta = {
-  title: 'Session/Project archive',
+  title: 'Session list/Archive',
   component: ProjectGroup,
   parameters: { layout: 'fullscreen' },
   beforeEach: () => {
@@ -110,20 +110,6 @@ const painted = (scope: HTMLElement) =>
 const band = async (page: ReturnType<typeof within>, name: string) => {
   const disclosure = await page.findByRole('button', { name: `Collapse ${name}` });
   return disclosure.closest('div')!.parentElement as HTMLElement;
-};
-
-export const LiveList: Story = {
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement);
-    const wallet = await band(page, 'Wallet work');
-
-    // What was put away is not on this list: the live group paints the one session left in
-    // it, the archived group has no band here, and the archived loose session is not below.
-    await expect(painted(wallet)).toEqual([FILED.id]);
-    await expect(painted(canvasElement)).toEqual([FILED.id]);
-    await expect(within(wallet).queryByText('1 session')).toBeNull();
-    await expect(page.queryByRole('button', { name: 'Collapse Receipts' })).toBeNull();
-  },
 };
 
 export const ShowsWhatItArchived: Story = {

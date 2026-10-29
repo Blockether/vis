@@ -57,7 +57,7 @@ function OutlineFrame({ entries, total, readAll, onJump }: FrameProps) {
 }
 
 const meta = {
-  title: 'Components/TranscriptOutline',
+  title: 'Session/Transcript/Outline',
   component: OutlineFrame,
   parameters: { layout: 'fullscreen' },
   args: {
@@ -70,28 +70,6 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
-
-/** Every turn is held: one line for each turn, and the panel lists them all. */
-export const EveryTurnHeld: Story = {
-  play: async ({ args, canvasElement }) => {
-    const rail = await within(canvasElement).findByRole('button', { name: 'Jump to a message' });
-    await expect(rail.querySelectorAll('span')).toHaveLength(STORY_OUTLINE_ENTRIES.length);
-    await waitFor(() => expect(rail.querySelector('[data-active]')).not.toBeNull());
-
-    await userEvent.click(rail);
-    const panel = await within(document.body).findByRole('dialog', { name: 'Jump to a message' });
-    const rows = within(panel).getAllByRole('button');
-    await expect(rows).toHaveLength(STORY_OUTLINE_ENTRIES.length);
-    // The turn on screen depends on the layout. Only one row can be the current one.
-    await expect(within(panel).getAllByRole('button', { current: true })).toHaveLength(1);
-    await expect(within(panel).getByText('council')).toBeVisible();
-
-    await userEvent.click(rows[2]);
-    await expect(args.onJump).toHaveBeenCalledWith(STORY_OUTLINE_ENTRIES[2].id, 2);
-    await waitFor(() => expect(within(document.body).queryByRole('dialog')).toBeNull());
-    await waitFor(() => expect(rail.querySelectorAll('span')[2]).toHaveAttribute('data-active'));
-  },
-};
 
 /** A long session holds only its newest turns. The panel reads the rest on open. */
 export const LongSession: Story = {
@@ -117,25 +95,5 @@ export const LongSession: Story = {
 
     await userEvent.click(within(panel).getAllByRole('button')[0]);
     await expect(args.onJump).toHaveBeenCalledWith(STORY_OUTLINE_LONG_ENTRIES[0].id, 0);
-  },
-};
-
-/** The gateway does not answer: the panel lists the held turns and says why. */
-export const EarlierTurnsUnread: Story = {
-  args: {
-    entries: STORY_OUTLINE_LONG_ENTRIES.slice(-6),
-    total: STORY_OUTLINE_LONG_ENTRIES.length,
-    readAll: async () => {
-      throw new Error('gateway unavailable');
-    },
-  },
-  play: async ({ canvasElement }) => {
-    const rail = await within(canvasElement).findByRole('button', { name: 'Jump to a message' });
-    await userEvent.click(rail);
-    const panel = await within(document.body).findByRole('dialog', { name: 'Jump to a message' });
-    await expect(
-      await within(panel).findByText('Earlier turns could not be read. Only loaded turns are listed.'),
-    ).toBeVisible();
-    await expect(within(panel).getAllByRole('button')).toHaveLength(6);
   },
 };

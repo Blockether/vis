@@ -4,7 +4,7 @@ import { STORY_FILE_SUGGESTIONS, STORY_SLASH_COMMANDS } from '../dev/story-data'
 import { ComposerSuggestions } from './ComposerSuggestions';
 
 const meta = {
-  title: 'Session/Composer suggestions',
+  title: 'Session/Composer/Suggestions',
   component: ComposerSuggestions,
   parameters: { layout: 'fullscreen' },
   decorators: [

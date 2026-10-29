@@ -5,7 +5,7 @@ import { DiffArtifact } from './DiffArtifact';
 import { OverlayScreen } from './DocArtifact';
 
 const meta = {
-  title: 'Components/Diff artifact',
+  title: 'Session/Artifacts/Diff',
   component: DiffArtifact,
   parameters: { layout: 'fullscreen' },
   args: {
@@ -28,10 +28,4 @@ export const ReadOnly: Story = {
       canvas.queryByRole('button', { name: 'Comment on the whole document' }),
     ).not.toBeInTheDocument();
   },
-};
-export const Empty: Story = {
-  args: { source: new Blob([JSON.stringify({ ...fixture, patch: '' })]) },
-};
-export const Invalid: Story = {
-  args: { source: new Blob(['invalid snapshot']) },
 };

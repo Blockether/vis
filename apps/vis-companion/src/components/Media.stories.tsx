@@ -1,15 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import {
-  PICTURE_SUMMARY,
-  PODCAST_VTT,
-  RECORDING_SEGMENTS,
-  RECORDING_TRANSCRIPT,
-  STORY_PICTURES,
-  STORY_WIDE_PICTURE,
-} from '../dev/story-data';
-import { mediaContentClass, mediaTileContentClass } from '../lib/media-frame';
-import { parseSubtitles, subtitleSegments } from '../lib/subtitles';
-import { MediaGrid, MediaPlate, MediaRecording, MediaTile, RecordingPlayer } from './Media';
+import { PICTURE_SUMMARY, RECORDING_TRANSCRIPT, STORY_PICTURES } from '../dev/story-data';
+import { mediaTileContentClass } from '../lib/media-frame';
+import { MediaGrid, MediaRecording, MediaTile, RecordingPlayer } from './Media';
 
 /**
  * WHAT A TURN CARRIED, ON THE PAPER THE TRANSCRIPT GIVES IT.
@@ -25,46 +17,13 @@ import { MediaGrid, MediaPlate, MediaRecording, MediaTile, RecordingPlayer } fro
  * is the same class the app hands it.
  */
 const meta = {
-  title: 'Components/Media',
+  title: 'Session/Artifacts/Media',
   parameters: { layout: 'padded' },
 } satisfies Meta;
 
 export default meta;
 
 type Story = StoryObj<typeof meta>;
-
-const [first, second, third] = STORY_PICTURES;
-
-/** One picture: the plate, and the name it was sent under. */
-export const Plate: Story = {
-  render: () => (
-    <MediaPlate name={first.name} meta={first.meta}>
-      <img src={first.src} alt="" className={mediaContentClass} />
-    </MediaPlate>
-  ),
-};
-
-/** A name longer than the plate: it truncates, and the weight keeps its column. */
-export const PlateLongName: Story = {
-  render: () => (
-    <MediaPlate name={second.name} meta={second.meta}>
-      <img src={second.src} alt="" className={mediaContentClass} />
-    </MediaPlate>
-  ),
-};
-
-/** A wide screenshot: the frame takes the picture's own ratio, with no mat above or below. */
-export const PlateWide: Story = {
-  render: () => (
-    <MediaPlate
-      name={STORY_WIDE_PICTURE.name}
-      meta={STORY_WIDE_PICTURE.meta}
-      size={STORY_WIDE_PICTURE.size}
-    >
-      <img src={STORY_WIDE_PICTURE.src} alt="" className={mediaContentClass} />
-    </MediaPlate>
-  ),
-};
 
 /** Three pictures: the names leave the tiles and come back as one line. */
 export const Grid: Story = {
@@ -85,50 +44,5 @@ export const Recording: Story = {
     <MediaRecording name="memo-2.m4a" meta="M4A · 412KB" transcription={RECORDING_TRANSCRIPT}>
       <RecordingPlayer />
     </MediaRecording>
-  ),
-};
-
-/** The words as TIMED LINES: the one being spoken lights up, and pressing one plays it. */
-export const RecordingTimed: Story = {
-  render: () => (
-    <MediaRecording
-      name="memo-4.m4a"
-      meta="M4A · 412KB"
-      transcription={RECORDING_TRANSCRIPT}
-      transcriptionSegments={RECORDING_SEGMENTS}
-    >
-      <RecordingPlayer />
-    </MediaRecording>
-  ),
-};
-
-/** A podcast with its subtitle file: the cues become the timed lines, each led by its speaker. */
-export const RecordingSubtitled: Story = {
-  render: () => (
-    <MediaRecording
-      name="episode.mp3"
-      meta="MP3 · 812KB"
-      transcriptionSegments={subtitleSegments(parseSubtitles(PODCAST_VTT))}
-    >
-      <RecordingPlayer />
-    </MediaRecording>
-  ),
-};
-
-/** Nobody spoke, and the row says so instead of showing an empty band. */
-export const RecordingSilent: Story = {
-  render: () => (
-    <MediaRecording name="memo-3.m4a" meta="M4A · 96KB" transcriptionStatus="silent">
-      <RecordingPlayer />
-    </MediaRecording>
-  ),
-};
-
-/** No name at all: an anonymous clip is the plate alone, with no caption strip. */
-export const PlateUncaptioned: Story = {
-  render: () => (
-    <MediaPlate>
-      <img src={third.src} alt="" className={mediaContentClass} />
-    </MediaPlate>
   ),
 };

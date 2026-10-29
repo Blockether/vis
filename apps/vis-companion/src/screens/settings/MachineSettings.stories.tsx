@@ -115,7 +115,7 @@ function Panel({ servers }: { servers: McpServer[] }) {
 }
 
 const meta = {
-  title: 'Screens/MCP servers panel',
+  title: 'Settings/Machine settings',
   component: Panel,
   // These stories show what the bands hold, so every band starts open.
   decorators: [
@@ -130,21 +130,6 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
-
-/** Names lead while endpoints, provenance and tool counts stay readable and secondary. */
-export const Typography: Story = {
-  args: { servers: SERVERS },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await canvas.findByText('filesystem', { exact: true });
-  },
-};
-
-export const TypographyPointer: Story = {
-  ...Typography,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
 
 /** Every reach a server can have: connected, waiting for sign-in, killed, off, and a config-file tier. */
 export const Fleet: Story = {
@@ -179,12 +164,6 @@ export const Fleet: Story = {
     await expect(control).toHaveAttribute('aria-checked', 'true');
     await userEvent.click(row);
   },
-};
-
-/** Desktop: the verbs wait at the trailing edge and show on hover. */
-export const FleetDesktop: Story = {
-  ...Fleet,
-  parameters: { viewport: { defaultViewport: 'desktop' } },
 };
 
 /** A row opens on the whole spec its one line cannot carry. */

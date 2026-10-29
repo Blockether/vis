@@ -81,11 +81,6 @@ know, and keep a test in a single layer:
   `src/components/ui.test.tsx` is the reference suite. A file that needs a
   DOM says so with a `// @vitest-environment jsdom` docblock; everything
   else stays in the fast node environment.
-- **Source conventions** are rules about the code itself — the closed control
-  vocabulary, corner and shadow rungs, named ways out, gallery coverage.
-  They live in `src/components/ui.conventions.test.ts`, which scans source
-  files instead of rendering them. Add a rule there when a behavior test
-  cannot see the thing you want to enforce.
 - **Looks** belong to Storybook. The story tests play every story in jsdom,
   which checks what a story does and how assistive technology reads it, not
   how it is laid out. Review layout, colour and scrolling in the browser with
@@ -94,15 +89,34 @@ know, and keep a test in a single layer:
   every theme with axe in Chromium. That takes about half an hour, so it is
   not part of `npm test`.
 
-Do not pin rendered markup with `toContain` string matches, and do not
-restate source text imported with `?raw`. Both break on every styling
-change and assert nothing a user can perceive. How a control paints is
-reviewed in Storybook, not unit-pinned.
+Do not test copy. A test that only checks a label, a heading, a hint or a
+message breaks on every change of wording and finds no bug. Use text only as
+a handle to find an element, then check what the element does.
 
-A story that needs real browser layout to play (a frame-size variant, line
-fitting, a scroll position, a Mermaid diagram) has `tags: ['!test']` and a
-comment that says why. The story tests skip it; Storybook still shows it, and
-the contrast audit still checks it.
+Do not pin rendered markup with `toContain` string matches, class names or
+computed styles. Do not read source as text with `?raw` or `readFileSync`.
+These checks break on every styling change and assert nothing a user can
+perceive.
+
+### Stories
+
+The Storybook tree follows the app, in the order that `.storybook/preview.tsx`
+sets:
+
+- `Foundations`: the control vocabulary, the menu and the calendar.
+- `App`: the frame around the screens, such as the header, the split and pairing.
+- `Session list`: the list, its rows, the projects and the search.
+- `Session`: one session, with its header, composer, transcript, Live View and artifacts.
+- `Settings`: providers, machines, automations and the settings panels.
+
+Add a story only for a state that can break: a long name, zero, busy or
+failed. Do not add a story for a viewport, a theme or a pointer. Use the
+toolbar for those. Give a story a `play` only for an interaction, such as a
+click, a key or typed text.
+
+A story that needs real browser layout to play (line fitting, a scroll
+position) has `tags: ['!test']` and a comment that says why. The story tests
+skip it; Storybook still shows it, and the contrast audit still checks it.
 
 Stories run axe once. A failed accessibility report fails Vitest, including
 scanner errors. Reports marked `todo` remain warnings. Disabled checks do

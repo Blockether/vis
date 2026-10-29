@@ -5,7 +5,7 @@ import { STORY_COMPOSER_PASTE, STORY_PENDING_ATTACHMENTS } from '../dev/story-da
 import { ComposerPayloadShelf } from './ComposerPayloadShelf';
 
 const meta = {
-  title: 'Session/Composer payload shelf',
+  title: 'Session/Composer/Attachments',
   component: ComposerPayloadShelf,
   parameters: { layout: 'centered' },
   args: {
@@ -40,14 +40,4 @@ export const MixedPayload: Story = {
       await expect(args.commands.editPaste).toHaveBeenCalledWith(paste.id);
     }
   },
-};
-
-export const UnnumberedImage: Story = {
-  args: {
-    pastes: [],
-    attachments: STORY_PENDING_ATTACHMENTS.filter((attachment) =>
-      attachment.media_type.startsWith('image/'),
-    ),
-  },
-  play: MixedPayload.play,
 };

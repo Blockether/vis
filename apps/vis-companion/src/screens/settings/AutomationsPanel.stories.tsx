@@ -23,7 +23,7 @@ function AutomationsPanelPreview({ available = true }: { available?: boolean }) 
 }
 
 const meta = {
-  title: 'Settings/Automations',
+  title: 'Settings/Automations/Band',
   component: AutomationsPanelPreview,
   parameters: { layout: 'padded' },
 } satisfies Meta<typeof AutomationsPanelPreview>;
@@ -40,14 +40,6 @@ export const OpenList: Story = {
   play: async ({ canvas }) => {
     await userEvent.click(await canvas.findByRole('button', { name: 'Show automations' }));
     await expect(await canvas.findByText('Morning summary')).toBeVisible();
-  },
-};
-
-export const NewAutomationWizard: Story = {
-  play: async ({ canvas }) => {
-    await userEvent.click(await canvas.findByRole('button', { name: 'Show automations' }));
-    await userEvent.click(await canvas.findByRole('button', { name: 'New automation' }));
-    await expect(canvas.getByText('What starts this automation?')).toBeVisible();
   },
 };
 

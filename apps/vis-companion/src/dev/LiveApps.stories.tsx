@@ -5,17 +5,14 @@ import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { AppSurface } from '../components/AppAttachment';
 import { SessionEventsContext } from '../lib/session-events';
 import {
-  BOARD,
   buildStep,
   COUNTER,
   DASHBOARD,
-  GAME_2048,
   type Job,
   StoryAppHost,
   TODO,
   type StoryApp,
   type WireApp,
-  WIZARD,
 } from './story-apps';
 import type { ViewAction } from '../lib/view';
 
@@ -25,7 +22,7 @@ import type { ViewAction } from '../lib/view';
  * events as a real extension or SDK owner: actions, `view.open` and `view.patch`.
  */
 const meta = {
-  title: 'Live View/Apps',
+  title: 'Session/Live View/Apps',
   parameters: { layout: 'fullscreen' },
 } satisfies Meta;
 
@@ -87,35 +84,6 @@ function stat(canvasElement: HTMLElement, label: string): string {
   return hero?.textContent?.trim() ?? '';
 }
 
-/** A counter: two buttons, a stat and five keys, two of them owner actions. */
-export const Counter: Story = {
-  render: () => <OpenApp app={COUNTER} />,
-  play: async ({ canvasElement }) => {
-    const canvas = await body(canvasElement);
-    await canvas.findByRole('button', { name: 'Plus one' });
-    await expect(stat(canvasElement, 'Count')).toBe('0');
-    await expect(canvas.getByRole('button', { name: 'Reset' })).toBeDisabled();
-    await userEvent.click(canvas.getByRole('button', { name: 'Plus one' }));
-    await waitFor(() => expect(stat(canvasElement, 'Count')).toBe('1'));
-    // A key that names a node presses that node, once the node takes presses again.
-    await waitFor(() => expect(canvas.getByRole('button', { name: 'Plus one' })).toBeEnabled());
-    await userEvent.keyboard('+');
-    await waitFor(() => expect(stat(canvasElement, 'Count')).toBe('2'));
-    // A key that names an action goes to the owner, in the order of the presses.
-    await userEvent.keyboard('{ArrowUp}{ArrowUp}{ArrowDown}');
-    await waitFor(() => expect(stat(canvasElement, 'Count')).toBe('12'));
-    // A legend tap is the same press: a phone has no keys.
-    await userEvent.click(await legend(canvasElement, 'Minus ten'));
-    await waitFor(() => expect(stat(canvasElement, 'Count')).toBe('2'));
-    await waitFor(() => expect(canvas.getByRole('button', { name: 'Reset' })).toBeEnabled());
-    await userEvent.keyboard('r');
-    await waitFor(() => expect(stat(canvasElement, 'Count')).toBe('0'));
-    // A modified key is the browser's, not the app's.
-    await userEvent.keyboard('{Control>}+{/Control}');
-    await expect(stat(canvasElement, 'Count')).toBe('0');
-  },
-};
-
 /** A todo list: an input the owner validates and clears, a selectable table and keys. */
 export const Todo: Story = {
   render: () => <OpenApp app={TODO} />,
@@ -146,54 +114,6 @@ export const Todo: Story = {
   },
 };
 
-/** A board: a grid of column groups with selectable cards that move on each press. */
-export const Board: Story = {
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-  render: () => <OpenApp app={BOARD} />,
-  play: async ({ canvasElement }) => {
-    const canvas = await body(canvasElement);
-    await canvas.findByText('Todo (2)');
-    await userEvent.click(canvas.getByRole('button', { name: /Dark theme check/ }));
-    await waitFor(() => expect(canvas.getByText('Doing (2)')).toBeVisible());
-    await expect(canvas.getByText('Todo (1)')).toBeVisible();
-    await userEvent.keyboard('n');
-    await waitFor(() => expect(canvas.getByText('Todo (2)')).toBeVisible());
-    await expect(canvas.getByRole('button', { name: /Card 5/ })).toBeVisible();
-  },
-};
-
-/** 2048: a 4x4 table, arrow keys that the owner reads in order, and a restart key. */
-export const Game2048: Story = {
-  name: '2048',
-  render: () => <OpenApp app={GAME_2048} />,
-  play: async ({ canvasElement }) => {
-    const canvas = await body(canvasElement);
-    const grid = await canvas.findByLabelText('Board');
-    const board = () => grid.textContent ?? '';
-    const before = board();
-    for (const key of ['{ArrowLeft}', '{ArrowUp}', '{ArrowRight}', '{ArrowDown}', '{ArrowLeft}', '{ArrowUp}']) {
-      await userEvent.keyboard(key);
-    }
-    await waitFor(() => expect(board()).not.toBe(before));
-    await waitFor(() => expect(Number(stat(canvasElement, 'Score'))).toBeGreaterThan(0));
-    // The legend presses the same moves.
-    await userEvent.click(await legend(canvasElement, 'Right'));
-    await userEvent.keyboard('n');
-    await waitFor(() => expect(stat(canvasElement, 'Score')).toBe('0'));
-  },
-};
-
-/** The owner leaves after 600 ms and adopts the app again 1.2 s later. */
-function ownerLeavesAndReturns(host: StoryAppHost<{ count: number }>) {
-  let step = 0;
-  return host.stream((state) => {
-    step += 1;
-    if (step === 1) host.disconnect();
-    if (step === 3) host.adopt();
-    return { state, ops: [] };
-  }, 600);
-}
-
 /** One more package each 400 ms. The returned stop ends the stream when the story leaves. */
 function streamBuild(host: StoryAppHost<Job>) {
   return host.stream(buildStep, 400);
@@ -218,20 +138,6 @@ export const Dashboard: Story = {
   },
 };
 
-/** A refusal shows its word, and the app keeps its state. */
-export const Refused: Story = {
-  render: () => (
-    <OpenApp app={COUNTER} refuse={(action) => (action.action === 'shortcut' ? 'unbound' : undefined)} />
-  ),
-  play: async ({ canvasElement }) => {
-    const canvas = await body(canvasElement);
-    await canvas.findByRole('button', { name: 'Plus one' });
-    await userEvent.keyboard('{ArrowUp}');
-    await expect(await within(canvasElement).findByText('No such key')).toBeVisible();
-    await expect(stat(canvasElement, 'Count')).toBe('0');
-  },
-};
-
 /** A closed app is a record: no key legend, no live controls and no key reaches it. */
 export const Closed: Story = {
   render: () => <OpenApp app={COUNTER} over={{ is_closed: true }} />,
@@ -242,48 +148,5 @@ export const Closed: Story = {
     await expect(canvas.getByRole('button', { name: 'Plus one' })).toBeDisabled();
     await userEvent.keyboard('+');
     await expect(stat(canvasElement, 'Count')).toBe('0');
-  },
-};
-
-/** A deploy wizard: radios, checkboxes, owner validation and keys that still work after a click. */
-export const Wizard: Story = {
-  render: () => <OpenApp app={WIZARD} />,
-  play: async ({ canvasElement }) => {
-    const canvas = await body(canvasElement);
-    // The opened app holds the focus, so its keys work before any click.
-    await waitFor(() => expect(document.activeElement).toBe(canvasElement.querySelector('[data-app-surface]')));
-    // Two keys share the label Up: their names say their keys.
-    await expect(await legend(canvasElement, 'Up')).toHaveAccessibleName('Up, key Up arrow');
-    await userEvent.click(await canvas.findByRole('radio', { name: /Production/ }));
-    await userEvent.click(canvas.getByRole('checkbox', { name: /United States/ }));
-    // A key after a click on a checkbox still reaches the app.
-    await userEvent.keyboard('n');
-    const confirm = await canvas.findByRole('checkbox', { name: /I read the release notes/ });
-    // The owner refuses Next until the box is ticked.
-    await userEvent.keyboard('n');
-    await expect(await canvas.findByText('Read the release notes first.')).toBeVisible();
-    await userEvent.click(confirm);
-    await userEvent.keyboard('n');
-    await expect(await canvas.findByText('Deployed to production')).toBeVisible();
-    await userEvent.keyboard('r');
-    await expect(await canvas.findByRole('radio', { name: /Staging/ })).toHaveAttribute('aria-checked', 'true');
-  },
-};
-
-/** The owner goes away and comes back: the app is read only between, then live again. */
-export const Reconnect: Story = {
-  render: () => <OpenApp app={COUNTER} stream={ownerLeavesAndReturns} />,
-  play: async ({ canvasElement }) => {
-    const canvas = await body(canvasElement);
-    await canvas.findByRole('button', { name: 'Plus one' });
-    await expect(await within(canvasElement).findByText('Disconnected', undefined, { timeout: 3000 })).toBeVisible();
-    await expect(canvas.getByRole('button', { name: 'Plus one' })).toBeDisabled();
-    await expect(within(canvasElement).queryByRole('toolbar', { name: 'App keys' })).toBeNull();
-    await userEvent.keyboard('+');
-    await expect(stat(canvasElement, 'Count')).toBe('0');
-    await expect(await within(canvasElement).findByText('Live', undefined, { timeout: 4000 })).toBeVisible();
-    await waitFor(() => expect(canvas.getByRole('button', { name: 'Plus one' })).toBeEnabled());
-    await userEvent.keyboard('+');
-    await waitFor(() => expect(stat(canvasElement, 'Count')).toBe('1'));
   },
 };

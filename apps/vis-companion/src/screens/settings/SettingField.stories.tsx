@@ -51,7 +51,7 @@ function Field({ setting, initial }: { setting: Toggle; initial: SettingValue })
 }
 
 const meta = {
-  title: 'Screens/Setting field',
+  title: 'Settings/Fields/Structured',
   component: Field,
   parameters: { layout: 'padded' },
 } satisfies Meta<typeof Field>;

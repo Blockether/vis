@@ -61,16 +61,15 @@ try {
     .map((entry) => entry.id)
     .sort();
   const hoverStories = new Set([
-    'session-remaining-messages--default',
-    ...storyIds.filter((id) => id.startsWith('vocabulary-controls--')),
-    'components-artifacts-sheet--files',
-    'components-data-table--opened',
-    'live-view-panel--finished-jobs',
-    'components-iteration-trace--code-with-result',
-    'components-menu--verbs',
-    'components-menu--danger-focused',
-    'components-manage-projects-sheet--browsing-pointer',
-    'screens-session-list--desktop-hover',
+    ...storyIds.filter((id) => id.startsWith('foundations-controls--')),
+    'foundations-menu--verbs',
+    'foundations-menu--danger-focused',
+    'session-list-screen--desktop',
+    'session-list-project-folder--browsing',
+    'session-artifacts-sheet--files',
+    'session-artifacts-table--opened',
+    'session-live-view-panel--settled',
+    'session-transcript-steps--code-with-result',
   ]);
   for (const id of hoverStories) {
     if (!storyIds.includes(id)) throw new Error(`Missing hover regression story: ${id}`);

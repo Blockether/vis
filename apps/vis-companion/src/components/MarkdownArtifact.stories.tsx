@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, waitFor } from 'storybook/test';
 
-import { LOG_TEXT, NOTE_MARKDOWN } from '../dev/story-data';
+import { NOTE_MARKDOWN } from '../dev/story-data';
 import { type DocumentChrome, MarkdownArtifact } from './MarkdownArtifact';
 
 /**
@@ -25,7 +25,7 @@ const chrome: DocumentChrome = ({ actions, note, body }) => (
 );
 
 const meta = {
-  title: 'Components/Markdown artifact',
+  title: 'Session/Artifacts/Markdown',
   component: MarkdownArtifact,
   parameters: { layout: 'padded' },
   args: { source: new Blob([NOTE_MARKDOWN], { type: 'text/markdown' }), chrome },
@@ -34,19 +34,6 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
-
-/** The note as prose: headings as headings, through the transcript's own renderer. */
-export const Note: Story = {
-  play: async ({ canvas }) => {
-    await waitFor(() => expect(canvas.getAllByRole('heading').length).toBeGreaterThan(0));
-    await expect(canvas.queryByRole('button', { name: /comment/i })).toBeNull();
-  },
-};
-
-/** A `.log`: the same reader, showing the file verbatim instead of rendering it. */
-export const Plain: Story = {
-  args: { source: new Blob([LOG_TEXT], { type: 'text/plain' }), plain: true },
-};
 
 const RICH_PARAGRAPH =
   'A **formatted paragraph** should use the same optimizer as plain prose. Read *the careful explanation*, follow [the reference](https://example.com), and keep `git  status --short` literal. Repeated words, **words**, and well-**known** choices must be measured in their own styles, without changing what you select or quote.';

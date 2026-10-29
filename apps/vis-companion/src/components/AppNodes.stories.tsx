@@ -75,7 +75,7 @@ const app: AppNodeActions = {
 };
 
 const meta = {
-  title: 'Live View/App nodes',
+  title: 'Session/Artifacts/Code review',
   component: LiveViewPanel,
   parameters: { layout: 'padded' },
   args: { view: review(), inDialog: true, app },
@@ -114,10 +114,6 @@ function width(px: string) {
     ),
   ];
 }
-
-export const Phone320: Story = { decorators: width('320px'), play: ({ canvasElement }) => fits(canvasElement) };
-export const Phone375: Story = { decorators: width('375px'), play: ({ canvasElement }) => fits(canvasElement) };
-export const Phone430: Story = { decorators: width('430px'), play: ({ canvasElement }) => fits(canvasElement) };
 
 /** A desktop: a keyboard activates a line number and saves a new comment. */
 export const Desktop: Story = {

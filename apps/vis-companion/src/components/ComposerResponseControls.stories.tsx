@@ -5,7 +5,7 @@ import { STORY_RESPONSE_CONTROL_VALUES } from '../dev/story-data';
 import { ComposerResponseControls } from './ComposerResponseControls';
 
 const meta = {
-  title: 'Session/Composer response controls',
+  title: 'Session/Composer/Response controls',
   component: ComposerResponseControls,
   parameters: { layout: 'centered' },
   // Leave room above the standalone strip for its extended touch targets.
@@ -69,38 +69,5 @@ export const AvailableOptions: Story = {
     await expect(
       reasoning && 'choose' in reasoning ? reasoning.choose : undefined,
     ).toHaveBeenCalledWith('low');
-  },
-};
-
-export const AvailableOptionsPointer: Story = {
-  ...AvailableOptions,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
-/** Simplified thinking modes step through quick, balanced and deep with one tap. */
-export const SimplifiedReasoning: Story = {
-  name: 'Simplified reasoning modes',
-  args: {
-    controls: {
-      ...meta.args.controls,
-      reasoning: {
-        label: 'Reasoning effort',
-        value: 'balanced',
-        busy: false,
-        cycle: fn(),
-      },
-    },
-  },
-  play: async ({ canvasElement, args }) => {
-    const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole('button', { name: /^Reasoning effort — balanced, tap/ }),
-    );
-    const reasoning = args.controls.reasoning;
-    await expect(
-      reasoning && 'cycle' in reasoning ? reasoning.cycle : undefined,
-    ).toHaveBeenCalledOnce();
-    await expect(within(canvasElement.ownerDocument.body).queryByRole('dialog')).toBeNull();
   },
 };

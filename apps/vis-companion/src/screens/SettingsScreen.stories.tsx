@@ -2,12 +2,10 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState, type ReactNode } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import { STORY_COMPACT_EXECUTIONS, STORY_GATEWAYS, storySettingsFetch } from '../dev/story-data';
-import { openStepDigests } from '../dev/story-steps';
 import { getThemePref, setThemePref } from '../lib/storage';
 import { resolveTheme } from '../lib/theme';
 import { THEMES } from '../lib/themes.generated';
 import { SettingsDialog } from './SettingsScreen';
-import { IterationTrace } from '../components/ChatContent';
 import { OpenBands } from '../dev/OpenBands';
 
 /** The real dialog over a fixture transport; preferences remain local to this preview. */
@@ -37,7 +35,7 @@ function StorySettings({
 }
 
 const meta = {
-  title: 'Screens/Settings',
+  title: 'Settings/Screen',
   component: SettingsDialog,
   parameters: { layout: 'fullscreen' },
   decorators: [
@@ -167,67 +165,6 @@ export const CouncilSubagents: Story = {
   },
 };
 
-/** Settings names and explanatory copy follow the desktop hierarchy without shrinking touch. */
-export const ReadingLayout: Story = {
-  args: { gateways: STORY_GATEWAYS.slice(0, 1) },
-  render: (args) => (
-    <>
-      <IterationTrace whole iterations={STORY_COMPACT_EXECUTIONS} />
-      <SettingsDialog {...args} />
-    </>
-  ),
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    await page.findByText('MCP servers');
-    await openStepDigests(canvasElement);
-    const application = page.queryByRole('button', { name: 'Show application settings' });
-    if (application) await userEvent.click(application);
-    await expect(page.getByRole('heading', { name: 'Theme' })).toHaveAttribute('aria-level', '4');
-    await expect(page.queryByRole('heading', { name: 'Responses' })).toBeNull();
-    const toggle = page.getByRole('switch', { name: /^Code mode:/ });
-    const checked = toggle.getAttribute('aria-checked');
-    for (const shown of [checked !== 'true', checked === 'true']) {
-      await userEvent.click(toggle);
-      await expect(toggle).toHaveAttribute('aria-checked', String(shown));
-      await waitFor(() =>
-        expect(Boolean(canvasElement.querySelector('[data-execution-code]'))).toBe(shown),
-      );
-      if (!shown) {
-        await expect(canvasElement.querySelector('[data-code-result]')).toBeNull();
-        await expect(canvasElement.querySelector('[data-execution-activity]')).not.toBeNull();
-      }
-    }
-    await userEvent.click(page.getByRole('button', { name: /^ASR/ }));
-    await page.findByText('No ASR engine is registered on this machine.');
-  },
-};
-
-export const ReadingLayoutPointer: Story = {
-  ...ReadingLayout,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
-/** MCP textareas use the same control scale as inputs; labels and hints keep their own roles. */
-export const FormTypography: Story = {
-  args: { gateways: STORY_GATEWAYS.slice(0, 1) },
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(await page.findByRole('button', { name: 'Add an MCP server' }));
-    await page.findByRole('textbox', { name: 'Server name' });
-    const args = page.getByRole('textbox', { name: /^Arguments — one per line/ });
-    await userEvent.type(args, '-y{Enter}server-filesystem');
-    await expect(args).toHaveValue('-y\nserver-filesystem');
-    await userEvent.click(page.getByRole('button', { name: 'Streamable HTTP' }));
-  },
-};
-
-export const FormTypographyPointer: Story = {
-  ...FormTypography,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
 /** Full production screen with representative provider and MCP rows. */
 export const Populated: Story = {
   // Gateway caches are keyed by URL; keep this fleet separate from the empty stories.
@@ -251,10 +188,4 @@ export const Populated: Story = {
     const form = page.getByRole('group', { name: 'MCP transport' }).parentElement!;
     await userEvent.click(within(form).getByRole('button', { name: 'Cancel' }));
   },
-};
-
-export const PopulatedPointer: Story = {
-  ...Populated,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
 };

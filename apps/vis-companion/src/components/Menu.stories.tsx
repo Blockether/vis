@@ -1,9 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 import { MENU_VERBS, STORY_SESSION } from '../dev/story-data';
-import { ForkIcon, ProjectsIcon, StarIcon, TrashIcon } from './icons';
-import { Menu, MenuBack, MenuHeading, MenuItem, MenuNote } from './Menu';
-import { BandButton } from './ui';
+import { TrashIcon } from './icons';
+import { Menu, MenuHeading, MenuItem, MenuNote } from './Menu';
 
 /**
  * THE RARER VERBS OF ONE ROW, HUNG UNDER THE `⋯` THAT ASKED FOR THEM.
@@ -18,7 +17,7 @@ import { BandButton } from './ui';
  * the step, so nothing is stacked over the panel.
  */
 const meta = {
-  title: 'Components/Menu',
+  title: 'Foundations/Menu',
   component: Menu,
 } satisfies Meta<typeof Menu>;
 
@@ -79,127 +78,5 @@ export const DangerFocused: Story = {
     const action = page.getByRole('button', { name: 'Delete session' });
     action.focus();
     await expect(action).toHaveFocus();
-  },
-};
-
-/** A band that also COMMITS: the cells stand beside the way out, never a Button. */
-export const BandWithCells: Story = {
-  args: {
-    label: 'Projects on tower',
-    at: AT,
-    onDismiss: noop,
-    children: (
-      <>
-        <MenuHeading
-          closeLabel="Close the projects menu"
-          onClose={noop}
-          cells={<BandButton isPrimary>Add</BandButton>}
-        >
-          Projects on tower
-        </MenuHeading>
-        <MenuItem
-          title="vis"
-          meta="42 sessions"
-          icon={<ProjectsIcon className="size-3.5" />}
-          onSelect={noop}
-        />
-        <MenuItem title="svar" meta="6 sessions" onSelect={noop} />
-        <MenuItem title="infrastructure" meta="2 sessions" onSelect={noop} />
-      </>
-    ),
-  },
-};
-
-/** A second step inside the same panel: the band becomes the way back. */
-export const Stepped: Story = {
-  args: {
-    label: 'Fork this session',
-    at: AT,
-    onDismiss: noop,
-    children: (
-      <>
-        <MenuBack label="Back to the session menu" onBack={noop}>
-          Fork from turn 61
-        </MenuBack>
-        <MenuItem
-          title="Fork on tower"
-          meta="2 live"
-          icon={<ForkIcon className="size-3.5" />}
-          onSelect={noop}
-        />
-        <MenuItem
-          title="Fork on macbook-pro-16-work"
-          hint="Idle since 11:57"
-          icon={<ForkIcon className="size-3.5" />}
-          onSelect={noop}
-        />
-        <MenuItem
-          title="Star the original"
-          icon={<StarIcon className="size-3.5" />}
-          onSelect={noop}
-        />
-      </>
-    ),
-  },
-};
-
-/** Nothing to offer is still an answer, and it is a sentence rather than a blank. */
-export const Empty: Story = {
-  args: {
-    label: 'Projects on mini',
-    at: AT,
-    onDismiss: noop,
-    children: (
-      <>
-        <MenuHeading closeLabel="Close the projects menu" onClose={noop}>
-          Projects on mini
-        </MenuHeading>
-        <MenuNote>mini is not answering, so it has no projects to offer.</MenuNote>
-      </>
-    ),
-  },
-};
-
-/**
- * A menu with no room to drop STANDS on its anchor instead: the panel's own foot is
- * pinned just above the control, whatever height the list inside it turns out to be.
- */
-export const StandingOnItsAnchor: Story = {
-  args: {
-    label: 'Projects on tower',
-    at: { left: 82, bottom: 240 },
-    onDismiss: noop,
-    children: (
-      <>
-        <MenuHeading>Projects on tower</MenuHeading>
-        <MenuItem
-          title="vis"
-          meta="42 sessions"
-          icon={<ProjectsIcon className="size-3.5" />}
-          onSelect={noop}
-        />
-        <MenuItem title="svar" meta="6 sessions" onSelect={noop} />
-      </>
-    ),
-  },
-};
-
-/**
- * A window with room on neither side of the anchor: the panel still hangs off the
- * control that opened it and gives up HEIGHT instead of its place, scrolling inside
- * the cap the placement hands it.
- */
-export const SqueezedAgainstItsAnchor: Story = {
-  args: {
-    label: 'Projects on relay',
-    at: { left: 82, bottom: 240, maxHeight: 180 },
-    onDismiss: noop,
-    children: (
-      <>
-        <MenuHeading>Projects on relay</MenuHeading>
-        <MenuItem title="vis" meta="42 sessions" onSelect={noop} />
-        <MenuItem title="svar" meta="6 sessions" onSelect={noop} />
-      </>
-    ),
   },
 };

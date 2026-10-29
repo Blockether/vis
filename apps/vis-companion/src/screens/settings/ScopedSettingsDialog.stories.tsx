@@ -34,7 +34,7 @@ function fixtureClient(catalog: SettingsResponse): ComponentProps<typeof ScopedS
 const client = fixtureClient(settings);
 
 const meta = {
-  title: 'Screens/Scoped settings dialog',
+  title: 'Settings/Scoped settings',
   component: ScopedSettingsDialog,
   // These stories show what the bands hold, so every band starts open.
   decorators: [
@@ -127,19 +127,6 @@ export const NoMatches: Story = {
     await userEvent.type(page.getByRole('searchbox', { name: 'Search settings' }), 'dd');
     await expect(page.getByRole('heading', { name: 'No settings match “dd”' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Clear search' })).toBeVisible();
-  },
-};
-
-/** A long catalog still scrolls under the search field rather than overflowing the viewport. */
-export const LongCatalog: Story = {
-  tags: ['!test'],
-  args: {
-    client: fixtureClient({
-      ...settings,
-      groups: [{ ...settings.groups[0], toggles: Array.from({ length: 24 }, (_, index) => ({
-        ...settings.groups[0].toggles[0], id: `option-${index}`, label: `Option ${index + 1}`,
-      })) }],
-    }),
   },
 };
 

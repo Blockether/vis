@@ -13,7 +13,7 @@ import { DiagnosticsPanel } from './DiagnosticsPanel';
  * in for it.
  */
 const meta = {
-  title: 'Screens/Diagnostics panel',
+  title: 'Settings/Diagnostics',
   component: DiagnosticsPanel,
   parameters: { layout: 'padded' },
 } satisfies Meta<typeof DiagnosticsPanel>;
@@ -46,11 +46,4 @@ export const BandPress: Story = {
 /** Open, phone: six facts keep their words while sharing three compact rows. */
 export const Open: Story = {
   args: { isOpen: true, onToggle: () => {} },
-};
-
-/** Open, desktop: the same compact matrix follows the machine-panel rhythm. */
-export const OpenDesktop: Story = {
-  ...Open,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
 };

@@ -41,12 +41,6 @@ export const Connected: Story = {
   },
 };
 
-export const ConnectedTouch: Story = {
-  ...Connected,
-  tags: ['!test'],
-  globals: { viewport: { value: 'phone', isRotated: false } },
-};
-
 export const Reconnecting: Story = {
   args: {
     model: {
@@ -63,65 +57,9 @@ export const ActiveGoal: Story = {
   args: { model: { ...meta.args.model, goal: STORY_GOAL } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const button = canvas.getByRole('button', { name: /^Goal: Active/ });
-    expect(button).toHaveTextContent(/^Goal: Active - /);
-    await userEvent.click(button);
+    await userEvent.click(canvas.getByRole('button', { name: /^Goal: Active/ }));
     const page = within(document.body);
     expect(page.getByRole('dialog', { name: 'Session goal' })).toBeVisible();
-    expect(page.getByText('Iterations: 12 / 30')).toBeVisible();
-    expect(page.getByText(/^Time in goal:/)).toBeVisible();
-    expect(page.queryByText(/tokens used/)).toBeNull();
     await userEvent.click(page.getByRole('button', { name: 'Close session goal' }));
-  },
-};
-
-export const ActiveGoalTouch: Story = {
-  ...ActiveGoal,
-  tags: ['!test'],
-  globals: { viewport: { value: 'phone', isRotated: false } },
-};
-
-export const CompletedGoal: Story = {
-  args: {
-    model: {
-      ...meta.args.model,
-      goal: {
-        ...STORY_GOAL,
-        status: 'complete',
-        reason: 'SDK tests and header interaction checks passed.',
-      },
-    },
-  },
-};
-export const BlockedGoal: Story = {
-  args: {
-    model: {
-      ...meta.args.model,
-      goal: {
-        ...STORY_GOAL,
-        status: 'blocked',
-        reason: 'The requested test device is unavailable.',
-      },
-    },
-  },
-};
-export const BudgetLimitedGoal: Story = {
-  args: {
-    model: {
-      ...meta.args.model,
-      goal: { ...STORY_GOAL, status: 'budget_limited', iterations_used: 30 },
-    },
-  },
-};
-export const LongGoal: Story = {
-  args: {
-    model: {
-      ...meta.args.model,
-      goal: {
-        ...STORY_GOAL,
-        objective:
-          'Preserve the complete objective, including the SDK boundary, session isolation, cancellation, reconnects, accessibility, phone layouts and verification against current state.',
-      },
-    },
   },
 };

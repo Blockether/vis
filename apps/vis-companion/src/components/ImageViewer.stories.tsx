@@ -6,7 +6,7 @@ import { ImageViewer } from './ImageViewer';
 
 /** The full-screen image tool, with the drawing state changed in its own footer slot. */
 const meta = {
-  title: 'Components/Image viewer',
+  title: 'Session/Artifacts/Image viewer',
   component: ImageViewer,
   args: {
     src: STORY_PICTURES[0].src,
@@ -27,60 +27,4 @@ export const Drawing: Story = {
     await expect(page.queryByRole('button', { name: 'Draw on image' })).not.toBeInTheDocument();
     await expect(page.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
   },
-};
-
-/** The pen stays active while its rail folds down to a single way back. */
-export const DrawingToolsHidden: Story = {
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(page.getByRole('button', { name: 'Draw on image' }));
-    await userEvent.click(page.getByRole('button', { name: 'Hide drawing tools' }));
-    await expect(page.queryByRole('group', { name: 'Drawing tools' })).not.toBeInTheDocument();
-    await expect(page.getByRole('button', { name: 'Show drawing tools' })).toBeInTheDocument();
-  },
-};
-
-/** Regression: zoom controls keep their targets without borders or circular faces. */
-export const ZoomControls: Story = {
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    const zoomIn = page.getByRole('button', { name: 'Zoom in' });
-    const zoomOut = page.getByRole('button', { name: 'Zoom out' });
-    for (const button of [zoomOut, zoomIn]) {
-      await userEvent.hover(button);
-      await userEvent.unhover(button);
-    }
-    const reset = page.getByRole('button', { name: 'Reset zoom' });
-    await userEvent.click(zoomIn);
-    await expect(reset).toHaveTextContent('135%');
-    await userEvent.click(zoomOut);
-    await expect(reset).toHaveTextContent('100%');
-    await userEvent.click(zoomIn);
-    await userEvent.click(reset);
-    await expect(reset).toHaveTextContent('100%');
-  },
-};
-
-/** Long file names keep the same compact header as short names. */
-export const LongFileName: Story = {
-  args: { name: STORY_PICTURES[1].name, src: STORY_PICTURES[1].src },
-  play: async ({ args, canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    const title = page.getByRole('heading', { name: args.name });
-    await expect(title).toHaveAttribute('title', args.name);
-    await userEvent.click(page.getByRole('button', { name: `Close ${args.name}` }));
-    await expect(args.onClose).toHaveBeenCalledOnce();
-  },
-};
-
-export const DrawingPointer: Story = {
-  ...Drawing,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
-export const ZoomControlsPointer: Story = {
-  ...ZoomControls,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
 };

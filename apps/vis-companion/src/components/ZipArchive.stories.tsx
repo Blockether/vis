@@ -9,7 +9,7 @@ import { ZipArchive } from './ZipArchive';
  * preview of a text or image entry, and the glyph beside it saves that entry alone.
  */
 const meta = {
-  title: 'Components/ZIP archive',
+  title: 'Session/Artifacts/ZIP',
   component: ZipArchive,
   parameters: { layout: 'padded' },
 } satisfies Meta<typeof ZipArchive>;
@@ -30,14 +30,4 @@ export const Results: Story = {
       { name: 'bin/report.pdf', data: encode('%PDF-1.7') },
     ]),
   },
-};
-
-/** An archive without files still says what it is. */
-export const Empty: Story = {
-  args: { name: 'empty.zip', blob: storedZip([]) },
-};
-
-/** Bytes that are not a ZIP archive: the reader says so and keeps the save action. */
-export const Broken: Story = {
-  args: { name: 'broken.zip', blob: new Blob(['not an archive at all, really']) },
 };

@@ -5,7 +5,7 @@ import { STORY_COMPOSER_PASTE } from '../dev/story-data';
 import { PasteEditor } from './PasteEditor';
 
 const meta = {
-  title: 'Session/Paste editor',
+  title: 'Session/Composer/Paste editor',
   component: PasteEditor,
   parameters: { layout: 'fullscreen' },
   args: {

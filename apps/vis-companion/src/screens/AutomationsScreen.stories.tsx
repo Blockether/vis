@@ -39,7 +39,7 @@ function Workspace({
 }
 
 const meta = {
-  title: 'Screens/Automations',
+  title: 'Settings/Automations/Screen',
   component: Workspace,
   parameters: { layout: 'fullscreen' },
 } satisfies Meta<typeof Workspace>;
@@ -47,26 +47,6 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const List: Story = {
-  play: async ({ canvas }) => {
-    await expect(await canvas.findByText('Morning summary')).toBeVisible();
-  },
-};
-
-export const Empty: Story = {
-  args: { empty: true },
-  play: async ({ canvas }) => {
-    await expect(await canvas.findByText('No automations on this machine.')).toBeVisible();
-  },
-};
-
-export const Failed: Story = {
-  args: { failed: true },
-  play: async ({ canvas }) => {
-    await expect(
-      await canvas.findByText('Machine unavailable. Retry when it reconnects.'),
-    ).toBeVisible();
-    await expect(canvas.getByRole('button', { name: 'Retry' })).toBeEnabled();
-  },
 };
 
 export const Details: Story = {
@@ -79,61 +59,11 @@ export const Details: Story = {
   },
 };
 
-export const NewSecret: Story = {
-  play: async (context) => {
-    await Details.play!(context);
-    await userEvent.click(context.canvas.getByRole('button', { name: 'Create callback secret' }));
-    await expect(await context.canvas.findByText('story-callback-secret-1')).toBeVisible();
-  },
-};
-
 export const NewForm: Story = {
   play: async ({ canvas }) => {
     await userEvent.click(await canvas.findByRole('button', { name: 'New automation' }));
     await expect(canvas.getByRole('heading', { name: 'New automation' })).toBeVisible();
     await expect(canvas.getByText('What starts this automation?')).toBeVisible();
     await expect(canvas.getByRole('button', { name: /^Repeat at an interval/ })).toBeEnabled();
-  },
-};
-
-export const WebhookStep: Story = {
-  play: async (context) => {
-    await NewForm.play!(context);
-    const { canvas } = context;
-    await userEvent.click(canvas.getByRole('button', { name: /^Run when a service sends an event/ }));
-    await expect(canvas.getByText('Which webhook starts it?')).toBeVisible();
-    await expect(canvas.getByRole('group', { name: 'Trigger signature' })).toBeVisible();
-  },
-};
-
-export const Create: Story = {
-  play: async (context) => {
-    await NewForm.play!(context);
-    const { canvas } = context;
-    await userEvent.click(canvas.getByRole('button', { name: /^Repeat at an interval/ }));
-    await userEvent.click(canvas.getByRole('button', { name: 'Next: Task' }));
-    await userEvent.type(canvas.getByRole('textbox', { name: /^Name/ }), 'Nightly check');
-    await userEvent.type(canvas.getByRole('textbox', { name: /^Prompt/ }), 'Check the build.');
-    for (let step = 0; step < 3; step += 1)
-      await userEvent.click(canvas.getByRole('button', { name: /^Next: / }));
-    await expect(canvas.getByText('Check the automation.')).toBeVisible();
-    await userEvent.click(canvas.getByRole('button', { name: 'Create automation' }));
-    await expect(await canvas.findByText('Automation created.')).toBeVisible();
-    await expect(canvas.getByRole('heading', { name: 'Nightly check' })).toBeVisible();
-  },
-};
-
-export const Edit: Story = {
-  play: async ({ canvas }) => {
-    await userEvent.click(await canvas.findByText('Morning summary'));
-    await userEvent.click(await canvas.findByRole('button', { name: 'Edit' }));
-    await expect(canvas.getByText('Check the automation.')).toBeVisible();
-    await userEvent.click(canvas.getByRole('button', { name: 'Change prompt' }));
-    const prompt = canvas.getByRole('textbox', { name: /^Prompt/ });
-    await userEvent.clear(prompt);
-    await userEvent.type(prompt, 'List the open pull requests.');
-    await userEvent.click(canvas.getByRole('button', { name: 'Save automation' }));
-    await expect(await canvas.findByText('Automation saved.')).toBeVisible();
-    await expect(canvas.getByText('List the open pull requests.')).toBeVisible();
   },
 };

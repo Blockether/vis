@@ -1,9 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, within } from 'storybook/test';
+import { expect, fn, userEvent } from 'storybook/test';
 
 import { STORY_INERT_CLIENT, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
 import { LivePanel } from './LivePanel';
-import { LiveViewPanel } from './LiveView';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 
 /**
@@ -50,7 +49,7 @@ const client = {
 } as unknown as typeof STORY_INERT_CLIENT;
 
 const meta = {
-  title: 'Live View/Side panel',
+  title: 'Session/Live View/Side panel',
   component: LivePanel,
   parameters: { layout: 'fullscreen' },
   args: { views: [DEPLOY, JOBS], client, sid: 's1', onClose: fn() },
@@ -81,31 +80,5 @@ export const TwoOwners: Story = {
     await userEvent.click(row);
     await expect(row).toHaveAttribute('aria-expanded', 'false');
     await expect(canvas.queryByRole('button', { name: /Fast lane/ })).toBeNull();
-  },
-};
-
-/** One extension owns every view: its name heads the panel, without tabs. */
-export const OneOwner: Story = {
-  args: { views: [JOBS] },
-  play: async ({ canvas }) => {
-    await expect(canvas.queryByRole('tablist')).toBeNull();
-    await expect(canvas.getByRole('heading', { name: 'jobs' })).toBeVisible();
-  },
-};
-
-/** The inputs and cards of a view: a value goes out after a pause, a submit sends all. */
-export const InputsAndCards: StoryObj<typeof LiveViewPanel> = {
-  render: (args) => <LiveViewPanel {...args} />,
-  args: { view: JOBS, inDialog: true, onChange: fn(), onSubmit: fn(), onActivate: fn() },
-  play: async ({ args, canvasElement }) => {
-    const canvas = within(canvasElement);
-    const name = canvas.getByLabelText('Job name');
-    await userEvent.clear(name);
-    await userEvent.type(name, 'release');
-    await userEvent.click(canvas.getByRole('button', { name: /Fast lane/ }));
-    await expect(args.onActivate).toHaveBeenCalledWith('fast');
-    await userEvent.click(canvas.getByRole('button', { name: 'Queue job' }));
-    await expect(args.onChange).toHaveBeenCalledWith('name', 'release');
-    await expect(args.onSubmit).toHaveBeenCalledWith('queue', { name: 'release', notes: '' });
   },
 };

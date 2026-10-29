@@ -5,7 +5,7 @@ import { QrScannerView } from './QrScanner';
 
 /** Camera permissions are side effects; the six surfaces they produce are plain values. */
 const meta = {
-  title: 'Components/QR scanner',
+  title: 'App/Pairing scanner',
   component: QrScannerView,
   args: {
     phase: 'starting',
@@ -18,12 +18,6 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
-
-/** The permission prompt has not answered yet. */
-export const Starting: Story = {};
-
-/** The wait became long enough to explain where iOS may be blocked. */
-export const SlowStart: Story = { args: { slowStart: true } };
 
 const cancel = fn();
 const photo = fn();
@@ -38,12 +32,6 @@ export const Live: Story = {
     await expect(args.onCancel).toHaveBeenCalledOnce();
   },
 };
-
-/** A live preview that has not found a code says what to change. */
-export const NoHitYet: Story = { args: { phase: 'live', noHitYet: true } };
-
-/** A still photo is being decoded and cannot be submitted twice. */
-export const ReadingPhoto: Story = { args: { phase: 'busy' } };
 
 /** Permission failed; the reason stands next to the two remaining exits. */
 export const Denied: Story = {

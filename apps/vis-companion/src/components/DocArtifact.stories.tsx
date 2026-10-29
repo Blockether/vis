@@ -16,7 +16,7 @@ import { DocFrame } from './DocArtifact';
  * story downloads nothing and two frames of it compare.
  */
 const meta = {
-  title: 'Components/Doc frame',
+  title: 'Session/Artifacts/PDF',
   component: DocFrame,
   parameters: {
     layout: 'padded',

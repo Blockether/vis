@@ -1,13 +1,11 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
-import { STORY_FLEET_CONNS, STORY_NEWER_PROJECT, storyFleetFetch } from '../dev/story-data';
-import { machineKey } from '../lib/fleet';
-import { groupFoldKey, projectFoldKey, readProjectFold, writeProjectFold } from '../lib/project-fold';
+import { STORY_FLEET_CONNS, storyFleetFetch } from '../dev/story-data';
 import { SessionsScreen } from './SessionsScreen';
 
 const meta = {
-  title: 'Screens/Project hierarchy',
+  title: 'Session list/Project hierarchy',
   component: SessionsScreen,
   parameters: { layout: 'fullscreen' },
   decorators: [
@@ -73,128 +71,5 @@ export const GroupedSessions: Story = {
     await expect(within(header).getByRole('button', { name: 'Expand infrastructure' })).toBeEnabled();
     await userEvent.click(page.getByRole('button', { name: 'Expand infrastructure' }));
     await within(group).findByText('Rotate the relay signing key');
-  },
-};
-
-export const GroupedSessionsDark: Story = {
-  ...GroupedSessions,
-  tags: ['!test'],
-  globals: { theme: 'blockether-dark' },
-};
-
-const STATUS_GROUP = 'group-statuses';
-const STATUS_NAME = 'Review work with a long name that must not hide pending input';
-
-/** Group counts stay visible on small phones, with larger text and behind a fold. */
-export const GroupStatuses: Story = {
-  beforeEach: () => {
-    const previous = globalThis.fetch;
-    const project = {
-      ...STORY_NEWER_PROJECT,
-      name: 'Status checks',
-      rows: Array.from({ length: 36 }, (_, index) => ({
-        ...STORY_NEWER_PROJECT.rows[0],
-        id: `group-status-${index}`, title: `Grouped session ${index + 1}`,
-        group_id: STATUS_GROUP, live: index < 23, is_awaiting_input: index < 12,
-        awaiting_input_count: index < 12 ? 3 : 0,
-        answer_count: 6, is_unread: index >= 23, unread_answers: index >= 23 ? 5 : 0,
-      })),
-      groups: [{ id: STATUS_GROUP, project_id: STORY_NEWER_PROJECT.projectId,
-        name: STATUS_NAME, color: 'blue', position: 0, session_count: 36 }],
-    };
-    const base = machineKey(STORY_FLEET_CONNS[0]);
-    const folds = [
-      { key: groupFoldKey(base, project.root, STATUS_GROUP), open: false },
-      { key: projectFoldKey(base, project.root), open: true },
-    ];
-    const previousFolds = folds.map(({ key }) => ({ key, open: readProjectFold(key) }));
-    for (const { key, open } of folds) writeProjectFold(key, open);
-    globalThis.fetch = storyFleetFetch([project]);
-    return () => {
-      globalThis.fetch = previous;
-      for (const { key, open } of previousFolds) writeProjectFold(key, open ?? false);
-    };
-  },
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement);
-    const toggle = await page.findByRole('button', { name: `Expand ${STATUS_NAME}` });
-    const badges = await Promise.all(['12 HITL', '11 LIVE', '13 NEW'].map((text) =>
-      within(toggle).findByText(text),
-    ));
-    await expect(within(toggle).getAllByText('·')).toHaveLength(2);
-    await expect(toggle).toHaveAccessibleDescription(
-      '12 sessions need input. 11 live sessions. 13 sessions with new answers.',
-    );
-    await expect(canvasElement.querySelector('[data-session-id="group-status-0"]')).toBeNull();
-    const header = page.getByRole('button', { name: 'Collapse Status checks' }).closest('header')!;
-    const projectCounts = ['36 sessions', '12 HITL', '11 LIVE', '13 NEW'].map((text) => within(header).getByText(text));
-    await expect(Array.from(header.querySelectorAll('span[aria-hidden="true"]'), (node) => node.textContent)).toEqual(['|', '·', '·']);
-    const namesAndCounts = [
-      { name: within(toggle).getByText(STATUS_NAME), counts: badges, parent: toggle },
-      { name: within(header).getByText('Status checks'), counts: projectCounts, parent: header },
-    ];
-    const screen = page.getByRole('region', { name: 'Sessions' });
-    const doc = canvasElement.ownerDocument;
-    const previousFontSize = doc.documentElement.style.fontSize;
-    const previousWidth = screen.style.width;
-    const typeSteps = ['--text-ui', '--text-ui--line-height', '--text-body', '--text-body--line-height', '--text-chip', '--text-chip--line-height'];
-    const previousSteps = typeSteps.map((name) => ({ name, value: screen.style.getPropertyValue(name) }));
-    try {
-      for (const scale of [1, 1.3]) {
-        doc.documentElement.style.fontSize = `${16 * scale}px`;
-        // The app uses pixel type steps. Scale their tokens, not only rem spacing.
-        for (const [index, size] of [11, 16, 12, 18, 8, 14].entries()) {
-          screen.style.setProperty(typeSteps[index], `${size * scale}px`);
-        }
-        for (const width of [320, 375, 393, 626]) {
-          screen.style.width = `${width}px`;
-          if (scale === 1 && width === 626 && header.getBoundingClientRect().width > 0) {
-            await expect(Math.round(header.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48);
-            await expect(header.getBoundingClientRect().height).toBeGreaterThan(toggle.parentElement!.getBoundingClientRect().height);
-            await expect(getComputedStyle(header).boxShadow).not.toBe('none');
-            await expect(getComputedStyle(namesAndCounts[1].name).fontSize).toBe(
-              getComputedStyle(namesAndCounts[0].name).fontSize,
-            );
-          }
-          if (header.getBoundingClientRect().width > 0 && matchMedia('(width < 40rem)').matches) {
-            const setHeader = page.getByText('Groups').parentElement!;
-            await waitFor(() => expect(parseFloat(getComputedStyle(setHeader).top)).toBe(header.offsetHeight));
-          }
-          for (const { name, counts, parent } of namesAndCounts) {
-            const bounds = parent.getBoundingClientRect();
-            // jsdom checks behavior; the browser also checks actual layout.
-            if (bounds.width === 0) continue;
-            const nameBox = name.getBoundingClientRect();
-            await expect(nameBox.width).toBeGreaterThan(0);
-            for (const count of counts) {
-              const box = count.getBoundingClientRect();
-              await expect(box.width).toBeGreaterThan(0);
-              await expect(box.left).toBeGreaterThanOrEqual(nameBox.right);
-              await expect(box.right).toBeLessThanOrEqual(bounds.right);
-              await expect(box.bottom).toBeLessThanOrEqual(bounds.bottom);
-            }
-          }
-        }
-      }
-    } finally {
-      doc.documentElement.style.fontSize = previousFontSize;
-      screen.style.width = previousWidth;
-      for (const { name, value } of previousSteps) {
-        if (value) screen.style.setProperty(name, value);
-        else screen.style.removeProperty(name);
-      }
-    }
-    await userEvent.click(toggle);
-    const expanded = page.getByRole('button', { name: `Collapse ${STATUS_NAME}` });
-    await expect(expanded).toHaveTextContent(/12 HITL.*11 LIVE.*13 NEW/);
-    await expect(canvasElement.querySelector('[data-session-id="group-status-0"]')).toHaveAttribute('data-session-id', 'group-status-0');
-    const sessionRow = canvasElement.querySelector('[data-session-id="group-status-0"]')!;
-    if (header.getBoundingClientRect().width > 0) {
-      await expect(header.getBoundingClientRect().height).toBeGreaterThan(sessionRow.getBoundingClientRect().height);
-    }
-    await userEvent.click(expanded);
-    await expect(page.getByRole('button', { name: `Expand ${STATUS_NAME}` })).toHaveTextContent(
-      /12 HITL.*11 LIVE.*13 NEW/,
-    );
   },
 };

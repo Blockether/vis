@@ -5,7 +5,7 @@ import { ErrorFallback } from './ErrorBoundary';
 
 /** The last surface never needs a fabricated crash: its message and recovery are ordinary props. */
 const meta = {
-  title: 'Components/Error fallback',
+  title: 'App/Error recovery',
   component: ErrorFallback,
   args: {
     message: 'Could not render the session timeline',

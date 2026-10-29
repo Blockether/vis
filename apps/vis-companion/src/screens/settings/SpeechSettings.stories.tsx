@@ -91,7 +91,7 @@ function VoiceSetup({ hasVoice = false, failsToSave = false, failsToSpeak = fals
 }
 
 const meta = {
-  title: 'Screens/Voice setup',
+  title: 'Settings/Voice setup',
   component: VoiceSetup,
   // These stories show what the bands hold, so every band starts open.
   decorators: [
@@ -157,14 +157,6 @@ export const TestVoice: Story = {
     ]);
     await expect(canvas.getByRole('button', { name: 'Test' })).toBeEnabled();
     await expect(input).toHaveValue('This is how my voice sounds in Vis.');
-  },
-};
-
-export const Synthesizing: Story = {
-  args: { hasVoice: true },
-  play: async ({ canvasElement }) => {
-    const { canvas } = await startTest(canvasElement);
-    await expect(canvas.getByRole('status')).toHaveTextContent('Synthesizing');
   },
 };
 

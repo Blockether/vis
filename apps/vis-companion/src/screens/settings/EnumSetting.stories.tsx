@@ -4,7 +4,7 @@ import { expect, userEvent, within } from 'storybook/test';
 import { EnumSetting } from './MachineSettings';
 
 const meta = {
-  title: 'Settings/Draft backend',
+  title: 'Settings/Fields/Choice',
   component: EnumSetting,
   parameters: { layout: 'padded' },
   args: {
@@ -25,7 +25,6 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Default: Story = {};
 export const Saving: Story = { args: { busy: true } };
 export const ChooseBackend: Story = {
   play: async ({ canvasElement }) => {

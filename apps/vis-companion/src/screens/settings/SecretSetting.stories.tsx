@@ -18,7 +18,7 @@ const TOKEN: Toggle = {
 };
 
 const meta = {
-  title: 'Settings/Secret setting',
+  title: 'Settings/Fields/Secret',
   component: SecretSetting,
   parameters: { layout: 'padded' },
   args: { toggle: TOKEN, busy: false, onSave: async () => true },
@@ -89,7 +89,3 @@ export const Replacing: Story = {
     await expectFits(canvasElement);
   },
 };
-
-export const SavedPhoneSmall: Story = { ...Replacing, globals: { viewport: { value: 'phoneSmall', isRotated: false } } };
-export const SavedTablet: Story = { ...Replacing, globals: { viewport: { value: 'tablet', isRotated: false } } };
-export const SavedDesktop: Story = { ...Replacing, globals: { viewport: { value: 'desktop', isRotated: false } } };

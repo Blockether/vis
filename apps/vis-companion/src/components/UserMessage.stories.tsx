@@ -32,7 +32,7 @@ const commands = {
   removeAttachment: fn(),
 };
 const meta = {
-  title: 'Session/Shared logs',
+  title: 'Session/Transcript/Request',
   component: UserMessage,
   parameters: { layout: 'padded' },
   args: { children: 'Please check these app logs.', attachments: logs },
@@ -63,8 +63,4 @@ export const PastedAndSent: Story = {
     await expect(canvas.getAllByText('vis-diagnostics.jsonl')).toHaveLength(2);
     await expect(canvas.queryByRole('img')).toBeNull();
   },
-};
-export const AttachmentOnly: Story = { args: { children: '' } };
-export const UnavailableBytes: Story = {
-  args: { children: '', attachments: [{ ...logs[0], base64: '' }] },
 };

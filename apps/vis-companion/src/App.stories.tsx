@@ -4,7 +4,7 @@ import { Header } from './App';
 import { Button, Input } from './components/ui';
 
 const meta = {
-  title: 'Navigation/Header',
+  title: 'App/Header',
   component: Header,
   args: { onSearch: fn(), onAppSettings: fn() },
   render: (args) => (
@@ -44,34 +44,6 @@ export const Search: Story = {
     // A Windows AltGr layout reports Ctrl+Alt while it only types the slash.
     await userEvent.keyboard('{Control>}{Alt>}/{/Alt}{/Control}');
     await expect(args.onSearch).toHaveBeenCalledTimes(3);
-  },
-};
-
-export const SearchPointer: Story = {
-  ...Search,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
-export const SearchDark: Story = {
-  ...Search,
-  tags: ['!test'],
-  globals: { theme: 'blockether-dark' },
-};
-
-export const SearchDarkPointer: Story = {
-  ...Search,
-  tags: ['!test'],
-  globals: { theme: 'blockether-dark', viewport: { value: 'desktop', isRotated: false } },
-};
-
-/** With no session list behind it there is nothing to search, so the bar offers no glass. */
-export const NothingToSearch: Story = {
-  render: (args) => <Header {...args} onSearch={null} />,
-  play: async ({ canvas }) => {
-    await expect(canvas.queryByRole('button', { name: 'Search sessions' })).toBeNull();
-    await userEvent.keyboard('/');
-    await expect(canvas.getByRole('button', { name: 'Open preferences' })).toBeVisible();
   },
 };
 

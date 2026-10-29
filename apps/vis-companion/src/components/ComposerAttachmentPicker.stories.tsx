@@ -4,7 +4,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { ComposerAttachmentPicker } from './ComposerAttachmentPicker';
 
 const meta = {
-  title: 'Session/Composer attachment picker',
+  title: 'Session/Composer/Attachment picker',
   component: ComposerAttachmentPicker,
   parameters: { layout: 'fullscreen' },
   render: (args) => (

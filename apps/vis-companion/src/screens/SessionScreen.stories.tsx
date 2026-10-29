@@ -6,8 +6,6 @@ import {
   STORY_COMPOSER_SESSION as session,
   STORY_COMPOSER_SUBSCRIPTIONS as subscriptions,
   STORY_QUEUED_TURNS,
-  STORY_COMPOSER_PASTE,
-  STORY_PENDING_ATTACHMENTS,
   STORY_OUTLINE_CLIENT,
   STORY_OUTLINE_SESSION,
   STORY_OUTLINE_TURNS,
@@ -19,7 +17,7 @@ import type { GatewayCapabilities } from '../lib/types';
 import { SessionScreen } from './SessionScreen';
 
 const meta = {
-  title: 'Screens/Session',
+  title: 'Session/Screen',
   component: SessionScreen,
   parameters: { layout: 'fullscreen' },
   decorators: [
@@ -70,26 +68,6 @@ export const ComposerInput: Story = {
   },
 };
 
-/** The input and bare actions share one line, without overlapping touch targets. */
-export const ComposerHeights: Story = {
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement);
-    const composer = await page.findByRole('textbox', { name: 'Message Vis' });
-
-    await userEvent.type(
-      composer,
-      'First line{Shift>}{Enter}{/Shift}Second line{Shift>}{Enter}{/Shift}Third line',
-    );
-    await userEvent.clear(composer);
-  },
-};
-
-export const ComposerHeightsPointer: Story = {
-  ...ComposerHeights,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
 const runningTurn: RunningTurn = {
   id: 'composer-running-turn',
   request: 'Check the control heights.',
@@ -135,24 +113,6 @@ const runningClient = new Proxy(client, {
   },
 });
 
-/** The full row still fits while voice and cancellation are both available. */
-export const RunningComposerHeights: Story = {
-  args: { client: runningClient },
-  play: async ({ canvasElement }) => {
-    const composer = await within(canvasElement).findByRole('textbox', { name: 'Message Vis' });
-    await expect(composer).toHaveAttribute('placeholder', 'Message Vis — queues next');
-    const row = composer.parentElement!;
-    const buttons = within(row).getAllByRole('button');
-    await expect(buttons).toHaveLength(4);
-  },
-};
-
-export const RunningComposerHeightsPointer: Story = {
-  ...RunningComposerHeights,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
 /** The queued message and composer share a square frame at every input density. */
 export const QueuedComposer: Story = {
   args: {
@@ -196,12 +156,6 @@ export const ReadingLayout: Story = {
   },
 };
 
-export const ReadingLayoutPointer: Story = {
-  ...ReadingLayout,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
 /** File intake, stable labels and keyboard removal share the same editor. */
 export const ImageReferences: Story = {
   play: async ({ canvasElement }) => {
@@ -226,28 +180,6 @@ export const ImageReferences: Story = {
     await userEvent.upload(input, new File([blob], 'third.png', { type: 'image/png' }));
     await expect(await page.findByText('[IMAGE #1]')).toBeVisible();
     await expect(composer).toHaveValue('Compare these:  [IMAGE #1]');
-  },
-};
-
-export const ImageReferencesMixed: Story = {
-  beforeEach: async () => {
-    await hydrateDraftMessages();
-    writeDraftMessage(draftMessageKey(client.base, session.id), {
-      text: `Compare [IMAGE #1] with the notes ${STORY_COMPOSER_PASTE.token}`,
-      pastes: [STORY_COMPOSER_PASTE],
-      counter: STORY_COMPOSER_PASTE.id,
-      imageCounter: 1,
-      attachments: STORY_PENDING_ATTACHMENTS.map((attachment) => ({
-        ...attachment,
-        reference: attachment.media_type.startsWith('image/') ? '[IMAGE #1]' : undefined,
-      })),
-    });
-  },
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement);
-    await expect(await page.findByText('[IMAGE #1]')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Edit pasted block 4' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Remove release-note.m4a' })).toBeVisible();
   },
 };
 

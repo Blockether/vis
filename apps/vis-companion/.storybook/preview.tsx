@@ -44,6 +44,11 @@ const preview: Preview = {
   parameters: {
     layout: 'fullscreen',
 
+    // The tree follows the app: its parts first, then the screens in the order you meet them.
+    options: {
+      storySort: { order: ['Foundations', 'App', 'Session list', 'Session', 'Settings'] },
+    },
+
     viewport: {
       options: {
         phone: { name: 'Phone 393x852', styles: { width: '393px', height: '852px' } },

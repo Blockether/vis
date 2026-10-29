@@ -25,7 +25,7 @@ const APPS = [
 ];
 
 const meta = {
-  title: 'Live View/App attachment',
+  title: 'Session/Live View/App cards',
   component: AppListRow,
   args: { view: APPS[0], onOpen: fn() },
   render: (args) => (

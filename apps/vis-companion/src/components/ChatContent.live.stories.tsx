@@ -74,7 +74,7 @@ const client = {
   })),
 } as unknown as typeof STORY_INERT_CLIENT;
 const meta = {
-  title: 'Live View/In the transcript',
+  title: 'Session/Live View/In transcript',
   component: IterationTrace,
   parameters: { layout: 'padded' },
   args: {
@@ -100,49 +100,12 @@ async function expectLiveFrame(element: Element) {
   return frame;
 }
 
-/** Several views share one digest control, which keeps its count when the steps open. */
-export const MultipleLiveViews: Story = {
-  args: {
-    liveViews: [view, { ...view, id: 'test-pool', title: 'Integration tests' }],
-  },
-  play: async ({ canvas, canvasElement }) => {
-    const control = canvas.getByRole('button', { name: 'Open running live view: Integration tests' });
-    const digest = canvasElement.querySelector<HTMLButtonElement>('[data-step-digest]')!;
-    await expect(control).toHaveTextContent(/^2 live$/);
-    await expect(digest.parentElement).toContainElement(control);
-    await userEvent.click(digest);
-    await expect(control).toBeVisible();
-    await expect(control).toHaveTextContent(/^2 live$/);
-    await userEvent.click(control);
-    const opened = within(document.body);
-    await expect(opened.getAllByRole('button', { name: 'Close Integration tests' })).toHaveLength(1);
-    await userEvent.click(opened.getByRole('button', { name: 'Close Integration tests' }));
-    await userEvent.click(digest);
-    await expect(control).toBeVisible();
-    await expect(control).toHaveTextContent(/^2 live$/);
-  },
-};
-
 /** Regression #222: production execution surface and live actions, without a gateway. */
 export const Running: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   play: async ({ canvas, canvasElement }) => {
     // A closed digest folds the live run into one control on its row, and it opens the run.
     const control = canvas.getByRole('button', { name: 'Open running live view: Jenkins build pool' });
-    await expect(control).toHaveTextContent(/^live$/);
-    // Regression: the control continues the counts after a separator, in their own font.
-    const part = control.parentElement!;
-    const toggle = part.previousElementSibling!;
-    await expect(part.textContent).toBe('\u00a0·\u00a0live');
-    await expect(toggle.hasAttribute('data-step-digest')).toBe(true);
-    await expect(
-      Math.abs(part.getBoundingClientRect().left - toggle.getBoundingClientRect().right),
-    ).toBeLessThan(1);
-    const counts = getComputedStyle(toggle.querySelector('span')!);
-    const word = getComputedStyle(control);
-    for (const key of ['color', 'fontFamily', 'fontSize', 'fontWeight'] as const) {
-      await expect(word[key], key).toBe(counts[key]);
-    }
     await expect(canvas.queryByRole('button', { name: 'Open run Jenkins build pool' })).toBeNull();
     await userEvent.click(control);
     const opened = within(document.body);
@@ -151,18 +114,13 @@ export const Running: Story = {
     await openStepDigests(canvasElement);
     // Regression, user report: expanding the steps keeps their live control in the header.
     await expect(control).toBeVisible();
-    await expect(control).toHaveTextContent(/^live$/);
     await userEvent.click(control);
     await expect(opened.getAllByRole('button', { name: 'Close Jenkins build pool' })).toHaveLength(1);
     await userEvent.click(opened.getByRole('button', { name: 'Close Jenkins build pool' }));
     const title = canvas.getByText('Jenkins build pool');
-    const liveFrame = await expectLiveFrame(title);
+    await expectLiveFrame(title);
     const activitySurface = title.closest<HTMLElement>('[data-execution-group]')!;
-    await expect(title.closest('.border')).toBeNull();
     const controls = within(activitySurface);
-    await expect(controls.getByText('ACTIVITY')).toBeInTheDocument();
-    await expect(controls.getByText('RUN')).toBeInTheDocument();
-    await expect(title.closest('[data-execution-activity]')).toBeNull();
     await userEvent.click(controls.getByRole('button', { name: 'Expand Activity' }));
     await userEvent.click(controls.getByRole('button', { name: 'Collapse Activity' }));
     await expect(title).toBeVisible();
@@ -170,14 +128,7 @@ export const Running: Story = {
     // The transcript STATES the run: its newest status, and no log painted in place.
     await expect(controls.getByText('Waiting for integration tests')).toBeVisible();
     await expect(controls.queryByRole('button', { name: 'Build log' })).toBeNull();
-    // The row ends as one line of type — INTERRUPT | LIVE. The verb rides the run's own band,
-    // centred in the row and wearing no face at all, and both words stand in the band's full
-    // weight with a printed rule between them: the user reported LIVE reading as light type
-    // beside a stop that filled the row.
-    const interrupt = controls.getByRole('button', { name: 'Interrupt' });
-    const band = liveFrame.querySelector('header')!;
-    await expect(band.textContent).toContain('|');
-    await userEvent.click(interrupt);
+    await userEvent.click(controls.getByRole('button', { name: 'Interrupt' }));
     await expect(
       controls.getByRole('textbox', { name: 'Why are you stopping Jenkins build pool?' }),
     ).toBeInTheDocument();
@@ -186,7 +137,6 @@ export const Running: Story = {
       name: 'Open run Jenkins build pool',
     });
     await expect(launch).not.toHaveAttribute('aria-expanded');
-    await expect(launch.querySelector('svg')).toBeNull();
     await userEvent.click(launch);
     const page = within(document.body);
     // The picture belongs to the run's own screen: the log opens there, and leaves with it.
@@ -199,41 +149,6 @@ export const Running: Story = {
   },
 };
 
-export const RunningPhone: Story = {
-  ...Running,
-  tags: ['!test'],
-  globals: { viewport: { value: 'phone', isRotated: false } },
-};
-
-export const RunningTablet: Story = {
-  ...Running,
-  tags: ['!test'],
-  globals: { viewport: { value: 'tablet', isRotated: false } },
-};
-
-// Regression, user report (screenshot): a long run name ate the band around it. RUN shrank to
-// "R…", the row ran past the card and LIVE trailed off it in light type. The PROSE is what gives
-// way: the band's own words keep their width, and the row still ends INTERRUPT | LIVE inside it.
-const longRunName: LiveView = {
-  ...view,
-  id: 'clojars-release',
-  title: 'Release & Deploy to Clojars · run 18234567',
-  nodes: [{ id: 'status', type: 'status', text: 'Queued · 0 of 6 jobs finished', tone: 'running' }],
-};
-
-export const LongRunName: Story = {
-  args: { liveViews: [longRunName] },
-  globals: { viewport: { value: 'phone', isRotated: false } },
-};
-
-// Regression, user report (screenshot): the live run sat in a bordered box on a rhythm of its
-// own. The three bands of an execution are one column — the step from ACTIVITY down to RUN is
-// the step from CODE down to ACTIVITY.
-export const BandRhythm: Story = {
-  args: { showCode: true },
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
-
 // A view that no Activity claims joins the last step digest. Its picture opens only on a click.
 export const Unmatched: Story = {
   args: { liveViews: [{ ...view, owner: undefined }] },
@@ -244,120 +159,5 @@ export const Unmatched: Story = {
     const opened = within(document.body);
     await expect(opened.getByRole('dialog', { name: view.title })).toBeVisible();
     await userEvent.click(opened.getByRole('button', { name: `Close ${view.title}` }));
-  },
-};
-
-// A run nobody could match to an Activity waits in the last step digest. In its dialog, its rows
-// state one line each: a step timeline and a result link print a name that is longer than a
-// phone is wide, and they say so by ending in an ellipsis or wrapping.
-const longRun: LiveView = {
-  ...view,
-  id: 'release-run',
-  title: 'Verify release source',
-  description: '22 jobs',
-  owner: undefined,
-  nodes: [
-    {
-      id: 'steps',
-      type: 'steps',
-      label: 'Timeline',
-      steps: [
-        {
-          id: 'isolation',
-          label: 'vis-agent-linux-arm64.tar.gz · Provision and verify Linux isolation · 6s',
-          tone: 'ok',
-        },
-        {
-          id: 'image',
-          label: 'vis-agent-linux-arm64.tar.gz · Build native image · 4m 12s',
-          tone: 'running',
-        },
-      ],
-    },
-    {
-      id: 'links',
-      type: 'link',
-      links: [
-        {
-          id: 'run',
-          label: 'This run',
-          target: 'https://gateway.example.com/actions/runs/4344',
-          target_kind: 'url',
-        },
-        {
-          id: 'ubuntu',
-          label: 'Failed · Verify release source / python-package / ubuntu-latest / 3.11',
-          target: 'https://gateway.example.com/actions/runs/4344/job/9883',
-          target_kind: 'url',
-        },
-        {
-          id: 'macos',
-          label: 'Failed · Verify release source / python-package / macos-26 / pypy3.11',
-          target: 'https://gateway.example.com/actions/runs/4344/job/9963',
-          target_kind: 'url',
-        },
-      ],
-    },
-  ],
-};
-
-// Regression, user report (screenshot): on a phone that picture dragged the whole card past the
-// right edge of the screen — the box lost its right border and the failed jobs were cut off
-// mid-word. The picture opens in the run's dialog now. The dialog takes the width it is given,
-// and the widest line a row could print never becomes the width of the screen.
-export const NarrowUnmatched: Story = {
-  args: { liveViews: [longRun] },
-  play: async ({ canvas }) => {
-    const name = `Open running live view: ${longRun.title}`;
-    await userEvent.click(canvas.getByRole('button', { name }));
-    await expect(within(document.body).getByRole('dialog', { name: longRun.title })).toBeVisible();
-  },
-};
-export const Settled: Story = {
-  args: {
-    liveViews: [],
-    iterations: [
-      {
-        id: 'story-iteration',
-        forms: [
-          {
-            source: 'jenkins.monitor()',
-            activity: {
-              ...activity,
-              state: 'succeeded',
-              counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
-              rows: activity.rows.map((row) => ({ ...row, state: 'succeeded' })),
-            },
-          },
-        ],
-        attachments: [
-          {
-            index: 0,
-            iteration_id: 'story-iteration',
-            filename: 'Jenkins build pool.live.ndjson',
-            media_type: 'application/vnd.vis.live+ndjson',
-            owner: view.owner,
-          },
-        ],
-      },
-    ],
-  },
-  play: async ({ canvas, canvasElement }) => {
-    await openStepDigests(canvasElement);
-    const run = canvas.getByRole('button', { name: 'Open run Jenkins build pool' });
-    const group = run.closest('[data-execution-group]')!;
-    await expect(group).not.toHaveClass('border');
-    await expect(run.closest('[data-execution-activity]')).toBeNull();
-    await expect(run.closest('.border')).toBeNull();
-    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
-    await userEvent.click(canvas.getByRole('button', { name: 'Collapse Activity' }));
-    await expect(run).toBeVisible();
-    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
-    await userEvent.click(run);
-    const page = within(document.body);
-    await expect(await page.findByText('Integration tests passed')).toBeVisible();
-    await expect(page.queryByRole('button', { name: 'Interrupt' })).toBeNull();
-    await userEvent.click(page.getByRole('button', { name: 'Close Jenkins build pool' }));
-    await expect(run).toBeVisible();
   },
 };

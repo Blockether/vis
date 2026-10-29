@@ -18,7 +18,7 @@ import { SessionsScreen } from './screens/SessionsScreen';
  * sometimes to nothing. Real CSS, real rows, real boxes.
  */
 const meta = {
-  title: 'Navigation/Desk split',
+  title: 'App/Desk split',
   // The rail is a DESK shape: 1280x800, where a third of the shell is wider than
   // the 20rem floor, so both halves of the mirror are exercised.
   globals: { viewport: { value: 'desktop', isRotated: false } },

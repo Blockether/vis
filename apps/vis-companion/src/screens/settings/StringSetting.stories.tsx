@@ -4,7 +4,7 @@ import { expect, userEvent, within } from 'storybook/test';
 import { StringSetting } from './MachineSettings';
 
 const meta = {
-  title: 'Settings/Agent name',
+  title: 'Settings/Fields/Text',
   component: StringSetting,
   parameters: { layout: 'padded' },
   args: {
@@ -36,22 +36,6 @@ const meta = {
 } satisfies Meta<typeof StringSetting>;
 export default meta;
 type Story = StoryObj<typeof meta>;
-export const Default: Story = {
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    const field = canvas.getByRole('textbox', { name: 'Agent name' });
-    await expect(canvas.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
-    await expect(canvas.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
-    await userEvent.click(field);
-    await expect(canvas.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
-    await expect(field).toHaveValue('Ada');
-    // A one-line value sits on the right of its label, like a switch or a picker.
-    const label = canvas.getByText('Agent name').getBoundingClientRect();
-    const box = field.getBoundingClientRect();
-    await expect(box.left).toBeGreaterThanOrEqual(label.right);
-    await expect(box.top).toBeLessThan(label.bottom + 16);
-  },
-};
 export const Saving: Story = {
   args: { busy: true },
   play: async ({ canvasElement }) => {

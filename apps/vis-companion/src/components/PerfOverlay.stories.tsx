@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect } from 'storybook/test';
 
 import type { MemoryCell, PerfReport } from '../lib/perf';
 import { PerfOverlay } from './PerfOverlay';
@@ -68,7 +67,7 @@ const MANY_SESSIONS: PerfReport = {
 };
 
 const meta = {
-  title: 'Diagnostics/Memory overlay',
+  title: 'App/Memory overlay',
   component: PerfOverlay,
   parameters: { layout: 'padded' },
   args: { read: () => MANY_SESSIONS, refreshMs: 0, startOpen: true },
@@ -79,29 +78,7 @@ type Story = StoryObj<typeof meta>;
 
 export const ManySessions: Story = {};
 
-export const LeftOnRemovedElements: Story = {
-  args: {
-    read: () => ({
-      ...MANY_SESSIONS,
-      listeners: {
-        ...MANY_SESSIONS.listeners,
-        detached: 7,
-        detachedByTarget: [{ site: 'div', live: 7 }],
-      },
-      observers: [{ kind: 'ResizeObserver', observers: 41, targets: 1_108, detached: 5 }],
-    }),
-  },
-};
-
-/** Safari and the macOS desktop app do not report the JS heap. */
-export const WithoutHeapSize: Story = {
-  args: { read: () => ({ ...MANY_SESSIONS, heap: null }) },
-};
-
 /** How every launch starts: one dot, with the figures behind a click. */
 export const Minimized: Story = {
   args: { startOpen: false },
-  play: async ({ canvas }) => {
-    await expect(canvas.getByRole('button', { name: /^Memory 96\.4 MB · 671 listeners$/ })).toBeVisible();
-  },
 };

@@ -10,7 +10,7 @@ import { ProviderRouterDialog } from './RouterScreen';
  * the modal glass through the title band, scrolling body and provider rows is production.
  */
 const meta = {
-  title: 'Screens/Model picker',
+  title: 'App/Model picker',
   component: ProviderRouterDialog,
   parameters: { layout: 'fullscreen' },
   args: {

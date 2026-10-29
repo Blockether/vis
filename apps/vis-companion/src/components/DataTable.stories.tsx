@@ -15,7 +15,7 @@ import { DataTable } from './DataTable';
  * pages inside it.
  */
 const meta = {
-  title: 'Components/Data table',
+  title: 'Session/Artifacts/Table',
   component: DataTable,
   parameters: { layout: 'padded' },
 } satisfies Meta<typeof DataTable>;
@@ -23,21 +23,6 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
-
-/** Inline in a transcript: the fence, at reading size. */
-export const Inline: Story = {
-  args: { body: TABLE_BLOCK, compact: false },
-};
-
-/** The same grid in a step's own frame, where the rows are already tight. */
-export const Compact: Story = {
-  args: { body: TABLE_BLOCK, compact: true },
-};
-
-/** Inside a card that already draws an edge: keep the rhythm, drop the frame. */
-export const Frameless: Story = {
-  args: { body: TABLE_BLOCK, compact: true, frameless: true },
-};
 
 /** Opened as an artifact: it takes the body and pages inside it. */
 export const Opened: Story = {
