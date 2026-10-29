@@ -622,7 +622,8 @@
           (expect (= {"vision_memory" {"working_eye" {}}
                       "theme_name" "vis-dark"
                       "show_python_code" false
-                      "summarize_steps" false}
+                      "summarize_steps" false
+                      "zen_mode" false}
                      @written)))))
   (it "reports a failed preference save instead of silently accepting it"
       (let [notifications (atom [])]

@@ -54,6 +54,11 @@
 
 (def height "Rows reserved for the model/Git and limits/usage status lines." 2)
 
+(defn rows
+  "Rows that the footer takes in `db`: `height`, or none in Zen mode."
+  [db]
+  (if (get-in db [:settings :zen-mode]) 0 height))
+
 ;;; ── Data extraction from app-db ────────────────────────────────────────────
 (def ^:private default-reasoning-level "balanced")
 
@@ -1036,11 +1041,12 @@
      - live turn / cancelling   → the `C-g / Esc cancel` abort hint
      - an open live viewer      → its close/stop controls, never hidden pane details
      - a transient `:echo` msg  → a one-shot message (the caller clears it)
+     - Zen mode                 → the latest host notification, which the hidden header shows otherwise
 
    No idle keybinding nags, and no which-key strip: C-x opens the HYDRA band
    itself (`keymap/prefix-spec` → `dialogs/prefix-band!`), which lists the next
    keys where they belong — over the transcript, not in a one-row strip."
-  [{:keys [loading? cancelling? echo live-views live-viewer-id tabs active-tab-id]}]
+  [{:keys [loading? cancelling? echo live-views live-viewer-id tabs active-tab-id settings]}]
   (let [building?
         (some #(and (= active-tab-id (:id %)) (:build-id %)) tabs)
 
@@ -1055,7 +1061,14 @@
           building? [(hint-segment "Starting session… type now; Enter sends when ready" 1)]
           loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
           (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]
-          :else [])))
+          :else (let [{:keys [text level]} (when (:zen-mode settings) (last (lp/notifications)))]
+                  (if (str/blank? (str text))
+                    []
+                    [{:text (str/trim (str text))
+                      :fg (components/level->fg level)
+                      :bold? true
+                      :region :center
+                      :priority 1}])))))
 
 (defn draw-echo-area!
   "Emacs echo area / minibuffer analogue: ONE flat row under the agent dock,
@@ -1085,12 +1098,14 @@
    Safe to call every frame (cheap; no allocations on the hot path
    beyond the spans vector)."
   [g db footer-row cols now-ms]
-  ;; Background fill: default footer fg on terminal bg, full row.
-  (p/clear-styles! g)
-  (p/set-colors! g t/footer-fg t/terminal-bg)
-  (p/fill-rect! g 0 footer-row cols height)
-  (draw-footer-row! g db footer-row cols now-ms build-segments 0)
-  (draw-footer-row! g db (inc (long footer-row)) cols now-ms build-limits-segments 1)
-  ;; Restore neutral state for whatever paints next.
-  (p/clear-styles! g)
-  (p/set-colors! g t/text-fg t/terminal-bg))
+  ;; Zen mode reserves no footer rows, so nothing paints below the prompt.
+  (when (pos? (long (rows db)))
+    ;; Background fill: default footer fg on terminal bg, full row.
+    (p/clear-styles! g)
+    (p/set-colors! g t/footer-fg t/terminal-bg)
+    (p/fill-rect! g 0 footer-row cols height)
+    (draw-footer-row! g db footer-row cols now-ms build-segments 0)
+    (draw-footer-row! g db (inc (long footer-row)) cols now-ms build-limits-segments 1)
+    ;; Restore neutral state for whatever paints next.
+    (p/clear-styles! g)
+    (p/set-colors! g t/text-fg t/terminal-bg)))

@@ -3578,7 +3578,15 @@
         :type :toggle
         :label "Compact mode"
         :description
-        "Fold the steps between progress notes into one row with their state, live views and time. Open the row to see their thinking, code and Activity. Turn off to show Activity for each step."}]
+        "Fold the steps between progress notes into one row with their state, live views and time. Open the row to see their thinking, code and Activity. Turn off to show Activity for each step."}
+       {:key :zen-mode
+        :type :toggle
+        :label "Zen mode"
+        :description
+        (str
+          "Hide the header and the footer, so the screen shows only the transcript and the prompt. "
+          (keymap/label-for :toggle-zen-mode)
+          " turns it on and off.")}]
       (thinking-modes-rows))))
 
 (declare titleize-label)

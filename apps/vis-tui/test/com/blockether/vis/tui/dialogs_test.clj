@@ -1403,14 +1403,14 @@
             (expect (= {:type :section :label "General"} (select-keys (first rows) [:type :label])))
             (expect (= "General" (:label (last (filter #(= :section (:type %)) (take view rows))))))
             (expect (= :subsection (:type (nth rows view))))
-            (expect (= ["Theme" "Code mode" "Compact mode" "Simplified thinking modes"]
-                       (subvec labels (inc view) (+ view 5))))
+            (expect (= ["Theme" "Code mode" "Compact mode" "Zen mode" "Simplified thinking modes"]
+                       (subvec labels (inc view) (+ view 6))))
             (expect (= :theme-name (:key (nth rows (inc view)))))
             ;; The View rows are the last rows of General.
-            (expect (or (nil? next-section) (= (+ view 5) next-section)))
+            (expect (or (nil? next-section) (= (+ view 6) next-section)))
             (expect
               (= {:type :registry-toggle :toggle-id "simplified_thinking_modes" :toggle-value true}
-                 (select-keys (nth rows (+ view 4)) [:type :toggle-id :toggle-value])))
+                 (select-keys (nth rows (+ view 5)) [:type :toggle-id :toggle-value])))
             (expect (= 1 (count (filter #(= "simplified_thinking_modes" (:toggle-id %)) rows))))))
         ;; A group, project or session target has no View rows: they are global only.
         (binding [dlg/*settings-target* {:scope "project" :target-id "p1"}]

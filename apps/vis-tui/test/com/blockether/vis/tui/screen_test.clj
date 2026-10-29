@@ -4340,3 +4340,72 @@ therapy line 2"
                                                              nil)}
                      #(#'screen/open-settings-modal! nil))
                    (expect (= [[:refresh-session-settings "s1"]] @events)))))
+
+
+;; User request: Zen mode hides the header and the footer, so the screen shows only
+;; the transcript and the prompt. The echo row takes over the header's notification.
+(defdescribe
+  zen-mode-frame-test
+  (let [frame
+        (fn [settings path]
+          (let [db {:session {:id "8c1f2a90-0000-4000-8000-000000000001"}
+                    :title "Zen title"
+                    :workspace {}
+                    :messages [{:role :user :text "hello zen" :id "m1"}]
+                    :scroll scroll/follow
+                    :input (input/empty-input)
+                    :settings settings
+                    :pending-sends []
+                    :detail-expansions {}
+                    :live-views []
+                    :loading? false
+                    :cancelling? false
+                    :progress nil
+                    :channel-status {}
+                    :tabs []
+                    :tab-locals {}
+                    :slash-command-index 0
+                    :render-version 0}]
+            (virtual/invalidate-heights!)
+            (render/invalidate-cache!)
+            (with-open [^TerminalScreen terminal-screen (:screen (term/virtual-screen))]
+              (with-redefs [state/app-db (atom db)
+                            timg/images-protocol (constantly nil)
+                            vis/notifications (constantly [{:text "Copied zen" :level :success}])]
+
+                (let [full (#'screen/render-frame! terminal-screen 80 30 db 1000)
+                      [layout _] (if (= :full path)
+                                   [full]
+                                   (#'screen/paint-frame! terminal-screen path 80 30 db 1020 full))]
+
+                  {:layout layout
+                   :rows (mapv (fn [row]
+                                 (apply str
+                                   (for [col (range 80)]
+                                     (.getCharacterString
+                                       (.getBackCharacter terminal-screen (int col) (int row))))))
+                               (range 30))})))))
+
+        row-of
+        (fn [rows text]
+          (first (keep-indexed #(when (str/includes? %2 text) %1) rows)))]
+
+    (it "paints the header and the footer when Zen mode is off"
+        (let [{:keys [rows layout]} (frame {} :full)]
+          (expect (= 1 (row-of rows "Zen title")))
+          (expect (= 1 (row-of rows "Copied zen")))
+          (expect (some? (row-of rows "Limits")))
+          (expect (= 4 (:messages-top layout)))))
+    (it "gives the header and footer rows to the transcript on every repaint path"
+        (let [normal (:layout (frame {} :full))]
+          (doseq [path [:full :scroll :input :partial-live :header-hover :header-spinner]]
+            (let [{:keys [rows layout]} (frame {:zen-mode true} path)]
+              (expect (nil? (row-of rows "Zen title")))
+              (expect (nil? (row-of rows "Limits")))
+              (expect (= 4 (row-of rows "hello zen")))
+              (expect (= 1 (:messages-top layout)))
+              (expect (= (+ 5 (long (:inner-h normal))) (:inner-h layout)))
+              ;; The prompt box closes on the last row, where the footer was.
+              (expect (str/starts-with? (peek rows) "────"))
+              ;; The hidden header's notification moves to the echo row above the prompt.
+              (expect (= (- 30 1 (long (:input-h layout))) (row-of rows "Copied zen")))))))))

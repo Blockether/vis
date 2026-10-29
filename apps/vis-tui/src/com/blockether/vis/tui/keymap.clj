@@ -166,6 +166,9 @@
    {:action :live-panel :key \V :label "side panel" :group "Buffer" :show-when :has-panel}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
    {:action :toggle-detail-labels :key \z :label "label folds" :group "Buffer"}
+   ;; C-x Z (Shift+z) turns Zen mode on and off: the screen shows only the transcript
+   ;; and the prompt, without the header and the footer.
+   {:action :toggle-zen-mode :key \Z :label "zen mode" :group "Buffer"}
    {:action :providers :key \o :label "providers" :group "Tools"}])
 
 (def prefix-groups

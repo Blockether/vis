@@ -3248,7 +3248,7 @@
         (+ text-rows 2 (* 2 (long render/input-pad-y)))
 
         footer-row
-        (- (long rows) (long footer/height))
+        (- (long rows) (long (footer/rows db)))
 
         input-top
         (- footer-row input-box-h)
@@ -3467,7 +3467,7 @@
                        :dock dock-h
                        :attachments rail-h
                        :composer input-box-h
-                       :footer footer/height}
+                       :footer (footer/rows db)}
                       (into {}
                             (map (fn [section-id]
                                    [section-id
@@ -5549,6 +5549,12 @@
   (when-let [sid (current-session-id)]
     (agent-team/toggle-dock! sid)
     (state/dispatch [:bump-render-version :full-frame])))
+
+(defn- toggle-zen-mode!
+  "Show or hide the header and the footer (C-x Z). The choice is saved like a Settings row."
+  []
+  (state/dispatch [:update-settings {:zen-mode (not (get-in @state/app-db [:settings :zen-mode]))}])
+  (state/dispatch [:bump-render-version :full-frame]))
 
 (defn- source-soul
   "The gateway soul of `source-sid`, the session the user started from, or nil."
@@ -9731,6 +9737,9 @@
                                      :toggle-agent-dock
                                      (toggle-agent-dock!)
 
+                                     :toggle-zen-mode
+                                     (toggle-zen-mode!)
+
                                      :switch-session
                                      (show-sessions!)
 
@@ -10078,6 +10087,10 @@
                          ;; C-x T — show or hide the agent table of the dock.
                          :toggle-agent-dock
                          (do (toggle-agent-dock!) (recur))
+
+                         ;; C-x Z — show or hide the header and the footer.
+                         :toggle-zen-mode
+                         (do (toggle-zen-mode!) (recur))
 
                          :session-group
                          (do (move-session-to-group! screen (current-session-id)) (recur))

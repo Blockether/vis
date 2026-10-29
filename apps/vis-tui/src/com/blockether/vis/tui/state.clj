@@ -868,7 +868,8 @@
   "Per-user terminal preferences stored by the standalone app."
   {:theme-name (keyword shared-theme/default-theme-id)
    :show-python-code true
-   :summarize-steps true})
+   :summarize-steps true
+   :zen-mode false})
 
 (defn- load-persisted-settings
   []
@@ -877,15 +878,18 @@
                                (when (map? raw)
                                  {:theme-name (get raw "theme_name")
                                   :show-python-code (get raw "show_python_code" true)
-                                  :summarize-steps (get raw "summarize_steps" true)})))))
+                                  :summarize-steps (get raw "summarize_steps" true)
+                                  :zen-mode (boolean (get raw "zen_mode" false))})))))
 
 (defn- persist-settings!
   [settings]
-  (let [{:keys [theme-name show-python-code summarize-steps]} (normalize-settings settings)]
+  (let [{:keys [theme-name show-python-code summarize-steps zen-mode]} (normalize-settings
+                                                                         settings)]
     (try (vis/update-machine-config! #(assoc %
                                         "theme_name" (name theme-name)
                                         "show_python_code" show-python-code
-                                        "summarize_steps" (boolean summarize-steps)))
+                                        "summarize_steps" (boolean summarize-steps)
+                                        "zen_mode" (boolean zen-mode)))
          (catch Throwable _
            (vis/notify!
              "Terminal preferences could not be saved; changes apply only to this session."

@@ -362,7 +362,7 @@
      (p/set-char! g c row p/BOX_H))
    (p/clear-styles! g)))
 
-(defn- level->fg
+(defn level->fg
   "Map a notification level to a foreground color; unknown levels fall back
    to the muted-footer color so something still renders."
   [level]

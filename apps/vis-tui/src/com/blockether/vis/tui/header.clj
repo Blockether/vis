@@ -131,9 +131,9 @@
   (vh/title-or-placeholder (:title db)))
 
 (defn header-rows
-  "Rows reserved by the header; goal controls live in the footer."
-  ([_db] header-rows-base)
-  ([_db _cols] header-rows-base))
+  "Rows reserved by the header: none in Zen mode. Goal controls live in the footer."
+  ([db] (if (get-in db [:settings :zen-mode]) 0 header-rows-base))
+  ([db _cols] (header-rows db)))
 
 (defn- short-id
   "Project a session's UUID onto the shared short-form length."
@@ -195,7 +195,7 @@
   [id-short]
   (id-copy-block-text id-short))
 
-(defn draw-header!
+(defn- draw-header-band!
   "Paint the header band: notifications on the left, the active session title
    centered in the available middle slot, and help and ID controls on the right."
   [g db header-top cols]
@@ -347,3 +347,8 @@
     (components/band-rule! g bottom-row cols)
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)))
+
+(defn draw-header!
+  "Paint the header band at `header-top`. Zen mode reserves no header rows, so it paints nothing."
+  [g db header-top cols]
+  (when (pos? (long (header-rows db cols))) (draw-header-band! g db header-top cols)))
