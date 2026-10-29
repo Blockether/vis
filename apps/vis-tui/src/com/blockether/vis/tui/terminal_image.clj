@@ -525,6 +525,34 @@
            (video-paste-descriptor text workspace-root))
        (catch Throwable _ nil)))
 
+(defn- local-file
+  "The file that a settings `path` names, or nil for a blank path. A leading `~` names
+   the home directory."
+  ^java.io.File [path]
+  (when-let [path (some-> path
+                          str
+                          str/trim
+                          not-empty)]
+    (let [home (System/getProperty "user.home")]
+      (io/file (cond (= "~" path) home
+                     (str/starts-with? path "~/") (str home (subs path 1))
+                     :else path)))))
+
+(defn- stamped-read
+  "The answer of `(read-file f)` for the file at `path`, cached in `cache` until the file
+   changes, so a frame can ask on each paint."
+  [cache path read-file]
+  (when-let [f (local-file path)]
+    (let [path (str/trim (str path))
+          stamp [(.lastModified f) (.length f)]
+          cached (get @cache path)]
+
+      (if (= stamp (:stamp cached))
+        (:value cached)
+        (let [value (when (.isFile f) (read-file f))]
+          (swap! cache assoc path {:stamp stamp :value value})
+          value)))))
+
 (defonce ^:private picture-files
   ;; The last answer of `picture-file` for each path, with the file stamp that it read.
   (atom {}))
@@ -535,26 +563,74 @@
    frame. A leading `~` names the home directory. The answer stays cached until the
    file changes, so a frame can ask on each paint."
   [path]
-  (when-let [path (some-> path
-                          str
-                          str/trim
-                          not-empty)]
-    (let [home (System/getProperty "user.home")
-          f (io/file (cond (= "~" path) home
-                           (str/starts-with? path "~/") (str home (subs path 1))
-                           :else path))
-          stamp [(.lastModified f) (.length f)]
-          cached (get @picture-files path)]
+  (stamped-read
+    picture-files
+    path
+    (fn [^java.io.File f]
+      (let [{:keys [mime width height] :as found} (probe-paste-image (.getAbsolutePath f) {})]
+        (when (and width height) {:path (:path found) :mime mime :width width :height height})))))
 
-      (if (= stamp (:stamp cached))
-        (:picture cached)
-        (let [picture (when (.isFile f)
-                        (let [{:keys [mime width height] :as found}
-                              (probe-paste-image (.getAbsolutePath f) {})]
-                          (when (and width height)
-                            {:path (:path found) :mime mime :width width :height height})))]
-          (swap! picture-files assoc path {:stamp stamp :picture picture})
-          picture)))))
+(def ^:private text-art-max-bytes
+  "The largest text art file that Vis reads. Art is a few screens of text at most."
+  (* 64 1024))
+
+(defn- text-art-lines
+  "The lines of the UTF-8 text `bytes`, or nil when they are no text. Colour codes
+   (SGR) stay. Other escape sequences, carriage returns and control characters go, and
+   tabs become spaces. Blank lines at the top and the bottom go."
+  [^bytes bytes]
+  (let [decoder
+        (-> java.nio.charset.StandardCharsets/UTF_8
+            .newDecoder
+            (.onMalformedInput java.nio.charset.CodingErrorAction/REPORT)
+            (.onUnmappableCharacter java.nio.charset.CodingErrorAction/REPORT))
+
+        text
+        (try (str (.decode decoder (java.nio.ByteBuffer/wrap bytes)))
+             (catch java.nio.charset.CharacterCodingException _ nil))]
+
+    (when (and text (not (str/includes? text "\u0000")))
+      (let [lines
+            (->> (str/split-lines text)
+                 (mapv (fn [line]
+                         (-> line
+                             ;; A cursor move or a screen clear would break the margin:
+                             ;; only colour codes (SGR) stay.
+                             (str/replace #"\u001b\[[0-9;?]*(?:[^0-9;?m]|$)" "")
+                             (str/replace #"\u001b(?!\[)\S?" "")
+                             (str/replace #"[\u0000-\u0008\u000B-\u001A\u001C-\u001F\u007F\r]" "")
+                             (str/replace "\t" "    ")
+                             str/trimr))))
+
+            blank?
+            #(str/blank? (str/replace % #"\u001b\[[0-9;]*m" ""))
+
+            lines
+            (->> lines
+                 (drop-while blank?)
+                 reverse
+                 (drop-while blank?)
+                 reverse
+                 vec)]
+
+        (when (seq lines) lines)))))
+
+(defonce ^:private text-art-files
+  ;; The last answer of `text-art-file` for each path, with the file stamp that it read.
+  (atom {}))
+
+(defn text-art-file
+  "The text art at `path` as `{:path :lines}`, or nil when the file is missing, too
+   large, empty or no UTF-8 text. A picture is no text art. A leading `~` names the
+   home directory. The answer stays cached until the file changes."
+  [path]
+  (stamped-read text-art-files
+                path
+                (fn [^java.io.File f]
+                  (when (<= (.length f) (long text-art-max-bytes))
+                    (when-let [lines (text-art-lines (java.nio.file.Files/readAllBytes (.toPath
+                                                                                         f)))]
+                      {:path (.getAbsolutePath f) :lines lines})))))
 
 ;; Persisted-attachment materialization (durable history re-render)
 

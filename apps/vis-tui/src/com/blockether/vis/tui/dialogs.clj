@@ -3597,12 +3597,12 @@
         :type :path
         :label "Zen left picture"
         :description
-        "A picture in the left margin of Zen mode, on a terminal that shows images. Enter an empty path to remove it."}
+        "A picture or a text file of ASCII art in the left margin of Zen mode. A picture needs a terminal that shows images; ASCII art shows in every terminal. Enter an empty path to remove it."}
        {:key :zen-right-image
         :type :path
         :label "Zen right picture"
         :description
-        "A picture in the right margin of Zen mode, on a terminal that shows images. Enter an empty path to remove it."}]
+        "A picture or a text file of ASCII art in the right margin of Zen mode. A picture needs a terminal that shows images; ASCII art shows in every terminal. Enter an empty path to remove it."}]
       (thinking-modes-rows))))
 
 (declare titleize-label)
@@ -5460,8 +5460,8 @@
     (when-let [value (settings-structured-editor! screen g region row)]
       (save-setting-value! screen g region (:toggle-id row) value))
 
-    ;; A local picture path: an empty answer removes the picture, a file that is no
-    ;; picture keeps the old value.
+    ;; A local picture or text art path: an empty answer removes it, a file that is
+    ;; neither keeps the old value.
     :path
     (let [region (host-band-region screen region)]
       (when-let [text (mini-read! screen
@@ -5470,13 +5470,18 @@
                                   (:label row)
                                   {:initial (get @values (:key row))
                                    :placeholder "~/Pictures/zen.png"})]
-        (if-let [picture (when-not (str/blank? text) (timg/picture-file text))]
-          (->> (swap! values assoc (:key row) (:path picture))
+        (if-let [found (when-not (str/blank? text)
+                         (or (timg/picture-file text) (timg/text-art-file text)))]
+          (->> (swap! values assoc (:key row) (:path found))
                (notify-settings-change! callbacks))
           (if (str/blank? text)
             (->> (swap! values assoc (:key row) nil)
                  (notify-settings-change! callbacks))
-            (mini-note! screen g region "Not a picture" (str "Vis cannot show " text "."))))))
+            (mini-note! screen
+                        g
+                        region
+                        "Not a picture or text art"
+                        (str "Vis cannot show " text "."))))))
 
     :inherit
     (try (cache-setting-row! (notify-change-error! (vis/inherit-setting! (:toggle-id row)

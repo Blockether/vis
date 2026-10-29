@@ -3412,11 +3412,11 @@
   "Blank cells between a Zen margin picture and the sides of its margin."
   2)
 
-(defn- zen-margin-images
-  "The Zen margin pictures of a `cols` x `rows` screen as image regions in screen columns.
-   Settings `:zen-left-image` and `:zen-right-image` name the files. Each picture keeps its
-   aspect ratio and is centred in its margin, inside a blank border. A margin that is too
-   small, or a file that is no picture, shows nothing."
+(defn- zen-margin-boxes
+  "The Zen margins of a `cols` x `rows` screen that name a file, as `{:key :path :col :row
+   :cols :rows}` in screen columns. Settings `:zen-left-image` and `:zen-right-image` name
+   the files. Each box stands inside a blank border of its margin. A margin that is too
+   small has no box."
   [db cols rows]
   (when (get-in db [:settings :zen-mode])
     (let [{:keys [left base-left base-cols] zen-cols :cols}
@@ -3431,33 +3431,90 @@
           box-h
           (- (long rows) 2)]
 
-      (vec
-        (for [[k x w]
-              [[:zen-left-image base-left (- (long left) (long base-left))]
-               [:zen-right-image right (- (+ (long base-left) (long base-cols)) right)]]
+      (vec (for [[k x w]
+                 [[:zen-left-image base-left (- (long left) (long base-left))]
+                  [:zen-right-image right (- (+ (long base-left) (long base-cols)) right)]]
 
-              :let [box-w
-                    (- (long w) (* 2 pad))
+                 :let [box-w
+                       (- (long w) (* 2 pad))
 
-                    picture
-                    (when (and (>= box-w 4) (>= box-h 2))
-                      (timg/picture-file (get-in db [:settings k])))]
-              :when picture
-              :let [fit
-                    (timg/cell-size {:w (:width picture) :h (:height picture)} box-w box-h)
+                       path
+                       (get-in db [:settings k])]
+                 :when (and path (>= box-w 4) (>= box-h 2))]
 
-                    pic-cols
-                    (min box-w (long (:cols fit)))
+             {:key k :path path :col (+ (long x) pad) :row 1 :cols box-w :rows box-h})))))
 
-                    pic-rows
-                    (min box-h (long (:rows fit)))]]
+(defn- zen-margin-images
+  "The Zen margin pictures of a `cols` x `rows` screen as image regions in screen columns.
+   Each picture keeps its aspect ratio and is centred in its margin box. A file that is
+   no picture shows no image."
+  [db cols rows]
+  (vec
+    (for [{:keys [key path col row] box-w :cols box-h :rows}
+          (zen-margin-boxes db cols rows)
 
-          {:row (+ 1 (quot (- box-h pic-rows) 2))
-           :col (+ (long x) pad (quot (- box-w pic-cols) 2))
-           :img (assoc picture
-                  :id (str (name k) " " (:path picture))
-                  :cols pic-cols
-                  :rows pic-rows)})))))
+          :let [picture
+                (timg/picture-file path)]
+          :when picture
+          :let [fit
+                (timg/cell-size {:w (:width picture) :h (:height picture)} box-w box-h)
+
+                pic-cols
+                (min (long box-w) (long (:cols fit)))
+
+                pic-rows
+                (min (long box-h) (long (:rows fit)))]]
+
+      {:row (+ (long row) (quot (- (long box-h) pic-rows) 2))
+       :col (+ (long col) (quot (- (long box-w) pic-cols) 2))
+       :img (assoc picture
+              :id (str (name key) " " (:path picture))
+              :cols pic-cols
+              :rows pic-rows)})))
+
+(defn- text-art-width
+  "Display columns of one text art `line`, without its colour codes."
+  ^long [line]
+  (p/display-width (str/replace line #"\u001b\[[0-9;]*m" "")))
+
+(defn- zen-margin-art
+  "The Zen margin text art of a `cols` x `rows` screen as `{:col :row :lines}` in screen
+   columns. A text file that is no picture is ASCII art, so every terminal can show it.
+   The art keeps its shape and is centred in its margin box. Art larger than its box
+   loses its right columns and its bottom lines."
+  [db cols rows]
+  (vec (for [{:keys [path col row] box-w :cols box-h :rows}
+             (zen-margin-boxes db cols rows)
+
+             :when (not (timg/picture-file path))
+             :let [art
+                   (timg/text-art-file path)]
+             :when art
+             :let [lines
+                   (vec (take box-h (:lines art)))
+
+                   art-cols
+                   (min (long box-w) (long (reduce max 0 (map text-art-width lines))))]]
+
+         {:row (+ (long row) (quot (- (long box-h) (count lines)) 2))
+          :col (+ (long col) (quot (- (long box-w) art-cols) 2))
+          :lines (mapv #(p/ansi-truncate-cols % box-w) lines)})))
+
+(defn- paint-zen-art!
+  "Paint the Zen margin text art in muted ink. Colour codes in the art pick theme colours."
+  [screen cols rows db]
+  (when-let [arts (seq (zen-margin-art db cols rows))]
+    (binding [frame/*column-offset* 0]
+      (let [g (frame/surface-graphics screen cols rows)]
+        (doseq [{:keys [col row lines]} arts
+                [i line] (map-indexed vector lines)]
+
+          (render/paint-ansi-line! g
+                                   col
+                                   (+ (long row) (long i))
+                                   line
+                                   t/dialog-hint
+                                   t/terminal-bg))))))
 
 (defn- frame-image-regions
   "The pictures of one frame in screen columns: the transcript `placements` that show in
@@ -4140,7 +4197,7 @@
 
 (defn- render-frame!
   "Paint the chat in its local surface and the project rail in screen coordinates.
-   The Zen column leaves blank margins at its sides."
+   The Zen column leaves margins at its sides, blank or with their text art."
   [screen cols rows db now-ms]
   (let [{:keys [left base-left base-cols]} (chat-pane db cols rows)]
     (when (not= left base-left)
@@ -4148,7 +4205,8 @@
         (let [g (frame/surface-graphics screen base-cols rows)]
           (p/clear-styles! g)
           (p/set-colors! g t/text-fg t/terminal-bg)
-          (p/fill-rect! g 0 0 base-cols rows))))
+          (p/fill-rect! g 0 0 base-cols rows)))
+      (paint-zen-art! screen cols rows db))
     (binding [frame/*column-offset* left]
       (render-frame-content! screen cols rows db now-ms))))
 

@@ -4524,7 +4524,7 @@ therapy line 2"
               (expect (<= 99 (:col right)))
               (expect (<= (+ (:col right) (:cols (:img right))) 118))
               (expect (every? #(and (<= 1 (:row %)) (<= (+ (:row %) (:rows (:img %))) 29)) images)))
-            ;; Outside Zen mode no picture shows. A file that is no picture leaves its margin empty.
+            ;; Outside Zen mode no picture shows. A text file is ASCII art, not an image.
             (expect (empty? (:images (frame 120 {:zen-left-image (str picture)} :full))))
             (let [{:keys [images]} (frame 120
                                           {:zen-mode true
@@ -4532,4 +4532,46 @@ therapy line 2"
                                            :zen-right-image (str picture)}
                                           :full)]
               (expect (= 1 (count images)))
-              (expect (<= 99 (:col (first images))))))))))
+              (expect (<= 99 (:col (first images))))))))
+    ;; User request: the Zen pictures can also be ASCII art, which every terminal shows.
+    (let [art
+          (doto (java.io.File/createTempFile "zen-art" ".txt") (.deleteOnExit))
+
+          binary
+          (doto (java.io.File/createTempFile "zen-art" ".bin") (.deleteOnExit))]
+
+      (spit art
+            (str "\n /\\_/\\\n( o.o )\r\n\u001b[31m~zen~\u001b[0m\u001b[2J\n"
+                 (apply str (repeat 40 "="))
+                 "\n\n"))
+      (io/copy (byte-array [0 1 2 -1]) binary)
+      ;; 120 columns: each margin has 23 cells, and its art box is 19 cells inside a
+      ;; 2-cell border: cells 2 to 20 at the left and 99 to 117 at the right.
+      (it "paints a text file as ASCII art inside each Zen margin on every repaint path"
+          (doseq [path [:full :scroll]]
+            (let [{:keys [rows images]}
+                  (frame 120
+                         {:zen-mode true :zen-left-image (str art) :zen-right-image (str art)}
+                         path)
+                  face (row-of rows "( o.o )")
+                  wide (nth rows (+ face 2))]
+
+              (expect (empty? images))
+              (expect (some? face))
+              (expect (<= 1 (row-of rows "/\\_/\\") face 27))
+              (expect (= [2 99]
+                         [(str/index-of (nth rows face) "(")
+                          (str/last-index-of (nth rows face) "(")]))
+              ;; Colour codes and a screen clear paint no cells.
+              (expect (= 2 (count (re-seq #"~zen~" (nth rows (inc face))))))
+              (expect (not-any? #(str/includes? % "[") rows))
+              ;; A line wider than the box loses its right columns.
+              (expect (= (apply str (repeat 19 "=")) (subs wide 2 21) (subs wide 99 118)))
+              (expect (str/blank?
+                        (str (subs wide 0 2) (subs wide 21 23) (subs wide 97 99) (subs wide 118))))
+              ;; The transcript keeps its column.
+              (expect (= 25 (str/index-of (nth rows (row-of rows "hello zen")) "│ hello zen")))))
+          ;; A binary file leaves its margin blank. Outside Zen mode no art shows.
+          (expect (every? #(str/blank? (subs % 0 23))
+                          (:rows (frame 120 {:zen-mode true :zen-left-image (str binary)} :full))))
+          (expect (nil? (row-of (:rows (frame 120 {:zen-left-image (str art)} :full)) "o.o")))))))
