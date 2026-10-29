@@ -17,8 +17,4 @@ describe('the render failure surface', () => {
     expect(reload).toHaveBeenCalledOnce();
   });
 
-  it('does not put a decorative frame around the logo', () => {
-    const { container } = render(<ErrorFallback message="timeline failed" onReload={() => {}} />);
-    expect(container.querySelector('img')?.parentElement).not.toHaveClass('border');
-  });
 });

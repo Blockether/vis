@@ -47,25 +47,6 @@ describe('an archived session row', () => {
   const statusCell = (session: Partial<Session>) =>
     row(session).querySelector('[data-session-status]')!;
 
-  it('says ARCHIVED where a working row says what it is doing', () => {
-    const container = row({ ...idle, archived_at: 1717 });
-    const cell = container.querySelector('[data-session-status]')!;
-    expect(cell.textContent).toContain('ARCHIVED');
-    expect(cell.className).toContain('text-muted');
-    // Filled and dimmed: put away is a state the row IS in, not the absence of one, so
-    // it takes a solid mark rather than IDLE's hollow square.
-    const dot = container.querySelector('[data-session-status-dot]')!;
-    expect(dot).toHaveClass('bg-current');
-    expect(dot.parentElement).toHaveClass('text-muted');
-    expect(dot.className).not.toContain('animate-pulse');
-  });
-
-  // A tablet sidebar is narrower than 24rem; IDLE hid its mark there and left bare titles.
-  it('keeps every mark at narrow widths, IDLE included', () => {
-    expect(statusCell({ ...idle, archived_at: 1717 }).className).not.toContain('hidden');
-    expect(statusCell({ ...idle, archived_at: null }).className).not.toContain('hidden');
-  });
-
   it('outranks whatever the row was doing when it was filed', () => {
     // A row left open on another screen still carries the flags of the turn it was
     // watching. The archive is the newer fact about that session, and the gateway

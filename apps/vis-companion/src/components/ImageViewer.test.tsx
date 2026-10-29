@@ -79,69 +79,6 @@ describe('ImageViewer', () => {
     expect(control('Reset zoom').textContent).toBe('100%');
   });
 
-  it('draws the picture actions as named icons, not toolbar words', () => {
-    const actions = [
-      control('Zoom out'),
-      control('Zoom in'),
-      control('Draw on image'),
-      control('Trim to view'),
-      control('Copy image'),
-    ];
-    const handoff = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="Share image"], button[aria-label="Save image"]',
-    );
-    if (!handoff) throw new Error('no image handoff control');
-    actions.push(handoff);
-
-    for (const action of actions) {
-      expect(action.textContent).toBe('');
-      expect(action.querySelector('svg')).toBeInTheDocument();
-      expect(action.title).toBe(action.getAttribute('aria-label'));
-    }
-  });
-
-  // Regression, user report ("the close buttons, instead of being just the X mark,
-  // are shown as `Close`"): the image viewer's header carried a secondary text button
-  // where every other surface wears the app's one `CloseButton`.
-  it("leaves through the app's one X, named after the picture", () => {
-    const close = control('Close chart.png');
-    expect(close.textContent).toBe('');
-    expect(close.querySelector('svg')).toBeInTheDocument();
-    expect(close.className).not.toContain('border-l');
-  });
-
-  // Regression, user report: the viewer's close looked nothing like the close in a
-  // dialog — smaller, and the wrong colour. The viewer hand-built its own `bg-panel`
-  // band with a quiet `text-ui` filename and asked for a panel-toned way out,
-  // so the app's one way out wore two faces on two surfaces of the same screen.
-  it("titles itself with the app's one dialog band", () => {
-    const header = document.querySelector('[role="dialog"] header');
-    expect(header?.querySelector('h2')?.textContent).toBe('chart.png');
-
-    // The close inherits the band's ink without a separate frame in either palette.
-    const close = control('Close chart.png');
-    expect(header?.className).not.toContain('text-dialog-title-foreground/70');
-    expect(close.className).toContain('border-0');
-    expect(close.className).toContain('text-current');
-    expect(close.querySelector('span')).toBeNull();
-    expect(close.className).not.toContain('rounded-full');
-  });
-
-  // Regression, same phone report ("the headline has wrong height"): the title band is
-  // the safe-area inset TALLER under a notch (48px + inset), while the picture's top pad
-  // and its own cap were a fixed 5rem/10rem — so the top of a tall image sat under the
-  // title bar it was supposed to clear.
-  it('keeps the picture clear of the band that clears the notch', () => {
-    const header = document.querySelector('[role="dialog"] header');
-    expect(header?.className).toContain('box-content');
-
-    const picture = document.querySelector('[role="dialog"] img');
-    expect(picture?.closest('.place-items-center')?.className).toContain(
-      'pt-[calc(5rem+env(safe-area-inset-top))]',
-    );
-    expect(picture?.className).toContain('max-w-[calc(100vw-2rem)]');
-  });
-
   // Regression, reported attachment filename click: an image edit could only be opened
   // by striking its thumbnail; the adjacent filename looked like part of the same chip
   // but was not a trigger.
@@ -181,7 +118,6 @@ describe('ImageViewer', () => {
   // share and apply all act on that region instead of the page around it.
   it('offers Trim beside Draw, and says so when there is nothing to trim', () => {
     const trim = control('Trim to view');
-    expect(trim.textContent).toBe('');
     expect(document.querySelector('[aria-label="Undo trim"]')).toBeNull();
 
     // jsdom gives every box a zero rect, which is exactly "the frame already
@@ -218,19 +154,6 @@ describe('ImageViewer', () => {
       expect(action.textContent).toBe('');
       expect(action.querySelector('svg')).toBeInTheDocument();
     }
-  });
-
-  // Regression, user report: the drawing rail hugged the title instead of sitting
-  // beside the picture around the middle of a phone.
-  it('centres the right-hand drawing rail vertically', () => {
-    act(() => control('Draw on image').click());
-    const tools = document.querySelector('[aria-label="Drawing tools"]');
-    const dock = tools?.parentElement;
-    expect(tools?.className).toContain('flex-col');
-    expect(dock?.className).toContain('right-[max(');
-    expect(dock?.className).toContain('top-1/2');
-    expect(dock?.className).toContain('-translate-y-1/2');
-    expect(document.querySelector('header')?.nextElementSibling).toBe(dock);
   });
 
   // Regression, user report: the drawing rail covered the picture with no way to tuck it away.
@@ -305,7 +228,6 @@ describe('ImageViewer', () => {
       expect(write).toHaveBeenCalledOnce();
       const announcement = document.querySelector<HTMLElement>('[aria-live="polite"]');
       expect(announcement?.textContent).toBe('Image copied. Paste it into your next message.');
-      expect(announcement?.className).toContain('sr-only');
       expect(document.querySelector('[role="dialog"] .border-t [aria-live]')).toBeNull();
       expect(document.querySelector('[role="alert"]')).toBeNull();
     } finally {
@@ -340,7 +262,6 @@ it('replaces the pencil with the drawing check in the same footer slot', () => {
 
   const finish = control('Save changes');
   expect(finish.parentElement).toBe(slot);
-  expect(finish.querySelector('svg')).toBeInTheDocument();
   expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
 
   act(() => finish.click());

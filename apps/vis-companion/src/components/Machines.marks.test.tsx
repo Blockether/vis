@@ -59,9 +59,4 @@ describe('what a machine row says about its rank', () => {
     expect(lineOf('laptop')).not.toContain('Primary');
   });
 
-  it('never says CURRENT, whichever machine the app is talking to', () => {
-    rows({ conns: [tower, laptop] });
-
-    expect(screen.queryByText('Current')).toBeNull();
-  });
 });

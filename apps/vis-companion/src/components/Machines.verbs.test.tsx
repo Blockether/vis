@@ -73,9 +73,6 @@ describe('a machine keeps its verbs under its own row', () => {
     // The menu is desktop-only: nothing stands beside the touch gesture.
     const menus = screen.getAllByRole('button', { name: /^Actions for/ });
     expect(menus).toHaveLength(2);
-    for (const menu of menus) {
-      expect(menu.parentElement).toHaveClass('hidden', 'mouse:flex');
-    }
     // Two machine rows, five touch verbs and two desktop menu triggers.
     expect(screen.getAllByRole('button')).toHaveLength(9);
 

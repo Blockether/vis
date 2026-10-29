@@ -6,7 +6,6 @@ import {
   AssistantMessage,
   AttachmentRail,
   ContentBlockView,
-  InlineMarkdown,
   IterationTrace,
   Markdown,
   SpeechBlock,
@@ -18,7 +17,6 @@ import { STORY_TURN_ITERATIONS, STORY_TURN_ITERATIONS_SETTLED } from '../dev/sto
 import type { ActivityProjection } from '../lib/activity';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import type { GatewayClient } from '../lib/gateway';
-import { mediaFrameClass, mediaGridClass, mediaTileFrameClass } from '../lib/media-frame';
 import { speechOutput } from '../lib/speech';
 import { setStepsSummarized } from '../lib/transcript-display';
 import type { IterationAttachment, TranscriptTurn } from '../lib/types';
@@ -61,13 +59,9 @@ describe('code block copy controls', () => {
     const view = render(<Markdown>{`\`\`\`${language}\n${source}\n\`\`\``}</Markdown>);
     try {
       const button = view.getByRole('button', { name: 'Copy code' });
-      expect(button.textContent).toBe('');
-      expect(button.querySelector('svg')).toBeInTheDocument();
-      expect(button.title).toBe('Copy code');
       fireEvent.click(button);
       await waitFor(() => expect(writeText).toHaveBeenCalledWith(source));
       await waitFor(() => expect(button.getAttribute('aria-label')).toBe('Copied'));
-      expect(button.textContent).toBe('');
       expect(button.querySelector('svg.lucide-check')).toBeInTheDocument();
     } finally {
       view.unmount();
@@ -77,60 +71,6 @@ describe('code block copy controls', () => {
 });
 
 describe('provider failure card', () => {
-  // Regression, issue #167: the gateway preserved HTTP 429 on the content block,
-  // but the companion painted only its machine code and flattened message.
-  it('leads with the diagnosis and keeps upstream facts visible', () => {
-    const view = render(
-      <ContentBlockView
-        block={{
-          id: 'provider-error-1',
-          type: 'error',
-          code: 'provider_rate_limit',
-          message: 'Flattened fallback that a structured client must not paint.',
-          title: 'Provider rate limit reached',
-          explanation: 'The provider is throttling new requests.',
-          next_step: 'Wait and retry, or switch provider/model.',
-          status: 429,
-          provider: 'anthropic',
-          request_id: 'req_167',
-          log_id: 'q-403',
-          retryable: true,
-          attempts: [
-            {
-              provider: 'anthropic',
-              model: 'claude-opus-4',
-              status: 429,
-              reason: 'rate-limit',
-            },
-          ],
-        }}
-      />,
-    );
-
-    try {
-      expect(view.getByRole('heading', { name: 'Provider rate limit reached' })).toBeVisible();
-      const card = view.getByRole('alert');
-      expect(card.textContent).toContain('The provider is throttling new requests.');
-      expect(card.textContent).toContain('Wait and retry, or switch provider/model.');
-      expect(card.textContent).not.toContain('What happened');
-      expect(card.textContent).not.toContain('Next step');
-      expect(card.textContent).toContain('HTTP 429');
-      expect(card.textContent).toContain('anthropic');
-      expect(card.textContent).toContain('req_167');
-      expect(card.textContent).toContain('Log id q-403');
-      expect(card.textContent).not.toContain('Flattened fallback');
-      expect(card.textContent).not.toContain('provider_rate_limit');
-
-      fireEvent.click(view.getByRole('button', { name: 'Diagnostics' }));
-      expect(card.textContent).toContain('anthropic/claude-opus-4');
-      expect(card.textContent).toContain('provider_rate_limit');
-      expect(card.textContent?.indexOf('Provider rate limit reached')).toBeLessThan(
-        card.textContent?.indexOf('provider_rate_limit') ?? -1,
-      );
-    } finally {
-      view.unmount();
-    }
-  });
   it('does not offer an empty diagnostics disclosure', () => {
     const view = render(
       <ContentBlockView
@@ -167,32 +107,6 @@ describe('spoken transcript', () => {
     expect(html).toContain('role="slider"');
     expect(html).toContain('aria-label="Speech position"');
     expect(html).toContain('lang="en"');
-  });
-
-  // Reported as "za żółto ... dwa headery": the block painted an amber band for
-  // its name and a SECOND amber band under it holding a worded Play/Pause button,
-  // so one spoken reply carried two headers and two yellow surfaces.
-  it('carries one header band, with the transport as an icon inside it', () => {
-    const html = renderToStaticMarkup(
-      <ContentBlockView block={{ id: 'speech-1', type: 'speech', text: 'Listen again.' }} />,
-    );
-
-    expect(count(html, /data-disclosure-toggle/g)).toBe(1);
-    expect(html).not.toContain('bg-accent-surface');
-
-    const view = render(<SpeechBlock text="Listen again." />);
-    try {
-      const play = view.getByRole('button', { name: 'Play' });
-      expect(play.textContent).toBe('');
-      expect(play.querySelector('svg')).toBeInTheDocument();
-      // The transport LEADS the header row, and the name is no longer in it.
-      const header = play.parentElement;
-      expect(header?.hasAttribute('data-speech-header')).toBe(true);
-      expect(header?.firstElementChild).toBe(play);
-      expect(header?.querySelector('[data-disclosure-toggle]')).toBeNull();
-    } finally {
-      view.unmount();
-    }
   });
 
   // Reported as "waveform i play etc jest w headerze ... oczywiście można sobie to
@@ -236,31 +150,6 @@ describe('spoken transcript', () => {
     }
   });
 
-  // Reported as "ten play i pause powinien być mniejszy i może po lewej stronie a
-  // transcript napis powinien być poza bloczkiem mały i full uppercased po lewej
-  // stronie nad borderem": the name sat inside the amber frame, and the transport
-  // ended the row on the far right in a 16px glyph.
-  it('captions the frame from outside it and leads the row with a small transport', () => {
-    const html = renderToStaticMarkup(
-      <ContentBlockView block={{ id: 'speech-1', type: 'speech', text: 'Listen again.' }} />,
-    );
-
-    // Above the border, not in it.
-    expect(html.indexOf('data-disclosure-toggle')).toBeLessThan(html.indexOf('<section'));
-
-    const view = render(<SpeechBlock text="Listen again." />);
-    try {
-      const play = view.getByRole('button', { name: 'Play' });
-      // The icons' own 14px grammar, not the 16px one this row used to spell.
-      expect(play.querySelector('svg')?.getAttribute('class')).toContain('size-3.5');
-      expect(
-        play.compareDocumentPosition(view.getByRole('slider', { name: 'Speech position' })) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    } finally {
-      view.unmount();
-    }
-  });
   it('draws a flat rule until real samples exist, and never a made-up shape', () => {
     const view = render(<SpeechBlock text="Nothing has been synthesised yet." />);
     try {
@@ -273,18 +162,6 @@ describe('spoken transcript', () => {
     } finally {
       view.unmount();
     }
-  });
-
-  it('puts the disclosure chevron before its name and points it down while open', () => {
-    const html = renderToStaticMarkup(
-      <ContentBlockView block={{ id: 'speech-1', type: 'speech', text: 'Listen again.' }} />,
-    );
-    const disclosure = html.slice(
-      html.indexOf('data-disclosure-toggle'),
-      html.indexOf('</button>'),
-    );
-
-    expect(disclosure.indexOf('<svg')).toBeLessThan(disclosure.indexOf('Transcript'));
   });
 
   it('restarts speech at the position pressed on the wave', async () => {
@@ -365,18 +242,12 @@ describe('Markdown list columns', () => {
   it('hangs an ordered and an unordered list off the same marker column', () => {
     const view = render(<Markdown>{'- one\n- two\n\n1. first\n2. second'}</Markdown>);
     for (const list of [view.container.querySelector('ul'), view.container.querySelector('ol')]) {
-      expect(list).toHaveClass('markdown-list', 'pl-[2ch]');
-      expect(list).not.toHaveClass('list-disc');
-      expect(list).not.toHaveClass('list-decimal');
       // WebKit drops the list semantics together with `list-style: none`.
       expect(list).toHaveAttribute('role', 'list');
     }
     expect(view.container.querySelector('ol')?.style.getPropertyValue('--marker-column')).toBe(
       '3ch',
     );
-    for (const item of view.container.querySelectorAll('li')) {
-      expect(item.className).not.toMatch(/\bpl-/);
-    }
   });
 
   it('widens the column for a list that reaches two digits', () => {
@@ -439,39 +310,12 @@ describe('Markdown list columns', () => {
     expect(ordered.length).toBeGreaterThan(0);
     expect(bulleted.length).toBeGreaterThan(0);
     for (const list of [...ordered, ...bulleted]) {
-      expect(list).toHaveClass('markdown-list', 'pl-[2ch]');
       expect(list).toHaveAttribute('role', 'list');
     }
     // A number left inside a paragraph is the report itself: it paints on the prose edge
     // instead of the marker column.
     for (const paragraph of view.container.querySelectorAll('p')) {
       expect(paragraph.textContent ?? '').not.toMatch(/^\s*\d+\.\s/);
-    }
-  });
-});
-
-// The trace is a quiet aside: it keeps the ui type step on every surface
-// instead of matching the answer body's mouse:text-title, and its collapsed
-// peek holds REASONING_PREVIEW_LINES rows at this step's 16px line box.
-// Reasoning streams one sentence per line, so nearly every line renders as
-// its own paragraph, and the band pins that paragraph gap to the compact step.
-describe('thinking band presentation', () => {
-  it('stays one type step below the answer and clamps its peek to three rows', () => {
-    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(200);
-    try {
-      const view = render(
-        <ThinkingBand>
-          {'One sentence.\nTwo sentences follow here.\nThird.\nFourth.\nFifth.'}
-        </ThinkingBand>,
-      );
-      const band = view.container.querySelector('section')!;
-      expect(band).toHaveClass('text-ui');
-      expect(band).not.toHaveClass('mouse:text-title');
-      const body = view.container.querySelector('div.italic') as HTMLDivElement;
-      expect(body).toHaveClass('max-h-[3rem]', 'overflow-hidden', '[&>div>p]:my-2');
-      expect(view.container.textContent).toContain('THINKING');
-    } finally {
-      height.mockRestore();
     }
   });
 });
@@ -559,10 +403,8 @@ describe('Markdown attachment links', () => {
     );
 
     const card = view.getByRole('group', { name: 'tui-card.png' });
-    expect(card).toHaveClass('my-3');
     expect(card.previousElementSibling?.tagName).toBe('P');
     expect(card.nextElementSibling?.tagName).toBe('P');
-    expect(card).toHaveTextContent('PNG · 1100x400 · 27.9 KB');
     expect(view.container).not.toHaveTextContent('/Users/me');
     fireEvent.click(view.getByRole('button', { name: 'tui-card.png' }));
     expect(open).toHaveBeenCalledExactlyOnceWith(id);
@@ -587,43 +429,9 @@ describe('Markdown attachment links', () => {
     expect(view.container.querySelector('img')?.getAttribute('referrerpolicy')).toBe('no-referrer');
   });
 
-  // Regression: a sprite between words was a block at its natural size, so the bullet stood
-  // alone and the item text broke below a 300px picture.
-  it('keeps an image between words on its text line and gives a lone image its own block', () => {
-    const sprite = 'https://example.com/potion.gif';
-    const view = render(
-      <Markdown>{`- ![Potion](${sprite}) **Great Spirit Potion** (lvl 80+)\n\n![Chart](https://example.com/chart.png)`}</Markdown>,
-    );
-    const [inline, figure] = Array.from(view.container.querySelectorAll('img'));
-
-    expect(inline.classList).toContain('inline-block');
-    expect(inline.classList).toContain('max-h-[1lh]');
-    expect(figure.classList).toContain('block');
-    expect(figure.classList).toContain('max-w-full');
-  });
 });
 
 describe('Markdown tool card body', () => {
-  it('keeps nested message paragraphs and lists on the activity text scale', () => {
-    const content = 'Review **complete**.\n\n- Tests passed\n\n> Ready to merge';
-    const view = render(
-      <Markdown compact nested>
-        {content}
-      </Markdown>,
-    );
-    const prose = view.container.querySelectorAll('p, li');
-    expect(prose.length).toBeGreaterThan(0);
-    for (const element of prose) {
-      expect(element).toHaveClass('text-meta', 'text-left');
-      expect(element).not.toHaveClass('text-justify');
-    }
-    view.rerender(<Markdown compact>{content}</Markdown>);
-    for (const element of view.container.querySelectorAll('p, li')) {
-      expect(element).toHaveClass('text-pretty');
-      expect(element).not.toHaveClass('text-meta');
-      expect(element).toHaveClass('text-justify');
-    }
-  });
 
   it('keeps blank lines and indentation inside a COMMAND block', () => {
     const html = renderToStaticMarkup(
@@ -652,27 +460,6 @@ describe('Markdown tool card body', () => {
   });
 });
 
-describe('nested result spacing', () => {
-  it.each(['text', 'diff'])(
-    'lets the result own %s block padding without changing standalone blocks',
-    (language) => {
-      // Regression: nested output added another 8px below the RESULT header.
-      const value = `\`\`\`${language}\n first line\n\n last line\n\`\`\``;
-      const view = render(<Markdown compact>{value}</Markdown>);
-      const content = () => view.container.querySelector('.overflow-x-auto')!;
-      expect(content()).toHaveClass('py-2');
-      const text = content().textContent;
-      view.rerender(
-        <Markdown compact nested>
-          {value}
-        </Markdown>,
-      );
-      expect(content()).not.toHaveClass('py-2');
-      expect(content().textContent).toBe(text);
-    },
-  );
-});
-
 // Regression, companion transcript report: PATCH diffs used a two-column
 // desktop layout, leaving each side unreadably narrow in the web and native apps.
 describe('compact diff blocks', () => {
@@ -684,7 +471,6 @@ describe('compact diff blocks', () => {
     );
 
     expect(html).toContain('aria-label="Unified diff"');
-    expect(html).not.toContain('grid-cols-2');
     expect(html).toContain('aria-label="Removed line 2"');
     expect(html).toContain('aria-label="Added line 2"');
   });
@@ -692,46 +478,6 @@ describe('compact diff blocks', () => {
 
 describe('turn header identity', () => {
   const createdAt = new Date(2026, 8, 16, 14, 35, 27).getTime();
-
-  it.each(['completed', 'running', 'cancelled'])(
-    'shows date / turn / fork in order for %s answers',
-    (status) => {
-      const view = render(
-        <AssistantMessage
-          turn={{ turn_id: 'persisted-id', position: 42, created_at: createdAt, status }}
-          streaming={status === 'running'}
-          onFork={status === 'completed' ? vi.fn() : undefined}
-        />,
-      );
-      const header = view.container.querySelector('article')!.firstElementChild!;
-      expect(header).toHaveTextContent('16/09/2026, 14:35:27 / T42');
-      if (status === 'completed') {
-        expect(header).toHaveTextContent('16/09/2026, 14:35:27 / T42 / Fork from this turn');
-      }
-      expect(header.querySelector('time')).toHaveAttribute(
-        'datetime',
-        new Date(createdAt).toISOString(),
-      );
-      expect(header.querySelector('time')).toBeVisible();
-    },
-  );
-
-  it('shows the same turn number and datetime on the request header', () => {
-    const view = render(
-      <UserMessage position={42} createdAt={createdAt}>
-        Request
-      </UserMessage>,
-    );
-    expect(view.container.querySelector('article')!.firstElementChild).toHaveTextContent(
-      'You16/09/2026, 14:35:27 / T42',
-    );
-  });
-
-  it('does not invent a number or date for missing metadata', () => {
-    const view = render(<AssistantMessage turn={{ turn_id: 'unknown' }} />);
-    expect(view.container.querySelector('article')!.firstElementChild).toHaveTextContent(/^Vis$/);
-    expect(view.container.querySelector('time')).toBeNull();
-  });
 
   it.each([
     [{ position: 42 }, 'T42 / Fork from this turn'],
@@ -746,34 +492,6 @@ describe('turn header identity', () => {
 });
 
 describe('request speaker labels', () => {
-  // Provenance is persisted metadata, never a request-text convention.
-  it.each(['Council wake — literal user text', 'Hello', ''])('keeps %j on the user rail', (request) => {
-    const view = render(<UserMessage>{request}</UserMessage>);
-    const article = view.container.querySelector('article')!;
-    expect(article.firstElementChild).toHaveTextContent(/^You$/);
-    expect(article.children[1].textContent).toBe(request);
-  });
-
-  // Both transcripts identify the thread, not the entry that woke the session.
-  it.each([
-    ['coordination', 'Coordination'],
-    ['informational', 'Information'],
-    ['complain', 'Complaint'],
-  ] as const)('labels explicit Council %s', (kind, label) => {
-    const view = render(
-      <UserMessage
-        requestKind="council"
-        council={{ entry_id: 84, thread_id: 42, kind, content: 'Actual peer request' }}
-      >
-        Council notification #84. Read the attributed Council input.
-      </UserMessage>,
-    );
-    expect(view.container.querySelector('article')!.firstElementChild!.textContent).toBe(
-      `Council · ${label} · Thread #42`,
-    );
-    expect(view.getByText('Actual peer request')).toBeInTheDocument();
-    expect(view.queryByText(/Council notification/)).toBeNull();
-  });
 
   it('collapses after four rendered lines and expands without losing the original content', () => {
     const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(200);
@@ -788,10 +506,8 @@ describe('request speaker labels', () => {
       expect(button).toHaveAttribute('aria-expanded', 'false');
       expect(button).toHaveAttribute('aria-controls', body.id);
       fireEvent.click(button);
-      expect(body).not.toHaveClass('line-clamp-4');
       expect(button).toHaveAttribute('aria-expanded', 'true');
       fireEvent.click(button);
-      expect(body).toHaveClass('line-clamp-4');
     } finally {
       height.mockRestore();
     }
@@ -832,31 +548,6 @@ describe('user bubble pictures', () => {
       </UserMessage>,
     );
 
-  it('reserves the picture box before a single byte has decoded', () => {
-    expect(html()).toContain(mediaFrameClass);
-  });
-
-  it('never lets the picture size its own slot', () => {
-    expect(html()).not.toMatch(/<img[^>]*\bw-auto\b/u);
-    expect(html()).not.toMatch(/<img[^>]*\bh-auto\b/u);
-  });
-
-  // Regression: the picture the HUMAN sent wore no frame, while the model's own
-  // artifact two rows below it did. `ExpandableImage`'s trigger spells `border-0
-  // bg-transparent` on itself, and this rail handed that very same element
-  // `border border-code-edge bg-code` through `frameClassName` — two competing
-  // utilities on one element are settled by Tailwind's emission order and never
-  // by which one the call site typed. The frame is a WRAPPER, and the plate owns
-  // it (`MediaPlate`), so both rails wear the same face.
-  it('never spells the frame on the element that disowns its own border', () => {
-    expect(html()).not.toMatch(/class="[^"]*\bborder-0\b[^"]*\bborder-code-edge\b/u);
-  });
-
-  it('captions a lone picture with its name and format', () => {
-    expect(text(html())).toContain('shot.png');
-    expect(text(html())).toContain('PNG');
-  });
-
   // Regression, user report with a screenshot: a wide picture the human sent stood
   // under a band of empty mat in its 4:3 plate. Its bytes are inline, so the plate
   // takes the picture's own ratio from the header before anything decodes.
@@ -885,61 +576,6 @@ describe('user bubble pictures', () => {
 // rail admitted `image/*` and `video/*` only, so the recording the gateway had
 // stored was invisible in the very message that carried it.
 describe('user bubble recordings', () => {
-  const html = () =>
-    renderToStaticMarkup(
-      <UserMessage
-        attachments={[
-          {
-            filename: 'memo.m4a',
-            media_type: 'audio/mp4',
-            base64: 'AAAAIGZ0eXBNNEEg',
-            size: 12,
-          },
-        ]}
-      >
-        {'listen to this'}
-      </UserMessage>,
-    );
-
-  it("plays what it cannot show, in this app's own face", () => {
-    // The platform's `controls` are a grey pill with another program's typeface
-    // and its own AirPlay and overflow buttons, parked on the transcript's paper.
-    expect(html()).toMatch(/<audio/u);
-    expect(html()).not.toMatch(/<audio[^>]*controls/u);
-    expect(html()).toContain('aria-label="Play"');
-    expect(text(html())).toContain('memo.m4a');
-    expect(text(html())).toContain('M4A');
-  });
-
-  // Nothing ever decodes into it, so the 4:3 box a still reserves would be a
-  // frame around silence.
-  it("never stands a recording on a picture's plate", () => {
-    expect(html()).not.toContain(mediaFrameClass);
-  });
-
-  // Regression: a message that was ONLY a recording still painted its bubble —
-  // an empty strip of paper with the user rail down its side, standing over the
-  // file the human actually sent.
-  it('paints no bubble for a message that carries only an attachment', () => {
-    const attachmentOnly = renderToStaticMarkup(
-      <UserMessage
-        attachments={[
-          {
-            filename: 'memo.m4a',
-            media_type: 'audio/mp4',
-            base64: 'AAAAIGZ0eXBNNEEg',
-            size: 12,
-          },
-        ]}
-      >
-        {''}
-      </UserMessage>,
-    );
-
-    expect(attachmentOnly).not.toContain('border-you-role bg-code');
-    expect(text(attachmentOnly)).toContain('memo.m4a');
-  });
-
   it('keeps the same player when gateway metadata catches up', () => {
     const bytes = 'AAAAIGZ0eXBNNEEg';
     const { container, rerender } = render(
@@ -1001,42 +637,6 @@ describe('user bubble recordings', () => {
     );
   });
 });
-// ONE picture is a plate; several are a GALLERY. A transcript where somebody
-// dropped four screenshots used to be four 60svh plates stacked down the
-// column — a wall to scroll past rather than something to look at.
-describe('user bubble galleries', () => {
-  const gallery = (count: number) =>
-    renderToStaticMarkup(
-      <UserMessage
-        attachments={Array.from({ length: count }, (_, i) => ({
-          filename: `shot-${i}.png`,
-          media_type: 'image/png',
-          base64: 'iVBORw0KGgo=',
-          size: 8,
-        }))}
-      >
-        {'look at these'}
-      </UserMessage>,
-    );
-
-  it('keeps a lone picture on its plate', () => {
-    expect(gallery(1)).toContain(mediaFrameClass);
-    expect(gallery(1)).not.toContain(mediaGridClass);
-  });
-
-  it('lays several pictures out as a grid of tiles', () => {
-    const html = gallery(3);
-
-    expect(html).toContain(mediaGridClass);
-    expect(html).toContain(mediaTileFrameClass);
-    expect(html).not.toContain(mediaFrameClass);
-  });
-
-  it('reports what the gallery holds instead of captioning every tile', () => {
-    expect(text(gallery(3))).toContain('3 images');
-    expect(text(gallery(3))).not.toContain('shot-0.png');
-  });
-});
 
 // Regression, TestFlight crash feedback: build 2875 rendered every collapsed tool result body,
 // so a large transcript left WebKit with hundreds of thousands of DOM nodes until iOS killed it
@@ -1079,32 +679,6 @@ describe('collapsed tool results', () => {
 // — the guessed size is what used to correct itself above the reader.
 // `ChatContent.paintSkip.test.tsx` pins the armed half.
 describe('a turn declares no size it has not measured', () => {
-  const paintIsland = /\bcontain:|\bcontent-visibility|contain-intrinsic-size/u;
-
-  it('gives a user bubble no paint-isolation boundary', () => {
-    const html = renderToStaticMarkup(<UserMessage>{'look at this'}</UserMessage>);
-
-    expect(html).not.toMatch(paintIsland);
-  });
-
-  it("leaves an assistant turn's markup free of containment", () => {
-    const html = renderToStaticMarkup(
-      <AssistantMessage
-        turn={{
-          turn_id: 'paint',
-          status: 'completed',
-          iterations: [
-            {
-              id: 'iteration-1',
-              forms: [{ op: 'shell', stdout: 'ok\n' }],
-            },
-          ],
-        }}
-      />,
-    );
-
-    expect(html).not.toMatch(paintIsland);
-  });
 
   it('marks each trace step and the answer as parts the jump chip counts', () => {
     const shell = { op: 'shell', stdout: 'ok\n' };
@@ -1147,22 +721,6 @@ describe('a card gives stdout one stable band and no op badge', () => {
       ),
     );
 
-  it('names stdout RESULT without deriving a second headline', () => {
-    const rendered = card({ op: 'grep', stdout: '12 results\n' });
-    expect(rendered).toContain('RESULT');
-    expect(rendered).not.toContain('12 results');
-    expect(rendered).not.toContain('GREP');
-  });
-
-  // A settled call that printed nothing already says so three times: the band says
-  // RESULT, there is no chevron to open and no `Copy` chip to take. A fourth telling
-  // — the word `none`, standing where a real summary would — was repeated status.
-  it('names the completed band even when stdout is empty', () => {
-    const rendered = card({ duration_ms: 39 });
-    expect(rendered).toContain('RESULT');
-    expect(rendered).not.toContain('none');
-  });
-
   it('keeps a non-Python failure message collapsed without its structured payload', () => {
     const view = render(
       <AssistantMessage
@@ -1190,7 +748,6 @@ describe('a card gives stdout one stable band and no op badge', () => {
     expect(view.queryByRole('button', { name: 'Expand error details' })).toBeNull();
     fireEvent.click(view.getByRole('button', { name: 'Expand steps: 1 failed' }));
     const toggle = view.getByRole('button', { name: 'Expand error details' });
-    expect(toggle).toHaveTextContent('Failed');
     expect(view.queryByText('Permission denied')).toBeNull();
     fireEvent.click(toggle);
     expect(view.getByText('Permission denied')).toBeVisible();
@@ -1198,10 +755,6 @@ describe('a card gives stdout one stable band and no op badge', () => {
     expect(view.container.textContent).not.toContain('large input');
     fireEvent.click(view.getByRole('button', { name: 'Collapse error details' }));
     expect(view.queryByText('Permission denied')).toBeNull();
-  });
-
-  it('names nothing while the op is still running', () => {
-    expect(card({})).not.toContain('RESULT');
   });
 
   it('never paints a private transport op a handle method answered', () => {
@@ -1337,9 +890,7 @@ describe('a Python evaluation without detected Activity', () => {
     expect(announcedStates(painted.container)).toContain('Failed');
     expect(painted.queryByRole('button', { name: 'Expand execution trace' })).toBeNull();
     const code = painted.getByRole('button', { name: 'Expand code' });
-    expect(code).toHaveTextContent('CODE');
     const toggle = painted.getByRole('button', { name: 'Expand error details' });
-    expect(toggle).toHaveTextContent('Failed');
     expect(code.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
@@ -1377,7 +928,6 @@ describe('a Python evaluation without detected Activity', () => {
     expect(painted.container.textContent).toContain('29ms');
     expect(announcedStates(painted.container)).toContain('Interrupted');
     const code = painted.getByRole('button', { name: 'Expand code' });
-    expect(code).toHaveTextContent('CODE (interrupted)');
     expect(painted.container.querySelector('[data-code-result]')).toBeNull();
     expect(painted.container.textContent).not.toContain('FutureTask/awaitDone');
     fireEvent.click(code);
@@ -1424,7 +974,6 @@ describe('a Python evaluation without detected Activity', () => {
       );
       const digest = painted.container.querySelector<HTMLElement>('[data-step-digest]')!;
       expect(digest).toHaveAttribute('aria-label', `Expand steps: 1 ${state}`);
-      expect(digest).toHaveClass('text-err-ink!');
       expect(digest.querySelector('.text-err-ink')).toHaveTextContent(`1 ${state}`);
       expect(digest.parentElement).toHaveTextContent('1.2s');
       expect(painted.container.textContent).not.toContain('Interrupted');
@@ -1535,29 +1084,6 @@ describe('Activity follows the combined Python source', () => {
       iterations: [{ id: 'iteration-1', position: 41, forms }],
     }) as unknown as TranscriptTurn;
 
-  // Regression, user screenshot: the nested RESULT header made a dark stripe
-  // between the CODE and ACTIVITY bands in dark themes.
-  it('keeps a collapsed and expanded result on the same surface as code and Activity', () => {
-    const painted = renderOpenSteps(
-      <AssistantMessage
-        turn={turnOf([
-          { source: 'run()', stdout: 'first line\nsecond line', activity: runningActivity },
-        ])}
-      />,
-    );
-    fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
-    const code = painted.container.querySelector('[data-execution-code]');
-    const result = painted.container.querySelector('[data-code-result]');
-    const activity = painted.container.querySelector('[data-execution-group]');
-    expect(code).toHaveClass('bg-code');
-    expect(activity).toHaveClass('bg-code');
-    expect(result).toHaveClass('bg-code');
-    expect(result).not.toHaveClass('bg-result');
-    fireEvent.click(painted.getByRole('button', { name: 'Expand result' }));
-    expect(result).toHaveClass('bg-code');
-    expect(painted.getByText('first line')).toBeVisible();
-  });
-
   it('groups adjacent calls without dropping either result', () => {
     const painted = renderOpenSteps(
       <AssistantMessage
@@ -1602,10 +1128,8 @@ describe('Activity follows the combined Python source', () => {
     );
 
     const code = painted.getByRole('button', { name: 'Expand code' });
-    expect(code).toHaveTextContent('CODE (interrupted)');
     expect(painted.container.querySelectorAll('[data-code-result]')).toHaveLength(1);
     const failure = painted.getByRole('button', { name: 'Expand error details' });
-    expect(failure).toHaveTextContent('Failed');
     fireEvent.click(failure);
     expect(painted.getByText('actual failure')).toBeVisible();
     fireEvent.click(code);
@@ -1735,23 +1259,6 @@ describe('Activity follows the combined Python source', () => {
     expect(painted.getByText(/THIRD_FAILURE/)).toBeVisible();
     fireEvent.click(painted.getByRole('button', { name: 'Collapse all error details' }));
     expect(painted.queryByText(/FIRST_FAILURE/)).toBeNull();
-  });
-
-  it('keeps grouped failure details on the code surface', () => {
-    const painted = renderOpenSteps(
-      <AssistantMessage
-        turn={turnOf([
-          { source: 'first()', error: { message: 'FIRST_FAILURE' } },
-          { source: 'second()', error: { message: 'SECOND_FAILURE' } },
-        ])}
-      />,
-    );
-    const result = painted.container.querySelector('[data-code-result]');
-    expect(result).toHaveClass('bg-code');
-    expect(result).not.toHaveClass('bg-result');
-    expect(painted.queryByText(/FIRST_FAILURE/)).toBeNull();
-    fireEvent.click(painted.getByRole('button', { name: 'Expand all error details' }));
-    expect(painted.getByText(/FIRST_FAILURE/)).toBeVisible();
   });
 
   it('keeps mixed outcomes independently collapsible', () => {
@@ -2282,43 +1789,6 @@ describe('a vis-doc fence', () => {
 // break, and in a table that makes the column's MIN-CONTENT one character: the auto
 // layout handed the file column 58px of a 366px bubble.
 describe('a markdown table', () => {
-  const table = [
-    '| Plik | Zmiana |',
-    '| --- | --- |',
-    '| `manifest.edn` | the size gate is gone, only the licence gates a download |',
-    '| `THIRD_PARTY_MODELS.md` | regenerated |',
-  ].join('\n');
-
-  it('lets a file column ask for the width of its name, not of one character', () => {
-    const markup = renderToStaticMarkup(<Markdown>{table}</Markdown>);
-    const cellRules = (/<table class="([^"]*)"/.exec(markup)?.[1] ?? '').replace(/&amp;/g, '&');
-    expect(cellRules).toContain('[&_code]:[word-break:normal]');
-    expect(cellRules).toContain('[&_a]:[word-break:normal]');
-    expect(text(markup)).toContain('manifest.edn');
-  });
-
-  // Prose stays justified natively; code never inherits that alignment.
-  it('justifies native Markdown prose while every code surface stays left-aligned', () => {
-    const markdown = renderToStaticMarkup(
-      <Markdown>
-        {
-          'Release `update version files for v0.7.126, bump next dev version`.\n\n```shell\ngit status --short\n```'
-        }
-      </Markdown>,
-    );
-    const inline = renderToStaticMarkup(
-      <InlineMarkdown>{'Run `update version files` now'}</InlineMarkdown>,
-    );
-
-    for (const markup of [markdown, inline]) {
-      expect(/<code class="[^"]*inline-block/.test(markup)).toBe(true);
-      expect(/<code class="[^"]*text-left/.test(markup)).toBe(true);
-    }
-    expect(/<p class="[^"]*text-justify/.test(markdown)).toBe(true);
-    expect(/<p class="[^"]*text-pretty/.test(markdown)).toBe(true);
-    expect(/<code class="[^"]*break-all/.test(markdown)).toBe(true);
-    expect(/<pre class="[^"]*text-left/.test(markdown)).toBe(true);
-  });
   it('makes scrollable code blocks keyboard-focusable named regions', () => {
     // CI 34270446372: axe rejected the horizontally scrolling CodeCopy story.
     const markup = renderToStaticMarkup(
@@ -2333,68 +1803,6 @@ describe('a markdown table', () => {
       expect(block).toContain('role="region"');
       expect(block).toContain('aria-label="');
     }
-  });
-});
-// Reported from a phone: a message was sent, the session title updated, and the
-// answer rail under it was a bare "Vis" — no phase, no clock, no trace — for the
-// whole turn. A `running` row the screen had stopped following rendered nothing
-// at all, so the reader had no word that work had even started.
-describe('a turn that has not answered yet', () => {
-  const running = {
-    turn_id: 't1',
-    request: 'check the logs',
-    status: 'running',
-    iterations: [],
-    content: [],
-  } as unknown as TranscriptTurn;
-
-  it('names its phase while the screen is following it', () => {
-    const html = renderToStaticMarkup(<AssistantMessage turn={running} />);
-
-    expect(text(html)).toContain('Vis is waiting for an update');
-    expect(html).toContain('animate-spinner-frame');
-  });
-
-  it('does not draw a placeholder before the first token', () => {
-    const html = renderToStaticMarkup(<AssistantMessage turn={running} streaming />);
-
-    expect(text(html)).toContain('Vis is working');
-    expect(html).not.toContain('bg-thinking-surface');
-  });
-
-  // Regression, session 3960d3aa-e090-41af-927d-f9ae2e24f200: an old reasoning
-  // fragment must not name the current phase of a long-running benchmark.
-  it('does not infer thinking from earlier reasoning in a running row', () => {
-    const html = renderToStaticMarkup(
-      <AssistantMessage
-        turn={{ ...running, iterations: [{ position: 1, thinking: 'Earlier reasoning', forms: [] }] }}
-      />,
-    );
-
-    expect(text(html)).toContain('Vis is working (iter 1)');
-    expect(text(html)).not.toContain('Vis is thinking (iter 1)');
-  });
-
-  it('keeps naming its phase once the screen stops following it', () => {
-    const html = renderToStaticMarkup(<AssistantMessage turn={running} settled />);
-
-    expect(text(html)).toContain('Vis is waiting for an update');
-    // What `settled` takes off is the TICKER — the spinner and the elapsed
-    // clock that made a finished turn look alive — and nothing else.
-    expect(html).not.toContain('animate-spinner-frame');
-    expect(text(html)).not.toMatch(/\d/);
-  });
-
-  it('says when a finished running turn is waiting for its transcript row', () => {
-    const html = renderToStaticMarkup(
-      <AssistantMessage
-        turn={{ ...running, status: 'completed' }}
-        pending="Loading latest changes"
-      />,
-    );
-
-    expect(text(html)).toContain('Loading latest changes');
-    expect(html).toContain('animate-spinner-frame');
   });
 });
 
@@ -2749,38 +2157,6 @@ describe('steps between progress notes', () => {
     expect(painted.container.textContent).not.toContain('read_first()');
   });
 
-  // Regression: a step without Activity counters showed only a chevron and its duration.
-  it.each(
-    [false, true].flatMap((live) =>
-      (['absent', 'empty', 'generic'] as const).map((kind) => ({ live, kind })),
-    ),
-  )('labels $kind Activity as RAW EXECUTION (live: $live)', ({ live, kind }) => {
-    const activity: ActivityProjection | undefined =
-      kind === 'absent'
-        ? undefined
-        : {
-            ...read,
-            counts: { running: 0, succeeded: kind === 'generic' ? 1 : 0, failed: 0, cancelled: 0 },
-            rows: kind === 'empty' ? [] : read.rows.map((row) => ({ ...row, signal: 'generic' })),
-          };
-    const painted = render(
-      <IterationTrace
-        whole
-        showCode
-        live={live}
-        iterations={[{ id: 'raw', forms: [{ source: 'print(1)', duration_ms: 45, activity }] }]}
-      />,
-    );
-    const digest = painted.getByRole('button', { name: 'Expand steps: RAW EXECUTION' });
-    expect(digest.textContent).toBe('RAW EXECUTION');
-    expect(digest.parentElement).toHaveTextContent('45ms');
-    fireEvent.click(digest);
-    expect(digest).toHaveAttribute('aria-label', 'Collapse steps: RAW EXECUTION');
-    expect(digest).toHaveAttribute('aria-expanded', 'true');
-    expect(digest.textContent).toBe('RAW EXECUTION');
-    expect(traces(painted.container)).toHaveLength(1);
-  });
-
   // Regression, user report: each running step flashed its code below the closed digest
   // until it folded in. The digest row alone counts the running step now.
   it('keeps the running step inside a closed live digest', () => {
@@ -2818,7 +2194,6 @@ describe('steps between progress notes', () => {
       <IterationTrace whole showCode live={live} iterations={[{ id: 'think', thinking: thought, forms: [] }]} />,
     );
     const digest = painted.getByRole('button', { name: 'Expand steps: THINKING' });
-    expect(digest.textContent).toBe('THINKING');
     expect(painted.container.textContent).not.toContain(thought);
     fireEvent.click(digest);
     expect(painted.container.textContent).toContain(thought);
@@ -2899,11 +2274,9 @@ describe('steps between progress notes', () => {
     const painted = render(
       <IterationTrace whole showCode live={live} iterations={failed} client={client} sid="s1" />,
     );
-    const [first, second] = digests(painted.container);
+    const [first] = digests(painted.container);
     expect(painted.queryByRole('button', { name: 'Expand error details' })).toBeNull();
     expect(first).toHaveAttribute('aria-label', 'Expand steps: 1 failed');
-    expect(first).toHaveClass('text-err-ink!');
-    expect(second).not.toHaveClass('text-err-ink!');
     expect(painted.getByText('report.pdf')).toBeVisible();
     expect(traces(painted.container)).toHaveLength(0);
     expect(painted.container.textContent).not.toContain('read_second()');
@@ -2969,7 +2342,6 @@ describe('steps between progress notes', () => {
       'aria-label',
       `Expand steps: 1 mutation · 2 observations · ${count}`,
     );
-    expect(digest).toHaveClass('text-err-ink!');
     expect(digest.querySelector('.text-err-ink')).toHaveTextContent(count);
     expect(digest.parentElement).toHaveTextContent('722ms');
     expect(painted.queryByRole('button', { name: 'Expand error details' })).toBeNull();

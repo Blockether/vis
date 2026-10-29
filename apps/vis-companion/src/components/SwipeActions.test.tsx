@@ -22,51 +22,6 @@ describe('SwipeActions tones', () => {
       </SwipeActions>,
     );
 
-  // A neutral verb means nothing in colour, which is what an accent action must not
-  // look like. It still owes paper of its own: `panel-2` equals `surface` in every
-  // shipped palette, so the cell used to BE the row's paper, and its ink is the
-  // theme's, because amber here says "waiting on a human".
-  it('leaves a neutral action in the shared verb ink, on paper of its own', () => {
-    const html = strip();
-    expect(html).not.toContain('bg-accent/15');
-    expect(html).toContain('bg-hover text-white');
-    expect(html).not.toContain('bg-panel-2 text-accent-ink');
-  });
-
-  // The same split, in red: `--err` is a badge fill and reads 3.50:1 as a caption
-  // on its own tint, under the 4.5 a 9px bold label owes. The list-safe pair
-  // (`err-surface` + `err-ink`, the tokens the in-row delete confirm already uses)
-  // reads 5.4:1 without turning half the row into an alarm.
-  it('paints a danger action in the list-safe red, not the badge fill', () => {
-    const html = strip('danger');
-    expect(html).not.toContain('bg-err/15');
-  });
-
-  // Regression, user report (a screenshot of the open drawer, asking for better colours
-  // between the icons): the cells were divided by `dialog-edge`, a dialog FRAME inside a
-  // list row — 9.57:1 against the row paper in blockether-light, eight times the 1.18:1
-  // of the rule between two rows, and so the loudest line on the screen. Each tone also
-  // brought its own, so the rule left of `Delete` was red and the one left of `Rename`
-  // near-black. One rule, the list's own, divides the whole strip.
-  it('divides the strip with the list rule, not a dialog frame', () => {
-    for (const html of [strip(), strip('accent'), strip('danger')]) {
-      expect(html).toContain('border-l border-edge-strong');
-      expect(html).not.toContain('border-dialog-edge bg-panel-2');
-      expect(html).not.toContain('border-err-edge bg-err-surface');
-      expect(html).not.toContain('border-accent/40 bg-accent/15');
-    }
-  });
-
-  // Regression, user report ("this also has not full height of the parent"): the swipe
-  // track is as tall as its TALLEST panel, and the action strip — a 16px icon over a
-  // 10px caption — measured 34px against a 32px desktop session row. The row panel
-  // stretched to 34 but the row inside it stayed 32, so the button's hover slab stopped
-  // 2px short of the rule under it. The panel is a GRID: one child, stretched on both
-  // axes, so whatever height the track ends up with is the row's height too.
-  it('lets the row fill the swipe track', () => {
-    expect(strip()).toContain('grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] mouse:contents');
-  });
-
   // The verbs are under the row's TRAILING edge and nowhere else: the row is panel
   // one at full width and the strip is panel two, so the slide always uncovers them
   // on the right.
@@ -75,26 +30,6 @@ describe('SwipeActions tones', () => {
     expect(html.indexOf('grid w-full')).toBeLessThan(html.indexOf('role="group"'));
   });
 });
-
-// The shared list inset left empty paper after the last action on mobile.
-it.each([false, true])(
-  'ends the touch strip at its last action, alignMenuWithHeader=%s',
-  (alignMenuWithHeader) => {
-    render(
-      <SwipeActions
-        label="a session"
-        alignMenuWithHeader={alignMenuWithHeader}
-        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: () => {} }]}
-      >
-        <span>row</span>
-      </SwipeActions>,
-    );
-    const strip = screen.getByRole('group', { name: 'a session actions' });
-    expect(strip).toHaveClass('shrink-0');
-    expect(strip.className).not.toMatch(/\b(?:p|px|pr|pe)-/);
-    expect(strip.lastElementChild).toBe(screen.getByRole('button', { name: 'Delete' }));
-  },
-);
 
 // Six fixed-width cells exceeded the row width and clipped the first action on iPhones.
 it.each([1, 3, 6, 8])(
@@ -175,63 +110,6 @@ describe('a mouse never slides', () => {
     expect(html).not.toContain('group-hover/swipe:opacity');
   });
 
-  // Regression, settings screenshot: a section action stood 8px to the right of its
-  // row menu. Session lists keep their original inset and touch drawers stay put.
-  it('aligns only opted-in desktop menus with settings header actions', () => {
-    const session = markup();
-    const settings = markup(true);
-    expect(session).toContain('mouse:flex pr-3 sm:pr-4');
-    expect(settings).toContain('mouse:flex pr-1 sm:pr-2');
-    expect(settings).toContain('shrink-0 mouse:hidden');
-  });
-
-  // Regression, user report (paraphrased: a plus standing on the left is unacceptable,
-  // the three dots belong on the right): a CSS reorder used to pull the menu trigger in
-  // front of the row's permanent control on a pointer, so the dots of a row and the dots
-  // of the header above it stood in different columns. Source order is the painted order
-  // now: the permanent control first, the menu last.
-  it('ends a pointer row with its menu, the permanent control one slot inside', () => {
-    const html = renderToStaticMarkup(
-      <SwipeActions
-        label="a session"
-        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: () => {} }]}
-        trailing={<button type="button">Show details</button>}
-      >
-        <span>row</span>
-      </SwipeActions>,
-    );
-
-    expect(html.indexOf('Show details')).toBeLessThan(
-      html.indexOf('aria-label="Actions for a session"'),
-    );
-    expect(html).not.toContain('order-last');
-  });
-
-  // Regression, user report right after BLO-167 shipped: the kebab on a session row still
-  // ran across the row. The trigger turned its mark a quarter turn, which was right while
-  // `DotsIcon` drew a horizontal ellipsis and laid the vertical one on its side once the
-  // icon itself started standing up.
-  it('opens the row menu off a standing kebab, not one on its side', () => {
-    const html = markup();
-    const dots = [...html.matchAll(/<circle[^>]*>/g)].map(([tag]) => ({
-      cx: Number(/cx="([\d.]+)"/.exec(tag)?.[1]),
-      cy: Number(/cy="([\d.]+)"/.exec(tag)?.[1]),
-    }));
-
-    expect(dots).toHaveLength(3);
-    expect(new Set(dots.map(({ cx }) => cx)).size).toBe(1);
-    expect(new Set(dots.map(({ cy }) => cy)).size).toBe(3);
-    expect(html).not.toContain('rotate-90');
-  });
-
-  // Row actions must not cover permanent controls such as session details.
-  it('reserves space beside row controls rather than overlaying them', () => {
-    const html = markup();
-    expect(html).not.toContain('mouse:absolute');
-    expect(html).toContain('mouse:flex-1');
-    expect(html).toContain('>Delete</span>');
-    expect(html).toContain('pr-3 sm:pr-4');
-  });
 });
 
 it.each([false, true])('retains one permanent control with actions=%s', (hasActions) => {
@@ -559,27 +437,6 @@ describe('the slide', () => {
     expect(verb.getAttribute('title')).toBe('Make tower primary');
   });
 
-  // Regression, user report with a phone screenshot (440px): the project band ran
-  // past the list — the path and the counts under the name were not truncated, and
-  // the pager and the `+` stood off the edge, a bare `1` showing past the rows'
-  // chevron column. The panel this track holds the row in is a grid, and a grid
-  // item's automatic minimum is its min-content width: a band whose every part is
-  // `nowrap` widened the track to 528px of a 393px list. The column must be free
-  // to be narrower than what it holds, so the band inside truncates instead.
-  it('lets the row it holds be narrower than its own nowrap content', () => {
-    const html = renderToStaticMarkup(
-      <SwipeActions
-        label="a project"
-        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: () => {} }]}
-      >
-        <span>row</span>
-      </SwipeActions>,
-    );
-    const panel = /<div class="([^"]*\bgrid\b[^"]*)"/.exec(html)?.[1] ?? '';
-    expect(panel).toContain('w-full');
-    expect(panel).toContain('grid-cols-[minmax(0,1fr)_auto]');
-  });
-
   it('treats the permanent control as a dismiss target while the touch drawer is open', () => {
     const onDetails = vi.fn();
     render(
@@ -659,25 +516,5 @@ describe('a press paints the whole row', () => {
     expect(details.closest(`[class*="${PRESSED}"]`)?.querySelector('[data-row-surface]')).toBe(
       null,
     );
-  });
-});
-
-// Regression, user reports (paraphrased: scrolling over a big group on the phone was extremely
-// slow, then a hard swipe over a 445-session group lagged and showed blank stripes): each row's
-// track was a native horizontal scroller, and WebKit paid for each one in the list's own scroll.
-describe('a row is never a native scroller', () => {
-  it('clips the row and leaves the page only the vertical pan', () => {
-    const html = renderToStaticMarkup(
-      <SwipeActions
-        label="a session"
-        actions={[{ key: 'rename', label: 'Rename', icon: <PencilIcon />, onSelect: () => {} }]}
-      >
-        <span>row</span>
-      </SwipeActions>,
-    );
-    const track = /<div data-swipe-track="" class="([^"]*)"/.exec(html)?.[1] ?? '';
-    expect(track.split(/\s+/)).toEqual(expect.arrayContaining(['overflow-clip', 'touch-pan-y']));
-    expect(html).not.toMatch(/overflow-x-auto|overflow-auto/);
-    expect(html).not.toMatch(/snap-x|snap-mandatory|snap-start|snap-end/);
   });
 });

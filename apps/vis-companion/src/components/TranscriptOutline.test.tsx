@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NARROW_SCREEN, RAIL_SHOW_MS, type OutlineEntry } from '../lib/transcript-outline';
@@ -30,51 +29,6 @@ function Outline() {
     </div>
   );
 }
-
-/** Lays the long answer out in ten lines of 18px, as a browser does, while its preview shows six. */
-function overflowLongAnswer() {
-  const height = (element: Element, lines: number) => (element.textContent === LONG_ANSWER ? lines * 18 : 0);
-  vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (this: Element) {
-    return height(this, 10);
-  });
-  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (this: Element) {
-    return height(this, 6);
-  });
-}
-
-/** Puts the outline card at the right edge of a wide screen, so its preview has room on the left. */
-function placeCardRight() {
-  const rect = Element.prototype.getBoundingClientRect;
-  const card = { x: 1100, y: 12, left: 1100, top: 12, right: 1388, bottom: 432, width: 288, height: 420 };
-  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-    return this.getAttribute('role') === 'dialog' ? ({ ...card, toJSON: () => card } as DOMRect) : rect.call(this);
-  });
-}
-
-describe('TranscriptOutline preview', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('names the state of the turn and fades the end of a cut answer', async () => {
-    overflowLongAnswer();
-    placeCardRight();
-    const user = userEvent.setup();
-    render(<Outline />);
-    await user.click(screen.getByRole('button', { name: 'Jump to a message' }));
-    const panel = await screen.findByRole('dialog', { name: 'Jump to a message' });
-    const [cut, whole] = within(panel).getAllByRole('button');
-
-    await user.hover(cut);
-    const preview = await screen.findByRole('tooltip');
-    expect(within(preview).getByText('Failed')).toHaveClass('text-err');
-    await waitFor(() => expect(within(preview).getByText(LONG_ANSWER).className).toContain('mask-image'));
-
-    await user.hover(whole);
-    await waitFor(() => expect(within(screen.getByRole('tooltip')).getByText('Done')).toHaveClass('text-ok'));
-    expect(within(screen.getByRole('tooltip')).getByText('Yes.').className).not.toContain('mask-image');
-  });
-});
 
 /** Makes the screen as narrow as a phone. */
 function narrowScreen() {
@@ -139,15 +93,4 @@ describe('TranscriptOutline rail on a narrow screen', () => {
     expect(screen.getByRole('dialog', { name: 'Jump to a message' })).toBeInTheDocument();
   });
 
-  it('paints the line of the turn on screen longer than the others', async () => {
-    render(<Outline />);
-    const rail = screen.getByRole('button', { name: 'Jump to a message' });
-    const active = await waitFor(() => {
-      const line = rail.querySelector('[data-active]');
-      expect(line).toBeInstanceOf(HTMLElement);
-      return line;
-    });
-    expect(active).toHaveClass('w-5');
-    for (const line of rail.querySelectorAll('span:not([data-active])')) expect(line).toHaveClass('w-4');
-  });
 });

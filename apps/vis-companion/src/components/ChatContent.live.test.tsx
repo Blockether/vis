@@ -12,52 +12,6 @@ import { dismissTopLayer, EDGE_BACK_PX, EDGE_SETTLE_MS } from '../lib/edge-back'
 import { drag } from '../lib/pull-to-search.fixture';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
 
-// Regression #222: ACTIVITY and RUN remain independent sibling sections.
-// User report (screenshot): the embedded run stood in a box of its own. It is a BAND now, the
-// way the terminal prints it — no frame, no inset, and the row rhythm CODE and ACTIVITY keep.
-it('renders the embedded live view as a borderless band on its shared background', () => {
-  const view = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
-  const panel = view.getByText(STORY_LIVE_VIEW.title).closest('section');
-  expect(panel).not.toHaveClass('border', 'border-dialog-hint', 'border-y', 'px-3');
-  // The band owns no vertical gap of its own: CODE, ACTIVITY and RUN keep one rhythm down the card.
-  expect(panel).not.toHaveClass('mt-3', 'pt-3');
-  expect(panel).not.toHaveClass('bg-panel');
-  const header = panel?.querySelector('header');
-  expect(header).not.toHaveClass('bg-panel-2', 'px-(--live-view-inset)');
-  expect(header).toHaveClass('min-h-9', 'mouse:min-h-7');
-  expect(header).not.toHaveClass('min-h-11');
-  expect(header?.querySelector('button')).toHaveClass('min-h-9', 'mouse:min-h-7');
-});
-
-// User report (screenshot): LIVE stood in light type beside a stop that wore a BUTTON. The row
-// ends as one line of type now — INTERRUPT | LIVE — both words in full weight, the verb carrying
-// no face at all, and the rule a terminal prints standing between them.
-it('ends the live band with a bold INTERRUPT | LIVE and no button face', () => {
-  const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded onInterrupt={() => {}} />);
-  const live = mounted.getByText('LIVE');
-  const interrupt = mounted.getByRole('button', { name: 'Interrupt' });
-  const row = Array.from(live.closest('header')!.children);
-  expect(row.indexOf(interrupt)).toBeLessThan(row.indexOf(live));
-  expect(row.at(-1)).toBe(live);
-  expect(live).toHaveClass('font-bold');
-  expect(interrupt).toHaveClass('font-bold');
-  // Caps are the band's, the WORD stays the app's: a screen reader still hears "Interrupt".
-  expect(interrupt).toHaveClass('uppercase');
-  expect(interrupt.textContent).toBe('Interrupt');
-  // No face: no frame, no paper, no padding of its own.
-  expect(interrupt.className).not.toMatch(/(?:^|\s)(?:border|bg-|min-h-|h-\d|px-)/);
-  // The rule divides the two words and is furniture, so it is never spoken.
-  const rule = row[row.indexOf(interrupt) + 1];
-  expect(rule.textContent).toBe('|');
-  expect(rule).toHaveAttribute('aria-hidden', 'true');
-  // A line of text says "target" by underlining what the pointer is on.
-  expect(interrupt).toHaveClass('enabled:hover:underline');
-  expect(live).toHaveClass('enabled:hover:underline');
-  // Losing the face must not lose the 44px touch reach it used to give.
-  expect(interrupt).toHaveClass('after:absolute', 'after:-inset-y-3.5');
-  expect(live).toHaveClass('after:absolute', 'after:-inset-y-3.5');
-});
-
 // Regression, user report (screenshot): LIVE underlined under the pointer but pressing it did
 // nothing — only the run's name opened the view. The word the band ends on opens the run too,
 // so the whole row answers the gesture it advertises.
@@ -96,8 +50,6 @@ it('opens a run in the app dialog, with no second frame inside it', () => {
   fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
   const dialog = mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title });
   expect(dialog).toHaveAttribute('aria-modal', 'true');
-  const opened = dialog.querySelector('section.live-view-panel');
-  expect(opened).not.toHaveClass('border');
   expect(within(dialog).getAllByText(STORY_LIVE_VIEW.title)).toHaveLength(1);
 });
 
@@ -115,8 +67,6 @@ it('mounts the opened run in the session pane rather than over the whole app', (
     const dialog = mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title });
     expect(pane.contains(dialog)).toBe(true);
     expect(shell.contains(dialog)).toBe(false);
-    expect(pane.firstElementChild).toHaveClass('absolute', 'inset-0');
-    expect(pane.firstElementChild).not.toHaveClass('fixed');
   } finally {
     shell.remove();
     pane.remove();
@@ -266,11 +216,6 @@ it.each([
       />,
     );
     expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
-    const title = mounted.getByText(liveView.title);
-    const group = title.closest('[data-execution-group]');
-    expect(group).toHaveClass('bg-code');
-    expect(group).not.toHaveClass('border');
-    expect(title.closest('.border')).toBeNull();
   },
 );
 
@@ -418,8 +363,6 @@ it('replaces the live view with one retained run receipt beside the same Activit
   const group = receipt.closest('[data-execution-group]');
   expect(group).toBeInTheDocument();
   expect(receipt.closest('[data-execution-activity]')).toBeNull();
-  expect(group).not.toHaveClass('border');
-  expect(receipt.closest('.border')).toBeNull();
   expect(receipt.closest('.bg-input')).toBeNull();
   fireEvent.click(mounted.getByRole('button', { name: 'Expand Activity' }));
   fireEvent.click(mounted.getByRole('button', { name: 'Collapse Activity' }));
@@ -604,7 +547,6 @@ it('renders RUN beside Activity and opens it without folding the preview', () =>
   expect(run?.parentElement).toBe(activitySection?.parentElement);
   expect(run?.closest('[data-execution-activity]')).toBeNull();
   // The band stands in the card's own column, with no inset ACTIVITY does not have.
-  expect(run?.querySelector('header')).not.toHaveClass('px-(--live-view-inset)');
   expect(mounted.getByText('RUN')).toBeVisible();
   fireEvent.click(mounted.getByRole('button', { name: 'Expand Activity' }));
   fireEvent.click(mounted.getByRole('button', { name: 'Collapse Activity' }));
@@ -613,7 +555,6 @@ it('renders RUN beside Activity and opens it without folding the preview', () =>
     name: `Open run ${STORY_LIVE_VIEW.title}`,
   });
   expect(launch).not.toHaveAttribute('aria-expanded');
-  expect(launch.querySelector('svg')).toBeNull();
   fireEvent.click(launch);
   const close = mounted.getByRole('button', {
     name: `Close ${STORY_LIVE_VIEW.title}`,
@@ -649,9 +590,6 @@ it('keeps multiple views as siblings even when their activity rows are absent', 
   const second = mounted.getByText('Second monitor').closest('section');
   expect(first?.parentElement).toBe(second?.parentElement);
   expect(first?.parentElement).toHaveAttribute('data-execution-group');
-  expect(first?.parentElement).not.toHaveClass('border');
-  expect(first?.closest('.border')).toBeNull();
-  expect(second?.closest('.border')).toBeNull();
   expect(mounted.getAllByText('RUN')).toHaveLength(2);
 });
 

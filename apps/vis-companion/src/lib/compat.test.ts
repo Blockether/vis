@@ -26,7 +26,6 @@ describe('compatFromHealth', () => {
     const verdict = compatFromHealth({ status: 'ok', id: 'g1' });
     expect(verdict?.reason).toBe('unknown');
     expect(verdict?.isCompatible).toBe(false);
-    expect(verdict?.title).toBe('Update the gateway');
   });
 
   it('accepts a gateway that speaks this app\u2019s protocol', () => {

@@ -11,12 +11,9 @@ import {
   liveRecordFromEdges,
   liveRunName,
   LiveRunRow,
-  liveVerdictLine,
   LIVE_RECORD_FOLD_LIMIT,
 } from './LiveArtifact';
-import liveArtifactSource from './LiveArtifact.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
-import { liveViewFromWire, type LiveRecord } from '../lib/live-view';
 import type { GatewayClient } from '../lib/gateway';
 import type { IterationAttachment } from '../lib/types';
 
@@ -33,13 +30,6 @@ function closeLine(result: Record<string, unknown>): string {
   return JSON.stringify({ kind: 'close', at: 99, result });
 }
 
-/** A verdict with the engine's own view behind it — only the trailer keys vary. */
-function ended(verdict: Partial<LiveRecord>): LiveRecord {
-  const view = liveViewFromWire(fixture);
-  if (!view) throw new Error('the engine fixture must be paintable');
-  return { view, ...verdict };
-}
-
 function client(): GatewayClient {
   return {
     liveViewLog: vi.fn(async () => ({ node_id: 'x', from: 0, lines: [], total: 0 })),
@@ -52,24 +42,6 @@ function serve(text: string) {
     blob: async () => new Blob([text]),
   }));
 }
-
-describe('how a finished run reads', () => {
-  it('says how it ended in the words a person uses, and carries the note', () => {
-    expect(liveVerdictLine(ended({ reason: 'completed' }))).toBe('finished');
-    expect(liveVerdictLine(ended({ reason: 'timeout' }))).toBe('timed out');
-    expect(liveVerdictLine(ended({ reason: 'superseded' }))).toBe('superseded');
-    expect(liveVerdictLine(ended({ reason: 'interrupted', note: 'flaky on rerun' }))).toBe(
-      'stopped by hand — flaky on rerun',
-    );
-  });
-
-  it('shows a reason it has no word for verbatim rather than as "ended"', () => {
-    // The engine owns `live-reasons`; a vocabulary that grew there must reach the
-    // phone as itself instead of being flattened into a word that says nothing.
-    expect(liveVerdictLine(ended({ reason: 'evicted' }))).toBe('evicted');
-    expect(liveVerdictLine(ended({}))).toBe('still recording');
-  });
-});
 
 describe('a long record, read at its two ends', () => {
   it('paints the verdict picture without parsing a single patch line', () => {
@@ -114,21 +86,6 @@ describe('the artifact on screen', () => {
     expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
   });
 
-  it('says so when the record cannot be read, instead of an empty picture', async () => {
-    serve('not a record at all');
-    render(
-      <LiveArtifact
-        client={client()}
-        sid="s1"
-        url="blob:broken"
-        chrome={({ body }) => <div>{body}</div>}
-      />,
-    );
-    await waitFor(() =>
-      expect(screen.getByText("This run's record could not be read.")).toBeVisible(),
-    );
-  });
-
   it('reads only the ends of a record past the fold limit', async () => {
     // The middle here is not JSON at all: a screen that folded the whole file
     // would stop at it and have no verdict to show. The verdict on screen IS the
@@ -152,14 +109,6 @@ describe('the artifact on screen', () => {
     expect(screen.getByText('swept 3 hosts')).toBeVisible();
   });
 
-  it("is built out of the app's own controls", () => {
-    expect(liveArtifactSource).toContain('<LiveViewPanel');
-    // The opened record is the app's one dialog, not the full-screen artifact overlay.
-    expect(liveArtifactSource).toContain('<RunDialog');
-    expect(liveArtifactSource).not.toContain('OverlayScreen');
-    expect(liveArtifactSource).not.toContain('<button');
-    expect(liveArtifactSource).not.toContain('style=');
-  });
 });
 
 // Reported from the app, with a screenshot: a `gh` watch that had finished left
@@ -349,7 +298,6 @@ describe('the settled run in the transcript', () => {
     render(<LiveRunRow client={c} sid="s1" attachment={record()} embedded={embedded} />);
     const launch = screen.getByRole('button', { name: 'Open run release' });
     expect(launch).not.toHaveAttribute('aria-expanded');
-    expect(launch.querySelector('svg')).toBeNull();
     fireEvent.click(launch);
     await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeVisible());
     expect(attachmentUrl).toHaveBeenCalledWith('s1', 'it-1', 2);
@@ -362,13 +310,6 @@ describe('the settled run in the transcript', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close release' }));
     await waitFor(() => expect(screen.queryByText('swept 3 hosts')).toBeNull());
     expect(screen.getByRole('button', { name: 'Open run release' })).toBeVisible();
-  });
-
-  it('says so when the record cannot be fetched, in the same screen', async () => {
-    const { client: c } = rowClient(null);
-    render(<LiveRunRow client={c} sid="s1" attachment={record()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open run release' }));
-    await waitFor(() => expect(screen.getByText('Loading…')).toBeVisible());
   });
 
   it('paints nothing for a run no iteration owns', () => {

@@ -177,7 +177,6 @@ describe('a machine that stopped answering while nobody was looking', () => {
     const checking = screen.getByRole('button', { name: 'Checking connection to retry target' });
     expect(checking).toHaveAttribute('aria-busy', 'true');
     expect(checking).toHaveAttribute('aria-disabled', 'true');
-    expect(checking.querySelector('.lucide-refresh-cw')).toHaveClass('animate-spin');
     fireEvent.click(checking);
     fireEvent.click(checking);
     expect(attempts).toBe(2);

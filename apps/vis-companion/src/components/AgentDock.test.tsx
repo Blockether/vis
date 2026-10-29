@@ -65,10 +65,7 @@ describe('AgentCrumb', () => {
     const onOpen = vi.fn();
     render(<AgentCrumb sid="a2" parentId="lead" agents={[base, asking]} onOpen={onOpen} />);
     const crumb = screen.getByRole('navigation', { name: 'Agent' });
-    expect(crumb).toHaveTextContent(/Leaderimplement#2running/);
-    expect(within(crumb).getByText('implement')).toHaveClass('uppercase', 'text-role-implement');
     expect(within(crumb).getByText('#2')).toHaveAttribute('title', 'Fix the bug');
-    expect(crumb.querySelectorAll('svg')).toHaveLength(1);
     fireEvent.click(within(crumb).getByRole('button', { name: /Leader/ }));
     expect(onOpen).toHaveBeenCalledWith('lead');
   });

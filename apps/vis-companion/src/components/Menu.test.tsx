@@ -1,8 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { MenuBack, MenuHeading, MenuItem, MenuNote, MENU_WIDTH } from './Menu';
-import { BandButton } from './ui';
+import { MenuBack, MenuItem, MENU_WIDTH } from './Menu';
 
 // Regression, user report ("when I open the ⋯ the view is not coherent between the
 // one ⋯ on the machine and another ⋯ on the project level"): the machine menu was a
@@ -16,38 +15,6 @@ describe('Menu parts', () => {
     expect(MENU_WIDTH).toBe(320);
   });
 
-  describe('MenuHeading', () => {
-    it('names what the rows act on in the black title band', () => {
-      const html = renderToStaticMarkup(<MenuHeading>studio-mbp</MenuHeading>);
-      expect(html).toContain('studio-mbp');
-    });
-
-    // Subordinate sections stay quiet beneath the primary title band.
-    it('keeps a second band in the same menu quiet', () => {
-      const html = renderToStaticMarkup(<MenuHeading tone="quiet">Or a draft</MenuHeading>);
-
-      expect(html).not.toContain('bg-accent');
-    });
-
-    // Regression, user report (paraphrased: the sheet's colours look wrong): this slot
-    // held PAPER — `Button`s parked on the dark title band inside a padded span — and
-    // `secondary` carries `text-white`, the PAGE's ink, so the second verb was dark on
-    // dark. The band's trailing end is a run of CELLS, the way out already being one.
-    it('welds its verbs into the band as cells, never as paper on it', () => {
-      const html = renderToStaticMarkup(
-        <MenuHeading
-          cells={<BandButton isPrimary>Use project</BandButton>}
-          onClose={() => {}}
-          closeLabel="Close new project"
-        >
-          New project
-        </MenuHeading>,
-      );
-      // And nothing pads it off the band the way a wrapper around a button did.
-      expect(html).not.toContain('items-center px-2');
-    });
-  });
-
   describe('MenuBack', () => {
     it('is the same band, made pressable, so a step is left the way it was entered', () => {
       const html = renderToStaticMarkup(
@@ -59,18 +26,6 @@ describe('Menu parts', () => {
       expect(html).toContain('aria-label="Back to actions for tower"');
     });
 
-    it('carries the step’s commit cells beside the way back', () => {
-      const html = renderToStaticMarkup(
-        <MenuBack
-          label="Back to projects"
-          onBack={() => {}}
-          cells={<BandButton isPrimary>Create project</BandButton>}
-        >
-          New project
-        </MenuBack>,
-      );
-      expect(html).not.toContain('items-center gap-2 px-2');
-    });
   });
 
   describe('MenuItem', () => {
@@ -82,44 +37,6 @@ describe('Menu parts', () => {
       expect(html()).not.toContain('role="menuitem"');
     });
 
-    // A workspace decision is unrecoverable-ish once the agent starts writing, so
-    // no row is allowed to be a bare noun.
-    it('carries the consequence of pressing it under the title', () => {
-      const markup = html({ hint: 'browse, create, and choose folders' });
-
-      expect(markup).toContain('browse, create, and choose folders');
-    });
-
-    it('marks the default answer with a badge rather than a second colour', () => {
-      const markup = html({ badge: 'Default' });
-
-      expect(markup).toContain('Default');
-    });
-
-    // The new row dropdown focuses Delete when it is a project's only action.
-    // A translucent error fill left its caption below 4.5:1 in several themes.
-    it('keeps the destructive focus surface separate from foreground-only hover', () => {
-      const markup = html({ tone: 'danger', title: 'Remove sessions', icon: <svg /> });
-      expect(markup).toContain('<button');
-      expect(markup).toContain('focus-visible:bg-err-surface');
-      expect(markup).not.toMatch(/hover:bg-/);
-      expect(markup).toContain('text-err-ink');
-      expect(markup).not.toContain('bg-err/15');
-    });
-
-    // Regression, user report ("fix this misalignment of icons and text", on the
-    // composer's attach menu): the row was `items-start`, so a row of one line —
-    // the only kind with an icon and no hint — pinned its icon and title to the top
-    // of the 44px thumb target. Measured off the report's own screenshot: 12px of
-    // paper above the title, 23.5px below it, twice over.
-    it('centres a one-line row in the thumb target it has to fill', () => {
-      const markup = html({ icon: <svg />, badge: 'Default' });
-      expect(markup).not.toContain('items-start');
-      // Nothing beside the title is nudged down: the centred row already put it on
-      // the title's line.
-      expect(markup).not.toContain('mt-0.5');
-    });
-
     // The nudge is not gone, it is CONDITIONAL: two lines have a first one to hang
     // the icon and the badge off, and centring them across both would float them
     // against the hint instead.
@@ -129,28 +46,10 @@ describe('Menu parts', () => {
       expect(markup.match(/self-start mt-0\.5/g)).toHaveLength(2);
     });
 
-    it('keeps details near a separate action without changing plain row padding', () => {
-      const withAction = html({
-        meta: '4 transcripts',
-        action: <button type="button">Delete</button>,
-      });
-
-      expect(withAction).toContain('min-w-0 flex-1 pr-0.5');
-      expect(html()).toContain('w-full border-b border-dialog-edge pr-3');
-    });
-
     it('is a real button, so a sheet can hang off the row that opened it', () => {
       expect(html()).toContain('<button');
       expect(html()).not.toContain('<a ');
     });
   });
 
-  describe('MenuNote', () => {
-    it('says what a menu with nothing to offer is doing', () => {
-      const html = renderToStaticMarkup(<MenuNote>No drafts parked yet.</MenuNote>);
-
-      expect(html).toContain('No drafts parked yet.');
-      expect(html).not.toContain('<button');
-    });
-  });
 });

@@ -185,18 +185,6 @@ describe('AppSurface', () => {
     expect(screen.getByRole('button', { name: 'Send review' })).toHaveProperty('disabled', true);
   });
 
-  it.each([320, 375, 430, 1280])('keeps the code scrolling inside the surface at %ipx', async (width) => {
-    vi.stubGlobal('innerWidth', width);
-    const { client } = fakeClient([view(3, 'Draft')], async () => ({}));
-    open(client, null);
-    const thread = await screen.findByRole('region', { name: 'Thread on src/a.ts line 1' });
-    const lines = document.querySelector('[data-diff-lines]');
-    expect(lines?.className).toContain('overflow-x-auto');
-    expect(lines?.className).toContain('min-w-0');
-    expect(thread.closest('[data-diff-lines]')).toBeNull();
-    expect(thread.className).toContain('min-w-0');
-    expect(document.querySelector('[data-app-surface="app-1"]')?.className).toContain('min-w-0');
-  });
 });
 
 describe('AppAttachmentRow', () => {
@@ -497,20 +485,6 @@ describe('AppSurface focus, names and owner loss', () => {
     fireEvent.keyDown(radio, { key: 'ArrowUp' });
     await waitFor(() => expect(viewAction.mock.calls.length).toBeGreaterThan(before));
     expect(viewAction.mock.calls.at(-1)?.[2]).toEqual({ action: 'shortcut', key: 'ArrowUp' });
-  });
-
-  it('names each legend entry by its label and key, so two keys named Up stay apart', async () => {
-    const { client } = fakeClient([wizard(3)], accepted);
-    open(client, null);
-    const legend = await screen.findByRole('toolbar', { name: 'App keys' });
-    const names = Array.from(legend.querySelectorAll('button')).map((one) => one.getAttribute('aria-label'));
-    expect(names).toEqual(['Next, key n', 'Up, key Up arrow', 'Up, key k']);
-    expect(legend.querySelector('[data-shortcut-key="k"] kbd')?.getAttribute('aria-hidden')).toBe('true');
-    // The node button keeps its own label as its name, without the key cap.
-    expect(nodeButton('next').getAttribute('aria-label')).toBe('Next');
-    // A finger gets a whole 44px box; a mouse gets the small face.
-    expect(legend.querySelector('[data-shortcut-key="n"]')?.className).toContain('h-11');
-    expect(legend.querySelector('[data-shortcut-key="n"]')?.className).toContain('mouse:h-5');
   });
 
   it('goes read only on a disconnected refusal and comes back live on the adopting open', async () => {

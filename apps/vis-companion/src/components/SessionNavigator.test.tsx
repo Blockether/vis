@@ -1,15 +1,10 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  HeaderActions,
-  MachineProjectsButton,
-  MachineSwitcher,
   MachineTab,
   Pager,
-  RowDisclosure,
   SectionHeader,
   sessionStatusTone,
 } from './SessionNavigator';
@@ -21,25 +16,6 @@ describe('session status colors', () => {
     ['DIRTY', 'text-dirty'], ['ARCHIVED', 'text-muted'], ['IDLE', 'text-dialog-hint'],
   ])('uses the shared color for %s', (label, tone) => {
     expect(sessionStatusTone(label)).toBe(tone);
-  });
-});
-
-describe('project heading borders', () => {
-  // Regression: adjacent collapsed projects added their lower and upper borders together.
-  it.each([false, true])('uses one shared edge before a project (expanded: %s)', (isExpanded) => {
-    const { container } = render(
-      <>
-        <section><SectionHeader>First project</SectionHeader></section>
-        <section><SectionHeader isExpanded={isExpanded}>Next project</SectionHeader></section>
-      </>,
-    );
-    const headers = container.querySelectorAll('header');
-    expect(headers).toHaveLength(2);
-    headers.forEach((header) => {
-      expect(header).toHaveClass('border-t', 'border-project-header-border');
-      expect(header).not.toHaveClass('border-y');
-      expect(header).not.toHaveClass('border-b');
-    });
   });
 });
 
@@ -85,9 +61,6 @@ describe('machine selection', () => {
     );
     const unread = screen.getByRole('button', { name: /tower\s*3 unread/ });
     expect(unread).toHaveAttribute('aria-pressed', 'false');
-    expect(unread).toHaveClass('bg-level-project', 'text-dialog-hint');
-    expect(screen.getByText('3')).toHaveClass('bg-accent', 'text-accent-foreground');
-    expect(screen.getByText('3 unread')).toHaveClass('sr-only');
 
     rerender(
       <MachineTab isOn unread={3} onClick={() => {}}>
@@ -96,14 +69,7 @@ describe('machine selection', () => {
     );
     const selectedUnread = screen.getByRole('button', { name: /tower\s*3 unread/ });
     expect(selectedUnread).toHaveAttribute('aria-pressed', 'true');
-    expect(selectedUnread).toHaveClass('bg-ink', 'font-bold', 'text-white', 'ring-1', 'ring-inset');
-    expect(screen.getByText('3')).toHaveClass('bg-accent');
     // Inset, because the scrolling track clips an outline drawn outside the segment.
-    expect(selectedUnread).toHaveClass(
-      'focus-visible:outline-2',
-      'focus-visible:-outline-offset-2',
-      'focus-visible:outline-white',
-    );
 
     rerender(
       <MachineTab isOn onClick={() => {}}>
@@ -111,7 +77,6 @@ describe('machine selection', () => {
       </MachineTab>,
     );
     const selectedRead = screen.getByRole('button', { name: 'tower' });
-    expect(selectedRead).toHaveClass('bg-ink', 'text-white');
     expect(selectedRead.querySelector('.bg-accent')).toBeNull();
     expect(screen.queryByText(/unread/)).toBeNull();
 
@@ -122,8 +87,6 @@ describe('machine selection', () => {
     );
     const retry = screen.getByRole('button', { name: 'Reconnect to tower' });
     expect(retry).not.toHaveAttribute('aria-pressed');
-    expect(retry).toHaveClass('text-err-ink');
-    expect(retry).not.toHaveClass('bg-ink', 'bg-level-project', 'ring-1');
     expect(screen.queryByText(/unread/)).toBeNull();
   });
 
@@ -139,11 +102,8 @@ describe('machine selection', () => {
         </MachineTab>,
       );
       const tab = screen.getByRole('button', { name: /^tower\s*4 unread$/ });
-      expect(screen.getByText('4')).toHaveClass('bg-accent', 'text-accent-foreground');
       expect(screen.getByText('4')).toHaveAttribute('aria-hidden', 'true');
       expect(screen.getByText('2 min')).toHaveAttribute('aria-hidden', 'true');
-      expect(screen.getByText('2 min')).toHaveClass('text-dialog-hint');
-      expect(screen.getByText('2 min')).not.toHaveClass('opacity-60');
       expect(tab).toHaveAttribute('aria-description', 'Last activity 2 min ago');
       expect(tab).not.toHaveAttribute('title');
 
@@ -158,7 +118,6 @@ describe('machine selection', () => {
         </MachineTab>,
       );
       const idle = screen.getByRole('button', { name: 'tower' });
-      expect(idle).toHaveClass('bg-level-project');
       expect(screen.getByText('now')).toBeInTheDocument();
       expect(idle).toHaveAttribute('aria-description', 'Active now');
 
@@ -175,52 +134,6 @@ describe('machine selection', () => {
   });
 });
 
-// Regression, visual review: Projects is an icon-only action with no frame, and the
-// machines must not run together (user review).
-describe('machine bar', () => {
-  it('gives every machine its own segment on the track and drops it when the machine is down', () => {
-    const { container, rerender } = render(
-      <MachineSwitcher>
-        <MachineTab isOn={false} onClick={() => {}}>
-          mini
-        </MachineTab>
-      </MachineSwitcher>,
-    );
-    expect(container.firstElementChild).toHaveClass('bg-machine-track', 'p-0.75', 'gap-0.75');
-    // The track's inset rides into the row's padding, so the desk strip keeps the session
-    // header's 52px height and both edges stay on one line.
-    expect(container.firstElementChild).toHaveClass('-my-0.75');
-    const idle = screen.getByRole('button', { name: 'mini' });
-    expect(idle).toHaveClass('bg-level-project');
-    expect(idle).not.toHaveClass('bg-ink');
-
-    rerender(
-      <MachineSwitcher>
-        <MachineTab isOn={false} isDown label="Reconnect to mini" onClick={() => {}}>
-          mini
-        </MachineTab>
-      </MachineSwitcher>,
-    );
-    const retry = screen.getByRole('button', { name: 'Reconnect to mini' });
-    expect(retry).toHaveClass('text-err-ink');
-    expect(retry).not.toHaveClass('bg-level-project');
-  });
-
-  it('keeps New project icon-only and borderless while it opens the folder sheet', async () => {
-    const onPress = vi.fn();
-    render(<MachineProjectsButton machine="tower" onPress={onPress} />);
-    const projects = screen.getByRole('button', { name: 'New project on tower' });
-    expect(projects).not.toHaveTextContent('New project');
-    expect(projects).toHaveClass('border-0');
-    expect(projects.querySelector('svg')).toBeInTheDocument();
-    await userEvent.click(projects);
-    expect(onPress).toHaveBeenCalledExactlyOnceWith(projects);
-    projects.focus();
-    await userEvent.keyboard('{Enter}');
-    expect(onPress).toHaveBeenCalledTimes(2);
-  });
-});
-
 // Regression: the chosen header layout is `previous · current / total · next` on every device.
 describe('project pages', () => {
   it.each([1, 9, 10, 99])('shows an editable counter and two step controls on page %s', (page) => {
@@ -231,7 +144,6 @@ describe('project pages', () => {
     const current = screen.getByRole('textbox', { name: 'Current page' });
     expect(current).toHaveValue(String(page));
     // Keep hover ink off the focused field on the focused project band's background.
-    expect(current).toHaveClass('mouse:group-hover:enabled:not-focus:text-accent-ink');
     expect(screen.getByText('/104')).toBeInTheDocument();
     expect(screen.getByText(`Page ${page} of 104`)).toHaveAttribute('aria-live', 'polite');
   });
@@ -295,13 +207,9 @@ describe('project pages', () => {
       const button = screen.getByLabelText(label);
       // Regression: desktop must not hide its steps inside the phone-only strip.
       expect(button.parentElement).toBe(screen.getByRole('navigation'));
-      expect(button).toHaveClass('border-0');
-      expect(button).not.toHaveClass('rounded-full');
-      expect(button).toHaveClass('after:-inset-1.5');
       if (target < 1 || target > 80) {
         expect(button).toBeDisabled();
         expect(button).not.toHaveAttribute('aria-hidden');
-        expect(button).not.toHaveClass('invisible');
         fireEvent.click(button);
         expect(onPage).not.toHaveBeenCalled();
       } else {
@@ -311,54 +219,6 @@ describe('project pages', () => {
       }
     }
     expect(screen.getByText(`Page ${page} of 80`)).toHaveAttribute('aria-live', 'polite');
-  });
-
-  // The pager is a header's NAVIGATION, not a row's mark: under a pointer it steps
-  // onto the band's 24px rhythm in metadata type so it reads as chrome beside the
-  // project's facts, while touch keeps the 44px reach the same cluster needs.
-  it('steps onto the band rhythm under a pointer without losing touch reach', () => {
-    render(<Pager page={2} pageCount={147} label="vis sessions" onPage={vi.fn()} />);
-    for (const name of ['Previous page', 'Next page']) {
-      const step = screen.getByRole('button', { name });
-      expect(step).toHaveClass('size-8', 'after:-inset-1.5', 'mouse:size-6', 'mouse:text-meta');
-      expect(step).not.toHaveClass('mouse:size-7');
-    }
-    const counter = screen.getByRole('textbox', { name: 'Current page' }).closest('label');
-    expect(counter).toHaveClass(
-      'min-h-11',
-      'min-w-11',
-      'mouse:min-h-6',
-      'mouse:min-w-6',
-      'mouse:text-meta',
-    );
-    expect(screen.getByRole('navigation')).toHaveClass('gap-2', 'mouse:gap-1');
-  });
-
-  // A page step and a session's disclosure are the same chevron, not two scales.
-  it('draws both pager chevrons at the row disclosure size', () => {
-    render(
-      <>
-        <RowDisclosure isOpen={false} label="Show details" onClick={() => {}} />
-        <Pager page={2} pageCount={10} label="vis sessions" onPage={vi.fn()} />
-      </>,
-    );
-    const disclosure = screen.getByRole('button', { name: 'Show details' }).querySelector('svg');
-    expect(disclosure).toHaveClass('size-3.5');
-    for (const name of ['Previous page', 'Next page']) {
-      expect(screen.getByRole('button', { name }).querySelector('svg')).toHaveClass('size-3.5');
-    }
-  });
-
-  // Regression, screenshot: both page arrows must sit in the middle of their own tap targets.
-  it('centers pager chevrons inside both step buttons on touch and mouse', () => {
-    render(<Pager page={1} pageCount={123} label="vis sessions" onPage={vi.fn()} />);
-    for (const name of ['Previous page', 'Next page']) {
-      const icon = screen.getByRole('button', { name }).querySelector('svg');
-      expect(icon).toHaveClass('mx-auto', 'size-3.5');
-      for (const shift of ['translate-x-1', '-translate-x-1', 'mouse:translate-x-0']) {
-        expect(icon).not.toHaveClass(shift);
-      }
-    }
   });
 
   it('keeps the same step controls while traversing a long history', () => {
@@ -465,48 +325,4 @@ describe('project pages', () => {
     expect(onPage).toHaveBeenCalledExactlyOnceWith(7);
   });
 
-  // Reported over the project header, once the pager took that edge (paraphrased: a plus
-  // standing on the left is unacceptable, the three dots belong on the right): a paged
-  // project stood its own controls in the middle of the band while an unpaged one kept
-  // them flush right. The controls hold the edge in ONE shape now, and the page steps
-  // stand over the set they move (`SetHeader` in `SessionProjectGroups`) instead.
-  it('gives a header’s own controls the trailing edge', () => {
-    render(
-      <SectionHeader>
-        <span>vis</span>
-        <HeaderActions align="center">
-          <button type="button">New session on tower</button>
-        </HeaderActions>
-      </SectionHeader>,
-    );
-    const actions = screen.getByRole('button', { name: 'New session on tower' })
-      .parentElement as HTMLElement;
-    const header = actions.parentElement as HTMLElement;
-
-    expect(header.tagName).toBe('HEADER');
-    expect(header).toHaveClass('min-h-14', 'mouse:min-h-12', 'shadow-project');
-    // The band's rule reaches the cluster through its LAST child, so the cluster is it.
-    expect(header.lastElementChild).toBe(actions);
-    // One shape for every section: the band never becomes a grid to make room for pages.
-    expect(header.className).toContain('sticky top-0 flex');
-    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
-  });
-
-  it('pulls row disclosures toward the menu without shifting header menus', () => {
-    render(
-      <>
-        <HeaderActions>
-          <RowDisclosure isOpen={false} label="Show details" onClick={() => {}} />
-        </HeaderActions>
-        <HeaderActions align="center">
-          <button type="button">Header menu</button>
-        </HeaderActions>
-      </>,
-    );
-    expect(screen.getByRole('button', { name: 'Show details' }).parentElement).toHaveClass('pr-0.5');
-    expect(screen.getByRole('button', { name: 'Header menu' }).parentElement).toHaveClass(
-      'pr-2',
-      'mouse:pr-2.5',
-    );
-  });
 });

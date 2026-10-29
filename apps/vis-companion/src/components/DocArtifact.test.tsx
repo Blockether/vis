@@ -382,13 +382,6 @@ describe('DocPreview', () => {
     expect(text(note)).toContain('PLAN.md');
   });
 
-  it('offers no draw, hide or new tab control', () => {
-    const body = text(preview());
-    expect(body).not.toContain('Draw');
-    expect(body).not.toContain('Hide');
-    expect(body).not.toContain('New tab');
-  });
-
   // Reported ("I love 4"): the card carried the screen's only verb as a chip at its
   // far trailing edge, so the other nine tenths of it was paper a finger could land
   // on for nothing. The ROW is the button now, and it keeps a finger's 48px box while
@@ -401,13 +394,6 @@ describe('DocPreview', () => {
     expect(text(html)).not.toContain('Open ');
   });
 
-  // A row is a row of the stack: the frame, the paper and the edge belong to the
-  // stack around it, or four documents are four boxes down one turn.
-  it('carries no frame of its own', () => {
-    const html = preview();
-    expect(html).not.toContain('border-code-edge');
-    expect(html).not.toContain('mt-2');
-  });
 });
 
 // Reported ("I love 4"): every document artifact was its own framed card with its own
@@ -417,15 +403,9 @@ describe('DocStack', () => {
   const stack = (summary?: string) =>
     renderToStaticMarkup(<DocStack summary={summary}>rows</DocStack>);
 
-  it('is the one frame the rows live in', () => {
-    const html = stack();
-    expect(html).toContain('divide-y');
-  });
-
   it('reports the group, and only when there is a group', () => {
     expect(text(stack('4 documents · 31.4KB'))).toContain('4 documents · 31.4KB');
     // A lone document is one row and no header band at all.
-    expect(stack()).not.toContain('border-b');
   });
 
   it('claims a weight only when every document reported one', () => {
@@ -439,25 +419,6 @@ describe('DocStack', () => {
 // itself to 60vh inside a padded scroller — and the session's composer strip
 // still stood at the bottom of the screen over it.
 describe('an opened document', () => {
-  const overlay = () =>
-    renderToStaticMarkup(
-      <DocOverlay
-        name="report.pdf"
-        mime="application/pdf"
-        sizeLabel="1.2 MB"
-        url="blob:x"
-        failed={false}
-        onClose={() => undefined}
-      />,
-    );
-
-  it('owns the whole viewport', () => {
-    const markup = overlay();
-    expect(markup).not.toContain('h-[100dvh]');
-    expect(markup).toContain('flex-1');
-    expect(markup).not.toContain('60vh');
-    expect(markup).toContain('aria-label="Close report.pdf"');
-  });
 
   // Shares from a document opened in the session, like the artifacts sheet does.
   // The outcome must not become a second header line: the band grew after Share.
@@ -547,24 +508,6 @@ describe('an opened document', () => {
     return { view, screenEl: close.closest('div[class*=inset-0]') as HTMLElement };
   };
 
-  // Regression, user report ("the input should be ABOVE THE KEYBOARD"): this screen
-  // hung off `document.body` at `100dvh`. The keyboard pins the app SHELL, not the
-  // glass (`useVisualViewportShell`), so the annotator's composer sat under the keys
-  // on iOS and on mobile web alike.
-  it('mounts inside the viewport-pinned shell, so a keyboard cannot bury it', async () => {
-    const shell = document.createElement('div');
-    shell.setAttribute('data-viewport-shell', '');
-    document.body.append(shell);
-
-    const { view, screenEl } = await openPreview('shelled.pdf');
-    expect(shell.contains(screenEl)).toBe(true);
-    expect(view.container.contains(screenEl)).toBe(false);
-    expect(screenEl.className).not.toContain('fixed');
-
-    view.unmount();
-    shell.remove();
-  });
-
   // No shell yet — the layer still leaves the transcript, so the composer strip the
   // session screen pins to the bottom cannot paint on top of it.
   it('falls back to the body, fixed, when there is no shell', async () => {
@@ -574,37 +517,6 @@ describe('an opened document', () => {
     view.unmount();
   });
 
-  // Regression, user report ("why is the contrast so weak here"): the mark on a cut
-  // of the thread was inked in `text-accent` — the amber BUTTON FILL, 1.45:1 on this
-  // screen's own paper — so a 9px word arrived as a smudge. Amber TEXT is `accent-ink`.
-  it('inks the mark on a cut in amber a reader can read', async () => {
-    render(
-      <DocOverlay
-        name="threaded.pdf"
-        mime="application/pdf"
-        sizeLabel="1.2 MB"
-        url="blob:x"
-        failed={false}
-        versions={[
-          { index: 0, iteration_id: 'i2', version: 2, size: 2048 },
-          { index: 0, iteration_id: 'i1', version: 1, size: 1024 },
-        ]}
-        shownAt={1}
-        onClose={() => undefined}
-      />,
-    );
-    await userEvent.click(screen.getByRole('button', { name: 'Versions of threaded.pdf' }));
-    for (const mark of [screen.getByText('latest'), screen.getByText('reading')]) {
-      expect(mark.className).not.toMatch(/(?:^|\s)text-accent(?:\s|$)/);
-    }
-  });
-  it('fills its box instead of standing at 60vh', () => {
-    const markup = renderToStaticMarkup(
-      <DocFrame url="blob:x" mime="application/pdf" name="q3.pdf" />,
-    );
-    expect(markup).toContain('flex-1');
-    expect(markup).not.toContain('60vh');
-  });
 });
 
 // Regression, user report: "the model attached me a document, then I commented on

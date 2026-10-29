@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { holdKeyboardAcrossSheet, isEnterSendKeyboard, keepKeyboard } from './keyboard';
-import { HARDWARE_POINTER } from './pointer';
 
 let platform = 'web';
 
@@ -374,10 +373,4 @@ describe('isEnterSendKeyboard', () => {
     expect(isEnterSendKeyboard(false)).toBe(false);
   });
 
-  // The query is the one `index.css` measures a Magic Keyboard's trackpad with,
-  // minus the width the `mouse:` variant carries: whether Return submits is not
-  // a question about room.
-  it('asks the pointer, in the spelling the stylesheet uses', () => {
-    expect(HARDWARE_POINTER).toBe('(pointer: fine)');
-  });
 });

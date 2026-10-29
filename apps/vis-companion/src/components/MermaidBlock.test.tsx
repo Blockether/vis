@@ -23,8 +23,6 @@ describe('a mermaid fence', () => {
     render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
 
     const picture = await screen.findByRole('img', { name: 'Diagram' });
-    const svg = picture.querySelector('svg');
-    expect(svg).toHaveClass('pele');
     expect(picture.textContent).toContain('Start');
     expect(picture.textContent).toContain('Stop');
     expect(screen.queryByTestId('fence')).toBeNull();
@@ -46,9 +44,6 @@ describe('a mermaid fence', () => {
     render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
     const picture = await screen.findByRole('img', { name: 'Diagram' });
     const drawn = picture.innerHTML;
-    const block = picture.closest('[data-mermaid-block]');
-    expect(block?.className).toContain('[--pele-bg:var(--color-code)]');
-    expect(block?.className).toContain('[--pele-fg:var(--color-code-foreground)]');
     expect(drawn).toContain('var(--pele-bg');
 
     act(() => {

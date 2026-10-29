@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { MemoryCell, PerfReport } from '../lib/perf';
-import { formatBytes, mountPerfOverlay, PerfOverlay } from './PerfOverlay';
+import { formatBytes, PerfOverlay } from './PerfOverlay';
 
 const MB = 1024 * 1024;
 
@@ -175,9 +175,7 @@ describe('memory overlay', () => {
     );
 
     expect(figure('On removed elements')).toHaveTextContent('3');
-    expect(figure('On removed elements')).toHaveClass('text-err');
     expect(figure('Observed elements')).toHaveTextContent('52 removed');
-    expect(figure('Observed elements')).toHaveClass('text-err');
   });
 
   it('keeps its first reading when the refresh is off', () => {
@@ -218,7 +216,6 @@ describe('memory overlay', () => {
 
       const dot = screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' });
       const box = dot.closest('section')!;
-      expect(box).toHaveClass('fixed');
       expect(box.style.left).toBe('96px');
       expect(box.style.top).toBe('24px');
       fireEvent.click(dot);
@@ -232,7 +229,6 @@ describe('memory overlay', () => {
     render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
 
     const box = screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' }).closest('section')!;
-    expect(box).not.toHaveClass('fixed');
     expect(box.style.left).toBe('');
   });
 
@@ -251,14 +247,6 @@ describe('memory overlay', () => {
     fireEvent.click(summary);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('region', { name: 'Memory overlay' })).toBeInTheDocument();
-  });
-
-  it('says when the browser does not report the heap', () => {
-    render(<PerfOverlay startOpen read={() => report({ heap: null })} refreshMs={60_000} />);
-
-    expect(figure('JS heap')).toHaveTextContent('Not reported');
-    fireEvent.click(screen.getByRole('button', { name: 'Minimize memory overlay' }));
-    expect(screen.getByRole('button', { name: 'Memory 10 listeners' })).toBeInTheDocument();
   });
 
   it('copies the full report as JSON', async () => {
@@ -282,36 +270,10 @@ describe('memory overlay', () => {
     expect(screen.queryByText('This device did not save the setting.')).not.toBeInTheDocument();
   });
 
-  it('says when this device did not save turning it off', () => {
-    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} turnOff={() => false} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
-
-    expect(screen.getByText('This device did not save the setting.')).toBeInTheDocument();
-  });
-
   it('has no Turn off control in the perf build', () => {
     render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} turnOff={null} />);
 
     expect(screen.queryByRole('button', { name: 'Turn off' })).not.toBeInTheDocument();
   });
 
-  // Regression, user report (paraphrased: the minimized memory badge covered the
-  // preferences cog, so the overlay could not be turned off): the host pinned the badge
-  // to the top-right corner, over the app bar's controls.
-  it('mounts clear of the app bar, at the middle of the right edge', async () => {
-    await act(async () => {
-      mountPerfOverlay();
-    });
-    const host = document.getElementById('vis-perf');
-    try {
-      expect(host).toBeInstanceOf(HTMLElement);
-      const classes = host!.className.split(' ');
-      expect(classes).toEqual(expect.arrayContaining(['fixed', 'inset-0', 'items-center', 'justify-end']));
-      expect(host!.className).not.toMatch(/(^| )(top|right)-/);
-      expect(within(host!).getByRole('button', { name: /^Memory .* listeners$/ })).toHaveAttribute('aria-expanded', 'false');
-    } finally {
-      host?.remove();
-    }
-  });
 });

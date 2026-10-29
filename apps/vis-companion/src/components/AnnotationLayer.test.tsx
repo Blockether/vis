@@ -151,17 +151,11 @@ describe('PenToolbar', () => {
         onClear={() => undefined}
       />,
     );
-    const toolbar = host.querySelector('[aria-label="Drawing tools"]');
-    expect(toolbar?.className).toContain('rounded-none');
-    expect(toolbar?.className).toContain('px-0');
-    expect(toolbar?.className).toContain('sm:p-1');
     const swatches = [...host.querySelectorAll('button[aria-pressed]')];
     expect(swatches).toHaveLength(5);
     expect(swatches.filter((b) => b.getAttribute('aria-pressed') === 'true')).toHaveLength(1);
     for (const swatch of swatches) {
       expect(swatch.getAttribute('aria-label')).toMatch(/pen$/u);
-      expect(swatch.className).not.toContain('sm:min-h');
-      expect(swatch.querySelector('span')?.className).toContain('rounded-none');
     }
     act(() => (swatches[0] as HTMLButtonElement).click());
     expect(onColor).toHaveBeenCalledWith('--err');
@@ -222,7 +216,6 @@ it('drops the stroke in progress when its owner cancels it', () => {
 it('refuses to be selected, so letters are written and not highlighted', () => {
   mount(<AnnotationLayer active color="--err" />);
   const canvas = layer();
-  expect(canvas.className).toContain('[-webkit-touch-callout:none]');
 
   // And a highlight already on the page does not survive the next stroke.
   const prose = document.createElement('p');

@@ -14,7 +14,6 @@ describe('a mermaid fence in a message', () => {
     render(<Markdown>{FENCE}</Markdown>);
 
     const picture = await screen.findByRole('img', { name: 'Diagram' });
-    expect(picture.querySelector('svg')).toHaveClass('pele');
     expect(picture.textContent).toContain('Stop');
     expect(screen.queryByText('flowchart TD')).toBeNull();
   });

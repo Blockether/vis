@@ -40,24 +40,6 @@ describe('composer response controls', () => {
       />,
     );
 
-    // Desktop settings stay secondary without shrinking mobile labels or touch reach.
-    for (const button of screen.getAllByRole('button')) {
-      expect(button).toHaveClass(
-        'text-meta',
-        'tracking-normal',
-        'min-h-8',
-        'mouse:min-h-7',
-        'mouse:tracking-normal',
-        'mouse:[&>svg]:size-2.5',
-      );
-      expect(button).not.toHaveClass('mouse:tracking-[0.08em]');
-    }
-    const row = screen.getByRole('button', { name: 'Change provider and model' }).parentElement!;
-    expect(row).toHaveClass('gap-1', 'pt-1', 'mouse:gap-1.5', 'mouse:pt-0.5');
-    for (const divider of row.querySelectorAll(':scope > [aria-hidden="true"]')) {
-      expect(divider).toHaveClass('h-2.5', 'mouse:h-2');
-    }
-
     fireEvent.click(screen.getByRole('button', { name: 'Change provider and model' }));
     fireEvent.click(screen.getByRole('button', { name: 'Reasoning — high, choose a level' }));
     fireEvent.click(

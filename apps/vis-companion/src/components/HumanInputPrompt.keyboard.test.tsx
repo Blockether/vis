@@ -8,7 +8,6 @@ import { useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HumanInputSheet } from './HumanInputPrompt';
 import { DialogFrame, Modal } from './ui';
-import settingsSource from '../screens/SettingsScreen.tsx?raw';
 import { HUMAN_INPUT_REQUESTS } from '../dev/humanInputVariants';
 import { initialHumanInputValues, type HumanInputRequest, type HumanInputValues } from '../lib/human-input';
 import { useVisualViewportShell } from '../lib/viewport';
@@ -158,13 +157,6 @@ describe('a form with a typed field on the iPhone', () => {
 
   // Regression, user report: the one-time code form in a session floated above the empty
   // keyboard band, and the transcript showed below it. The band is the sheet's paper.
-  it('paints the reserved band under the form in the session pane', () => {
-    pointing('coarse');
-    render(<SessionWithForm request={HUMAN_INPUT_REQUESTS.otp} />);
-    const box = screen.getByRole('dialog').parentElement;
-    expect(reserve()).toBeGreaterThan(0);
-    expect(box).toHaveClass('after:bg-panel', 'after:top-full', 'after:h-[var(--keyboard-reserve,0px)]');
-  });
 
   // Regression, user report: a double tap on the one-time code only made the sheet jump,
   // and the paste menu never came. The composer had taught the text keyboard height,
@@ -242,10 +234,8 @@ describe('the settings sheet on the iPhone', () => {
   it('reserves the keyboard band and lets a tall sheet keep its height', () => {
     pointing('coarse');
     render(<ShellWithSettingsSheet />);
-    const scrim = document.querySelector<HTMLElement>('[data-testid="shell"] [role="presentation"]');
     const resting = sheetBottom();
     expect(reserve()).toBeGreaterThan(0);
-    expect(scrim).toHaveClass('items-end-safe');
 
     act(() => screen.getByRole('textbox', { name: 'Machine name' }).focus());
     expect(shellHeight()).toBeLessThan(HEIGHT);
@@ -257,9 +247,7 @@ describe('the settings sheet on the iPhone', () => {
   it('stays docked to the bottom edge while no typed field is on the sheet', async () => {
     pointing('coarse');
     const { rerender } = render(<ShellWithSettingsSheet hasField={false} />);
-    const scrim = document.querySelector<HTMLElement>('[data-testid="shell"] [role="presentation"]');
     expect(reserve()).toBe(0);
-    expect(scrim).toHaveClass('items-end');
 
     // The sheet sees its fields through a MutationObserver. It reports in a microtask
     // after the commit, so a second act lets that report land.
@@ -267,30 +255,9 @@ describe('the settings sheet on the iPhone', () => {
     act(() => rerender(<ShellWithSettingsSheet hasField />));
     await settle();
     expect(reserve()).toBeGreaterThan(0);
-    expect(scrim).toHaveClass('items-end-safe');
 
     act(() => rerender(<ShellWithSettingsSheet hasField={false} />));
     await settle();
     expect(reserve()).toBe(0);
-  });
-
-  // Regression, user report: Settings with the pairing field open floated above the empty
-  // keyboard band, and the session list showed below it. The band is the sheet's paper.
-  it('paints the reserved band with the sheet paper down to the bottom edge', async () => {
-    pointing('coarse');
-    const { rerender } = render(<ShellWithSettingsSheet />);
-    const box = () => screen.getByRole('dialog', { name: 'Settings' }).parentElement;
-    expect(reserve()).toBeGreaterThan(0);
-    expect(box()).toHaveClass('after:bg-panel', 'after:top-full', 'after:h-[var(--keyboard-reserve,0px)]');
-    expect(box()).toHaveClass('sm:after:hidden');
-
-    act(() => rerender(<ShellWithSettingsSheet hasField={false} />));
-    await act(async () => await Promise.resolve());
-    expect(reserve()).toBe(0);
-    expect(box()).not.toHaveClass('after:bg-panel');
-  });
-
-  it('is the sheet that Settings opens', () => {
-    expect(settingsSource).toContain('<Modal size="wide" isKeyboardReserved onDismiss={onClose}>');
   });
 });

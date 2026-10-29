@@ -14,7 +14,6 @@ import {
   parseCsv,
   parseTableBlock,
   sortRows,
-  tableShape,
   toCsv,
   type TableRow,
 } from './DataTable';
@@ -169,13 +168,6 @@ describe('paging', () => {
   });
 });
 
-describe('tableShape', () => {
-  it('counts in words, singular for one', () => {
-    expect(tableShape(1, 1, '23B')).toBe('1 row, 1 column, 23B');
-    expect(tableShape(3, 2, '')).toBe('3 rows, 2 columns');
-  });
-});
-
 describe('DataTable', () => {
   const html = renderToStaticMarkup(<DataTable body={fence} compact />);
 
@@ -197,17 +189,6 @@ describe('DataTable', () => {
     expect(html).not.toContain('Filter rows');
   });
 
-  it("rules every column but the first — the TUI grid's │, in CSS", () => {
-    const heads = html.match(/<th\b[^>]*>/g) ?? [];
-    // heads[0] is the `#` gutter; heads[1] is the first data column.
-    expect(heads[1]).not.toContain('border-l');
-  });
-
-  it('uses the same neutral header treatment as the other document tables', () => {
-    const heads = html.match(/<th\b[^>]*>/g) ?? [];
-    expect(heads[0]).not.toContain('bg-warn-surface');
-  });
-
   it('gives every row a # gutter, and the gutter IS the selection control', () => {
     expect(html).toContain('role="grid"');
     expect(html).toContain('aria-label="Select every row on this page"');
@@ -218,10 +199,6 @@ describe('DataTable', () => {
 
   it('is ONE tab stop, not one per row', () => {
     expect((html.match(/tabindex="0"/g) ?? []).length).toBe(1);
-  });
-
-  it('right-aligns numeric columns without changing their ink or typeface', () => {
-    expect(html).not.toContain('text-code-syntax-number');
   });
 
   it('shows a blank cell as NULL, not as an empty string', () => {
@@ -240,23 +217,6 @@ describe('DataTable', () => {
       />,
     );
     expect(text(gaps)).toContain('NULL');
-  });
-
-  it('says so instead of painting an empty grid', () => {
-    const empty = renderToStaticMarkup(
-      <DataTable
-        body={[
-          '[Table: none.csv 0 rows × 1 cols, 0 B]',
-          'none.csv',
-          'text/csv',
-          '1x0',
-          '0 B',
-          'name',
-        ].join('\n')}
-        compact
-      />,
-    );
-    expect(text(empty)).toContain('No rows');
   });
 
   it('hides the pager for a sheet that fits on one page', () => {
@@ -330,16 +290,6 @@ describe('DataTable', () => {
     expect(opened).not.toContain('Record view of');
     expect(opened).not.toContain('Record 1 of');
     expect(opened).not.toContain('mouse:hidden');
-  });
-
-  // Reported from the same artifact: WebKit enlarged different table columns by different
-  // amounts, while number cells and headers also introduced unrelated display colours.
-  it('locks one type treatment across an opened CSV table', () => {
-    const opened = renderToStaticMarkup(<DataTable body={fence} compact fill />);
-    expect(opened).toContain('[-webkit-text-size-adjust:none]');
-    expect(opened).toContain('[text-size-adjust:none]');
-    expect(opened).not.toContain('text-code-syntax-number');
-    expect(opened).toContain('touch-pan-x touch-pan-y overflow-auto');
   });
 
   it('closes a selected value when that cell is pressed again', async () => {

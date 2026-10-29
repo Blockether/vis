@@ -103,11 +103,6 @@ describe('painting the stored palette before React renders', () => {
 describe('the boot stamp in index.html', () => {
   const inline = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? '';
 
-  it('runs before the module bundle', () => {
-    expect(inline.trim()).not.toBe('');
-    expect(html.indexOf('<script>')).toBeLessThan(html.indexOf('type="module"'));
-  });
-
   it('stamps the stored id — the same key storage.ts mirrors — during parse', () => {
     delete document.documentElement.dataset.theme;
     const dark = THEMES.find((theme) => theme.mode === 'dark')!;

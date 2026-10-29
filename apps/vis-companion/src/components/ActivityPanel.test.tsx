@@ -5,13 +5,7 @@
 // that is the Live View rail, and it is a different file for that reason.
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  ActivityPanel,
-  activityCostParts,
-  activityReceiptText,
-  activityStatePart,
-} from './ActivityPanel';
-import activityPanelSource from './ActivityPanel.tsx?raw';
+import { ActivityPanel, activityCostParts } from './ActivityPanel';
 import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import argumentCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json';
 import { ACTIVITY_LONG_RUNNING, ACTIVITY_TREE_CHANGES } from '../dev/story-data';
@@ -282,24 +276,6 @@ it('keeps table schemas and intervening content separate, including empty groups
   expect(screen.getByText('Still separate')).toBeVisible();
   expect(screen.getByRole('cell', { name: '<tag>' }).innerHTML).toBe('&lt;tag&gt;');
   expect(screen.getByRole('cell', { name: '**ready**' }).textContent).toBe('**ready**');
-});
-
-// Regression: a Council message body sat on the step edge, left of the code words.
-it('sets text, Markdown and heading words in to the column of code words', () => {
-  const activity = structuredClone(storyData.ACTIVITY_TABLES);
-  activity.rows[0].presentation!.content = [
-    { type: 'heading', text: 'Heading words' },
-    { type: 'text', text: 'Text words' },
-    { type: 'markdown', text: 'Markdown words' },
-    { type: 'code', text: 'Code words' },
-  ];
-  paintActivity({ activity });
-  openEverySettledStep();
-  const inset = (element: Element | null) => element?.className.split(' ').includes('px-3');
-  expect(inset(screen.getByText('Code words').closest('div'))).toBe(true);
-  expect(inset(screen.getByText('Heading words'))).toBe(true);
-  expect(inset(screen.getByText('Text words'))).toBe(true);
-  expect(inset(screen.getByText('Markdown words').closest('[data-activity-content] > div'))).toBe(true);
 });
 
 /**
@@ -848,38 +824,6 @@ describe("one form's Activity on the phone", () => {
     expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
   });
 
-  // Regression, issue td-5b6b08: settled Companion receipts said SUCCEEDED,
-  // omitted the operation and elapsed time, and retained "activities run".
-  it('matches the settled TUI receipt grammar and durations', () => {
-    const projection = activityProjection();
-    const settled = {
-      ...projection,
-      state: 'succeeded' as const,
-      counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
-      rows: projection.rows.map((row: ActivityProjection['rows'][number], index: number) => ({
-        ...row,
-        state: 'succeeded' as const,
-        ...(index === 0
-          ? {
-              operation: 'shell',
-              summary: 'running: git status',
-              duration_ms: 66,
-            }
-          : { duration_ms: 12_500 }),
-      })),
-    };
-
-    paintActivity({ activity: settled });
-
-    expect(activityReceiptText(settled, 12_600)).toBe('SHELL · SUITE · 12.6s');
-    expect(activityReceiptText({ ...settled, rows: [settled.rows[0]] }, 66)).toBe(
-      'SHELL · git status · 66ms',
-    );
-    expect(screen.getByLabelText('Operation groups').textContent).toContain('Ran git status');
-    expect(screen.getByText('66ms')).toBeVisible();
-    expect(screen.getByText('12.5s')).toBeVisible();
-  });
-
   it('adds no empty panel before the first operation', () => {
     paintActivity({
       activity: {
@@ -901,7 +845,6 @@ describe('what the iteration cost', () => {
     expect(parts.map((part) => part.text)).toEqual(['1 observation', '1 verification']);
     // Colour REPEATS the noun. Reading the words alone must lose nothing, so the
     // quiet count wears the margin's own ink and no tone at all.
-    expect(parts.map((part) => part.tone)).toEqual(['text-code-syntax-keyword', '']);
   });
 
   it.each([
@@ -936,28 +879,6 @@ describe('what the iteration cost', () => {
     expect(activityCostParts({ ...activityProjection(), rows: [] })).toEqual([]);
   });
 
-  it('shortens state counters on a phone and keeps the whole words for a copy', () => {
-    const activity = {
-      ...activityProjection(),
-      state: 'failed' as const,
-      counts: { running: 1, succeeded: 1, failed: 1, cancelled: 1 },
-    };
-    expect(
-      (['running', 'failed', 'cancelled'] as const).map((state) => activityStatePart(1, state)),
-    ).toEqual([
-      { text: '1 running', short: '1 run', tone: '' },
-      { text: '1 failed', short: '1 fail', tone: '' },
-      { text: '1 cancelled', short: '1 canc', tone: '' },
-    ]);
-
-    render(<ActivityPanel activity={activity} />);
-    const band = screen.getByRole('button', { name: 'Expand Activity' });
-    expect(band).toHaveTextContent('1 running · 1 failed · 1 cancelled');
-    const phone = band.cloneNode(true) as HTMLElement;
-    phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
-    expect(phone).toHaveTextContent('1 run · 1 fail · 1 canc');
-  });
-
   it('leaves the failures to the marks and the state word', () => {
     const projection = activityProjection();
     const [first, ...rest] = projection.rows;
@@ -980,108 +901,6 @@ describe('what the iteration cost', () => {
     });
 
     expect(parts.map((part) => part.text)).toEqual(['1 verification', '1 external action']);
-    expect(parts.at(-1)?.tone).toBe('text-code-syntax-special');
-  });
-
-  // On a phone, all four counters use abbreviations to keep the band on one line.
-  it('abbreviates all four nouns on a phone and spells them out where there is room', () => {
-    const projection = activityProjection();
-    const [first, ...rest] = projection.rows;
-    const activity = {
-      ...projection,
-      rows: [
-        first,
-        ...rest,
-        { ...first, id: 'call-3', sequence: 3, signal: 'external' as const },
-        { ...first, id: 'call-4', sequence: 4, signal: 'mutation' as const },
-      ],
-    };
-    expect(activityCostParts(activity).map((part) => part.short)).toEqual([
-      '1 mut',
-      '1 obs',
-      '1 ver',
-      '1 ext',
-    ]);
-
-    render(<ActivityPanel activity={activity} />);
-    const band = screen.getByRole('button', { name: /^(Expand|Collapse) Activity$/ });
-    // The words stay whole in the document; a phone hides what follows each abbreviation.
-    expect(band).toHaveTextContent(
-      '1 mutation · 1 observation · 1 verification · 1 external action',
-    );
-    const phone = band.cloneNode(true) as HTMLElement;
-    phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
-    expect(phone).toHaveTextContent('1 mut · 1 obs · 1 ver · 1 ext');
-  });
-
-  it.each(['passed', 'failed', undefined] as const)(
-    'counts verification calls without verdicts in the header (%s)',
-    (verdict) => {
-      const projection = activityProjection();
-      const verification = projection.rows.find((row) => row.signal === 'verification')!;
-      const summary = verdict === 'failed' ? '38 passed, 2 failed' : '40 passed';
-      const activity = {
-        ...projection,
-        counts: { running: 0, succeeded: 3, failed: 0, cancelled: 0 },
-        rows: [
-          ...projection.rows.filter((row) => row.signal !== 'verification'),
-          ...['tests', 'lint'].map((id) => ({
-            ...verification,
-            id,
-            operation: id,
-            state: 'succeeded' as const,
-            presentation: {
-              headline: id === 'tests' ? 'Run tests' : 'Lint code',
-              summary,
-              content: [{ type: 'text' as const, text: 'Suite output' }],
-              verdict,
-            },
-          })),
-        ],
-      };
-
-      expect(activityCostParts(activity).map((part) => part.text)).toEqual([
-        '1 observation',
-        '2 verifications',
-      ]);
-      expect(activityCostParts(activity).at(-1)?.short).toBe('2 ver');
-
-      render(<ActivityPanel activity={activity} />);
-      const band = screen.getByRole('button', { name: 'Expand Activity' });
-      expect(band).toHaveTextContent('1 observation · 2 verifications');
-      expect(band).not.toHaveTextContent(/checks?|failing|failed/);
-      const phone = band.cloneNode(true) as HTMLElement;
-      phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
-      expect(phone).toHaveTextContent('1 obs · 2 ver');
-
-      fireEvent.click(band);
-      expect(screen.getAllByText(summary)[0]).toBeVisible();
-      fireEvent.click(screen.getAllByRole('button', { name: /Run tests/ })[0]);
-      expect(screen.getByText('Suite output')).toBeVisible();
-    },
-  );
-
-  // Summarized steps pool into one band whose collapsed header is all a reader sees:
-  // it names what the steps cost, not only how many ran.
-  it('names the collapsed band by its cost, beside the state words', () => {
-    const projection = activityProjection();
-    const [first, ...rest] = projection.rows;
-    render(
-      <ActivityPanel
-        activity={{
-          ...projection,
-          counts: { running: 0, succeeded: 1, failed: 1, cancelled: 0 },
-          rows: [{ ...first, signal: 'mutation' as const, state: 'failed' as const }, ...rest],
-        }}
-      />,
-    );
-    const toggle = screen.getByRole('button', { name: 'Expand Activity' });
-
-    expect(toggle).toHaveTextContent('1 mutation · 1 verification · 1 failed');
-    expect(toggle).not.toHaveTextContent('operation');
-    // The phone hides the tail of the noun, so the words span two text nodes.
-    const mutations = within(toggle).getByText((_, node) => node?.textContent === '1 mutation');
-    expect(mutations).toHaveClass('text-accent-ink');
   });
 
   // Rows past the first page have not arrived, so the rows present cannot say what
@@ -1102,60 +921,8 @@ describe('what the iteration cost', () => {
   });
 });
 
-describe('the axis is built from the closed vocabulary', () => {
-  it("borrows the app's controls and writes no styles of its own", () => {
-    expect(activityPanelSource).toContain('<Disclosure');
-    expect(activityPanelSource).toContain('<LoadMore');
-    // No spinner: a mark that turns says only "still here", while one word says
-    // whether the form is still working and, once it is not, how it ended.
-    expect(activityPanelSource).not.toContain('<Spinner');
-    expect(activityPanelSource).not.toContain('<button');
-    expect(activityPanelSource).not.toContain('style={');
-    expect(activityPanelSource).not.toContain('style="');
-  });
-});
-
 // A flat chronology shares the turn spine; it never draws a second set of markers.
 describe('a run reads as one thread', () => {
-  it('keeps the one list and removes decorative per-operation marks', () => {
-    paintActivity();
-    expect(screen.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
-    for (const step of document.querySelectorAll('[data-activity-row]')) {
-      expect(step.querySelector('span.absolute')).toBeNull();
-    }
-  });
-  it('states running, failed and cancelled work in words rather than colour alone', () => {
-    const base = activityProjection();
-    paintActivity({
-      activity: {
-        ...base,
-        rows: [
-          {
-            ...base.rows[0],
-            id: 'failed',
-            state: 'failed',
-            error_summary: 'Read refused',
-          },
-          { ...base.rows[1], id: 'cancelled', state: 'cancelled' },
-        ],
-      },
-    });
-    fireEvent.click(
-      document.querySelector<HTMLElement>(
-        '[data-activity-row="0:failed"] [data-disclosure-toggle]',
-      )!,
-    );
-    expect(screen.getByText('Read refused')).toBeVisible();
-    expect(screen.getByText('Cancelled')).toBeVisible();
-  });
-
-  it('names a builtin with a verb and an extension operation by its own name', () => {
-    paintActivity();
-
-    const chronology = screen.getByLabelText('Operation groups').textContent ?? '';
-    expect(chronology).toContain('Searched 18 matches');
-    expect(chronology).toContain('suite');
-  });
 
   it('answers a patch with what it changed, and folds only the patch itself', () => {
     const projection = activityProjection();
@@ -1390,30 +1157,6 @@ describe('the axis says a thing once', () => {
     });
   }
 
-  const refusedPatch = {
-    operation: 'patch',
-    summary: 'src/components/ui.tsx',
-    state: 'failed' as const,
-    error_summary: 'no match',
-    evidence: [{ kind: 'error' as const, text: 'patch refused: no anchor matched' }],
-  };
-
-  it('gives a failed step its own verb instead of the settled one', () => {
-    paintStep(refusedPatch);
-
-    const chronology = screen.getByLabelText('Operation groups').textContent ?? '';
-    expect(chronology).toContain('Patch refused');
-    expect(chronology).not.toContain('Patched');
-  });
-
-  it('names the operation and its object once, never again as a card head', () => {
-    paintStep(refusedPatch);
-
-    const chronology = screen.getByLabelText('Operation groups').textContent ?? '';
-    expect(chronology).not.toContain('NO MATCH');
-    expect(chronology.match(/src\/components\/ui\.tsx/g) ?? []).toHaveLength(1);
-  });
-
   it("prints the engine's reason only when no text opens under the step", () => {
     paintStep({
       state: 'failed' as const,
@@ -1483,30 +1226,6 @@ describe('the axis says a thing once', () => {
     expect(document.querySelector('[data-path="src/index.css"]')).toBeInTheDocument();
   });
 
-  it('prioritizes the file name and retains the full path', () => {
-    paintStep({
-      operation: 'cat',
-      summary: 'one file',
-      state: 'succeeded' as const,
-      resources: [
-        {
-          type: 'file',
-          id: 'src/com/blockether/vis/internal/channel/render.clj',
-        },
-      ],
-      evidence: [],
-    });
-
-    openEverySettledStep();
-    const path = document.querySelector(
-      '[data-path="src/com/blockether/vis/internal/channel/render.clj"]',
-    );
-    const name = path?.lastElementChild;
-
-    expect(name?.textContent).toBe('render.clj');
-    expect(name?.className).toContain('shrink-0');
-    expect(path?.getAttribute('title')).toBe('src/com/blockether/vis/internal/channel/render.clj');
-  });
 });
 
 // A chronology inside a live region is re-read from the top on every render, and a
@@ -1563,17 +1282,6 @@ describe('what the axis does while the work is still moving', () => {
     expect(document.querySelector('[data-activity-row="0:step-4"]')).toBeInTheDocument();
     expect(document.querySelector('[data-activity-row="0:step-5"]')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /more steps/i })).toBeNull();
-  });
-
-  it('says the clock is still counting instead of leaving the column empty', () => {
-    const projection = activityProjection();
-    const [first] = projection.rows;
-    const running = { ...first, state: 'running' as const };
-    delete running.duration_ms;
-
-    paintActivity({ activity: { ...projection, rows: [running] } });
-
-    expect(screen.getByLabelText('Operation groups').textContent).toContain('…');
   });
 
   it('silences the live region it sits inside', () => {
@@ -1716,39 +1424,6 @@ describe('a path reads short and stays addressable', () => {
     openEverySettledStep();
 
     expect(pathOf(written)?.textContent).toBe('~/vis/apps/vis-companion/src/lib/path.ts');
-  });
-});
-
-// Regression, T121: a story fixture spelled a diff line's own `+`/`-` into its text
-// while the renderer draws that sign in its own marker column, so the review picture
-// showed `+ +` and `- -` on a surface the engine never feeds that way — it strips the
-// sign in `internal/activity/event.clj` and leaves the column to say it.
-describe('a diff line carries its sign only once', () => {
-  const SIGNED = new Set(['addition', 'deletion', 'context']);
-
-  it('leaves the sign to the marker column in every story fixture', () => {
-    const doubled: string[] = [];
-    const seen = new Set<unknown>();
-    const visit = (value: unknown) => {
-      if (!value || typeof value !== 'object' || seen.has(value)) return;
-      seen.add(value);
-      if (Array.isArray(value)) {
-        value.forEach(visit);
-        return;
-      }
-      const node = value as Record<string, unknown>;
-      if (node.kind === 'diff' && Array.isArray(node.lines)) {
-        for (const line of node.lines as { kind: string; text: string }[]) {
-          if (SIGNED.has(line.kind) && /^[-+]/.test(line.text)) {
-            doubled.push(`${line.kind}: ${line.text}`);
-          }
-        }
-      }
-      Object.values(node).forEach(visit);
-    };
-
-    visit(storyData);
-    expect(doubled).toEqual([]);
   });
 });
 

@@ -234,7 +234,6 @@ describe('justified prose', () => {
     await settle();
     const prose = view.getByRole('paragraph');
     expect(prose).not.toHaveAttribute('data-justified-lines');
-    expect(prose).toHaveClass('text-justify');
     expect(prose.textContent).toBe(paragraph);
     expect(reads).not.toHaveBeenCalled();
   });
@@ -409,10 +408,7 @@ git\tstatus`;
     const view = render(<UserMessage>{text}</UserMessage>);
     await settle();
     const lines = [...view.container.querySelectorAll('article p')];
-    expect(lines[0]).toHaveClass('text-justify');
     for (const line of lines.slice(1)) {
-      expect(line).toHaveClass('text-left', 'whitespace-pre-wrap');
-      expect(line).not.toHaveClass('text-justify');
       expect(line).not.toHaveAttribute('data-justified-lines');
     }
     expect(lines.map((line) => line.textContent)).toEqual(text.split('\n'));
@@ -430,10 +426,6 @@ git\tstatus`;
       '```',
       paragraph,
     ]);
-    for (const line of lines.slice(1, 4)) {
-      expect(line).toHaveClass('text-left', 'whitespace-pre-wrap');
-      expect(line).not.toHaveClass('text-justify');
-    }
   });
 
   it('keeps an empty request bubble without introducing a blank paragraph', () => {

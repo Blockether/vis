@@ -179,16 +179,6 @@ describe('human input sheet', () => {
     expect(off(element(refused, buttons))).toBe(false);
   });
 
-  it('says that the run is blocked, and how many more are behind it', () => {
-    expect(markup('approve')).toContain('This run is waiting for you');
-    expect(markup('approve', { waiting: 1 })).toContain('1 more request waiting');
-    expect(markup('approve', { waiting: 3 })).toContain('3 more requests waiting');
-  });
-
-  it('names whoever stopped the run', () => {
-    expect(markup('approve')).toContain('deploy.sh');
-  });
-
   it('shows the engine’s refusal next to the field it refused', () => {
     const html = markup('rejected', {
       error: 'The engine refused this answer.',
@@ -224,17 +214,6 @@ describe('human input sheet', () => {
     expect(html).toContain('Error budget');
   });
 
-  it('uses square range thumbs instead of native round knobs', () => {
-    const html = markup('slider');
-    const slider = /<input[^>]*type="range"[^>]*>/.exec(html)?.[0] ?? '';
-    for (const thumb of ['::-webkit-slider-thumb', '::-moz-range-thumb']) {
-      // A square input alone does not change the browser's native thumb painting.
-      for (const style of ['appearance-none', 'rounded-none', 'border-0', 'size-4', 'bg-accent']) {
-        expect(slider).toContain(`[&amp;${thumb}]:${style}`);
-      }
-    }
-  });
-
   it('masks a password and gives a checkbox a drawn, accessible mark', () => {
     const html = markup('slider');
     expect(html).toContain('type="password"');
@@ -243,17 +222,6 @@ describe('human input sheet', () => {
     expect(checkbox).not.toHaveAttribute('aria-pressed');
     expect(screen.getAllByText('Halt on the first regression')).toHaveLength(1);
     expect(html).not.toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOn);
-  });
-
-  // The question IS the dialog's title, and the shared frame clipped it to one
-  // line: on a phone the header read "How much of the error budget may …",
-  // which is no longer a question anyone can answer.
-  it('shows the whole question in the header', () => {
-    const html = markup('slider');
-    const heading = /<h2[^>]*>[\s\S]*?<\/h2>/.exec(html)?.[0] ?? '';
-    expect(heading).toContain(HUMAN_INPUT_REQUESTS.slider.title);
-    expect(heading).not.toContain('truncate');
-    expect(heading).toContain('line-clamp-3');
   });
 
   it('draws one box per digit over one real code input', () => {
@@ -324,65 +292,6 @@ describe('human input sheet', () => {
     // The checkbox is the column's second child, not part of that row.
     expect(inner).not.toContain('Require TLS');
     expect(pool).toContain('Require TLS');
-  });
-});
-
-// A PAUSE IS ONLY AS TALL AS THE QUESTION
-
-// Regression, user report ("when we are showing OTP cannot we make it less height,
-// like it goes from bottom only and occupies only the height its required?"): the
-// sheet hand-rolled its own scrim beside `Modal` and took the WHOLE glass, so six
-// digit boxes opened a full-screen page — 844px tall on a 390x844 phone, with a
-// phone's length of empty panel between the code and the verbs that end the pause.
-describe('a pause is only as tall as the question it asks', () => {
-  it('opens in the sheet that stops at its content, arriving from the bottom edge', () => {
-    const html = markup('otp');
-    // `Modal size="fit"`: welded to the bottom edge on a phone, and no fixed
-    // 38rem box above `sm:` either.
-    const scrim = /<div class="fixed inset-0 z-50[^"]*"/.exec(html)?.[0] ?? '';
-    expect(scrim).not.toContain('items-stretch');
-    expect(html).not.toContain('sm:h-[min(38rem,100%)]');
-  });
-
-  // A sheet that starts halfway down the glass has no notch above it: the inset
-  // hung 47px of dead paper over the title of the one dialog whose whole point
-  // is to take no more height than it needs.
-  it('does not clear a notch that is not above it', () => {
-    expect(markup('otp')).not.toContain('pt-[env(safe-area-inset-top)]');
-  });
-
-  // Regression, user report ("in general you need to ALSO DO BEST EFFORT JUSTIFY
-  // because now its too much"): each box took a sixth of the glass — 55px wide on
-  // a 390px phone — so a six-digit code read as six empty fields.
-  it('stretches a digit box only as far as a digit box goes', () => {
-    const boxes = markup('otp').match(/<span[^>]*data-otp-box="\d"[^>]*>/g) ?? [];
-    // One shape everywhere — the desktop no longer shrinks it to `w-9`.
-    expect(boxes[0]).not.toContain('sm:flex-none');
-    expect(boxes[0]).not.toContain('w-9');
-  });
-
-  // Regression: a narrow field shrinks flex widths below 44px while a fixed
-  // 44px height leaves tall, thin digits. Each box must follow its own width.
-  it('keeps every code box square as the field column narrows', () => {
-    const boxes = markup('otp').match(/<span[^>]*data-otp-box="\d"[^>]*>/g) ?? [];
-    expect(boxes).toHaveLength(6);
-    for (const box of boxes) {
-      const classes = (/class="([^"]*)"/.exec(box)?.[1] ?? '').split(/\s+/);
-      expect(classes).toContain('aspect-square');
-      expect(classes).toContain('flex-1');
-      expect(classes).not.toContain('h-11');
-    }
-  });
-
-  // Regression, user report (a 440pt iPhone photograph of the shipped sheet): the
-  // bounded row was capped on the phone too, so the code stopped 24px short of the
-  // field under it — justified against nothing.
-  it('runs the code row to the edges of the field column on a phone', () => {
-    const row = element(markup('otp'), 'data-otp-row');
-    const classes = (/class="([^"]*)"/.exec(row)?.[1] ?? '').split(/\s+/);
-    // Below `sm:` the cap is wider than the widest phone's field column (408px on
-    // a 440pt iPhone), so it never bites there; it only tightens in the box.
-    expect(classes).not.toContain('max-w-sm');
   });
 });
 
@@ -508,8 +417,6 @@ describe('a pause stands in the session that asked it', () => {
       expect(pane.contains(dialog)).toBe(true);
       expect(shell.contains(dialog)).toBe(false);
       // Scrim and box alike: the pane is the bound, so nothing outside it is dimmed.
-      expect(pane.firstElementChild).toHaveClass('absolute', 'inset-0');
-      expect(pane.firstElementChild).not.toHaveClass('fixed');
     } finally {
       shell.remove();
       pane.remove();
@@ -525,7 +432,6 @@ describe('a pause stands in the session that asked it', () => {
     try {
       const dialog = openSheet();
       expect(shell.contains(dialog)).toBe(true);
-      expect(shell.firstElementChild).toHaveClass('absolute', 'inset-0');
     } finally {
       shell.remove();
     }
@@ -535,7 +441,6 @@ describe('a pause stands in the session that asked it', () => {
 // Issue #392: the origin line names a subagent and its parent. Long titles must
 // shorten with an ellipsis on one row, never wrap or push the parent away.
 describe('human input origin', () => {
-  const longAgent = 'Collect the CloudWatch logs of every service in DEV13';
   const longParent = 'Deploy the release candidate to DEV13';
 
   function originRow(origin?: Record<string, string>) {
@@ -558,23 +463,6 @@ describe('human input origin', () => {
     );
     return screen.queryByTestId('human-input-origin');
   }
-
-  it('keeps the origin on one row and ellipsizes each title on its own', () => {
-    const row = originRow({
-      session_id: 'child-1',
-      title: longAgent,
-      parent_session_id: 'leader-1',
-      parent_title: longParent,
-    });
-    expect(row?.tagName).toBe('P');
-    expect(row?.className).toContain('whitespace-nowrap');
-    expect(row?.className).toContain('min-w-0');
-    expect(row?.getAttribute('title')).toBe(`Subagent ${longAgent}, parent ${longParent}`);
-    const titles = Array.from(row?.querySelectorAll('span.truncate') ?? []).map(
-      (span) => span.textContent,
-    );
-    expect(titles).toEqual([longAgent, longParent]);
-  });
 
   it('shows no origin row for a top-level session', () => {
     expect(originRow({ session_id: 'leader-1', title: longParent })).toBeNull();

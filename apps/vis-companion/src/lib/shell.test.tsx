@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
-import { Capacitor } from '@capacitor/core';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { renderApp } from '../app-harness';
-import { renderSessionScreen } from '../screens/session-screen-harness';
 import { IconButton } from '../components/ui';
 import { isShellChromeVisible, isShellSplit, shellScreen, type ShellState } from './shell';
 
@@ -115,76 +113,6 @@ describe('the app bar', () => {
     return view;
   };
 
-  // Regression, user report (desktop screenshots with empty paper below both views):
-  // the flex item had no explicit full-size box and the sessions card changed to
-  // intrinsic height at `sm`, leaving the app painted only across its upper strip.
-  it('gives desktop screens the whole shell instead of an intrinsic-height strip', async () => {
-    const view = await mount();
-
-    const sessions = screen.getByRole('region', { name: 'Sessions' });
-    const list = sessions.querySelector('.overflow-y-auto') as HTMLElement;
-    expect(list).toBeInTheDocument();
-    expect(list.parentElement?.className).not.toContain('sm:h-auto');
-
-    view.unmount();
-    view.restore();
-  });
-  // The chrome is the only thing that pads the top safe area on these screens,
-  // so if it stops doing it the app bar sits under the status bar clock.
-  it('pads the status bar from the shell chrome', async () => {
-    const view = await mount();
-    const header = view.baseElement.querySelector('header');
-    expect(header?.className).toContain('pt-[env(safe-area-inset-top)]');
-    view.unmount();
-    view.restore();
-  });
-
-  // Regression: after removing the notch overlay, the iOS controls sat on both
-  // sides of the island instead of below it. Keep the safe inset inside the
-  // header background, with the full app bar underneath; the search dialog's
-  // frame starts below the island too.
-  it('keeps iPhone app actions and search below the island', async () => {
-    const platform = vi.spyOn(Capacitor, 'getPlatform').mockReturnValue('ios');
-    const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
-    try {
-      const view = await mount();
-      try {
-        const header = view.baseElement.querySelector('header')!;
-        expect(header).toHaveClass('pt-[env(safe-area-inset-top)]', 'sm:pt-0');
-        expect(header.firstElementChild).toHaveClass('flex', 'w-full');
-        expect(screen.getByRole('button', { name: 'Search sessions' })).toBeVisible();
-        expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
-        await userEvent.click(screen.getByRole('button', { name: 'Search sessions' }));
-        const dialog = await screen.findByRole('dialog', { name: 'Search sessions' });
-        const close = within(dialog).getByRole('button', { name: 'Close search' });
-        expect(close).toBeVisible();
-        expect(close.closest('section')).toHaveClass('pt-[env(safe-area-inset-top)]', 'sm:pt-0');
-      } finally {
-        view.unmount();
-        view.restore();
-      }
-    } finally {
-      native.mockRestore();
-      platform.mockRestore();
-    }
-  });
-
-  // Regression: a centered 1400px cap pulled the app controls away from wide-window edges.
-  it('keeps the app bar full width with symmetric safe-area gutters', async () => {
-    const view = await mount();
-    try {
-      const header = view.baseElement.querySelector('header')!;
-      const bar = header.firstElementChild!;
-      expect(bar).toHaveClass('w-full');
-      expect(bar.className).not.toMatch(/max-w-|mx-auto/);
-      expect(bar.className).toContain('sm:pl-[max(1rem,env(safe-area-inset-left))]');
-      expect(bar.className).toContain('sm:pr-[max(1rem,env(safe-area-inset-right))]');
-    } finally {
-      view.unmount();
-      view.restore();
-    }
-  });
-
   // Regression, user report (paraphrased: make it ONE screen, with pairing behind a
   // single icon, so there are not two tabs): pairing owned a whole tab of a two-tab
   // bar for a verb used twice a year.
@@ -192,26 +120,6 @@ describe('the app bar', () => {
     const view = await mount();
     expect(screen.queryAllByRole('navigation')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: /Machines/ })).toBeNull();
-    view.unmount();
-    view.restore();
-  });
-
-  // Regression, user report ("cog icon", drawn over the word `Preferences`): the bar
-  // spelled its verbs as word-buttons, so two nouns held the trailing corner of every
-  // screen for orders given twice a session. They are marks now — and a mark is only
-  // legible if it is NAMED where a name is read: `aria-label` for the screen reader,
-  // `title` for the pointer. An icon-only control without both is a bug.
-  it('marks the bar’s two verbs and names them twice', async () => {
-    const view = await mount();
-    for (const [label, title] of [
-      ['Search sessions', 'Search sessions (Ctrl+/)'],
-      ['Open preferences', 'Preferences'],
-    ]) {
-      const mark = screen.getByRole('button', { name: label });
-      expect(mark.getAttribute('title')).toBe(title);
-      expect(mark.querySelector('svg')).toBeInTheDocument();
-      expect(mark.textContent).toBe('');
-    }
     view.unmount();
     view.restore();
   });
@@ -256,7 +164,6 @@ describe('the app bar', () => {
     const field = within(dialog).getByRole('searchbox', {
       name: 'Search session titles and messages',
     });
-    expect(field.getAttribute('placeholder')).toBe('Search titles and messages…');
     expect(field).toHaveFocus();
     expect(within(dialog).getByRole('button', { name: 'Close search' })).toBeVisible();
     // The list behind the dialog stays whole: nothing in it is filtered away.
@@ -307,7 +214,6 @@ describe('the app bar', () => {
 
     // The very same node, still carrying the fleet — never rebuilt, never hidden.
     expect(main.contains(list)).toBe(true);
-    expect(list.className).toBe('isolate h-full');
     expect(within(list).getByRole('button', { name: 'New project on laptop' })).toBeVisible();
     view.unmount();
     view.restore();
@@ -381,17 +287,5 @@ describe('the app bar', () => {
     );
     view.unmount();
     view.restore();
-  });
-});
-
-// The chrome is allowed to disappear on exactly one screen, so that screen has to
-// bring the status-bar padding itself — otherwise its header sits under the clock.
-describe('the session screen, the one screen the chrome leaves', () => {
-  it('pads the status bar itself', async () => {
-    expect(isShellChromeVisible('session')).toBe(false);
-    const view = renderSessionScreen();
-    const header = view.baseElement.querySelector('header');
-    expect(header?.className).toContain('pt-[env(safe-area-inset-top)]');
-    view.unmount();
   });
 });

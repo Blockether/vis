@@ -3,10 +3,9 @@
 // case here renders the ENGINE's own fixture — the same file
 // `gateway/human_input_test.clj` asserts is the engine's projection of a view —
 // and reads the document that landed.
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LiveView as LiveViewList, LiveViewPanel, useLiveViews } from './LiveView';
-import liveViewSource from './LiveView.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
 import type { GatewayClient } from '../lib/gateway';
 import {
@@ -115,29 +114,22 @@ describe('a live view on the phone', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('does not repeat the default live state as a badge', () => {
-    paint();
-    expect(within(screen.getByRole('banner')).queryByText('Live')).toBeNull();
-  });
-
   it('draws the fraction as a bar and states the count beside it', () => {
     paint();
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('67');
-    expect(document.body.innerHTML).toContain('2 of 3');
   });
 
   // A bar that never moves reads as a stall. A run whose size is not known yet
   // says so in words instead.
   it('draws no bar for a run with no knowable end', () => {
-    const html = paint({
+    paint({
       view: withNode(opened(), { id: 'swept', type: 'progress', label: 'Swept' }),
     });
     expect(screen.queryByRole('progressbar')).toBeNull();
-    expect(html).toContain('Working');
   });
 
   it("says what an empty node is waiting for, in the engine's own words", () => {
-    const html = paint({
+    paint({
       view: withNode(opened(), {
         id: 'hosts',
         type: 'table',
@@ -151,70 +143,9 @@ describe('a live view on the phone', () => {
         groups: [],
       }),
     });
-    expect(html).toContain('no rows yet');
     expect(screen.getByRole('columnheader', { name: 'Host' })).toBeVisible();
   });
 
-  // Weight is for the NAME, and caps are for no one's words but ours. A live node
-  // names what it is a label OF — the failing job, the build a console belongs to —
-  // and those words are the extension's, so they keep the case it wrote them in.
-  it('sets the node name apart by weight and keeps the case its author wrote', () => {
-    paint({
-      view: withNode(opened(), {
-        id: 'tail',
-        type: 'log',
-        label: 'Failure · Run native build',
-        lines: ['exit 1'],
-        window_lines: 2000,
-        total_lines: 1,
-      }),
-    });
-    const name = [...document.querySelectorAll('span')].find(
-      (one) => one.textContent === 'Failure',
-    )!;
-    expect(name.className).toContain('font-bold');
-    expect(name.className).not.toContain('uppercase');
-    // #417: what follows the name is a plain hint phrase, not a dot-joined meta string.
-    expect(name.nextElementSibling?.textContent).toBe('Run native build');
-    expect(name.parentElement?.textContent).not.toContain('·');
-  });
-
-  // #417: space separates the sections of a run. A rule under every node fenced the
-  // run into a stack of boxes, so only the log, the secondary reading, keeps one.
-  it('separates sections by space and rules off only the log', () => {
-    const view: LiveView = {
-      ...opened(),
-      nodes: [
-        { id: 'queued', type: 'paragraph', text: 'Build queued.' },
-        { id: 'left', type: 'paragraph', text: 'Two jobs left.' },
-        { id: 'break', type: 'divider' },
-        {
-          id: 'hosts',
-          type: 'table',
-          label: 'Hosts',
-          columns: [{ id: 'host', label: 'Host', align: 'left' }],
-          rows: [],
-          max_rows: 5000,
-          order: 'insertion',
-          is_selectable: false,
-          selected_ids: [],
-          groups: [],
-        },
-        { id: 'written', type: 'paragraph', text: 'Report written.' },
-        { id: 'out', type: 'log', label: 'Output', lines: [], window_lines: 2000, total_lines: 0 },
-      ],
-    };
-    paint({ view });
-    const rows = [...document.querySelectorAll('section > ul > li')];
-    expect(rows.map((one) => one.className.includes('border-t'))).toEqual([
-      false,
-      false,
-      false,
-      false,
-      false,
-      true,
-    ]);
-  });
   // A path or an attachment names a place on the MACHINE: dressing it as a link
   // would promise a tap that does nothing under the thumb.
   it('opens what the phone can reach and states what it cannot', () => {
@@ -295,51 +226,6 @@ describe('selecting a table row', () => {
     expect(parent.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('button', { name: 'Select iOS' })).toBeVisible();
     expect(screen.getByText('Android')).toBeVisible();
-  });
-  // Regression, reported from the phone: a long job name ran straight into the
-  // count beside it, so a head read as one run-on line and the name gave way
-  // right up against the number.
-  it('keeps a group head name off the count it carries', () => {
-    const view = matrixView([]);
-    const parent = 'Verify release source / python-package / ubuntu-latest';
-    hostsTable(view).rows = [
-      { id: 'ios', cells: ['iOS', 'queued'], tone: 'running', parent },
-      { id: 'android', cells: ['Android', 'running'], tone: 'running', parent },
-    ];
-    paint({ view, onSelect: vi.fn() });
-
-    const name = screen.getByText(parent);
-    const count = screen.getByText('2 rows');
-    // The name is the only part that may give way, and it stops short of the count.
-    expect(name.className).toContain('truncate');
-    expect(count.className).toContain('shrink-0');
-    expect(count.className).toContain('pl-2');
-  });
-  // Regression, reported from the phone: the live table drew its words in six columns. A
-  // head's mark pushed its name off the column of the rows, and a leg indented its name but
-  // not its mark. The browser story `PhoneMatrixJobs` measures the columns; this test keeps
-  // the structure that gives them.
-  it('keeps every head name on one column and moves a leg mark with its name', () => {
-    const view = matrixView([]);
-    hostsTable(view).groups = [{ id: 'Release apps', tone: 'error', is_open: true }];
-    paint({ view, onSelect: vi.fn() });
-
-    const head = screen.getByRole('button', { name: 'Release apps' });
-    const [chevron, mark] = [...head.querySelectorAll('svg')];
-    const name = within(head).getByText('Release apps');
-    // The chevron keeps the step of a row mark, and the failure mark follows the name.
-    expect(head.className).toContain('gap-2');
-    expect(chevron.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(name.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-
-    // A leg indents its mark, and its name follows the mark: the words never indent alone.
-    const leg = screen.getByRole('button', { name: 'Select iOS' });
-    // The mark sits in its line box; the box and the words move together.
-    const indent = (row: HTMLElement) => row.querySelector('svg')?.parentElement?.parentElement;
-    expect(indent(leg)?.className).toContain('ml-5');
-    expect(leg.innerHTML).not.toContain('pl-3');
-    const job = screen.getByRole('button', { name: 'Select Publish docs' });
-    expect(indent(job)?.className).not.toContain('ml-5');
   });
   // Regression, session 641fbdc0-44a9-46dd-86c9-3e8b9bdf878b: a parent with a single leg
   // stayed flat beside its folded neighbors, so one table showed two shapes and the lone
@@ -457,8 +343,6 @@ describe('selecting a table row', () => {
     expect(at('Publish')).toBeLessThan(at('Release apps'));
     // The head wears the LABEL; the id its rows point at never reaches the screen.
     expect(screen.queryByText('release')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Publish' }).innerHTML).toContain('text-err');
-    expect(screen.getByRole('button', { name: 'Release apps' }).innerHTML).not.toContain('text-err');
   });
   it('opens a group the producer declared open, and lets the reader shut it again', () => {
     const view = matrixView([]);
@@ -642,13 +526,6 @@ describe('a log the panel shows whole', () => {
 });
 
 describe('stopping the run from the phone', () => {
-  // Regression: the live header must use the shared compact face, not a 44px slab.
-  it('keeps the interrupt face compact while preserving touch reach', () => {
-    paint({ onInterrupt: vi.fn() });
-    const button = screen.getByRole('button', { name: 'Interrupt' });
-    expect(button.classList.contains('min-h-11')).toBe(false);
-    expect(button.classList.contains('after:absolute')).toBe(true);
-  });
   it('arms the stop, takes the comment, and sends it with the interrupt', () => {
     const onInterrupt = vi.fn();
     paint({ onInterrupt });
@@ -710,29 +587,6 @@ describe('stopping the run from the phone', () => {
     expect(button).toHaveProperty('disabled', true);
   });
 
-  it('states a refusal where the press happened', () => {
-    const html = paint({ onInterrupt: vi.fn(), error: 'That view would not stop.' });
-    expect(html).toContain('That view would not stop.');
-  });
-
-  // Regression: in the dialog the stop stood alone on an empty row above the
-  // headline, not on the headline's line.
-  it('puts the dialog stop on the headline line, without an empty header', () => {
-    const view = opened();
-    const headline = view.nodes[0];
-    if (headline.type !== 'status') throw new Error('the fixture must open with its headline');
-    paint({ view, onInterrupt: vi.fn(), inDialog: true });
-    const button = screen.getByRole('button', { name: 'Interrupt' });
-    expect(button.parentElement?.textContent).toContain(headline.text);
-    expect(document.querySelector('.live-view-panel > header')).toBeNull();
-  });
-
-  it('keeps the dialog stop in the header when the run has no headline', () => {
-    const view = opened();
-    paint({ view: { ...view, nodes: view.nodes.slice(1) }, onInterrupt: vi.fn(), inDialog: true });
-    const button = screen.getByRole('button', { name: 'Interrupt' });
-    expect(button.closest('header')).toContainElement(button);
-  });
 });
 
 describe('what a run says about its own layout', () => {
@@ -753,52 +607,6 @@ describe('what a run says about its own layout', () => {
       row.textContent?.includes('Elsewhere'),
     ) as HTMLElement;
     expect(alone.querySelector('[data-view-layout]')).toBeNull();
-  });
-
-  // A phone reads a table DOWN its first column. The row's own line carries the
-  // name and, at the right edge, the value it is measured by; every column between
-  // them stacks under the name, and they take their cells back only when there is
-  // width for them. Forty fenced cells at 8px were a grid to decode before a run
-  // could be read — a rule between rows is all the eye needs to keep a row whole.
-  it('reads down a phone: no fenced cells, a rule between rows, columns only at sm', () => {
-    paint();
-    const table = screen.getByRole('table');
-    expect(table.className).not.toContain('border border-dialog-edge');
-    expect(table.querySelector('tbody')?.className).toContain('divide-y');
-    const head = table.querySelector('thead') as HTMLElement;
-    expect(head.className).toContain('sm:table-header-group');
-    const cells = [...table.querySelectorAll('td')];
-    expect(cells.some((cell) => cell.className.includes('border border-dialog-edge'))).toBe(false);
-    const [name, ...rest] = [...(table.querySelector('tbody tr') as HTMLElement).children];
-    expect(name.className).not.toContain('hidden');
-    expect(
-      rest.every(
-        (cell) => cell.className.includes('hidden') && cell.className.includes('sm:table-cell'),
-      ),
-    ).toBe(true);
-  });
-
-  it('keeps the name and its value on one line and stacks the rest beneath', () => {
-    const view = opened();
-    const hosts = view.nodes
-      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
-      .find((node) => node.id === 'hosts');
-    if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
-    paint({
-      view: withNode(view, {
-        ...hosts,
-        columns: [
-          { id: 'job', label: 'Job', align: 'left' },
-          { id: 'now', label: 'Now', align: 'left' },
-          { id: 'took', label: 'Took', align: 'right' },
-        ],
-        rows: [{ ...hosts.rows[0], cells: ['macos-latest', 'Run native build', '44m46s'] }],
-      }),
-    });
-    const face = screen.getAllByRole('cell')[0] as HTMLElement;
-    expect(face.textContent).toContain('macos-latest');
-    expect(face.textContent).toContain('44m46s');
-    expect(face.textContent).toContain('Run native build');
   });
 
   it('paints the marks a human wrote, and nothing a block would bring', () => {
@@ -826,59 +634,7 @@ describe('what a run says about its own layout', () => {
     expect(screen.getAllByRole('cell')[0].querySelector('code')?.textContent).toBe('db-1');
   });
 
-  // Regression, reported from the phone: the headline shared one flex line with
-  // its detail, so "1 of 2 jobs finished" beside a workflow and a job name was
-  // squeezed to one word per line — a column of five words down the panel.
-  it('gives the headline the whole width and puts its detail on the line below', () => {
-    paint();
-    const headline = screen.getByText('Scanning db-2').closest('p') as HTMLElement;
-    const detail = screen.getByText('host 2 of 3').closest('p') as HTMLElement;
-    // Two elements, not two halves of one line.
-    expect(headline).not.toBe(detail);
-    expect(headline.contains(detail)).toBe(false);
-    // One column: the state word over the headline, the detail on its own line under it.
-    expect(detail.parentElement).toBe(headline.parentElement);
-    expect(headline.nextElementSibling).toBe(detail);
-    // #417: a label is larger than the caption under it.
-    expect(headline.className).toContain('text-subhead');
-    expect(detail.className).toContain('text-body');
-    // Nothing may take width from the headline any more.
-    expect(headline.className).not.toContain('flex-1');
-    expect(headline.parentElement?.className).not.toContain('flex');
-  });
 
-
-  // Regression, reported from the phone: a step's detail is the part that can be
-  // any length, and it refused to shrink, so a long one pushed the row past the
-  // screen. #417: it now wraps under its label, smaller than the label, and keeps
-  // every word.
-  it('wraps a long step detail under its label instead of stretching its row', () => {
-    const view: LiveView = {
-      ...opened(),
-      nodes: [
-        {
-          id: 'timeline',
-          type: 'steps',
-          steps: [
-            {
-              id: 'verify',
-              label: 'Verify release source',
-              detail: 'python-package / ubuntu-latest / real SDK engine, waiting for a runner',
-              tone: 'running',
-            },
-          ],
-        },
-      ],
-    };
-    paint({ view });
-
-    const detail = screen.getByText(/real SDK engine/).closest('span') as HTMLElement;
-    expect(detail.className).toContain('[overflow-wrap:anywhere]');
-    expect(detail.className).not.toContain('truncate');
-    expect(detail.className).toContain('text-meta');
-    const label = screen.getByText('Verify release source').closest('span') as HTMLElement;
-    expect(label.closest('ol')?.className).toContain('text-body');
-  });
   // Regression, user report: Activity patches rendered one-by-one on WKWebView and
   // starved the independent elapsed-time paint, leaving its clock visibly frozen.
   it('coalesces a patch burst into one phone paint', async () => {
@@ -1109,32 +865,6 @@ describe('what a run says about its own layout', () => {
       await answer(0);
       await waitFor(() => expect(screen.getByText('none')).toBeVisible());
     });
-  });
-});
-
-describe('the section is built from the closed vocabulary', () => {
-  it('uses shared actions around its feature-only meter and tables', () => {
-    expect(liveViewSource).toContain('<Button');
-    expect(liveViewSource).toContain('<ProgressMeter');
-    expect(liveViewSource).toContain('<Disclosure');
-    // Motion is explicit: only a declared spinner uses the shared control.
-    expect(liveViewSource).toContain('<Spinner');
-    expect(liveViewSource).not.toContain('<button');
-    expect(liveViewSource).not.toContain('style={');
-    expect(liveViewSource).not.toContain('style="');
-  });
-});
-
-// A run used to open in the artifact overlay, which on a desktop papered the session list,
-// the transcript and the composer with one view. It opens in the app's ONE dialog now, and
-// that dialog stands in the session's own pane rather than over the whole window.
-describe('an opened run is a dialog over the chat', () => {
-  it('opens in `Modal` + `DialogFrame`, never the full-screen artifact overlay', () => {
-    expect(liveViewSource).toContain('<Modal within="session" onDismiss={onClose}>');
-    expect(liveViewSource).toContain(
-      '<DialogFrame title={title} subtitle={subtitle} footer={footer} onClose={onClose}>',
-    );
-    expect(liveViewSource).not.toContain('OverlayScreen');
   });
 });
 

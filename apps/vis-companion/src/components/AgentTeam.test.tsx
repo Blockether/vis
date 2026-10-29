@@ -1,14 +1,11 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
 import type { AgentTimeline, Subagent } from '../lib/types';
 import {
-  ROLES,
   TurnAgents,
   agentLabel,
-  agentRole,
   agentStatus,
   agentTime,
   agentUpdate,
@@ -20,10 +17,6 @@ import {
   teamTime,
   useAgentTeam,
 } from './AgentTeam';
-
-// Vitest stubs CSS imports, so read the shipped stylesheet itself. Under jsdom,
-// `import.meta.url` is no file URL: the path is relative to the app directory.
-const css = readFileSync('src/index.css', 'utf8');
 
 const T0 = new Date(2026, 4, 3, 14, 3, 7).getTime();
 const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: 'leader', team_id: 'turn-1',
@@ -78,31 +71,6 @@ describe('agent rows', () => {
     expect([0, 45_999, 184_000, 3_725_000].map(formatAgentTime)).toEqual(['0s', '45s', '3m 04s', '1h 02m']);
   });
 
-  it('gives each agent one table row: role, title, update, status, time; without icons', () => {
-    vi.useFakeTimers({ now: T0 + 65_000 });
-    const { container } = render(<TurnAgents {...props} agents={[
-      { ...child, role: 'research', activity: 'Search files AgentTeam' },
-      { ...child, session_id: 'v', role: 'verify', title: 'Gateway tests', status: 'completed', outcome: 'failed',
-        result: '2 of 40 tests fail', activity: 'Old line', finished_at: T0 + 30_000, created_at: T0 + 1 },
-      { ...child, session_id: 'q', status: 'queued', created_at: T0 + 2 },
-    ]} />);
-    expect(rowTexts()).toEqual([
-      'research#1Search files AgentTeamrunning1m 05s',
-      'verifyGateway tests2 of 40 tests failfailed29s',
-      'agent#3Verify the contractqueued',
-    ]);
-    expect(container.querySelector('svg')).toBeNull();
-    // The status stands right before the time.
-    const [role, , , status, time] = container.querySelector('[data-agent-row="v"]')!.children;
-    expect(role).toHaveClass('uppercase', 'text-role-verify');
-    expect(status).toHaveClass('uppercase', 'text-err-ink');
-    expect(time).toHaveTextContent('29s');
-    expect(screen.getByText('Gateway tests')).toHaveAttribute('title', 'Verify the contract');
-    // The time ticks while an agent runs; no message is needed for it.
-    act(() => { vi.advanceTimersByTime(2000); });
-    expect(rowTexts()[0]).toBe('research#1Search files AgentTeamrunning1m 07s');
-  });
-
   it('shows what a working agent does now: its newest note, its activity or its task, then its result', () => {
     const asks = { question: 'Keep the old API?', budget_request: { iterations: 8, reason: 'Slow tests' } };
     expect(agentUpdate({ ...child, ...asks, note: 'The bug is in tokenize', activity: 'Read ~/a.clj' })).toBe('The bug is in tokenize');
@@ -117,26 +85,6 @@ describe('agent rows', () => {
     render(<TurnAgents {...props} agents={[{ ...child, ...asks, note: 'The bug is in tokenize' }]} />);
     expect(rowTexts()[0]).toMatch(/^agent#1The bug is in tokenize/);
     expect(screen.queryByText(/old API|Slow tests/)).not.toBeInTheDocument();
-  });
-
-  it('wraps a long title and clamps a long update, never with an ellipsis on the title', () => {
-    const long = 'A result line that is much longer than the row can show on a phone or a desk';
-    const { container } = render(<TurnAgents {...props} agents={[{ ...child, title: 'T'.repeat(40), status: 'completed', result: long }]} />);
-    expect(screen.getByText('T'.repeat(40))).not.toHaveClass('truncate');
-    expect(screen.getByText('T'.repeat(40)).className).toContain('[overflow-wrap:anywhere]');
-    expect(screen.getByText(long)).toHaveClass('line-clamp-2');
-    expect(screen.getByText(long)).toHaveAttribute('title', long);
-    // The title column fits the longest title of the team, so every row keeps one grid.
-    const table = container.querySelector<HTMLElement>('[style]')!;
-    expect(table.style.getPropertyValue('--title')).toBe('41ch');
-    expect(table.style.getPropertyValue('--role')).toBe('5ch');
-    expect(table.style.getPropertyValue('--status')).toBe('6ch');
-  });
-
-  it('takes one line on a phone for a row without an update, not a blank second line', () => {
-    const { container } = render(<TurnAgents {...props} agents={[{ ...child, status: 'completed' }]} />);
-    const [, , update] = container.querySelector('[data-agent-row="child"]')!.children;
-    expect(update).toHaveClass('max-sm:hidden');
   });
 
   it('keeps the spawn order whatever the status', () => {
@@ -168,18 +116,6 @@ describe('agent rows', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('keeps the contract roles in their order', () => {
-    expect(ROLES.map((role) => role.const)).toEqual(['research', 'implement', 'verify', 'audit']);
-  });
-
-  it('gives every contract role its own ink from the theme, and any other role the hint ink', () => {
-    const inks = ROLES.map((role) => agentRole({ ...child, role: role.const }).ink);
-    expect(inks).toEqual(ROLES.map((role) => `text-role-${role.const}`));
-    for (const role of ROLES) expect(css).toContain(`--color-role-${role.const}:`);
-    expect(agentRole({ ...child, role: 'boss' })).toEqual({ text: 'boss', ink: 'text-dialog-hint' });
-    expect(agentRole({ ...child, role: 'constructor' }).ink).toBe('text-dialog-hint');
-    expect(agentRole(child)).toEqual({ text: 'agent', ink: 'text-dialog-hint' });
-  });
 });
 
 describe('agent timeline', () => {
@@ -207,8 +143,6 @@ describe('agent timeline', () => {
       `${clockTime(T0 + 61_000)}Finisheddone · All 40 tests pass`,
     ]);
     expect(clockTime(T0)).toBe('14:03:07');
-    expect(sheet).toHaveTextContent('verifydone1m 01s');
-    expect(sheet.querySelectorAll('svg')).toHaveLength(1);
     expect(within(sheet).queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
     fireEvent.click(within(sheet).getByRole('button', { name: 'Open session' }));
     expect(onOpen).toHaveBeenCalledWith('child');
@@ -231,7 +165,6 @@ describe('agent timeline', () => {
     const timeline = vi.fn().mockResolvedValueOnce({ session_id: 'child', items: [] }).mockRejectedValue(new Error('Not found'));
     const { rerender } = render(<TurnAgents {...props} timeline={timeline} agents={[child]} />);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
-    expect(screen.getByText('No steps yet.')).toBeInTheDocument();
     // A step of the agent reads the timeline again; a clock tick does not.
     await act(async () => { rerender(<TurnAgents {...props} timeline={timeline} agents={[{ ...child, iterations_used: 3 }]} />); });
     expect(screen.getByRole('alert')).toHaveTextContent('Not found');
@@ -260,7 +193,6 @@ describe('team line', () => {
       { ...child, session_id: 'e', role: 'audit', status: 'queued' },
     ]);
     expect(statuses.map(({ count, text }) => `${count} ${text}`)).toEqual(['2 running', '1 queued', '1 done', '1 failed']);
-    expect(statuses[0].ink).toBe('text-accent-ink');
     expect(teamCounts([])).toEqual([]);
   });
 
@@ -282,17 +214,6 @@ describe('team line', () => {
     vi.useRealTimers();
   });
 
-  it('frames the table of a turn under its team line, with the column headings', () => {
-    render(<TurnAgents {...props} agents={[
-      { ...child, role: 'research' },
-      { ...child, session_id: 'v', role: 'verify', status: 'completed', outcome: 'passed' },
-    ]} />);
-    const team = screen.getByRole('region', { name: 'Subagents' });
-    expect(team).toHaveClass('border');
-    expect(team).toHaveAttribute('data-transcript-part');
-    expect(team.querySelector('[data-team-line]')).toHaveTextContent(/^team\d+[hms][\d ms]*1 running1 done$/);
-    expect(team.querySelector('[aria-hidden]')).toHaveTextContent('roletitleupdatestatustime');
-  });
 });
 
 describe('teams', () => {

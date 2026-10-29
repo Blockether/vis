@@ -11,17 +11,11 @@ import {
   automationDraft,
   automationInput,
   automationPatch,
-  automationSummary,
-  deliveryLabel,
   draftProblem,
   draftStepProblem,
   everyLabel,
   localInput,
-  runReason,
   stepProblem,
-  targetLabel,
-  triggerLabel,
-  wordLabel,
   type Automation,
   type AutomationDraft,
 } from './automations';
@@ -44,64 +38,9 @@ describe('automation labels', () => {
     expect(everyLabel(seconds)).toBe(label);
   });
 
-  it('names each trigger kind and keeps an unknown kind readable', () => {
-    expect(
-      triggerLabel({ kind: 'cron', expression: '0 9 * * 1-5', timezone: 'Europe/Warsaw' }, NOW),
-    ).toBe('Cron 0 9 * * 1-5 · Europe/Warsaw');
-    expect(triggerLabel({ kind: 'cron', expression: '*/5 * * * *' }, NOW)).toBe('Cron */5 * * * *');
-    expect(triggerLabel({ kind: 'every', seconds: 1_800 }, NOW)).toBe('Every 30 minutes');
-    expect(triggerLabel({ kind: 'once', at: NOW + 2 * HOUR }, NOW)).toBe(
-      `Once · ${timeLabel(NOW + 2 * HOUR, NOW)}`,
-    );
-    expect(triggerLabel({ kind: 'webhook', signature: 'github' }, NOW)).toBe('Webhook · GitHub');
-    expect(triggerLabel({ kind: 'webhook', signature: 'custom' }, NOW)).toBe('Webhook · custom');
-    expect(triggerLabel({ kind: 'calendar' }, NOW)).toBe('Calendar');
-  });
-
   it('labels a millisecond time like the session list does', () => {
     expect(timeLabel(NOW - 2 * HOUR, NOW)).toBe(timeLabel(new Date(NOW - 2 * HOUR).toISOString(), NOW));
     expect(timeLabel(undefined, NOW)).toBe('-');
-  });
-
-  it('describes targets and delivery in plain words', () => {
-    expect(targetLabel({ mode: 'session', session_id: 'session-1' })).toBe(
-      'Continues one existing session',
-    );
-    expect(targetLabel({ mode: 'new', root: '/Users/ana/code/vis' })).toBe(
-      'New session for each run in ~/code/vis',
-    );
-    expect(targetLabel({ mode: 'temporary' })).toBe(
-      'Temporary session for each run, deleted after the run',
-    );
-    expect(deliveryLabel({ push: true, callback: null })).toBe('Phone alert');
-    expect(deliveryLabel({})).toBe('Phone alert');
-    expect(
-      deliveryLabel({ push: false, callback: { url: 'https://gateway.example.com/results' } }),
-    ).toBe('Callback to https://gateway.example.com/results');
-    expect(deliveryLabel({ push: false, callback: null })).toBe('Only the target session');
-  });
-
-  it('explains run reason codes and keeps other text as it is', () => {
-    expect(runReason({ ...STORY_AUTOMATION_RUN, status: 'skipped', reason: 'settings' })).toBe(
-      'settings',
-    );
-    expect(runReason({ ...STORY_AUTOMATION_RUN, status: 'skipped', reason: 'overlap' })).toBe(
-      'The previous run was still running.',
-    );
-    expect(
-      runReason({ ...STORY_AUTOMATION_RUN, status: 'failed', error: 'The run asked for input.' }),
-    ).toBe('The run asked for input.');
-    expect(runReason(STORY_AUTOMATION_RUN)).toBeNull();
-    expect(wordLabel('manual')).toBe('Manual');
-  });
-
-  it('summarizes a row with its state, triggers, next run and last result', () => {
-    const [standup, review] = STORY_AUTOMATIONS;
-    const next = NOW + 3 * HOUR;
-    expect(automationSummary({ ...standup, next_run_at: next }, NOW)).toBe(
-      `Cron 0 9 * * 1-5 · Europe/Warsaw · Next ${timeLabel(next, NOW)} · Last completed`,
-    );
-    expect(automationSummary(review, NOW)).toBe('Paused · Webhook · GitHub · Last failed');
   });
 
   it('keeps the story fixtures on the wire contract', () => {

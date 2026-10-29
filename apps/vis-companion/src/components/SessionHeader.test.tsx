@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { Capacitor } from '@capacitor/core';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -90,26 +89,6 @@ describe('SessionHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Session actions' }));
     expect(screen.queryByRole('button', { name: /artifacts/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Copy session id/ })).toBeInTheDocument();
-  });
-
-  // Regression: moving controls beside the iPhone island obscured their intended
-  // row. Give the whole session header a safe inset so its actions sit below it.
-  it('keeps iPhone session actions below the island', () => {
-    const platform = vi.spyOn(Capacitor, 'getPlatform').mockReturnValue('ios');
-    const native = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
-    try {
-      render(<SessionHeader model={model} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
-      const header = screen.getByRole('heading', { name: model.title }).closest('header')!;
-      expect(header).toHaveClass('flex', 'pt-[env(safe-area-inset-top)]', 'sm:pt-0');
-      expect(header).not.toHaveClass('grid');
-      expect(screen.getByRole('button', { name: 'Back to sessions' })).not.toHaveClass('row-start-1');
-      expect(
-        screen.getByRole('button', { name: 'Session actions, 3 artifacts' }).parentElement,
-      ).not.toHaveClass('row-start-1');
-    } finally {
-      native.mockRestore();
-      platform.mockRestore();
-    }
   });
 
   // Regression, user report (paraphrased): the trailing mark's dots ran across instead

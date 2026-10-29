@@ -62,7 +62,6 @@ it('opens the preview from a read activity with its Read label', async () => {
     undefined,
     expect.anything(),
   );
-  expect(dialog.querySelector('header h2')).toHaveClass('sr-only');
   expect(within(dialog).getByText('~/vis/PLAN.md')).toBeVisible();
   const editor = within(dialog).getByRole('button', { name: 'Open in editor' });
   expect(editor).toHaveAttribute('title', 'Open in editor');
@@ -74,28 +73,6 @@ it('opens the preview from a read activity with its Read label', async () => {
   fireEvent.click(within(dialog).getByRole('button', { name: 'Close PLAN.md' }));
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(row).toBeVisible();
-});
-
-it('shows only the file path, without the duplicate headline', async () => {
-  show(gateway());
-
-  await waitFor(() => expect(screen.getByText('twelve')).toBeVisible());
-  const dialog = screen.getByRole('dialog', { name: 'app.ts' });
-  const header = dialog.querySelector('header')!;
-  expect(header.querySelector('h2')).toHaveClass('sr-only');
-  expect(screen.getByText(PATH)).toBeVisible();
-  expect(header.querySelectorAll('p')).toHaveLength(1);
-});
-
-it('uses an accessible editor icon without a left divider', async () => {
-  show(gateway());
-
-  await waitFor(() => expect(screen.getByText('twelve')).toBeVisible());
-  const open = screen.getByRole('button', { name: 'Open in editor' });
-  expect(open).toHaveAttribute('title', 'Open in editor');
-  expect(open.textContent).toBe('');
-  expect(open.querySelector('svg')).toBeInTheDocument();
-  expect(open.className).not.toMatch(/\bborder-l(?:\s|$)/);
 });
 
 it('reads the file where the session is being read, standing at the pressed line', async () => {

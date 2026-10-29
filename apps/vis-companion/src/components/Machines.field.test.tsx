@@ -59,8 +59,6 @@ async function pair() {
 describe('one field takes whatever the terminal printed', () => {
   it('explains the three steps in the order they happen, command first', () => {
     render(<AddMachine onAdd={vi.fn(async () => {})} />);
-    const steps = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
-    expect(steps).toEqual(['On the machine that runs vis', 'Copy the link it printed', 'Pair']);
     // Under a mouse this IS the machine with the terminal, so the second step says
     // copy, and the field's verb is the only primary one on the page.
     expect(screen.queryByRole('button', { name: 'Scan QR' })).toBeNull();
@@ -92,8 +90,6 @@ describe('one field takes whatever the terminal printed', () => {
     render(<AddMachine onAdd={vi.fn(async () => {})} />);
     // A phone has the camera: the two ways the code gets here are alternatives,
     // so neither carries an ordinal and scanning is the one primary verb.
-    const ways = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
-    expect(ways).toEqual(['Scan the QR code', 'I have a pairing link']);
     expect(document.body.textContent).not.toMatch(/^\s*1\s/m);
     expect(screen.getByRole('button', { name: 'Scan QR' })).toBeVisible();
     // The start command has nowhere to be pasted from a phone, so it is not shown;

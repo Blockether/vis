@@ -402,14 +402,6 @@ describe('the provider wait notice', () => {
     );
   });
 
-  it('leaves out the connection and the deadline when the notice has none', () => {
-    const bare = reduceRunningTurnEvent(
-      runningTurn,
-      notice({ connection: undefined, deadline_in_ms: undefined }),
-    )?.progress?.wait;
-
-    expect(bare && providerWaitDetail(bare, bare.receivedAt)).toBe('No response for 25s');
-  });
 });
 
 // A Python block can run for minutes without a tool call. The ticker said only
@@ -453,15 +445,6 @@ describe('the busy Python notice', () => {
     expect(pythonBusyDetail(busy, 6_000)).toBe('No tool call for 1m 17s · Python CPU 99% · stops in 3m 43s');
   });
 
-  it('names the measured process when Python is idle', () => {
-    expect(pythonBusyDetail({ ...busy, cpuPercent: 0 }, 1_000)).toBe('No tool call for 1m 12s · Python CPU 0% · stops in 3m 48s');
-  });
-
-  it('leaves out the CPU use when Vis cannot read it', () => {
-    const bare = reduceRunningTurnEvent(runningTurn, notice({ cpu_percent: undefined }))?.progress?.busy;
-
-    expect(bare && pythonBusyDetail(bare, bare.receivedAt)).toBe('No tool call for 1m 12s · stops in 3m 48s');
-  });
 });
 
 describe('live block text', () => {

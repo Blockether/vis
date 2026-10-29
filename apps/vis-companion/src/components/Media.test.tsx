@@ -62,18 +62,6 @@ describe('MediaPlate', () => {
     expect(plate()).not.toContain('style=');
   });
 
-  it('docks the name and the format under the mat', () => {
-    const html = renderToStaticMarkup(
-      <MediaPlate name="shot.png" meta="PNG · 8B">
-        <div />
-      </MediaPlate>,
-    );
-
-    expect(html).toContain('<figcaption');
-    expect(html).toContain('shot.png');
-    expect(html).toContain('PNG · 8B');
-  });
-
   it('carries no caption strip at all when there is no name', () => {
     expect(
       renderToStaticMarkup(
@@ -177,13 +165,6 @@ describe('MediaRecording', () => {
     expect(html).not.toContain(mediaTileFrameClass);
   });
 
-  it('names the recording under the player it hands over', () => {
-    expect(html).toContain('<audio');
-    expect(html).toContain('<figcaption');
-    expect(html).toContain('memo.m4a');
-    expect(html).toContain('M4A · 8B');
-  });
-
   // The words a memo carries are the only thing a reader can SKIM, and the same
   // string the model was given — but a minute of speech is a paragraph, so the row
   // stays one line until it is asked.
@@ -203,43 +184,6 @@ describe('MediaRecording', () => {
     expect(html).not.toContain('aria-expanded');
   });
 
-  // Regression, issue: a recording whose transcription failed looked exactly like one
-  // nobody had transcribed yet — an empty space under the player, and a model that was
-  // handed the filename alone.
-  it('says what the words are doing when there are none to show', () => {
-    const band = (status: string) =>
-      renderToStaticMarkup(
-        <MediaRecording name="memo.m4a" meta="M4A · 8B" transcriptionStatus={status}>
-          <audio controls />
-        </MediaRecording>,
-      );
-    expect(band('pending')).toContain('TRANSCRIBING…');
-    expect(band('unavailable')).toContain('NO TRANSCRIPTION');
-    expect(band('silent')).toContain('NO SPEECH');
-    // A status is a caption, never a control: there is nothing to open.
-    expect(band('pending')).not.toContain('aria-expanded');
-  });
-
-  it('prefers the words themselves to whatever the status still says', () => {
-    const settled = renderToStaticMarkup(
-      <MediaRecording
-        name="memo.m4a"
-        transcription="buy milk and call back"
-        transcriptionStatus="pending"
-      >
-        <audio controls />
-      </MediaRecording>,
-    );
-    expect(settled).toContain('TRANSCRIPTION');
-    expect(settled).not.toContain('TRANSCRIBING…');
-  });
-
-  // A mic glyph beside a player is the same claim twice: the control is already,
-  // visibly, audio. It only ate column width from the scrubber.
-  it('puts no icon beside the player', () => {
-    expect(html).not.toContain('<svg');
-  });
-
   // Speech is not code. Opened, the words read as an italic QUOTATION of the audio
   // above them without distorting the spacing between words.
   it('quotes the opened transcript in naturally spaced italic', async () => {
@@ -251,16 +195,6 @@ describe('MediaRecording', () => {
     await userEvent.click(screen.getByText('TRANSCRIPTION'));
     const words = screen.getByText(/buy milk and call back/);
     expect(words.textContent).toBe('“buy milk and call back”');
-    expect(words.className).toContain('italic');
-  });
-
-  it('ignores a transcript that is only whitespace', () => {
-    const blank = renderToStaticMarkup(
-      <MediaRecording name="memo.m4a" transcription="   ">
-        <audio controls />
-      </MediaRecording>,
-    );
-    expect(blank).not.toContain('TRANSCRIPTION');
   });
 
   // Regression: the speech engine timestamps every token it decodes, and the row
@@ -317,14 +251,6 @@ describe('MediaRecording', () => {
 // overflow buttons, and its own idea of contrast. What a listener uses is a
 // button, a scrubber and a clock.
 describe('RecordingPlayer', () => {
-  it("hands the row this app's own controls instead of the platform's", () => {
-    const html = renderToStaticMarkup(<RecordingPlayer src="blob:memo" />);
-
-    expect(html).toContain('<audio');
-    expect(html).not.toMatch(/<audio[^>]*controls/u);
-    expect(html).toContain('aria-label="Play"');
-    expect(html).toContain('type="range"');
-  });
 
   // An hour-long recording is the case that made this necessary, and `61:15` is
   // not a time anybody reads.

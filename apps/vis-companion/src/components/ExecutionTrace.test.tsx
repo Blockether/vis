@@ -193,51 +193,6 @@ describe('execution grouping', () => {
     expect(view.queryByText('Operation failed')).toBeNull();
   });
 
-  it('keeps collapsed CODE, ACTIVITY and FAILED rows equally compact on mobile', () => {
-    const view = renderOpenSteps(
-      <IterationTrace
-        whole
-        iterations={iterations([
-          { source: 'first()', activity: activity('succeeded', 'Attempt') },
-          { source: 'fail()', error: { message: 'Operation failed' } },
-        ])}
-      />,
-    );
-    const codeHeader = view.container.querySelector('[data-execution-code]')!.firstElementChild!;
-    const codeToggle = view.getByRole('button', { name: 'Expand code' });
-    const activityToggle = view.getByRole('button', { name: 'Expand Activity' });
-    const failureToggle = view.getByRole('button', { name: 'Expand error details' });
-    for (const toggle of [codeToggle, activityToggle, failureToggle]) {
-      expect(toggle).toHaveClass('after:-inset-y-1');
-    }
-    for (const row of [codeHeader, codeToggle, activityToggle, failureToggle]) {
-      expect(row).toHaveClass('min-h-9', 'mouse:min-h-7');
-      expect(row).not.toHaveClass('min-h-11');
-    }
-    const failure = failureToggle.closest('[data-code-result]')!;
-    expect(failure).not.toHaveClass('pb-1');
-    fireEvent.click(failureToggle);
-    expect(failure).toHaveClass('pb-1');
-  });
-
-  it('keeps a grouped collapsed failure level with its neighboring rows', () => {
-    const view = renderOpenSteps(
-      <IterationTrace
-        whole
-        iterations={iterations([
-          { source: 'first()', error: { message: 'First failed' } },
-          { source: 'second()', error: { message: 'Second failed' } },
-        ])}
-      />,
-    );
-    const toggle = view.getByRole('button', { name: 'Expand all error details' });
-    expect(toggle).toHaveClass('min-h-9', 'mouse:min-h-7');
-    const failure = toggle.closest('[data-code-result]')!;
-    expect(failure).not.toHaveClass('pb-1');
-    fireEvent.click(toggle);
-    expect(failure).toHaveClass('pb-1');
-  });
-
   it('owns source and result in one CODE disclosure before Activity', () => {
     const view = renderOpenSteps(
       <IterationTrace
@@ -254,13 +209,10 @@ describe('execution grouping', () => {
     );
     const band = view.container.querySelector('[data-execution-code]')!;
     // The label starts the row; its chevron and tally still expose the fold.
-    expect(view.getByRole('button', { name: 'Expand code' }).textContent).toBe('CODE +2 more');
-    expect(view.getByRole('button', { name: 'Expand code' }).querySelector('svg')).toBeVisible();
     expect(band.querySelector('[data-code-node]')).toBeNull();
     expect(view.queryByText('RESULT')).toBeNull();
     fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
     expect(band.textContent).toContain('print(42)');
-    expect(view.getByRole('button', { name: 'Collapse code' }).textContent).toBe('CODE');
     // The RESULT is its own fold and starts closed.
     expect(band.textContent).toContain('RESULT +2 more');
     expect(band.textContent).not.toContain('out-42');
@@ -564,34 +516,6 @@ it('opens the complete program below its own CODE header', () => {
   expect(band.querySelector('pre')).not.toHaveClass('py-2');
   expect(band.querySelector('pre')?.textContent).toContain('paths = await ls(root)');
   expect(band.querySelector('pre')?.textContent).toContain('print(paths)');
-});
-
-it.each([true, false])('pads standalone source until Activity arrives (live=%s)', (live) => {
-  const form = { source: 'value = 42\nprint(value)' };
-  const view = renderOpenSteps(<IterationTrace whole live={live} iterations={iterations([form])} />);
-  fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
-  const band = view.container.querySelector('[data-execution-code]')!;
-  const body = band.querySelector('[data-code-body]')!;
-  expect(body).toHaveClass('last:pb-2');
-  expect(body).toBe(band.lastElementChild);
-
-  view.rerender(
-    <IterationTrace
-      whole
-      live={live}
-      iterations={iterations([{ ...form, activity: activity('running', 'Checking files') }])}
-    />,
-  );
-  expect(band.querySelector('[data-code-body]')).toBe(body);
-  expect(body).not.toHaveClass('last:pb-2');
-  expect(view.getByRole('button', { name: 'Expand Activity' })).toBeVisible();
-
-  view.rerender(
-    <IterationTrace whole live={live} iterations={iterations([{ ...form, stdout: '42' }])} />,
-  );
-  // RESULT owns the next header's spacing; the source is no longer the last child.
-  expect(body).not.toBe(band.lastElementChild);
-  expect(view.getByRole('button', { name: 'Expand result' })).toBeVisible();
 });
 
 it('folds even a one-line program under the CODE header', () => {

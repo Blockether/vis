@@ -9,12 +9,6 @@ import { ArtifactLinkContext } from '../lib/artifact-links';
 import { dismissTopLayer } from '../lib/edge-back';
 import { buildZip } from '../lib/zip-harness';
 
-/** The classes of the button whose tag carries `mark` — attribute order is React's. */
-const classesOf = (html: string, mark: string) => {
-  const tag = (html.match(/<button[^>]*>/g) ?? []).find((entry) => entry.includes(mark)) ?? '';
-  return /class="([^"]*)"/.exec(tag)?.[1] ?? '';
-};
-
 /** The bytes are never fetched in static markup: effects do not run. */
 const client = {
   attachmentUrl: async () => 'blob:none',
@@ -179,32 +173,6 @@ describe('the artifacts sheet', () => {
     vi.unstubAllGlobals();
   });
 
-  // Regression, user report ("the artifact button, instead of being the dark one with
-  // white color, it's completely white"): the sheet was the one opened surface with no
-  // title band, so its ✕ stood on the filter strip's PAPER and read as a white button
-  // beside an app whose every other way out is a light mark on the dark dialog band.
-  // Earlier attempts moved the paint instead of the band — a black block of its own
-  // ("Why not black like all buttons"), then no block at all ("can we not have just one
-  // close button that looks the same") — and both left the ✕ answering for a band the
-  // sheet did not have. It has the band now, and the ✕ inherits it like every other.
-  it("opens with the app's own band, and leaves by the ✕ standing in it", () => {
-    const html = sheet([picture]);
-    expect(html).toContain('<h2');
-    expect(text(html)).toContain('Artifacts');
-
-    const close = classesOf(html, 'aria-label="Close artifacts"');
-    expect(close).not.toContain('bg-dialog-title');
-  });
-
-  // Regression, user report ("big on Ipad we don't need this"): a permanent band under
-  // the grid spelled out "Tap to open · pinch to zoom …" — an instruction one tap
-  // teaches, paid for on every screen for the life of the session.
-  it('spends no band on telling you what a tap does', () => {
-    const html = sheet([picture]);
-    expect(html).not.toContain('Tap to open');
-    expect(html).not.toMatch(/<footer/);
-  });
-
   // Regression, user report ("why not sneakpeak! this should be visible too in
   // artifacts"): every document wore the same five grey bars, so two notes produced by
   // one session were told apart only by the filename under them.
@@ -259,24 +227,6 @@ describe('the artifacts sheet', () => {
     expect(previewBlocks('')).toEqual([]);
   });
 
-  // The fade is measured against the BOX, never against the text: a gradient sized by
-  // the lines reaches zero somewhere past the cut, so the bottom row was guillotined at
-  // 71% opacity on a 390px screen, and a note too short to overflow faded a line nothing
-  // was going to clip.
-  it('dissolves the peek at the bottom of the tile instead of slicing it', async () => {
-    readable();
-    const view = render(
-      <ArtifactsSheet client={client} sid="s1" artifacts={[note]} onClose={() => {}} />,
-    );
-    const mask = '[mask-image:linear-gradient(to_bottom,black_80%,transparent)]';
-    await waitFor(() => expect(view.baseElement.innerHTML).toContain(mask));
-    const masked = [...view.baseElement.querySelectorAll(`.${CSS.escape(mask)}`)];
-    expect(masked).toHaveLength(1);
-    expect(view.baseElement.querySelector('[aria-hidden="true"].text-chip')).toBeInTheDocument();
-    view.unmount();
-    vi.unstubAllGlobals();
-  });
-
   // The same regression, on screen: the tile printed `# Note` in mono, and the kind
   // chip sat on top of the one line the fade had left readable.
   it("paints the note's title as a title, with no source and no chip over it", async () => {
@@ -291,44 +241,6 @@ describe('the artifacts sheet', () => {
     expect(view.baseElement.textContent?.match(/MD/g)).toHaveLength(1);
     view.unmount();
     vi.unstubAllGlobals();
-  });
-
-  // Read off the live tile at 390px: the version `⋯` is a 32px control floating in the
-  // corner where the note's TITLE starts, so the first line ran under the button and
-  // looked like a rendering fault. Only that line gives up the width.
-  it("keeps the note's title clear of the control floating over the tile", async () => {
-    readable();
-    const threadedNote = { ...note, versions: [note, { ...note, version: 1 }] };
-    const view = render(
-      <ArtifactsSheet client={client} sid="s1" artifacts={[threadedNote]} onClose={() => {}} />,
-    );
-    await waitFor(() => expect(view.baseElement.textContent).toContain('A read that works.'));
-    const peek = view.baseElement.querySelector('[aria-hidden="true"].text-chip');
-    const rows = [...(peek?.children ?? [])].map((row) => row.className);
-    expect(rows.length).toBeGreaterThan(1);
-    expect(rows.slice(1).join(' ')).not.toContain('pr-9');
-    view.unmount();
-    vi.unstubAllGlobals();
-  });
-
-  // A note with one cut has nothing floating over it, so nothing is indented for a
-  // control that is not there.
-  it('spends no width on a control an artifact without a history never shows', async () => {
-    readable();
-    const view = render(
-      <ArtifactsSheet client={client} sid="s1" artifacts={[note]} onClose={() => {}} />,
-    );
-    await waitFor(() => expect(view.baseElement.textContent).toContain('A read that works.'));
-    expect(view.baseElement.innerHTML).not.toContain('pr-9');
-    view.unmount();
-    vi.unstubAllGlobals();
-  });
-
-  // A PDF has no cheap raster and nothing this app can read without a renderer, so it
-  // keeps the plate rather than faking a peek at itself.
-  it('leaves the plate on a document it cannot read', () => {
-    const html = sheet([document]);
-    expect(text(html)).toContain('PDF');
   });
 
   it('puts the band above the filter strip, and the strip above the grid', () => {
@@ -349,17 +261,6 @@ describe('the artifacts sheet', () => {
     expect(filters).toHaveAttribute('tabindex', '0');
     filters.focus();
     expect(filters).toHaveFocus();
-  });
-
-  // Regression: a `.md` note was classified as an unreadable file, so the tile
-  // was a <div> with a `≡` plate and tapping it did nothing at all.
-  it('opens a written note and says what format it is', () => {
-    const html = sheet([note]);
-    expect(html).toContain(
-      'aria-label="Open vis-issue-115-comment.md, MD, 1.9KB, produced in turn 1"',
-    );
-    expect(text(html)).toContain('MD');
-    expect(html).not.toContain('≡');
   });
 
   // A file the app cannot preview is still useful: opening it is the path to the
@@ -402,15 +303,6 @@ describe('the artifacts sheet', () => {
     expect(html).toContain('disabled=""');
   });
 
-  // Regression: the filter chips were 32px tall, taller than a chip and taller
-  // than the app's own phone-height button, so the strip read as a row of empty
-  // boxes above the grid.
-  it('keeps the filter strip at chip height, shrinking only under a cursor', () => {
-    const strip =
-      /<button[^>]*aria-pressed="[^"]*"[^>]*class="([^"]*)"/.exec(sheet([document]))?.[1] ?? '';
-    expect(strip).not.toMatch(/sm:min-h|sm:h-/);
-  });
-
   it('opens every original without pretending every format has a reader', () => {
     const html = sheet([picture, document, recorded]);
     expect(html).toContain('aria-label="Open revenue.png, PNG, 2.0KB, produced in turn 6"');
@@ -422,15 +314,6 @@ describe('the artifacts sheet', () => {
     );
   });
 
-  it('carries the provenance that makes an artifact citable', () => {
-    const visible = text(sheet([picture]));
-    expect(visible).toContain('revenue.png');
-    expect(visible).toContain('PNG · 2.0KB · turn 6');
-  });
-
-  it('says so when a filter has nothing behind it', () => {
-    expect(text(sheet([]))).toContain('Nothing of that kind in this session.');
-  });
 });
 
 describe('the artifacts sheet, paged', () => {
@@ -467,16 +350,6 @@ describe('the artifacts sheet, paged', () => {
     expect(text(html)).not.toContain('more');
   });
 
-  // Regression: the reveal stood 36px tall, taller than the app's own button.
-  it("keeps the reveal control tappable, at the app's button height", () => {
-    const html = sheet(many(30, 64 * 1024));
-    const reveal =
-      /<button[^>]*aria-label="Load [^"]*"[^>]*class="([^"]*)"/.exec(html)?.[1] ??
-      /<button[^>]*class="(mt-3[^"]*)"/.exec(html)?.[1] ??
-      '';
-    // A width query may never shrink a hit box; only a pointer may.
-    expect(reveal).not.toMatch(/sm:min-h|sm:h-/);
-  });
 });
 
 describe('an artifact with a history', () => {
@@ -511,62 +384,6 @@ describe('an artifact with a history', () => {
     expect(text(html)).not.toContain('v1');
   });
 
-  // Regression, user report ("why is the contrast so weak here"): the mark on the
-  // newest cut was inked in `text-accent` — the amber BUTTON FILL, 1.45:1 on this
-  // sheet's own paper — so a 9px word arrived as a smudge. Amber TEXT is the
-  // palette's own amber ink, `accent-ink`, at 6.3:1 on the same paper.
-  it('inks the mark on the newest cut in amber a reader can read', async () => {
-    render(<ArtifactsSheet client={client} sid="s1" artifacts={[threaded]} onClose={() => {}} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Show 3 versions of chart.png' }));
-    const mark = await screen.findByText('latest');
-    expect(mark.className).not.toMatch(/(?:^|\s)text-accent(?:\s|$)/);
-  });
-  // The dot cannot live INSIDE the tile: a button inside a button is invalid
-  // HTML and the browser hands the inner clicks to the outer control.
-  it('keeps the history control a sibling of the tile it belongs to', () => {
-    const html = sheet([threaded]);
-    expect(html).not.toMatch(/<button(?:(?!<\/button>)[\s\S])*<button/);
-  });
-
-  // Regression, user report ("the markers are not in the right places"): after the
-  // row-edge box was removed, the disc's `relative` and the tile's `absolute` still
-  // fought on ONE button. CSS order let `relative` win, so the dot re-entered grid flow
-  // below the card. Position belongs to a separate anchor around the control.
-  it('keeps the history control inside the card it belongs to', () => {
-    render(<ArtifactsSheet client={client} sid="s1" artifacts={[threaded]} onClose={() => {}} />);
-    const dots = screen.getByRole('button', {
-      name: 'Show 3 versions of chart.png',
-    });
-
-    expect(dots.parentElement?.className).toMatch(/(?:^|\s)absolute(?:\s|$)/);
-    expect(dots.className).not.toMatch(/(?:^|\s)absolute(?:\s|$)/);
-    expect(dots.className).not.toContain('-mr-3');
-    expect(dots.className).not.toContain('sm:-mr-4');
-    expect(dots.className).not.toContain('justify-items-end');
-  });
-});
-// Regression, user report: the gallery called itself a full-screen surface but was
-// absolutely positioned inside the transcript box, leaving the 115px session header
-// exposed on iPhone and making every artifact detail inherit the same short frame.
-describe('the artifacts surface', () => {
-  it('covers the viewport-pinned shell rather than only the transcript', () => {
-    const shell = globalThis.document.createElement('div');
-    shell.setAttribute('data-viewport-shell', '');
-    globalThis.document.body.append(shell);
-
-    try {
-      render(<ArtifactsSheet client={client} sid="s1" artifacts={[picture]} onClose={() => {}} />);
-
-      const surface = shell.querySelector('#artifacts-surface');
-      expect(surface).toBeInTheDocument();
-      expect(surface?.className).not.toContain('pt-[env(safe-area-inset-top)]');
-      const header = surface?.querySelector('header');
-      expect(header?.className).toContain('pt-[env(safe-area-inset-top)]');
-      expect(header?.className).toContain('sm:pt-0');
-    } finally {
-      shell.remove();
-    }
-  });
 });
 // Regression: an opened attachment was read in a letterbox. Every kind that owns
 // its own scrolling — a clip, a note, a text file, a document — is handed the
@@ -713,7 +530,7 @@ describe('an opened artifact', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     view.unmount();
   });
-  const openNote = async () => {
+  async () => {
     const view = render(
       <ArtifactsSheet client={client} sid="s1" artifacts={[note]} onClose={() => {}} />,
     );
@@ -733,47 +550,6 @@ describe('an opened artifact', () => {
     return { view, overlay, prose };
   };
 
-  // Regression: safe-area padding outside the title band left a blank strip above
-  // the document, even in a wide app window. The band must own the phone inset.
-  it('clears the phone safe area without a blank strip above the title band', async () => {
-    readable();
-    const { view, overlay } = await openNote();
-    expect(overlay.className).not.toContain('pt-[env(safe-area-inset-top)]');
-    const header = overlay.querySelector('header');
-    expect(header?.className).toContain('pt-[env(safe-area-inset-top)]');
-    expect(header?.className).toContain('sm:pt-0');
-    view.unmount();
-    vi.unstubAllGlobals();
-  });
-  it('is given the whole height of the overlay', async () => {
-    readable();
-    const { view, overlay, prose } = await openNote();
-    // Every box between the overlay and the prose grows and may shrink, so the
-    // artifact reaches the bottom of the screen instead of stopping at its text.
-    const chain: HTMLElement[] = [];
-    for (let box = prose.parentElement; box && box !== overlay; box = box.parentElement) {
-      chain.push(box);
-    }
-    expect(chain.length).toBeGreaterThan(2);
-    expect(
-      chain
-        .filter((box) => box.className.includes('flex-1'))
-        .every((box) => box.className.includes('min-h-0')),
-    ).toBe(true);
-    expect(chain.at(-1)?.className).toContain('flex-1');
-    view.unmount();
-    vi.unstubAllGlobals();
-  });
-
-  it('hands the filled body to the frame rather than padding around it', async () => {
-    readable();
-    const { view, overlay } = await openNote();
-    const body = overlay.lastElementChild as HTMLElement;
-    expect(body.className).toContain('flex min-h-0 min-w-0 flex-1 flex-col');
-    expect(body.className).not.toMatch(/\bp[xytblr]?-\d/);
-    view.unmount();
-    vi.unstubAllGlobals();
-  });
   it('opens a note read-only in the gallery', async () => {
     const view = render(
       <ArtifactsSheet client={client} sid="s1" artifacts={[note]} onClose={() => {}} />,

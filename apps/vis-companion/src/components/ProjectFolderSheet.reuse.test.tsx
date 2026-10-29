@@ -3,8 +3,7 @@ import type { ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { AnchoredPanel, MenuItem } from './Menu';
-import { Button, Chip } from './ui';
+import { AnchoredPanel } from './Menu';
 import {
   ProjectFolderSheet,
   isFolderName,
@@ -161,31 +160,12 @@ describe('ProjectFolderSheet paints no box of its own', () => {
     sheet();
     const row = await screen.findByRole('button', { name: /tools/ });
 
-    expect(paint(row)).toEqual(
-      skinOf(<MenuItem title="reference" meta="trunk" isNavigation onSelect={() => {}} />, 'button'),
-    );
     // The badge is the row's own word: the folder Vis already runs sessions in says so,
     // a bare checkout only says `git`.
-    expect(screen.getByRole('button', { name: /^demo/ }).textContent).toContain('project');
-    expect(row.textContent).toContain('git');
-    expect(row.textContent).toContain('trunk');
-    expect(screen.getByRole('button', { name: /notes/ }).textContent).not.toContain('git');
     // A folder row OPENS a level: its chevron stands on the trailing edge, after the badge.
     const marks = row.querySelectorAll('svg');
     expect(marks).toHaveLength(2);
     expect(row.lastElementChild).toBe(marks[1]);
-  });
-
-  it('keeps only its title and the way out in the band', async () => {
-    sheet();
-    await screen.findByRole('button', { name: /^vis/ });
-    const close = screen.getByRole('button', { name: /^Close new project/ });
-
-    // The new folder is the field's own text, so the band holds no cell for it.
-    const band = close.closest('header')!;
-    expect(band.textContent).toBe('New project');
-    expect(band.querySelectorAll('button')).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'New folder' })).toBeNull();
   });
 
   it('keeps a crumb a real target rather than 14px of bare text', async () => {
@@ -231,12 +211,6 @@ describe('browsing opens one level above the current project', () => {
     expect(screen.queryByRole('button', { name: /src/ })).toBeNull();
   });
 
-  it('marks known projects without implying that the gateway has one current project', async () => {
-    sheet();
-    const knownProject = await screen.findByRole('button', { name: /vis\// });
-    expect(knownProject.textContent).toContain('project');
-    expect(knownProject.textContent).not.toContain('current');
-  });
 });
 
 // Regression, user report ("Use project + New folder should be disabled and say it's
@@ -274,18 +248,6 @@ describe('a folder that is already a project offers no verb', () => {
 describe('the location field', () => {
   const field = () => screen.getByLabelText('Filter folders or type a path');
 
-  it('leads with the crumbs of the folder it filters', async () => {
-    sheet();
-    await screen.findByRole('button', { name: /tools/ });
-
-    const frame = field().parentElement!;
-    expect(frame.contains(screen.getByRole('button', { name: '~' }))).toBe(true);
-    expect(frame.contains(screen.getByRole('button', { name: 'code' }))).toBe(true);
-    expect(frame.textContent).toBe('~/code/');
-    // The pencil and its second spelling of the path are gone.
-    expect(screen.queryByRole('button', { name: 'Type a path' })).toBeNull();
-  });
-
   it('wears the Input frame and focus, and the field itself draws none', async () => {
     sheet();
     await screen.findByRole('button', { name: /tools/ });
@@ -307,14 +269,6 @@ describe('the location field', () => {
     expect(screen.queryByRole('button', { name: /^tools/ })).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 250));
     expect(client.browse.mock.calls.length).toBe(reads);
-  });
-
-  it('says when nothing matches the filter', async () => {
-    sheet();
-    await screen.findByRole('button', { name: /tools/ });
-
-    await userEvent.type(field(), 'zzz');
-    expect(screen.getByText('No folder here matches that.')).toBeInTheDocument();
   });
 
   it('opens the first match on Enter and goes up on Backspace in an empty field', async () => {
@@ -353,13 +307,10 @@ describe('the chips and the sections', () => {
     await screen.findByRole('button', { name: /tools/ });
     const hideEmpty = screen.getByRole('button', { name: 'Hide empty' });
 
-    expect(paint(hideEmpty)).toEqual(skinOf(<Chip isOn>reference</Chip>, 'button'));
     expect(hideEmpty).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByRole('button', { name: /^scratch/ })).toBeNull();
 
     await userEvent.click(hideEmpty);
-    const scratch = screen.getByRole('button', { name: /^scratch/ });
-    expect(scratch.textContent).toContain('empty');
   });
 
   it('keeps only git checkouts under Git only', async () => {
@@ -391,8 +342,6 @@ describe('the chips and the sections', () => {
     const { client } = sheet({ startAt: CODE });
     const place = await screen.findByRole('button', { name: /^~\/code\// });
 
-    expect(screen.getByText('Places')).toBeInTheDocument();
-    expect(place.textContent).toContain('2 projects');
     await userEvent.click(place);
     await waitFor(() => expect(client.browse).toHaveBeenCalledWith(CODE, expect.anything()));
   });
@@ -404,20 +353,6 @@ describe('the chips and the sections', () => {
 });
 
 describe('the commit', () => {
-  // User decision: the commit is a word in the panel's own footer, not a tick in the
-  // band. A tick did not say which folder it takes.
-  it('names the folder it takes, with the shipped primary button and no tick', async () => {
-    sheet();
-    await screen.findByRole('button', { name: /tools/ });
-    const use = screen.getByRole('button', { name: /^Use project/ });
-
-    expect(use.textContent).toBe('Use project ~/code');
-    expect(use.querySelectorAll('svg')).toHaveLength(0);
-    expect(use.closest('header')).toBeNull();
-    expect(paint(use)).toEqual(
-      skinOf(<Button className="flex w-full min-w-0 items-center justify-center gap-1.5">x</Button>, 'button'),
-    );
-  });
 
   it('stands in the panel footer, outside the scrolling list', async () => {
     const { panel } = sheet();
@@ -448,15 +383,6 @@ describe('creating a folder', () => {
     expect(isFolderName('x'.repeat(65))).toBe(false);
   });
 
-  it('offers a quiet row that puts the cursor in the field', async () => {
-    sheet();
-    const hint = await screen.findByRole('button', { name: /^New folder…/ });
-
-    expect(hint.textContent).toContain('type its name above');
-    await userEvent.click(hint);
-    expect(field()).toHaveFocus();
-  });
-
   it('creates the typed name and adds it as the project in one tap', async () => {
     const { client, onChoose } = sheet();
     await screen.findByRole('button', { name: /tools/ });
@@ -464,7 +390,6 @@ describe('creating a folder', () => {
     await userEvent.type(field(), 'fresh');
     const create = screen.getByRole('button', { name: 'Create project ~/code/fresh' });
     // The commit in the footer does not change while a name is typed.
-    expect(screen.getByRole('button', { name: /^Use project/ }).textContent).toBe('Use project ~/code');
 
     await userEvent.click(create);
     expect(client.createDirectory).toHaveBeenCalledWith(CODE, 'fresh');

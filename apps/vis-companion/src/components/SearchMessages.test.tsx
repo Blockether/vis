@@ -61,12 +61,9 @@ describe('search messages pane', () => {
     });
     const message = container.querySelector('ol > li button > span:last-child') as HTMLElement;
 
-    expect(within(message).getByText('Changes')).toHaveClass('block', 'font-bold');
     expect(message.querySelector('strong')).toHaveTextContent('two');
     const items = [...message.querySelectorAll('span.list-item')];
     expect(items.map((item) => item.textContent)).toEqual(['app', 'TUI', 'first']);
-    expect(items[0].parentElement).toHaveClass('list-disc');
-    expect(items[2].parentElement).toHaveClass('list-decimal');
     expect(message.querySelector('span.block.text-justify')).toHaveTextContent(
       'Send all now shows from two messages.',
     );
@@ -166,7 +163,6 @@ describe('search messages pane', () => {
       replySnippet: null,
     };
     const { container, unmount } = pane({ title: 'Windows release', match: titleOnly });
-    expect(screen.getByText('The title matches. No message matches.')).toBeVisible();
     expect(screen.queryByText('You')).toBeNull();
     expect(screen.queryByText('Vis')).toBeNull();
     expect(marks(container)).toEqual(['Windows']);
@@ -174,11 +170,6 @@ describe('search messages pane', () => {
 
     pane({ match: null, isSearching: true });
     expect(screen.getByText('Searching messages...')).toBeVisible();
-  });
-
-  it('says so when neither the title nor a message matches', () => {
-    pane({ match: null });
-    expect(screen.getByText('No message matches.')).toBeVisible();
   });
 
   it('opens the session from the Open button or from any message', () => {

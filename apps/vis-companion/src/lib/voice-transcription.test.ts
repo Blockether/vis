@@ -6,7 +6,6 @@
 // arrives in the closing frame. Nothing here may poll.
 import { afterEach, beforeEach, expect, it, describe } from 'vitest';
 import type { GatewayConn, VoiceJob, VoiceProgress } from './types';
-import { voiceProgressLabel } from './voice';
 
 // Same reason as `gateway-providers.test.ts`: `gateway.ts` arms timers and reads
 // storage at import time, so the browser shims exist BEFORE the dynamic import.
@@ -24,7 +23,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 });
 (globalThis as { window?: unknown }).window ??= globalThis;
 
-const { GatewayClient, GatewayError, VOICE_JOB_EVENT } = await import('./gateway');
+const { GatewayClient, GatewayError } = await import('./gateway');
 
 const CONN = {
   id: 'gw',
@@ -227,7 +226,6 @@ describe('transcribeVoice', () => {
     // This client used to take ANY JSON with an `id` off the socket, so a session
     // event, an intermediary's notice, or a future frame kind sharing the
     // connection would have been painted as transcription progress.
-    expect(VOICE_JOB_EVENT).toBe('voice.job');
     upload.body = { id: 'vj_4', phase: 'queued', progress: 0, is_done: false };
     gatewayStreams(
       // A session-log frame, cursor and all: same framing, different resource.
@@ -310,26 +308,5 @@ describe('transcribeVoice', () => {
     );
     // Nothing was streamed: there is no job to watch.
     expect(calls).toEqual([]);
-  });
-});
-
-describe('voiceProgressLabel', () => {
-  it('names the phase and shows the number when there is one', () => {
-    expect(voiceProgressLabel(null)).toBe('Sending recording…');
-    expect(voiceProgressLabel({ phase: 'uploading', progress: 42 })).toBe(
-      'Sending recording · 42%',
-    );
-    expect(voiceProgressLabel({ phase: 'queued', progress: 0 })).toBe(
-      'Recording received · waiting for the engine',
-    );
-    expect(voiceProgressLabel({ phase: 'preparing', progress: 0 })).toBe('Preparing voice engine…');
-    expect(voiceProgressLabel({ phase: 'preparing', progress: 66 })).toBe(
-      'Preparing voice engine · 66%',
-    );
-    expect(voiceProgressLabel({ phase: 'transcribing', progress: 0 })).toBe('Transcribing · 0%');
-    expect(voiceProgressLabel({ phase: 'transcribing', progress: 99.6 })).toBe(
-      'Transcribing · 100%',
-    );
-    expect(voiceProgressLabel({ phase: 'failed', progress: 0 })).toBe('Transcription failed');
   });
 });

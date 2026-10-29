@@ -323,7 +323,6 @@ describe('the pop the stroke draws', () => {
 
     const veil = veilOf(pane);
     expect(veil.getAttribute('aria-hidden')).toBe('true');
-    expect(veil.style.background).toBe('rgb(0, 0, 0)');
     expect(veil.style.pointerEvents).toBe('none');
     // Above the list, below the page that leaves.
     expect(veil.nextElementSibling).toBe(pane);

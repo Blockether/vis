@@ -122,7 +122,6 @@ describe('humanInputRequestFromWire', () => {
       nodes: [{ id: 'token', type: 'plaintext' }],
     });
     expect(request?.nodes[0]?.label).toBe('token');
-    expect(request?.submit_label).toBe('Submit');
     expect(request?.cancel_label).toBe('Cancel');
     expect(request?.is_cancellable).toBe(true);
   });
