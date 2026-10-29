@@ -67,8 +67,11 @@
     (.refresh screen Screen$RefreshType/DELTA)))
 
 (def section-order
-  "Stable paint/layout order for the complete application frame."
-  [:header :header-gap :transcript :attachments :echo :composer :footer])
+  "Stable paint/layout order for the complete application frame.
+
+   The attachment rail touches the prompt, so the echo row sits above it,
+   under the agent dock."
+  [:header :header-gap :transcript :dock :echo :attachments :composer :footer])
 
 (defn- checked-size
   ^long [label value]
@@ -106,15 +109,15 @@
 
 (defn layout
   "Resolve the complete screen into integer cell rectangles through Lanterna's
-   `GridLayout`. Fixed heights are `:header`, `:attachments`, `:composer`, and
-   `:footer`; the transcript receives every remaining row. Optional `painters`
+   `GridLayout`. Fixed heights are `:header`, `:dock`, `:attachments`, `:composer`,
+   and `:footer`; the transcript receives every remaining row. Optional `painters`
    maps section IDs to `(fn [graphics component])` callbacks. Their graphics keep
    root-screen coordinates for the existing painters but are clipped by the real
    laid-out component."
   ([cols rows heights] (layout cols rows heights {}))
   ([cols rows
-    {:keys [header attachments composer footer] :or {header 0 attachments 0 composer 0 footer 2}}
-    painters]
+    {:keys [header dock attachments composer footer]
+     :or {header 0 dock 0 attachments 0 composer 0 footer 2}} painters]
    (let [cols
          (checked-size :columns cols)
 
@@ -125,6 +128,7 @@
          {:header (checked-size :header header)
           :header-gap 1
           :transcript 0
+          :dock (checked-size :dock dock)
           :echo 1
           :attachments (checked-size :attachments attachments)
           :composer (checked-size :composer composer)

@@ -3944,25 +3944,56 @@ therapy line 2"
         (expect (str/starts-with? limits-row "  Limits"))
         (expect (str/ends-with? limits-row "~$0.0042  "))))))
 
-(defdescribe composer-attachment-geometry-test
-             ;; #249: only item rows and the two borders belong above the prompt.
-             (it "reserves compact attachment panels above the prompt on every render path"
-                 (doseq [[attachments rail-h] [[[] 0] [[{:id "a"}] 3] [[{:id "a"} {:id "b"}] 4]]]
-                   (let [geometry (#'screen/composer-geometry
-                                   {:input (input/empty-input) :attachments attachments}
-                                   80
-                                   30)]
-                     (expect (= {:text-rows 1
-                                 :input-box-h 3
-                                 :composer-h (+ 3 rail-h)
-                                 :input-top 25
-                                 ;; The echo row sits under the dock and the rail, above the prompt.
-                                 :rail-top (- 24 rail-h)
-                                 :rail-h rail-h
-                                 :echo-row 24
-                                 :messages-bottom (- 24 rail-h)
-                                 :footer-row 28}
-                                geometry))))))
+(defdescribe
+  composer-attachment-geometry-test
+  ;; #249: only item rows and the two borders belong above the prompt.
+  (it "reserves compact attachment panels above the prompt on every render path"
+      (doseq [[attachments rail-h] [[[] 0] [[{:id "a"}] 3] [[{:id "a"} {:id "b"}] 4]]]
+        (let [geometry (#'screen/composer-geometry
+                        {:input (input/empty-input) :attachments attachments}
+                        80
+                        30)]
+          (expect (= {:text-rows 1
+                      :input-box-h 3
+                      :composer-h (+ 3 rail-h)
+                      :input-top 25
+                      ;; The rail touches the prompt; the echo row sits above the rail.
+                      :rail-top (- 25 rail-h)
+                      :rail-h rail-h
+                      :dock-top (- 24 rail-h)
+                      :dock-h 0
+                      :echo-row (- 24 rail-h)
+                      :messages-bottom (- 24 rail-h)
+                      :footer-row 28}
+                     geometry)))))
+  (it "paints the rail's bottom border directly on the prompt's top rule"
+      (let [db
+            {:input (input/empty-input)
+             :attachments [{:id "a" :filename "shot.png" :media-type "image/png" :size 10}]
+             :scroll scroll/follow
+             :settings {}
+             :messages []}
+
+            capture
+            (binding [interactions/hit-map (interactions/create-hit-map)]
+              (with-redefs [state/app-db (atom db)
+                            timg/images-protocol (constantly nil)]
+
+                (cap/capture! {:cols 80
+                               :rows 30
+                               :paint! (fn [{:keys [screen terminal]}]
+                                         (#'screen/render-frame! screen 80 30 db 1000)
+                                         (subvec (term/grid terminal) 21 26))})))
+
+            [echo rail-top rail-row rail-bottom prompt-top]
+            (:ret capture)]
+
+        (expect (nil? (:error capture)) (str (:error capture)))
+        (expect (not (str/includes? echo "Attachments")) "the echo row stays above the rail")
+        (expect (str/includes? rail-top "Attachments"))
+        (expect (str/includes? rail-row "shot.png"))
+        (expect (str/starts-with? rail-bottom "└"))
+        (expect (= (apply str (repeat 80 "─")) prompt-top)))))
 
 (defdescribe
   compact-activity-copy-test

@@ -3251,25 +3251,32 @@
         input-top
         (- footer-row input-box-h)
 
-        ;; The echo row sits under the agent dock, directly above the prompt.
-        echo-row
-        (dec input-top)
-
-        ;; The agent dock stands above the attachment rail, inside the same band.
+        ;; The attachment rail touches the prompt, so the two read as one control.
         rail-h
-        (+ (attachment-rail/rail-height (:attachments db))
-           (agent-team/dock-height (get-in db [:session :id]) (running-turn-id db) cols))
+        (attachment-rail/rail-height (:attachments db))
 
         rail-top
-        (- echo-row rail-h)]
+        (- input-top rail-h)
+
+        ;; The echo row sits under the agent dock, directly above the rail.
+        echo-row
+        (dec rail-top)
+
+        dock-h
+        (agent-team/dock-height (get-in db [:session :id]) (running-turn-id db) cols)
+
+        dock-top
+        (- echo-row dock-h)]
 
     {:text-rows text-rows
      :input-box-h input-box-h
-     :composer-h (+ input-box-h rail-h)
+     :composer-h (+ input-box-h rail-h dock-h)
      :input-top input-top
      :rail-top rail-top
      :rail-h rail-h
-     :messages-bottom rail-top
+     :dock-top dock-top
+     :dock-h dock-h
+     :messages-bottom dock-top
      :footer-row footer-row
      :echo-row echo-row}))
 
@@ -3295,25 +3302,19 @@
   [db cols key]
   (or (not (project-sidebar-locked? db cols)) (and (:help-open? db) (projects/help-key? db key))))
 
+(defn- paint-agent-dock!
+  "Paint the agent dock of the session at `dock-top`, above the echo row."
+  [g db dock-top cols]
+  (agent-team/draw-dock! g (get-in db [:session :id]) (running-turn-id db) dock-top cols))
+
 (defn- paint-attachment-rail!
-  "Paint the agent dock, then the attachment rail below it."
+  "Paint the attachment rail at `rail-top`, directly above the prompt."
   [g db rail-top cols]
-  (let [sid
-        (get-in db [:session :id])
-
-        running-turn
-        (running-turn-id db)
-
-        dock-h
-        (agent-team/dock-height sid running-turn cols)]
-
-    (agent-team/draw-dock! g sid running-turn rail-top cols)
-    (attachment-rail/draw! g
-                           (:attachments db)
-                           (+ (long rail-top) dock-h)
-                           cols
-                           {:focused? (:attachment-focus? db)
-                            :focused-index (:attachment-index db)})))
+  (attachment-rail/draw! g
+                         (:attachments db)
+                         rail-top
+                         cols
+                         {:focused? (:attachment-focus? db) :focused-index (:attachment-index db)}))
 
 (defn- paint-composer!
   [g input input-top text-rows cols]
@@ -3325,8 +3326,9 @@
    painters as separate GridLayout children; this helper remains the focused
    test/modal entry point."
   [^TerminalScreen screen g db
-   {:keys [input input-top rail-top text-rows cols now-ms echo-row footer-row slash-suggestions
-           slash-command-index]}]
+   {:keys [input input-top dock-top rail-top text-rows cols now-ms echo-row footer-row
+           slash-suggestions slash-command-index]}]
+  (paint-agent-dock! g db dock-top cols)
   (paint-attachment-rail! g db rail-top cols)
   (let [[cx cy] (paint-composer! g input input-top text-rows cols)]
     (footer/draw-echo-area! g db echo-row cols now-ms)
@@ -3432,7 +3434,7 @@
         g
         (frame/surface-graphics screen cols rows)
 
-        {:keys [^long text-rows ^long input-box-h ^long composer-h ^long rail-h]}
+        {:keys [^long text-rows ^long input-box-h ^long composer-h ^long rail-h ^long dock-h]}
         (composer-geometry db cols rows)
 
         paint-context
@@ -3442,6 +3444,7 @@
         (frame/layout cols
                       rows
                       {:header (header/header-rows db)
+                       :dock dock-h
                        :attachments rail-h
                        :composer input-box-h
                        :footer footer/height}
@@ -3475,6 +3478,9 @@
 
         echo-row
         (get-in section-bounds [:echo :row])
+
+        dock-top
+        (get-in section-bounds [:dock :row])
 
         rail-top
         (get-in section-bounds [:attachments :row])
@@ -3640,6 +3646,8 @@
                         (paint-content-loading! graphics cols messages-top messages-bottom now-ms)))
                     :header (fn [graphics _]
                               (header/draw-header! graphics db header-top cols))
+                    :dock (fn [graphics _]
+                            (paint-agent-dock! graphics db dock-top cols))
                     :attachments (fn [graphics _]
                                    (paint-attachment-rail! graphics db rail-top cols))
                     :composer (fn [graphics _]
@@ -4329,8 +4337,8 @@
         rows
         (long rows)
 
-        {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row ^long messages-bottom
-                ^long footer-row]}
+        {:keys [^long text-rows ^long input-top ^long dock-top ^long rail-top ^long echo-row
+                ^long messages-bottom ^long footer-row]}
         (composer-geometry db cols rows)
 
         ;; Keep partial-frame geometry identical to `render-frame!`; even a one-row
@@ -4559,6 +4567,7 @@
           ;; AFTER the commit (as before) left those regions in an uncommitted
           ;; staging buffer that the next `begin-frame!` dropped — so the footer
           ;; buttons were never clickable on the live/partial render path.
+          (paint-agent-dock! g db dock-top cols)
           (paint-attachment-rail! g db rail-top cols)
           (footer/draw-echo-area! g db echo-row cols now-ms)
           (footer/draw-footer! g db footer-row cols now-ms)
@@ -4829,7 +4838,8 @@
         g
         (frame/surface-graphics screen cols rows)
 
-        {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row ^long footer-row]}
+        {:keys [^long text-rows ^long input-top ^long dock-top ^long rail-top ^long echo-row
+                ^long footer-row]}
         (composer-geometry db cols rows)
 
         slash-suggestions
@@ -4843,6 +4853,7 @@
                          db
                          {:input input
                           :input-top input-top
+                          :dock-top dock-top
                           :rail-top rail-top
                           :text-rows text-rows
                           :cols cols

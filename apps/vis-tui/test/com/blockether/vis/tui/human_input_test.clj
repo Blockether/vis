@@ -1569,7 +1569,8 @@
      db
      {:input {:lines ["hello draft"] :crow 0 :ccol 11}
       :input-top 24
-      ;; No attachments and no agent questions: the rail band is empty.
+      ;; No attachments and no agent dock: both bands are empty.
+      :dock-top 23
       :rail-top 24
       :text-rows 1
       :cols 80
