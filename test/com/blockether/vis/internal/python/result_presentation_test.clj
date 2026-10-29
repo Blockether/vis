@@ -153,7 +153,6 @@
    "created_at" 0
    "source" "host"
    "ping" []
-   "kind" "coordination"
    "title" "Review cancellation"
    "content" "Keep the existing cancellation boundary."})
 
@@ -174,7 +173,7 @@
                                      "assert json.dumps(q) == before\n"
                                      "assert json.loads(before) == dict(q)\n"
                                      "assert q['replies'][2]['reply_entry_id'] == 8"))]
-          (doseq [text [op "Entry #7" "thread #1" "coordination" "fixture-group" "fixture-author"
+          (doseq [text [op "Entry #7" "thread #1" "fixture-group" "fixture-author"
                         "Review cancellation" "Keep the existing cancellation boundary."
                         "reply_required=True" "reply_to=#3" "pending=1" "delivered=1" "peer-a"
                         "replied=1" "reply_entry_id=8" "notified-peer"]]
@@ -232,12 +231,11 @@
       (let [out (check-result {"op" "council.threads"
                                "entries" [{"thread_id" 7
                                            "title" "Recover retries"
-                                           "kind" "complain"
                                            "author_session_id" "fixture-author"}]
                                "after" 7
                                "has_more" false}
                               "print(r)")]
-        (doseq [text ["Thread #7" "Recover retries" "complain" "has_more=False"]]
+        (doseq [text ["Thread #7" "Recover retries" "has_more=False"]]
           (expect (str/includes? out text) text)))
       (let [out (check-result {"op" "council.read" "entries" [] "after" 0 "has_more" false}
                               "print(r)")]

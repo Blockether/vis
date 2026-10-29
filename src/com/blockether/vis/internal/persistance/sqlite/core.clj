@@ -5138,7 +5138,6 @@
     (assoc :council
       {:entry-id (:council_entry_id row)
        :thread-id (or (:council_thread_id row) (:council_entry_id row))
-       :kind (->kw-back (:council_kind row))
        :content (:council_content row)
        :title (:council_title row)
        :author-session-id (:council_author_sid row)
@@ -5166,11 +5165,11 @@
   ;; no `title` column. Display layers fall back to `:user_request`
   ;; or the session-level title.
   {:select [:qs.id :qs.session_state_id :qs.position :qs.user_request :qs.request_kind
-            :qs.council_entry_id [:ce.thread_id :council_thread_id] [:ce.kind :council_kind]
-            [:ce.content :council_content] [:ce.title :council_title]
-            [:ce.author_sid :council_author_sid] [:ce.source :council_source]
-            [:ce.reply_required :council_reply_required] [:qs.created_at :soul_created_at]
-            [:qs.id :soul_id] :qst.status :qst.content_json :qst.iteration_count :qst.duration_ms
+            :qs.council_entry_id [:ce.thread_id :council_thread_id] [:ce.content :council_content]
+            [:ce.title :council_title] [:ce.author_sid :council_author_sid]
+            [:ce.source :council_source] [:ce.reply_required :council_reply_required]
+            [:qs.created_at :soul_created_at] [:qs.id :soul_id] :qst.status :qst.content_json
+            :qst.iteration_count :qst.duration_ms
             ;; Phase B canonical columns on session_turn_state.
             :qst.input_tokens :qst.input_regular_tokens :qst.input_cache_write_tokens
             :qst.input_cache_read_tokens :qst.output_tokens :qst.output_reasoning_tokens
@@ -7063,7 +7062,6 @@
                                    :order-by [:entry_id :recipient_sid]})))]
     (mapv (fn [row]
             (cond-> {:entry_id (:id row)
-                     :kind (:kind row)
                      :thread_id (or (:thread_id row) (:id row))
                      :group_id (:group_id row)
                      :author_session_id (:author_sid row)
@@ -7199,7 +7197,7 @@
         rows
         (into (if root [root] [])
               (query! db
-                      {:select (if roots? [:id :kind :title :author_sid :created_at] [:*])
+                      {:select (if roots? [:id :title :author_sid :created_at] [:*])
                        :from [:council_entry]
                        :where (cond-> [:and [:= :group_id gid] [:> :id after]]
                                 roots?
@@ -7214,7 +7212,6 @@
       (mapv (fn [r]
               {:thread_id (:id r)
                :title (:title r)
-               :kind (:kind r)
                :author_session_id (:author_sid r)
                :created_at (:created_at r)})
             rows)
@@ -7234,10 +7231,9 @@
             (:reply_to row)
             (assoc :reply_to (:reply_to row))))
         (query! db
-                {:select [[:e.id :entry_id] :e.kind [[:coalesce :e.thread_id :e.id] :thread_id]
-                          :e.group_id [:e.author_sid :author_session_id] :e.created_at :e.source
-                          :e.source_ref :e.reply_required :e.reply_to
-                          [[:substr :e.content 1 1025] :content]
+                {:select [[:e.id :entry_id] [[:coalesce :e.thread_id :e.id] :thread_id] :e.group_id
+                          [:e.author_sid :author_session_id] :e.created_at :e.source :e.source_ref
+                          :e.reply_required :e.reply_to [[:substr :e.content 1 1025] :content]
                           [[:raw "length(CAST(e.content AS BLOB))"] :content_bytes]]
                  :from [[:council_ping :p]]
                  :join [[:council_entry :e] [:= :e.id :p.entry_id]]

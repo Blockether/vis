@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Settings: Subagents is a stable setting under Council and is on by default. While Council is off, subagents are off and their row is locked.
 - TUI: settings rows have no leading mark, because the value column gives the state. Each header is bold and has one blank line above it. Subsection names line up with the setting names under them.
 
+### Removed
+- Council messages have no kind. `council.publish` and `council.wake` refuse a `kind` argument, and entries and threads have no `kind` field. The TUI and the Companion no longer show a kind label on a Council turn.
+- At its first start, Vis drops the `kind` column of Council entries. An old automatic complaint now has the source `host`.
+
 ### Fixed
 - Python SDK: `vis.ui.table` refuses text columns where you write them and names the `vis.ui.table_column` fix. The test recorder refuses a live group without an id, as the engine does. Both test hosts drop the selection of rows that a clear or remove takes away (#428).
 - TUI: scrolling a turn with large Activity output and code results is fast again. A frame clips and anchors only the rows that changed.

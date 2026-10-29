@@ -4896,12 +4896,6 @@ function CouncilRequestBody({ children }: { children: string }) {
   );
 }
 
-const councilKindLabel: Record<CouncilRequest['kind'], string> = {
-  coordination: 'Coordination',
-  informational: 'Information',
-  complain: 'Complaint',
-};
-
 function UserRequestText({ text }: { text: string }) {
   // Keep authored breaks and literal spacing. Native justification keeps ordinary lines
   // aligned without collapsing their spaces.
@@ -5054,7 +5048,7 @@ export const UserMessage = memo(function UserMessage({
           {requestKind === 'council' ? 'Council' : 'You'}
           {requestKind === 'council' &&
             council &&
-            ` · ${councilKindLabel[council.kind]} · Thread #${council.thread_id}`}
+            ` · Thread #${council.thread_id}`}
         </span>
         <TurnStamp position={position} createdAt={createdAt} />
       </div>

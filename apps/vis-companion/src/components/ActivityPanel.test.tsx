@@ -166,7 +166,6 @@ it.each([
   expect(screen.queryByRole('table')).toBeNull();
   for (const metadata of [
     'Activity review',
-    'informational',
     'Created at',
     'Source',
     'Replies',

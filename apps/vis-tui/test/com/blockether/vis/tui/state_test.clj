@@ -4658,12 +4658,12 @@
                                      :request "from web"
                                      :started-at-ms 777
                                      :request-kind :council
-                                     :council {"kind" "coordination"}}])
+                                     :council {"thread_id" 42}}])
                    (let [db @state/app-db]
                      (expect (true? (:loading? db)))
                      (expect (= "t9" (:gateway-turn-id db)))
                      (expect (= :council (:request-kind (first (:messages db)))))
-                     (expect (= {"kind" "coordination"} (:council (first (:messages db)))))
+                     (expect (= {"thread_id" 42} (:council (first (:messages db)))))
                      (expect (= 777 (:turn-start-ms db))))))
              (it "no-ops when the tab is already mid-turn"
                  (reset! state/app-db {:session {:id "s1"}

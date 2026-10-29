@@ -25,7 +25,7 @@
 (def ^:private child-code
   "A child answers each Council request of its parent before its turn can end."
   (str "for item in session['council']['pending_replies']:\n"
-       "    await council.publish('sub-answer', kind='informational', "
+       "    await council.publish('sub-answer', "
        "reply_to=item['entry_id'])\n" "print('child-replied')\n"))
 
 (def ^:private probe-code

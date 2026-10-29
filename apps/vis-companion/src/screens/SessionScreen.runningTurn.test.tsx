@@ -70,7 +70,6 @@ describe('Council transcript requests', () => {
     const council = {
       entry_id: 42,
       thread_id: 42,
-      kind: 'coordination' as const,
       content: 'Actual peer request',
     };
     renderSessionScreen({
@@ -99,7 +98,7 @@ describe('Council transcript requests', () => {
     await waitFor(() => {
       const heading = document.querySelector('article .text-you-role');
       expect(heading).toHaveTextContent('Council');
-      expect(heading).toHaveTextContent('Coordination');
+      expect(heading).toHaveTextContent('Council · Thread #42');
     });
   });
 });

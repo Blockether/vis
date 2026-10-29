@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 from blockether.vis._contracts import validate
 
 from ._agents import Subagent, SubagentRecord
-
-CouncilKind = Literal["complain", "coordination", "informational"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +51,6 @@ class CouncilReply:
 @dataclass(frozen=True, slots=True)
 class CouncilEntry:
     entry_id: int
-    kind: CouncilKind
     thread_id: int
     group_id: str | None
     content: str
@@ -94,7 +91,6 @@ class CouncilMember:
 @dataclass(frozen=True, slots=True)
 class CouncilThread:
     thread_id: int
-    kind: CouncilKind
     title: str
     author_session_id: str
     created_at: int
@@ -160,7 +156,6 @@ class Council:
         self,
         content: str,
         *,
-        kind: CouncilKind,
         thread_id: int | None = None,
         title: str | None = None,
         ping: list[str] | str | None = None,
@@ -173,10 +168,6 @@ class Council:
 
         Args:
             content: Message text. Keep secrets and private data out of messages.
-            kind: `coordination` for work and questions, `informational` for
-                findings, or `complain` for failures and concrete improvements.
-                Include sanitized evidence, expected versus actual behavior, impact
-                and a workaround. Keep facts apart from guesses.
             thread_id: Existing thread to continue. Omit it to start a new thread.
             title: Optional readable title for the message.
             ping: Session IDs, `"all"` for active peers, or no recipients. Explicit
@@ -196,14 +187,13 @@ class Council:
             Pending, delivered and unavailable states are not completed answers.
             Inspect the entry later with `get` to see replies and their states.
 
-        Each message owns its kind and host-generated `source_ref`. That reference
-        identifies this publication, not a reported incident. When you report an
-        incident, include the original session and turn/iteration/form. Follow-ups and
+        Each message owns its host-generated `source_ref`. That reference identifies
+        this publication, not a reported incident. When you report an incident,
+        include the original session and turn/iteration/form. Follow-ups and
         acknowledgements do not grant wake rights.
         """
         body = {
             "content": content,
-            "kind": kind,
             "group_id": self.group_id,
             "activation_id": self._activation_id,
             "idempotency_key": str(uuid4())
@@ -387,7 +377,6 @@ class Council:
         self,
         content: str,
         *,
-        kind: CouncilKind,
         thread_id: int | None = None,
         title: str | None = None,
         idempotency_key: str | None = None,
@@ -400,7 +389,6 @@ class Council:
         """
         body = {
             "content": content,
-            "kind": kind,
             "group_id": self.group_id,
             "idempotency_key": str(uuid4())
             if idempotency_key is None
@@ -420,7 +408,7 @@ class Council:
         return CouncilEntry.from_wire(self._call("POST", "/wake", body=body))
 
     def threads(self, *, after: int = 0, limit: int = 50) -> CouncilPage:
-        """List roots and their kind in entry-ID order. Replies do not reorder roots."""
+        """List roots in entry-ID order. Replies do not reorder roots."""
         query = {"after": after, "limit": limit}
         validate("council", "page_request", query)
         return CouncilPage.from_wire(

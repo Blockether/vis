@@ -1437,7 +1437,6 @@ export type RequestKind = 'user' | 'council';
 export interface CouncilRequest {
   entry_id: number;
   thread_id: number;
-  kind: 'coordination' | 'informational' | 'complain';
   content: string;
   title?: string | null;
   author_session_id?: string;

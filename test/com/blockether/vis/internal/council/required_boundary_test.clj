@@ -56,26 +56,24 @@
                          db
                          #(council/runtime db)
                          {:session-id aid :activation-id (:activation-id active) :source "sdk"}
-                         {:kind "coordination"
-                          :content "Do you have evidence for the reported issue?"
+                         {:content "Do you have evidence for the reported issue?"
                           :ping [bid]
                           :reply_required true})
                tid (ps/db-store-session-turn! db
                                               {:parent-session-id (:session-id b)
                                                :user-request "Continue your task"})
                reply-at (if (#{:research :read-final} first-action) 3 2)
-               reply-code
-               (str "pending = session['council']['pending_replies']\n"
-                    "assert len(pending) == 1\n"
-                    "assert pending[0]['entry_id'] == "
-                    (:entry_id request)
-                    "\n"
-                    "assert pending[0]['due_iteration'] == 1\n"
-                    "await council.publish('I do not have evidence.', kind='informational', "
-                    reply-mode
-                    "="
-                    (:entry_id request)
-                    ")\n")
+               reply-code (str "pending = session['council']['pending_replies']\n"
+                               "assert len(pending) == 1\n"
+                               "assert pending[0]['entry_id'] == "
+                               (:entry_id request)
+                               "\n"
+                               "assert pending[0]['due_iteration'] == 1\n"
+                               "await council.publish('I do not have evidence.', "
+                               reply-mode
+                               "="
+                               (:entry_id request)
+                               ")\n")
                result
                (with-redefs
                  [svar/ask-code!
@@ -170,14 +168,12 @@
           (with-redefs [toggles/enabled? (fn [id]
                                            (= "council" id))]
             (let [active (get (council/runtime db) cid)
-                  question (council/publish!
-                             db
-                             #(council/runtime db)
-                             {:session-id cid :activation-id (:activation-id active) :source "sdk"}
-                             {:kind "coordination"
-                              :content "Keep the old API or remove it?"
-                              :ping [lid]
-                              :reply_required true})
+                  question
+                  (council/publish!
+                    db
+                    #(council/runtime db)
+                    {:session-id cid :activation-id (:activation-id active) :source "sdk"}
+                    {:content "Keep the old API or remove it?" :ping [lid] :reply_required true})
                   entry-id (:entry_id question)
                   tid (ps/db-store-session-turn! db
                                                  {:parent-session-id (:session-id leader)
@@ -196,7 +192,7 @@
                                        [{:id "reply"
                                          :name "python_execution"
                                          :input {:code (str "await council.publish('Keep it.', "
-                                                            "kind='informational', reply_to="
+                                                            "reply_to="
                                                             entry-id
                                                             ")")}}]}
                                       {:stop-reason :end

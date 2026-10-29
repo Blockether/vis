@@ -19,7 +19,7 @@
             (document/schema-document "council")
 
             message
-            {"kind" "informational" "content" "Check the canonical schema"}
+            {"content" "Check the canonical schema"}
 
             recipients
             (mapv #(str "session-" %) (range 256))]

@@ -326,9 +326,24 @@
 
    `session_soul.last_opened_at` held the last time a person opened a session.
    Recency follows the newest sent message alone, so opening a session must not
-   move it."
+   move it.
+
+   `council_entry.kind` classified each message as a complaint, coordination or
+   information. Council messages have no kind any more."
   [["session_turn_iteration" "llm_assistant_message"] ["session_attachment" "classification"]
-   ["session_attachment" "activity_anchor"] ["session_soul" "last_opened_at"]])
+   ["session_attachment" "activity_anchor"] ["session_soul" "last_opened_at"]
+   ["council_entry" "kind"]])
+
+(def ^:private retired-values
+  "Values a narrowed CHECK no longer admits, as `[table column old new]`.
+
+   They are rewritten BEFORE the column is realigned: the realignment copies every
+   value into the narrower column, and one refused value rolls it all back.
+
+   `council_entry.source = 'autocomplain'` marked the complaint that the host
+   published itself after a failed `python_execution`. The host wrote it, so it
+   reads as `host` now that Council has no complaints."
+  [["council_entry" "source" "autocomplain" "host"]])
 
 (def ^:private retired-rows
   "Rows DELETED before the column that identifies them is retired, as
@@ -600,6 +615,22 @@
              (.executeUpdate st (str "DELETE FROM " table " WHERE " predicate)))
            (catch Throwable _ nil)))))
 
+(defn- rewrite-retired-values!
+  "Rewrite every `retired-values` entry a store still holds. Best effort: a store
+   without the column has nothing to rewrite."
+  [^DataSource ds]
+  (with-open [conn (.getConnection ds)]
+    (doseq [[^String table ^String column ^String old ^String new] retired-values
+            :when (contains? (existing-columns conn table) (str/lower-case column))]
+
+      (try (with-open [st (.prepareStatement
+                            conn
+                            (str "UPDATE " table " SET " column " = ? WHERE " column " = ?"))]
+             (.setString st 1 new)
+             (.setString st 2 old)
+             (.executeUpdate st))
+           (catch Throwable _ nil)))))
+
 (defn- drifted-columns
   "Columns whose definition in the STORE no longer reads like the canonical
    file's, as the canonical definition plus its `:table`.
@@ -719,6 +750,7 @@
           (if (repairable-validation-error? e) (do (.repair flyway) (.migrate flyway)) (throw e)))))
     (install-missing-canonical-tables! ds locs)
     (reconcile-canonical-columns! ds locs)
+    (rewrite-retired-values! ds)
     (realign-drifted-columns! ds locs)
     (install-missing-canonical-indexes! ds locs)
     (delete-retired-rows! ds)

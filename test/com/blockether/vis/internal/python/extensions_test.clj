@@ -2591,7 +2591,7 @@ def start_watch(gate):
             time.sleep(0.01)
         if Path(gate).exists():
             try:
-                body = {\"content\": \"Build finished\", \"kind\": \"informational\", \"idempotency_key\": \"background\"}
+                body = {\"content\": \"Build finished\", \"idempotency_key\": \"background\"}
                 _outcome[\"wake\"] = _send(\"POST\", route + \"/council/wake\", body)
                 _outcome[\"change\"] = _send(\"PATCH\", route + \"/model\", {\"provider\": None, \"model\": None})
             except Exception as error:
@@ -2607,7 +2607,7 @@ def watch_status():
 
 def wake_now():
     \"\"\"Exercise the registration-only context's missing session binding.\"\"\"
-    return vis.council.wake(\"No session\", kind=\"informational\")
+    return vis.council.wake(\"No session\")
 
 vis.register_extension(vis.Extension(
     name=\"council-watch\", alias=\"watch\", description=\"Bound Council watcher fixture.\",
@@ -2873,12 +2873,12 @@ def _calls():
         ('sessions.search', lambda: vis.sessions.list(search='deploy')),
         ('sessions.export', lambda: vis.sessions.export()),
         ('sessions.restore', lambda: vis.sessions.restore(b'VISSNAP', key='k')),
-        ('council.publish', lambda: council.publish('Done', kind='informational')),
+        ('council.publish', lambda: council.publish('Done')),
         ('council.read', lambda: council.read()),
         ('council.get', lambda: council.get(1)),
         ('council.threads', lambda: council.threads()),
         ('council.members', lambda: council.members()),
-        ('council.wake', lambda: council.wake('Done', kind='informational')),
+        ('council.wake', lambda: council.wake('Done')),
         ('council.subagents', lambda: council.subagents()),
         ('council.spawn', lambda: council.spawn('Check')),
         ('council.run', lambda: council.run(['Check'])),

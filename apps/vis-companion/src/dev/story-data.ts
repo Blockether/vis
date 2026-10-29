@@ -1376,7 +1376,6 @@ export const STORY_OUTLINE_TURNS: TranscriptTurn[] = outlinePrompts.map(([reques
         council: {
           entry_id: 41,
           thread_id: 40,
-          kind: 'coordination' as const,
           content: request,
           title: 'Auth middleware owner',
         },

@@ -238,8 +238,8 @@ def test_unavailable_council_binding_does_not_block_team_controls(code):
             team.threads,
             team.read,
             lambda: team.get(1),
-            lambda: team.publish("Question", kind="coordination"),
-            lambda: team.wake("Update", kind="informational"),
+            lambda: team.publish("Question"),
+            lambda: team.wake("Update"),
         ):
             with pytest.raises(GatewayError) as error:
                 communicate()

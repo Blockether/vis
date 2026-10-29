@@ -722,7 +722,6 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
     # Council intentionally lives on a session-bound handle rather than raw client mutations.
     entry = {
         "entry_id": 1,
-        "kind": "informational",
         "thread_id": 1,
         "group_id": "G",
         "content": "Entry",
@@ -776,8 +775,8 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.threads()
         council.read()
         council.get(1)
-        council.publish("Entry", kind="informational")
-        council.wake("Finished", kind="informational")
+        council.publish("Entry")
+        council.wake("Finished")
         council.spawn("Check the contract")
         council.subagents()
         council.run(["Check the contract"], timeout_secs=1)
@@ -785,7 +784,6 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.cancel("child")
         council.publish(
             "Check again",
-            kind="coordination",
             ping=["child"],
             files={"write": ["out.txt"]},
         )

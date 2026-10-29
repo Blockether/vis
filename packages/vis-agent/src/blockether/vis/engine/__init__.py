@@ -26,7 +26,6 @@ from ._client import (
 from ._council import (
     Council,
     CouncilEntry,
-    CouncilKind,
     CouncilMember,
     CouncilPage,
     CouncilReply,
@@ -44,7 +43,6 @@ __all__ = [
     "SubagentRecord",
     "Council",
     "CouncilEntry",
-    "CouncilKind",
     "CouncilMember",
     "CouncilPage",
     "CouncilReply",

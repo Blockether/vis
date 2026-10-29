@@ -54,22 +54,14 @@
                               opts)))))
 
 (defn publish
-  "Publish a Council entry. `kind` is required: `complain` for failures or concrete improvements,
-   `coordination` for work and questions, and `informational` for results and decisions. `kind` never
-   selects recipients. Choose individual pings, all, or none.
+  "Publish a Council entry. Choose individual pings, all, or none.
 
    `title` is optional for a new thread. With `thread_id` or `reply_to`, Council ignores `title`.
    Validation and idempotency checks use the request without this field. The existing thread title
    stays unchanged.
 
-   A complaint gives the goal, environment and version, preconditions, minimal reproduction steps
-   and sanitized input or tool arguments. It also gives expected and actual behavior, diagnostics,
-   frequency, impact and workaround. Keep evidence apart from hypotheses, and mark a missing fact
-   as unknown or not attempted. Name the affected session and its turn/iteration/form. `source_ref`
-   identifies this publication, not another execution.
-
-   Use `read_session(session_id)` to inspect the original evidence. Never copy secrets or private
-   data into the report, and never replay unsafe operations.
+   `source_ref` identifies this publication, not another execution. Keep secrets and private data
+   out of messages.
 
    A no-ping continuation answers the latest addressed unanswered request and notifies its author.
    `reply_to` selects an unanswered request explicitly, once per recipient. `reply_required=True`
@@ -121,7 +113,7 @@
                                        (council/publish! db #(council/runtime db) actor opts)))
 
          ref
-         (select-keys entry [:entry_id :thread_id :group_id :kind :source_ref])]
+         (select-keys entry [:entry_id :thread_id :group_id :source_ref])]
 
      (let [[before after] (swap-vals!
                             (:turn-state-atom env)
@@ -191,22 +183,20 @@
          :active-fn council/enabled?
          :call {:pos (or positional []) :rest :always}
          :params (mapv (fn [p]
-                         (cond-> {:name p}
-                           (= p "kind")
-                           (assoc :required? true)))
+                         {:name p})
                        params)
          :description (:doc (meta v))
          :result
          (str
-           "Members: `{session_id, title, state}`. Entries: `{entry_id, thread_id, group_id, kind, "
-           "content, author_session_id, created_at, source, ping}`, plus the root `title`, the host "
+           "Members: `{session_id, title, state}`. Entries: `{entry_id, thread_id, group_id, content, "
+           "author_session_id, created_at, source, ping}`, plus the root `title`, the host "
            "`source_ref` and optional `reply_required`, `replies` or `reply_to`. Replies report "
            "`{session_id, state, reply_entry_id?}`. Pages: `{entries, after, has_more}`. Thread "
-           "summaries: `{thread_id, kind, title, author_session_id, created_at}`.")}))
+           "summaries: `{thread_id, title, author_session_id, created_at}`.")}))
     [[#'members 'council.members :observation ["group_id"]]
      [#'publish 'council.publish :external
-      ["kind" "group_id" "thread_id" "title" "ping" "idempotency_key" "reply_required" "reply_to"
-       "files"] ["content"]] [#'threads 'council.threads :observation ["group_id" "after" "limit"]]
+      ["group_id" "thread_id" "title" "ping" "idempotency_key" "reply_required" "reply_to" "files"]
+      ["content"]] [#'threads 'council.threads :observation ["group_id" "after" "limit"]]
      [#'read 'council.read :observation ["group_id" "thread_id" "after" "limit"]]
      [#'get 'council.get :observation ["group_id"] ["entry_id"]]]))
 

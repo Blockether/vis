@@ -51,7 +51,7 @@ function thought(turn: ReturnType<typeof reduceRunningTurnEvent>): string | unde
 
 describe('Council request provenance', () => {
   it('preserves the actual entry and kind from the live event', () => {
-    const council = { entry_id: 42, thread_id: 42, kind: 'coordination', content: 'Actual request' };
+    const council = { entry_id: 42, thread_id: 42, content: 'Actual request' };
     const turn = reduceRunningTurnEvent(
       null,
       event({

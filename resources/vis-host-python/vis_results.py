@@ -107,7 +107,7 @@ def _council_entry(entry, source):
         heading = f"Entry #{entry['entry_id']}; thread #{entry['thread_id']}"
     else:
         heading = f"Thread #{entry['thread_id']}"
-    lines = [heading + f"; {entry['kind']}"]
+    lines = [heading]
     for key in ("author_session_id", "group_id", "title"):
         if entry.get(key):
             lines.append(f"{key}: {_bounded(entry[key], f'{source}[{key!r}]', 160)}")

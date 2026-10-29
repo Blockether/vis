@@ -68,17 +68,13 @@
         "reply_to": {
           "$ref": "#/$defs/entry_id"
         },
-        "kind": {
-          "$ref": "#/$defs/kind"
-        },
         "files": {
           "$comment": "Replace the file grant of the one pinged idle subagent for its follow-up task.",
           "$ref": "agents.json#/$defs/files"
         }
       },
       "required": [
-        "content",
-        "kind"
+        "content"
       ],
       "additionalProperties": false
     },
@@ -87,9 +83,6 @@
       "properties": {
         "content": {
           "$ref": "#/$defs/publish/properties/content"
-        },
-        "kind": {
-          "$ref": "#/$defs/publish/properties/kind"
         },
         "group_id": {
           "$ref": "#/$defs/publish/properties/group_id"
@@ -105,8 +98,7 @@
         }
       },
       "required": [
-        "content",
-        "kind"
+        "content"
       ],
       "additionalProperties": false
     },
@@ -308,8 +300,7 @@
         "source": {
           "enum": [
             "host",
-            "sdk",
-            "autocomplain"
+            "sdk"
           ]
         },
         "ping": {
@@ -343,9 +334,6 @@
         },
         "entry_id": {
           "$ref": "#/$defs/entry_id"
-        },
-        "kind": {
-          "$ref": "#/$defs/kind"
         }
       },
       "required": [
@@ -356,8 +344,7 @@
         "author_session_id",
         "created_at",
         "source",
-        "ping",
-        "kind"
+        "ping"
       ],
       "additionalProperties": false
     },
@@ -378,17 +365,13 @@
         "created_at": {
           "type": "integer",
           "minimum": 0
-        },
-        "kind": {
-          "$ref": "#/$defs/kind"
         }
       },
       "required": [
         "thread_id",
         "title",
         "author_session_id",
-        "created_at",
-        "kind"
+        "created_at"
       ],
       "additionalProperties": false
     },
@@ -427,17 +410,13 @@
         "entry_id": {
           "$ref": "#/$defs/entry_id"
         },
-        "kind": {
-          "$ref": "#/$defs/kind"
-        },
         "source_ref": {
           "$ref": "#/$defs/source_ref"
         },
         "source": {
           "enum": [
             "host",
-            "sdk",
-            "autocomplain"
+            "sdk"
           ]
         }
       },
@@ -448,8 +427,7 @@
         "content",
         "author_session_id",
         "created_at",
-        "truncated",
-        "kind"
+        "truncated"
       ],
       "additionalProperties": false
     },
@@ -468,16 +446,12 @@
         },
         "entry_id": {
           "$ref": "#/$defs/entry_id"
-        },
-        "kind": {
-          "$ref": "#/$defs/kind"
         }
       },
       "required": [
         "entry_id",
         "thread_id",
-        "group_id",
-        "kind"
+        "group_id"
       ],
       "additionalProperties": false
     },
@@ -644,14 +618,6 @@
       "type": "integer",
       "minimum": 0,
       "description": "Exclusive entry-ID cursor; zero starts a page. Keep the same group and filters."
-    },
-    "kind": {
-      "enum": [
-        "complain",
-        "coordination",
-        "informational"
-      ],
-      "description": "Per-entry information classification, independent of recipients and reply obligations."
     }
   }
 }

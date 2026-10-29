@@ -30,7 +30,6 @@ def test_council_session_handle_and_thread_workflow():
                 "thread_id": 142,
                 "group_id": "project-1",
                 "content": request["content"],
-                "kind": request["kind"],
                 "author_session_id": "A",
                 "created_at": 1,
                 "source": "sdk",
@@ -42,7 +41,6 @@ def test_council_session_handle_and_thread_workflow():
                     {
                         "thread_id": 142,
                         "title": "API",
-                        "kind": "coordination",
                         "author_session_id": "A",
                         "created_at": 1,
                     }
@@ -55,19 +53,17 @@ def test_council_session_handle_and_thread_workflow():
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         assert hasattr(client.session("A"), "council"), "Session.council is missing"
         council = client.session("A").council()
-        root = council.publish("API change", kind="coordination", title="API\n")
+        root = council.publish("API change", title="API\n")
         assert root.entry_id == root.thread_id == 142
         assert council.threads().entries[0].thread_id == root.thread_id
         assert council.read(thread_id=root.thread_id).entries == ()
         council.publish(
             "Works",
-            kind="coordination",
             thread_id=root.thread_id,
             ping=[],
             idempotency_key="retry",
         )
         common = {
-            "kind": "coordination",
             "group_id": "project-1",
             "activation_id": "active-1",
         }
@@ -87,7 +83,7 @@ def test_council_session_handle_and_thread_workflow():
             },
         ]
         with pytest.raises(TypeError):
-            council.publish("Wrong", kind="coordination", parent_id=142)
+            council.publish("Wrong", parent_id=142)
         assert sum(path == "/v1/sessions/A/council" for _, path, _, _ in calls) == 1
         assert not any("/turns" in path for _, path, _, _ in calls)
 
@@ -111,7 +107,6 @@ def test_council_wakes_its_bound_session_between_turns(activation):
             "thread_id": 1,
             "group_id": "G",
             "content": request["content"],
-            "kind": request["kind"],
             "author_session_id": "A",
             "created_at": 1,
             "source": "sdk",
@@ -120,22 +115,14 @@ def test_council_wakes_its_bound_session_between_turns(activation):
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         council = client.session("A").council()
-        entry = council.wake(
-            "Build finished", kind="informational", idempotency_key="build-1"
-        )
+        entry = council.wake("Build finished", idempotency_key="build-1")
         assert entry.ping == ("A",)
-        assert (
-            council.wake(
-                "Build finished", kind="informational", idempotency_key="build-1"
-            )
-            == entry
-        )
+        assert council.wake("Build finished", idempotency_key="build-1") == entry
         assert (
             publications
             == [
                 {
                     "content": "Build finished",
-                    "kind": "informational",
                     "group_id": "G",
                     "idempotency_key": "build-1",
                 }
@@ -144,7 +131,7 @@ def test_council_wakes_its_bound_session_between_turns(activation):
         )
         assert sum(path == "/v1/sessions/A/council" for _, path, _, _ in calls) == 1
         with pytest.raises(TypeError):
-            council.wake("Wrong target", kind="informational", session_id="B")
+            council.wake("Wrong target", session_id="B")
 
 
 def test_council_explicit_group_and_read_only_handle():
@@ -198,7 +185,6 @@ def test_entry_decoder_does_not_invent_missing_authorship():
     with pytest.raises(ValueError):
         CouncilEntry.from_wire(
             {
-                "kind": "coordination",
                 "entry_id": 1,
                 "thread_id": 1,
                 "group_id": "G",
@@ -223,7 +209,6 @@ def test_required_reply_and_automatic_return_notification():
             "thread_id": 1,
             "group_id": "G",
             "content": request["content"],
-            "kind": request["kind"],
             "author_session_id": "A",
             "created_at": 1,
             "source": "sdk",
@@ -239,38 +224,28 @@ def test_required_reply_and_automatic_return_notification():
 
     with endpoint(respond) as (url, _), GatewayClient(url) as client:
         council = client.session("A").council()
-        request = council.publish(
-            "Evidence?", kind="coordination", ping=["B"], reply_required=True
-        )
+        request = council.publish("Evidence?", ping=["B"], reply_required=True)
         assert request.reply_required
         assert request.replies[0].state == "pending"
-        reply = council.publish(
-            "Unknown", kind="informational", reply_to=request.entry_id
-        )
-        assert reply.kind == "informational"
-        assert request.kind == "coordination"
+        reply = council.publish("Unknown", reply_to=request.entry_id)
         assert reply.reply_to == request.entry_id
         assert "ping" not in publications[1]
         assert "thread_id" not in publications[1]
         with pytest.raises(ValueError):
-            council.publish("Wrong", kind="coordination", reply_required="true")
+            council.publish("Wrong", reply_required="true")
 
 
-@pytest.mark.parametrize("kind", ["complain", "coordination", "informational"])
-def test_explicit_message_kind_and_identifier_domains(kind):
-    from typing import get_args
-
-    from blockether.vis.engine import Council, CouncilEntry, CouncilKind
+def test_message_identifier_domains():
+    from blockether.vis.engine import Council, CouncilEntry
 
     class Session:
         def _call(self, method, path, **kwargs):
             assert (method, path) == ("POST", "/council/entries")
             request = kwargs["body"]
-            assert request["kind"] == kind
+            assert "kind" not in request
             return {
                 "entry_id": 4,
                 "thread_id": 4,
-                "kind": request["kind"],
                 "group_id": "workspace:opaque",
                 "content": request["content"],
                 "author_session_id": "session",
@@ -280,20 +255,12 @@ def test_explicit_message_kind_and_identifier_domains(kind):
             }
 
     council = Council(Session(), "workspace:opaque", "active")
-    entry = council.publish("Evidence and uncertainty", kind=kind)
+    entry = council.publish("Evidence and uncertainty")
     assert entry.entry_id == entry.thread_id == 4
-    assert entry.kind == kind
     assert not hasattr(entry, "id")
-    assert set(get_args(CouncilKind)) == {
-        "complain",
-        "coordination",
-        "informational",
-    }
+    # Council messages have no kind: a caller that still passes one is refused.
     with pytest.raises(TypeError):
-        council.publish("Missing kind")
-    for invalid in (None, "question", 1):
-        with pytest.raises(ValueError):
-            council.publish("Invalid kind", kind=invalid)
+        council.publish("Retired", kind="informational")
     for invalid in (None, 0, -1, True, 1.5, "4"):
         with pytest.raises(ValueError):
             council.get(invalid)
@@ -302,7 +269,6 @@ def test_explicit_message_kind_and_identifier_domains(kind):
             {
                 "id": 4,
                 "thread_id": 4,
-                "kind": kind,
                 "group_id": "workspace:opaque",
                 "content": "Old name",
                 "author_session_id": "session",
@@ -314,7 +280,7 @@ def test_explicit_message_kind_and_identifier_domains(kind):
 
 
 @pytest.mark.parametrize("scope", [None, {"turn": 2, "iter": 3, "next_form": 4}])
-def test_source_identity_and_automatic_complain(scope):
+def test_source_identity(scope):
     from blockether.vis.engine import CouncilEntry
 
     source = {
@@ -330,12 +296,11 @@ def test_source_identity_and_automatic_complain(scope):
         {
             "entry_id": 8,
             "thread_id": 8,
-            "kind": "complain",
             "group_id": None,
             "author_session_id": "session-soul",
             "content": "Python execution failed at t2/i3/f4",
             "created_at": 1,
-            "source": "autocomplain",
+            "source": "host",
             "source_ref": source,
             "ping": [],
         }
@@ -349,12 +314,10 @@ def test_source_identity_and_automatic_complain(scope):
     assert entry.source_ref.form == (4 if scope else None)
     assert entry.group_id is None
     with pytest.raises(ValueError):
-        validate("council", "kind", "potential_issue")
-    with pytest.raises(ValueError):
         validate(
             "council",
             "publish",
-            {"kind": "complain", "content": "Report", "source_ref": source},
+            {"content": "Report", "source_ref": source},
         )
 
 
@@ -383,7 +346,6 @@ def test_extension_council_wakes_its_bound_session_through_the_host(monkeypatch)
                 "thread_id": 1,
                 "group_id": "G",
                 "content": frame["body"]["content"],
-                "kind": frame["body"]["kind"],
                 "author_session_id": "A",
                 "created_at": 1,
                 "source": "sdk",
@@ -394,9 +356,7 @@ def test_extension_council_wakes_its_bound_session_through_the_host(monkeypatch)
     monkeypatch.setattr(vis._host, "request", request)
     monkeypatch.setattr(vis._host, "bound_session", lambda: "A")
     monkeypatch.setattr(vis, "_LAYER", [])
-    entry = vis.council.wake(
-        "Build finished", kind="informational", idempotency_key="build-1"
-    )
+    entry = vis.council.wake("Build finished", idempotency_key="build-1")
     assert entry.ping == ("A",)
     assert [(frame["method"], frame["route"]) for frame in frames] == [
         ("GET", "/v1/sessions/A/council"),

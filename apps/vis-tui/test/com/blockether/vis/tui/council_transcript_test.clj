@@ -11,7 +11,7 @@
 (def request-text
   "Actual peer request.\nSecond line.\nThird line.\nFourth line.\nLast line remains available.")
 
-(def council-entry {"entry_id" 42 "thread_id" 42 "kind" "coordination" "content" request-text})
+(def council-entry {"entry_id" 42 "thread_id" 42 "content" request-text})
 
 (defdescribe council-wire-history-and-live-events-retain-provenance
              (it "council wire history and live events retain provenance"

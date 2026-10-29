@@ -507,7 +507,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
         council=True,
         tool_code=(
             "threads = await council.threads()\n"
-            "entry = await council.publish('Host continuation', kind='coordination', thread_id=threads['entries'][0]['thread_id'])\n"
+            "entry = await council.publish('Host continuation', thread_id=threads['entries'][0]['thread_id'])\n"
             "assert (await council.get(entry['entry_id']))['source'] == 'host'\n"
             "print(session['council'])"
         ),
@@ -533,9 +533,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                     session.id
                 ]
                 with pytest.raises(GatewayError) as inactive:
-                    readonly.publish(
-                        "Must not bind an idle handle", kind="coordination"
-                    )
+                    readonly.publish("Must not bind an idle handle")
                 assert inactive.value.status == 409
                 for invalid in (
                     {"content": " "},
@@ -543,13 +541,12 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                     {"content": "Valid", "title": "two\nlines"},
                 ):
                     with pytest.raises(GatewayError) as invalid_request:
-                        active.publish(kind="coordination", **invalid)
+                        active.publish(**invalid)
                     assert invalid_request.value.status == 400
                 if generation == 0:
                     bound = active
                     entry = bound.publish(
                         "SDK conversation",
-                        kind="coordination",
                         title="SDK\n",
                         ping="all",
                         idempotency_key="sdk-retry",
@@ -566,7 +563,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                     thread_id = bound.threads().entries[0].thread_id
                     assert thread_id == entry.thread_id
                     continuation = bound.publish(
-                        "SDK continuation", kind="coordination", thread_id=thread_id
+                        "SDK continuation", thread_id=thread_id
                     )
                     first_page = bound.read(thread_id=thread_id, limit=1)
                     assert first_page.entries == (entry,) and first_page.has_more
@@ -576,12 +573,11 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                     assert bound.get(entry.entry_id) == entry
                 else:
                     with pytest.raises(GatewayError) as stale:
-                        bound.publish("Must not rebind", kind="coordination")
+                        bound.publish("Must not rebind")
                     assert stale.value.status == 409
                     assert (
                         bound.publish(
                             "SDK conversation",
-                            kind="coordination",
                             title="SDK",
                             ping="all",
                             idempotency_key="sdk-retry",
@@ -590,7 +586,6 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                     )
                     active.publish(
                         "New active generation",
-                        kind="coordination",
                         thread_id=entry.thread_id,
                     )
             finally:
@@ -616,7 +611,6 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
             assert (
                 bound.publish(
                     "SDK conversation",
-                    kind="coordination",
                     title="SDK",
                     ping="all",
                     idempotency_key="sdk-retry",
@@ -698,16 +692,10 @@ def test_real_council_explicit_ping_wakes_an_idle_peer(
             assert ready.wait(30), "author model request was not observed"
             conversation = author.council()
             # "all" snapshots the ACTIVE peers, and an idle one is not among them.
-            assert (
-                conversation.publish(
-                    "Active peers only", kind="coordination", ping="all"
-                ).ping
-                == ()
-            )
+            assert conversation.publish("Active peers only", ping="all").ping == ()
             assert peer.turns() == []
             entry = conversation.publish(
                 "What did you learn about the parser?",
-                kind="coordination",
                 ping=[peer.id, f"vis_session_id#{peer.id}"],
                 idempotency_key="wake-once",
             )
@@ -720,7 +708,6 @@ def test_real_council_explicit_ping_wakes_an_idle_peer(
             assert (
                 conversation.publish(
                     entry.content,
-                    kind="coordination",
                     ping=[peer.id],
                     idempotency_key="wake-once",
                 )
@@ -778,16 +765,13 @@ def test_real_council_reply_after_author_finishes_wakes_it(
             turn = author.send("Finish the initial research task")
             assert author_ready.wait(30), "author did not start"
             conversation = author.council()
-            entry = conversation.publish(
-                "Research question", kind="coordination", ping=[peer.id]
-            )
+            entry = conversation.publish("Research question", ping=[peer.id])
             # The ping resumes the idle peer, which answers from inside its own turn.
             assert peer_ready.wait(30), "pinged peer did not start"
             release_author.set()
             assert turn.wait(timeout=30)["status"] == "completed"
             reply = peer.council().publish(
                 "Research findings",
-                kind="informational",
                 thread_id=entry.thread_id,
                 ping=[author.id],
                 idempotency_key="findings",
@@ -845,7 +829,7 @@ def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport)
             "        print(council.run({'task': 'Report fixture evidence', 'iteration_budget': 8}))\n"
             "else:\n"
             "    for pending in session['council']['pending_replies']:\n"
-            "        print(await council.publish('Fixture evidence', kind='informational', reply_to=pending['entry_id']))\n"
+            "        print(await council.publish('Fixture evidence', reply_to=pending['entry_id']))\n"
             "print('Managed Council fixture')"
         ),
     ) as (client, work, requests):
@@ -866,7 +850,6 @@ def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport)
             team = parent.council()
             entry = team.publish(
                 "Report again",
-                kind="coordination",
                 ping=[child.id],
                 idempotency_key="managed-wake",
             )
@@ -876,7 +859,6 @@ def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport)
             assert (
                 team.publish(
                     "Report again",
-                    kind="coordination",
                     ping=[child.id],
                     idempotency_key="managed-wake",
                 )

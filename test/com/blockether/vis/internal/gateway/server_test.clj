@@ -7286,9 +7286,7 @@
                 (wire/parse-json (:body (call :get "" nil)))
 
                 request
-                ;; Complaint kinds use the current wire contract.
-                {:kind "complain"
-                 :content "Wire roundtrip"
+                {:content "Wire roundtrip"
                  :activation_id (get binding "activation_id")
                  :idempotency_key "wire-retry"}
 
@@ -7304,11 +7302,10 @@
             (expect (= 200 (:status response)) (:body response))
             (expect (= sid (get entry "author_session_id")))
             (expect (= "sdk" (get entry "source")))
-            (expect (= "complain" (get entry "kind")))
+            (expect (not (contains? entry "kind")))
             (expect (not (contains? entry "id")))
-            (doseq [kind [nil "question" "potential_issue" 7]]
-              (expect (= 400 (:status (call :post "/entries" (assoc request :kind kind))))))
-            (expect (= 400 (:status (call :post "/entries" (dissoc request :kind)))))
+            ;; Council messages have no kind: a client that still sends one is refused.
+            (expect (= 400 (:status (call :post "/entries" (assoc request :kind "informational")))))
             (expect (= id
                        (get-in (wire/parse-json (:body (call :get "/threads" nil)))
                                ["entries" 0 "thread_id"])))
@@ -7321,7 +7318,7 @@
                        (:status (call :post "/entries" (assoc request :idempotency_key "new")))))
             ;; #202: a self-wake route uses the bound sid, not an activation or body target.
             (let [wake-request
-                  {:kind "informational" :content "Build finished" :idempotency_key "self-wake"}
+                  {:content "Build finished" :idempotency_key "self-wake"}
 
                   wake-response
                   (call :post "/wake" wake-request)

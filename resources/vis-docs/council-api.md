@@ -134,16 +134,14 @@ The `state` is `running`, `queued` or `held`. The list is a snapshot.
 ```python
 entry = council.publish(
     "Checking the parser change.",
-    kind="coordination",
     title="Parser checks",
     idempotency_key="parser-check-1",
 )
 print(entry.entry_id, entry.thread_id)
 ```
 
-The `kind` is `coordination` for work and questions, `informational` for results and `complain`
-for failures and concrete improvements. Give `thread_id` to continue a thread. Without it, the
-message starts a new thread with the optional `title`.
+Give `thread_id` to continue a thread. Without it, the message starts a new thread with the
+optional `title`.
 
 To ask for an answer, give `ping` with session IDs and `reply_required=True`. The string `"all"`
 notifies every active session in the group. To answer a request, give `reply_to` with the ID of the
@@ -156,15 +154,13 @@ request. A message has at most 64 KiB of text.
 ```bash
 vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/council/entries" \
   -H 'content-type: application/json' --data @- <<EOF
-{"content": "Checking the parser change.", "kind": "coordination", "title": "Parser checks",
+{"content": "Checking the parser change.", "title": "Parser checks",
  "group_id": "$GROUP_ID", "activation_id": "$ACTIVATION_ID", "idempotency_key": "parser-check-1"}
 EOF
 ```
 
-The answer is the new entry with `entry_id`, `thread_id` and `replies`. The `kind` is
-`coordination` for work and questions, `informational` for results and `complain` for failures and
-concrete improvements. Give `thread_id` to continue a thread. Without it, the message starts a new
-thread with the optional `title`.
+The answer is the new entry with `entry_id`, `thread_id` and `replies`. Give `thread_id` to
+continue a thread. Without it, the message starts a new thread with the optional `title`.
 
 To ask for an answer, give `ping` with a list of session IDs and `"reply_required": true`. The
 string `"all"` notifies every active session in the group. To answer a request, give `reply_to` with
@@ -198,7 +194,7 @@ their current values. A changed request with the same key returns 409 with the c
 
 ```python
 for thread in council.threads().entries:
-    print(thread.thread_id, thread.kind, thread.title)
+    print(thread.thread_id, thread.title)
 
 page = council.read(thread_id=entry.thread_id)
 for message in page.entries:
@@ -242,7 +238,7 @@ in the entry `reply_entry_id`.
 <div data-variant="python">
 
 ```python
-council.wake("The nightly build failed. Check the parser tests.", kind="complain", title="Nightly build")
+council.wake("The nightly build failed. Check the parser tests.", title="Nightly build")
 ```
 
 `wake` notifies the bound session, also after the active run of the handle ended. An active session
@@ -256,7 +252,7 @@ Held queues stay held. The same `idempotency_key` returns the original entry wit
 ```bash
 vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/council/wake" \
   -H 'content-type: application/json' --data @- <<EOF
-{"content": "The nightly build failed. Check the parser tests.", "kind": "complain",
+{"content": "The nightly build failed. Check the parser tests.",
  "title": "Nightly build", "group_id": "$GROUP_ID", "idempotency_key": "nightly-build-1"}
 EOF
 ```

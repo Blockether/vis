@@ -3424,10 +3424,8 @@
         (with-redefs [env/run-python-block (fn [context code & args]
                                              (swap! entered conj code)
                                              (apply run-block context code args))]
-          (doseq
-            [code
-             ["print(await council.publish('after timeout', kind='coordination', title='Timeout regression'))"
-              "print(42)"]]
+          (doseq [code ["print(await council.publish('after timeout', title='Timeout regression'))"
+                        "print(42)"]]
             (with-redefs [svar/ask-code! (fn [_ _]
                                            {:stop-reason :tool-calls
                                             :tool-calls [{:id "follow_up"
@@ -3539,24 +3537,23 @@
     (it
       (str "stops after the native timeout without a restart; Council shares response="
            same-response?)
-      (let
-        [environment (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
-         db (:db-info environment)
-         tid (persistance/db-store-session-turn! db
-                                                 {:parent-session-id (:session-id environment)
-                                                  :user-request "timeout regression"})
-         timeout-code "import select\nprint('before native wait')\nselect.select([], [], [], 10)"
-         publish-code
-         "print(await council.publish('after timeout', kind='coordination', title='Timeout regression'))"
-         calls (atom 0)
-         chunks (atom [])
-         response (fn [codes]
-                    {:stop-reason :tool-calls
-                     :tool-calls
-                     (mapv (fn [idx code]
-                             {:id (str "call_" idx) :name "python_execution" :input {:code code}})
-                           (range)
-                           codes)})]
+      (let [environment (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+            db (:db-info environment)
+            tid (persistance/db-store-session-turn! db
+                                                    {:parent-session-id (:session-id environment)
+                                                     :user-request "timeout regression"})
+            timeout-code "import select\nprint('before native wait')\nselect.select([], [], [], 10)"
+            publish-code "print(await council.publish('after timeout', title='Timeout regression'))"
+            calls (atom 0)
+            chunks (atom [])
+            response (fn [codes]
+                       {:stop-reason :tool-calls
+                        :tool-calls (mapv (fn [idx code]
+                                            {:id (str "call_" idx)
+                                             :name "python_execution"
+                                             :input {:code code}})
+                                          (range)
+                                          codes)})]
 
         (try (expect (nil? (:error (#'python-exec/execute-code environment "print('ready')"))))
              (let [result (binding [rt/*eval-timeout-ms* 3000]
@@ -13237,16 +13234,16 @@
          requests
          (atom [])
 
-         source
-         (str
-           "assert session['id'] == '"
-           aid
-           "'\n"
-           "assert set(session['council']) == {'default_group_id', 'pending_replies'}\n"
-           "session['council']['default_group_id'] = 'tampered'\n"
-           "await council.publish(kind='coordination', content='Boundary message ' + 'é' * 2000, title='API', ping=['"
-           bid
-           "'])\n" "await council.members()")]
+            source
+            (str
+              "assert session['id'] == '"
+              aid
+              "'\n"
+              "assert set(session['council']) == {'default_group_id', 'pending_replies'}\n"
+              "session['council']['default_group_id'] = 'tampered'\n"
+              "await council.publish(content='Boundary message ' + 'é' * 2000, title='API', ping=['"
+              bid
+              "'])\n" "await council.members()")]
 
         (try
           (doseq [sid [aid bid]]
@@ -13397,7 +13394,7 @@
              :turn-state-atom (ctx-loop/make-turn-state-atom)}
 
             publication
-            {:entry_id 7 :thread_id 7 :group_id "group" :kind "informational"}
+            {:entry_id 7 :thread_id 7 :group_id "group"}
 
             result
             (#'iteration/with-council-execution

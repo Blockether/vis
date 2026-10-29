@@ -38,14 +38,12 @@
       [:council.publish "Activity review"
        {:title "Activity review"
         :entry_id 42
-        :kind "informational"
         :thread_id 42
         :ping ["reviewer"]
         :content "Read links to the file; Patch shows its **changes** after one disclosure."} nil]
       [:council.get "Activity review"
        {:title "Activity review"
         :entry_id 42
-        :kind "informational"
         :thread_id 42
         :ping ["reviewer"]
         :content "Read links to the file; Patch shows its **changes** after one disclosure."} nil]]
@@ -457,7 +455,6 @@
              :group_id "internal-group"
              :author_session_id "internal-author"
              :created_at 1789503371213
-             :kind "coordination"
              :source "host"
              :source_ref {:session_id "internal-author"}
              :ping ["internal-recipient"]
@@ -496,7 +493,6 @@
                     :thread_id 42
                     :group_id "internal-group"
                     :created_at 1789470180407
-                    :kind "coordination"
                     :source "host"
                     :source_ref {:session_id "internal-author"}
                     :ping ["internal-recipient"]
@@ -507,16 +503,13 @@
                     "summary" "Message 42 · Thread 42"
                     "content" [{"type" "markdown" "text" "Tests **passed**."}]}
                    view))))
-  (it "summarizes pages and keeps each read message behind its own disclosure"
-      (let [value
-            {:entries [{:title "Review"
-                        :content "Full **message**."
-                        :created_at 1
-                        :entry_id 42
-                        :thread_id 41
-                        :kind "coordination"}]
-             :after 42
-             :has_more true}
+  (it
+    "summarizes pages and keeps each read message behind its own disclosure"
+    (let [value
+          {:entries
+           [{:title "Review" :content "Full **message**." :created_at 1 :entry_id 42 :thread_id 41}]
+           :after 42
+           :has_more true}
 
             view
             (result-view {:operation :council.read} value)]
@@ -532,9 +525,8 @@
                 [{:session_id "internal-member" :title "Reviewer" :state "running"}] "1 member"
                 ["Member" "State"] [["Reviewer" "Running"]]]
                [:council.threads
-                {:entries [{:thread_id 42 :title "Review" :created_at 1 :kind "coordination"}]
-                 :after 42
-                 :has_more false} "1 thread" ["Thread"] [["Review"]]]]]
+                {:entries [{:thread_id 42 :title "Review" :created_at 1}] :after 42 :has_more false}
+                "1 thread" ["Thread"] [["Review"]]]]]
         (let [view (result-view {:operation operation} value)]
           (expect (= summary (get view "summary")))
           (expect (= [{"type" "table" "columns" columns "rows" rows}] (get view "content"))))))

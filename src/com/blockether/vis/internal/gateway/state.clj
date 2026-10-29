@@ -3050,8 +3050,7 @@
            :source "host"
            :activation-id (str "agent-result:" tid)
            :self-wake? true}
-          {:kind "informational"
-           :title "Subagent result"
+          {:title "Subagent result"
            :content content
            :ping (if cancelled? [] (vec (distinct [(:parent_id child) (:leader_id child)])))
            :idempotency_key (str "agent-result:" tid)})))))
@@ -5228,9 +5227,8 @@
                                         council-ping
                                         (assoc :council
                                           (select-keys (:entry council-ping)
-                                                       [:entry_id :thread_id :kind :content :title
-                                                        :source :author_session_id
-                                                        :reply_required]))
+                                                       [:entry_id :thread_id :content :title :source
+                                                        :author_session_id :reply_required]))
 
                                         idempotency-key
                                         (assoc :idempotency_key idempotency-key)
@@ -5365,7 +5363,7 @@
                    (:entry_id entry)
                    ")." (when (:reply_required entry)
                           (str " Reply before ending this turn with await council.publish(content, "
-                               "kind=\"informational\", reply_to="
+                               "reply_to="
                                (:entry_id entry)
                                ")."))))
              :display-request (:content entry)
@@ -6986,8 +6984,7 @@
                                                 :activation-id (get-in (ctx-loop/read-turn-state
                                                                          env)
                                                                        [:council :activation-id])}
-                                               {:kind "coordination"
-                                                :title "Delegated task"
+                                               {:title "Delegated task"
                                                 :content message
                                                 :ping [child-id]
                                                 :reply_required true

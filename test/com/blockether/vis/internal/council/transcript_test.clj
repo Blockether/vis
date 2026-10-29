@@ -21,7 +21,7 @@
 (h/use-mem-store!)
 
 (defn- fixture
-  [kind]
+  []
   (let [db
         (h/store)
 
@@ -43,8 +43,7 @@
          db
          (constantly {sid {:activation-id activation :group-id gid :state "running"}})
          {:session-id sid :activation-id activation :source "sdk"}
-         {:kind kind
-          :title "Review findings"
+         {:title "Review findings"
           :content
           "Actual Council request.\nSecond line.\nThird line.\nFourth line.\nFifth line."})})))
 
@@ -52,48 +51,56 @@
   council-request-provenance-survives-storage-and-fork
   (it
     "council request provenance survives storage and fork"
-    (doseq [kind ["coordination" "informational" "complain"]]
-      (let [{:keys [db sid entry]} (fixture kind)
-            prompt "Council notification. Read the attributed input."
-            opts (#'turn/turn-store-opts
-                  {:session-id sid}
-                  prompt
-                  {:request-kind :council :council-entry-id (:entry_id entry)})
-            tid (ps/db-store-session-turn! db opts)
-            user-tid (ps/db-store-session-turn! db
-                                                {:parent-session-id sid
-                                                 :user-request "Council wake — literal user text"})
-            [turn user-turn] (ps/db-list-session-turns db sid)
-            wire (#'state/persisted-turn->wire sid turn)
-            transcript (with-redefs [lp/db-info (constantly db)]
-                         (state/transcript sid))
-            fork (h/fork-session-at-turn! db sid {:through-turn-id user-tid})]
+    (let [{:keys [db sid entry]}
+          (fixture)
 
-        (expect (= :council (:request-kind turn)))
-        (expect (= prompt (:user-request turn))
-                "Model instruction stays separate from the visible request")
-        (expect (= (:entry_id entry) (get-in turn [:council :entry-id])))
-        (expect (= kind
-                   (some-> (get-in turn [:council :kind])
-                           name)))
-        (expect (= (:content entry) (get-in turn [:council :content])))
-        (expect (= (:content entry) (:request wire)))
-        (expect (= "council" (get-in transcript [0 "request_kind"])))
-        (expect (= kind (get-in transcript [0 "council" "kind"])))
-        (expect (= (:content entry) (get-in transcript [0 "request"])))
-        (expect (= :user (:request-kind user-turn)) "Never classify user text by its prefix")
-        (expect (nil? (:council user-turn)))
-        (expect (= [{:request_kind "council" :council_entry_id (:entry_id entry)}]
-                   (h/raw-query db
-                                {:select [:request_kind :council_entry_id]
-                                 :from :session_turn_soul
-                                 :where [:= :id (str tid)]})))
-        (expect (= [{:kind kind}]
-                   (h/raw-query
-                     db
-                     {:select [:kind] :from :council_entry :where [:= :id (:entry_id entry)]})))
-        (expect (some? fork))
-        (expect (= (:council turn) (:council (first (ps/db-list-session-turns db fork)))))))))
+          prompt
+          "Council notification. Read the attributed input."
+
+          opts
+          (#'turn/turn-store-opts
+           {:session-id sid}
+           prompt
+           {:request-kind :council :council-entry-id (:entry_id entry)})
+
+          tid
+          (ps/db-store-session-turn! db opts)
+
+          user-tid
+          (ps/db-store-session-turn! db
+                                     {:parent-session-id sid
+                                      :user-request "Council wake — literal user text"})
+
+          [turn user-turn]
+          (ps/db-list-session-turns db sid)
+
+          wire
+          (#'state/persisted-turn->wire sid turn)
+
+          transcript
+          (with-redefs [lp/db-info (constantly db)]
+            (state/transcript sid))
+
+          fork
+          (h/fork-session-at-turn! db sid {:through-turn-id user-tid})]
+
+      (expect (= :council (:request-kind turn)))
+      (expect (= prompt (:user-request turn))
+              "Model instruction stays separate from the visible request")
+      (expect (= (:entry_id entry) (get-in turn [:council :entry-id])))
+      (expect (= (:content entry) (get-in turn [:council :content])))
+      (expect (= (:content entry) (:request wire)))
+      (expect (= "council" (get-in transcript [0 "request_kind"])))
+      (expect (= (:content entry) (get-in transcript [0 "request"])))
+      (expect (= :user (:request-kind user-turn)) "Never classify user text by its prefix")
+      (expect (nil? (:council user-turn)))
+      (expect (= [{:request_kind "council" :council_entry_id (:entry_id entry)}]
+                 (h/raw-query db
+                              {:select [:request_kind :council_entry_id]
+                               :from :session_turn_soul
+                               :where [:= :id (str tid)]})))
+      (expect (some? fork))
+      (expect (= (:council turn) (:council (first (ps/db-list-session-turns db fork))))))))
 
 ;; Regression: completed Council wakes appeared as You after engine preparation
 ;; discarded their provenance. Exercise both engine phases before the real write.
@@ -101,8 +108,8 @@
   council-provenance-survives-engine-phases
   (it
     "council provenance survives engine phases"
-    (doseq [kind [nil "coordination" "informational" "complain"]]
-      (let [{:keys [db sid entry]} (fixture (or kind "informational"))
+    (doseq [council? [false true]]
+      (let [{:keys [db sid entry]} (fixture)
             tid (str (random-uuid))
             prompt
             (str "Council notification #" (:entry_id entry) ". Read the attributed Council input.")
@@ -111,7 +118,7 @@
                  :turn-state-atom (ctx-loop/make-turn-state-atom)
                  :router {:providers [{:id :openai-codex :models [{:name "shared"}]}]}}
             opts (cond-> {:model "shared" :session-turn-id tid}
-                   kind
+                   council?
                    (assoc :request-kind
                      :council :council-entry-id
                      (:entry_id entry)))
@@ -134,19 +141,18 @@
 
         (expect (= tid (str (:session-turn-id phase)) (str (:id turn))))
         (expect (= prompt (:user-request turn)) "Keep the model instruction unchanged")
-        (expect (= (if kind :council :user) (:request-kind turn)))
-        (expect (= (if kind "council" "user") (get wire "request_kind")))
-        (if kind
+        (expect (= (if council? :council :user) (:request-kind turn)))
+        (expect (= (if council? "council" "user") (get wire "request_kind")))
+        (if council?
           (do (expect (= (:entry_id entry) (get-in wire ["council" "entry_id"])))
               (expect (= (:thread_id entry) (get-in wire ["council" "thread_id"])))
-              (expect (= kind (get-in wire ["council" "kind"])))
               (expect (= (:content entry) (get wire "request"))))
           (do (expect (nil? (:council turn))) (expect (= prompt (get wire "request")))))))))
 
 (defn- managed-fixture
-  [kind]
+  []
   (let [{:keys [db sid] :as base}
-        (fixture kind)
+        (fixture)
 
         turn
         (ps/db-store-session-turn! db {:parent-session-id sid :user-request "Delegate"})
@@ -172,7 +178,7 @@
   council-wake-keeps-display-content-out-of-the-short-instruction
   (it "council wake keeps peer content out of the short instruction"
       (let [{:keys [db sid entry]}
-            (managed-fixture "coordination")
+            (managed-fixture)
 
             submitted
             (atom nil)
@@ -205,7 +211,7 @@
   council-wake-gives-a-parent-task-as-the-instruction
   (it "gives the parent's entry as the child's task and asks for the whole result"
       (let [{:keys [db sid entry]}
-            (managed-fixture "coordination")
+            (managed-fixture)
 
             submitted
             (atom nil)]
@@ -226,7 +232,7 @@
             (expect (not (str/includes? request "Council notification")))
             (expect (= required?
                        (str/includes? request (str "reply_to=" (:entry_id entry) ")")))))))
-      (let [{:keys [db sid entry]} (fixture "coordination")]
+      (let [{:keys [db sid entry]} (fixture)]
         (expect (nil? (agents/task-request db sid entry)) "An independent session gets no task"))))
 
 ;; A ping from its parent to a finished subagent is its follow-up task, the same store step for each.
@@ -234,7 +240,7 @@
   council-wake-continues-a-finished-subagent-like-resume
   (it "queues the child with its turn count and restores it when the turn cannot start"
       (let [{:keys [db sid entry]}
-            (managed-fixture "coordination")
+            (managed-fixture)
 
             submit
             (atom (fn [_]
@@ -270,7 +276,7 @@
   (it
     "refuses a ping to an exhausted or stopped child and stores a ping that can start"
     (let [{:keys [db sid]}
-          (managed-fixture "coordination")
+          (managed-fixture)
 
           leader
           (str (:parent_id (agents/info db sid)))
@@ -292,7 +298,7 @@
                                                           :group-id gid
                                                           :state "running"}})
                                      {:session-id leader :activation-id activation :source "sdk"}
-                                     {:kind "coordination" :content "Next task" :ping [sid]})))
+                                     {:content "Next task" :ping [sid]})))
                  (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))]
 
       (with-redefs-fn {#'toggles/enabled? (constantly true)
@@ -314,7 +320,7 @@
 
 (defdescribe request-provenance-is-enforced-by-sqlite
              (it "request provenance is enforced by sqlite"
-                 (let [{:keys [db sid entry]} (fixture "coordination")]
+                 (let [{:keys [db sid entry]} (fixture)]
                    (doseq [invalid [{:request-kind :assistant} {:request-kind :council}
                                     {:request-kind :user :council-entry-id (:entry_id entry)}
                                     {:request-kind :council :council-entry-id 99999}]]
@@ -338,7 +344,7 @@
                    (try
                      (let [{:keys [sid entry]}
                            (binding [h/*store* db]
-                             (fixture "complain"))
+                             (fixture))
 
                            tid
                            (ps/db-store-session-turn! db
@@ -352,7 +358,6 @@
                          (try (let [turn (first (ps/db-list-session-turns reopened sid))]
                                 (expect (= (str tid) (str (:id turn))))
                                 (expect (= :council (:request-kind turn)))
-                                (expect (= :complain (get-in turn [:council :kind])))
                                 (expect (= (:content entry) (get-in turn [:council :content]))))
                               (finally (ps/db-dispose-connection! reopened)))))
                      (finally (ps/db-dispose-connection! db)
@@ -364,7 +369,7 @@
   (it
     "council wake live event and early terminal share durable provenance"
     (let [{:keys [db sid]}
-          (managed-fixture "informational")
+          (managed-fixture)
 
           events
           (atom [])]
@@ -382,12 +387,11 @@
                        #'cancellation/worker-future (fn [& _]
                                                       (future nil))}
         (fn []
-          (try
-            (let [entry
-                  (council/wake! db
-                                 #(council/runtime db)
-                                 {:session-id sid :source "sdk"}
-                                 {:kind "coordination" :content "Actual build result from the SDK"})
+          (try (let [entry
+                     (council/wake! db
+                                    #(council/runtime db)
+                                    {:session-id sid :source "sdk"}
+                                    {:content "Actual build result from the SDK"})
 
                   started
                   (some (fn [[type payload]]
@@ -400,16 +404,15 @@
                   live
                   (state/get-turn sid tid)]
 
-              (expect (some? started))
-              (expect (= "council" (:request_kind started)))
-              (expect (= (:entry_id entry) (get-in started [:council :entry_id])))
-              (expect (= "coordination" (get-in started [:council :kind])))
-              (expect (= (:content entry) (:request started) (get live "request")))
-              (expect (= "council" (get live "request_kind")))
-              (expect (#'state/persist-forced-terminal! sid tid {:status :interrupted :content []}))
-              (let [turn (last (state/transcript sid))]
-                (expect (= "council" (get turn "request_kind")))
-                (expect (= "coordination" (get-in turn ["council" "kind"])))
-                (expect (= (:entry_id entry) (get-in turn ["council" "entry_id"])))
-                (expect (= (:content entry) (get turn "request")))))
-            (finally (#'state/drop-session! sid))))))))
+                 (expect (some? started))
+                 (expect (= "council" (:request_kind started)))
+                 (expect (= (:entry_id entry) (get-in started [:council :entry_id])))
+                 (expect (= (:content entry) (:request started) (get live "request")))
+                 (expect (= "council" (get live "request_kind")))
+                 (expect
+                   (#'state/persist-forced-terminal! sid tid {:status :interrupted :content []}))
+                 (let [turn (last (state/transcript sid))]
+                   (expect (= "council" (get turn "request_kind")))
+                   (expect (= (:entry_id entry) (get-in turn ["council" "entry_id"])))
+                   (expect (= (:content entry) (get turn "request")))))
+               (finally (#'state/drop-session! sid))))))))

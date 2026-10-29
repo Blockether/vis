@@ -120,7 +120,7 @@
       "resources": []
     },
     {
-      "result_summary": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}",
+      "result_summary": "{:title \"Activity review\", :entry_id 42, :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}",
       "id": "result-4",
       "summary": "Activity review",
       "signal": "observation",
@@ -148,7 +148,7 @@
       "resources": []
     },
     {
-      "result_summary": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}",
+      "result_summary": "{:title \"Activity review\", :entry_id 42, :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}",
       "id": "result-5",
       "summary": "Activity review",
       "signal": "observation",

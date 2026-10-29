@@ -2309,17 +2309,6 @@
         (cond queued? "Queued"
               (and user? (= :council (:request-kind message)))
               (str "Council"
-                   (when-let [kind (get-in message [:council "kind"])]
-                     (str " · "
-                          (case kind
-                            "coordination"
-                            "Coordination"
-
-                            "informational"
-                            "Information"
-
-                            "complain"
-                            "Complaint")))
                    (when-let [thread-id (get-in message [:council "thread_id"])]
                      (str " · Thread #" thread-id)))
               user? "You"

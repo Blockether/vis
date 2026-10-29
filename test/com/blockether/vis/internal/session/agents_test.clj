@@ -844,7 +844,7 @@
           (atom #{})
 
           ping
-          {:kind "coordination" :content "Next task" :ping [child]}
+          {:content "Next task" :ping [child]}
 
           refused
           (fn [opts publish!]
@@ -1849,8 +1849,7 @@
 
                           ps/db-council-get
                           (fn [_ id]
-                            (when (= 7 id)
-                              {:entry_id 7 :kind "informational" :content "tokenize drops tabs"}))]
+                            (when (= 7 id) {:entry_id 7 :content "tokenize drops tabs"}))]
 
               (let [publisher
                     (future (Thread/sleep 1500)
@@ -1866,8 +1865,7 @@
 
                 @publisher
                 (expect (< (- (System/currentTimeMillis) started) 15000))
-                (expect (= [{"entry_id" 7 "kind" "informational" "content" "tokenize drops tabs"}]
-                           (get record "messages"))
+                (expect (= [{"entry_id" 7 "content" "tokenize drops tabs"}] (get record "messages"))
                         (pr-str record))))))))
     (it "does not end the wait for a child that ended before it"
         (let [{:keys [db leader env done busy]}

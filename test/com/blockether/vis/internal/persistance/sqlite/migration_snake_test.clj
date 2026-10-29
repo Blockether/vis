@@ -237,6 +237,40 @@
     (when (.next rs) (.getString rs 1))))
 
 (defdescribe
+  retired-council-kind-test
+  (it "drops the Council message kind and keeps an old automatic complaint as a host entry"
+      ;; User decision: Council messages have no kind, and Vis never publishes a complaint.
+      (let [[^java.io.File file ds] (temp-ds)]
+        (try (migration/migrate! ds [migration-dir])
+             ;; the shape a V1 with message kinds and automatic complaints left behind
+             (exec! ds "DROP TABLE council_entry")
+             (exec! ds
+                    (str "CREATE TABLE council_entry (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                         "group_id TEXT, author_sid TEXT NOT NULL, activation_id TEXT NOT NULL, "
+                         "source TEXT NOT NULL DEFAULT 'host' "
+                         "CHECK (source IN ('host', 'sdk', 'autocomplain')), "
+                         "kind TEXT NOT NULL DEFAULT 'informational' "
+                         "CHECK (kind IN ('complain', 'coordination', 'informational')), "
+                         "source_ref BLOB, thread_id INTEGER REFERENCES council_entry(id), "
+                         "reply_required INTEGER NOT NULL DEFAULT 0, "
+                         "reply_to INTEGER REFERENCES council_entry(id), title TEXT, "
+                         "content TEXT NOT NULL, created_at INTEGER NOT NULL, "
+                         "idempotency_key TEXT NOT NULL, fingerprint TEXT NOT NULL, "
+                         "UNIQUE (author_sid, idempotency_key))"))
+             (exec! ds
+                    (str
+                      "INSERT INTO council_entry (author_sid, activation_id, source, kind, title, "
+                      "content, created_at, idempotency_key, fingerprint) VALUES ('s1', 'a1', "
+                      "'autocomplain', 'complain', 'Failure', 'Python execution failed', 1, "
+                      "'k1', 'f1')"))
+             (migration/migrate! ds [migration-dir])
+             (expect (not (contains? (columns-of ds "council_entry") "kind")))
+             (expect (= 1 (row-count ds "council_entry")))
+             (expect (= "host" (scalar ds "SELECT source FROM council_entry")))
+             (expect (not (str/includes? (get (master-sql ds) "council_entry") "autocomplain")))
+             (finally (.delete file))))))
+
+(defdescribe
   attachment-reference-reopen-test
   (it "adds the composer reference column to an existing store without losing attachments"
       (let [[^java.io.File file ds] (temp-ds)]

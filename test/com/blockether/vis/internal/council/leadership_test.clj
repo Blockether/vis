@@ -42,24 +42,21 @@
                                 :wake! (fn [_ sid _]
                                          (swap! wakes conj sid))})}
           (fn []
-            (let [request (council/publish! db
-                                            #(deref fleet)
-                                            actor
-                                            {:kind "coordination"
-                                             :content "Existing findings?"
-                                             :ping [b]
-                                             :reply_required true})]
+            (let [request (council/publish!
+                            db
+                            #(deref fleet)
+                            actor
+                            {:content "Existing findings?" :ping [b] :reply_required true})]
               (expect (= [b] @wakes) "An explicit ping resumes an idle peer of the group")
               (expect (not= "unavailable" (get-in request [:replies 0 :state])))
               (reset! wakes [])
               ;; The woken peer answers its requester after that requester has gone idle.
               (swap! fleet assoc b {:activation-id "b" :group-id gid :wake? true})
               (swap! fleet dissoc a)
-              (council/publish!
-                db
-                #(deref fleet)
-                {:session-id b :activation-id "b" :source "host"}
-                {:kind "informational" :content "Findings" :reply_to (:entry_id request)})
+              (council/publish! db
+                                #(deref fleet)
+                                {:session-id b :activation-id "b" :source "host"}
+                                {:content "Findings" :reply_to (:entry_id request)})
               (expect (= [a] @wakes) "A reply reaches a requester that has gone idle")))))))
 
 (defdescribe
@@ -78,7 +75,6 @@
                                     :author_sid (str sid)
                                     :activation_id "fixture"
                                     :source "host"
-                                    :kind "coordination"
                                     :title "Work"
                                     :content "Work"
                                     :created_at 1

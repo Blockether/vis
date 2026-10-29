@@ -888,7 +888,7 @@
              (keep :entry_id)
              (keep #(ps/db-council-get db %))
              (mapv (fn [e]
-                     {:entry_id (:entry_id e) :kind (:kind e) :content (clip (:content e) 600)})))
+                     {:entry_id (:entry_id e) :content (clip (:content e) 600)})))
 
         alerts
         (cond-> []
@@ -1283,9 +1283,7 @@
 
     (when (live? parent)
       (let [entry
-            ((runtime-fn :publish)
-              env
-              {:kind "coordination" :content question :ping [parent] :reply_required true})
+            ((runtime-fn :publish) env {:content question :ping [parent] :reply_required true})
 
             entry-id
             (:entry_id entry)]
@@ -1422,7 +1420,7 @@
   [env sid kind text]
   (let [{:keys [entry_id] :as question} (get @questions sid)]
     (when (get question kind)
-      ((runtime-fn :publish) env {:kind "informational" :content text :reply_to entry_id})
+      ((runtime-fn :publish) env {:content text :reply_to entry_id})
       (swap! questions #(if (= entry_id (get-in % [sid :entry_id])) (dissoc % sid) %))
       true)))
 
@@ -1512,7 +1510,7 @@
         (get @questions session_id)]
 
     (when-not entry_id (fail! :invalid-request "That subagent has no open question"))
-    ((runtime-fn :publish) env {:kind "informational" :content text :reply_to entry_id})
+    ((runtime-fn :publish) env {:content text :reply_to entry_id})
     (swap! questions #(if (= entry_id (get-in % [session_id :entry_id])) (dissoc % session_id) %))
     (current-record env session_id)))
 
@@ -1643,7 +1641,7 @@
            (when (:reply_required entry)
              (str
                "When the task is done, reply once with the result: await council.publish(result, "
-               "kind=\"informational\", reply_to="
+               "reply_to="
                id
                "). "))
            "End your turn with the complete result as your final answer. Your parent reads that "
@@ -1850,10 +1848,10 @@
 "
       role-guide
       "- A child sees your requests and notes, not your tool output. For an independent review, give the child the code, not your conclusion.
-- council.run and council.wait return at the first event or at the timeout. For running, call council.wait(session_ids=[...]) again. For asking, reply with council.publish(text, kind=\"informational\", reply_to=question_entry_id). Answer budget_request with council.extend or council.deny, and files_request with council.grant or council.deny.
+- council.run and council.wait return at the first event or at the timeout. For running, call council.wait(session_ids=[...]) again. For asking, reply with council.publish(text, reply_to=question_entry_id). Answer budget_request with council.extend or council.deny, and files_request with council.grant or council.deny.
 - A failed record names its cause in error. For rate_limited, run the task again on a route from alternatives. For budget_limited, the answer is the handoff: call council.extend, then ping the child.
 - While children run, do your own work. Do not do their work again. When a child ends, check its files and tests at once.
-- For a follow-up task, ping the child: council.publish(task, kind=\"coordination\", ping=[session_id]). Add files={...} for other files. Then call council.wait(session_ids=[session_id]).
+- For a follow-up task, ping the child: council.publish(task, ping=[session_id]). Add files={...} for other files. Then call council.wait(session_ids=[session_id]).
 "
       lead-guide
       lead-child-guide)))

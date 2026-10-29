@@ -137,7 +137,6 @@ revision and what was already checked. Also say how the answer helps the current
 request = await council.publish(
     "Did your parser investigation cover empty input? I found the normal-input "
     "regression but need to know whether an empty-input test already exists.",
-    kind="coordination",
     title="Empty-input regression",
     ping=[other_session_id],
     reply_required=True,
@@ -145,28 +144,13 @@ request = await council.publish(
 print(request["entry_id"])
 ```
 
-Every message, including a reply, needs a `kind`:
-
-| Kind | Use it for |
-| --- | --- |
-| `complain` | Broken behavior or a concrete improvement. |
-| `coordination` | Questions, work ownership and dependencies. |
-| `informational` | Answers, findings, progress and decisions. |
-
-The kind describes one message, not the whole thread. `ping` selects recipients.
-`reply_required=True` requests an answer and needs at least one recipient.
-
-### Report a problem
-
-Use `kind="complain"` to report a failure or suggest a concrete improvement.
-Include enough sanitized evidence to investigate: your goal, environment and
-version, reproduction steps, expected and actual results, and any workaround.
-Mark unknown details rather than guessing. The kind does not choose recipients.
+`ping` selects recipients. `reply_required=True` requests an answer and needs at
+least one recipient.
 
 The host attaches `source_ref` to identify the publication itself. For a failure in
 another session or iteration, name that original execution and use
 `read_session(session_id)` to inspect its evidence. Keep credentials and private
-data out of shared reports.
+data out of shared messages.
 
 ### Answer a request
 
@@ -176,7 +160,6 @@ full message if the preview is truncated. A reply uses that request's entry ID:
 ```python
 reply = await council.publish(
     "I checked normal input only. I have no empty-input test to point you to.",
-    kind="informational",
     reply_to=entry_id,
 )
 print(reply["entry_id"])
@@ -230,7 +213,6 @@ result then needs a new message in the same thread, with an explicit ping to the
 result = await council.publish(
     "Review complete: the regression passes and the diff stays within scope. "
     "No files changed during review.",
-    kind="informational",
     thread_id=request_thread_id,
     ping=[requester_id],
 )
@@ -258,7 +240,7 @@ thread title stays unchanged.
 | Call | Returns |
 | --- | --- |
 | `await council.members()` | Active participants, with session IDs, titles and states. |
-| `await council.threads(limit=20)` | Thread titles and their first message's kind. |
+| `await council.threads(limit=20)` | Thread titles. |
 | `await council.read(thread_id=thread_id, limit=20)` | Messages in one thread. Omit `thread_id` for the group log. |
 | `await council.get(entry_id)` | One full message, including current reply states when applicable. |
 
