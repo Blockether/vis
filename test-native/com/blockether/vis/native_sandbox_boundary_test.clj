@@ -54,7 +54,7 @@
            "edit_target = project_root_path / 'edit.txt'\n"
            "edit_target.write_text('alpha\\nbeta\\n')\n"
            "version = cat(str(edit_target)).splitlines()[0].rsplit(' @', 1)[1]\n"
-           "patch(str(edit_target), [{'from': 2, 'replace': 'gamma'}], version)\n"
+           "patch(str(edit_target), [{'from': 2, 'new': 'gamma'}], version)\n"
            "assert edit_target.read_text() == 'alpha\\ngamma\\n', edit_target.read_text()\n"
            "print('NATIVE_PATCH_READY')\n"
            ;; #279: let the refusal escape this tool call; the next model step must

@@ -349,7 +349,7 @@
    [:patch-version-invalid ["is not known here" "version must be the `@` value"]]
    [:patch-invalid-edit
     ["must be a line number" "out of range" "is after to line" "must be a map"
-     "non-empty list of maps" "missing `from`" "missing `replace`" "allowed: from, to, replace"]]])
+     "non-empty list of maps" "missing `from`" "missing `new`" "allowed: from, to, new"]]])
 
 (defn- patch-refusal-classification
   "The classification a `patch` refusal earns from the cause line it printed, or nil when
@@ -390,7 +390,7 @@
     "Two edits in the batch cover the same line, so the whole batch was refused. Merge them into ONE edit spanning both ranges instead of sending the same pair again."
 
     :patch-invalid-edit
-    "The edit shape is unusable as written: each edit is {\"from\": 12, \"to\": 14, \"replace\": text}, with line numbers of the version that the cat/grep header showed, inside the file and `from` before `to`. The cause line names the failing edit — fix that one and re-send."
+    "The edit shape is unusable as written: each edit is {\"old\": exact_text, \"new\": text} or {\"from\": 12, \"to\": 14, \"new\": text}, and a line edit uses line numbers of the version that the cat/grep header showed, inside the file and `from` before `to`. The cause line names the failing edit — fix that one and re-send."
 
     :patch-lines-changed
     "The lines of this edit changed after the read that showed them, so the whole batch was refused. Read only the `cat` window the refusal names, then send the edit again with the current version it gives. Edits elsewhere in the file move on their own."

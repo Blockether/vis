@@ -89,7 +89,7 @@
 (defn decode-unicode-escapes
   "Decode the `\\uXXXX` escapes in edit text that can only be model drift.
 
-   A literal `\\u2014` handed to `patch` as `replace` text used
+   A literal `\\u2014` handed to `patch` as `new` text used
    to be written to disk as those six characters, so edited files grew
    `\\u2014` where an em dash belonged. Here it becomes the em dash, while every
    escape a real file may legitimately carry is returned untouched: a doubled

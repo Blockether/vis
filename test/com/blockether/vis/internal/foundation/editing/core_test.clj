@@ -438,7 +438,7 @@
     (it "patch refuses to write outside cwd"
         (let [patch (private-fn "patch-tool")]
           (doseq [p escape-paths]
-            (let [err (try (patch p [{"from" 1 "replace" "x"}] "00000000")
+            (let [err (try (patch p [{"from" 1 "new" "x"}] "00000000")
                            nil
                            (catch clojure.lang.ExceptionInfo e e))]
               (expect (some? err))
@@ -558,7 +558,7 @@
                                (before {:extensions (atom [])}
                                        (constantly :ok)
                                        ["target/editing-test/protected/policy.txt"
-                                        [{"from" 1 "replace" "x"}]])]
+                                        [{"from" 1 "new" "x"}]])]
 
                            (expect (= :ext.foundation.editing/path-protected
                                       (-> out
@@ -581,7 +581,7 @@
                              out
                              (before {:extensions (atom [])}
                                      (constantly :ok)
-                                     ["target/editing-test/a.clj" [{"from" 1 "replace" "x"}]])]
+                                     ["target/editing-test/a.clj" [{"from" 1 "new" "x"}]])]
 
                          (expect (= :ext.foundation.editing/path-protected
                                     (-> out
@@ -1285,7 +1285,7 @@
   [rel from to replacement]
   ((private-fn "patch-file!")
     rel
-    [(cond-> {"from" from "replace" replacement}
+    [(cond-> {"from" from "new" replacement}
        to
        (assoc "to" to))]
     (current-version rel)))
@@ -1311,7 +1311,7 @@
                      (private-fn "patch-file!")
 
                      first-out
-                     (:result (patch-file rel [{"from" 4 "replace" "FOUR\nFOUR B"}] shown))
+                     (:result (patch-file rel [{"from" 4 "new" "FOUR\nFOUR B"}] shown))
 
                      ;; No `cat` between the two edits: the version the status line just
                      ;; reported IS the version the next edit spends.
@@ -1319,7 +1319,7 @@
                      (version-in first-out)
 
                      second-out
-                     (:result (patch-file rel [{"from" 5 "replace" "FOUR AGAIN"}] reported))]
+                     (:result (patch-file rel [{"from" 5 "new" "FOUR AGAIN"}] reported))]
 
                  (expect (string/starts-with? first-out (str "patched " rel " @")))
                  (expect (= reported
@@ -1373,7 +1373,7 @@
             (spit rel "new 1\nnew 2\na\nb\nc\nd\ne\n")
 
             out
-            (:result ((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] shown))]
+            (:result ((private-fn "patch-file!") rel [{"from" 4 "new" "D"}] shown))]
 
         (expect (= "new 1\nnew 2\na\nb\nc\nD\ne\n" (slurp rel)))
         (expect (string/includes? out (str "note: moved from @" shown)))
@@ -1386,7 +1386,7 @@
             (version-in ((comp :result (private-fn "cat-tool")) rel))]
 
         (spit rel "a\nb\nc\nappended\n")
-        ((private-fn "patch-file!") rel [{"from" 1 "to" 2 "replace" "AB"}] shown)
+        ((private-fn "patch-file!") rel [{"from" 1 "to" 2 "new" "AB"}] shown)
         (expect (= "AB\nc\nappended\n" (slurp rel)))))
   (it "a change inside the edited lines is refused with the current version"
       (let [rel
@@ -1399,7 +1399,7 @@
             (spit rel "a\nB CHANGED\nc\nd\n")
 
             thrown
-            (refusal #((private-fn "patch-file!") rel [{"from" 2 "to" 3 "replace" "x"}] shown))]
+            (refusal #((private-fn "patch-file!") rel [{"from" 2 "to" 3 "new" "x"}] shown))]
 
         (expect (= :lines-changed (:reason (ex-data thrown))))
         (expect (= (current-version rel) (:current-version (ex-data thrown))))
@@ -1427,14 +1427,14 @@
         (expect (= :lines-changed
                    (:reason (ex-data (refusal #((private-fn "patch-file!")
                                                   rel
-                                                  [{"from" 2 "to" 3 "replace" "x"}]
+                                                  [{"from" 2 "to" 3 "new" "x"}]
                                                   shown))))))))
   (it "a version the host never showed is refused when the file differs"
       (let [rel
             (write-temp! "patch/unknown.txt" "a\nb\n")
 
             thrown
-            (refusal #((private-fn "patch-file!") rel [{"from" 1 "replace" "x"}] "0badc0de"))]
+            (refusal #((private-fn "patch-file!") rel [{"from" 1 "new" "x"}] "0badc0de"))]
 
         (expect (= :version-unknown (:reason (ex-data thrown))))
         (expect (string/includes? (ex-message thrown) "version @0badc0de is not known here."))
@@ -1442,7 +1442,7 @@
   (it "an unchanged file needs no remembered version, so a restart keeps it usable"
       (let [rel (write-temp! "patch/restart.txt" "a\nb\n")]
         (version/forget-all!)
-        ((private-fn "patch-file!") rel [{"from" 2 "replace" "B"}] (str "@" (current-version rel)))
+        ((private-fn "patch-file!") rel [{"from" 2 "new" "B"}] (str "@" (current-version rel)))
         (expect (= "a\nB\n" (slurp rel)))))
   (it "a malformed or missing version is refused"
       (let [rel (write-temp! "patch/no-version.txt" "a\n")]
@@ -1450,7 +1450,7 @@
           (expect (= :version-malformed
                      (:reason (ex-data (refusal #((private-fn "patch-file!")
                                                     rel
-                                                    [{"from" 1 "replace" "x"}]
+                                                    [{"from" 1 "new" "x"}]
                                                     v))))))))))
 
 (defdescribe
@@ -1466,10 +1466,10 @@
 
             after
             (version-in (:result
-                          ((private-fn "patch-file!") rel [{"from" 2 "replace" "B1\nB2"}] shown)))
+                          ((private-fn "patch-file!") rel [{"from" 2 "new" "B1\nB2"}] shown)))
 
             thrown
-            (refusal #((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] after))]
+            (refusal #((private-fn "patch-file!") rel [{"from" 4 "new" "D"}] after))]
 
         (expect (= :lines-not-shown (:reason (ex-data thrown))))
         (expect (string/includes?
@@ -1487,15 +1487,15 @@
 
             after
             (version-in (:result
-                          ((private-fn "patch-file!") rel [{"from" 2 "replace" "B1\nB2"}] shown)))
+                          ((private-fn "patch-file!") rel [{"from" 2 "new" "B1\nB2"}] shown)))
 
             thrown
-            (refusal #((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] after))]
+            (refusal #((private-fn "patch-file!") rel [{"from" 4 "new" "D"}] after))]
 
         (expect (string/includes? (ex-message thrown)
                                   (str "These lines of @" after " are shown now:")))
         (expect (string/includes? (ex-message thrown) "  4│ c"))
-        ((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] after)
+        ((private-fn "patch-file!") rel [{"from" 4 "new" "D"}] after)
         (expect (= "a\nB1\nB2\nD\nd\ne\n" (slurp rel)))))
   (it "keeps the written lines and the lines before the change usable at the new version"
       (let [rel
@@ -1506,9 +1506,9 @@
 
             after
             (version-in (:result
-                          ((private-fn "patch-file!") rel [{"from" 3 "replace" "C1\nC2"}] shown)))]
+                          ((private-fn "patch-file!") rel [{"from" 3 "new" "C1\nC2"}] shown)))]
 
-        ((private-fn "patch-file!") rel [{"from" 1 "replace" "A"} {"from" 4 "replace" "C2!"}] after)
+        ((private-fn "patch-file!") rel [{"from" 1 "new" "A"} {"from" 4 "new" "C2!"}] after)
         (expect (= "A\nb\nC1\nC2!\nd\ne\n" (slurp rel)))))
   (it "keeps the old version usable: its lines move through the diff"
       (let [rel
@@ -1517,8 +1517,8 @@
             shown
             (version-in ((comp :result (private-fn "cat-tool")) rel))]
 
-        ((private-fn "patch-file!") rel [{"from" 2 "replace" "B1\nB2"}] shown)
-        ((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] shown)
+        ((private-fn "patch-file!") rel [{"from" 2 "new" "B1\nB2"}] shown)
+        ((private-fn "patch-file!") rel [{"from" 4 "new" "D"}] shown)
         (expect (= "a\nB1\nB2\nc\nD\ne\n" (slurp rel)))))
   (it "refuses lines outside the cat window of that version"
       (let [rel
@@ -1528,10 +1528,10 @@
             (version-in ((comp :result (private-fn "cat-tool")) rel 1 2))
 
             thrown
-            (refusal #((private-fn "patch-file!") rel [{"from" 2 "to" 3 "replace" "x"}] shown))]
+            (refusal #((private-fn "patch-file!") rel [{"from" 2 "to" 3 "new" "x"}] shown))]
 
         (expect (= :lines-not-shown (:reason (ex-data thrown))))
-        ((private-fn "patch-file!") rel [{"from" 2 "replace" "B"}] shown)
+        ((private-fn "patch-file!") rel [{"from" 2 "new" "B"}] shown)
         (expect (= "a\nB\nc\nd\n" (slurp rel)))))
   (it "limits a remapped patch result to its written lines"
       (let [rel
@@ -1544,14 +1544,12 @@
             (spit rel "new\na\nb\nc\nd\n")
 
             after
-            (version-in (:result
-                          ((private-fn "patch-file!") rel [{"from" 2 "replace" "B"}] shown)))]
+            (version-in (:result ((private-fn "patch-file!") rel [{"from" 2 "new" "B"}] shown)))]
 
         (expect (= :lines-not-shown
-                   (:reason (ex-data (refusal #((private-fn "patch-file!")
-                                                  rel
-                                                  [{"from" 4 "replace" "D"}]
-                                                  after))))))
+                   (:reason (ex-data
+                              (refusal
+                                #((private-fn "patch-file!") rel [{"from" 4 "new" "D"}] after))))))
         (expect (= "new\na\nB\nc\nd\n" (slurp rel)))))
   (it "applies concurrent patches of one file one after another, so no edit is lost"
       (let [n
@@ -1567,7 +1565,7 @@
             (mapv (fn [i]
                     (future (try ((private-fn "patch-file!")
                                    rel
-                                   [{"from" (inc i) "replace" (str "LINE " i)}]
+                                   [{"from" (inc i) "new" (str "LINE " i)}]
                                    shown)
                                  (catch Exception e e))))
                   (range n))]
@@ -1589,21 +1587,22 @@
               [[[] :edits-missing "edits must be a non-empty list of maps" 2]
                [large-input :edits-missing "edits must be a non-empty list of maps" 2]
                [[large-input] :edit-not-a-map "edit 1/1 must be a map" 2]
-               [[{"replace" "x"}] :line-missing "edit 1/1 missing `from`" 2]
-               [[{"from" 1}] :replacement-missing "edit 1/1 missing `replace`" 2]
+               [[{"new" "x"}] :line-missing "edit 1/1 missing `from`" 2]
+               [[{"from" 1}] :replacement-missing "edit 1/1 missing `new`" 2]
                [[{"from" 1 "replacement" "x"}] :edit-unknown-key
-                "unknown keys: \"replacement\"; allowed: from, to, replace" 2]
+                "unknown keys: \"replacement\"; allowed: from, to, new" 2]
+               ;; The edit key `replace` is now `new`; the old name is refused, never read.
+               [[{"from" 1 "replace" "x"}] :edit-unknown-key
+                "unknown keys: \"replace\"; allowed: from, to, new" 2]
                ;; #291: an edit is read under its JSON names only; keyword keys are named.
                [[{:from 1 :replace "x"}] :edit-unknown-key
-                "unknown keys: :from, :replace; allowed: from, to, replace" 2]
-               [[{"from" large-input "replace" "x"}] :line-malformed "`from` must be a line number"
-                2]
-               [[{"from" 1 "to" "2:abc" "replace" "x"}] :line-malformed "`to` must be a line number"
-                2] [[{"from" 99 "replace" "x"}] :line-out-of-range "lines 99..99 out of range" 2]
-               [[{"from" 1 "to" 99 "replace" "x"}] :line-out-of-range "has 2 lines" 2]
-               [[{"from" 2 "to" 1 "replace" "x"}] :range-inverted "from line 2 is after to line 1"
-                2]
-               [[{"from" 1 "to" 2 "replace" "x"} {"from" 2 "replace" "y"}] :edits-overlap
+                "unknown keys: :from, :replace; allowed: from, to, new" 2]
+               [[{"from" large-input "new" "x"}] :line-malformed "`from` must be a line number" 2]
+               [[{"from" 1 "to" "2:abc" "new" "x"}] :line-malformed "`to` must be a line number" 2]
+               [[{"from" 99 "new" "x"}] :line-out-of-range "lines 99..99 out of range" 2]
+               [[{"from" 1 "to" 99 "new" "x"}] :line-out-of-range "has 2 lines" 2]
+               [[{"from" 2 "to" 1 "new" "x"}] :range-inverted "from line 2 is after to line 1" 2]
+               [[{"from" 1 "to" 2 "new" "x"} {"from" 2 "new" "y"}] :edits-overlap
                 "lines 1..2 and 2..2" 2]]]
         (let [thrown (refusal #(patch-now rel edits))
               message (ex-message thrown)]
@@ -1627,7 +1626,7 @@
             (spit rel (str "first\n" text "y\nlast\n"))
 
             thrown
-            (refusal #((private-fn "patch-file!") rel [{"from" 2 "replace" "z"}] shown))
+            (refusal #((private-fn "patch-file!") rel [{"from" 2 "new" "z"}] shown))
 
             message
             (ex-message thrown)]
@@ -1638,49 +1637,49 @@
         (expect (= 3 (count (string/split-lines message))))
         (expect (< (count message) 350)))))
 
-(defdescribe
-  patch-newline-semantics-test
-  ;; Regression: a span whose LAST line was BLANK grew one extra blank line on every
-  ;; replace — that line's terminator sits OUTSIDE the span, so the check read the
-  ;; PREVIOUS line's `\n` and padded the replacement with a newline it must not carry.
-  (it "a span that ends on a blank line replaces it instead of growing another"
-      (let [rel
-            (write-temp! "patch/blank-tail.txt" "alpha\nbeta\n\ngamma\n")
+(defdescribe patch-newline-semantics-test
+             ;; Regression: a span whose LAST line was BLANK grew one extra blank line on every
+             ;; replace — that line's terminator sits OUTSIDE the span, so the check read the
+             ;; PREVIOUS line's `\n` and padded the replacement with a newline it must not carry.
+             (it "a span that ends on a blank line replaces it instead of growing another"
+                 (let [rel
+                       (write-temp! "patch/blank-tail.txt" "alpha\nbeta\n\ngamma\n")
 
-            out
-            (:result (patch-now rel [{"from" 2 "to" 3 "replace" "BETA"}]))]
+                       out
+                       (:result (patch-now rel [{"from" 2 "to" 3 "new" "BETA"}]))]
 
-        (expect (= "alpha\nBETA\ngamma\n" (slurp rel)))
-        (expect (string/includes? out "2..3"))))
-  ;; Regression: a replacement carrying its OWN trailing newline wrote a blank line
-  ;; nobody asked for, and the row counted the lines it had not written — so every
-  ;; later row's range drifted by one and addressed the wrong line.
-  (it "a replacement's own trailing newline neither doubles the line nor drifts the rows"
-      (let [rel
-            (write-temp! "patch/trailing-nl.txt" "one\ntwo\nthree\nfour\n")
+                   (expect (= "alpha\nBETA\ngamma\n" (slurp rel)))
+                   (expect (string/includes? out "2..3"))))
+             ;; Regression: a replacement carrying its OWN trailing newline wrote a blank line
+             ;; nobody asked for, and the row counted the lines it had not written — so every
+             ;; later row's range drifted by one and addressed the wrong line.
+             (it "a replacement's own trailing newline neither doubles the line nor drifts the rows"
+                 (let [rel
+                       (write-temp! "patch/trailing-nl.txt" "one\ntwo\nthree\nfour\n")
 
-            out
-            (:result (patch-now rel [{"from" 1 "replace" "ONE\n"} {"from" 3 "replace" "THREE"}]))]
+                       out
+                       (:result (patch-now rel
+                                           [{"from" 1 "new" "ONE\n"} {"from" 3 "new" "THREE"}]))]
 
-        (expect (= "ONE\ntwo\nTHREE\nfour\n" (slurp rel)))
-        (expect (string/includes? out "3..3  → 1 line  3"))))
-  (it "a replacement ending in TWO newlines still asks for one blank line after it"
-      (let [rel
-            (write-temp! "patch/trailing-blank.txt" "one\ntwo\n")
+                   (expect (= "ONE\ntwo\nTHREE\nfour\n" (slurp rel)))
+                   (expect (string/includes? out "3..3  → 1 line  3"))))
+             (it "a replacement ending in TWO newlines still asks for one blank line after it"
+                 (let [rel
+                       (write-temp! "patch/trailing-blank.txt" "one\ntwo\n")
 
-            out
-            (:result (patch-now rel [{"from" 1 "replace" "ONE\n\n"}]))]
+                       out
+                       (:result (patch-now rel [{"from" 1 "new" "ONE\n\n"}]))]
 
-        (expect (= "ONE\n\ntwo\n" (slurp rel)))
-        (expect (string/includes? out "2 lines  1..2"))))
-  (it "a CRLF file keeps its CRLF on a last-line replace"
-      (let [rel (write-temp! "patch/crlf.txt" "one\r\ntwo\r\n")]
-        (patch-now rel [{"from" 2 "replace" "TWO"}])
-        (expect (= "one\r\nTWO\r\n" (slurp rel)))))
-  (it "a span ending on the file's last line keeps the file's final newline"
-      (let [rel (write-temp! "patch/last-line.txt" "alpha\nbeta\n\ngamma\ndelta\n")]
-        (patch-now rel [{"from" 4 "to" 5 "replace" "TAIL"}])
-        (expect (= "alpha\nbeta\n\nTAIL\n" (slurp rel))))))
+                   (expect (= "ONE\n\ntwo\n" (slurp rel)))
+                   (expect (string/includes? out "2 lines  1..2"))))
+             (it "a CRLF file keeps its CRLF on a last-line replace"
+                 (let [rel (write-temp! "patch/crlf.txt" "one\r\ntwo\r\n")]
+                   (patch-now rel [{"from" 2 "new" "TWO"}])
+                   (expect (= "one\r\nTWO\r\n" (slurp rel)))))
+             (it "a span ending on the file's last line keeps the file's final newline"
+                 (let [rel (write-temp! "patch/last-line.txt" "alpha\nbeta\n\ngamma\ndelta\n")]
+                   (patch-now rel [{"from" 4 "to" 5 "new" "TAIL"}])
+                   (expect (= "alpha\nbeta\n\nTAIL\n" (slurp rel))))))
 
 (defdescribe
   patch-batch-shape-test
@@ -1698,11 +1697,11 @@
 
         (expect (some? thrown))
         (expect (= :replacement-missing (:reason (ex-data thrown))))
-        (expect (string/includes? (ex-message thrown) "missing `replace`"))
+        (expect (string/includes? (ex-message thrown) "missing `new`"))
         (expect (= "alpha\nbeta\n" (slurp rel)))))
   ;; Regression: `patch(path, from, to)` — the model naming a SPAN and forgetting
   ;; the text — wrote the string `6:70a` over line 3 and reported success. The
-  ;; named `replace` key retires that ambiguity, and a MISSPELLED key is all that
+  ;; named `new` key retires that ambiguity, and a MISSPELLED key is all that
   ;; is left of it: unnamed, it would read as an edit with no replacement at all.
   (it "an unrecognised edit key is named, not guessed at"
       (let [rel
@@ -1727,8 +1726,7 @@
         (expect (string/includes? (ex-message thrown) "\"replacement\""))
         (expect (= "alpha\nbeta\ngamma\n" (slurp rel)))
         ;; The same call, spelled right, still lands.
-        (expect (string/starts-with? (:result (patch-tool rel
-                                                          [{"from" a1 "to" a3 "replace" "ONE"}]))
+        (expect (string/starts-with? (:result (patch-tool rel [{"from" a1 "to" a3 "new" "ONE"}]))
                                      "patched "))
         (expect (= "ONE\n" (slurp rel)))))
   (it "an empty batch is refused with the shape it should have had"
@@ -1754,7 +1752,7 @@
             patch-now
 
             out
-            (:result (patch-tool rel [{"from" 2 "replace" "2│ BETA"}]))]
+            (:result (patch-tool rel [{"from" 2 "new" "2│ BETA"}]))]
 
         (expect (string/includes? out "note: a replacement carries a `line│ ` gutter"))
         (expect (= "alpha\n2│ BETA\n" (slurp rel))))))
@@ -1774,8 +1772,7 @@
 
           edits
           (fn [_text]
-            [{"from" 1 "replace" "ONE"} {"from" 2 "to" 3 "replace" "TWO+THREE"}
-             {"from" 5 "replace" "FIVE"}])
+            [{"from" 1 "new" "ONE"} {"from" 2 "to" 3 "new" "TWO+THREE"} {"from" 5 "new" "FIVE"}])
 
           ascending
           (write-temp! "patch/batch-asc.txt" content)
@@ -1811,8 +1808,7 @@
             thrown
             (refusal #((private-fn "patch-file!")
                          rel
-                         [{"from" 1 "replace" "ALPHA"} {"from" 2 "replace" "BETA"}
-                          {"from" 3 "replace" "GAMMA"}]
+                         [{"from" 1 "new" "ALPHA"} {"from" 2 "new" "BETA"} {"from" 3 "new" "GAMMA"}]
                          shown))]
 
         (expect (some? thrown))
@@ -1835,7 +1831,7 @@
             (cat-tool rel)
 
             thrown
-            (try (patch-tool rel [{"from" 1 "to" 2 "replace" "A+B"} {"from" 2 "replace" "BETA"}])
+            (try (patch-tool rel [{"from" 1 "to" 2 "new" "A+B"} {"from" 2 "new" "BETA"}])
                  nil
                  (catch clojure.lang.ExceptionInfo e e))]
 
@@ -1857,8 +1853,7 @@
             (cat-tool rel)
 
             out
-            (:result (patch-tool rel
-                                 [{"from" 1 "to" 1 "replace" "ALPHA"} {"from" 3 "replace" ""}]))]
+            (:result (patch-tool rel [{"from" 1 "to" 1 "new" "ALPHA"} {"from" 3 "new" ""}]))]
 
         (expect (= "ALPHA\nbeta\ndelta\n" (slurp rel)))
         (expect (string/includes? out "2 edits  4 → 3 lines (-1)"))
@@ -1866,16 +1861,16 @@
 
 (defdescribe
   patch-preview-test
-  (it
-    "shows what one call would write and leaves the file as it was"
-    (let [rel
-          (write-temp! "patch/preview.txt" "alpha\nbeta\n")
+  (it "shows what one call would write and leaves the file as it was"
+      (let [rel
+            (write-temp! "patch/preview.txt" "alpha\nbeta\n")
 
-          preview
-          ((private-fn "patch-preview") [rel [{"from" 2 "replace" "BETA"}] (current-version rel)])]
+            preview
+            ((private-fn "patch-preview") [rel [{"from" 2 "new" "BETA"}] (current-version rel)])]
 
-      (expect (= {:path rel :before "alpha\nbeta\n" :after "alpha\nBETA\n" :spans [[2 2]]} preview))
-      (expect (= "alpha\nbeta\n" (slurp rel)))))
+        (expect (= {:path rel :before "alpha\nbeta\n" :after "alpha\nBETA\n" :spans [[2 2]]}
+                   preview))
+        (expect (= "alpha\nbeta\n" (slurp rel)))))
   (it "is nil for a call that the write would refuse"
       (let [rel
             (write-temp! "patch/preview-stale.txt" "alpha\nbeta\n")
@@ -1883,8 +1878,8 @@
             preview
             (private-fn "patch-preview")]
 
-        (expect (nil? (preview [rel [{"from" 2 "replace" "BETA"}] "ffffffff"])))
-        (expect (nil? (preview [(str rel ".missing") [{"from" 1 "replace" "x"}] "ffffffff"])))
+        (expect (nil? (preview [rel [{"from" 2 "new" "BETA"}] "ffffffff"])))
+        (expect (nil? (preview [(str rel ".missing") [{"from" 1 "new" "x"}] "ffffffff"])))
         (expect (= "alpha\nbeta\n" (slurp rel)))))
   (it "reaches the op's around hooks through the env that the before-fn returns"
       (let [rel
@@ -1894,7 +1889,7 @@
             ((:ext.symbol/before-fn (private-fn "patch-symbol"))
               {:extensions (atom [])}
               (constantly :ok)
-              [rel [{"from" 1 "replace" "ALPHA"}] (current-version rel)])]
+              [rel [{"from" 1 "new" "ALPHA"}] (current-version rel)])]
 
         (expect (= {:path rel :before "alpha\n" :after "ALPHA\n" :spans [[1 1]]}
                    ((get-in out [:env :op/preview]) (:args out)))))))
@@ -1907,7 +1902,7 @@
           (write-temp! "patch/repaired.clj" "(old)\n(keep)\n")
 
           args
-          [rel [{"from" 1 "replace" "(new"}] (current-version rel)]
+          [rel [{"from" 1 "new" "(new"}] (current-version rel)]
 
           preview
           ((private-fn "patch-preview") args)
@@ -1941,7 +1936,7 @@
             (write-temp! "patch/repair-race.clj" "(old)\n(keep)\n")
 
             args
-            [rel [{"from" 1 "replace" "(new"}] (current-version rel)]
+            [rel [{"from" 1 "new" "(new"}] (current-version rel)]
 
             preview
             ((private-fn "patch-preview") args)
@@ -1964,7 +1959,7 @@
           (write-temp! "patch/repair-preview.clj" "(a)\n")
 
           args
-          [rel [{"from" 1 "replace" "(b"}] (current-version rel)]
+          [rel [{"from" 1 "new" "(b"}] (current-version rel)]
 
           out
           ((:ext.symbol/before-fn (private-fn "patch-symbol"))
@@ -2088,35 +2083,34 @@
 (defdescribe
   a-grep-hit-feeds-patch-test
   ;; The point of the whole scheme: search, then edit, with NO read between.
-  (it "a hit's line number and its header version feed patch directly"
-      (let [d
-            (temp-dir-path "grepline")
+  (it
+    "a hit's line number and its header version feed patch directly"
+    (let [d
+          (temp-dir-path "grepline")
 
-            rel
-            (write-temp! "grepline/target.txt" "keep\nZZHITZZ line\nkeep\n")
+          rel
+          (write-temp! "grepline/target.txt" "keep\nZZHITZZ line\nkeep\n")
 
-            grep-out
-            (:result ((private-fn "grep-tool") {"query" "ZZHITZZ" "paths" [d]}))
+          grep-out
+          (:result ((private-fn "grep-tool") {"query" "ZZHITZZ" "paths" [d]}))
 
-            hit-row
-            (->> (string/split-lines grep-out)
-                 ;; Default context rows are numbered too; select the hit itself.
-                 (filter #(string/includes? % "│ ZZHITZZ line"))
-                 first)
+          hit-row
+          (->> (string/split-lines grep-out)
+               ;; Default context rows are numbered too; select the hit itself.
+               (filter #(string/includes? % "│ ZZHITZZ line"))
+               first)
 
-            line
-            (parse-long (string/trim (first (string/split hit-row #"│ "))))
+          line
+          (parse-long (string/trim (first (string/split hit-row #"│ "))))
 
-            out
-            (:result ((private-fn "patch-tool")
-                       rel
-                       [{"from" line "replace" "replaced"}]
-                       (version-in grep-out)))]
+          out
+          (:result
+            ((private-fn "patch-tool") rel [{"from" line "new" "replaced"}] (version-in grep-out)))]
 
-        (expect (= 2 line))
-        (expect (= (version/content-version "keep\nZZHITZZ line\nkeep\n") (version-in grep-out)))
-        (expect (string/starts-with? out "patched "))
-        (expect (= "keep\nreplaced\nkeep\n" (slurp rel)))))
+      (expect (= 2 line))
+      (expect (= (version/content-version "keep\nZZHITZZ line\nkeep\n") (version-in grep-out)))
+      (expect (string/starts-with? out "patched "))
+      (expect (= "keep\nreplaced\nkeep\n" (slurp rel)))))
   (it "a grep version still lands after an edit elsewhere in the file"
       (let [d
             (temp-dir-path "greplinemoved")
@@ -2131,10 +2125,8 @@
             (spit rel (str "added\n" (slurp rel)))
 
             out
-            (:result ((private-fn "patch-tool")
-                       rel
-                       [{"from" 2 "replace" "replaced"}]
-                       (version-in grep-out)))]
+            (:result
+              ((private-fn "patch-tool") rel [{"from" 2 "new" "replaced"}] (version-in grep-out)))]
 
         (expect (string/includes? out "moved from @"))
         (expect (= "added\nkeep\nreplaced\nkeep\n" (slurp rel)))))
@@ -2158,7 +2150,7 @@
             out
             (:result ((private-fn "patch-tool")
                        rel
-                       [{"from" hit-row "to" hit-row "replace" "replaced"}]
+                       [{"from" hit-row "to" hit-row "new" "replaced"}]
                        (version-in grep-out)))]
 
         (expect (string/includes? hit-row "│ ZZWHOLEZZ LINE"))
@@ -2210,7 +2202,7 @@
         (expect (not (string/includes? text "changed while grep ran")))
         (expect (string/starts-with?
                   (:result
-                    ((private-fn "patch-tool") rel [{"from" 2 "replace" "done"}] (version-in text)))
+                    ((private-fn "patch-tool") rel [{"from" 2 "new" "done"}] (version-in text)))
                   "patched ")))))
 
 (defdescribe read-activity-snapshot-test
@@ -2261,7 +2253,7 @@
               (extension/invoke-symbol-wrapper
                 {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols [sym]}}
                 sym
-                [rel [{"from" 1 "replace" "after"}] (current-version rel)]
+                [rel [{"from" 1 "new" "after"}] (current-version rel)]
                 {:workspace/root (System/getProperty "user.dir")
                  :workspace {:root (System/getProperty "user.dir")
                              :repo-root (System/getProperty "user.dir")}}))
@@ -2439,7 +2431,7 @@
                    (expect (string/includes? (get-in out [:error :trace]) "ExceptionInfo"))
                    (expect (not (contains? out :markdown))))))
 
-;; Regression: a `patch` `replace` used to write a
+;; Regression: a `patch` `new` text used to write a
 ;; literal `\u2014` -- the six characters -- into the file whenever the model
 ;; emitted the escape instead of the em dash itself, so edited files ended up
 ;; carrying `\u2014` in prose and docstrings where a dash belonged.
@@ -2585,7 +2577,7 @@
         (let [s (str "\\u" (apply str (map #(char (long %)) quad)))]
           (expect (= s (escapes/decode-unicode-escapes s)) (pr-str s)))))
   (it "decodes megabytes in one linear pass"
-      ;; Every `patch` `replace` goes through the decoder, so it may never be
+      ;; Every `patch` `new` text goes through the decoder, so it may never be
       ;; the slow part of an edit: text between
       ;; backslashes is bulk-copied rather than walked character by character,
       ;; and an escape costs no substring and no matcher. All four blobs together
@@ -4956,8 +4948,8 @@
                  "print(text)\n" "w = cat(p, start=2, end=3)\n"
                  "print('window:', ' | '.join(w.splitlines()))\n"
                  "head, row = text.splitlines()[0], text.splitlines()[2]\n"
-                 "print(patch(p, [{'from': row, 'replace': 'BETA'}], head.split(' @')[1]))\n"
-                 "print(patch(p, [{'old': 'gamma', 'replace': 'GAMMA'}]))\n")
+                 "print(patch(p, [{'from': row, 'new': 'BETA'}], head.split(' @')[1]))\n"
+                 "print(patch(p, [{'old': 'gamma', 'new': 'GAMMA'}]))\n")
             "t1/i2")
 
           out
@@ -5546,7 +5538,7 @@
               (write-temp! "patch/text-one.py" "def f(x):\n    return x + 1\n")
 
               out
-              ((private-fn "patch-tool") rel [{"old" "x + 1" "replace" "x + 2"}])]
+              ((private-fn "patch-tool") rel [{"old" "x + 1" "new" "x + 2"}])]
 
           (expect (= "def f(x):\n    return x + 2\n" (slurp rel)))
           (expect (string/includes? (:result out) (current-version rel)))))
@@ -5555,13 +5547,13 @@
               (write-temp! "patch/text-all.py" "print(1)\nx = 0\nprint(1)\n")
 
               e
-              (refusal #((private-fn "patch-tool") rel [{"old" "print(1)" "replace" "print(2)"}]))]
+              (refusal #((private-fn "patch-tool") rel [{"old" "print(1)" "new" "print(2)"}]))]
 
           (expect (= :text-ambiguous (:reason (ex-data e))))
           (expect (string/includes? (ex-message e) "lines 1, 3"))
           (expect (string/includes? (ex-message e) "set `line`"))
           (expect (= "print(1)\nx = 0\nprint(1)\n" (slurp rel)))
-          ((private-fn "patch-tool") rel [{"old" "print(1)" "replace" "print(2)" "all" true}])
+          ((private-fn "patch-tool") rel [{"old" "print(1)" "new" "print(2)" "all" true}])
           (expect (= "print(2)\nx = 0\nprint(2)\n" (slurp rel)))))
     ;; ctb edits3-vis thread-timeout: a repeated call text cost a refusal, a read and a
     ;; version-addressed retry. `line` picks one match without a read.
@@ -5570,38 +5562,37 @@
               (write-temp! "patch/text-line.py" "print(1)\nx = 0\nprint(1)\n")
 
               e
-              (refusal #((private-fn "patch-tool")
-                           rel
-                           [{"old" "print(1)" "replace" "print(2)" "line" 2}]))]
+              (refusal
+                #((private-fn "patch-tool") rel [{"old" "print(1)" "new" "print(2)" "line" 2}]))]
 
           (expect (= :text-line-mismatch (:reason (ex-data e))))
           (expect (string/includes? (ex-message e) "lines 1, 3"))
           (expect (string/includes? (ex-message e) "not at line 2"))
-          ((private-fn "patch-tool") rel [{"old" "print(1)" "replace" "print(2)" "line" 3}])
+          ((private-fn "patch-tool") rel [{"old" "print(1)" "new" "print(2)" "line" 3}])
           (expect (= "print(1)\nx = 0\nprint(2)\n" (slurp rel)))))
     (it "refuses `line` without `old`"
         (let [rel
               (write-temp! "patch/text-line-mixed.py" "a\n")
 
               e
-              (refusal #((private-fn "patch-tool") rel [{"from" 1 "replace" "b" "line" 1}]))]
+              (refusal #((private-fn "patch-tool") rel [{"from" 1 "new" "b" "line" 1}]))]
 
           (expect (= :edit-mixed-address (:reason (ex-data e))))
           (expect (= "a\n" (slurp rel)))))
-    (it "refuses text that is not in the file and names the line that differs"
-        (let [rel
-              (write-temp! "patch/text-miss.py" "def f():\n    return 1\n")
+    (it
+      "refuses text that is not in the file and names the line that differs"
+      (let [rel
+            (write-temp! "patch/text-miss.py" "def f():\n    return 1\n")
 
-              e
-              (refusal
-                #((private-fn "patch-tool") rel [{"old" "def f():\n  return 1" "replace" "x"}]))]
+            e
+            (refusal #((private-fn "patch-tool") rel [{"old" "def f():\n  return 1" "new" "x"}]))]
 
-          (expect (= :text-not-found (:reason (ex-data e))))
-          (expect (string/includes?
-                    (ex-message e)
-                    (str "Near match at line 1: line 2 of `old` differs from file line 2"
-                         " in indentation.")))
-          (expect (= "def f():\n    return 1\n" (slurp rel)))))
+        (expect (= :text-not-found (:reason (ex-data e))))
+        (expect (string/includes? (ex-message e)
+                                  (str
+                                    "Near match at line 1: line 2 of `old` differs from file line 2"
+                                    " in indentation.")))
+        (expect (= "def f():\n    return 1\n" (slurp rel)))))
     ;; Blockether/vis#424: a near match showed only its line number, so an agent
     ;; retried with the same extra space. Show both lines with visible whitespace.
     (it "shows the whitespace difference of a near match and keeps exact matching"
@@ -5610,7 +5601,7 @@
 
               message
               #(ex-message (refusal (fn []
-                                      ((private-fn "patch-tool") rel [{"old" % "replace" "x"}]))))]
+                                      ((private-fn "patch-tool") rel [{"old" % "new" "x"}]))))]
 
           (expect (string/includes? (message "   Optional parameters.")
                                     (str
@@ -5626,20 +5617,20 @@
           (expect (= "  Optional parameters.\n\tTabbed \nother\n" (slurp rel)))))
     (it "applies two text edits on one line, and refuses overlapping text"
         (let [rel (write-temp! "patch/text-line.py" "a = b + c\n")]
-          ((private-fn "patch-tool") rel [{"old" "a =" "replace" "z ="} {"old" "c" "replace" "d"}])
+          ((private-fn "patch-tool") rel [{"old" "a =" "new" "z ="} {"old" "c" "new" "d"}])
           (expect (= "z = b + d\n" (slurp rel)))
           (expect (= :edits-overlap
                      (:reason (ex-data (refusal #((private-fn "patch-tool")
                                                     rel
-                                                    [{"old" "z = b" "replace" "q"}
-                                                     {"old" "b + d" "replace" "r"}]))))))))
+                                                    [{"old" "z = b" "new" "q"}
+                                                     {"old" "b + d" "new" "r"}]))))))))
     (it "mixes a text edit with a line edit of the read version"
         (let [rel (write-temp! "patch/text-mixed.txt" "one\ntwo\nthree\n")]
-          (patch-now rel [{"old" "one" "replace" "1"} {"from" 3 "replace" "3"}])
+          (patch-now rel [{"old" "one" "new" "1"} {"from" 3 "new" "3"}])
           (expect (= "1\ntwo\n3\n" (slurp rel)))))
-    (it "keeps CRLF line ends when `old` and `replace` use LF"
+    (it "keeps CRLF line ends when `old` and `new` use LF"
         (let [rel (write-temp! "patch/text-crlf.txt" "a\r\nb\r\nc\r\n")]
-          ((private-fn "patch-tool") rel [{"old" "a\nb" "replace" "x\ny"}])
+          ((private-fn "patch-tool") rel [{"old" "a\nb" "new" "x\ny"}])
           (expect (= "x\r\ny\r\nc\r\n" (slurp rel)))))
     (it "refuses `old` together with `from`, an empty `old`, and a line edit without version"
         (let [rel
@@ -5649,7 +5640,7 @@
               #(:reason (ex-data (refusal (fn []
                                             (apply (private-fn "patch-tool") rel %)))))]
 
-          (expect (= :edit-mixed-address (reason [[{"old" "a" "from" 1 "replace" "b"}]])))
-          (expect (= :text-malformed (reason [[{"old" "" "replace" "b"}]])))
-          (expect (= :version-malformed (reason [[{"from" 1 "replace" "b"}]])))
+          (expect (= :edit-mixed-address (reason [[{"old" "a" "from" 1 "new" "b"}]])))
+          (expect (= :text-malformed (reason [[{"old" "" "new" "b"}]])))
+          (expect (= :version-malformed (reason [[{"from" 1 "new" "b"}]])))
           (expect (= "a\n" (slurp rel)))))))

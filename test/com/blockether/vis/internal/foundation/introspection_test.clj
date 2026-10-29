@@ -57,7 +57,7 @@
           "The file is now @3f9a1c2b.\n" "  cat(\"src/app.py\", 37, 45)")
 
      shape-refusal
-     (str "patch refused — nothing was written.\n" "  src/app.py: edit 1/2 missing `replace`.")]
+     (str "patch refused — nothing was written.\n" "  src/app.py: edit 1/2 missing `new`.")]
 
     (it "classifies changed lines and an unusable version apart"
         (expect (= :patch-lines-changed (classify changed-refusal)))

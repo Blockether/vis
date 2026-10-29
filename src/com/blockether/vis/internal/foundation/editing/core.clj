@@ -3836,9 +3836,9 @@
    A line is an integer, a numeric string or a whole numbered row of a read, such as
    `12│ text`; a refusal echoes only a short value.
 
-   An entry with NO `replace` DELETED its span: `(str nil)` is the empty string, so
+   An entry with NO `new` DELETED its span: `(str nil)` is the empty string, so
    a truncated entry erased lines and reported success. A key that is not
-   `from`/`to`/`replace` is NAMED rather than ignored, because a `replacement` typo
+   `from`/`to`/`new` is NAMED rather than ignored, because a `replacement` typo
    otherwise reads as exactly that missing replacement. An empty batch is a call
    that meant to edit and never said what, and a non-map entry is the positional
    call this verb no longer has."
@@ -3857,10 +3857,10 @@
               (patch-refusal! rel
                               {:reason :edit-not-a-map :edit-index i}
                               [(str at "must be a map.")]))
-            (let [unknown (remove #{"from" "to" "replace" "old" "all" "line"} (keys entry))
+            (let [unknown (remove #{"from" "to" "new" "old" "all" "line"} (keys entry))
                   from (get entry "from")
                   old (get entry "old")
-                  replacement (get entry "replace")]
+                  replacement (get entry "new")]
 
               (when (seq unknown)
                 (patch-refusal!
@@ -3869,7 +3869,7 @@
                   [(str at
                         "unknown keys: "
                         (str/join ", " (map pr-str unknown))
-                        "; allowed: from, to, replace, or old, replace, all, line.")]))
+                        "; allowed: from, to, new, or old, new, all, line.")]))
               (when (and (some? old) (or (some? from) (some? (get entry "to"))))
                 (patch-refusal! rel
                                 {:reason :edit-mixed-address :edit-index i}
@@ -3889,7 +3889,7 @@
               (when (nil? replacement)
                 (patch-refusal! rel
                                 {:reason :replacement-missing :edit-index i}
-                                [(str at "missing `replace`.")]))
+                                [(str at "missing `new`.")]))
               (let [line-of
                     (fn [slot v]
                       (or (cond (integer? v) (long v)
@@ -4183,7 +4183,7 @@
   "Resolve ONE text edit against the CURRENT file: one char span for each exact match
    of `old`. The text is its own address, so it needs no version and no earlier read.
    A `line` keeps only the matches that cover that line. Refuse a missing match, and
-   more than one match without `all`. On a CRLF file, an `old` or `replace` with bare
+   more than one match without `all`. On a CRLF file, an `old` or `new` text with bare
    LF line ends gets CRLF line ends."
   [rel ^String content {:keys [index old all? line replace]} total]
   (let [crlf?
@@ -4694,9 +4694,9 @@
 (defn- patch-tool
   "patch — every edit for ONE file, applied atomically in ONE write.
 
-     patch(path, [{\"old\": text, \"replace\": new}])                      exact text
-     patch(path, [{\"old\": text, \"replace\": new, \"all\": true}])        every match
-     patch(path, [{\"from\": 41, \"to\": 48, \"replace\": new}], version)    a line span
+     patch(path, [{\"old\": text, \"new\": text}])                      exact text
+     patch(path, [{\"old\": text, \"new\": text, \"all\": true}])       every match
+     patch(path, [{\"from\": 41, \"to\": 48, \"new\": text}], version)  a line span
 
    A TEXT edit addresses the current file by its exact text: it needs no read and no
    version, and it is refused unless `old` matches exactly once (or `all` is true).
@@ -4704,7 +4704,7 @@
    A LINE edit uses line numbers of `version`, the `@` value of the cat or grep header
    that showed them; `to` defaults to `from`. When the file changed after that read,
    each span moves through a diff and is refused only when its own lines changed.
-   `replace` is required — an absent one is refused, never read as a deletion. Every
+   `new` is required — an absent one is refused, never read as a deletion. Every
    edit resolves against ONE read, so edits may be listed in ANY order; overlapping
    edits are refused. Success returns the new version and each edit's lines after
    the write. One file per call; a refusal writes NOTHING."
@@ -4754,16 +4754,16 @@
      (str
        "Apply all edits for one file in one atomic write, in any language. Each edit has one of "
        "two forms:\n"
-       "- Text: `{\"old\": exact_text, \"replace\": new}`. `old` must match the current file exactly "
+       "- Text: `{\"old\": exact_text, \"new\": text}`. `old` must match the current file exactly "
        "once. Add nearby lines to make it unique, set `\"line\": n` to the line of one match, or set "
        "`\"all\": true` to replace every match. A "
        "text edit needs no read and no version, so you can edit in the same block as a search.\n"
-       "- Lines: `{\"from\": 12, \"to\": 14, \"replace\": new}` with the `version` argument, the `@` "
+       "- Lines: `{\"from\": 12, \"to\": 14, \"new\": text}` with the `version` argument, the `@` "
        "value of the `cat` or `grep` result that showed the lines. `to` defaults to `from`. Use it "
        "for a long span, so you do not repeat its text.\n\n"
-       "Call `patch(path, [{\"old\": \"x = 1\", \"replace\": \"x = 2\"}])` or "
-       "`patch(path, [{\"from\": 12, \"replace\": new}, {\"from\": 30, \"to\": 34, \"replace\": \"\"}], "
-       "version)`. `replace: \"\"` deletes. You can list the edits in any order, because they all "
+       "Call `patch(path, [{\"old\": \"x = 1\", \"new\": \"x = 2\"}])` or "
+       "`patch(path, [{\"from\": 12, \"new\": text}, {\"from\": 30, \"to\": 34, \"new\": \"\"}], "
+       "version)`. `new: \"\"` deletes. You can list the edits in any order, because they all "
        "apply to one read.\n\n"
        "If the file changed elsewhere after your read, patch moves each line edit to its new lines. "
        "If the lines of an edit changed, patch refuses. It also refuses lines that no `cat`, `grep` "

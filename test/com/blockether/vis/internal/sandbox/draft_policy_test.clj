@@ -556,7 +556,7 @@
                   ((:ext.symbol/before-fn editing/patch-symbol)
                     environment
                     #'editing/patch-tool
-                    [path [{"from" 1 "replace" "changed"}] "00000000"]))]
+                    [path [{"from" 1 "new" "changed"}] "00000000"]))]
 
             (expect (nil? (:error opened)) (str opened))
             (expect (string? clone) (str opened))

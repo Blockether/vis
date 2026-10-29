@@ -3831,7 +3831,7 @@ vis.register_extension(vis.Extension(
                         "lines = cat(path).splitlines()\n"
                         "version = lines[0].rsplit(' @', 1)[1]\n"
                         "rows = [line.split('│', 1)[0].strip() for line in lines if '│' in line]\n"
-                        "print(patch(path, [{'from': rows[0], 'to': rows[-1], 'replace': "
+                        "print(patch(path, [{'from': rows[0], 'to': rows[-1], 'new': "
                         (json-text replacement)
                         "}], version))"))]
                 (expect (nil? (:error result)) (pr-str result))

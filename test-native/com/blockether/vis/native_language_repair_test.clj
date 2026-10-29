@@ -50,7 +50,7 @@
              "('sample.clj', '(def value [1 2', '(def value [1 2])')]:\n"
              "    path = project_root_path / name\n"
              "    version = (await cat(path)).splitlines()[0].rsplit(' @', 1)[1]\n"
-             "    print(await patch(path, [{'from': 1, 'replace': replacement}], version))\n"
+             "    print(await patch(path, [{'from': 1, 'new': replacement}], version))\n"
              "    assert path.read_text().strip() == expected, path.read_text()\n"
              "print('Native patch repair verified')")
         (str "(project_root_path / 'late.py').write_text('value = [3, 4\\n')\n"
@@ -65,7 +65,7 @@
           "    path = project_root_path / name\n"
           "    before = path.read_text()\n"
           "    version = (await cat(path)).splitlines()[0].rsplit(' @', 1)[1]\n"
-          "    try:\n" "        await patch(path, [{'from': 1, 'replace': replacement}], version)\n"
+          "    try:\n" "        await patch(path, [{'from': 1, 'new': replacement}], version)\n"
           "    except Exception as error:\n"
           "        assert 'unparseable, so nothing was written' in str(error), str(error)\n"
           "    else:\n" "        raise AssertionError('invalid patch was accepted')\n"
