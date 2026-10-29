@@ -1507,13 +1507,17 @@
       ;; terminal, but it may be stranded across a transport/restart gap; this
       ;; independent projection lets the tab reconcile its optimistic spinner.
       "turn.completed"
-      {:phase :turn-terminal
-       :turn-id (event-get event :turn-id)
-       :client-id (event-get event :idempotency-key)
-       :request-kind (some-> (event-get event :request-kind)
-                             keyword)
-       :subagent (event-get event :subagent)
-       :status (event-get event :status)}
+      (cond-> {:phase :turn-terminal
+               :turn-id (event-get event :turn-id)
+               :client-id (event-get event :idempotency-key)
+               :request-kind (some-> (event-get event :request-kind)
+                                     keyword)
+               :subagent (event-get event :subagent)
+               :status (event-get event :status)}
+        ;; The settled answer prose. A goal completion builds its reply on the
+        ;; host and never streams it, so the trace cannot stand in for it.
+        (seq (event-get event :content))
+        (assoc :content (vec (event-get event :content))))
 
       "turn.failed"
       (cond-> {:phase :turn-terminal

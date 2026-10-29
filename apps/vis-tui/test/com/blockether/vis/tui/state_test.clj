@@ -4963,9 +4963,9 @@
         (settle-marked-terminal!)
         (expect (= trace (get-in @state/app-db [:messages 1 :traces])))))
   (it "a stranded completed turn paints the streamed prose, not \"Turn completed.\""
-      ;; `turn.completed` is deliberately LEAN (no :content), so the independent
-      ;; terminal path used to fabricate a "Turn completed." notice and drop the
-      ;; answer the user just watched stream. The live trace already carries it.
+      ;; A `turn.completed` without :content used to fabricate a "Turn completed."
+      ;; notice and drop the answer the user just watched stream. The live trace
+      ;; already carries it.
       (let [trace [{:id :iter-1 :assistant-prose "first pass"}
                    {:id :iter-2 :assistant-prose "final answer"}]]
         (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
@@ -4975,6 +4975,24 @@
           (expect (= 1 (count blocks)))
           (expect (= "prose" (get (first blocks) "type")))
           (expect (= "final answer" (get (first blocks) "markdown"))))))
+  (it "a stranded goal completion paints the gateway answer, not the last step's prose"
+      ;; Session ee6f147d: the host builds "Goal complete: ..." and never streams it,
+      ;; so only the terminal event's :content holds the reply.
+      (let [trace
+            [{:id :iter-1 :assistant-prose "The host rejected the text, so I retry."}]
+
+            answer
+            [{"id" "b1" "type" "prose" "markdown" "Goal complete: done"}]]
+
+        (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
+        (sync-terminal-without-timer! (@#'chat/gateway-event->chunk
+                                       {"type" "turn.completed"
+                                        "turn_id" "t1"
+                                        "idempotency_key" "c1"
+                                        "status" "completed"
+                                        "content" answer}))
+        (settle-marked-terminal!)
+        (expect (= answer (get-in @state/app-db [:messages 1 :content])))))
   (it "a cross-channel completed turn keeps streamed content outside reasoning"
       (let [trace
             [{:id :iter-1 :thinking "hidden reasoning" :content-stream "visible streamed answer"}]]

@@ -1042,7 +1042,8 @@
              :client-id "c1"
              :status "completed"
              :request-kind :council
-             :subagent true}
+             :subagent true
+             :content [{"id" "b1" "type" "prose" "markdown" "done"}]}
             {:phase :turn-terminal
              :turn-id "t2"
              :client-id nil
@@ -1055,18 +1056,17 @@
              :status "cancelled"
              :request-kind :user
              :subagent false}]
-           (mapv g->c
-                 [{"type" "turn.completed"
-                   "turn_id" "t1"
-                   "idempotency_key" "c1"
-                   "request_kind" "council"
-                   "subagent" true
-                   "status" "completed"}
-                  {"type" "turn.failed" "turn_id" "t2" "request_kind" "user" "subagent" false}
-                  {"type" "turn.cancelled"
-                   "turn_id" "t3"
-                   "request_kind" "user"
-                   "subagent" false}]))))))
+           (mapv
+             g->c
+             [{"type" "turn.completed"
+               "turn_id" "t1"
+               "idempotency_key" "c1"
+               "request_kind" "council"
+               "subagent" true
+               "status" "completed"
+               "content" [{"id" "b1" "type" "prose" "markdown" "done"}]}
+              {"type" "turn.failed" "turn_id" "t2" "request_kind" "user" "subagent" false}
+              {"type" "turn.cancelled" "turn_id" "t3" "request_kind" "user" "subagent" false}]))))))
 
 (it "rehydrates a structured iteration error for the transient retry row"
     (let [g->c
