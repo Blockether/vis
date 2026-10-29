@@ -834,6 +834,39 @@
           (expect (= 24 (count (line-text (first texts)))))
           (expect (some #(str/includes? (line-text %) "one") texts))
           (expect (< (count (line-text (last texts))) 24))))
+    ;; User report (paraphrased): C-x s painted `[33mpatch [0m(path, …` in the pane; a
+    ;; highlighted code fence must paint its token colors, never the escape text.
+    (it "the message pane paints a highlighted code fence without escape text"
+        (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
+              lines (var-get #'dlg/navigator-preview-lines)
+              draw (var-get #'dlg/draw-navigator-preview!)
+              entry {:title "T"
+                     :recent [{:label "Vis"
+                               :role :ai
+                               :side :reply
+                               :text "```python\npatch(path, [{\"old\": 1}])\n```"}]}
+              cell (fn [row column]
+                     (.getBackCharacter screen (int column) (int row)))
+              line (fn [row]
+                     (str/trimr (apply str
+                                  (for [column (range 40)]
+                                    (.getCharacterString ^TextCharacter (cell row column))))))]
+
+          (try (let [g (.newTextGraphics screen)
+                     marked (lines entry "old" {:width 30 :height 10})]
+
+                 (draw g 0 0 30 (lines entry "" {:width 30 :height 10}))
+                 (draw g 0 5 30 marked)
+                 (expect (= "patch(path, [{\"old\": 1}])" (line 3)))
+                 (expect (some #(= "patch(path, [{\"old\": 1}])" (line %)) (range 5 15)))
+                 ;; The keyword ink differs from the punctuation ink.
+                 (expect (not= (.getForegroundColor ^TextCharacter (cell 3 0))
+                               (.getForegroundColor ^TextCharacter (cell 3 5))))
+                 ;; A query word in a colored run is marked on its visible text.
+                 (expect
+                   (= ["old"]
+                      (into [] (comp (mapcat :segments) (filter :match?) (map :text)) marked))))
+               (finally (.stopScreen screen)))))
     (it "the newest messages keep the last turns and cut a long request"
         (let [recent (var-get #'dlg/navigator-recent-entries)
               attach (var-get #'dlg/navigator-attach-recent)

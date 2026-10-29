@@ -4,6 +4,7 @@
    The companion's slide offers both, so both must be answerable from the daemon
    without a terminal: fork the whole session, or fork THROUGH one turn."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -86,28 +87,50 @@
                                  nil
                                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
              (finally (ps/db-close! store)))))
-  (it "lists the start of each prose answer with its fork point"
-      (let [store (ps/db-open! :memory)]
-        (try
-          (let [{:keys [sid]} (seeded-session! store [])
-                answered!
-                (fn [request content]
-                  (let [tid (ps/db-store-session-turn!
-                              store
-                              {:parent-session-id sid :user-request request :status :running})]
-                    (ps/db-update-session-turn! store tid {:content content :status :success})))]
+  (it
+    "lists the start of each prose answer with its fork point"
+    (let [store (ps/db-open! :memory)]
+      (try
+        (let [{:keys [sid]} (seeded-session! store [])
+              answered!
+              (fn [request content]
+                (let [tid (ps/db-store-session-turn!
+                            store
+                            {:parent-session-id sid :user-request request :status :running})]
+                  (ps/db-update-session-turn! store tid {:content content :status :success})))]
 
-            (answered! "short" [{"id" "p" "type" "prose" "markdown" "**Done.**"}])
-            (answered! "code only" [{"id" "c" "type" "code" "text" "(+ 1 2)"}])
-            (answered! "long" [{"id" "p" "type" "prose" "markdown" (apply str (repeat 500 "a"))}])
-            (with-redefs [lp/db-info (constantly store)]
-              (let [points (state/fork-points sid)]
-                (expect (= "**Done.**" (get-in points [0 "answer"])))
-                ;; Code is not an answer that a person reads in a list.
-                (expect (not (contains? (points 1) "answer")))
-                (expect (= 400 (count (get-in points [2 "answer"]))))
-                (expect (= "…" (str (last (get-in points [2 "answer"]))))))))
-          (finally (ps/db-close! store)))))
+          (answered! "short" [{"id" "p" "type" "prose" "markdown" "**Done.**"}])
+          (answered! "code only" [{"id" "c" "type" "code" "text" "(+ 1 2)"}])
+          (answered! "long" [{"id" "p" "type" "prose" "markdown" (apply str (repeat 500 "a"))}])
+          ;; User report (paraphrased): the C-x s pane showed `**The old key i…` raw.
+          ;; The cut must close the span that it leaves open.
+          (answered! "cut strong"
+                     [{"id" "p"
+                       "type" "prose"
+                       "markdown" (str (apply str (repeat 390 "a")) " **The old key is gone.**")}])
+          (answered! "cut code"
+                     [{"id" "p"
+                       "type" "prose"
+                       "markdown" (str "`x` and **y**\n\n"
+                                       (apply str (repeat 380 "b"))
+                                       " `some/long/path.clj`")}])
+          (answered! "cut fence"
+                     [{"id" "p"
+                       "type" "prose"
+                       "markdown" (str "Run:\n\n```\n" (apply str (repeat 450 "c")) "\n```")}])
+          (with-redefs [lp/db-info (constantly store)]
+            (let [points (state/fork-points sid)]
+              (expect (= "**Done.**" (get-in points [0 "answer"])))
+              ;; Code is not an answer that a person reads in a list.
+              (expect (not (contains? (points 1) "answer")))
+              (expect (= 400 (count (get-in points [2 "answer"]))))
+              (expect (= "…" (str (last (get-in points [2 "answer"])))))
+              (expect (str/ends-with? (get-in points [3 "answer"]) "…**"))
+              (expect (= 2 (count (re-seq #"\*\*" (get-in points [3 "answer"])))))
+              (expect (str/ends-with? (get-in points [4 "answer"]) "…`"))
+              ;; A cut inside a fence renders as an open code block, so it stays as cut.
+              (expect (str/ends-with? (get-in points [5 "answer"]) "c…")))))
+        (finally (ps/db-close! store)))))
   (it "gives each fork point the wire status of its turn"
       (let [store (ps/db-open! :memory)]
         (try (let [{:keys [sid]} (seeded-session! store [])]

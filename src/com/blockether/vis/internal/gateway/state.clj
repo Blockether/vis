@@ -6463,9 +6463,29 @@
   "The longest answer excerpt that a fork point carries, in characters."
   400)
 
+(defn- close-cut-spans
+  "`cut` with the inline span that the cut left open closed again: a code span or a
+   `**` strong span. Only the last paragraph counts, because a span ends with its
+   paragraph. A cut inside a fenced block stays as it is."
+  ^String [^String cut]
+  (let [fences
+        (count (re-seq #"(?m)^\s*(?:```|~~~)" cut))
+
+        paragraph
+        (last (str/split cut #"\n\s*\n"))
+
+        outside-code
+        (str/replace (str paragraph) #"`[^`]*`" "")]
+
+    (cond (odd? fences) cut
+          (str/includes? outside-code "`") (str cut "`")
+          (odd? (count (re-seq #"\*\*" outside-code))) (str cut "**")
+          :else cut)))
+
 (defn- answer-excerpt
   "The opening words of a turn's answer, as Markdown, or nil. Only prose and speech
-   count. A longer answer is cut to `fork-answer-chars` and ends with `…`."
+   count. A longer answer is cut to `fork-answer-chars` and ends with `…`. The cut
+   closes a span that it left open, so the Markdown still renders."
   [blocks]
   (when-let [text (some->> blocks
                            (filterv #(contains? #{"prose" "speech"} (get % "type")))
@@ -6473,7 +6493,7 @@
                            str/trim
                            not-empty)]
     (if (> (count text) fork-answer-chars)
-      (str (str/trimr (util/truncate text (dec fork-answer-chars))) "…")
+      (close-cut-spans (str (str/trimr (util/truncate text (dec fork-answer-chars))) "…"))
       text)))
 
 (defn fork-points

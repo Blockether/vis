@@ -7720,15 +7720,37 @@
            (mapv (fn [{:keys [runs wrap?]}]
                    (if wrap? (layout/justify-line-runs runs width) runs)))))))
 
+(def ^:private sgr-pattern
+  "One ANSI SGR escape, such as the token colors of a highlighted code fence."
+  #"\u001b\[[0-9;]*m")
+
+(defn- sgr-free
+  "`s` without its ANSI SGR escapes: the text that a reader sees."
+  ^String [s]
+  (str/replace (str s) sgr-pattern ""))
+
 (defn- navigator-run-segments
   "Split the IR `runs` of one line into `navigator-highlight-segments`. Each segment
-   is `{:text :style :match?}` and keeps the Markdown style of its run."
+   is `{:text :style :match?}` and keeps the Markdown style of its run. A colored
+   code run stays whole, with its escapes, until a query word matches its visible
+   text; then it is split without color, so no mark cuts an escape."
   [runs query]
   (into []
         (comp (mapcat (fn [{:keys [text style]}]
-                        (map (fn [[segment match?]]
-                               {:text segment :style style :match? match?})
-                             (navigator-highlight-segments text query))))
+                        (let [text
+                              (str text)
+
+                              plain
+                              (sgr-free text)
+
+                              segments
+                              (navigator-highlight-segments plain query)]
+
+                          (if (and (not= plain text) (not-any? second segments))
+                            [{:text text :style style :match? false}]
+                            (map (fn [[segment match?]]
+                                   {:text segment :style style :match? match?})
+                                 segments)))))
               (remove #(= "" (:text %))))
         runs))
 
@@ -7967,11 +7989,21 @@
         (contains? style :italic)]
 
     (p/set-colors! g fg t/dialog-bg)
-    (cond (and bold? italic?) (p/styled g [p/BOLD p/ITALIC] (p/put-str! g x row text))
-          bold? (p/styled g [p/BOLD] (p/put-str! g x row text))
-          italic? (p/styled g [p/ITALIC] (p/put-str! g x row text))
-          :else (p/put-str! g x row text))
-    (+ (long x) (p/display-width text))))
+    (let [text
+          (str text)
+
+          ;; A highlighted fence carries ANSI token colors. They are paint
+          ;; directives, as in the transcript, and never glyphs.
+          paint!
+          (if (str/includes? text "\u001b[")
+            #(render/paint-ansi-line! g x row text fg t/dialog-bg)
+            #(p/put-str! g x row text))]
+
+      (cond (and bold? italic?) (p/styled g [p/BOLD p/ITALIC] (paint!))
+            bold? (p/styled g [p/BOLD] (paint!))
+            italic? (p/styled g [p/ITALIC] (paint!))
+            :else (paint!))
+      (+ (long x) (p/display-width (sgr-free text))))))
 
 (defn- draw-navigator-segments!
   "Paint `navigator-run-segments` from `x`, clipped to `width` columns. A matched
@@ -7992,10 +8024,10 @@
             (first segments)
 
             text
-            (p/truncate-cols (str text) remaining)
+            (p/ansi-truncate-cols (str text) remaining)
 
             segment-w
-            (long (p/display-width text))]
+            (long (p/display-width (sgr-free text)))]
 
         (if match?
           (do (p/set-colors! g t/dialog-bg t/dialog-hint-key)
