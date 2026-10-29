@@ -961,8 +961,39 @@
         (conj (more-row id behind "step"))))
     [{:kind :empty :node-id id :text (empty-text :steps)}]))
 
+(defn- log-line-rows
+  "One log line wrapped to `text-w` columns.
+
+   - Expand tabs first, because the painter widens a tab to its stop.
+   - Break at a space, and drop only the spaces that pass the row's end.
+   - Keep indentation and the spaces between columns.
+   - Fold a word wider than the row at the row's width."
+  [line text-w]
+  (let [w (max 1 (long text-w))]
+    (loop [[token & more :as tokens] (re-seq #"\s+|\S+" (p/expand-tabs (str line)))
+           row ""
+           used 0
+           rows []]
+
+      (if (empty? tokens)
+        (if (and (= "" row) (seq rows)) rows (conj rows row))
+        (let [token-w (long (p/display-width token))
+              room (max 0 (- w used))]
+
+          (cond (<= token-w room) (recur more (str row token) (+ used token-w) rows)
+                (str/blank? token) (recur more "" 0 (conj rows (str row (subs token 0 room))))
+                (and (pos? used) (<= token-w w)) (recur more token token-w (conj rows row))
+                :else
+                (let [parts (p/fold-cols token w)
+                      rows (cond-> rows
+                             (pos? used)
+                             (conj row))
+                      tail (peek parts)]
+
+                  (recur more tail (long (p/display-width tail)) (into rows (pop parts))))))))))
+
 (defmethod node-rows :log
-  [{:keys [id lines line-tones total-lines]} {:keys [is-expanded is-record-unread]}]
+  [{:keys [id lines line-tones total-lines]} {:keys [text-w is-expanded is-record-unread]}]
   (if (seq lines)
     (let [{:keys [shown]}
           (windowed lines is-expanded true)
@@ -978,14 +1009,22 @@
                         (str "… " behind " earlier lines are in the record — reading them failed")
                         (str "… reading " behind " earlier lines from the record"))}]
               [])
-            (map-indexed (fn [index line]
-                           {:kind :log
-                            :node-id id
-                            ;; An absolute line number survives new output and earlier-page fills.
-                            :item-id [:line (+ (long behind) (long index))]
-                            :text (str line)
-                            :tone (get line-tones (+ (- (count lines) (count shown)) index))})
-                         shown)))
+            (apply concat
+              (map-indexed (fn [index line]
+                             (let [tone (get line-tones (+ (- (count lines) (count shown)) index))]
+                               (map-indexed (fn [part text]
+                                              {:kind :log
+                                               :node-id id
+                                               ;; An absolute line number survives new output and
+                                               ;; earlier-page fills; each wrapped row keeps its own.
+                                               :item-id (cond-> [:line
+                                                                 (+ (long behind) (long index))]
+                                                          (pos? (long part))
+                                                          (conj part))
+                                               :text text
+                                               :tone tone})
+                                            (log-line-rows line text-w))))
+                           shown))))
     [{:kind :empty :node-id id :text (empty-text :log)}]))
 
 (defn- painted-groups
@@ -1749,7 +1788,7 @@
                                 (map-indexed
                                   (fn [idx line]
                                     {:kind :log :node-id node-id :item-id [number idx] :text line})
-                                  (p/word-wrap (str number ": " text) text-w)))
+                                  (log-line-rows (str number ": " text) text-w)))
                               (get page "line_numbers")
                               (get page "lines"))))))
 
@@ -2028,7 +2067,10 @@
 
 (defn- put!
   [g left row inner-w text]
-  (p/put-str! g (+ (long left) 2) row (p/ellipsize (str text) (max 0 (- (long inner-w) 3)))))
+  (p/put-str! g
+              (+ (long left) 2)
+              row
+              (p/ellipsize (p/expand-tabs text) (max 0 (- (long inner-w) 3)))))
 
 (defn- paint-plain!
   [g left row inner-w fg text]
@@ -2077,7 +2119,7 @@
   [g left row inner-w segments]
   (fill! g left row inner-w t/dialog-fg)
   (reduce (fn [^long used {:keys [text fg styles]}]
-            (let [shown (p/ellipsize (str text) (max 0 (- (long inner-w) 3 used)))]
+            (let [shown (p/ellipsize (p/expand-tabs text) (max 0 (- (long inner-w) 3 used)))]
               (when (seq shown)
                 (p/set-colors! g (or fg t/dialog-fg) t/dialog-bg)
                 (p/styled g (or styles []) (p/put-str! g (+ (long left) 2 used) row shown)))

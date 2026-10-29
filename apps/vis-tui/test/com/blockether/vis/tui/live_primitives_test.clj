@@ -572,39 +572,44 @@
 
 (defdescribe
   styled-log-narrow-terminal-test
-  (it "styled log narrow terminal"
-      (doseq [cols [24 40 80]]
-        (let [view {:id "styled"
-                    :title "Build output"
-                    :seq 0
-                    :nodes [{:id "log"
-                             :type :log
-                             :lines ["ERROR compiler"]
-                             :line-tones [:error]
-                             :total-lines 1
-                             :window-lines 200
-                             :default-expanded true}]}
-              captured (capture/capture! {:cols cols
-                                          :rows 16
-                                          :paint! (fn [{:keys [screen]}]
-                                                    (lv/paint! (.newTextGraphics ^TerminalScreen
-                                                                                 screen)
-                                                               cols
-                                                               16 [(lv/opened view)]
-                                                               1 3))})]
+  (it
+    "styled log narrow terminal"
+    (doseq [cols [24 40 80]]
+      (let [view {:id "styled"
+                  :title "Build output"
+                  :seq 0
+                  :nodes [{:id "log"
+                           :type :log
+                           :lines ["ERROR compiler"]
+                           :line-tones [:error]
+                           :total-lines 1
+                           :window-lines 200
+                           :default-expanded true}]}
+            captured (capture/capture! {:cols cols
+                                        :rows 16
+                                        :paint! (fn [{:keys [screen]}]
+                                                  (lv/paint! (.newTextGraphics ^TerminalScreen
+                                                                               screen)
+                                                             cols
+                                                             16 [(lv/opened view)]
+                                                             1 3))})]
 
-          (expect (nil? (:error captured)))
-          (let [frame (last (:frames captured))
-                ;; #219: the disclosure inset leaves less room; preserve the visible error tone.
-                line (first (filter #(str/includes? (apply str (map :ch %)) "ERROR") frame))
-                start (str/index-of (apply str (map :ch line)) "ERROR")
-                color theme/footer-error-fg]
+        (expect (nil? (:error captured)))
+        (let [frame (last (:frames captured))
+              ;; #219: the disclosure inset leaves less room; preserve the visible error tone.
+              ;; A narrow band wraps the line and follows its tail, so read the part on screen.
+              line (first (filter #(some (fn [part]
+                                           (str/includes? (apply str (map :ch %)) part))
+                                         ["ERROR" "compil"])
+                                  frame))
+              start (some #(str/index-of (apply str (map :ch line)) %) ["ERROR" "compil"])
+              color theme/footer-error-fg]
 
-            (expect (some? start))
-            (expect (= [(.getRed ^com.googlecode.lanterna.TextColor color)
-                        (.getGreen ^com.googlecode.lanterna.TextColor color)
-                        (.getBlue ^com.googlecode.lanterna.TextColor color)]
-                       (:fg (get line start)))))))))
+          (expect (some? start))
+          (expect (= [(.getRed ^com.googlecode.lanterna.TextColor color)
+                      (.getGreen ^com.googlecode.lanterna.TextColor color)
+                      (.getBlue ^com.googlecode.lanterna.TextColor color)]
+                     (:fg (get line start)))))))))
 
 (defdescribe
   styled-log-theme-contrast-test

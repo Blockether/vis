@@ -867,6 +867,50 @@
         (expect (< (long done) 12) "the selectable mark does not make `done` the widest")
         (expect (> (long task) 60) "the long text gets the room"))))
 
+;; User report 2026-10-29: in a live view, a long line of the searchable Output
+;; log was cut at the band edge instead of wrapped, and a line with tabs ran past
+;; the band's right border into the terminal.
+(defdescribe
+  live-view-log-wrap-test
+  (it
+    "a long log line wraps inside the band and keeps every character"
+    (let [line
+          (str "    at " (str/join "  " (repeat 12 "com.blockether.vis.Loop")) " end-marker")
+
+          rows
+          (filterv #(= :log (:kind %))
+            (lv/plan (lv/opened (mounted {}
+                                         (fixture/log
+                                           "tail"
+                                           {:label "Output" :default-expanded true :lines [line]})))
+                     60))]
+
+      (expect (< 1 (count rows)) "one long line becomes several rows")
+      (expect (every? #(<= (count (:text %)) 58) rows) "each row fits the log's own width")
+      (expect (= (str/replace line #"\s" "") (str/replace (apply str (map :text rows)) #"\s" ""))
+              "wrapping drops no character")
+      (expect (str/starts-with? (:text (first rows)) "    at com.blockether.vis.Loop  com")
+              "indentation and the spaces between columns stay")
+      (expect (apply distinct? (map :item-id rows)) "each wrapped row has its own scroll anchor")))
+  (it "a tab-separated log line never paints past the band's right border"
+      (let [line
+            (str/join "\t" (map #(str "f" %) (range 40)))
+
+            lines
+            (str/split-lines (painted-text [(lv/opened (mounted {}
+                                                                (fixture/log "tail"
+                                                                             {:label "Output"
+                                                                              :default-expanded true
+                                                                              :lines [line]})))]
+                                           96
+                                           26))
+
+            border
+            (str/index-of (first (filter #(str/includes? % "┐") lines)) "┐")]
+
+        (expect (every? #(<= (count (str/trimr %)) (inc (long border))) lines))
+        (expect (str/includes? (str/join "\n" lines) "f39") "the end of the line is on screen"))))
+
 ;; A PARENT is how a producer says which rows belong together, and every
 ;; surface owes that one field the same shape: one head, shut, standing where the
 ;; legs were listed — the fold the Companion paints, painted here.
