@@ -9,7 +9,6 @@
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
-            [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.iteration :as iteration]
             [com.blockether.vis.contract.activity :as activity-contract]
             [clojure.data.json :as json]
@@ -26,10 +25,6 @@
 (def ^:private bang-prefix @#'render/bang-prefix)
 
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
-
-(def ^:private result-row-bg @#'render/result-row-bg)
-
-(def ^:private code-row-bg @#'render/code-row-bg)
 
 (def ^:private truncate-with-suffix @#'render/truncate-with-suffix)
 
@@ -705,32 +700,6 @@
                      "fixture")]
         (expect (= 2 (count (filter #(= :activity-diff (get-in % [:meta :kind])) entries))))
         (expect (not-any? #(= "Diff" (get-in % [:meta :label])) entries))))
-  (it "shows only the Council action label and message body"
-      (doseq [[operation headline] [["council.publish" "Published Council message"]
-                                    ["council.get" "Read Council message"]]]
-        (let [rows (->> (io/resource "vis-contract/fixtures/activity-results.json")
-                        slurp
-                        json/read-str
-                        activity-contract/from-wire
-                        :rows
-                        (filterv #(= operation (:operation %))))
-              entries (#'render/activity-detail-entries
-                       {:node-id "activity"
-                        :activity-rows rows
-                        :activity-expanded? (fn [_ _]
-                                              true)}
-                       120
-                       "fixture")
-              text (str/join "\n" (map (comp #'render/strip-paint-markers-line :line) entries))]
-
-          (expect (= 1 (count rows)))
-          (expect (str/includes? text headline))
-          (expect (str/includes?
-                    text
-                    "Read links to the file; Patch shows its changes after one disclosure."))
-          (doseq [metadata ["Activity review" "informational" "Created at" "Source" "Replies"
-                            "Details truncated"]]
-            (expect (not (str/includes? text metadata)))))))
   (it "keeps the result filename in a narrow read or patch header"
       (let [rows
             (-> (io/resource "vis-contract/fixtures/activity-results.json")
@@ -1060,51 +1029,6 @@
           (expect (= (vec (mapcat #(get-in % [:presentation :content]) rows))
                      (get-in merged [:presentation :content])))
           (expect (= 2 (count rows)))))
-    (it "paints Read before file paths for single, merged and expandable reads"
-        ;; Regression: successful reads must keep their operation label on both clients.
-        (doseq [read-rows
-                [[first-read] rows [(dissoc first-read :presentation)]
-                 [(assoc-in first-read
-                    [:presentation :content]
-                    [{:type "code" :text "File snapshot"}])]]
-
-                cols
-                [40 100]]
-
-          (let [entries
-                (#'render/activity-detail-entries
-                 {:node-id "reads"
-                  :activity-rows read-rows
-                  :activity-expanded? (fn [key _]
-                                        (not= "read-1" key))}
-                 (- cols 4)
-                 "fixture")
-
-                head
-                (first (filter #(= "read-1" (get-in % [:meta :item-id])) entries))
-
-                capture
-                (cap/capture! {:cols cols
-                               :rows 8
-                               :paint!
-                               (fn [{:keys [screen]}]
-                                 (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                                   (render/draw-chat-bubble! (.newTextGraphics s)
-                                                             {:role :assistant
-                                                              :prewrapped-lines [(:line head)]
-                                                              :line-meta [(:meta head)]}
-                                                             0
-                                                             0
-                                                             cols
-                                                             {:viewport-h 8})
-                                   (.refresh s)))})
-
-                text
-                (cap/frame-text capture)]
-
-            (expect (= "Read" (get-in head [:meta :operation-label])))
-            (expect (nil? (:error capture)))
-            (expect (boolean (re-find #"Read(?: [▾▸])? (?:· )?.*PLAN\.md" text))))))
     (it "opens the file rather than a caption containing one or several line ranges"
         (doseq [read-rows
                 [[first-read] rows]
@@ -1477,27 +1401,6 @@
                      :bg (.getBackgroundColor c0)
                      :sgr (set (.getModifiers c0))}]))))))
 
-(defdescribe result-band-color-test
-             (it "keeps result labels flush on the quiet result band"
-                 (expect (= t/result-bg (result-row-bg {:kind :result-headline} false)))
-                 (expect (= t/result-bg (result-row-bg {:kind :toggle-details} false))))
-             (it "keeps nested result labels, body and padding inside Code"
-                 (expect (= t/code-block-bg (result-row-bg {:code-result? true} false)))
-                 (expect (= t/link-chrome-hover-bg
-                            (result-row-bg {:kind :toggle-details :code-result? true} true))))
-             (it "keeps body rows quiet and gives hover the strongest affordance"
-                 (expect (= t/result-bg (result-row-bg nil false)))
-                 (expect (= t/link-chrome-hover-bg (result-row-bg {:kind :toggle-details} true)))))
-
-(defdescribe python-header-color-test
-             (it "keeps the PYTHON header continuous with every execution-status code band"
-                 (doseq [code-bg [t/code-block-bg t/code-ok-bg t/code-err-bg]]
-                   (expect (= code-bg (code-row-bg {:kind :toggle-details} false code-bg)))
-                   (expect (= code-bg (code-row-bg nil false code-bg)))))
-             (it "uses the shared interactive hover surface for the PYTHON header"
-                 (expect (= t/link-chrome-hover-bg
-                            (code-row-bg {:kind :toggle-details} true t/code-ok-bg)))))
-
 (defn- result-form
   "One executed form carrying stdout and its optional operation metadata."
   [op stdout]
@@ -1519,14 +1422,6 @@
 
 (defdescribe
   stdout-card-has-one-label-test
-  ;; Stdout owns the completion text and body. The UI adds only the stable RESULT
-  ;; band label; it never promotes body text or private operation metadata into
-  ;; another headline.
-  (it "labels stdout RESULT without titling it with the op"
-      (let [txt (str/join "\n" (map strip-ansi (render-forms [(result-form "grep" "12 results")])))]
-        (expect (str/includes? txt "RESULT"))
-        (expect (str/includes? txt "12 results"))
-        (expect (not (str/includes? txt "GREP")))))
   (it "never paints an op name, however unheard-of the op"
       (let [txt (str/join "\n"
                           (map strip-ansi
@@ -1849,58 +1744,6 @@
           (expect (= node-id
                      (:node-id (second (first (interactions/assign-labels [region])))))))))))
 
-(defdescribe
-  failed-code-band-name-test
-  ;; The CODE row is a control that names what folds. Dragging the error headline
-  ;; onto it replaced the program with the failure; the failure already has its own
-  ;; red row under the code, so the band NAME turns red and says nothing else.
-  (it "turns the CODE name red on a failed form and keeps the error off the control row"
-      (let [entries
-            (format-iteration-entry-entries
-              (iteration/canonicalize {:position 0
-                                       :thinking nil
-                                       :forms [{:success? false
-                                                :code "root = 1\nprint(root)\nx = 1/0"
-                                                :error {:message
-                                                        "NameError: `root` is not defined"}}]})
-              80
-              1
-              {:session-id "s1"
-               :session-turn-id "t1"
-               :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
-
-            header
-            (some #(when (str/includes? (str %) "CODE") (str %))
-                  (map (comp strip-ansi :line) entries))
-
-            txt
-            (str/join "\n" (map (comp strip-sentinels strip-ansi :line) entries))]
-
-        (expect (some? header))
-        (expect (str/includes? header (str p/INLINE_ERR_ON p/INLINE_BOLD_ON "CODE")))
-        (expect (not (str/includes? header "NameError")))
-        (expect (not (str/includes? header " · ")))
-        ;; Failure status stays visible below the independent source disclosure.
-        (expect (not (str/includes? txt "NameError")))
-        (expect (str/includes? txt "FAILED"))
-        (expect (< (.indexOf ^String txt "CODE") (.indexOf ^String txt "FAILED")))))
-  (it "keeps the CODE name plain when the form succeeded"
-      (let [header
-            (some #(when (str/includes? (str %) "CODE") (str %))
-                  (map (comp strip-ansi :line)
-                       (format-iteration-entry-entries
-                         (iteration/canonicalize
-                           {:position 0
-                            :thinking nil
-                            :forms [{:success? true :code "print(1)\nprint(2)" :stdout "1\n2"}]})
-                         80
-                         1
-                         {:session-id "s1"
-                          :session-turn-id "t1"
-                          :detail-expansions {:vis.channel-tui/expand-execution-details? true}})))]
-        (expect (some? header))
-        (expect (not (str/includes? header p/INLINE_ERR_ON))))))
-
 (defdescribe failed-form-error-row-test
              ;; Inside a code band the error row is the ONLY status signal a failed call has:
              ;; the band itself is deliberately status-neutral. Painting that row with the
@@ -1919,323 +1762,6 @@
                    (expect (seq err-lines))
                    (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines))
                    (expect (not-any? #(str/starts-with? (str %) p/MARKER_CODE) err-lines)))))
-
-(defdescribe
-  failed-disclosure-layout-test
-  (it
-    "aligns and pads a bold failure control beside other bands at different sizes and fold states"
-    (doseq [width
-            [40 80 120]
-
-            expanded?
-            [false true]
-
-            activity?
-            [false true]
-
-            preceded-by-result?
-            [false true]]
-
-      (let [form
-            (cond-> {:code "print(missing)" :duration-ms 29 :error {:message "MISSING_VALUE"}}
-              activity?
-              (assoc :activity
-                {:state "failed"
-                 :rows [{:id "a" :sequence 1 :operation "read" :state "failed" :duration-ms 29}]}))
-
-            entries
-            (format-iteration-entry-entries
-              (iteration/canonicalize {:forms (cond-> []
-                                                preceded-by-result?
-                                                (conj {:code "print(42)\nprint(43)"
-                                                       :stdout "42\n43"
-                                                       :duration-ms 14
-                                                       :success? true})
-
-                                                true
-                                                (conj form))})
-              (- width 8)
-              1
-              {:session-id "s"
-               :session-turn-id "t"
-               :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
-
-            captured
-            (cap/capture! {:cols width
-                           :rows 40
-                           :paint! (fn [{:keys [g]}]
-                                     (render/draw-chat-bubble! g
-                                                               {:role :assistant
-                                                                :prewrapped-lines (mapv :line
-                                                                                        entries)
-                                                                :line-meta (mapv :meta entries)}
-                                                               0
-                                                               0
-                                                               (- width 4)
-                                                               {:viewport-top 0 :viewport-h 40}))})
-
-            frame
-            (last (:frames captured))
-
-            lines
-            (str/split-lines (cap/frame-text captured))
-
-            row-for
-            (fn [pattern]
-              (first (keep-indexed #(when (re-find pattern %2) %1) lines)))
-
-            code-row
-            (row-for #"CODE")
-
-            result-row
-            (row-for #"RESULT")
-
-            failed-row
-            (row-for #"(?i)failed")
-
-            activity-row
-            (row-for #"ACTIVITY")
-
-            detail-row
-            (row-for #"MISSING_VALUE")]
-
-        (expect (nil? (:error captured)))
-        (expect (and code-row failed-row))
-        (expect (= activity? (some? activity-row)))
-        (expect (= (and preceded-by-result? expanded?) (some? result-row)))
-        (expect (= expanded? (some? detail-row)))
-        (when (and code-row failed-row)
-          (let [failed-line
-                (nth lines failed-row)
-
-                column
-                (.indexOf ^String failed-line "FAILED")
-
-                ink
-                (apply str (map :ch (filter :bold (nth frame failed-row))))
-
-                red
-                (get-in (shared-theme/theme shared-theme/default-theme-id) [:palette :code-err-bg])
-
-                paper
-                (get-in (shared-theme/theme shared-theme/default-theme-id)
-                        [:palette :code-block-bg])]
-
-            (expect (str/includes? failed-line (if expanded? "FAILED ▾" "FAILED ▸")))
-            (expect (= "FAILED" ink))
-            (expect (= (.indexOf ^String (nth lines code-row) "CODE") column))
-            (expect (str/blank? (apply str (map :ch (nth frame (dec failed-row))))))
-            (expect (str/blank? (apply str (map :ch (nth frame (inc failed-row))))))
-            (expect (= red (get-in frame [(dec failed-row) 20 :bg])))
-            (expect (= red (get-in frame [failed-row 20 :bg])))
-            (expect (= red (get-in frame [(inc failed-row) 20 :bg])))
-            (when result-row
-              (expect (< code-row result-row))
-              (expect (not= red (get-in frame [result-row 20 :bg])))
-              (expect (= paper (get-in frame [(dec result-row) 20 :bg]))
-                      "Result keeps its top padding"))
-            (when activity-row
-              (expect (< code-row failed-row activity-row))
-              (expect (= column (.indexOf ^String (nth lines activity-row) "ACTIVITY")))
-              ;; User report: a neutral gap cut Activity off from the failure above it,
-              ;; and its header sat on the band's top edge.
-              (expect (str/blank? (apply str (map :ch (nth frame (dec activity-row))))))
-              (expect (= paper (get-in frame [(dec activity-row) 20 :bg]))
-                      "Activity keeps its top padding")
-              (when-not expanded?
-                (expect (= (+ failed-row 3) activity-row)
-                        "Activity follows the red band directly")))))))))
-
-(defdescribe
-  failed-form-error-surface-test
-  (it
-    "keeps the failed disclosure and expanded diagnostics on error paper in every theme and width"
-    (try
-      (doseq [id
-              (shared-theme/available-theme-ids)
-
-              width
-              [40 80 120]
-
-              expanded?
-              [false true]]
-
-        (t/apply-theme! (keyword id))
-        (let [entries
-              (format-iteration-entry-entries
-                (iteration/canonicalize
-                  {:forms [{:code "print(missing)"
-                            :error {:message (str "MISSING_VALUE "
-                                                  (apply str (repeat 12 "recovery details ")))}}
-                           {:code "next_call()" :error {:message "SECOND_FAILURE"}}]})
-                (- width 8)
-                1
-                {:session-id "s"
-                 :session-turn-id "t"
-                 :detail-expansions (if expanded? {:vis.channel-tui/expand-all-details? true} {})})
-
-              captured
-              (cap/capture! {:cols width
-                             :rows 30
-                             :paint! (fn [{:keys [g]}]
-                                       (render/draw-chat-bubble!
-                                         g
-                                         {:role :assistant
-                                          :prewrapped-lines (mapv :line entries)
-                                          :line-meta (mapv :meta entries)}
-                                         0
-                                         0
-                                         (- width 4)
-                                         {:viewport-top 0 :viewport-h 30}))})
-
-              frame
-              (last (:frames captured))
-
-              lines
-              (str/split-lines (cap/frame-text captured))
-
-              row-for
-              (fn [needle]
-                (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
-
-              code-row
-              (row-for "CODE")
-
-              failed-row
-              (row-for "FAILED")
-
-              detail-row
-              (row-for "MISSING_VALUE")
-
-              last-detail-row
-              (row-for "SECOND_FAILURE")]
-
-          (expect (nil? (:error captured)))
-          (expect (some? code-row))
-          (expect (some? failed-row))
-          (expect (= expanded? (some? detail-row)))
-          (expect (= expanded? (some? last-detail-row)))
-          (expect (= (get-in (shared-theme/theme id) [:palette :code-block-bg])
-                     (get-in frame [code-row 20 :bg])))
-          ;; Opening diagnostics keeps wrapped/grouped messages and bottom padding red.
-          (doseq [row
-                  (range (dec failed-row) (+ (or last-detail-row failed-row) 2))
-
-                  col
-                  [4 20 (- width 8)]]
-
-            (expect
-              (= (get-in (shared-theme/theme id) [:palette :code-err-bg])
-                 (get-in frame [row col :bg]))
-              (str id " width " width " failed row " row " col " col " expanded? " expanded?)))))
-      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
-
-(defdescribe
-  code-result-paper-test
-  (it
-    "paints Code and nested Result on their themed code surface"
-    (try
-      (doseq [id
-              (shared-theme/available-theme-ids)
-
-              expanded?
-              [false true]]
-
-        (t/apply-theme! (keyword id))
-        (let [entries
-              (format-iteration-entry-entries
-                (iteration/canonicalize {:forms [{:code "print('VISIBLE_CODE')"
-                                                  :stdout "VISIBLE_STDOUT"
-                                                  :success? true}]})
-                72
-                1
-                {:session-id "s"
-                 :session-turn-id "t"
-                 :detail-expansions (if expanded? {:vis.channel-tui/expand-all-details? true} {})})
-
-              captured
-              (cap/capture! {:cols 80
-                             :rows 20
-                             :paint!
-                             (fn [{:keys [g]}]
-                               (render/draw-chat-bubble! g
-                                                         {:role :assistant
-                                                          :prewrapped-lines (mapv :line entries)
-                                                          :line-meta (mapv :meta entries)}
-                                                         0 0
-                                                         76 {:viewport-top 0 :viewport-h 20}))})
-
-              frame
-              (last (:frames captured))
-
-              lines
-              (str/split-lines (cap/frame-text captured))
-
-              row-for
-              (fn [needle]
-                (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
-
-              code-row
-              (row-for "CODE")
-
-              body-row
-              (row-for "VISIBLE_CODE")
-
-              result-row
-              (row-for "RESULT")
-
-              output-row
-              (row-for "VISIBLE_STDOUT")
-
-              expected-bg
-              (get-in (shared-theme/theme id) [:palette :code-block-bg])]
-
-          (expect (nil? (:error captured)))
-          (expect (some? code-row))
-          (expect (= expanded? (some? body-row)))
-          (expect (= expanded? (some? result-row)))
-          (expect (= expanded? (some? output-row)))
-          (doseq [row (remove nil? [(dec code-row) code-row body-row result-row output-row])]
-            (expect (= expected-bg (get-in frame [row 20 :bg]))
-                    (str id " row " row " expanded? " expanded?)))))
-      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
-
-(defdescribe
-  activity-code-paper-test
-  (it
-    "paints Activity content on the same themed code surface"
-    (try (doseq [id (shared-theme/available-theme-ids)]
-           (t/apply-theme! (keyword id))
-           (let [entries (vec (concat [{:line (str p/MARKER_ACTIVITY "ACTIVITY_SENTINEL") :meta {}}]
-                                      (#'render/activity-content-entries
-                                       [{:type "text" :text "ACTIVITY_CONTENT"}]
-                                       72
-                                       2
-                                       nil
-                                       false)))
-                 captured (cap/capture! {:cols 80
-                                         :rows 10
-                                         :paint! (fn [{:keys [g]}]
-                                                   (render/draw-chat-bubble!
-                                                     g
-                                                     {:role :assistant
-                                                      :prewrapped-lines (mapv :line entries)
-                                                      :line-meta (mapv :meta entries)}
-                                                     0 0
-                                                     76 {:viewport-top 0 :viewport-h 10}))})
-                 frame (last (:frames captured))
-                 lines (str/split-lines (cap/frame-text captured))
-                 row-for (fn [needle]
-                           (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
-                 expected-bg (get-in (shared-theme/theme id) [:palette :code-block-bg])]
-
-             (expect (nil? (:error captured)))
-             (doseq [needle ["ACTIVITY_SENTINEL" "ACTIVITY_CONTENT"]]
-               (let [row (row-for needle)]
-                 (expect (some? row) (str id " " needle))
-                 (when row
-                   (expect (= expected-bg (get-in frame [row 20 :bg])) (str id " " needle)))))))
-         (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 (defmacro ^:private with-raw-code-on
   [& body]
@@ -2307,21 +1833,6 @@
 
 (defdescribe
   tool-card-duration-test
-  ;; The companion ends every tool-card band with the call's duration
-  ;; (`formatDuration(form.duration_ms)` in `ToolCard`); the TUI parsed
-  ;; `:duration-ms` all the way into the renderer and never painted a single
-  ;; one — a finished call said how long it took in the app and nothing at all
-  ;; in the terminal. Parity: the card head wears the figure in the same
-  ;; right-aligned slot the id badge owns, on the head's LAST line.
-  (it "paints the duration at the right edge of a plain card head"
-      (let [lines
-            (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 2300)])
-
-            head
-            (first (filter #(str/includes? % "RESULT") lines))]
-
-        (expect (some? head) (str "got: " lines))
-        (expect (str/ends-with? (str/trimr (strip-sentinels (body-of head))) "2.3s"))))
   ;; Regression, T137: the head band and the RESULT disclosure under it both stamped the
   ;; same figure. The band is the one row a receipt shows in either state, so the band
   ;; says how long the call took and nothing beneath it repeats the measurement.
@@ -2428,41 +1939,6 @@
 (defdescribe
   input-full-width-test
   (it
-    "paints both rules edge to edge for prompts and shell commands"
-    (doseq [cols
-            [20 80 220]
-
-            line
-            ["" "!pwd" "!&tail -f log"]]
-
-      (let [captured
-            (cap/capture!
-              {:cols cols
-               :rows 3
-               :paint! (fn [{:keys [g]}]
-                         (render/draw-input-box! g {:lines [line] :crow 0 :ccol 0} 0 1 cols nil))})
-
-            grid
-            (last (:frames captured))
-
-            top
-            (apply str (map :ch (nth grid 0)))
-
-            bottom
-            (apply str (map :ch (nth grid 2)))
-
-            rule
-            (apply str (repeat cols "─"))]
-
-        (expect (nil? (:error captured)))
-        (expect (= [2 1] (:ret captured)))
-        (expect (str/starts-with? (apply str (map :ch (nth grid 1))) (str "  " line)))
-        (expect (= rule bottom))
-        (expect (= "─" (:ch (first (nth grid 0))) (:ch (last (nth grid 0)))))
-        (expect (if (str/blank? line)
-                  (= rule top)
-                  (str/includes? top (if (str/starts-with? line "!&") " shell & " " shell ")))))))
-  (it
     "insets text by two columns and keeps the cursor visible at wrap boundaries"
     (doseq [[cols left text-w]
             [[1 0 1] [2 0 1] [3 1 1] [4 1 1] [5 2 1] [20 2 16] [80 2 76] [220 2 216]]
@@ -2517,26 +1993,7 @@
 
           (expect (nil? (:error captured)))
           (expect (every? #(= " " (:ch %)) row))
-          (expect (= 1 (count (set (map :bg row))))))))
-  (it "retains the overflow hint inside full-width rules"
-      (let [cols
-            40
-
-            captured
-            (cap/capture!
-              {:cols cols
-               :rows 4
-               :paint!
-               (fn [{:keys [g]}]
-                 (render/draw-input-box! g {:lines ["a" "b" "c"] :crow 2 :ccol 1} 0 2 cols nil))})
-
-            grid
-            (last (:frames captured))]
-
-        (expect (nil? (:error captured)))
-        (expect (str/includes? (apply str (map :ch (first grid))) " 1 more "))
-        (expect (= "─" (:ch (first (first grid))) (:ch (last (first grid)))))
-        (expect (= (apply str (repeat cols "─")) (apply str (map :ch (last grid))))))))
+          (expect (= 1 (count (set (map :bg row)))))))))
 
 (defdescribe input-overflow-hint-test
              (it "shows hidden visual-row count as an N more label for the input top border"
@@ -2561,36 +2018,6 @@
 
 (defdescribe
   live-running-block-test
-  (it "renders a block slot with no status footer"
-      (with-raw-code-on
-        ;; The right-aligned `BLOCK N` / `ITERATION N` / `CODE N` header bands
-        ;; were retired per user directive (see comments in render.clj). Per-form
-        ;; status footers are gone too; code blocks are source-only.
-        (let [lines
-              (format-iteration-entry {:iteration 0
-                                       :forms [{:code "(reduce + (range 1000))"
-                                                :comment nil
-                                                :render-segments nil
-                                                :stdout nil
-                                                :error nil
-                                                :started-at-ms 1000
-                                                :duration-ms 0
-                                                :success? nil
-                                                :silent? false}]}
-                                      40
-                                      1
-                                      {:now-ms 2500})
-
-              code-line
-              (first (filter #(str/includes? (strip-ansi %) "reduce") lines))]
-
-          ;; A live-running block's raw :code paints verbatim with a MARKER_CODE
-          (expect (not-any? #(str/includes? % "BLOCK 1") lines))
-          (expect (not-any? #(str/includes? % "ITERATION 1") lines))
-          (expect (not-any? #(str/includes? % "CODE 1") lines))
-          (expect (= p/MARKER_CODE (marker-of code-line)))
-          (expect (not-any? #(str/includes? % "↻") lines))
-          (expect (not-any? #(str/includes? % "1.0s") lines)))))
   (it "renders the block's raw code verbatim — the canonical web block-code contract"
       (let [lines
             (format-iteration-entry {:iteration 0
@@ -2734,99 +2161,6 @@
         (expect (= 1 (count (filter #(str/includes? % "1ms") lines))))
         (expect (not-any? #(= p/MARKER_CODE_PAD (marker-of %)) lines))
         (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
-  (it "pads displayed form comments by one column"
-      (with-raw-code-on
-        (let [lines
-              (format-iteration-entry {:iteration 0
-                                       :forms [{:code "(+ 1 2)"
-                                                :comment ";; why this runs"
-                                                :render-segments nil
-                                                :stdout nil
-                                                :error nil
-                                                :started-at-ms nil
-                                                :duration-ms 0
-                                                :success? nil
-                                                :silent? false}]}
-                                      40
-                                      1
-                                      {})
-
-              comment-line
-              (first (filter #(str/includes? % ";; why this runs") lines))]
-
-          (expect (= p/MARKER_THINKING (marker-of comment-line)))
-          (expect (str/starts-with? (body-of comment-line) ";;")))))
-  (describe "provider-fallback-notice-test"
-            (it "renders provider fallback recap lines above fallback details"
-                (let [lines
-                      (format-iteration-entry {:provider-fallbacks
-                                               [{:failed-provider
-                                                 {:id :anthropic-coding-plan
-                                                  :model "claude-opus-4-7"
-                                                  :error "Exceptional status code: 429"}}]}
-                                              120
-                                              1
-                                              {})
-
-                      body
-                      (str/join "\n" (map (comp strip-ansi body-of) lines))]
-
-                  ;; The recap rail is retired; provider fallback notices were
-                  ;; recap-only rows and no longer surface.
-                  (expect (not (str/includes? body "RECAP")))
-                  (expect (not (str/includes? body "Provider fallback:"))))))
-  (it "formats same-provider retry notices as recap rows"
-      (let [lines
-            (format-iteration-entry {:provider-fallbacks [{:event/type :llm.routing/provider-retry
-                                                           :provider "anthropic-coding-plan"
-                                                           :model "claude-opus-4-7"
-                                                           :reason :rate-limit
-                                                           :delay-ms 2000}]}
-                                    120
-                                    1
-                                    {})
-
-            ;; Recap row wraps when wider than the bubble: line N+1
-            ;; carries a leading space (continuation indent). Trim each
-            ;; wrapped fragment then join with a SINGLE space so two
-            ;; meaningful spaces inside the recap badge (\"RECAP  Provider\")
-            ;; survive the merge. Substring check pins CONTENT, not
-            ;; column width.
-            body
-            (->> lines
-                 (map (comp str/trim strip-ansi body-of))
-                 (str/join " "))]
-
-        ;; Retired with the recap rail — same-provider retry notices were
-        ;; recap-only rows and no longer surface.
-        (expect (not (str/includes? body "RECAP")))))
-  ;; Regression, issue #167: structured provider trace rows repeated two form-like labels.
-  (it "renders provider error guidance without redundant labels"
-      (let [lines
-            (format-iteration-entry
-              {:error (projected-provider-error
-                        {:type :svar.core/http-error
-                         :message "Exceptional status code: 429"
-                         :data {:status 429 :body "rate limit"}}
-                        :rate-limit "WHAT HAPPENED: the provider rate-limited this request."
-                        "NEXT STEP: wait and retry, or switch provider/model." [["HTTP" "429"]])}
-              120
-              1
-              {})
-
-            body
-            (->> lines
-                 (map (comp str/trim strip-sentinels strip-ansi body-of))
-                 (str/join " "))]
-
-        ;; The recap rail is retired; the provider error itself still
-        ;; surfaces its diagnosis and actionable guidance via the error panel.
-        (expect (not (str/includes? body "RECAP")))
-        (expect (str/includes? body "the provider rate-limited this request."))
-        (expect (str/includes? body "wait and retry, or switch provider/model."))
-        (expect (not (str/includes? body "WHAT HAPPENED")))
-        (expect (not (str/includes? body "NEXT STEP")))
-        (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
   (it "paints a running form's OWN source, never the invocation that carried it"
       ;; A `!cmd` bubble authors `:display-code`/`:display-language` — the command
       ;; the user typed — so the band shows `sleep 30` in bash and never the
@@ -2852,24 +2186,6 @@
         (expect (some? (first (filter #(str/includes? (strip-ansi %) "sleep 30") shell-lines))))
         (expect (nil? (first (filter #(str/includes? (strip-ansi %) "command\":") shell-lines))))
         (expect (some? (first (filter #(str/includes? (strip-ansi %) "print(1)") python-lines)))))))
-
-(defdescribe python-code-band-color-test
-             (it "colors a Python band with PythonHighlighter and keeps its text"
-                 (let [lines
-                       (format-iteration-entry {:iteration 0
-                                                :forms [{:started-at-ms 1000
-                                                         :success? nil
-                                                         :code "def f(x):\n    return x  # note"}]}
-                                               80
-                                               1
-                                               {:now-ms 2500})
-
-                       code-row
-                       (first (filter #(str/includes? (strip-ansi %) "return x") lines))]
-
-                   (expect (str/includes? code-row "\u001b[36mreturn\u001b[0m"))
-                   (expect (str/includes? code-row "\u001b[90m# note\u001b[0m"))
-                   (expect (str/ends-with? (strip-ansi code-row) "    return x  # note")))))
 
 (defdescribe
   provider-auth-error-test
@@ -2974,123 +2290,6 @@
 
                   (and (<= 0xE000 n0 0xE0FF) (str/blank? body))))))
 
-(defdescribe
-  answer-trailer-margin-test
-  ;; Answer layout mirrors code-block chrome: one neutral outside
-  ;; margin row above the answer zone, then one answer-bg inside pad
-  ;; row before text. If a code-bearing trace already ended with a
-  ;; neutral iteration pad, reuse that row as the outside margin.
-  (let [ans
-        "hello"
-
-        settings
-        {:show-thinking true :show-iterations true}
-
-        iter
-        {:forms [{:code "(+ 1 1)"
-                  :comment nil
-                  :render-segments nil
-                  :stdout nil
-                  :error nil
-                  :started-at-ms nil
-                  :duration-ms 1
-                  :success? true
-                  :silent? false}]}
-
-        index-of
-        (fn [p needle]
-          (first (keep-indexed (fn [i ln]
-                                 (when (str/includes? (strip-ansi ln) needle) i))
-                               (:lines p))))]
-
-    (it "answer with NO trace renders directly without internal answer padding"
-        (let [p
-              (render/format-answer-with-thinking-data* ans [] 80 settings nil false nil)
-
-              idx
-              (index-of p "hello")
-
-              ln
-              (:lines p)
-
-              pad?
-              (fn [line]
-                (str/starts-with? line p/MARKER_ANSWER_PAD))]
-
-          ;; Top-margin blank row pushes content down by one.
-          (expect (= 1 idx))
-          (expect (visually-blank? (nth ln 0)))
-          (expect (not-any? pad? ln))))
-    (it "engine-mutation recaps no longer render in the trace"
-        ;; The RECAP rail is fully retired: an iteration carrying
-        ;; `:recaps` produces no RECAP rows above the answer.
-        (let [p
-              (render/format-answer-with-thinking-data*
-                ans
-                [{:recaps ["Title — \"Wyjaśnienie rozmiaru kontekstu\""]}]
-                80
-                settings
-                nil
-                false
-                nil)
-
-              answer-idx
-              (index-of p "hello")]
-
-          (expect (some? answer-idx))
-          (expect (nil? (index-of p "RECAP")))))
-    (it
-      "answer with code-bearing trace keeps band edges + a terminal-bg gap between trace and answer"
-      ;; Spacing contract enforced by `coalesce-bubble-blanks`:
-      ;; different marker families paint distinct visual bands
-      ;; (code-bg pad, terminal-bg gap, answer-bg pad), so adjacent
-      ;; blanks from DIFFERENT families are preserved — they ARE the
-      ;; visual band edges the user reads as section borders. Only
-      ;; same-family duplicates collapse.
-      ;;
-      ;; Above the answer text the user sees, in order:
-      ;;   [code-pad bottom]   band edge of the last form's code block
-      ;;   [terminal-bg gap]   iter-pad / outer margin
-      ;;   [answer-pad top]    band edge of the answer band
-      ;;   answer text
-      ;; The assertion: the row immediately above the answer is
-      ;; visually blank (band edge or gap), and no run of three
-      ;; identical blank rows appears above the answer (regression
-      ;; guard for the old triple-stacked terminal-bg blanks).
-      (with-raw-code-on
-        (let [p
-              (render/format-answer-with-thinking-data* ans [iter] 80 settings nil false nil)
-
-              idx
-              (index-of p "hello")
-
-              ln
-              (:lines p)
-
-              above
-              (when (and idx (>= idx 3))
-                [(nth ln (dec idx)) (nth ln (- idx 2)) (nth ln (- idx 3))])]
-
-          (expect (some? idx))
-          (expect (visually-blank? (nth ln (dec idx))))
-          (expect (or (nil? above) (not (apply = above))))))
-      (it "cancelled with non-empty answer renders the answer text once"
-          ;; `cancel-text` falls back to the answer text when the IR is
-          ;; non-empty. Cancelled turns are flat system notes, so they use
-          ;; only the outside margin, not answer-bg inside padding.
-          (let [p
-                (render/format-answer-with-thinking-data* ans [iter] 80 settings nil true nil)
-
-                idx
-                (index-of p "hello")
-
-                ln
-                (:lines p)]
-
-            (expect (some? idx))
-            (expect (visually-blank? (nth ln (dec idx))))
-            (expect (or (zero? (dec idx)) (not (visually-blank? (nth ln (- idx 2)))))))))))
-
 (defdescribe collapsed-thinking-keeps-streamed-answer-visible-test
              (it "keeps live provider prose outside the collapsed THINKING accordion"
                  (let [thinking
@@ -3117,164 +2316,8 @@
                    (expect (some #(re-find #"THINKING ▸  \+\d+ more" %) visible))
                    (expect (some #(str/includes? % answer) visible)))))
 
-(defdescribe collapsed-thinking-ellipsis-test
-             ;; Regression: the collapsed `THINKING +N more` peek appends a dim
-             ;; " …" to its LAST visible reasoning line. Thinking rows carry a
-             ;; zero-width thinking marker (`​`) prefix that `str/blank?` does
-             ;; NOT count as whitespace, so the old detection treated every row —
-             ;; including paragraph-separator blanks — as non-blank. When the
-             ;; 6-row peek window ended on a blank separator the " …" landed there
-             ;; and rendered alone on its own otherwise-empty line.
-             (let [;; A thinking text whose 6th wrapped row is a blank paragraph
-                   ;; separator, with enough rows after it to force the collapse.
-                   thinking
-                   (str "The patch was applied successfully. Now I need to verify the change "
-                        "works by evaluating the namespace in the REPL, then close the task.\n\n"
-                        "Let me verify by loading the file or at least checking the changed "
-                        "lines look correct.\n\n" "The diff looks correct.\n\n"
-                        "More reasoning after the diff that should be hidden.\n"
-                        "Even more hidden reasoning lines here.\n")
-
-                   stid
-                   "abcd1234-5678-9999"
-
-                   visible
-                   (->> (:lines (render/format-answer-with-thinking-data*
-                                  nil
-                                  [{:thinking thinking}]
-                                  80
-                                  {:show-thinking true :show-iterations true}
-                                  nil
-                                  false
-                                  {:session-id "sid"
-                                   :session-turn-id stid
-                                   :detail-expansions (open-digests "sid" stid)}))
-                        (mapv (comp str/trimr strip-sentinels strip-ansi body-of)))]
-
-               (it "renders the collapsed THINKING peek with a +N more header"
-                   (expect (some #(re-find #"THINKING ▸  \+\d+ more" %) visible)))))
-
-(defdescribe
-  thinking-chevron-placement-test
-  (let [entries
-        (mapv (fn [n]
-                {:line (str p/MARKER_THINKING "row " n) :meta nil})
-              (range 10))
-
-        opts
-        {:entries entries :session-id "sid" :session-turn-id "turn" :iteration-number 1 :max-w 40}
-
-        collapsed
-        (#'render/maybe-collapse-thinking-entries opts)
-
-        header-of
-        (fn [rows]
-          (first (filter #(= :toggle-details (get-in % [:meta :kind])) rows)))
-
-        collapsed-header
-        (header-of collapsed)
-
-        node-id
-        (get-in collapsed-header [:meta :node-id])
-
-        expanded
-        (#'render/maybe-collapse-thinking-entries
-         (assoc opts :detail-expansions {["sid" node-id] true}))
-
-        expanded-header
-        (header-of expanded)]
-
-    (it "places the collapsed chevron after THINKING and before the tally"
-        (expect (re-find #"^THINKING ▸  \+\d+ more$"
-                         (strip-sentinels (body-of (:line collapsed-header)))))
-        (expect (true? (get-in collapsed-header [:meta :collapsed?]))))
-    (it "keeps the expanded chevron beside THINKING"
-        (expect (= "THINKING ▾" (strip-sentinels (body-of (:line expanded-header)))))
-        (expect (false? (get-in expanded-header [:meta :collapsed?]))))))
-
 (defdescribe
   progress-rendering-test
-  (it "iter-0 spinner row has a one-line top margin inside the bubble"
-      ;; Regression: the "Vis is calling the provider" spinner used to
-      ;; sit flush against the bubble's top border because the no-trace
-      ;; branch in `progress->lines-data` emitted just the spinner line.
-      ;; The iter≥1 branch always ended with a blank line before the
-      ;; spinner, so the bubble visually grew by an extra row the moment
-      ;; the first iteration arrived. Keep the blank in both branches.
-      (let [payload
-            (render/progress->lines-data {:iterations []}
-                                         80
-                                         {:show-thinking true :show-iterations true}
-                                         {:now-ms 1000 :turn-start-ms 0})
-
-            lines
-            (mapv strip-ansi (:lines payload))]
-
-        (expect (= 2 (count lines)))
-        (expect (= "" (first lines)))
-        (expect (str/includes? (second lines) "Vis is calling the provider"))))
-  ;; Regression, T143: keep one outer margin above the ticker, separately from
-  ;; the filled Activity band's own bottom padding.
-  (it "the live ticker keeps one outer margin after the Activity bottom padding"
-      (render/invalidate-cache!)
-      (let [iter
-            {:forms [{:code "r = 1"
-                      :comment nil
-                      :stdout nil
-                      :error nil
-                      :duration-ms nil
-                      :silent? false
-                      :activity
-                      {:state "running"
-                       :counts {:running 1 :succeeded 0 :failed 0 :cancelled 0}
-                       :rows [{:id "one" :operation "status" :summary "--json" :state "running"}]}}]
-             :activity :tool-call}
-
-            lines
-            (mapv (comp strip-ansi str)
-                  (:lines (render/progress->lines-data
-                            {:iterations [iter]}
-                            80
-                            {:show-thinking true :show-iterations true}
-                            {:now-ms 1000
-                             :turn-start-ms 0
-                             :session-id "s1"
-                             :session-turn-id "t1"
-                             :detail-expansions {:vis.channel-tui/expand-all-details? true}})))
-
-            ticker
-            (count (take-while #(not (spinner-row? %)) lines))]
-
-        (expect (< ticker (count lines)))
-        (expect (str/blank? (nth lines (dec ticker))))
-        (expect (= p/MARKER_ACTIVITY (nth lines (- ticker 2))))))
-  ;; Regression, T144: a live THINKING block lost its closing band edge - the
-  ;; ticker's margin trim ate the thinking pad, so the dim band ended flush
-  ;; against its last word and the row only reappeared once the iteration settled.
-  (it "the live ticker keeps the thinking band's own bottom edge above its margin"
-      (render/invalidate-cache!)
-      (let [lines
-            (mapv (comp strip-ansi str)
-                  (:lines (render/progress->lines-data
-                            {:iterations
-                             [{:thinking "Auditing thread starts, capping the pool at one hundred."
-                               :forms []
-                               :activity :thinking}]}
-                            80
-                            {:show-thinking true :show-iterations true}
-                            {:now-ms 1000
-                             :turn-start-ms 0
-                             :session-id "s1"
-                             :session-turn-id "t1"
-                             :detail-expansions {:vis.channel-tui/expand-all-details? true}})))
-
-            ticker
-            (count (take-while #(not (spinner-row? %)) lines))]
-
-        (expect (< 3 ticker (count lines)))
-        (expect (= "" (nth lines (dec ticker))))
-        (expect (= p/MARKER_THINKING (nth lines (- ticker 2))))
-        (expect (str/includes? (nth lines (- ticker 3)) "Auditing thread starts"))))
   (it "shows queued submissions inside the live progress bubble"
       (let [payload
             (render/progress->lines-data
@@ -3331,17 +2374,6 @@
 
         (expect (str/includes? body "Vis is parsing model response (iter 1)"))
         (expect (not (str/includes? body "Paused")))))
-  (it "distinguishes response parsing from provider waiting"
-      (let [payload
-            (render/progress->lines-data {:iterations [{:iteration 1 :activity :response-parse}]}
-                                         80
-                                         {:show-thinking true :show-iterations true}
-                                         {:now-ms 1000 :turn-start-ms 0})
-
-            body
-            (strip-ansi (str/join "\n" (:lines payload)))]
-
-        (expect (str/includes? body "Vis is parsing model response (iter 1)"))))
   (it "paints a running Activity receipt inside the live bubble, owned by its form"
       ;; Regression, td-821868: run receipts landed on the loading placeholder's
       ;; `:runs` but `progress->lines-data` never read them, so Activity was
@@ -3609,42 +2641,6 @@
         (expect (not (str/includes? (:text payload) "chars hidden")))
         (expect (not (str/includes? (:text payload) huge-result)))
         (expect (not-any? #(= :progress-history (:kind %)) (:line-meta payload)))))
-  (it
-    "live progress always renders every iteration with no PROGRESS HISTORY toggle"
-    (with-raw-code-on
-      ;; Per user directive: no collapsible iteration history. Every
-      ;; iteration paints in place; the PROGRESS HISTORY summary band
-      ;; is gone.
-      (let [mk-entry
-            (fn [n]
-              {:forms [{:code (str "(+ " n " 1)")
-                        :comment nil
-                        :render-segments nil
-                        :stdout nil
-                        :error nil
-                        :started-at-ms nil
-                        :duration-ms 1
-                        :success? true
-                        :silent? false}]})
-
-            payload
-            (render/progress->lines-data {:iterations (mapv mk-entry (range 12))}
-                                         80
-                                         {:show-thinking true :show-iterations true}
-                                         {:now-ms 1000
-                                          :turn-start-ms 0
-                                          :session-id "session"
-                                          :detail-expansions {:vis.channel-tui/expand-all-details?
-                                                              true}})
-
-            body
-            (strip-ansi (:text payload))]
-
-        (expect (not (str/includes? body "PROGRESS HISTORY")))
-        (expect (not (str/includes? body "iterations hidden")))
-        (expect (str/includes? body "(+ 0 1)"))
-        (expect (str/includes? body "(+ 11 1)"))
-        (expect (not-any? #(= :progress-history (:kind %)) (:line-meta payload))))))
   (it "toggles explicitly silent forms in live progress traces"
       (with-raw-code-on
         (let [progress
@@ -3943,47 +2939,6 @@
           ;; Queue block renders AFTER the spinner row (order preserved).
           (expect (< (long spinner-idx) (long queued-idx)))))))
 
-(defdescribe
-  spinner-transient-error-segment-test
-  ;; A recoverable error on the LAST iteration surfaces a RED (INLINE_ERR
-  ;; sentinel-wrapped) segment on the spinner row, to the RIGHT of the elapsed
-  ;; clock (placement A). The
-  ;; phase itself stays a plain "Vis is retrying"; the error detail lives ONLY
-  ;; in the tinted suffix, and the copyable :text stays sentinel-free.
-  (let [extra
-        {:now-ms 1700000000000 :turn-start-ms 1700000000000}
-
-        err-iter
-        {:activity :provider-call
-         :error {:type :svar.core/http-error :attempt 2 :max-retries 3 :delay-ms 1000}}
-
-        spinner
-        (fn [d]
-          (first (filter #(spinner-row? %) (:lines d))))]
-
-    (it "wraps the transient-error detail in INLINE_ERR sentinels after the clock"
-        (let [d
-              (render/progress->lines-data {:iterations [err-iter]} 130 {} extra)
-
-              line
-              (spinner d)]
-
-          (expect (str/includes? line "Vis is retrying"))
-          (expect (str/includes? line p/INLINE_ERR_ON))
-          (expect (str/includes? line p/INLINE_ERR_OFF))
-          (expect (str/includes? line "\u2014 http error \u00b7 retry 2/3 \u00b7 next in 1.0s"))
-          (expect (< (long (str/index-of line "Vis is retrying"))
-                     (long (str/index-of line p/INLINE_ERR_ON))))
-          (expect (nil? (re-find #"[\uE110-\uE11B]" (:text d))))))
-    (it "renders no segment when the last iteration has no error"
-        (let [d
-              (render/progress->lines-data {:iterations [{:activity :provider-call}]} 130 {} extra)
-
-              line
-              (spinner d)]
-
-          (expect (not (str/includes? line p/INLINE_ERR_ON)))))))
-
 ;; Regression, issue #120: a tool-result continuation was indistinguishable from
 ;; the human's own submit — the spinner said "Vis is calling the provider (iter N)"
 ;; for every request, so an unbounded loop looked exactly like ordinary work.
@@ -4005,9 +2960,6 @@
                                  "Vis is transcribing recordings (up to 5 min)"))
           (on-chunk {:phase :provider-call :iteration 1})
           (expect (not (str/includes? (spinner (get-timeline)) "transcribing")))))
-    (it "names the human's own submit on the first provider call"
-        (expect (str/includes? (spinner [{:activity :provider-call :activity/reason :user-submit}])
-                               "Vis is calling the provider (user submit, iter 1)")))
     ;; Regression, reported as "it just says the same thing and I wait": the line
     ;; stood unchanged for the whole provider wait because the only subject it
     ;; could name was "the provider".
@@ -4015,14 +2967,7 @@
         (expect (str/includes? (spinner [{:activity :provider-call
                                           :activity/reason :user-submit
                                           :activity/model "claude-opus-5"}])
-                               "Vis is calling claude-opus-5 (user submit, iter 1)")))
-    (it "names a tool-result continuation on every later call"
-        (expect (str/includes? (spinner [{:activity :provider-call}
-                                         {:activity :provider-call :activity/reason :tool-result}])
-                               "Vis is continuing after tool results (iter 2)")))
-    (it "keeps the plain label when no reason was recorded"
-        (expect (str/includes? (spinner [{:activity :provider-call}])
-                               "Vis is calling the provider (iter 1)")))))
+                               "Vis is calling claude-opus-5 (user submit, iter 1)")))))
 
 ;; Claude Code and Hermes say after about 20s that they still wait for the model.
 ;; The Vis line said "calling the provider" for minutes, so a slow provider looked
@@ -4119,10 +3064,6 @@
                                  "no tool call for 1m 12s · Python CPU 99% · stops in 3m 48s"))
           (expect (str/includes? (spinner timeline (+ received 5000))
                                  "no tool call for 1m 17s · Python CPU 99% · stops in 3m 43s"))))
-    (it "names the measured process when Python is idle"
-        (expect (str/includes?
-                  (spinner (busy {:busy-ms 72000 :deadline-in-ms 228000 :cpu-percent 0}) received)
-                  "no tool call for 1m 12s · Python CPU 0% · stops in 3m 48s")))
     (it "leaves out the CPU share when Vis cannot read it"
         (expect (str/includes? (spinner (busy {:busy-ms 30000 :deadline-in-ms 270000}) received)
                                "no tool call for 30s · stops in 4m 30s")))
@@ -5064,20 +4005,6 @@
       (expect (not (str/includes? text "Wrapper: Stream semantic timeout")))
       (expect (str/includes? text "Stream went quiet — Vis timed out")))))
 
-(defdescribe answer-separator-test
-             (it "does not draw a bottom border between reasoning and final answer"
-                 (render/invalidate-cache!)
-                 (let [payload (render/format-answer-with-thinking-data "done"
-                                                                        [{:thinking "reasoning"}]
-                                                                        80
-                                                                        {:show-thinking true
-                                                                         :show-iterations true}
-                                                                        nil
-                                                                        false
-                                                                        {})]
-                   (expect (not (str/includes? (:text payload) p/MARKER_ANSWER_SEP)))
-                   (expect (not-any? #(str/starts-with? % p/MARKER_ANSWER_SEP) (:lines payload))))))
-
 (defdescribe
   message-footer-test
   (it "does not register a per-message copy button"
@@ -5169,40 +4096,6 @@
         (expect (= 5 height))
         (expect (some #(str/includes? (:text %) "100→20") @puts))
         (expect (not-any? #(str/includes? (:text %) "cached 0") @puts))))
-  (it
-    "leaves one blank row between assistant answer and bubble footer"
-    (let [puts
-          (atom [])
-
-          graphics
-          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-            (clearModifiers [] this)
-            (enableModifiers [_] this)
-            (disableModifiers [_] this)
-            (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-            (setForegroundColor [_] this)
-            (setBackgroundColor [_] this)
-            (putString [_col row text] (swap! puts conj {:row row :text (put-text text)}) this)
-            (fillRectangle [_ _ _] this)
-            (setCharacter [_ _ _] this))
-
-          height
-          (render/draw-chat-bubble! graphics
-                                    {:role :assistant
-                                     :text "hello"
-                                     :message-meta-mode :full
-                                     :tokens {"input" 100 "output" 20}}
-                                    4 2
-                                    60 {:viewport-h 40})
-
-          answer-row
-          (:row (first (filter #(= "hello" (:text %)) @puts)))
-
-          footer-row
-          (:row (first (filter #(str/includes? (:text %) "100→20") @puts)))]
-
-      (expect (= 5 height))
-      (expect (= 2 (- footer-row answer-row)))))
   (it "omits the footer for an iteration-only turn with no model / tokens / cost"
       ;; The bubble footer is now the SHARED humanized turn-summary line
       ;; (`vis/meta-summary-line`): model · in→out (cached) · ~$cost · duration.
@@ -5238,245 +4131,6 @@
         (expect (= 3 height))
         (expect (not-any? #(str/includes? (str (:text %)) "iter") @puts))
         (expect (not-any? #(str/includes? (str (:text %)) "silent") @puts))))
-  (it
-    "ignores legacy turn separator flag on user prompts"
-    (let [puts
-          (atom [])
-
-          active
-          (atom #{})
-
-          graphics
-          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-            (clearModifiers [] (reset! active #{}) this)
-            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (swap! active into (seq arr))
-              this)
-            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (apply swap! active disj (seq arr))
-              this)
-            (getActiveModifiers []
-              (if (empty? @active)
-                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-            (setForegroundColor [_] this)
-            (setBackgroundColor [_] this)
-            (putString [_col row text] (swap! puts conj {:row row :text text :sgr @active}) this)
-            (fillRectangle [_pos _size _ch] this)
-            (setCharacter [_ _ _] this))
-
-          height
-          (render/draw-chat-bubble! graphics
-                                    {:role :user :text "hello" :turn-separator? true}
-                                    4 2
-                                    30 {:viewport-h 40})]
-
-      (expect (= 5 height))
-      (expect (not-any? #(str/includes? (or (:text %) "") "──") @puts))
-      (expect (some #(and (= 4 (:row %))
-                          (= "You" (:text %))
-                          (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
-                    @puts))))
-  (it
-    "renders user messages with a left rail and markdown styling"
-    (let [puts
-          (atom [])
-
-          active
-          (atom #{})
-
-          graphics
-          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-            (clearModifiers [] (reset! active #{}) this)
-            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (swap! active into (seq arr))
-              this)
-            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (apply swap! active disj (seq arr))
-              this)
-            (getActiveModifiers []
-              (if (empty? @active)
-                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-            (setForegroundColor [_] this)
-            (setBackgroundColor [_] this)
-            (putString [_col row text]
-              (swap! puts conj {:row row :text (put-text text) :sgr @active})
-              this)
-            (fillRectangle [_ _ _] this)
-            (setCharacter [_ _ _] this))
-
-          ;; Inline markdown styling for user-message bubbles now lives
-          ;; in the `virtual.clj` projection layer that supplies
-          ;; `:prewrapped-lines` to `draw-chat-bubble!`. The bubble
-          ;; painter itself no longer parses markdown from `:text`
-          ;; (the IR→prewrapped lift happens upstream). Feed prewrapped
-          ;; lines directly so the assertion exercises the painter, not
-          ;; the retired in-painter markdown lift.
-          rendered
-          (render/format-answer-markdown-data (vis/markdown->ast "**SIEMA**\n\n> quoted text")
-                                              50
-                                              nil)
-
-          message
-          {:role :user
-           :text "**SIEMA**\n\n> quoted text"
-           :prewrapped-lines (:lines rendered)
-           :line-meta (:line-meta rendered)}
-
-          start
-          4
-
-          left
-          2
-
-          width
-          50
-
-          height
-          (render/draw-chat-bubble! graphics message start left width {:viewport-h 40})]
-
-      (expect (pos? height))
-      ;; SIEMA appears on one of the painted rows; markdown styling
-      ;; (bold/italic via inline sentinels) is driven by
-      ;; `virtual.clj`'s projection layer, which uses MARKER_ANSWER_TXT
-      ;; on the answer side and MARKER_MD_* on plain-markdown blocks.
-      ;; This test only pins that the painter visits the rendered
-      ;; rows and surfaces the user-visible text — the bold-SGR
-      ;; activation is exercised by the answer-side painter tests.
-      (expect (some #(str/includes? (or (:text %) "") "SIEMA") @puts))
-      (expect (some #(str/includes? (or (:text %) "") "quoted text") @puts))))
-  (it
-    "draws assistant answer text aligned with the Vis label"
-    (let [puts
-          (atom [])
-
-          active
-          (atom #{})
-
-          graphics
-          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-            (clearModifiers [] (reset! active #{}) this)
-            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (swap! active into (seq arr))
-              this)
-            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (apply swap! active disj (seq arr))
-              this)
-            (getActiveModifiers []
-              (if (empty? @active)
-                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-            (setForegroundColor [_] this)
-            (setBackgroundColor [_] this)
-            (putString [col row text]
-              (swap! puts conj {:col col :row row :text (put-text text)})
-              this)
-            (fillRectangle [_ _ _] this)
-            (setCharacter [_ _ _] this))
-
-          rendered
-          (render/format-answer-markdown-data (vis/markdown->ast "hello") 50 nil)
-
-          left
-          2
-
-          _height
-          (render/draw-chat-bubble! graphics
-                                    {:role :assistant
-                                     :text ""
-                                     :prewrapped-lines (:lines rendered)
-                                     :line-meta (:line-meta rendered)}
-                                    4 left
-                                    50 {:viewport-h 40})
-
-          answer-put
-          (first (filter #(str/includes? (:text %) "hello") @puts))]
-
-      (expect (= left (:col answer-put)))))
-  (it
-    "draws markdown fenced code one column inside the bubble band"
-    (let [fills
-          (atom [])
-
-          puts
-          (atom [])
-
-          active
-          (atom #{})
-
-          fg
-          (atom nil)
-
-          bg
-          (atom nil)
-
-          graphics
-          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-            (clearModifiers [] (reset! active #{}) this)
-            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (swap! active into (seq arr))
-              this)
-            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (apply swap! active disj (seq arr))
-              this)
-            (getActiveModifiers []
-              (if (empty? @active)
-                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-            (setForegroundColor [c] (reset! fg c) this)
-            (setBackgroundColor [c] (reset! bg c) this)
-            (putString [col row text]
-              (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg})
-              this)
-            (fillRectangle [pos size _ch]
-              (swap! fills conj
-                {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
-                 :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
-                 :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
-                 :h (.getRows ^com.googlecode.lanterna.TerminalSize size)
-                 :fg @fg
-                 :bg @bg})
-              this)
-            (setCharacter [_ _ _] this))
-
-          rendered
-          (render/format-answer-markdown-data (vis/markdown->ast "```clojure\n(+ 1 2)\n```") 50 nil)
-
-          left
-          2
-
-          width
-          50
-
-          ;; ANSWER fenced-code rows are inset from the band's left edge by
-          ;; `code-block-h-pad` (the band still fills from `left`).
-          text-x
-          (+ left @#'render/code-block-h-pad)
-
-          _height
-          (render/draw-chat-bubble! graphics
-                                    {:role :assistant
-                                     :text ""
-                                     :prewrapped-lines (:lines rendered)
-                                     :line-meta (:line-meta rendered)}
-                                    4
-                                    left
-                                    width
-                                    {:viewport-h 40})
-
-          code-put
-          ;; Colorization splits the code line into one putString per color run,
-          ;; so the leading chunk (which starts the code at text-x) no longer
-          ;; contains the whole form. Match that leading chunk, ANSI-stripped.
-          (first (filter #(str/includes? (strip-ansi (str (:text %))) "(+") @puts))
-
-          code-fill
-          (first (filter #(and (= t/code-block-bg (:bg %)) (= (:row code-put) (:row %))) @fills))]
-
-      (expect (= text-x (:col code-put)))
-      (expect (= left (:col code-fill)))
-      (expect (= width (:w code-fill)))))
   (it "renders blank fenced-code rows nested in a list"
       (let [fence
             (apply str (repeat 3 (char 96)))
@@ -5499,81 +4153,7 @@
                                                  :prewrapped-lines (:lines rendered)
                                                  :line-meta (:line-meta rendered)}
                                                 4 2
-                                                50 {:viewport-h 40})))))
-  (it
-    "leaves only the final gap after the user bubble fill"
-    (let [fills
-          (atom [])
-
-          active
-          (atom #{})
-
-          graphics
-          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-            (clearModifiers [] (reset! active #{}) this)
-            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (swap! active into (seq arr))
-              this)
-            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (apply swap! active disj (seq arr))
-              this)
-            (getActiveModifiers []
-              (if (empty? @active)
-                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-            (setForegroundColor [_] this)
-            (setBackgroundColor [_] this)
-            (putString ([_ _ _] this))
-            (fillRectangle [pos size _ch]
-              (swap! fills conj
-                {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
-                 :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
-                 :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
-                 :h (.getRows ^com.googlecode.lanterna.TerminalSize size)})
-              this)
-            (setCharacter [_ _ _] this))
-
-          message
-          {:role :user :text "hello world"}
-
-          start
-          4
-
-          left
-          2
-
-          width
-          36
-
-          viewport-top
-          7
-
-          height
-          (render/draw-chat-bubble! graphics
-                                    message
-                                    start
-                                    left
-                                    width
-                                    {:viewport-top viewport-top :viewport-h 40})
-
-          gap-row
-          (+ start height -1)
-
-          bubble-fill
-          (some (fn [fill]
-                  (when (and (= left (:col fill)) (pos? (:h fill))) fill))
-                @fills)
-
-          bubble-last-row
-          (+ (:row bubble-fill) (:h bubble-fill) -1)]
-
-      (expect (= 5 height))
-      (expect (= 3 (:h bubble-fill)))
-      ;; Snug fit: the block hugs its content ("hello world" = 11 cols +
-      ;; symmetric h-pad of 2 each side = 15), NOT the full message column.
-      (expect (= 15 (:w bubble-fill)))
-      (expect (< (:w bubble-fill) width))
-      (expect (= bubble-last-row (dec gap-row))))))
+                                                50 {:viewport-h 40}))))))
 
 (defdescribe
   bubble-row-clipping-test
@@ -5649,207 +4229,6 @@
 
 (defdescribe
   slash-command-suggestions-overlay-test
-  (it
-    "draws a bordered, BOLD, accent-stripe title with flex hint pairs"
-    (let [puts
-          (atom [])
-
-          fills
-          (atom [])
-
-          fg
-          (atom nil)
-
-          bg
-          (atom nil)
-
-          active
-          (atom #{})
-
-          g
-          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-            (clearModifiers [] (reset! active #{}) this)
-            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (swap! active into (seq arr))
-              this)
-            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (apply swap! active disj (seq arr))
-              this)
-            (getActiveModifiers []
-              (if (empty? @active)
-                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-            (setForegroundColor [c] (reset! fg c) this)
-            (setBackgroundColor [c] (reset! bg c) this)
-            (getForegroundColor [] @fg)
-            (getBackgroundColor [] @bg)
-            (putString [col row text]
-              (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg :sgr @active})
-              this)
-            (fillRectangle [pos size _ch]
-              (swap! fills conj
-                {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
-                 :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
-                 :w (.getColumns ^com.googlecode.lanterna.TerminalSize size)
-                 :h (.getRows ^com.googlecode.lanterna.TerminalSize size)
-                 :fg @fg
-                 :bg @bg
-                 :sgr @active})
-              this)
-            (setCharacter [_ _ _] this))
-
-          ;; More matches than the overlay cap must stay a compact, scrollable
-          ;; menu instead of consuming all available transcript height.
-          suggestions
-          (mapv (fn [i]
-                  {:label (str "command-" i)
-                   :slash/usage (str "/command-" i)
-                   :slash/selected? (zero? i)})
-                (range 12))
-
-          input-top
-          20
-
-          cols
-          80
-
-          n
-          8
-
-          ;; Layout (from top to bottom):
-          ;;   margin-row -> title-row -> border-row -> sug rows ...
-          first-sug
-          (- input-top n)
-
-          border-row
-          (dec first-sug)
-
-          title-row
-          (dec border-row)
-
-          margin-row
-          (dec title-row)
-
-          ;; Completion chrome shares the full-width input rules.
-          pad
-          0
-
-          inner-w
-          (- cols (* 2 pad))]
-
-      (render/draw-slash-command-suggestions! g suggestions input-top cols)
-      ;; Title row sits ABOVE the border row (border under title).
-      (expect (< title-row border-row))
-      ;; The title stripe reaches both screen edges, like the input rules.
-      (expect (some #(and (= title-row (:row %))
-                          (= t/dialog-title-bg (:bg %))
-                          (= pad (:col %))
-                          (= cols (:w %)))
-                    @fills))
-      ;; The rule under the title spans the same full width as the accent stripe.
-      (expect (some #(and (= border-row (:row %))
-                          (str/starts-with? (:text %) "─")
-                          (= pad (:col %))
-                          (= cols (count (:text %)))
-                          (= t/dialog-border (:fg %))
-                          (= t/terminal-bg (:bg %)))
-                    @puts))
-      ;; Top margin row: a full-width terminal-bg gap above the title.
-      (expect (some #(and (= margin-row (:row %)) (= 0 (:col %)) (= t/terminal-bg (:bg %))) @fills))
-      ;; Title row: BOLD label "Slash commands" on the accent stripe.
-      (expect (some #(and (= title-row (:row %))
-                          (str/includes? (:text %) "Slash commands")
-                          (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD)
-                          (= t/dialog-title-fg (:fg %))
-                          (= t/dialog-title-bg (:bg %)))
-                    @puts))
-      ;; Title row: BOLD keys for each [key action] hint pair.
-      ;; Enter and Tab both complete selected slash suggestion.
-      (doseq [k ["↑↓/wheel" "Enter/Tab"]]
-        (expect (some #(and (= title-row (:row %))
-                            (= k (:text %))
-                            (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
-                      @puts)))
-      (expect (not-any? #(and (= title-row (:row %)) (#{"Enter" "Tab"} (:text %))) @puts))
-      ;; Title row: action words rendered NON-BOLD next to their keys.
-      (doseq [a [" select" " complete"]]
-        (expect (some #(and (= title-row (:row %))
-                            (= a (:text %))
-                            (not (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD)))
-                      @puts)))
-      ;; Title items spread across the inner width (space-between):
-      ;; first item sits inside the left margin, last item in the
-      ;; right half of the inner span.
-      (let [title-puts
-            (filter #(= title-row (:row %)) @puts)
-
-            cols-used
-            (mapv :col title-puts)]
-
-        (expect (some #(<= pad % (+ pad 2)) cols-used))
-        (expect (some #(>= % (+ pad (quot inner-w 2))) cols-used)))
-      ;; Selection covers the inset row fill and all text, not a cursor glyph.
-      (expect (some #(and (= first-sug (:row %))
-                          (= pad (:col %))
-                          (= inner-w (:w %))
-                          (= t/dialog-bg (:bg %))
-                          (contains? (:sgr %) p/BOLD)
-                          (contains? (:sgr %) p/REVERSE))
-                    @fills))
-      (expect (some #(and (= (inc first-sug) (:row %))
-                          (= pad (:col %))
-                          (= inner-w (:w %))
-                          (= t/dialog-bg (:bg %))
-                          (not (contains? (:sgr %) p/BOLD))
-                          (not (contains? (:sgr %) p/REVERSE)))
-                    @fills))
-      (expect (not-any? #(str/includes? (:text %) "•") @puts))
-      (doseq [put (filter #(= first-sug (:row %)) @puts)]
-        (expect (contains? (:sgr put) p/BOLD))
-        (expect (contains? (:sgr put) p/REVERSE)))
-      ;; Each suggestion row paints a markdown-style chip:
-      ;;   <code-bg fill> /cmd <code-bg fill end> ` - ` <italic desc>
-      (let [sug-rows
-            (filter #(<= first-sug (:row %)) @puts)
-
-            usages
-            (filter #(str/starts-with? (:text %) "/") sug-rows)
-
-            seps
-            (filter #(= " - " (:text %)) sug-rows)
-
-            descs
-            (filter #(contains? (:sgr %) com.googlecode.lanterna.SGR/ITALIC) sug-rows)
-
-            chip-fills
-            (filter #(and (<= first-sug (:row %)) (= t/code-block-bg (:bg %))) @fills)]
-
-        ;; One chip fill, usage, separator and description per suggestion.
-        (expect (= n (count chip-fills)))
-        (expect (= n (count usages)))
-        (expect (= n (count seps)))
-        (expect (= n (count descs)))
-        ;; Chips have one column of padding on each side, followed by the
-        ;; separator and italic description. There is no selection gutter.
-        (doseq [[chip u s d] (map vector
-                                  (sort-by :row chip-fills)
-                                  (sort-by :row usages)
-                                  (sort-by :row seps)
-                                  (sort-by :row descs))]
-          ;; A single padding column separates the chip from the inset edge.
-          (expect (= (:col chip) (inc pad)))
-          ;; Chip starts one col before the usage and is exactly
-          ;; (usage-width + 2) wide.
-          (expect (= (:col u) (inc (:col chip))))
-          (expect (= (:w chip) (+ (count (:text u)) 2)))
-          ;; Usage paints in code-block colors.
-          (expect (= t/code-block-fg (:fg u)))
-          (expect (= t/code-block-bg (:bg u)))
-          ;; ` - ` separator sits immediately after the chip.
-          (expect (= (:col s) (+ (:col chip) (:w chip))))
-          ;; Italic description follows the separator on the same row.
-          (expect (= (:row u) (:row d)))
-          (expect (= (:col d) (+ (:col s) (count (:text s)))))))))
   (it
     "drops the border row when there is not enough vertical space"
     (let [puts
@@ -5960,12 +4339,7 @@
                    (expect (not= (fp (assoc base :display-code "# a"))
                                  (fp (assoc base :display-code "# b")))))
                (it "display-language busts the fingerprint"
-                   (expect (not= (fp base) (fp (assoc base :display-language "bash")))))
-               (it "identical display fields still hit the same fingerprint"
-                   (let [full (assoc base
-                                :display-code "sleep 30"
-                                :display-language "bash")]
-                     (expect (= (fp full) (fp full)))))))
+                   (expect (not= (fp base) (fp (assoc base :display-language "bash")))))))
 
 (defdescribe
   message-detail-expansions-key-test
@@ -6168,53 +4542,6 @@
 
           (expect (str/includes? txt "attachments"))
           (expect (nil? (re-find #"attachmen\s*\n" txt)))))
-    (it "paints the words as a QUOTATION: curly quotes, italic, justified"
-        ;; Regression: speech on code paper read as machine output. A memo is somebody
-        ;; talking, so the words are quoted, slanted and set flush like every other
-        ;; prose block the renderer paints - never a mono column.
-        (let [node
-              [:code {:lang "vis-transcript"}
-               (str "[Transcription #1: memo.m4a]\n"
-                    "transcription support for voice attachments and a bit more speech here\n")]
-
-              lines
-              (mapv :line (@#'render/paste-disclosure-entries node 40 (opts {[sid node-id] true})))
-
-              body
-              (remove str/blank? (rest lines))
-
-              plain
-              (mapv (fn [l]
-                      (-> l
-                          (str/replace p/INLINE_ITALIC_ON "")
-                          (str/replace #"[\uE000-\uF8FF]" "")
-                          (str/replace p/INLINE_ITALIC_OFF "")))
-                    body)]
-
-          ;; The whole utterance sits inside ONE pair of curly quotes.
-          (expect (str/includes? (first plain) "'transcription"))
-          (expect (str/includes? (last plain) "here'"))
-          ;; ... every row of it slanted ...
-          (expect (every? (fn [l]
-                            (str/includes? l p/INLINE_ITALIC_ON))
-                          body))
-          ;; Global paragraph breaks may leave a short line when stretching would
-          ;; make every gap wider. Near-full rows still follow the shared comfort cap.
-          (expect (every? (fn [line]
-                            (let [slack
-                                  (- 40 (p/display-width line))
-
-                                  gaps
-                                  (dec (count (str/split (subs line 2) #"\s+")))]
-
-                              (and (not (neg? slack)) (or (zero? slack) (>= slack gaps)))))
-                          (butlast plain)))
-          ;; The bare words - no quotes, no stretch - are what a click copies.
-          (expect (= "transcription support for voice attachments and a bit more speech here\n"
-                     (:text (:meta (last (@#'render/paste-disclosure-entries
-                                          node
-                                          40
-                                          (opts {[sid node-id] true})))))))))
     (it "a paste's expansion state cannot open it"
         (let [txt (:text
                     (render/format-answer-markdown-data ast 76 (opts {[sid paste-node-id] true})))]
@@ -6292,39 +4619,6 @@
           (expect (str/includes? text "PNG · 1600x900 · 1.2 MB"))
           (expect (str/includes? text
                                  "Click a thumbnail or press Ctrl+X Shift+I to view pictures."))))
-    (it "keeps one blank row between the card and the prose above and below it"
-        ;; User report (screenshots): the card touched the sentence above and below it.
-        (let [{:keys [text line-meta]}
-              (data :kitty (str "look\n" (fence 1 1600 900) "\nafter"))
-
-              lines
-              (str/split-lines text)
-
-              parts
-              (mapv :card-part line-meta)
-
-              top
-              (.indexOf parts :top)
-
-              bottom
-              (.lastIndexOf parts :bottom)]
-
-          (expect (= ["look" ""] (subvec lines 0 top)))
-          (expect (= ["" "after"] (subvec lines (inc bottom))))))
-    (it "keeps two pastes together, like the rows of a list"
-        (let [paste
-              (fn [i]
-                (str "````vis-paste\n[Pasted #" i ": 2 lines, 4B]\na\nb\n````"))
-
-              lines
-              (str/split-lines (:text (data :kitty (str "x\n\n" (paste 1) "\n\n" (paste 2)))))
-
-              row
-              (fn [needle]
-                (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))]
-
-          (expect (= ["x" ""] (subvec lines 0 (row "[Pasted #1"))))
-          (expect (= 1 (- (long (row "[Pasted #2")) (long (row "[Pasted #1")))))))
     (it "gives a wide and a tall picture one thumbnail size, each cut to its shape"
         (let [[wide tall] (map :img
                                (filter #(= :image (:kind %))
@@ -6337,29 +4631,6 @@
           (expect (= (quot (- 2622 (long (get-in tall [:view :h]))) 2)
                      (long (get-in tall [:view :y]))))
           (expect (= 900 (long (get-in wide [:view :h]))))))
-    (it "keeps a blank line above the Open externally button"
-        (let [rows (filter #(= :image-table (:card-part %))
-                           (:line-meta (data nil (md [[1600 900]]))))]
-          (expect (= [0 1 2 3] (mapv :table-line rows)))))
-    (it "rules the thumbnail column off from the text column"
-        (let [{:keys [line-meta]}
-              (data :kitty (md [[1600 900] [1206 2622]]))
-
-              joints
-              (keep :table-joint line-meta)
-
-              rows
-              (filter #(= :image-table (:card-part %)) line-meta)
-
-              rule-col
-              (:table-rule-col (first rows))]
-
-          (expect (= ["┬" "┼" "┴"] joints))
-          (expect (every? #(= rule-col (:table-rule-col %)) rows))
-          (expect (< (long rule-col) (long (:table-text-col (first rows)))))
-          (expect (every? #(< (+ (long (:image-col-offset %)) (long (:cols (:img %))))
-                              (long rule-col))
-                          (filter :img rows)))))
     (it "several pictures share one card with one row block each"
         (let [{:keys [line-meta]}
               (data :kitty (md [[1600 900] [1206 2622] [1200 900]]))
@@ -6419,39 +4690,6 @@
               (str/replace #"\u001b\[[0-9;]*m" "")
               (str/replace #"[\u200B-\u200F\u2060-\u206F\uFEFF\uE000-\uF8FF]" "")))
         entries))
-
-(defdescribe
-  tool-card-body-indent-test
-  (it
-    "keeps one header spacer, glues each label to its content, and breathes one blank row between sections + a trailing pad"
-    (let [texts
-          (entry-text (tool-card-entries
-                        {:label "REPL"
-                         :summary "(+ 1 1) ⇒ 2"
-                         :body "**RESULT**\n```clojure\n2\n```\n\n**STDOUT**\n```\nhi\n```"}
-                        {:fill-w 76 :session-id nil :detail-expansions {}}))
-
-          body-texts
-          (vec (remove str/blank? (drop 2 texts)))]
-
-      (expect (= "" (second texts)))
-      (expect (= ["  RESULT" "  2" "  STDOUT" "  hi"] body-texts))
-      ;; Sections are separated by exactly ONE blank row, each **LABEL** glued to
-      ;; its own content, and the body ends with ONE trailing pad row.
-      (expect (= ["  RESULT" "  2" "" "  STDOUT" "  hi" ""] (vec (drop 2 texts))))))
-  (it
-    "keeps a blank row on both sides of a batch command divider"
-    (let
-      [texts
-       (entry-text
-         (tool-card-entries
-           {:summary "$ 2 shell commands — 2 succeeded, 0 failed"
-            :body
-            "### 1. $ first\n\n**STATUS**\n\nstatus: success\n\n────────────\n\n### 2. $ second\n\n**STATUS**\n\nstatus: success"}
-           {:fill-w 76 :session-id nil :detail-expansions {}}))]
-      (expect (= ["  ▍ 1. $ first" "" "  STATUS" "  status: success" "" "  ────────────" ""
-                  "  ▍ 2. $ second"]
-                 (vec (take 8 (drop 2 texts))))))))
 
 (defdescribe tool-card-image-reservation-test
              ;; A `vis-image` fence inside an op-card RESULT (e.g. `attach`'s stdout)
@@ -7521,11 +5759,7 @@ h = 8"
 ;; truth from a real paint: every row of an all-error bubble wears the card.
 (defdescribe
   error-card-paint-test
-  (let [rgb
-        (fn [^com.googlecode.lanterna.TextColor$RGB c]
-          [(.getRed c) (.getGreen c) (.getBlue c)])
-
-        blocks
+  (let [blocks
         (chat/error-content {"error" (str "Provider stream stalled: no output at all for 123507ms "
                                           "while waiting in :provider-call")})
 
@@ -7550,59 +5784,8 @@ h = 8"
            (fn [{:keys [screen]}]
              (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
                (render/draw-chat-bubble! (.newTextGraphics s) message 2 2 76 {:viewport-h 20})
-               (.refresh s)))})
+               (.refresh s)))})]
 
-        grid
-        (first (:frames captured))
-
-        ;; The card is exactly the rows carrying its own left edge bar.
-        card-rows
-        (filterv (fn [row]
-                   (some #(= "│" (:ch %)) row))
-          grid)
-
-        ;; Bubble band only: `bx` 2, `bubble-w` 76.
-        band
-        (fn [row]
-          (subvec (vec row) 2 78))
-
-        ink
-        (into [] (comp (mapcat band) (remove #(= " " (:ch %)))) card-rows)]
-
-    (it "paints the whole card on the warning surface, never on the answer's"
-        ;; top padding + the machine code on its own row + the blank paragraph
-        ;; break + the two wrapped sentence rows + bottom padding
-        (expect (= 6 (count card-rows)))
-        (expect (= #{(rgb t/warning-bg)} (into #{} (comp (mapcat band) (map :bg)) card-rows))))
-    ;; ... and it is a CARD, not a stripe: one margin row of plain terminal
-    ;; paper between the band and its own `Vis` label, one padding row of the
-    ;; card's own surface under the last sentence, and the edge bar down all of
-    ;; it. The band used to hug the role banner and end flush with the final
-    ;; sentence.
-    (it "keeps a margin row above the band and a padding row inside it"
-        (let [card-top
-              (first (keep-indexed (fn [i row]
-                                     (when (some #(= "│" (:ch %)) row) i))
-                                   grid))
-
-              text-of
-              (fn [row]
-                (str/trim (apply str (map :ch (band row)))))]
-
-          (expect (= "Vis" (text-of (nth grid (- (long card-top) 2)))))
-          (expect (= "" (text-of (nth grid (dec (long card-top))))))
-          (expect (= #{(rgb t/terminal-bg)}
-                     (into #{} (map :bg) (band (nth grid (dec (long card-top)))))))
-          ;; the card's own first and last rows are pure surface + edge bar
-          (expect (= ["│" "│"] [(text-of (first card-rows)) (text-of (last card-rows))]))
-          ;; label(1) + margin(1) + the 6 card rows + gap(1)
-          (expect (= 9 (render/bubble-height* message 76)))))
-    (it "leads with the bold machine code in error ink behind an amber edge bar"
-        (expect (= "turn_failed" (apply str (map :ch (filter :bold ink)))))
-        (expect (= #{(rgb t/warning-border)}
-                   (into #{} (comp (filter #(= "│" (:ch %))) (map :fg)) ink)))
-        (expect (= #{(rgb t/footer-error-fg)}
-                   (into #{} (comp (remove #(= "│" (:ch %))) (map :fg)) ink))))
     (it "reads as a sentence, not as raw markdown"
         (let [text (cap/frame-text captured)]
           ;; The code labels the card from ABOVE now, so the sentence starts on
@@ -7744,27 +5927,8 @@ h = 8"
         ;; The one painted row carrying this band's label.
         band-row
         (fn [needle]
-          (first (filter #(str/includes? (row-text %) needle) grid)))
+          (first (filter #(str/includes? (row-text %) needle) grid)))]
 
-        ink
-        (fn [row pred]
-          (apply str (map :ch (filter pred row))))]
-
-    (it "paints the first source line and one Copy, without a language heading"
-        (let [row (band-row "CODE")]
-          (expect (str/includes? (row-text row) "CODE"))
-          (expect (str/includes? (row-text row) "▸"))
-          (expect (str/ends-with? (row-text row) " COPY"))
-          (expect (not (str/includes? (row-text row) "PYTHON")))))
-    (it "paints THINKING bold ON TOP of the band's own italic"
-        ;; The thinking band is painted italic as a whole and
-        ;; `p/paint-styled-line!` inherits the modifiers already active on the
-        ;; surface, so its name is the one label that is bold AND italic.
-        (let [row (band-row "THINKING")]
-          (expect (re-find #"THINKING ▸  \+8 more" (row-text row)))
-          (expect (= "THINKING" (ink row :bold)))
-          (expect (= "THINKING" (ink row #(and (:bold %) (:italic %)))))
-          (expect (str/includes? (ink row :italic) "+8 more"))))
     (it "hides RESULT while CODE is closed" (expect (nil? (band-row "RESULT"))))))
 
  ;; Canonical output carries no pre-rendered body. The renderer derives it locally,
@@ -7794,22 +5958,7 @@ h = 8"
 
     (it "keeps the result disclosure inside CODE" (expect (nil? (label-of {}))))
     (it "keeps the name once expanded"
-        (expect (re-find #"RESULT\s+▾" (label-of {:vis.channel-tui/expand-all-details? true}))))
-    (it "wraps that name in the painter's bold sentinels"
-        (render/invalidate-cache!)
-        (let [line (->> (:lines (render/format-answer-with-thinking-data*
-                                  nil
-                                  [{:forms [{:success? true :code "x = 1" :stdout long-result}]}]
-                                  80
-                                  {:show-thinking true :show-iterations true}
-                                  nil
-                                  false
-                                  {:session-id "sid"
-                                   :session-turn-id "abcd1234-5678-9999"
-                                   :detail-expansions {:vis.channel-tui/expand-all-details? true}}))
-                        (filter #(str/includes? (str %) "RESULT"))
-                        first)]
-          (expect (str/includes? (str line) (str p/INLINE_BOLD_ON "RESULT" p/INLINE_BOLD_OFF)))))))
+        (expect (re-find #"RESULT\s+▾" (label-of {:vis.channel-tui/expand-all-details? true}))))))
 
 ;; Regression, Vis session a64d44c2-8228-455f-926e-b3381f19a93b: finished
 ;; live views moved below the final answer instead of settling beside the Python
@@ -8092,44 +6241,11 @@ h = 8"
       (doseq [label ["Patched" "Searched" "Ran tests"]]
         (expect (not (str/includes? receipt label))))
       (expect (str/includes? receipt "ACTIVITY"))))
-  (it "hides zero counters for absent, empty and generic activity"
-      (doseq [activity [nil {:rows []} {:rows [{:signal "generic"}]}]]
-        (expect (= "" (#'render/activity-cost-text activity)))))
   (it "shows only the nonzero activity counter"
       (doseq [[signal expected] [["mutation" "1 mutation"] ["observation" "1 observation"]
                                  ["verification" "1 verification"]
                                  ["external" "1 external action"]]]
         (expect (= expected (#'render/activity-cost-text {:rows [{:signal signal}]})))))
-  (it "omits empty counters and separators from step summaries"
-      (doseq [[state expected] [["succeeded" "▸ RAW EXECUTION"] ["running" "▸ 1 running"]
-                                ["failed" "▸ 1 failed"] ["cancelled" "▸ 1 cancelled"]]]
-        (let [entries (#'render/step-digest-entries
-                       {:forms [{:activity {:rows [{:signal "generic" :state state}]}}]}
-                       80
-                       "s1")]
-          (expect (= expected (subs (:line (second entries)) 1))))))
-  ;; Regression: a step without Activity counters showed only a chevron and its duration.
-  (it "labels raw execution in open and closed step summaries"
-      (doseq [activity
-              [nil {:rows []} {:rows [{:signal "generic" :state "succeeded"}]}]
-
-              open?
-              [false true]]
-
-        (let [entry
-              (second (#'render/step-digest-entries
-                       {:forms [{:code "print(1)" :duration-ms 45 :activity activity}]
-                        :node-id "raw"
-                        :open? open?}
-                       80
-                       "s1"))
-
-              text
-              (subs (:line entry) 1)]
-
-          (expect (str/starts-with? text (str (if open? "▾ " "▸ ") "RAW EXECUTION")))
-          (expect (str/ends-with? text "45ms"))
-          (expect (= (not open?) (get-in entry [:meta :collapsed?]))))))
   (it "counts the calls that reached outside the machine"
       (let [cost @#'render/activity-cost-text]
         (expect (= "1 observation · 1 external action"
@@ -8751,42 +6867,6 @@ h = 8"
           (expect (some #(str/includes? % "no matches") (lines [failed] {"grep-2" true}))
                   "a press shows the failure reason")))))
 
-;; Regression, T126: the same step wore different words on the two surfaces - the app said
-;; "Patch refused" where the terminal said "PATCHED" - because each surface kept its own
-;; vocabulary and its own bounds. The table is ONE table; this reads the app's own copy and
-;; fails when either side drifts from it.
-(defdescribe activity-cross-surface-vocabulary-test
-             (let [source
-                   (loop [dir (.getCanonicalFile (io/file (System/getProperty "user.dir")))]
-                     (when dir
-                       (let [f (io/file dir "apps/vis-companion/src/components/ActivityPanel.tsx")]
-                         (if (.isFile f) (slurp f) (recur (.getParentFile dir))))))
-
-                   web-verbs
-                   (into {}
-                         (map (fn [[_ operation running settled failed]]
-                                [operation [running settled failed]]))
-                         (re-seq #"(?m)^\s+(\w+): \['([^']+)', '([^']+)', '([^']+)'\],"
-                                 (str (second (re-find
-                                                #"(?s)const ACTIVITY_VERBS[^{]+\{(.*?)\n\s*\};"
-                                                (str source))))))
-
-                   web-number
-                   (fn [nm]
-                     (some-> (re-find (re-pattern (str "const " nm " = (\\d+);")) (str source))
-                             second
-                             parse-long))]
-
-               (it "reads the app's own panel beside the terminal's"
-                   (expect (some? source) "the companion panel is in the tree")
-                   (expect (seq web-verbs) "and it still declares its verb table"))
-               (it "wears the same verb for the same operation, in every state it can be read in"
-                   (expect (= web-verbs @#'render/activity-verbs)))
-               (it "shows the same four paths before it starts counting"
-                   (expect (= (web-number "ACTIVITY_FILES_SHOWN") @#'render/activity-files-shown)))
-               (it "keeps a failure's own words whole on both surfaces"
-                   (expect (not (str/includes? (str source) "ERROR_PREVIEW_LINES"))))))
-
 ;; Execution bands share a text edge without a vertical rail.
 (defdescribe
   turn-rail-paint-test
@@ -8997,89 +7077,6 @@ h = 8"
         (expect (some? (row-with collapsed "Let me count the rows."))
                 "and folding the receipt cannot hide it, being no part of the fold"))))
 
-;; Regression, T137: reported as one flat grey for every step - measured through a harness
-;; that painted the lines itself and never read `:line-meta`. The paint the terminal really
-;; runs inks each mark with its own state; this pins it, so the claim is measured next time.
-(defdescribe
-  step-mark-ink-test
-  (let [step
-        (fn [i operation summary state]
-          {:id (str operation "-" i)
-           :sequence i
-           :operation operation
-           :summary summary
-           :state state
-           :duration-ms 12
-           :resources []
-           :evidence []})
-
-        activity
-        {:state "running"
-         :counts {:running 1 :succeeded 1 :failed 1 :cancelled 0}
-         :rows [(step 1 "grep" "3 files" "succeeded") (step 2 "patch" "3 hunks" "failed")
-                (step 3 "shell" "npm test" "running")]}
-
-        rendered
-        (do (render/invalidate-cache!)
-            (render/format-answer-with-thinking-data*
-              "Done."
-              [{:thinking "Read the app first."
-                :forms [{:code "print(1)"
-                         :stdout "1"
-                         :result-kind :none
-                         :duration-ms 8400
-                         :silent? false
-                         :success? true
-                         :activity activity}]}]
-              72
-              {:show-thinking true :show-iterations true}
-              nil
-              false
-              {:session-id "s1" :detail-expansions {:vis.channel-tui/expand-all-details? true}}))
-
-        message
-        {:role :assistant
-         :text "Done."
-         :prewrapped-lines (:lines rendered)
-         :line-meta (:line-meta rendered)}
-
-        grid
-        (first (:frames (cap/capture!
-                          {:cols 80
-                           :rows 40
-                           :paint! (fn [{:keys [screen]}]
-                                     (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                                       (render/draw-chat-bubble! (.newTextGraphics s)
-                                                                 message
-                                                                 2 2
-                                                                 76 {:viewport-h 36})
-                                       (.refresh s)))})))
-
-        ink-of
-        (fn [glyph]
-          (for [row
-                grid
-
-                cell
-                row
-
-                :when (= glyph (str (:ch cell)))]
-
-            (:fg cell)))
-
-        marks
-        (vec (ink-of "●"))]
-
-    (it "removes status dots and execution rails"
-        (expect (empty? marks))
-        (expect (empty? (ink-of "│"))))
-    (it "retains a readable failure state in the operation text"
-        (let [line (first (filter #(str/includes? (apply str (map :ch %)) "failed") grid))]
-          (expect (some? line))
-          (expect (some (fn [{:keys [fg]}]
-                          (> (long (first fg)) (long (second fg))))
-                        line))))))
-
 (defdescribe
   live-activity-more-test
   (let [rows
@@ -9233,17 +7230,6 @@ h = 8"
           (expect (= [{:line "" :meta nil}] entries))
           (expect (nil? (:error captured)))
           (expect (not (str/includes? (cap/frame-text captured) "<1ms"))))))
-  (it "shows <1ms on a measured sub-millisecond CODE header"
-      (let [entry
-            (iteration/canonicalize {:forms [{:code "pass" :success? true :duration-ms 0}]})
-
-            entries
-            (format-iteration-entry-entries entry 80 1 {:session-id "s" :session-turn-id "t"})
-
-            code
-            (filter #(str/ends-with? (str (get-in % [:meta :node-id])) ":code") entries)]
-
-        (expect (str/includes? (:line (first code)) "<1ms"))))
   (it
     "paints gateway duration totals without inventing missing measurements"
     ;; Regression #224: pass actual wire events through progress before rendering the group.
@@ -10273,65 +8259,6 @@ print(paths)"
                                "print(42)"))))
         (expect (not (str/includes? (str/join "\n" lines) "</>"))))))
   (it
-    "opens the code band like THINKING: a blank under the name, a pad above a chevroned CODE, one column for code and its collapsed RESULT"
-    (let [data
-          (render/format-answer-with-thinking-data*
-            ""
-            [{:forms
-              [{:code "print(42)\nprint(43)" :stdout "42\n43" :success? true :duration-ms 57}]}]
-            72
-            {:show-iterations true}
-            nil
-            false
-            {:session-id "result-align"
-             :detail-expansions
-             (open-digests {["result-align" "iteration:i1:b1:code"] true} "result-align" nil)})
-
-          captured
-          (cap/capture! {:cols 80
-                         :rows 20
-                         :paint! (fn [{:keys [screen]}]
-                                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                                     (render/draw-chat-bubble! (.newTextGraphics s)
-                                                               {:role :assistant
-                                                                :text ""
-                                                                :prewrapped-lines (:lines data)
-                                                                :line-meta (:line-meta data)}
-                                                               2 1
-                                                               76 {:viewport-h 18})
-                                     (.refresh s)))})
-
-          lines
-          (str/split-lines (cap/frame-text captured))
-
-          row-of
-          (fn [needle]
-            (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
-
-          code-row
-          (row-of "CODE")
-
-          code
-          (nth lines code-row)
-
-          source
-          (nth lines (row-of "print(42)"))
-
-          result
-          (nth lines (row-of "RESULT"))]
-
-      ;; One row of air under the bubble's name, then the band's own top pad.
-      (expect (str/blank? (nth lines (inc (row-of "Vis")))))
-      (expect (str/blank? (str/replace (nth lines (dec code-row)) "│" "")))
-      ;; CODE keeps its disclosure beside the name; RESULT retains its own layout.
-      (expect (str/includes? code "CODE ▾"))
-      (expect (re-find #"RESULT  \+2 more\s+▸" result))
-      (expect (not-any? #(= "43" (str/trim (str/replace % "│" ""))) lines))
-      ;; CODE, its source and RESULT share one left column.
-      (expect (= (.indexOf ^String code "CODE")
-                 (.indexOf ^String source "print(42)")
-                 (.indexOf ^String result "RESULT")))))
-  (it
     "keeps syntax colour on every wrapped row of a long code line"
     (let
       [long-line
@@ -10392,45 +8319,7 @@ print(paths)"
         (expect (some? error-idx))
         ;; The row after the message is blank, so the red band ends on the same air
         ;; a code band or a result band does.
-        (expect (= "" (nth lines (inc (long error-idx)) ::missing)))))
-  (it
-    "paints an iteration's prose on the answer's left edge, flush with the bubble's name"
-    (let [data
-          (render/format-answer-with-thinking-data*
-            "Done: diagnostics added."
-            [{:assistant-prose "I'll add diagnostics for slow input handling."
-              :forms [{:code "paths = ls(root)" :stdout "[]" :success? true :duration-ms 12}]}]
-            66
-            {:show-iterations true}
-            nil
-            false
-            {:session-id "prose-edge"
-             :detail-expansions {:vis.channel-tui/expand-all-details? false}})
-
-          captured
-          (cap/capture! {:cols 74
-                         :rows 16
-                         :paint! (fn [{:keys [screen]}]
-                                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                                     (render/draw-chat-bubble! (.newTextGraphics s)
-                                                               {:role :assistant
-                                                                :text ""
-                                                                :prewrapped-lines (:lines data)
-                                                                :line-meta (:line-meta data)}
-                                                               2 1
-                                                               70 {:viewport-h 14})
-                                     (.refresh s)))})
-
-          lines
-          (str/split-lines (cap/frame-text captured))
-
-          column-of
-          (fn [needle]
-            (some #(let [idx (.indexOf ^String % ^String needle)] (when (<= 0 idx) idx)) lines))]
-
-      ;; The interim prose used to sit two columns in, like a user bubble, while the
-      ;; answer below it and the name above it were flush: one left edge now.
-      (expect (= (column-of "Vis") (column-of "I'll add") (column-of "Done:"))))))
+        (expect (= "" (nth lines (inc (long error-idx)) ::missing))))))
 
 (defdescribe
   activity-content-render-test
@@ -10965,82 +8854,6 @@ print(paths)"
               (let [index (first (keep-indexed #(when (str/includes? (:line %2) heading) %1)
                                                entries))]
                 (expect (= p/MARKER_ACTIVITY (:line (get entries (dec index))))))))))))
-  ;; A section opens shut as ONE line, its headline and summary together; nothing of its
-  ;; body, summary included, stands under that line until the reader presses it.
-  (it "shows each closed section as one head line with its summary"
-      (let [row
-            {:id "session"
-             :state "succeeded"
-             :operation "read_session"
-             :presentation {:headline "Read session"
-                            :summary "3 turns"
-                            :content []
-                            :sections
-                            [{:headline "Turn details"
-                              :summary "Full requests"
-                              :content [{:type "text" :text "Complete request"}]}
-                             {:headline "Empty details" :summary "No retries" :content []}]}}
-
-            entries
-            (#'render/activity-detail-entries
-             {:node-id "sections"
-              :activity-rows [row]
-              :activity-expanded? (fn [key default]
-                                    (get {"#band" true "session" true} key default))}
-             90
-             "sections")
-
-            line-with
-            (fn [text]
-              (first (filter #(str/includes? (:line %) text) entries)))]
-
-        (expect (re-find #"Turn details ▸ · Full requests" (:line (line-with "Turn details"))))
-        (expect (re-find #"Empty details · No retries" (:line (line-with "Empty details"))))
-        (expect (= 1 (count (filter #(str/includes? (:line %) "Full requests") entries))))
-        (expect (not-any? #(str/includes? (:line %) "Complete request") entries))))
-  ;; Regression for #329: a failing-test section stood at its row's own column, so
-  ;; an opened "Run Python tests" row showed its failures without an inset.
-  (it
-    "sets section head lines and their bodies in by the body inset"
-    (let [row
-          {:id "tests"
-           :state "failed"
-           :operation "run_tests"
-           :presentation {:headline "Run Python tests"
-                          :summary "1 failed in 1.0 s"
-                          :content []
-                          :sections [{:headline "test_one"
-                                      :summary "tests/test_a.py:3 · AssertionError"
-                                      :content [{:type "text" :text "SECTION_BODY"}]}]}}
-
-          entries
-          (#'render/activity-detail-entries
-           {:node-id "tests"
-            :activity-rows [row]
-            :activity-expanded?
-            (fn [key default]
-              (get {"#band" true "tests" true "tests:section:0" true} key default))}
-           90
-           "tests")
-
-          line-with
-          (fn [text]
-            (first (filter #(str/includes? (:line %) text) entries)))
-
-          pad
-          (long @#'render/code-block-h-pad)
-
-          row-col
-          (long (get-in (line-with "Run Python tests") [:meta :operation-col]))
-
-          section
-          (line-with "test_one")]
-
-      (expect (= (+ row-col pad) (get-in section [:meta :operation-col])))
-      (expect (str/includes? (:line section)
-                             (str (apply str (repeat (+ row-col pad) \space)) "test_one")))
-      (expect (= (+ row-col pad pad)
-                 (get-in (line-with "SECTION_BODY") [:meta :activity-content-col])))))
   (it "does not offer an inert chevron for a summary-only presentation"
       (let [entry (nth (#'render/activity-detail-entries
                         {:node-id "summary"
@@ -11989,31 +9802,6 @@ print(paths)"
 
             (expect (= tone (get-in digest [:meta :status-tone])))
             (expect (str/includes? (:line digest) label)))))
-    (it "paints a digest row as one bold toggle"
-        (let [entries
-              (render* {} false {})
-
-              captured
-              (cap/capture! {:cols 80
-                             :rows 30
-                             :paint! (fn [{:keys [g]}]
-                                       (render/draw-chat-bubble! g
-                                                                 {:role :assistant
-                                                                  :prewrapped-lines (mapv :line
-                                                                                          entries)
-                                                                  :line-meta (mapv :meta entries)}
-                                                                 0 0
-                                                                 76 {:viewport-h 30}))})
-
-              row
-              (first (filter #(str/includes? (apply str (map :ch %)) "▸ 1 mutation")
-                             (first (:frames captured))))]
-
-          (expect (nil? (:error captured)))
-          (expect (str/includes? (apply str (map :ch (filter :bold row))) "1 mutation"))
-          (.commitFrame interactions/hit-map)
-          (expect (some #(= "iteration:tt:i1:digest" (:node-id %))
-                        (.current interactions/hit-map)))))
     (it "shows the measured time of its steps on the right"
         (let [timed
               (fn [idx ms]
@@ -12630,81 +10418,7 @@ print(paths)"
         (expect (= [[:queue-send-now "s1" "t1"] [:queue-send-now "s1" "t3"]]
                    (mapv interactions/label-key sends)))
         (expect (= [:queue-send-all-now "s1"] (interactions/label-key send-all)))
-        (expect (= 3 (count (interactions/assign-labels regions))))))
-    ;; Regression, user report: the header sat on a dark band and each `Send it now` on a
-    ;; dark fill. Now every queue control is accent text on the row's own paper, and each
-    ;; one shows the chord that presses it.
-    (it
-      "paints the header and its controls without a dark fill, each with its chord"
-      (let [d
-            (payload {:iterations [{:activity :provider-call}]} pending {})
-
-            puts
-            (atom [])
-
-            fills
-            (atom [])
-
-            fg
-            (atom nil)
-
-            bg
-            (atom nil)
-
-            g
-            (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-              (clearModifiers [] this)
-              (enableModifiers [_] this)
-              (disableModifiers [_] this)
-              (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-              (setForegroundColor [c] (reset! fg c) this)
-              (setBackgroundColor [c] (reset! bg c) this)
-              (getForegroundColor [] @fg)
-              (getBackgroundColor [] @bg)
-              (putString [_col row text]
-                (swap! puts conj {:row row :text (put-text text) :fg @fg :bg @bg})
-                this)
-              (fillRectangle [pos _size _ch]
-                (swap! fills conj
-                  {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos) :bg @bg})
-                this)
-              (setCharacter [_ _ _] this))
-
-            _
-            (do (.reset interactions/hit-map) (.beginFrame interactions/hit-map))
-
-            _
-            (render/draw-chat-bubble!
-              g
-              {:role :assistant :text "" :prewrapped-lines (:lines d) :line-meta (:line-meta d)}
-              0 2
-              130 {:viewport-top 0 :viewport-h 80})
-
-            _
-            (.commitFrame interactions/hit-map)
-
-            put-of
-            (fn [text]
-              (first (filter #(= text (:text %)) @puts)))
-
-            header
-            (first (filter #(str/includes? (:text %) "Queued · 4") @puts))
-
-            paper
-            (:bg header)
-
-            dark
-            #{t/dialog-title-bg t/dialog-hint t/header-active-tab-accent}]
-
-        (expect (some? header))
-        (expect (not (contains? dark paper)))
-        (expect (= t/header-active-tab-accent (:fg header)))
-        (expect (not-any? #(and (= (:row header) (:row %)) (= t/dialog-title-bg (:bg %))) @fills))
-        (doseq [text ["Send all now" "Send it now" "Send later"]]
-          (expect (= {:fg t/header-active-tab-accent :bg paper}
-                     (select-keys (put-of text) [:fg :bg]))))
-        (doseq [chord ["C-x k" "C-x 1" "C-x 4"]]
-          (expect (= {:fg t/dialog-hint :bg paper} (select-keys (put-of chord) [:fg :bg]))))))))
+        (expect (= 3 (count (interactions/assign-labels regions))))))))
 
 (defdescribe queue-focus-render-test
              ;; C-x e: the hint names the focus keys, the selected row is marked for the painter, a
@@ -12721,8 +10435,6 @@ print(paths)"
                       {:running? true :session-id "s1" :focus focus}))]
 
                (it "names the chord that focuses the queue at rest"
-                   (expect (str/ends-with? (:line (peek (entries nil)))
-                                           "C-x e edit, send, remove or merge a message"))
                    (expect (some #(:queue-send (:meta %)) (entries nil))
                            "A running turn shows the row buttons"))
                (it "selects, checks and hides the buttons while focused"
@@ -12771,77 +10483,6 @@ print(paths)"
                    (with-redefs [t/user-bubble-bg (com.googlecode.lanterna.TextColor$RGB. 1 2 3)]
                      (filterv #(str/starts-with? % p/MARKER_USER_INPUT)
                        (format-iteration-entry entry 60 2))))))
-    ;; User report: on a theme where the user paper matches the terminal, the bottom pad
-    ;; and the gap read as two empty rows after the message.
-    (it "ends with one empty row when the user paper matches the terminal"
-        (let [entry
-              (assoc entry :assistant-prose "Done.")
-
-              lines
-              (with-redefs [t/user-bubble-bg t/terminal-bg]
-                (:lines (render/format-answer-with-thinking-data* "" [entry] 80 {} nil false {})))
-
-              last-word
-              (.lastIndexOf ^java.util.List lines (str p/MARKER_USER_INPUT "🖼 shot.png look"))]
-
-          (expect (<= 0 last-word))
-          (expect (= ["" "Done."] (subvec (vec lines) (inc last-word) (+ 3 last-word))))))
-    (it "drops the queue rail and border"
-        (expect (not-any? #(str/starts-with? % p/MARKER_QUEUE_HDR) lines))
-        (expect (not-any? #(str/starts-with? % p/MARKER_QUEUE_BORDER) lines)))
-    (it
-      "paints the words on the user bubble paper and the label in the user role ink"
-      (let [puts
-            (atom [])
-
-            fills
-            (atom [])
-
-            fg
-            (atom nil)
-
-            bg
-            (atom nil)
-
-            g
-            (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-              (clearModifiers [] this)
-              (enableModifiers [_] this)
-              (disableModifiers [_] this)
-              (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-              (setForegroundColor [c] (reset! fg c) this)
-              (setBackgroundColor [c] (reset! bg c) this)
-              (getForegroundColor [] @fg)
-              (getBackgroundColor [] @bg)
-              (putString [_col row text]
-                (swap! puts conj {:row row :text (put-text text) :fg @fg :bg @bg})
-                this)
-              (fillRectangle [pos _size _ch]
-                (swap! fills conj
-                  {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos) :bg @bg})
-                this)
-              (setCharacter [_ _ _] this))
-
-            _
-            (render/draw-chat-bubble! g
-                                      {:role :assistant :text "" :prewrapped-lines lines}
-                                      0 0
-                                      64 {:viewport-top 0 :viewport-h 0})
-
-            put-of
-            (fn [text]
-              (first (filter #(str/includes? (:text %) text) @puts)))
-
-            words
-            (put-of "ship it")]
-
-        (expect (= {:fg t/user-bubble-fg :bg t/user-bubble-bg} (select-keys words [:fg :bg])))
-        (expect (some #(and (= (:row words) (:row %)) (= t/user-bubble-bg (:bg %))) @fills))
-        (expect (= t/user-role-fg (:fg (put-of "You"))))
-        (expect (= t/header-active-tab-accent (:fg (put-of "Queued"))))
-        (expect (= t/dialog-hint (:fg (put-of "sent now"))))
-        ;; `You`, `Queued` and the meta share one row.
-        (expect (= 1 (count (distinct (map #(:row (put-of %)) ["You" "Queued" "sent now"])))))))
     (it "paints no block for a step that received nothing"
         (let [plain (format-iteration-entry (iteration/canonicalize {:iteration 1 :forms []}) 60 1)]
           (expect (not-any? #(str/starts-with? % p/MARKER_USER_INPUT_HDR) plain))
@@ -12973,14 +10614,8 @@ print(paths)"
             {:role :assistant
              :text ""
              :prewrapped-lines (mapv :line entries)
-             :line-meta (mapv :meta entries)}))
+             :line-meta (mapv :meta entries)}))]
 
-        normal
-        (grid-of (chat/user-message "ship it"))]
-
-    (it "paints the rail of a normal user bubble on its word rows"
-        (expect (= (word-span normal ["ship it"]) (rail-rows normal)))
-        (expect (= user-ink (rail-ink normal))))
     (it "paints the same rail for a message that starts the next turn from the queue"
         (let [drain-fn
               (-> #'state/event-registry

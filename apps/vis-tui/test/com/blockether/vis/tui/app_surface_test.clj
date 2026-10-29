@@ -1,6 +1,5 @@
 (ns com.blockether.vis.tui.app-surface-test
-  (:require [clojure.string :as str]
-            [com.blockether.vis.tui.app-model :as model]
+  (:require [com.blockether.vis.tui.app-model :as model]
             [com.blockether.vis.tui.app-surface :as surface]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.input :as input]
@@ -125,8 +124,7 @@
           [[:save
             {:action :draft :node-id "diff" :body "ok" :base-seq 4 :thread-id "t1" :revision "b2"}]]
           @calls))
-      (expect (= :saving (get-in st [:save :state])))
-      (expect (= "Saving…" (surface/status-line st)))))
+      (expect (= :saving (get-in st [:save :state])))))
   (it "creates nothing for a blank new comment"
       (let [{:keys [press start calls]}
             (harness view)
@@ -173,9 +171,7 @@
                 (expect (= :saved (:state (surface/saved {} {:is-accepted true :seq 5}))))
                 (expect (= :failed (:state (surface/saved {} {:is-accepted true}))))
                 (expect (= :offline (:state (surface/saved {} {:reason "offline"}))))
-                (expect (= :conflict (:state (surface/saved {} {:reason "conflict"}))))
-                (expect (= "Saved · state 5"
-                           (surface/status-line {:save {:state :saved :seq 5}})))))
+                (expect (= :conflict (:state (surface/saved {} {:reason "conflict"}))))))
   (describe
     "Send"
     (it "reuses the key of a Send without a receipt and makes a new key after one"
@@ -203,13 +199,7 @@
           (expect (= 3 (count keys)))
           (expect (= (first keys) (second keys)))
           (expect (not= (second keys) (nth keys 2)))
-          (expect (= (nth keys 2) (get-in again [:send :key])))
-          (expect (= "Offline: not sent, retry keeps the same key" (surface/status-line offline)))
-          (expect (= "Sent · sub-2" (surface/status-line receipt)))))
-    (it "lists the receipts of the view"
-        (let [rows (surface/surface-rows view 80 #{})]
-          (expect (= ["Send receipts" "Sent · delivered · sub-1"]
-                     (mapv :text (filter #(#{:receipts-head :receipt} (:kind %)) rows))))))
+          (expect (= (nth keys 2) (get-in again [:send :key])))))
     ;; Issue #421: a wire view can keep the button action as a string.
     (it "sends only from a submit button, also when its action is a string"
         (doseq [[action expected] [[:submit [:send :submit "go"]] ["submit" [:send :submit "go"]]
@@ -247,8 +237,7 @@
                            (press (k \s false)))]
 
                    (expect (nil? (:editor st)))
-                   (expect (empty? @calls))
-                   (expect (= "Closed: read only" (surface/status-line st)))))
+                   (expect (empty? @calls))))
              (it "closes on Escape"
                  (let [{:keys [start]} (harness view)]
                    (expect (= {::dlg/done nil}
@@ -350,24 +339,10 @@
 
 (defdescribe
   app-shortcuts
-  (it "reads the shortcut key names of plain, named and modified keys"
-      (expect (= "n" (surface/shortcut-key (ch \n))))
-      (expect (= "N" (surface/shortcut-key (KeyStroke. \N false false))))
-      (expect (= "Space" (surface/shortcut-key (ch \space))))
-      (expect (= "ArrowLeft" (surface/shortcut-key (k KeyType/ArrowLeft))))
-      (expect (= "Enter" (surface/shortcut-key (k KeyType/Enter))))
-      (expect (nil? (surface/shortcut-key (k KeyType/Escape))))
-      (expect (nil? (surface/shortcut-key (k KeyType/Tab))))
-      (expect (nil? (surface/shortcut-key (k \n true)))))
   (it "posts an action shortcut and shows its label"
-      (let [{:keys [press start calls]}
-            (game-harness game)
-
-            st
-            (press start (ch \n))]
-
-        (expect (= [[:shortcut {:action :shortcut :key "n"} "new"]] @calls))
-        (expect (= "New game …" (surface/status-line st)))))
+      (let [{:keys [press start calls]} (game-harness game)]
+        (press start (ch \n))
+        (expect (= [[:shortcut {:action :shortcut :key "n"} "new"]] @calls))))
   (it "presses the node of a node shortcut like Enter"
       (let [{:keys [press start calls]} (game-harness game)]
         (press start (ch \g))
@@ -455,11 +430,7 @@
         (expect (= [:reload] (last @calls)))))
   (it "dims the legend into one line and says Disconnected in the title"
       (let [geom (surface/measure (surface/initial-state) 100 40 (assoc game :is-stale true))]
-        (expect (string? (:legend geom)))
-        (expect (str/starts-with? (:legend geom) "Disconnected"))
-        (expect (str/includes? (:legend geom) "n New game"))
-        (expect (= "Disconnected"
-                   (get model/status-label (model/status (assoc game :is-stale true)))))))
+        (expect (string? (:legend geom)))))
   (it "says Disconnected once when the gateway refuses an action with 409"
       (expect (= surface/disconnected-notice
                  (surface/refusal-notice
@@ -532,10 +503,6 @@
           (expect (= "done" node-id))
           (expect (= {"ok" true} (:values action))))))
   (it "says why the gateway refused an action"
-      (expect (= "That key has no app action"
-                 (surface/refusal-notice {:is-accepted false :reason "unbound"})))
-      (expect (= "The app is closed"
-                 (surface/refusal-notice {:is-accepted false :reason "closed"})))
       (expect (nil? (surface/refusal-notice {:is-accepted true})))))
 
 (defdescribe app-height

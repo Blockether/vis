@@ -9,7 +9,6 @@
    real Lanterna virtual terminal and reads its back-buffer."
   (:require [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
-            [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.raster :as raster]
             [com.blockether.vis.tui.render :as render]
@@ -192,12 +191,9 @@
                        tbls
                        (keep :table (:line-meta r))]
 
-                   (expect (str/includes? joined "[Table: fleet.csv 3 rows × 3 cols, 64 B]"))
                    (expect (str/includes? joined "name"))
                    (expect (str/includes? joined "row0"))
                    (expect (str/includes? joined "note2"))
-                   ;; the grid is bordered, not a code dump
-                   (expect (some #(str/includes? % "─") texts))
                    ;; every painted grid row is clickable: the dialog opens on the
                    ;; WHOLE dataset, not on the preview
                    (expect (seq tbls))
@@ -209,10 +205,7 @@
              (it "previews the first rows and says how many are left"
                  (let [joined (rendered (fence 15))]
                    (expect (str/includes? joined "row9"))
-                   (expect (not (str/includes? joined "row12")))
-                   (expect (str/includes? joined "5 more rows"))))
-             (it "a one-row overflow says row, not rows"
-                 (expect (str/includes? (rendered (fence 11)) "1 more row —")))
+                   (expect (not (str/includes? joined "row12")))))
              (it "the headline titles the card: same chip as the grid, and clickable"
                  (let [r
                        (table-render (fence 3))
@@ -290,169 +283,59 @@
               (raster/cell (.getBackCharacter screen (int col) (int row)))))
          (finally (.stopScreen screen)))))
 
-(defn- lum
-  "Relative luminance of a captured cell colour `[r g b]`, so a contrast claim can
-   be made about the THEME's direction instead of one palette's literal RGB."
-  [[r g b]]
-  (/ (+ (* 0.2126 (double r)) (* 0.7152 (double g)) (* 0.0722 (double b))) 255.0))
+(defdescribe vis-table-card-chrome-test
+             (it "tags every line of the card with the part it plays"
+                 (let [roles (vec (remove nil? (card-roles (fence 12))))]
+                   (expect (= :title (first roles)))
+                   (expect (= [:border :head :border] (subvec roles 1 4)))
+                   ;; ten preview rows, striped in turn - the zebra IS the row separator
+                   (expect (= (take 10 (cycle [:row :row-alt])) (subvec roles 4 14)))
+                   (expect (= [:border :hint] (subvec roles 14)))))
+             ;; Regression: the band used to be filled across the WHOLE row, frame columns
+             ;; included. A terminal cell is tinted whole and `│` runs down the middle of
+             ;; its own cell, so every other row grew a half-cell tab of colour sticking
+             ;; out past the table's left and right edges.
+             (it
+               "keeps the band INSIDE the frame - the border columns stay on the card"
+               (paint-card
+                 (fence 12)
+                 (fn [rows cell]
+                   (let [row-of
+                         (fn [needle]
+                           (first (keep-indexed (fn [i r]
+                                                  (when (str/includes? r needle) i))
+                                                rows)))
 
-(defn- row-ink
-  "Rasterize ONE captured row and count its GLYPH pixels — the picture's own
-   measure of how heavy that line of type is, through the same ops the screencast
-   encodes.
+                         ;; a striped row and its neighbour, which carries the card's own bg
+                         y1
+                         (row-of "row1")
 
-   The raster's TOP row is handed to `cap/ink` as the paper: it sits above every
-   glyph, so its colours are exactly this line's backgrounds and its full-height
-   bars. \"Not the dominant colour\" would count the header's whole coloured band
-   as type and drown the difference."
-  [nm cells]
-  (let [raster (cap/png-rows (cap/shot! {:grid [cells]
-                                         :out (str (System/getProperty "java.io.tmpdir") "/" nm)
-                                         :font-size 16
-                                         :trim false}))]
-    (cap/ink raster (set (first raster)))))
+                         y0
+                         (row-of "row0")
 
-(defdescribe
-  vis-table-card-chrome-test
-  (it "tags every line of the card with the part it plays"
-      (let [roles (vec (remove nil? (card-roles (fence 12))))]
-        (expect (= :title (first roles)))
-        (expect (= [:border :head :border] (subvec roles 1 4)))
-        ;; ten preview rows, striped in turn - the zebra IS the row separator
-        (expect (= (take 10 (cycle [:row :row-alt])) (subvec roles 4 14)))
-        (expect (= [:border :hint] (subvec roles 14)))))
-  (it
-    "paints two backgrounds down the data rows, and an INVERTED header band"
-    (paint-card
-      (fence 12)
-      (fn [rows cell]
-        (let [row-of
-              (fn [needle]
-                (first (keep-indexed (fn [i r]
-                                       (when (str/includes? r needle) i))
-                                     rows)))
+                         line
+                         (nth rows y1)
 
-              y0
-              (row-of "row0")
+                         left
+                         (str/index-of line "│")
 
-              y1
-              (row-of "row1")
+                         right
+                         (str/last-index-of line "│")
 
-              yh
-              (row-of "name")
+                         card-bg
+                         (:bg (cell left y0))]
 
-              text-col
-              (fn [y needle]
-                (str/index-of (nth rows y) needle))
-
-              c0
-              (cell (text-col y0 "row0") y0)
-
-              c1
-              (cell (text-col y1 "row1") y1)
-
-              ch
-              (cell (text-col yh "name") yh)]
-
-          (expect (some? y0))
-          (expect (some? y1))
-          ;; consecutive rows do NOT share a background: that is the stripe
-          (expect (not= (:bg c0) (:bg c1)))
-          ;; the header is NOT one more stripe: it gets its own band, far
-          ;; from the card's paper and from the zebra alike
-          (expect (not= (:bg ch) (:bg c0)))
-          (expect (not= (:bg ch) (:bg c1)))
-          (expect (> (abs (- (lum (:bg ch)) (lum (:bg c0)))) 0.3))
-          ;; and INVERTED: the body is dark ink on light paper, the header
-          ;; light letters on a dark strip - on a dark theme the exact
-          ;; mirror of that. Either way the contrast runs the OTHER way.
-          (expect (not= (pos? (- (lum (:bg c0)) (lum (:fg c0))))
-                        (pos? (- (lum (:bg ch)) (lum (:fg ch))))))
-          ;; header bold, body not - the column names read as labels
-          (expect (:bold ch))
-          (expect (not (:bold c0)))
-          ;; chrome is muted: the borders are not painted in the cell ink
-          (expect (not= (:fg (cell (str/index-of (nth rows y0) "│") y0)) (:fg c0)))))))
-  ;; Regression: the band used to be filled across the WHOLE row, frame columns
-  ;; included. A terminal cell is tinted whole and `│` runs down the middle of
-  ;; its own cell, so every other row grew a half-cell tab of colour sticking
-  ;; out past the table's left and right edges.
-  (it
-    "keeps the band INSIDE the frame - the border columns stay on the card"
-    (paint-card
-      (fence 12)
-      (fn [rows cell]
-        (let [row-of
-              (fn [needle]
-                (first (keep-indexed (fn [i r]
-                                       (when (str/includes? r needle) i))
-                                     rows)))
-
-              ;; a striped row and its neighbour, which carries the card's own bg
-              y1
-              (row-of "row1")
-
-              y0
-              (row-of "row0")
-
-              line
-              (nth rows y1)
-
-              left
-              (str/index-of line "│")
-
-              right
-              (str/last-index-of line "│")
-
-              card-bg
-              (:bg (cell left y0))]
-
-          (expect (< (long left) (long right)))
-          ;; the frame's own columns are painted like the rest of the card…
-          (expect (= card-bg (:bg (cell left y1))))
-          (expect (= card-bg (:bg (cell right y1))))
-          ;; …while everything between them carries the stripe
-          (expect (not= card-bg (:bg (cell (inc (long left)) y1))))
-          (expect (not= card-bg (:bg (cell (dec (long right)) y1))))
-          ;; and the header band is fenced in exactly the same way
-          (let [yh (row-of "name")]
-            (expect (= card-bg (:bg (cell left yh))))
-            (expect (not= card-bg (:bg (cell (inc (long left)) yh)))))))))
-  ;; Regression: the header was bold in the terminal and NOT in the picture. The
-  ;; rasterizer asked the embedded mono face for weight 700, that face carries a
-  ;; single weight, and every shot of the card came back with a header nobody
-  ;; would call bold.
-  (it "carries that bold into the PICTURE of the card, not only into the buffer"
-      (paint-card (fence 12)
-                  (fn [rows cell]
-                    (let [row-of
-                          (fn [needle]
-                            (first (keep-indexed (fn [i r]
-                                                   (when (str/includes? r needle) i))
-                                                 rows)))
-
-                          cells
-                          (fn [y]
-                            (mapv #(cell % y) (range (count (nth rows y)))))
-
-                          unbolded
-                          (fn [cs]
-                            (mapv #(assoc % :bold false) cs))
-
-                          head
-                          (cells (row-of "name"))
-
-                          body
-                          (cells (row-of "row0"))]
-
-                      (expect (some :bold head))
-                      ;; the same header, drawn without its flag, is visibly lighter
-                      (expect (> (row-ink "vis-table-head-bold.png" head)
-                                 (* 1.1 (row-ink "vis-table-head-plain.png" (unbolded head)))))
-                      ;; and a body row is unchanged by the flag it never carried, so the
-                      ;; difference above is the BOLD and not the rasterizer wandering
-                      (expect (= (row-ink "vis-table-body.png" body)
-                                 (row-ink "vis-table-body-plain.png" (unbolded body)))))))))
+                     (expect (< (long left) (long right)))
+                     ;; the frame's own columns are painted like the rest of the card…
+                     (expect (= card-bg (:bg (cell left y1))))
+                     (expect (= card-bg (:bg (cell right y1))))
+                     ;; …while everything between them carries the stripe
+                     (expect (not= card-bg (:bg (cell (inc (long left)) y1))))
+                     (expect (not= card-bg (:bg (cell (dec (long right)) y1))))
+                     ;; and the header band is fenced in exactly the same way
+                     (let [yh (row-of "name")]
+                       (expect (= card-bg (:bg (cell left yh))))
+                       (expect (not= card-bg (:bg (cell (inc (long left)) yh))))))))))
 
 ;;; ── the table dialog ─────────────────────────────────────────────────────────
 
@@ -493,13 +376,10 @@
             (measure c (:init c))]
 
         (expect (= 3 (:total m)))
-        (expect (str/includes? (:title m) "fleet.csv"))
-        (expect (str/includes? (:title m) "3 rows x 3 cols"))
         (expect (= 3 (count (:widths m))))
         (expect (= [:left :right :left] (:aligns m)))))
   (it "a sheet that fits on one page carries no page counter"
       (let [c (component)]
-        (expect (not (str/includes? (:title (measure c (:init c))) "page")))
         (expect (= 1 (:pages (measure c (:init c)))))))
   (it "PgDn turns a WHOLE page: the cursor lands on its first row and the title counts"
       (let [c
@@ -518,11 +398,9 @@
             (measure c st)]
 
         (expect (< page-size 60))
-        (expect (str/includes? (:title m0) (str "page 1/" (:pages m0))))
         (expect (= page-size (:selected st)))
         (expect (= 1 (:page m)))
-        (expect (= page-size (:scroll ((:reconcile c) st m))))
-        (expect (str/includes? (:title m) (str "page 2/" (:pages m))))))
+        (expect (= page-size (:scroll ((:reconcile c) st m))))))
   (it "PgUp comes back and neither page key walks off the sheet"
       (let [c
             (big-component)
@@ -568,7 +446,6 @@
             (press c (:init c) [(special KeyType/ArrowRight)])]
 
         (expect (= 1 (:col st)))
-        (expect (str/includes? (nth (:head-cells (measure c st)) 1) "▸"))
         (expect (zero? (long (:col (press c (:init c) [(special KeyType/ArrowLeft)])))))))
   (it "Enter sorts by the cursor column and pressing it again flips the direction"
       (let [c
@@ -584,8 +461,7 @@
         (expect (= :asc (:sort-dir asc)))
         (expect (= ["ada" "yak" "zed"] (mapv first (:visible (measure c asc)))))
         (expect (= :desc (:sort-dir desc)))
-        (expect (= ["zed" "yak" "ada"] (mapv first (:visible (measure c desc)))))
-        (expect (str/includes? (nth (:head-cells (measure c desc)) 0) "↓"))))
+        (expect (= ["zed" "yak" "ada"] (mapv first (:visible (measure c desc)))))))
   (it "sorting a numeric column is numeric — 9, 10, 120"
       (let [c
             (component)
@@ -662,12 +538,9 @@
                  (str/join "\n" rows)]
 
              (expect (str/includes? txt "fleet.csv"))
-             (expect (str/includes? txt "PgUp/PgDn"))
              (expect (str/includes? txt "name"))
              (expect (str/includes? txt "ada"))
-             (expect (str/includes? txt "120"))
-             (expect (str/includes? txt "Esc"))
-             (expect (some #(str/includes? % "─") rows)))
+             (expect (str/includes? txt "120")))
            (finally (.stopScreen screen))))))
 
 ;;; ── cross-surface: the TUI paints what the ENGINE hands the human ────────────

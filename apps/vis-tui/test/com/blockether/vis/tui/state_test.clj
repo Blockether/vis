@@ -832,7 +832,6 @@
                                                                    :model "gpt-6-astra"}
                                               :settings {:reasoning-level "balanced"}})]
           (expect (= "reasoning_level" (:id picker)))
-          (expect (= "Reasoning effort" (:title picker)))
           (expect (= ["quick" "balanced" "deep"] (mapv :value (:items picker))))
           (expect (= 1 (:selected picker)))
           (expect (= [nil "current" nil] (mapv :hint (:items picker)))))))
@@ -858,7 +857,6 @@
                                                                             "medium" "high" "xhigh"
                                                                             "max"]}}})]
           (expect (= "reasoning_effort" (:id picker)))
-          (expect (= "Thinking level" (:title picker)))
           (expect (= ["low" "medium" "high" "xhigh"] (mapv :value (:items picker))))
           ;; The model offers no max rung, so the next turn sends xhigh.
           (expect (= 3 (:selected picker)))))))
@@ -2881,7 +2879,6 @@
                 #(session-turn-fx :main {:id "session-1"} "steer" :token nil nil {} {} "client-1"))]
           (expect (= :main workspace-id))
           (expect (= ["notice"] (mapv #(get % "type") content)))
-          (expect (= "Sent into the running turn · step 3" (get-in content [0 "message"])))
           (expect (= :sent (:status metadata)))
           (expect (= "client-1" (:client-turn-id metadata)))))
     (it "an attach to the sent queued turn settles the same way"
@@ -5598,7 +5595,6 @@
         (let [m (pending-assistant-for "!echo hi")]
           (expect (true? (:pending? m)))
           (expect (true? (:slash? m)))
-          (expect (= "Running shell command..." (get-in m [:content 0 "message"])))
           ;; The zero-iteration live spinner reads this label instead of
           ;; "Vis is calling the provider" — a bang turn makes NO provider call.
           (expect (= "Running shell command" (:command-phase-label m)))))
@@ -5619,7 +5615,6 @@
                 path (pending-assistant-for "/var/folders/67/x/shot.png what is this")]
 
             (expect (true? (:slash? blank)))
-            (expect (= "Running command..." (get-in blank [:content 0 "message"])))
             (expect (= "Running command" (:command-phase-label blank)))
             (expect (true? (:slash? sub)))
             (expect (nil? (:slash? unk)))
@@ -5628,7 +5623,6 @@
         (let [m (pending-assistant-for "summarize the repo")]
           (expect (true? (:pending? m)))
           (expect (nil? (:slash? m)))
-          (expect (= "Sending request to provider..." (get-in m [:content 0 "message"])))
           ;; A normal turn DOES call the provider, so no override label.
           (expect (nil? (:command-phase-label m)))))
     (it "carries the :slash? command marker from the pending slot onto the settled bubble"

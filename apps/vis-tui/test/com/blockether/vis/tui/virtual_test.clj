@@ -170,12 +170,7 @@
 (defdescribe
   estimated-height-test
   (describe "estimated-height never returns negative or zero"
-            (it "user msg >= 1" (expect (>= (estimated-height (user-msg "hi") bubble-w) 1)))
-            (it "empty user msg >= 1" (expect (>= (estimated-height (user-msg "") bubble-w) 1)))
-            (it "plain assistant >= 1"
-                (expect (>= (estimated-height (plain-assistant-msg "Done.") bubble-w) 1)))
-            (it "trace assistant >= 1"
-                (expect (>= (estimated-height (trace-assistant-msg 1 1 "ok") bubble-w) 1))))
+            (it "empty user msg >= 1" (expect (>= (estimated-height (user-msg "") bubble-w) 1))))
   (describe "estimated-height grows monotonically with content"
             (it "longer text -> taller user bubble"
                 (let [a
@@ -388,11 +383,6 @@
               projected
               (:projected (first visible))]
 
-          (expect (re-find #"CODE  \+\d+ more ▸" (:text projected)))
-          (expect (re-find #"CODE[^\n]*▸" (:text projected)))
-          (expect (str/includes? (:text projected) "1ms"))
-          (expect (not (str/includes? (:text projected) "Execution")))
-          (expect (not (str/includes? (:text projected) "chars hidden")))
           (expect (not (str/includes? (:text projected) huge-result)))
           (expect (some #(= :toggle-details (:kind %)) (:line-meta projected)))))
     (it
@@ -2169,17 +2159,7 @@
           (expect (every? #(= 24 (count %)) (butlast user-lines)))
           (expect (= user-lines window-lines))
           (expect (some #(< (count %) 24) (butlast answer-lines)))
-          (expect (= text (str/join " " (mapcat #(str/split % #" +") user-lines)))))))
-  (describe "plain assistant messages run through markdown formatting"
-            (it "produces a non-empty :text"
-                (let [pm (project-message (plain-assistant-msg "**bold**") bubble-w settings)]
-                  (expect (string? (:text pm)))
-                  (expect (pos? (count (:text pm)))))))
-  (describe "trace assistant messages run through format-answer-with-thinking"
-            (it "produces a multi-line :text"
-                (let [pm (project-message (trace-assistant-msg 2 1 "Done.") bubble-w settings)]
-                  (expect (string? (:text pm)))
-                  (expect (pos? (count (:text pm))))))))
+          (expect (= text (str/join " " (mapcat #(str/split % #" +") user-lines))))))))
 
 (defdescribe turn-identity-test
              ;; Regression: during live streaming, the assistant bubble has

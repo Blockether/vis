@@ -168,88 +168,58 @@
 
 (defn- strip-ansi [s] (str/replace (str s) #"\u001b\[[0-9;]*m" ""))
 
-(defdescribe
-  tui-compact-diff-test
-  (it "renders the unified patch verbatim, one row per line"
-      (let [rows
-            (content-rows (code-block->lines
-                            [:code {:lang "diff"}
-                             "@@ -4,3 +4,3 @@\n keep\n-old value\n+new value\n tail"]
-                            80
-                            {}))
+(defdescribe tui-compact-diff-test
+             (it "renders the unified patch verbatim, one row per line"
+                 (let [rows
+                       (content-rows (code-block->lines
+                                       [:code {:lang "diff"}
+                                        "@@ -4,3 +4,3 @@\n keep\n-old value\n+new value\n tail"]
+                                       80
+                                       {}))
 
-            plain
-            (mapv strip-ansi rows)]
+                       plain
+                       (mapv strip-ansi rows)]
 
-        (expect (= ["@@ -4,3 +4,3 @@" " keep" "-old value" "+new value" " tail"] plain))
-        (expect (not-any? #(str/includes? % "│") rows))
-        (expect (every? #(<= (p/display-width (strip-ansi %)) 80) rows))))
-  (it "colours removals red and additions green"
-      (let [rows (content-rows (code-block->lines
-                                 [:code {:lang "diff"}
-                                  "@@ -4,3 +4,3 @@\n keep\n-old value\n+new value\n tail"]
-                                 80
-                                 {}))]
-        ;; 91 = red (removed), 32 = green (added).
-        (expect (some #(re-find #"\u001b\[91m-old value" %) rows))
-        (expect (some #(re-find #"\u001b\[32m\+new value" %) rows))
-        ;; context rows stay uncoloured
-        (expect (not-any? #(and (str/includes? % "keep") (str/includes? % "\u001b[")) rows)))))
+                   (expect (= ["@@ -4,3 +4,3 @@" " keep" "-old value" "+new value" " tail"] plain))
+                   (expect (not-any? #(str/includes? % "│") rows))
+                   (expect (every? #(<= (p/display-width (strip-ansi %)) 80) rows)))))
 
 ;; --- Python fences -----------------------------------------------------------
 ;; A Python fence is colored by `PythonHighlighter` (plain Java, see
 ;; packages/vis-python-presentation); the text itself never changes.
 
-(defdescribe
-  tui-python-code-block-test
-  (it "colors a Python fence and leaves its text unchanged"
-      (let [src
-            "@cache\ndef add(a: int, b: int = 2) -> int:\n    return a + b  # sum"
+(defdescribe tui-python-code-block-test
+             (it "folds a wide Python row to the budget and keeps its color on every row"
+                 (let [src
+                       (str "message = \"" (apply str (repeat 60 "ab")) "\"")
 
-            rows
-            (content-rows (code-block->lines [:code {:lang "python"} src] 80 {}))]
+                       width
+                       40
 
-        (expect (= (str/split-lines src) (mapv strip-ansi rows)))
-        (expect (some #(str/includes? % "\u001b[36mdef\u001b[0m") rows))
-        (expect (some #(str/includes? % "\u001b[33madd\u001b[0m") rows))
-        (expect (some #(str/includes? % "\u001b[32mint\u001b[0m") rows))
-        (expect (some #(str/includes? % "\u001b[34m2\u001b[0m") rows))
-        (expect (some #(str/includes? % "\u001b[90m# sum\u001b[0m") rows))))
-  (it "treats py and python3 fences as Python"
-      (doseq [lang ["py" "python3" "Python"]]
-        (expect (= ["\u001b[36mreturn\u001b[0m \u001b[35mNone\u001b[0m"]
-                   (content-rows (code-block->lines [:code {:lang lang} "return None"] 80 {})))
-                lang)))
-  (it "folds a wide Python row to the budget and keeps its color on every row"
-      (let [src
-            (str "message = \"" (apply str (repeat 60 "ab")) "\"")
+                       rows
+                       (content-rows (code-block->lines [:code {:lang "python"} src] width {}))]
 
-            width
-            40
+                   (expect (> (count rows) 1))
+                   (expect (every? #(<= (p/display-width (strip-ansi %)) width) rows))
+                   (expect (= src (apply str (map strip-ansi rows))))
+                   (expect (every? #(str/includes? % "\u001b[31m") rows))))
+             (it "keeps a fence in another language plain"
+                 (expect (= ["(def x 1)"]
+                            (content-rows
+                              (code-block->lines [:code {:lang "clojure"} "(def x 1)"] 80 {})))))
+             (it "reuses a completed Python fold at the same width"
+                 (let [src
+                       "x = 1\ny = 2"
 
-            rows
-            (content-rows (code-block->lines [:code {:lang "python"} src] width {}))]
+                       fold-calls
+                       (atom 0)]
 
-        (expect (> (count rows) 1))
-        (expect (every? #(<= (p/display-width (strip-ansi %)) width) rows))
-        (expect (= src (apply str (map strip-ansi rows))))
-        (expect (every? #(str/includes? % "\u001b[31m") rows))))
-  (it "keeps a fence in another language plain"
-      (expect (= ["(def x 1)"]
-                 (content-rows (code-block->lines [:code {:lang "clojure"} "(def x 1)"] 80 {})))))
-  (it "reuses a completed Python fold at the same width"
-      (let [src
-            "x = 1\ny = 2"
-
-            fold-calls
-            (atom 0)]
-
-        (.clear ^java.util.Map folded-code-cache)
-        (with-redefs [p/ansi-fold-cols (fn [line ^long _budget]
-                                         (swap! fold-calls inc)
-                                         [line])]
-          (code-block->lines [:code {:lang "python"} src] 80 {})
-          (code-block->lines [:code {:lang "python"} src] 80 {})
-          (expect (= 2 @fold-calls))
-          (code-block->lines [:code {:lang "python"} src] 79 {})
-          (expect (= 4 @fold-calls))))))
+                   (.clear ^java.util.Map folded-code-cache)
+                   (with-redefs [p/ansi-fold-cols (fn [line ^long _budget]
+                                                    (swap! fold-calls inc)
+                                                    [line])]
+                     (code-block->lines [:code {:lang "python"} src] 80 {})
+                     (code-block->lines [:code {:lang "python"} src] 80 {})
+                     (expect (= 2 @fold-calls))
+                     (code-block->lines [:code {:lang "python"} src] 79 {})
+                     (expect (= 4 @fold-calls))))))

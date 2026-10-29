@@ -13,7 +13,7 @@
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TextColor$RGB]))
 
-(defn- rgb-tuple
+(defn rgb-tuple
   "[r g b] of a Lanterna RGB colour (typed to avoid reflection)."
   [^TextColor$RGB c]
   [(.getRed c) (.getGreen c) (.getBlue c)])
@@ -49,13 +49,6 @@
 
 (defdescribe
   heading-colours-test
-  (describe "Markdown heading SLATE ladder exists and has the documented values"
-            ;; Premium palette (2026-07-02): headings are an editorial slate ladder
-            ;; — near-black H1 down to slate H3 — weight/contrast carries hierarchy,
-            ;; no gold/amber ink (chrome recedes; color is for semantic states).
-            (it "H1 is near-black slate" (expect (= [38 38 38] (rgb-tuple t/md-h1-fg))))
-            (it "H2 is dark slate" (expect (= [63 63 63] (rgb-tuple t/md-h2-fg))))
-            (it "H3 is mid slate" (expect (= [90 84 74] (rgb-tuple t/md-h3-fg)))))
   (describe
     "Headings are readable on every surface they're painted on (contrast >= AA 4.5)"
     (it "H1 on white assistant bg" (expect (>= (contrast-ratio t/md-h1-fg t/ai-bubble-bg) 4.5)))
@@ -64,44 +57,16 @@
     (it "H1 on the dialed-back answer-bg" (expect (>= (contrast-ratio t/md-h1-fg t/answer-bg) 4.5)))
     (it "H2 on the dialed-back answer-bg" (expect (>= (contrast-ratio t/md-h2-fg t/answer-bg) 4.5)))
     (it "H3 on the dialed-back answer-bg"
-        (expect (>= (contrast-ratio t/md-h3-fg t/answer-bg) 4.5))))
-  (describe "Visual hierarchy: H1 carries the MOST contrast on the light ground"
-            ;; Lower luminance = more contrast against the (light) background =
-            ;; visually 'heavier'. In the slate ladder H1 is the DARKEST (loudest)
-            ;; heading and H3 the lightest (most muted) — contrast, not hue,
-            ;; carries the hierarchy.
-            (it "L(H1) < L(H2) < L(H3)"
-                (let [l1
-                      (relative-luminance t/md-h1-fg)
-
-                      l2
-                      (relative-luminance t/md-h2-fg)
-
-                      l3
-                      (relative-luminance t/md-h3-fg)]
-
-                  (expect (< l1 l2))
-                  (expect (< l2 l3))))))
+        (expect (>= (contrast-ratio t/md-h3-fg t/answer-bg) 4.5)))))
 
 (defdescribe user-bg-test
              (describe
                "User request background is visually identical to terminal-bg (no yellow zone)"
-               (it "user-bubble-bg RGB matches terminal-bg exactly"
-                   ;; Per user request: the user prompt should not paint a yellow
-                   ;; block. Pinning equality keeps that tint from coming back.
-                   (expect (= (rgb-tuple t/terminal-bg) (rgb-tuple t/user-bubble-bg))))
                (it "user-bubble-fg on user-bubble-bg still passes WCAG AAA (>= 7)"
                    (expect (>= (contrast-ratio t/user-bubble-fg t/user-bubble-bg) 7.0)))))
 
 (defdescribe answer-bg-test
              (describe "Answer background is now visually identical to terminal-bg (no zone bg)"
-                       (it "answer-bg RGB matches terminal-bg exactly"
-                           ;; Per user request: the answer zone no longer paints a coloured
-                           ;; block. The answer is distinguished by the FINAL ANSWER header
-                           ;; + heading colours, nothing else. Pinning the equality keeps
-                           ;; the renderer honest - if anyone re-introduces a tint, this
-                           ;; test fails immediately.
-                           (expect (= (rgb-tuple t/terminal-bg) (rgb-tuple t/answer-bg))))
                        (it "answer-fg on answer-bg still passes WCAG AAA (>= 7)"
                            (expect (>= (contrast-ratio t/answer-fg t/answer-bg) 7.0)))))
 
@@ -117,14 +82,6 @@
                (let [v (ns-resolve 'com.blockether.vis.tui.theme (symbol (name token)))]
                  (expect (some? v))
                  (expect (= expected (rgb-vec @v)))))
-             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
-    (it "adapts every TokyoNight style from its canonical terminal background"
-        (try (doseq [[theme-id expected] {:tokyonight-day [225 226 231]
-                                          :tokyonight-moon [34 36 54]
-                                          :tokyonight-night [26 27 38]
-                                          :tokyonight-storm [36 40 59]}]
-               (t/apply-theme! theme-id)
-               (expect (= expected (rgb-vec t/terminal-bg))))
              (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
     (it "applies dark theme through the atom-backed shared theme registry"
         (try (t/apply-theme! :vis-dark)

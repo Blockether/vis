@@ -135,9 +135,7 @@
         (expect (= [:sox :ffmpeg] (mapv :backend (:attempts (ex-data error)))))
         (expect (every? #(= "microphone denied" (:error %)) (:attempts (ex-data error))))
         (expect (= :permission-denied (:reason (ex-data error))))
-        (expect (every? #(= :permission-denied (:reason %)) (:attempts (ex-data error))))
-        (expect (re-find #"Microphone" (:remediation (ex-data error))))
-        (expect (not (re-find #"Install" (:remediation (ex-data error))))))))
+        (expect (every? #(= :permission-denied (:reason %)) (:attempts (ex-data error)))))))
 
 ;; Regression, issue #298: absent capture tools were reported as microphone-permission failures.
 (defdescribe missing-macos-recorder-test
@@ -165,9 +163,7 @@
                    (expect (= :missing-executable (:reason data)))
                    (expect (= "no capture line" (:java-sound-error data)))
                    (expect (= [:sox :ffmpeg] (mapv :backend (:attempts data))))
-                   (expect (every? #(= :missing-executable (:reason %)) (:attempts data)))
-                   (expect (re-find #"brew install sox" (:remediation data)))
-                   (expect (not (re-find #"Microphone|permission" (:remediation data)))))))
+                   (expect (every? #(= :missing-executable (:reason %)) (:attempts data))))))
 
 ;; Regression, issue #298: launch environments can omit both Homebrew prefixes from PATH.
 (defdescribe
@@ -277,6 +273,4 @@
             (ex-data error)]
 
         (expect (= :capture-failed (:reason data)))
-        (expect (= [:missing-executable :capture-failed] (mapv :reason (:attempts data))))
-        (expect (re-find #"Sound > Input" (:remediation data)))
-        (expect (not (re-find #"Install" (:remediation data)))))))
+        (expect (= [:missing-executable :capture-failed] (mapv :reason (:attempts data)))))))

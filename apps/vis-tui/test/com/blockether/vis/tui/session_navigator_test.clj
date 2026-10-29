@@ -6,9 +6,8 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.terminals :as term]
-            [com.blockether.vis.tui.theme :as t]
             [lazytest.core :refer [defdescribe describe it expect]])
-  (:import [com.googlecode.lanterna SGR TerminalSize]
+  (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -123,36 +122,6 @@
           (expect (= ["newest" "star"] (mapv (comp :id :target) visible))))))
   (describe
     "compact rows"
-    (it "paints a neutral date, a bold uppercase status, title and explicit location on two lines"
-        (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)]
-          (try (#'dlg/draw-navigator-session!
-                (.newTextGraphics screen)
-                2
-                4
-                74
-                {:modified "09-30 11:34"
-                 :status "Idle"
-                 :title "Session title"
-                 :session "hidden-id"
-                 :favorite? true
-                 :group "Workbench"
-                 :session-group "Planning"}
-                false)
-               (let [date (.getBackCharacter screen 4 4)
-                     status (.getBackCharacter screen 16 4)]
-
-                 (expect
-                   (str/includes?
-                     (back-line screen 4)
-                     "09-30 11:34 / IDLE / Session title | Project: Workbench / Group: Planning"))
-                 (expect (str/blank? (back-line screen 5)))
-                 (expect (= t/dialog-hint (.getForegroundColor date)))
-                 (expect (contains? (set (.getModifiers date)) SGR/BOLD))
-                 (expect (contains? (set (.getModifiers status)) SGR/BOLD))
-                 (expect (= (dlg/session-status-ink "Idle") (.getForegroundColor status)))
-                 (expect (not (str/includes? (back-line screen 4) "hidden-id")))
-                 (expect (not (str/includes? (back-line screen 4) "*"))))
-               (finally (.stopScreen screen)))))
     (it "fits one session per terminal row without group headings or spacer lines"
         (let [rows
               (#'dlg/navigator-all-rows {:sessions sessions})

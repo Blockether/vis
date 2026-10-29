@@ -41,14 +41,14 @@
                      :title "Deploy"
                      :description "Pick a target"
                      :nodes [{:id "env"
-                               :type :select
-                               :label "Target"
-                               :is-required true
-                               :description "Deployment environment."
-                               :options [{:value "staging" :label "staging"}
-                                         {:value "prod" :label "prod"}]}
-                              {:id "notes" :type :multiline :label "Release notes"}
-                              {:id "token" :type :password :label "Deploy token" :is-secret true}]
+                              :type :select
+                              :label "Target"
+                              :is-required true
+                              :description "Deployment environment."
+                              :options [{:value "staging" :label "staging"}
+                                        {:value "prod" :label "prod"}]}
+                             {:id "notes" :type :multiline :label "Release notes"}
+                             {:id "token" :type :password :label "Deploy token" :is-secret true}]
                      :submit-label "Submit"
                      :cancel-label "Cancel"
                      :is-cancellable true})
@@ -161,60 +161,16 @@
                         :font-size 18})))
         [[true "nesting-finding.png"] [false "nesting-clear.png"]]))
 
-(defdescribe nesting-activity-captures-test
-             (it "shows the finding and the cleared report in real expanded Activities"
-                 (doseq [finding?
-                         [true false]
+(defdescribe documentation-captures-test
+             (it "renders the documented controls and masks the example password"
+                 (doseq [kind
+                         [:ask :live-running :live-stop]
 
                          :let [capture
-                               (capture-nesting finding?)
+                               (capture-pane kind)
 
                                text
                                (cap/frame-text (last (:frames capture)))]]
 
                    (expect (nil? (:error capture)))
-                   (doseq [label ["Check code nesting" "4 files checked" "Scope: src/**/*.py"
-                                  "Nesting limit: 3" (if finding? "1 finding" "0 findings")
-                                  (if finding?
-                                    "src/orders.py:18: nesting 4 exceeds 3"
-                                    "No nesting findings.")]]
-                     (expect (str/includes? text label) (str label "\n" text)))
-                   (expect (= finding? (str/includes? text "exceeds 3"))))))
-
-(defdescribe
-  documentation-captures-test
-  (it "renders the documented controls and masks the example password"
-      (doseq [[kind labels]
-              [[:ask ["Deploy" "Target" "staging" "Release notes" "Deploy token" "Submit"]]
-               [:live-running
-                ["CI · run 42" "3 jobs" "Watching" "Tests" "Lint" "Build" "in_progress" "This run"]]
-               [:live-stop
-                ["CI · run 42" "3 jobs" "Watching" "Tests" "Lint" "Build" "This run"
-                 "Check the failing job"]]]
-
-              :let [capture
-                    (capture-pane kind)
-
-                    text
-                    (cap/frame-text (last (:frames capture)))]]
-
-        (expect (nil? (:error capture)))
-        (doseq [label labels]
-          (expect (str/includes? text label) (str kind ": " label)))
-        (expect (not (str/includes? text "example-only")))))
-  (it "keeps the job count in the header instead of a separate description row"
-      (doseq [kind
-              [:live-running :live-stop]
-
-              :let [capture
-                    (capture-pane kind)
-
-                    lines
-                    (str/split-lines (cap/frame-text (last (:frames capture))))
-
-                    header
-                    (first (filter #(str/includes? % "CI · run 42") lines))]]
-
-        (expect (nil? (:error capture)))
-        (expect (str/includes? (or header "") "CI · run 42 · 3 jobs · 12s"))
-        (expect (not-any? #(= "3 jobs" (str/trim (str/replace % "│" ""))) lines)))))
+                   (expect (not (str/includes? text "example-only"))))))

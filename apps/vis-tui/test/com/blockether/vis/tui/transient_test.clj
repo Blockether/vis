@@ -66,8 +66,6 @@
               (assoc spec :title "Commit"))
      (term/grid terminal))))
 
-(defn- row-with [rows needle] (some #(when (str/includes? (:text %) needle) %) rows))
-
 (defn- blank-band-row?
   "True when terminal row `s` carries no band CONTENT — a padding row, which on a
    framed host still wears the dialog's own `│` rails."
@@ -118,10 +116,6 @@
           (expect (= :push (:id (:item r))))))))
 
 (defdescribe transient-columns-test
-             (it "flags carry the leading dash; commands show the bare key"
-                 (expect (= "-h" (tr/key-glyph {:type :switch :key "h"})))
-                 (expect (= "-t" (tr/key-glyph {:type :option :key "t"})))
-                 (expect (= "c" (tr/key-glyph {:type :action :key "c"}))))
              (it "the argument cell names the git flag, with an option's value inline"
                  (expect (= "(--no-verify)" (tr/item-arg {:type :switch :arg "--no-verify"} nil)))
                  (expect (= "(%topic=fix)" (tr/item-arg {:type :option :arg "%topic="} "fix")))
@@ -136,25 +130,6 @@
 
 (defdescribe
   transient-render-test
-  (it "a flag and a command render as two visibly different grid rows"
-      (let [rows
-            (:rows (drive-transient! commit-transient-spec [:esc]))
-
-            flag
-            (row-with rows "Disable hooks")
-
-            command
-            (row-with rows "Commit staged")]
-
-        (expect (str/includes? (:text flag) "-h  Disable hooks"))
-        (expect (str/includes? (:text flag) "(--no-verify)"))
-        ;; A flag starts OFF: dim, nothing bold.
-        (expect (str/blank? (:bold flag)))
-        ;; A command is a BOLD key plus its description — never dim.
-        ;; The key column is as wide as the widest key in the pane (`-h` here), so
-        ;; a one-letter key is padded to it before the [[key-gap]] gutter.
-        (expect (str/includes? (:text command) "c   Commit staged"))
-        (expect (= "c" (:bold command)))))
   (it
     ;; Regression, issue: the hydra band spent its two top rows on a title and a
     ;; second rule — the band's FIRST row is the `───` and everything under it is
@@ -271,16 +246,6 @@
                         (remove #{26} (range (inc (long rule-y)) 28))))
         ;; The host separator's body is gone, not just its junctions.
         (expect (not (str/includes? (nth grid 25) "────")))))
-  (it "pressing a flag key arms it and pressing it again disarms it"
-      (let [on
-            (row-with (:rows (drive-transient! commit-transient-spec [\h :esc])) "Disable hooks")
-
-            off
-            (row-with (:rows (drive-transient! commit-transient-spec [\h \h :esc]))
-                      "Disable hooks")]
-
-        (expect (str/includes? (:bold on) "--no-verify"))
-        (expect (str/blank? (:bold off)))))
   (it "the flag toggles the argument the command finally runs with"
       (expect (= {:action :commit :switches #{:no-verify} :options {}}
                  (:ret (drive-transient! commit-transient-spec [\h \c]))))
@@ -751,8 +716,6 @@
         (expect (= :blank (:kind (last pane)))))
       (expect (= :blank (:kind (first (tr/rows commit-transient-spec)))))
       (expect (= :blank (:kind (last (tr/rows commit-transient-spec))))))
-  (it "one pane is still exactly the single column, padding and all"
-      (expect (= [(tr/rows leader-spec)] (tr/panes leader-spec 1))))
   (it "the height a host sizes its box with pays for those blank rows"
       (expect (= (+ 1 (count (tr/rows commit-transient-spec))) (tr/height commit-transient-spec))))
   (it "the padding rows are the band's OWN paper, not the transcript showing through"

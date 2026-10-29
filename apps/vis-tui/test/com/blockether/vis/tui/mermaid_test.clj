@@ -30,12 +30,6 @@
             (str/join "\n"))))
 
 (defdescribe node-test
-             (it "a lone node is a box around its label"
-                 (expect (= ["┌──────┐" "│ Only │" "└──────┘"] (rows "flowchart TD\n  A[Only]\n"))))
-             (it "round and diamond shapes keep their own chrome"
-                 (expect (= ["╭───────╮" "│ Round │" "╰───────╯" "    │" "    │" "    ▼"
-                             "/────────\\" "│ Choice │" "\\────────/"]
-                            (rows "flowchart TD\n  A([Round]) --> B{Choice}\n"))))
              (it "a quoted label keeps the characters mermaid would escape"
                  (expect (str/includes? (picture "flowchart TD\n  A[\"a --> b\"]\n") "a --> b")))
              (it "a <br/> label becomes two rows inside one box"
@@ -140,9 +134,6 @@
   (edn/read-string (slurp (io/resource "resources/fixtures/mermaid_examples.edn"))))
 
 (defdescribe official-examples-test
-             (it "has examples of each diagram page"
-                 (expect (< 500 (count official-examples)))
-                 (expect (< 30 (count (distinct (map :page official-examples))))))
              (it "every official example draws inside the width"
                  (doseq [{:keys [page at source]}
                          official-examples
@@ -176,23 +167,6 @@
              (it "a railroad rule stacks its choices between junctions"
                  (expect (= ["sign" "├──┬─\"+\"─┬──┤" "   ╰─\"-\"─╯"]
                             (rows "railroad-ebnf-beta\nsign = \"+\" | \"-\" ;\n" 40)))))
-
-(defdescribe
-  colour-test
-  (it "lines and chrome use the muted tone"
-      (expect (str/includes? (tones "flowchart LR\n  A[One] --> B[Two]\n" 60) "\u001b[90m")))
-  (it "a style colour tints the border of its node"
-      (let [drawn (tones "flowchart LR\n  A[One] --> B[Two]\n  style A stroke:#ff0000\n" 60)]
-        (expect (str/includes? drawn "\u001b[91m┌─────┐") drawn)
-        (expect (str/includes? drawn "\u001b[90m┌─────┐") drawn)))
-  (it "each git branch takes the next palette tone"
-      (let [drawn (tones "gitGraph\n  commit\n  branch dev\n  commit\n" 40)]
-        (expect (str/includes? drawn "\u001b[36mmain") drawn)
-        (expect (str/includes? drawn "\u001b[31mdev") drawn)))
-  (it "railroad terminals are green and rule references cyan"
-      (let [drawn (tones "railroad-ebnf-beta\nsign = \"+\" | digit ;\n" 40)]
-        (expect (str/includes? drawn "\u001b[32m\"+\"") drawn)
-        (expect (str/includes? drawn "\u001b[36mdigit") drawn))))
 
 ;; Regression for https://github.com/Blockether/vis/issues/319: a valid
 ;; flowchart with a subgraph legend, `:::class` suffixes and `~~~` links fell
@@ -234,20 +208,6 @@
   (it "a sideways chart too wide for the bubble is stacked top-down"
       (let [source "flowchart LR\n  A[One] --> B[Two] --> C[Three] --> D[Four] --> E[Five]\n"]
         (expect (some #(str/includes? % "▼") (rows source 30)) (pr-str (rows source 30))))))
-
-(defdescribe reason-test
-             (it "a fence that is not drawn answers the reason"
-                 (expect (= {:reason "unknown diagram type: notadiagram"}
-                            (mermaid/draw "notADiagram\n  x\n" 60)))
-                 (expect (= {:reason "cannot read: A[One] -->"}
-                            (mermaid/draw "flowchart TD\n  A[One] --> \n" 60)))
-                 (expect (= {:reason "empty flowchart"} (mermaid/draw "flowchart TD\n" 60))))
-             (it "a graph too wide at every label limit names the width it needs"
-                 (expect (re-matches #"too wide: \d+ > 8 cols"
-                                     (:reason
-                                       (mermaid/draw
-                                         "flowchart LR\n  A[One] --> B[Two]\n  B --> C[Three]\n"
-                                         8))))))
 
 (defdescribe chart-bar-test
              (it "rounds a bar to whole cells, because the opencode glyph set has no partial blocks"

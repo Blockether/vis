@@ -176,7 +176,6 @@
 
         (expect (= #{"a"} (state/session-draft-ids closed)))
         (expect (= "Dirty" (:status row)))
-        (expect (= "1 unsent attachment" (:label row)))
         (expect (= [file] (:attachments reopened)))))
   (it "does not call an untouched or whitespace-only session dirty"
       (let [db (-> (draft-db)

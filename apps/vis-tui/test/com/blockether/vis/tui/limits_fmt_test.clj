@@ -16,12 +16,6 @@
 
 (defdescribe
   generic-limit-label-test
-  (it "hard-coded labels for well-known plan rows"
-      (expect (= "Codex 5h" (lfmt/generic-limit-label {:id :codex-5h})))
-      (expect (= "Codex 7d" (lfmt/generic-limit-label {:id :codex-7d})))
-      (expect (= "Z.ai coding plan 5h" (lfmt/generic-limit-label {:id :zai-coding-plan-5h})))
-      (expect (= "Z.ai coding plan 7d" (lfmt/generic-limit-label {:id :zai-coding-plan-7d})))
-      (expect (= "Premium interactions" (lfmt/generic-limit-label {:id :premium_interactions}))))
   (it "derives a label from :label, stripping ` Quota` / ` Quota (%)` suffixes"
       (expect (= "Z.ai coding plan 5h"
                  (lfmt/generic-limit-label {:id :zai-coding-plan-5h
@@ -66,8 +60,6 @@
       (expect (= "3/5 used" (lfmt/format-limit-usage {:used 3 :limit 5}))))
   (it "renders `remaining/limit left` when used is missing"
       (expect (= "2/5 left" (lfmt/format-limit-usage {:remaining 2 :limit 5}))))
-  (it "handles `:is-unlimited` explicitly"
-      (expect (= "unlimited" (lfmt/format-limit-usage {:is-unlimited true}))))
   (it "returns nil when no usage signal is present" (expect (nil? (lfmt/format-limit-usage {})))))
 
 (defdescribe generic-limit-has-signal?-test

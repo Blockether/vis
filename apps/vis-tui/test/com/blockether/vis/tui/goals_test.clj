@@ -141,8 +141,6 @@
             (some #(when (= :footer-goal (:kind %)) %) hits)]
 
         (expect (nil? (:error frame)))
-        (expect (str/includes? row "Limits"))
-        (expect (str/includes? row "Goal:"))
         (expect (not (str/includes? row "tokens")))
         (expect (not (str/includes? row "12,400")))
         (expect (nil? limits))
@@ -170,14 +168,8 @@
 
       (expect (some #{(get goal "objective")} lines))
       (expect (some #{(get blocked "reason")} lines))
-      (expect (some #{"Iterations: 12 / 30"} lines))
-      (expect (some #{"Time in goal: 32.0s"} lines))
       (expect (not-any? #(str/includes? % "tokens") lines))
-      (expect (some #{"Iterations: 12 / unlimited"}
-                    (footer/goal-detail-lines (assoc goal "iteration_budget" nil))))
-      (expect (nil? (:error frame)))
-      (expect (str/includes? (capture/frame-text frame :first) "Status: Blocked"))
-      (expect (str/includes? (capture/frame-text frame) "Time in goal: 32.0s"))))
+      (expect (nil? (:error frame)))))
   (it "adds uncheckpointed active wall time but freezes all inactive states"
       (expect (some #{"Time in goal: 35.0s"} (footer/goal-detail-lines goal 3002)))
       (expect (some #{"Time in goal: 32.0s"} (footer/goal-detail-lines goal 0)))

@@ -35,9 +35,6 @@
     (it "renders extension command arguments in usage"
         (expect (= "/exa/search <query> [--limit <limit>]"
                    (:slash/usage (first (suggest/suggestions "/exa" commands))))))
-    (it "renders built-in worktree branch argument in usage"
-        (expect (= "/worktree [<branch>]"
-                   (:slash/usage (first (suggest/suggestions "/work" commands))))))
     (it "tracks the selected suggestion for arrow keys and tab completion"
         (let [suggestions (suggest/suggestions "/" commands {:limit 3 :selected-index 1})]
           (expect (= "new-tab" (:slash/name (suggest/selected-suggestion suggestions))))

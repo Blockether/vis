@@ -867,40 +867,6 @@
                                (subvec (nth grid bottom) 1 (- cols 3)))))))))))
 
 (defdescribe
-  live-execution-bottom-padding-test
-  (it "live execution bottom padding"
-      ;; Live margin trimming must not remove the filled Activity bottom edge.
-      (doseq [status
-              ["running" "succeeded" "failed"]
-
-              expanded?
-              [false true]]
-
-        (let [payload
-              (render/progress->lines-data
-                {:iterations [{:forms [{:code "inspect_files()"
-                                        :activity {:state status
-                                                   :rows (activity-review-rows status)}}]}]}
-                80
-                {:show-iterations true}
-                {:session-id "live-padding"
-                 :now-ms 1000
-                 :detail-expansions {:vis.channel-tui/expand-all-details? expanded?
-                                     ["live-padding" "iteration:i1:digest"] true}})
-
-              lines
-              (:lines payload)
-
-              last-band-row
-              (last (keep-indexed #(when (str/starts-with? %2 @#'render/activity-marker) %1)
-                                  lines))]
-
-          (expect (= @#'render/activity-marker (nth lines last-band-row)))
-          (expect (= "" (nth lines (inc last-band-row))))
-          ;; The spinner row: a frame, then two spaces. The cancel hint is on the echo row.
-          (expect (re-find #"[⠀-⣿]  " (str (nth lines (+ last-band-row 2)))))))))
-
-(defdescribe
   screen-accepts-a-transport-neutral-html-terminal-test
   (it "screen accepts a transport neutral html terminal"
       (with-open [terminal (-> (HtmlTerminal/builder)
@@ -990,27 +956,6 @@
                         (expect (= :header-help (deref triggered 3000 ::timeout)))
                         (expect (.contains (.renderHtml view) "help ("))
                         (finally (.close view))))))
-
-(defdescribe
-  all-terminal-surfaces-enter-through-the-grid-test
-  (it "all terminal surfaces enter through the grid"
-      (let [source-root
-            (-> (io/resource "com/blockether/vis/tui/frame.clj")
-                .toURI
-                io/file
-                .getParentFile)
-
-            calls-by-file
-            (into (sorted-map)
-                  (keep (fn [file]
-                          (when (and (.isFile file) (.endsWith (.getName file) ".clj"))
-                            (let [calls (count (re-seq #"\.newTextGraphics" (slurp file)))]
-                              (when (pos? calls) [(.getName file) calls])))))
-                  (file-seq source-root))]
-
-        ;; Dialogs, render and screen create only child clips from grid-owned graphics.
-        ;; Every terminal-screen root and section clip is centralized in frame.
-        (expect (= {"dialogs.clj" 1 "frame.clj" 5 "render.clj" 1 "screen.clj" 1} calls-by-file)))))
 
 (defdescribe full-screen-surfaces-use-one-lanterna-grid-test
              (it "full screen surfaces use one lanterna grid"

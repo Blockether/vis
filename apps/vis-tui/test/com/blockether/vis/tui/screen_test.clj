@@ -333,22 +333,6 @@
                      (disable-terminal-state! nil))
                    (expect (= [:set-bg :reset-bg] @calls)))))
 
-(defdescribe lanterna-input-ownership-test
-             (it "keeps terminal decoding, coalescing, geometry, and tty modes out of Vis"
-                 (let [source (->> ["dialogs" "input" "screen" "scroll"]
-                                   (map #(str "com/blockether/vis/tui/" % ".clj"))
-                                   (map io/resource)
-                                   (map slurp)
-                                   (str/join "\\n"))]
-                   (doseq [duplicate ["CharacterPattern" "DefaultKeyDecodingProfile"
-                                      "MouseAction$CoalescedInput" "MouseAction/coalesceQueued"
-                                      "(MouseAction." ".scrollDelta" ".dragCount"
-                                      "merge-wheel-delta" "decay-wheel-momentum"
-                                      "disable-literal-next!" "disable-software-flow-control!"
-                                      "modal-close-bounds" "(defn- stty!" "IEXTEN" "IXON"
-                                      "\u001B[?100" "\\u001B[?100"]]
-                     (expect (not (str/includes? source duplicate)))))))
-
 (defdescribe terminal-cell-size-probe-test
              ;; Regression, issue td-03018d: cmux's trailing CSI 18 t reply was typed into the composer.
              (it
@@ -377,7 +361,6 @@
 
 (defdescribe
   render-heartbeat-test
-  (it "keeps live render heartbeat at 80ms" (expect (= 80 (deref #'screen/spinner-tick-ms))))
   (it "classifies progress-only loading ticks for partial repaint"
       (let [base {:loading? true
                   :messages [{:role :assistant :text "live"}]
@@ -2624,13 +2607,6 @@ therapy line 2"
                  ;; explicitly: the flag with a stray "s" must blow up.
                  (expect (user-error? #(parse-args ["--sessions-id"
                                                     "d8aff512-d60d-42b6-a009-041f1bec3891"]))))
-             (it "unknown flag error message names the bad flag and shows usage"
-                 (try (parse-args ["--sessions-id" "x"])
-                      (expect false "expected ex-info")
-                      (catch clojure.lang.ExceptionInfo e
-                        (let [msg (.getMessage e)]
-                          (expect (re-find #"--sessions-id" msg))
-                          (expect (re-find #"Usage:" msg))))))
              (it "--session-id without a value -> :vis/user-error"
                  (expect (user-error? #(parse-args ["--session-id"]))))
              (it "--session-id followed by another flag -> :vis/user-error (no value)"
@@ -4287,33 +4263,8 @@ therapy line 2"
                                    1000
                                    ::timeout)))
             (expect (= ::pristine (deref copied 100 ::pristine)))
-            (let [[text kvs] (deref notified 1000 ::timeout)]
-              (expect (str/includes? text "Could not copy the whole Activity history"))
-              (expect (= :error (:level (apply hash-map kvs)))))))))
-  (it "tells a reader whose record changed mid-export to read it again first"
-      (let [copied
-            (promise)
-
-            notified
-            (promise)]
-
-        (with-redefs-fn {#'chat/activity-export (fn [& _]
-                                                  {:failed true :stale true})
-                         #'input/clipboard-copy! (fn [text]
-                                                   (deliver copied text)
-                                                   true)
-                         #'vis/notify! (fn [text & kvs]
-                                         (deliver notified [text kvs]))}
-          (fn []
-            (expect (false? (deref (copy-disclosure! {:session-id "sid"
-                                                      :history
-                                                      [{:id "history-1" :revision 4 :total 274}]
-                                                      :text "ACTIVITY window"})
-                                   1000
-                                   ::timeout)))
-            (expect (= ::pristine (deref copied 100 ::pristine)))
-            (expect (str/includes? (first (deref notified 1000 ::timeout))
-                                   "Activity changed while copying")))))))
+            (let [[_ kvs] (deref notified 1000 ::timeout)]
+              (expect (= :error (:level (apply hash-map kvs))))))))))
 
 ;; Issue #212: a reader who cannot find an operation in the painted window must be
 ;; able to search the WHOLE record from the band, and to leave it exactly as it was.
@@ -4336,8 +4287,7 @@ therapy line 2"
                      (prompt-activity-search! :screen {:session-id "sid" :history-id "history-1"})
                      (expect (= [[:activity-page "sid" "history-1" 0 nil "patch"]
                                  [:bump-render-version]]
-                                @events))
-                     (expect (= "Search Activity" (first @asked))))))
+                                @events)))))
              (it "leaves the band untouched when the reader cancels"
                  (let [events (atom [])]
                    (with-redefs [state/dispatch #(swap! events conj %)

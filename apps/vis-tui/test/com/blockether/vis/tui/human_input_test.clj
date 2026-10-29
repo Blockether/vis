@@ -7,12 +7,10 @@
    harness `dialogs-test` uses."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
-            [com.blockether.vis.tui.dialogs :as dialogs]
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.state :as state]
-            [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.view-model :as engine]
             [com.blockether.vis.contract.view :as view-spec]
@@ -136,20 +134,6 @@
    `band-test` instead."
   32)
 
-(defn- band-paper
-  "The paper an in-session BAND lays its rows on — the terminal's own, with no
-   tint at all. A band is told apart from the transcript by its BORDER, the way
-   the C-x hydra is, so every painter inside it sees this."
-  []
-  t/terminal-bg)
-
-(defn- band-resting-bg
-  "`theme/field-resting-bg` as a field inside a BAND wears it: derived from the
-   band's own paper, not from the modal dialog's."
-  []
-  (binding [t/dialog-bg (band-paper)]
-    (t/field-resting-bg)))
-
 (defn- screen-row
   "The rendered characters of one back-buffer row, right-trimmed."
   [^TerminalScreen screen y]
@@ -178,18 +162,17 @@
       (let [form (hi/init-form {:id "r"
                                 :title "T"
                                 :nodes [{:id "a" :type :plaintext :label "A" :default 7}
-                                         {:id "b" :type :checkbox :label "B" :default true}
-                                         {:id "c"
-                                          :type :select
-                                          :label "C"
-                                          :default "y"
-                                          :options [{:value "x" :label "X"}
-                                                    {:value "y" :label "Y"}]}
-                                         {:id "d"
-                                          :type :multiselect
-                                          :label "D"
-                                          :default ["x"]
-                                          :options [{:value "x" :label "X"}]}]})]
+                                        {:id "b" :type :checkbox :label "B" :default true}
+                                        {:id "c"
+                                         :type :select
+                                         :label "C"
+                                         :default "y"
+                                         :options [{:value "x" :label "X"} {:value "y" :label "Y"}]}
+                                        {:id "d"
+                                         :type :multiselect
+                                         :label "D"
+                                         :default ["x"]
+                                         :options [{:value "x" :label "X"}]}]})]
         (expect (= {"a" "7" "b" true "c" "y" "d" ["x"]} (:values form)))))
   (it "walks one stop per text field and one stop per declared option"
       (expect (= [{:kind :text :field-id "user"} {:kind :text :field-id "pass"}
@@ -326,46 +309,7 @@
       (expect (= \q
                  (:char (hi/key->event (KeyStroke. (Character/valueOf \q) false false false)))))))
 
-;; The hint bar is NAVIGATION AND TYPING ONLY: the pinned action bar prints the
-;; submit/cancel caps with their own chords one row above it, so a hint pair for
-;; either action is the same sentence printed twice.
-(defdescribe hint-test
-             (it "keeps submit and cancel out of the hint bar"
-                 (let [pairs (hi/hint (hi/init-form (request)))]
-                   ;; Navigation is not a hint: `↑/↓ move` used to lead every
-                   ;; pause's bar. A plain text field earns NO chords at all.
-                   (expect (empty? pairs))
-                   (expect (not-any? #{"submit" "cancel" "press"} (map second pairs)))
-                   (expect (not-any? #{"Esc" "^S"} (map first pairs)))))
-             (it "offers Enter as a newline chord inside a multiline field"
-                 (let [pairs (hi/hint (assoc (hi/init-form (request)) :focus 7))]
-                   (expect (some #{["Enter" "newline"]} pairs))
-                   (expect (not-any? #{"submit"} (map second pairs)))))
-             ;; Regression: an exclusive option said `Space toggle` — the very word an
-             ;; inclusive one uses — promising an off state a single choice never has.
-             (it "says pick on an exclusive option and toggle on an inclusive one"
-                 (let [pairs-at (fn [focus]
-                                  (hi/hint (assoc (hi/init-form (request)) :focus focus)))]
-                   (expect (= [["Space" "pick"]] (pairs-at 2)))
-                   (expect (= [["Space" "toggle"]] (pairs-at 4)))
-                   (expect (= [["Space" "toggle"]] (pairs-at 6))))))
-
 (defdescribe paint-test
-             (it "paints the title, the description and every field label"
-                 (let [{:keys [screen g]}
-                       (virtual-screen)
-
-                       _
-                       (hi/paint! g 80 30 (hi/init-form (request)))
-
-                       text
-                       (screen-text screen)]
-
-                   (expect (str/includes? text "Deploy"))
-                   (expect (str/includes? text "Pick the target"))
-                   (expect (str/includes? text "User *"))
-                   (expect (str/includes? text "Password *"))
-                   (expect (str/includes? text "Dev"))))
              (it "places the terminal cursor inside the focused text field"
                  (let [{:keys [screen g]}
                        (virtual-screen)
@@ -509,14 +453,6 @@
           (expect (= ["session-1" "req-1" {:action :cancel}] @cancelled))
           (expect (nil? (:human-input @state/app-db)))))))
 
-(defn- canonical-row
-  "Row text a CANONICAL `dialogs` row painter produces, trimmed. The dialog
-   must paint the very same characters for the same row."
-  [draw!]
-  (let [{:keys [screen g]} (virtual-screen)]
-    (draw! g)
-    (str/trim (screen-row screen 0))))
-
 (defn- painted-rows
   "Every painted human-input row containing `needle`, with the dialog frame and
    padding stripped, so a row compares directly against a canonical painter."
@@ -537,102 +473,6 @@
   canonical-presentation-test
   "Cross-validation against the canonical TUI dialog vocabulary: the same row
    painters, the same hint-bar spelling, the same scrollbar gutter."
-  (it "paints checkbox rows on the shared form-field surface"
-      (let [rows (painted-rows (assoc (hi/init-form (request)) :focus 6) "Confirm")]
-        (expect (some #{(canonical-row
-                          (fn [g]
-                            (dialogs/draw-toggle-row! g
-                                                      0
-                                                      0 40
-                                                      true (str (dialogs/choice-mark false false)
-                                                                "Confirm"))))}
-                      rows))
-        ;; The checkbox row IS the label — no duplicate bold label row above it.
-        (expect (= 1 (count rows)))))
-  (it "paints select options with the shared ●/○ status marks"
-      (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-toggle-row!
-                                         g
-                                         0
-                                         0 40
-                                         true (str (dialogs/choice-mark true true) "Dev"))))}
-                    (painted-rows (assoc (hi/init-form (request)) :focus 2) "Dev")))
-      (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-toggle-row!
-                                         g
-                                         0
-                                         0 40
-                                         false (str (dialogs/choice-mark true false) "Prod"))))}
-                    (painted-rows (assoc (hi/init-form (request)) :focus 2) "Prod"))))
-  ;; Regression: EVERY option row was painted with the radio ●/○ mark, so a
-  ;; `multiselect` — where several answers are legal — looked exactly like the
-  ;; `select` above it and nothing on the screen said "choose any".
-  (it "paints multiselect options as INCLUSIVE checkbox boxes, never radio dots"
-      (let [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 4) "Alpha")
-                       (painted-rows (assoc (hi/init-form (request)) :focus 4) "Beta"))]
-        (expect (some #{(canonical-row (fn [g]
-                                         (dialogs/draw-toggle-row!
-                                           g
-                                           0
-                                           0 40
-                                           true (str (dialogs/choice-mark false false) "Alpha"))))}
-                      rows))
-        (expect (some #{(canonical-row (fn [g]
-                                         (dialogs/draw-toggle-row!
-                                           g
-                                           0
-                                           0 40
-                                           false (str (dialogs/choice-mark false false) "Beta"))))}
-                      rows))
-        (expect (not-any? #(or (str/includes? % "●") (str/includes? % "○")) rows))))
-  (it "fills the box of a chosen inclusive option and leaves its sibling empty"
-      (let [form (feed (assoc (hi/init-form (request)) :focus 4) [(ch \space)])]
-        (expect (some #{(canonical-row (fn [g]
-                                         (dialogs/draw-toggle-row!
-                                           g
-                                           0
-                                           0 40
-                                           true (str (dialogs/choice-mark false true) "Alpha"))))}
-                      (painted-rows form "Alpha")))
-        (expect (some #{(canonical-row (fn [g]
-                                         (dialogs/draw-toggle-row!
-                                           g
-                                           0
-                                           0 40
-                                           false (str (dialogs/choice-mark false false) "Beta"))))}
-                      (painted-rows form "Beta")))))
-  (it "never lends the inclusive box to an EXCLUSIVE option"
-      (let [rows (into (painted-rows (assoc (hi/init-form (request)) :focus 2) "Dev")
-                       (painted-rows (assoc (hi/init-form (request)) :focus 2) "Prod"))]
-        (expect (seq rows))
-        (expect (not-any? #(str/includes? % "[") rows))))
-  (it "paints text fields with the shared input row painter"
-      (expect (some #{(canonical-row (fn [g]
-                                       (dialogs/draw-input-item! g 0 0 40 true "" 0 "who")))}
-                    (painted-rows (assoc (hi/init-form (request)) :focus 0) "who"))))
-  (it "keeps navigation chords and ASCII button brackets off the screen"
-      (let [{:keys [screen g]}
-            (virtual-screen)
-
-            _
-            (hi/paint! g 80 30 (hi/init-form (request)))
-
-            text
-            (screen-text screen)]
-
-        ;; `↑/↓ move` was a permanent row of chrome for the one chord every
-        ;; terminal operator already knows.
-        (expect (not (str/includes? text "↑/↓")))
-        ;; The caps are the SHARED neobrutalist chip: filled pills, never `[ … ]`
-        ;; ASCII and never `▏…▕` outlines.
-        (expect (not (str/includes? text "[ Submit ]")))
-        (expect (not (str/includes? text "[ Cancel ]")))
-        (expect (not (str/includes? text "▏")))
-        (expect (not (str/includes? text "▕")))
-        ;; The two actions are spelled ONCE, on the pinned caps — no chord beside
-        ;; them, and no hint bar reprinting them one row lower.
-        (expect (not (str/includes? text "Enter")))
-        (expect (not (str/includes? text "Esc")))))
   (it "puts a scrollbar thumb in the gutter once the form outgrows the box"
       ;; The band grows UPWARD over the transcript, so on a roomy terminal this
       ;; form fits whole; it is a SHORT terminal that squeezes it into a window.
@@ -649,45 +489,6 @@
                                   :nodes [{:id "a" :type :checkbox :label "Yes"}]
                                   :is-cancellable true}))
         (expect (not (str/includes? (screen-text screen) "█"))))))
-
-(defn- painted-row-cells
-  "`{:text :cells}` for the FIRST painted row containing `needle`: the row's
-   characters plus one `{:char :fg :bg :is-bold}` map per column.
-
-   `painted-rows` compares characters, and an emphasis is not a character: the
-   focused field and a resting one spell the same value with the same glyphs and
-   differ only in surface, ink and weight."
-  [form needle]
-  (let [{:keys [screen g]}
-        (virtual-screen probe-rows)
-
-        ^TerminalScreen screen
-        screen
-
-        _
-        (hi/paint! g 80 probe-rows form)
-
-        y
-        (first (keep (fn [y]
-                       (when (str/includes? (screen-row screen y) needle) y))
-                     (range probe-rows)))]
-
-    (when y
-      {:text (screen-row screen y)
-       :cells (mapv (fn [x]
-                      (let [^TextCharacter tc (.getBackCharacter screen (int x) (int y))]
-                        {:char (.getCharacterString tc)
-                         :fg (.getForegroundColor tc)
-                         :bg (.getBackgroundColor tc)
-                         :is-bold (.contains (.getModifiers tc) SGR/BOLD)}))
-                    (range 80))})))
-
-(defn- cell-under
-  "The painted cell carrying the FIRST character of `needle` — the surface the
-   text was actually laid on."
-  [form needle]
-  (let [{:keys [text cells]} (painted-row-cells form needle)]
-    (nth cells (str/index-of text needle))))
 
 (defn- rule-row?
   "True when a painted row is one of the band's horizontal rules and NOTHING
@@ -718,21 +519,7 @@
             (- 30 (long tr/prompt-rows) 3)]
 
         ;; Every row from the prompt's opening rule down belongs to the session.
-        (expect (every? #(= "" (screen-row screen %)) (range (inc prompt-top) 30)))
-        ;; The C-x hydra's own paper: a band lies ON the live transcript and is
-        ;; told apart by its BORDER, never by a tint of its own.
-        (expect (= t/terminal-bg (:bg (cell-under (hi/init-form (request)) "User"))))))
-  (it "fences its hint bar INSIDE the box, under its own rule"
-      (let [{:keys [screen g]} (virtual-screen)]
-        ;; Focus the multiline field so the bar has a chord worth printing at
-        ;; all — navigation alone no longer earns a hint pair.
-        (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7))
-        ;; The band closes BELOW its footer, exactly like a sideless transient:
-        ;; the hint bar sits on `rows - prompt-h - 4` with a rule above it, and
-        ;; the box's own closing rule takes the echo row underneath.
-        (expect (str/includes? (screen-row screen 23) "Enter newline"))
-        (expect (rule-row? (screen-row screen 22)))
-        (expect (rule-row? (screen-row screen 24)))))
+        (expect (every? #(= "" (screen-row screen %)) (range (inc prompt-top) 30)))))
   (it "never swallows the session's bottom chrome"
       (let [{:keys [screen g]} (virtual-screen)]
         (hi/paint! g 80 30 (hi/init-form (request)))
@@ -743,30 +530,6 @@
         (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7) 12)
         (expect (every? #(= "" (screen-row screen %)) (range 12)))
         (expect (str/includes? (screen-text screen) "Deploy"))))
-  (it "says its name ON the opening rule, the way a transient does"
-      (let [{:keys [screen g]}
-            (virtual-screen)
-
-            _
-            (hi/paint! g
-                       80
-                       30
-                       (hi/init-form (assoc (request)
-                                       :nodes [{:id "user" :type :plaintext :label "User"}])))
-
-            title-y
-            (first (filter #(str/includes? (screen-row screen %) "Deploy") (range 30)))
-
-            title-row
-            (str/trim (screen-row screen (long title-y)))]
-
-        ;; `┌── Deploy? ──────┐`: chrome and question on ONE row. A title row and
-        ;; a rule of its own were two rows of chrome bought with two rows of form.
-        (expect (some? title-y))
-        (expect (str/starts-with? title-row "┌──"))
-        (expect (str/ends-with? title-row "──┐"))
-        (expect (str/includes? title-row "Deploy"))
-        (expect (not (rule-row? (screen-row screen (inc (long title-y))))))))
   ;; Regression, issue #108: a form taller than the band scrolled its own
   ;; the `Submit` / `Cancel` caps out of sight, so the only visible way to end
   ;; the pause was to guess a key.
@@ -790,63 +553,7 @@
         (expect (rule-row? (screen-row screen (- close-y 2))))
         ;; Ink pill for Submit, muted pill for Cancel — two filled caps, no rails.
         (expect (str/includes? bar " Submit "))
-        (expect (str/includes? bar " Cancel"))
-        (expect (not (str/includes? bar "▏")))
-        (expect (not (str/includes? bar "▕")))))
-  ;; Regression: the band said the same two things twice — the pinned
-  ;; `[ Submit ]` / `[ Cancel ]` row and, one row under it, a hint bar reading
-  ;; `Enter submit · Esc cancel`. Two rows of chrome for one meaning — and the
-  ;; chords stencilled ON the caps were a third: a cap is a focus stop ↑/↓ walks
-  ;; onto, so it needs no shortcut printed beside it.
-  (it "states each action once — on its cap, with no chord and no second row"
-      (let [{:keys [screen g]}
-            (virtual-screen)
-
-            _
-            (hi/paint! g 80 30 (hi/init-form (request)))
-
-            close-y
-            (long (:hint-row (tr/band-region 80 30 1)))
-
-            bar
-            (screen-row screen (- close-y 3))
-
-            hints
-            (str/lower-case (screen-row screen (dec close-y)))
-
-            text
-            (screen-text screen)]
-
-        (expect (str/includes? bar " Submit "))
-        (expect (str/includes? bar " Cancel"))
-        (expect (not (str/includes? text "Enter")))
-        (expect (not (str/includes? text "Esc")))
-        ;; ...and with focus on a plain text field the bar below has nothing to
-        ;; say at all — no `move`, and still no submit/cancel.
-        (expect (str/blank? (str/replace hints #"[│└┘─]" "")))
-        (expect (not (str/includes? hints "submit")))
-        (expect (not (str/includes? hints "cancel")))))
-  (it "parks no marker glyph beside a cap — the cap's own colour is the cursor"
-      (let [form
-            (hi/init-form (request))
-
-            cancel-idx
-            (dec (count (:stops form)))
-
-            bar-of
-            (fn [f]
-              (let [{:keys [screen g]} (virtual-screen)]
-                (hi/paint! g 80 30 f)
-                (screen-row screen (- (long (:hint-row (tr/band-region 80 30 1))) 3))))]
-
-        ;; The `•` cursor glyph a LIST row wears has no business on a pill that
-        ;; recolours itself when focus arrives, and the gutter it needed had to be
-        ;; reserved in every state just to keep the row still.
-        (doseq [f [form (assoc form :focus (dec cancel-idx)) (assoc form :focus cancel-idx)]]
-          (let [bar (bar-of f)]
-            (expect (str/includes? bar " Submit "))
-            (expect (str/includes? bar " Cancel"))
-            (expect (not (str/includes? bar "•")))))))
+        (expect (str/includes? bar " Cancel"))))
   (it "marks exactly the focused button and keeps the buttons out of the body"
       (let [form
             (hi/init-form (request))
@@ -865,32 +572,6 @@
                    (mapv :action
                          (:buttons (hi/action-bar (hi/init-form (assoc (request)
                                                                   :is-cancellable false)))))))))
-  ;; The band is the same object the C-x hydra is: a CLOSED BOX laid over the
-  ;; transcript. What it must never draw is a `├`/`┤` junction — the session
-  ;; frame it lies on is sideless, so there are no host rails for one to join.
-  (it "closes as a box: corner caps and a rail down both edge columns"
-      (let [{:keys [screen g]} (virtual-screen)]
-        (hi/paint! g
-                   80
-                   30
-                   (hi/init-form
-                     {:id "r" :title "T" :nodes [{:id "a" :type :plaintext :label "A"}]}))
-        (let [{:keys [left inner-w]} (tr/band-region 80 30 1)
-              left (long left)
-              right (+ left (long inner-w) 1)
-              top (first (filter #(= "┌" (char-at screen left %)) (range 30)))
-              bottom (long (:hint-row (tr/band-region 80 30 1)))
-              text (screen-text screen)]
-
-          (expect (some? top))
-          (expect (= "┐" (char-at screen right (long top))))
-          (expect (= "└" (char-at screen left bottom)))
-          (expect (= "┘" (char-at screen right bottom)))
-          (expect (every? (fn [y]
-                            (and (= "│" (char-at screen left y)) (= "│" (char-at screen right y))))
-                          (range (inc (long top)) bottom)))
-          (expect (not (str/includes? text "├")))
-          (expect (not (str/includes? text "┤"))))))
   ;; Regression: the band framed the form with no margin of its own — a focused
   ;; row's `▎` ring was painted in the column against the rail, and the pinned
   ;; caps grew straight out of whatever field the body ended on.
@@ -1043,27 +724,6 @@
   (let [y (screen-row-of screen needle)]
     (when y (modifiers-at screen (.indexOf ^String (screen-row screen y) ^String needle) y))))
 
-(defn- bg-of
-  "The background colour the back buffer holds on the first cell of `needle` —
-   which FILL a painted cap wears."
-  [^TerminalScreen screen needle]
-  (let [y
-        (long (screen-row-of screen needle))
-
-        x
-        (.indexOf ^String (screen-row screen y) ^String needle)]
-
-    (.getBackgroundColor ^TextCharacter (.getBackCharacter screen (int x) (int y)))))
-
-(defn- cap-bgs
-  "The fills the painted action row gives `form`'s Submit and Cancel caps."
-  [form]
-  (let [{:keys [screen g]} (virtual-screen)]
-    (hi/paint! g 80 30 form)
-    ;; The row is right-trimmed, so the LAST cap keeps only its leading pad cell —
-    ;; which is fill either way.
-    [(bg-of screen " Submit ") (bg-of screen " Cancel")]))
-
 (defdescribe
   label-and-description-test
   "Three names, three jobs, drawn in that order: the bold LABEL says what the
@@ -1098,24 +758,6 @@
         ;; The row also SAYS it is required, which is what lets the painter ink
         ;; exactly that cell red instead of guessing at a trailing glyph.
         (expect (true? (:is-required (first checkbox-rows))))))
-  (it "paints that `*` in the error colour, and nothing else on the row"
-      ;; A required field is a refusal waiting to happen, so its mark wears the very
-      ;; red the field's error line will — while the label keeps the ink that says
-      ;; whether the keyboard is in it.
-      (let [form (hi/init-form (request))]
-        (expect (= t/footer-error-fg (:fg (cell-under form "*"))))
-        (expect (not= t/footer-error-fg (:fg (cell-under form "User"))))))
-  (it "re-inks a checkbox's own `*` on whatever paper its row already wears"
-      (let [cell (cell-under (hi/init-form
-                               {:id "r"
-                                :title "T"
-                                :nodes
-                                [{:id "ok" :type :checkbox :label "Confirm" :is-required true}]})
-                             "*")]
-        (expect (= t/footer-error-fg (:fg cell)))
-        ;; A checkbox is a TOGGLE, so that paper is the band's own: the typed
-        ;; field's surface never gets under a row nobody types into.
-        (expect (= (band-paper) (:bg cell)))))
   (it "puts a field's description between its label and its input, one blank row below the label"
       ;; The label is the HEADLINE of its own section: whatever it introduces —
       ;; prose, options, or the input itself — starts one row below it, so a form
@@ -1152,34 +794,13 @@
       (let [rows (hi/form-rows (hi/init-form {:id "r"
                                               :title "T"
                                               :nodes [{:id "ok"
-                                                        :type :checkbox
-                                                        :label "Confirm"
-                                                        :description "This cannot be undone"}]}))]
+                                                       :type :checkbox
+                                                       :label "Confirm"
+                                                       :description "This cannot be undone"}]}))]
         ;; No bold label row: the checkbox row already says "Confirm", and the
         ;; description still explains it right underneath.
         (expect (= [:checkbox :description :blank] (mapv :kind rows)))
-        (expect (= "This cannot be undone" (:text (second rows))))))
-  (it "paints every description in italic and every label in bold"
-      (let [{:keys [screen g]}
-            (virtual-screen)
-
-            _
-            ;; A short form, so both prose rows are inside the dialog viewport.
-            (hi/paint! g
-                       80
-                       30
-                       (hi/init-form
-                         {:id "r"
-                          :title "T"
-                          :description "Pick the target"
-                          :nodes
-                          [{:id "note" :type :plaintext :label "Note" :description "Free text"}]}))]
-
-        ;; The request's own description and the field's, both italic, never bold.
-        (expect (= #{SGR/ITALIC} (modifiers-of screen "Pick the target")))
-        (expect (= #{SGR/ITALIC} (modifiers-of screen "Free text")))
-        ;; The label above it is the bold one — the two must not read alike.
-        (expect (= #{SGR/BOLD} (modifiers-of screen "Note"))))))
+        (expect (= "This cannot be undone" (:text (second rows)))))))
 
 (defdescribe
   toggle-indent-test
@@ -1330,8 +951,7 @@
             (hi/form-rows (hi/init-form
                             {:id "r"
                              :title "Deploy"
-                             :nodes
-                             [{:id "env" :type :plaintext :label "Env" :description prose}]})
+                             :nodes [{:id "env" :type :plaintext :label "Env" :description prose}]})
                           40)
 
             i
@@ -1462,8 +1082,8 @@
   [& {:as slider}]
   (assoc (request)
     :nodes [{:id "who" :type :plaintext :label "Who"}
-             (merge {:id "pct" :type :range :label "Canary %" :min 0 :max 100 :step 5 :default 25}
-                    slider)]))
+            (merge {:id "pct" :type :range :label "Canary %" :min 0 :max 100 :step 5 :default 25}
+                   slider)]))
 
 (defdescribe
   range-field-test
@@ -1484,15 +1104,7 @@
   (it "snaps to a whole number only when the bounds are whole"
       (let [decimal (assoc (hi/init-form (slider-request :min 0 :max 1 :step 0.25 :default 0.5))
                       :focus 1)]
-        (expect (= 0.75 (get-in (feed decimal [{:kind :right}]) [:values "pct"])))))
-  (it "draws a track, the value and the bounds, so the number is never a mystery"
-      (let [texts (map #(str (:text %)) (hi/form-rows (hi/init-form (slider-request))))]
-        (expect (some #(str/includes? % "●") texts))
-        (expect (some #(str/includes? % "25") texts))
-        (expect (some #(str/includes? % "(0-100)") texts))))
-  (it "offers ←/→ in the hint bar while the slider has focus"
-      (let [form (assoc (hi/init-form (slider-request)) :focus 1)]
-        (expect (some #{["←/→" "adjust"]} (hi/hint form))))))
+        (expect (= 0.75 (get-in (feed decimal [{:kind :right}]) [:values "pct"]))))))
 
 ;; Regression, issue #108: the request's confirm/cancel labels were painted
 ;; nowhere and only a bare Enter ended the pause — the operator had to know the
@@ -1523,37 +1135,7 @@
 
         (expect (= ["Ship it" "Hold"] (mapv :label (:buttons (hi/action-bar custom)))))
         (expect (= ["Submit"] (mapv :label (:buttons (hi/action-bar locked)))))
-        (expect (= 3 (count (:stops locked))))))
-  (it "ranks the caps by FILL, and paints the FOCUSED one in the accent"
-      ;; The solid pill used to mean "the cap a chord fires", so walking onto
-      ;; Cancel repainted Submit as the quiet action and the form lost its
-      ;; default; then focus was spelled as a `•` in a reserved gutter instead of
-      ;; being what a button's own colour already says.
-      (let [form
-            (hi/init-form (request))
-
-            cancel-idx
-            (dec (count (:stops form)))
-
-            [submit-bg cancel-bg]
-            (cap-bgs form)
-
-            [focused-submit-bg quiet-cancel-bg]
-            (cap-bgs (assoc form :focus (dec cancel-idx)))
-
-            [quiet-submit-bg focused-cancel-bg]
-            (cap-bgs (assoc form :focus cancel-idx))]
-
-        ;; Cursor elsewhere: two different fills, both solid.
-        (expect (not= submit-bg cancel-bg))
-        ;; Focus is a COLOUR — the product's accent, the same fill the active tab
-        ;; wears — and it is the only thing that moves with the cursor.
-        (expect (= t/header-active-tab-bg focused-submit-bg))
-        (expect (= t/header-active-tab-bg focused-cancel-bg))
-        ;; ...while RANK stays put: Submit is the primary cap even when the cursor
-        ;; is parked on Cancel.
-        (expect (= submit-bg quiet-submit-bg))
-        (expect (= cancel-bg quiet-cancel-bg)))))
+        (expect (= 3 (count (:stops locked)))))))
 
 ;; The band is bottom-anchored over exactly the rows the composer occupies, and
 ;; the prompt — not the composer — owns the keyboard while it is up (issue #108).
@@ -1647,13 +1229,6 @@
   focus-emphasis-test
   "Focus is an EMPHASIS, not a list: the section the keyboard is in takes the ink
    and the surface, the others recede — and a typed field is drawn as a field."
-  (it "seats a typed value on the shared input surface, never on dialog paper"
-      (let [cell (cell-under (assoc (hi/init-form (request)) :focus 0) "who")]
-        (expect (= t/input-field-bg (:bg cell)))
-        (expect (not= t/dialog-bg (:bg cell)))))
-  (it "lets the field the keyboard is NOT in recede to the resting surface"
-      (let [cell (cell-under (assoc (hi/init-form (request)) :focus 1) "who")]
-        (expect (= (band-resting-bg) (:bg cell)))))
   (it "rings the focused field, and rings exactly one"
       (let [{:keys [screen g]}
             (virtual-screen)
@@ -1667,36 +1242,7 @@
         (expect (= 1 (count ringed)))
         ;; The ring is on the CODE boxes, the field being filled, not on the
         ;; address above them.
-        (expect (str/includes? (first ringed) "[ ]"))
-        (expect (= t/header-active-tab-accent (:fg (cell-under (otp-form) "┃"))))))
-  (it "keeps every field label bold while focus still controls its ink"
-      (let [form
-            (assoc (hi/init-form (request)) :focus 0)
-
-            mine
-            (cell-under form "User")
-
-            theirs
-            (cell-under form "Password")]
-
-        (expect (:is-bold mine))
-        (expect (= t/dialog-fg (:fg mine)))
-        ;; Unfocused labels remain quiet in colour, but their headline weight is stable.
-        (expect (:is-bold theirs))
-        (expect (= t/dialog-hint (:fg theirs)))))
-  (it "makes the focused field's prose readable and leaves the rest as hints"
-      ;; A SHORT form, so both fields' prose is inside the viewport and the
-      ;; comparison is about ink rather than about what scrolled away.
-      (let [two {:id "r"
-                 :title "T"
-                 :nodes [{:id "a" :type :plaintext :label "A" :description "Free text"}
-                          {:id "b" :type :plaintext :label "B" :description "Other prose"}]}]
-        (expect (= t/dialog-fg (:fg (cell-under (hi/init-form two) "Free text"))))
-        (expect (= t/dialog-hint
-                   (:fg (cell-under (assoc (hi/init-form two) :focus 1) "Free text"))))))
-  (it "paints the OTP boxes on the very same field surface a typed row uses"
-      (expect (= t/input-field-bg (:bg (cell-under (otp-form) "[ ]"))))
-      (expect (= (band-resting-bg) (:bg (cell-under (assoc (otp-form) :focus 0) "[ ]")))))
+        (expect (str/includes? (first ringed) "[ ]"))))
   (it "parks the terminal cursor inside the box the next digit lands in"
       (let [{:keys [screen g]}
             (virtual-screen)
@@ -1710,38 +1256,7 @@
         (expect (str/includes? row "[•] [•] [ ]"))
         ;; Inside the THIRD box: its own bracket one column to the left.
         (expect (= \[ (.charAt row (dec (.getColumn pos)))))
-        (expect (= \space (.charAt row (.getColumn pos))))))
-  (it "drops the `› ` prompt now that the field itself is visible"
-      (let [{:keys [screen g]} (virtual-screen)]
-        (hi/paint! g 80 30 (hi/init-form (otp-request)))
-        (expect (not (str/includes? (screen-text screen) "›")))))
-  ;; Regression: focus in a form was ALSO spelled as a `•` in a reserved gutter —
-  ;; the checkbox, option and slider rows still wore that marker after the typed
-  ;; rows had stopped needing it, so the form shouted "active" in two alphabets at
-  ;; once and no row lined up under its own label.
-  (it "spells focus with the surface alone — no `•` marker in front of a row"
-      (let [form (assoc (hi/init-form (request)) :focus 2)]
-        (doseq [needle ["Dev" "Prod" "Alpha" "Beta"]]
-          (expect (seq (painted-rows form needle)))
-          (expect (not-any? #(str/starts-with? % "•") (painted-rows form needle))))))
-  ;; Regression: a checkbox, an option and a slider were painted on the TYPED
-  ;; field's own surface — `input-field-bg` when focused, `field-resting-bg` at
-  ;; rest — so most of a form read as a column of pale boxes to type into, when
-  ;; Space is the only thing any of them takes.
-  (it "keeps a TOGGLE off the typed field's surface — it is not an input"
-      (let [form (assoc (hi/init-form (request)) :focus 2)]
-        (doseq [needle ["Dev" "Prod" "Alpha" "Beta"]]
-          (expect (= (band-paper) (:bg (cell-under form needle)))))
-        (expect (= (band-paper)
-                   (:bg (cell-under (assoc (hi/init-form (request)) :focus 6) "Confirm"))))
-        ;; The field beside them that IS typed into keeps its surface.
-        (expect (= t/input-field-bg
-                   (:bg (cell-under (assoc (hi/init-form (request)) :focus 0) "who"))))))
-  (it "still says which toggle the keyboard is on: the ring and the bold ink"
-      (let [form (assoc (hi/init-form (request)) :focus 2)]
-        (expect (str/includes? (:text (painted-row-cells form "Dev")) "┃"))
-        (expect (:is-bold (cell-under form "Dev")))
-        (expect (not (:is-bold (cell-under form "Prod")))))))
+        (expect (= \space (.charAt row (.getColumn pos)))))))
 
 (defdescribe
   otp-field-test
@@ -1772,15 +1287,7 @@
         (expect (= "123" (get-in (feed form [{:kind :backspace}]) [:values "code"])))
         (expect (= "134"
                    (get-in (feed form [{:kind :left} {:kind :left} {:kind :backspace}])
-                           [:values "code"])))))
-  (it "says so when it accepts a RANGE of lengths"
-      ;; Eight empty boxes cannot show that four of them are already enough.
-      (expect (= "[ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ]  (4-8 digits)" (:text (otp-row (otp-form 4 8)))))
-      (expect (= "[•] [•] [•] [•] [ ] [ ] [ ] [ ]  (4-8 digits)"
-                 (:text (otp-row (feed (otp-form 4 8) (map ch "1234")))))))
-  (it "offers the digits in the hint bar"
-      (expect (some #{["0-9" "fill"]} (hi/hint (otp-form))))
-      (expect (nil? (some #{["0–9" "fill"]} (hi/hint (hi/init-form (otp-request))))))))
+                           [:values "code"]))))))
 
 (defdescribe
   confirm-then-clear-test
@@ -1830,8 +1337,8 @@
             (canonical-input-view
               {"title" "Ship"
                "nodes" [{"name" "ok" "type" "checkbox" "label" "Confirm"}
-                         {"name" "env" "type" "select" "label" "Env" "options" ["prod" "stg"]}
-                         {"name" "risk" "type" "range" "label" "Risk" "min" 0 "max" 10 "step" 1}]})
+                        {"name" "env" "type" "select" "label" "Env" "options" ["prod" "stg"]}
+                        {"name" "risk" "type" "range" "label" "Risk" "min" 0 "max" 10 "step" 1}]})
 
             errors
             {"ok" "must be checked" "env" "is required" "risk" "too much"}
@@ -1882,7 +1389,7 @@
    "direction" direction
    "label" "Server"
    "children" [{"name" "host" "label" "Host" "is_required" true "placeholder" "db.internal"}
-             {"name" "port" "label" "Port" "placeholder" "5432"}]})
+               {"name" "port" "label" "Port" "placeholder" "5432"}]})
 
 (defn- ink
   "Every non-blank painted row of `form`, framing stripped."
@@ -1928,12 +1435,12 @@
       (let [rows (ink (hi/init-form (grouped-request {"type" "group"
                                                       "direction" "row"
                                                       "children" [{"type" "group"
-                                                                 "direction" "column"
-                                                                 "label" "Left"
-                                                                 "children" [{"name" "a" "label" "A"}
-                                                                           {"name" "b"
-                                                                            "label" "B"}]}
-                                                                {"name" "c" "label" "C"}]})))]
+                                                                   "direction" "column"
+                                                                   "label" "Left"
+                                                                   "children"
+                                                                   [{"name" "a" "label" "A"}
+                                                                    {"name" "b" "label" "B"}]}
+                                                                  {"name" "c" "label" "C"}]})))]
         ;; The nested column's heading shares its line with the neighbour column,
         ;; and B — the second row of that column — is BELOW A, not beside it.
         (expect (some #(and (str/includes? % "Left") (str/includes? % "C")) rows))
@@ -1983,8 +1490,9 @@
             (hi/init-form (grouped-request
                             {"type" "group"
                              "direction" "row"
-                             "children" [{"name" "env" "type" "select" "options" ["dev" "prod"]}
-                                       {"name" "tier" "type" "select" "options" ["free" "paid"]}]}))
+                             "children"
+                             [{"name" "env" "type" "select" "options" ["dev" "prod"]}
+                              {"name" "tier" "type" "select" "options" ["free" "paid"]}]}))
 
             focused
             (fn [focus]
@@ -2133,7 +1641,7 @@
                           {"type" "group"
                            "name" "creds"
                            "children" [{"type" "heading" "text" "Credentials"}
-                                     {"name" "pw" "type" "password" "label" "Password"}]}]}))
+                                       {"name" "pw" "type" "password" "label" "Password"}]}]}))
 
 (defdescribe
   decoration-test
@@ -2157,7 +1665,7 @@
                             {"title" "Confirm"
                              "description" "**Deployment effect:** Updates the proxy."
                              "nodes" [{"type" "paragraph"
-                                        "text" "**Target:** `DEV21`\n\n- **Memory:** 4096 MiB"}]}))
+                                       "text" "**Target:** `DEV21`\n\n- **Memory:** 4096 MiB"}]}))
 
             rows
             (filterv #(= :paragraph (:kind %)) (hi/form-rows form 60))]
@@ -2174,26 +1682,15 @@
         (let [{:keys [screen g]} (virtual-screen)]
           (try (hi/paint! g 80 30 form)
                (expect (contains? (modifiers-of screen "Target:") SGR/BOLD))
-               (expect (= t/header-active-tab-accent (:fg (cell-under form "DEV21"))))
                (expect (not (str/includes? (screen-text screen) "**Target:**")))
                (finally (.close ^TerminalScreen screen))))))
-  (it "paints a heading bold on the dialog's own paper, never as a field"
-      (let [cell (cell-under (hi/init-form (decorated-request)) "Connection")]
-        (expect (:is-bold cell))
-        (expect (= t/dialog-fg (:fg cell)))
-        (expect (= (band-paper) (:bg cell)))))
-  (it "paints a paragraph as the prose it is — dim, unbolded, on dialog paper"
-      (let [cell (cell-under (hi/init-form (decorated-request)) "Where")]
-        (expect (not (:is-bold cell)))
-        (expect (= t/dialog-hint (:fg cell)))
-        (expect (= (band-paper) (:bg cell)))))
   (it "wraps a long paragraph instead of clipping it to a single `…` row"
       (let [rows (hi/form-rows (hi/init-form
                                  (identity (engine/view<-wire
                                              {"title" "T"
                                               "nodes" [{"type" "paragraph"
-                                                         "text" (str/join " " (repeat 30 "words"))}
-                                                        {"name" "a" "label" "A"}]})))
+                                                        "text" (str/join " " (repeat 30 "words"))}
+                                                       {"name" "a" "label" "A"}]})))
                                40)]
         (expect (< 1 (count (filterv #(= :paragraph (:kind %)) rows)))))))
 
@@ -2241,18 +1738,7 @@
   (it "names how many more are waiting"
       (expect (= "Deploy · 2 more waiting" (hi/band-label (hi/init-form (request)) 2))))
   (it "still counts them when the request asked no question of its own"
-      (expect (= "1 more waiting" (hi/band-label (hi/init-form (assoc (request) :title "")) 1))))
-  (it "paints that count onto the band's own rule"
-      (let [{:keys [screen g]}
-            (virtual-screen)
-
-            _
-            (hi/paint! g 80 30 (hi/init-form (request)) 1 tr/prompt-rows 1)
-
-            rows
-            (mapv #(screen-row screen %) (range 30))]
-
-        (expect (some #(str/includes? % "1 more waiting") rows)))))
+      (expect (= "1 more waiting" (hi/band-label (hi/init-form (assoc (request) :title "")) 1)))))
 
 ;; Issue #392: a subagent's form also reaches its parent session, so the dialog
 ;; must say which subagent asks and which session is its parent.

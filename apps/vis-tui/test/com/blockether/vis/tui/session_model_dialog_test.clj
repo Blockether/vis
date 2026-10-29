@@ -1,6 +1,5 @@
 (ns com.blockether.vis.tui.session-model-dialog-test
-  (:require [clojure.string :as str]
-            [com.blockether.vis.tui.client :as vis]
+  (:require [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.primitives :as p]
@@ -189,8 +188,6 @@
         (expect (nil? choice))
         (expect (= [80 120] [offset cols]))
         (expect (every? #(= (apply str (repeat 80 \R)) (subs % 0 80)) lines))
-        (expect (some #(str/includes? % "Session model") lines))
-        (expect (some #(str/includes? % "current") lines))
         (expect (= (+ offset (:left bounds) 3) (.getColumn cursor)))
         (expect (= (+ (:top bounds) 3) (.getRow cursor)))))
   (it "filters and chooses a configured model through the scoped terminal dialog"

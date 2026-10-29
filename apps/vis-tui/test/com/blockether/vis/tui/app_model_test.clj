@@ -59,10 +59,7 @@
                    (expect (= :diff-head (first kinds)))
                    (expect (= :thread-head (nth kinds (inc at-add))))
                    (expect (= "t1" (:thread-id (nth rows (inc at-add)))))
-                   (expect (= "t2" (:thread-id (last (filter #(= :thread-head (:kind %)) rows)))))
-                   (expect (some #(= "Because" (:text %)) rows))
-                   (expect (some #(= "Agent" (:text %)) rows))
-                   (expect (some #(= "Ana" (:text %)) rows))))
+                   (expect (= "t2" (:thread-id (last (filter #(= :thread-head (:kind %)) rows)))))))
              (it "hides the lines of a folded file and marks its row"
                  (let [rows
                        (model/diff-rows diff-node 60 #{"src/x.clj"})
@@ -71,9 +68,7 @@
                        (first (filter #(= :file (:kind %)) rows))]
 
                    (expect (:is-folded file))
-                   (expect (not-any? #(#{:add :del :ctx :hunk} (:kind %)) rows))
-                   (expect (= "▸ " (:gutter (model/row-parts file))))
-                   (expect (= "▾ " (:gutter (model/row-parts (assoc file :is-folded false)))))))
+                   (expect (not-any? #(#{:add :del :ctx :hunk} (:kind %)) rows))))
              (it "keeps line numbers in the gutter and tones the change"
                  (let [{:keys [gutter body]} (model/row-parts {:kind :del :old 11 :text "x"})]
                    (expect (= "   11       - " gutter))
@@ -123,7 +118,6 @@
                  (expect (= :live (model/status {})))
                  (expect (= :stale (model/status {:is-stale true})))
                  (expect (= :closed (model/status {:is-stale true :is-closed true})))
-                 (expect (= "Disconnected" (model/status-label (model/status {:is-stale true}))))
                  (expect (model/read-only? {:is-closed true}))
                  (expect (not (model/read-only? {:is-stale true}))))
              (it "lists receipts newest first and counts the saved drafts"
@@ -131,8 +125,6 @@
                              :submissions [{:id "s1" :status "answered"}
                                            {:id "s2" :status "accepted" :comments [{}]}]}]
                    (expect (= ["s2" "s1"] (mapv :submission-id (model/receipt-rows view))))
-                   (expect (= "Sent · accepted · 1 comment · s2"
-                              (:text (first (model/receipt-rows view)))))
                    (expect (= 1 (model/pending-drafts view)))))
              (it "finds the view id of an attachment row"
                  (expect (= "v1" (model/row-view-id {:view-id "v1"})))

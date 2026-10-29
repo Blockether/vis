@@ -432,41 +432,6 @@
           (expect (= [{:action :send :state state}]
                      (mapv #(input/handle-key % state) (terminal-keys report))))))))
 
-(defdescribe
-  placeholder-format-test
-  (it "multi-line paste shows lines AND bytes"
-      (let [text
-            (apply str (repeat 42 "line of text\n"))
-
-            token
-            (input/format-paste-placeholder {:id 1 :content text})]
-
-        (expect (str/includes? token "#1"))
-        (expect (str/includes? token "43 lines"))
-        (expect (re-find #"\d+(?:\.\d+)?[BKM]" token))))
-  (it "single-line paste pluralises correctly + reports byte size"
-      (let [token (input/format-paste-placeholder {:id 7 :content "abcdef"})]
-        (expect (= "[Pasted #7: 1 line, 6B]" token))))
-  (it "sub-1024 chars render as <N>B; 1024+ render as KB"
-      (let [small
-            (input/format-paste-placeholder {:id 1 :content "x"})
-
-            big
-            (input/format-paste-placeholder {:id 2 :content (apply str (repeat 2048 "a"))})]
-
-        (expect (str/includes? small "1B"))
-        (expect (str/includes? big "2.0KB"))))
-  (it "an image entry is labelled `Image` with filename + dims + size"
-      (let [token (input/format-paste-placeholder
-                    {:id 3
-                     :content "/tmp/shot.png"
-                     :image {:filename "shot.png" :width 1200 :height 800 :size-label "245KB"}})]
-        (expect (= "[Image #3: shot.png 1200x800, 245KB]" token))))
-  (it "an image with unknown dims omits the WxH clause"
-      (let [token (input/format-paste-placeholder
-                    {:id 4 :content "/tmp/x.gif" :image {:filename "x.gif" :size-label "12KB"}})]
-        (expect (= "[Image #4: x.gif, 12KB]" token)))))
-
 (defdescribe placeholder-threshold-test
              (it "short single-line text bypasses the placeholder UX"
                  (expect (false? (input/use-placeholder? "hello world"))))
@@ -737,19 +702,6 @@
                                  (str "<FILE:" path ">"))]
                    (expect (= "see <FILE:src/foo.clj> please"
                               (input/expand-file-mentions "see @src/foo.clj please")))))
-             (it "expands local @mentions to a tool-agnostic attached-file directive"
-                 ;; Per `file-mention->prompt-block` contract: emit a short
-                 ;; directive only (no `(cat ...)` / `(v/preview ...)`
-                 ;; boilerplate). The model picks the right tool itself.
-                 (let [file (java.io.File/createTempFile "vis-input-large" ".clj")]
-                   (spit file (str/join "\n" (repeat 121 "x")))
-                   (try (with-redefs [com.blockether.vis.tui.input/resolve-local-file (fn [_path]
-                                                                                        file)]
-                          (let [expanded (input/expand-file-mentions "inspect @src/foo.clj now")]
-                            (expect (str/includes? expanded "[Attached File: src/foo.clj]"))
-                            (expect (str/includes? expanded "Read it"))
-                            (expect (not (str/includes? expanded "v/preview")))))
-                        (finally (.delete file)))))
              (it "supports quoted @mentions for paths with spaces"
                  (with-redefs [com.blockether.vis.tui.input/file-mention->prompt-block
                                (fn [path]

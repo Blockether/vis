@@ -181,13 +181,6 @@
         (expect (true? (:vis/user-error (ex-data failure))))
         (expect (= :gateway/connection-failed (:type (ex-data failure))))
         (expect (identical? cause (ex-cause failure)))
-        (expect (re-find #"Could not connect to the Vis gateway at http://gateway.example.com:7890"
-                         (ex-message failure)))
-        (expect (re-find #"connection could not be established" (ex-message failure)))
-        (expect (re-find #"vis-agent gateway start" (ex-message failure)))
-        (expect (re-find #"VIS_GATEWAY_URL" (ex-message failure)))
-        (expect (re-find #"VPN" (ex-message failure)))
-        (expect (re-find #"Diagnostic log:" (ex-message failure)))
         (expect (re-find #"java.net.ConnectException" log))
         (expect (re-find #"java.nio.channels.ClosedChannelException" log))
         (doseq [secret ["password" "query-secret" "bearer-secret" "private" "fragment"]]

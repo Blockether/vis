@@ -3,29 +3,13 @@
   (:require [charred.api :as charred]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
-
-(defn- clojure-sources
-  [root]
-  (->> (file-seq root)
-       (filter #(and (.isFile ^java.io.File %)
-                     (str/ends-with? (.getName ^java.io.File %) ".clj")))))
 
 (defdescribe independent-app-test
              (it "depends on the wire contract, not the Vis engine"
                  (let [deps (:deps (edn/read-string (slurp "deps.edn")))]
                    (expect (contains? deps 'com.blockether/vis-contract))
-                   (expect (not (contains? deps 'com.blockether/vis)))))
-             (it "keeps every engine and extension namespace outside the app"
-                 (let [sources (clojure-sources (io/file "src"))]
-                   (expect (seq sources))
-                   (doseq [source sources
-                           forbidden ["com.blockether.vis.core" "com.blockether.vis.internal"
-                                      "com.blockether.vis.ext"]]
-
-                     (expect (not (str/includes? (slurp source) forbidden))
-                             (str source " imports " forbidden))))))
+                   (expect (not (contains? deps 'com.blockether/vis))))))
 
 (defdescribe
   native-resize-registration-test

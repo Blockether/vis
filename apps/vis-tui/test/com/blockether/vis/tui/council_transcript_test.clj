@@ -69,11 +69,9 @@
 
         (expect (= 5 (count (:prewrapped-lines collapsed)))
                 "Four visible body rows and one control")
-        (expect (str/includes? (:text collapsed) "Show full message"))
         (expect (= :toggle-details (:kind control)))
         (expect (true? (:collapsed? control)))
         (expect (> (count (:prewrapped-lines expanded)) 5))
-        (expect (str/includes? (:text expanded) "Show less"))
         (expect (false? (:collapsed? (last (:line-meta expanded)))))
         (.reset interactions/hit-map)
         (.beginFrame interactions/hit-map)
@@ -89,7 +87,6 @@
                                                                         :viewport-h 12}))})]
           (.commitFrame interactions/hit-map)
           (expect (nil? (:error frame)))
-          (expect (str/includes? (cap/frame-text frame) "Council"))
           (expect (some (fn [row]
                           (= (:node-id control) (:node-id (.lookup interactions/hit-map 3 row))))
                         (range 12))

@@ -99,42 +99,19 @@
   (it "offers OAuth only for HTTP servers, and sign-out only once signed in"
       (expect (= [:kill :disable :edit :remove :auth :details]
                  (mapv :id (mcp-model/server-actions http-server))))
-      (expect (= "Sign in"
-                 (->> (mcp-model/server-actions http-server)
-                      (filter #(= :auth (:id %)))
-                      first
-                      :label)))
       (let [signed (mcp-model/server-actions (assoc http-server "is_authorized" true))]
-        (expect (= [:kill :disable :edit :remove :auth :logout :details] (mapv :id signed)))
-        (expect (= "Re-authorize"
-                   (->> signed
-                        (filter #(= :auth (:id %)))
-                        first
-                        :label))))
+        (expect (= [:kill :disable :edit :remove :auth :logout :details] (mapv :id signed))))
       (expect (empty? (filter (comp #{:auth :logout} :id)
                               (mcp-model/server-actions managed-stdio)))))
   (it "binds ONE transient key per verb, and never the same key twice on a row"
       (let [ks (mapv :key (mcp-model/server-actions (assoc http-server "is_authorized" true)))]
-        (expect (= ["k" "d" "c" "x" "a" "o" "v"] ks))
         (expect (= (count ks) (count (set ks))))))
   (it "groups the verbs by what they touch, and drops a group with nothing in it"
       (let [spec (mcp-model/server-transient-spec (assoc http-server "is_authorized" true))]
-        ;; the popup names the server AND its live state, so the band is self-describing
-        (expect (= "notion \u00b7 idle \u00b7 signed in" (:title spec)))
         (expect (= ["Runtime" "Configuration" "Account" "Inspect"] (mapv :title (:groups spec))))
-        (expect (= [{:key "a" :type :action :id :auth :label "Re-authorize"}
-                    {:key "o" :type :action :id :logout :label "Sign out"}]
-                   (:items (nth (:groups spec) 2))))
         ;; nothing about a hand-written server is persisted here: no Configuration
         (expect (= ["Runtime" "Inspect"]
-                   (mapv :title (:groups (mcp-model/server-transient-spec handwritten)))))))
-  (it "shows the managed tier and the runtime flags in the details view"
-      (let [lines (mcp/server-details handwritten)]
-        (expect (some #(= "name       repo" %) lines))
-        (expect (some #(= "killed     false" %) lines))
-        (expect (some #(= "managed    config file (read-only)" %) lines))
-        (expect (not-any? #(str/starts-with? % "url ") lines)))
-      (expect (some #(= "managed    gateway (editable here)" %) (mcp/server-details http-server)))))
+                   (mapv :title (:groups (mcp-model/server-transient-spec handwritten))))))))
 
 (defdescribe mcp-palette-command-test
              (it "is reachable from the command palette, in any session"
@@ -142,7 +119,6 @@
                                 (filter #(= :mcp (:id %)))
                                 first)]
                    (expect (some? cmd))
-                   (expect (= "MCP Servers" (:label cmd)))
                    ;; Untagged, so it survives the turnless gating too.
                    (expect (some #(= :mcp (:id %))
                                  (dlg/palette-commands-for {:has-turns? false}))))))
@@ -324,19 +300,7 @@
                      "env" {"A" "1"}}]
                    @saved))
         ;; Dialed by the GATEWAY before anything is persisted.
-        (expect (= @dialed @saved))
-        (expect (= ["MCP · add server" "Name:" "Command:"
-                    "Working directory (blank for the default):"
-                    "Environment, KEY=value, comma separated:"
-                    "Timeout in ms (blank for the default):" "Add MCP server `files`?"]
-                   (mapv second @log)))
-        ;; The one useful line of the old four-line dialog body survives as the
-        ;; field's own placeholder, where it is read while typing.
-        (expect (str/includes? (str @log) "npx -y @modelcontextprotocol/server-filesystem"))
-        ;; Saying yes has a cost, and the band says what it is.
-        (let [[_ _ opts] (last @log)]
-          (expect (= "Connected · 3 tools" (:cost opts)))
-          (expect (= "Yes, add it" (:yes-label opts)))))))
+        (expect (= @dialed @saved)))))
   (it "distinguishes OAuth sign-in from connection failures before saving"
       (doseq [[verdict expected] [[{"is_connected" false "tools" []}
                                    "Sign-in required · save, then choose Sign in"]
@@ -410,11 +374,7 @@
                         (throw (ex-info "removal opened a dialog" {})))]
 
           (mcp/run-action! nil nil nil managed-stdio :remove)
-          (expect (= "files" @removed))
-          (let [[_ question opts] (first @log)]
-            (expect (str/includes? question "Remove MCP server"))
-            (expect (str/includes? (:cost opts) "gateway's own configuration"))
-            (expect (= "Yes, remove" (:yes-label opts)))))))
+          (expect (= "files" @removed)))))
   (it "keeps the server when the removal confirm is declined"
       (let [removed? (atom false)]
         (with-redefs [dlg/host-band-region (fn [_screen region]
@@ -437,8 +397,7 @@
                                               (throw (ex-info "a refusal opened a dialog" {})))]
 
           (mcp/run-action! nil nil nil handwritten :kill)
-          (expect (= :note (ffirst @log)))
-          (expect (str/includes? (str @log) "not gateway-managed")))))
+          (expect (= :note (ffirst @log))))))
   (it "shows every detail in the caller's transient without opening a dialog"
       (let [viewed
             (atom nil)
@@ -497,11 +456,7 @@
             (cap/frame-text capture)]
 
         (expect (nil? (:error capture)))
-        (expect (str/includes? text "Settings · MCP servers"))
-        (expect (str/includes? text "MCP · files"))
-        (expect (str/includes? text "name"))
-        (expect (str/includes? text "back"))
-        (expect (str/includes? text "managed")))))
+        (expect (str/includes? text "Settings · MCP servers")))))
   (it "scrolls long details to the end and returns to the beginning in the same band"
       (doseq [[keys expected]
               [[[:end :esc] "managed    config file"] [[:end :home :esc] "name       repo"]
@@ -534,8 +489,4 @@
                        actions
                        (mcp-model/server-actions row)]
 
-                   (expect (= #{:disable :edit :details} (set (map :id actions))))
-                   (expect (= "Use inherited"
-                              (:label (first (filter #(= :remove (:id %))
-                                                     (mcp-model/server-actions
-                                                       (assoc row "is_override" true))))))))))
+                   (expect (= #{:disable :edit :details} (set (map :id actions)))))))

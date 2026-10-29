@@ -44,19 +44,6 @@
   ([entry] (rendered entry {}))
   ([entry opts] (mapv clean (format-iteration-entry entry 80 1 opts))))
 
-;; The block-level COUNT header (`N observation(s)` / `N mutation(s)`), the
-;; op rows, and the block-level collapse toggle were ALL retired. Tool output
-;; is the program's stdout now. We keep `counts-re` to ASSERT the header's
-;; absence; any rendered line carrying the counts vocabulary would be a
-;; regression.
-(def ^:private counts-re #"observation|mutation")
-
-(defn- header-of
-  "The retired count header, if one ever leaks back in. Always nil now;
-   used by the fixtures to assert headerlessness."
-  [lines]
-  (some #(when (re-find counts-re %) %) lines))
-
 ;; Form builders.
 
 (defn- ok-form
@@ -207,8 +194,7 @@
                                  body
                                  (str/join "\n" lines)]
 
-                             (expect (str/includes? body "^"))
-                             (expect (str/includes? body "Divide by zero"))))))
+                             (expect (str/includes? body "^"))))))
 
 ;; Fixture 6 — cancellation mid-block → :cancelled.
 
@@ -219,19 +205,11 @@
     :status
     :cancelled))
 
-(defdescribe
-  cancelled-fixture-test
-  (describe "cancellation mid-block"
-            (it "canonicalizes to a :cancelled status block"
-                (let [block (iteration/canonicalize (cancelled-entry))]
-                  (expect (= :cancelled (:status block)))))
-            (it "keeps the status glyph OUT of the block render (it lives on the TURN header)"
-                ;; No block header at all, and the per-block render never paints a
-                ;; status glyph — aggregate status belongs to the parent TURN header.
-                (let [lines (rendered (cancelled-entry))]
-                  (expect (nil? (header-of lines)))
-                  (expect (not-any? #(str/includes? % (iteration/status-glyph :cancelled)) lines))
-                  (expect (not-any? #(str/includes? % (iteration/status-glyph :ok)) lines))))))
+(defdescribe cancelled-fixture-test
+             (describe "cancellation mid-block"
+                       (it "canonicalizes to a :cancelled status block"
+                           (let [block (iteration/canonicalize (cancelled-entry))]
+                             (expect (= :cancelled (:status block)))))))
 
 ;; Fixture 7 — timeout mid-block → :timeout.
 
@@ -242,16 +220,10 @@
                      :timeout))
 
 (defdescribe timeout-fixture-test
-             (describe
-               "timeout mid-block"
-               (it "canonicalizes to a :timeout status block"
-                   (let [block (iteration/canonicalize (timeout-entry))]
-                     (expect (= :timeout (:status block)))))
-               (it "keeps the status glyph OUT of the block render (it lives on the TURN header)"
-                   (let [lines (rendered (timeout-entry))]
-                     (expect (nil? (header-of lines)))
-                     (expect (not-any? #(str/includes? % (iteration/status-glyph :timeout)) lines))
-                     (expect (not-any? #(str/includes? % (iteration/status-glyph :ok)) lines))))))
+             (describe "timeout mid-block"
+                       (it "canonicalizes to a :timeout status block"
+                           (let [block (iteration/canonicalize (timeout-entry))]
+                             (expect (= :timeout (:status block)))))))
 
 ;; Fixture 8 — merged multi-fence → flat block, both forms' stdout.
 

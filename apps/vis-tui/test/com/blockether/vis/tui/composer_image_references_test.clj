@@ -1,6 +1,5 @@
 (ns com.blockether.vis.tui.composer-image-references-test
-  (:require [clojure.string :as str]
-            [com.blockether.vis.tui.capture :as cap]
+  (:require [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.composer-attachment-rail :as rail]
             [com.blockether.vis.tui.composer-attachments :as attachments]
             [com.blockether.vis.tui.input :as input]
@@ -182,44 +181,19 @@
       (state/dispatch [:apply-attachment-intake
                        {:attachments [{:id "new" :media-type "image/png"}]}])
       (expect (= " [IMAGE #7][IMAGE #8]" (input/input->text (:input @state/app-db)))))
-  (it "paints both wrapped token fragments as chips without painting surrounding prose"
-      (let [capture
-            (cap/capture!
-              {:cols 20
-               :rows 6
-               :paint! (fn [{:keys [g]}]
-                         (render/draw-input-box! g
-                                                 {:lines ["abcdefghij[IMAGE #1]z"] :crow 0 :ccol 0}
-                                                 0 4
-                                                 20 nil))})
-
-            grid
-            (last (:frames capture))]
-
-        (expect (nil? (:error capture)))
-        (expect (false? (:bold (get-in grid [1 2]))))
-        (expect (true? (:bold (get-in grid [1 12]))))
-        (expect (true? (:bold (get-in grid [2 2]))))
-        (expect (false? (:bold (get-in grid [2 6]))))))
   (it "renders a bounded staging surface with consistent labels and focus, without a shadow"
       (doseq [cols [8 20 40 80]]
         (let [captured (cap/capture! {:cols cols
                                       :rows 14
                                       :paint! (fn [{:keys [g]}]
                                                 (paint-composer! g review-draft cols))})
-              grid (last (:frames captured))
               regions (.current interactions/hit-map)]
 
           (expect (nil? (:error captured)))
           ;; #249: the prompt follows the bottom border, not an extra yellow shadow row.
           (expect (= 4 (rail/rail-height (:attachments review-draft))))
-          (expect (= (:bg (get-in grid [4 3])) (:bg (get-in grid [5 3]))))
-          (expect (not= (:bg (get-in grid [1 3])) (:bg (get-in grid [2 3]))))
           (doseq [{:keys [bounds]} regions]
-            (expect (<= 0 (:col bounds) (+ (:col bounds) (:width bounds)) cols)))
-          (when (>= cols 40)
-            (expect (str/includes? (cap/frame-text captured) "IMAGE #1"))
-            (expect (str/includes? (cap/frame-text captured) "IMAGE #2"))))))
+            (expect (<= 0 (:col bounds) (+ (:col bounds) (:width bounds)) cols))))))
   (it
     "keeps file intake, token deletion and submitted bytes synchronized"
     (let

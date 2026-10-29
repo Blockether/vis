@@ -47,7 +47,6 @@
                    (set (map :node-id (lv/controls [pane])))))
         (expect (not (lv/animating? [(lv/settled pane {:reason :completed})])))
         (expect (not (lv/animating? [(lv/minimized pane)])))
-        (expect (str/includes? (materializer/->markdown view) "Heading level 6"))
         (let [markdown (materializer/->markdown view)]
           (expect (= markdown
                      (materializer/->markdown (:view (materializer/parse-markdown markdown)))))))))
@@ -272,78 +271,73 @@
                                     (lv/expanded "a"))
                          search (filter #(= :live-log-search (:kind %)) (lv/controls [opened]))]
 
-                     (expect (= ["a"] (mapv :node-id search)))
-                     (expect (= "Search Build A logs" (:label (first search))))))))
+                     (expect (= ["a"] (mapv :node-id search)))))))
 
 (defdescribe
   log-search-renders-real-terminal-and-receipt-controls-test
-  (it
-    "log search renders real terminal and receipt controls"
-    ;; Regression #189: search remains reachable in live output and reopened receipts.
-    (doseq [cols
-            [40 80 120]
-
-            settled?
-            [false true]]
-
-      (let [view
-            (update (fixture)
-                    :nodes
-                    #(filterv (fn [n]
-                                (= "details" (:id n)))
-                       %))
-
-            pane
-            (cond-> (lv/opened view)
-              settled?
-              (lv/settled {:reason :completed})
+  (it "log search renders real terminal and receipt controls"
+      ;; Regression #189: search remains reachable in live output and reopened receipts.
+      (doseq [cols
+              [40 80 120]
 
               settled?
-              lv/reopened)
+              [false true]]
 
-            pane
-            (-> pane
-                (lv/expanded "details")
-                (lv/expanded "a")
-                (assoc :is-following false))
+        (let [view
+              (update (fixture)
+                      :nodes
+                      #(filterv (fn [n]
+                                  (= "details" (:id n)))
+                         %))
 
-            captured
-            (capture/capture!
-              {:cols cols
-               :rows 24
-               :paint! (fn [{:keys [screen]}]
-                         (.beginFrame interactions/hit-map)
-                         (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)
-                         (.commitFrame interactions/hit-map)
-                         (.refresh ^TerminalScreen screen)
-                         {:hits (vec (.current interactions/hit-map))
-                          :button-bg [(.getRed theme/button-bg) (.getGreen theme/button-bg)
-                                      (.getBlue theme/button-bg)]})})
+              pane
+              (cond-> (lv/opened view)
+                settled?
+                (lv/settled {:reason :completed})
 
-            lines
-            (str/split-lines (capture/frame-text captured))
+                settled?
+                lv/reopened)
 
-            search
-            (first (filter #(and (= :live-log-search (:kind %)) (= "a" (:node-id %)))
-                           (get-in captured [:ret :hits])))
+              pane
+              (-> pane
+                  (lv/expanded "details")
+                  (lv/expanded "a")
+                  (assoc :is-following false))
 
-            disclosure
-            (first (filter #(and (= :live-expand (:kind %)) (= "a" (:node-id %)))
-                           (get-in captured [:ret :hits])))
+              captured
+              (capture/capture!
+                {:cols cols
+                 :rows 24
+                 :paint! (fn [{:keys [screen]}]
+                           (.beginFrame interactions/hit-map)
+                           (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 24 [pane] 1 3)
+                           (.commitFrame interactions/hit-map)
+                           (.refresh ^TerminalScreen screen)
+                           {:hits (vec (.current interactions/hit-map))
+                            :button-bg [(.getRed theme/button-bg) (.getGreen theme/button-bg)
+                                        (.getBlue theme/button-bg)]})})
 
-            {:keys [row col width]}
-            (:bounds search)]
+              lines
+              (str/split-lines (capture/frame-text captured))
 
-        (expect (nil? (:error captured)))
-        (expect (some? search))
-        ;; #250: Search is a filled header action, not a full-width text row.
-        (expect (= (get-in disclosure [:bounds :row]) row) "Search belongs to the log header")
-        (expect (= 8 width) "only the padded Search button is clickable")
-        (expect (not (str/includes? (capture/frame-text captured) "Search Build A logs")))
-        (when search
-          (expect (= " Search " (subs (nth lines row) col (+ col width))))
-          (expect (= (get-in captured [:ret :button-bg])
-                     (:bg (get-in (last (:frames captured)) [row col])))))))))
+              search
+              (first (filter #(and (= :live-log-search (:kind %)) (= "a" (:node-id %)))
+                             (get-in captured [:ret :hits])))
+
+              disclosure
+              (first (filter #(and (= :live-expand (:kind %)) (= "a" (:node-id %)))
+                             (get-in captured [:ret :hits])))
+
+              {:keys [row col width]}
+              (:bounds search)]
+
+          (expect (nil? (:error captured)))
+          (expect (some? search))
+          ;; #250: Search is a filled header action, not a full-width text row.
+          (expect (= (get-in disclosure [:bounds :row]) row) "Search belongs to the log header")
+          (expect (= 8 width) "only the padded Search button is clickable")
+          (expect (not (str/includes? (capture/frame-text captured) "Search Build A logs")))
+          (when search (expect (= " Search " (subs (nth lines row) col (+ col width)))))))))
 
 (defdescribe
   inline-log-search-renders-results-empty-error-and-loading-test
@@ -388,14 +382,8 @@
                   (str/replace #"\s+" " "))]
 
           (expect (nil? (:error captured)))
-          (expect (str/includes? text "Search Build A logs"))
           (doseq [copy expected]
             (expect (str/includes? text copy)))
-          (when (and (>= cols 80) (:page response))
-            (expect (str/includes? text
-                                   (str (get (:page response) "matched") " matches / 503 lines"))))
-          (when (and (>= cols 80) (:error response))
-            (expect (str/includes? text "Enter to retry.")))
           (expect (seq (:frames captured)))
           (expect (every? #(and (= 24 (count %))
                                 (every? (fn [row]

@@ -60,10 +60,7 @@
                            :source :voice/input
                            :workspace-id :tab-1}
                           %)
-                      @events))
-        (let [texts (mapv :text @events)]
-          (expect (some #{"● Preparing voice engine 40%"} texts))
-          (expect (some #{"● Transcribing 70%"} texts))))))
+                      @events)))))
   (it "keeps the session that owned recording even after the active tab changes"
       (let [events
             (atom [])

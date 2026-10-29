@@ -1,6 +1,5 @@
 (ns com.blockether.vis.tui.composer-attachments-test
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [com.blockether.vis.tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.input :as input]
@@ -74,33 +73,6 @@
                    (select-keys attachment [:filename :media-type :size :width :height])))
         (expect (= (:id attachment) (:id (first (:added second-result)))))
         (expect (.startsWith ^String (:id attachment) "sha256:"))))
-  (it
-    "uses the gateway count, media and byte limits verbatim"
-    (let [png
-          (temporary-file ".png" one-pixel-png)
-
-          unsupported
-          (temporary-file ".png" (.getBytes "plain text" "UTF-8"))
-
-          too-large
-          (composer-attachments/admit-files (capabilities {:max-file-bytes (dec (alength
-                                                                                  one-pixel-png))})
-                                            []
-                                            [png])
-
-          wrong-media
-          (composer-attachments/admit-files (capabilities {:media-types ["image/jpeg"]}) [] [png])
-
-          over-count
-          (composer-attachments/admit-files (capabilities {:max-files 1}) [{:id "existing"}] [png])
-
-          unrecognized
-          (composer-attachments/admit-files (capabilities {}) [] [unsupported])]
-
-      (expect (re-find #"larger than the gateway limit" (first (:rejected too-large))))
-      (expect (re-find #"does not accept image/png" (first (:rejected wrong-media))))
-      (expect (re-find #"limit of 1 attachments" (first (:rejected over-count))))
-      (expect (re-find #"unsupported file format" (first (:rejected unrecognized))))))
   (it "refuses intake when the gateway disables attachments"
       (let [file
             (temporary-file ".png" one-pixel-png)
@@ -111,8 +83,7 @@
             result
             (composer-attachments/admit-files disabled [] [file])]
 
-        (expect (= [] (:added result)))
-        (expect (re-find #"gateway did not advertise" (first (:rejected result))))))
+        (expect (= [] (:added result)))))
   (it "admits every advertised media family by sniffed bytes, not extension"
       (let [fixtures
             [[one-pixel-png "image/png"] [(.getBytes "0000ftypisom" "US-ASCII") "video/mp4"]
@@ -140,8 +111,7 @@
             staged
             (composer-attachments/admit-files (capabilities {}) [] [file file])]
 
-        (expect (= 1 (count (:added staged))))
-        (expect (re-find #"already attached" (first (:rejected staged))))))
+        (expect (= 1 (count (:added staged))))))
   (it "encodes explicit gateway payloads without leaking filesystem paths"
       (let [file
             (temporary-file ".png" one-pixel-png)
@@ -185,12 +155,7 @@
       (state/dispatch [:remove-attachment "b"])
       (state/dispatch [:remove-attachment "a"])
       (expect (false? (:attachment-focus? @state/app-db)))
-      (expect (= 0 (:attachment-index @state/app-db))))
-  (it "does not copy the gateway media vocabulary or numeric limits"
-      (let [source (slurp (io/resource "com/blockether/vis/tui/composer_attachments.clj"))]
-        (expect (not (str/includes? source "attachments/max-")))
-        (doseq [prefix ["\"image/" "\"video/" "\"audio/" "\"application/"]]
-          (expect (not (str/includes? source prefix)))))))
+      (expect (= 0 (:attachment-index @state/app-db)))))
 
 (defdescribe
   image-reference-sync

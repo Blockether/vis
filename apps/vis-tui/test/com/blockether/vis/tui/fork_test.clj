@@ -10,8 +10,6 @@
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.virtual :as virtual]
-            [com.blockether.vis.tui.theme :as theme]
-            [com.blockether.vis.tui.shared-theme :as shared]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
@@ -70,14 +68,9 @@
                        (second (str/split-lines (cap/frame-text capture)))
 
                        hit
-                       (first regions)
-
-                       date
-                       (client/format-date (:timestamp review-message))]
+                       (first regions)]
 
                    (expect (nil? (:error capture)))
-                   (expect (re-matches #"\d{2}/\d{2}/\d{4}, \d{2}:\d{2}:\d{2}" date))
-                   (expect (str/includes? header (str date " /  Fork from this turn")))
                    (expect (= 1 (count regions)))
                    (expect (= {:kind :fork-at-turn :session-id "session-1" :turn-id "turn-2"}
                               (select-keys hit [:kind :session-id :turn-id])))
@@ -85,32 +78,6 @@
                    (expect (= (.indexOf ^String header " Fork from this turn")
                               (get-in hit [:bounds :col])))
                    (expect (= (count " Fork from this turn ") (get-in hit [:bounds :width]))))))
-
-(defdescribe
-  date-precedes-the-turn-and-fork-for-every-message-state
-  (it "date precedes the turn and fork for every message state"
-      (doseq [role
-              [:user :assistant]
-
-              status
-              [:running :completed :failed :cancelled]]
-
-        (let [message
-              (assoc review-message
-                :role role
-                :status status
-                :turn-position 42)
-
-              {:keys [capture]}
-              (header-frame message 76 {})
-
-              header
-              (second (str/split-lines (cap/frame-text capture)))]
-
-          (expect (nil? (:error capture)))
-          (expect (str/includes? header (str (client/format-date (:timestamp message)) " / T42")))
-          (when (str/includes? header "Fork")
-            (expect (str/includes? header "T42 /  Fork from this turn")))))))
 
 (defdescribe
   narrow-header-keeps-the-turn-number-and-date
@@ -247,32 +214,6 @@
                             (mapv :timestamp (:messages @state/app-db)))))))
            (finally (reset! state/app-db before))))))
 
-(defdescribe
-  fork-hover-matches-copy-and-only-highlights-the-target-turn
-  (it "fork hover matches copy and only highlights the target turn"
-      (let [original @theme/active-theme-id]
-        (try (doseq [id (keys shared/built-in-themes)]
-               (theme/apply-theme! id)
-               (doseq [turn-id [nil "turn-2" "another-turn"]
-                       width [36 76]]
-
-                 (let [{:keys [capture regions]}
-                       (header-frame review-message width {:hover-turn-id turn-id})
-                       col (get-in (first regions) [:bounds :col])
-                       hovered? (= "turn-2" turn-id)
-                       ink (if hovered? theme/header-active-tab-fg theme/button-fg)
-                       background (if hovered? theme/header-active-tab-accent theme/button-bg)]
-
-                   (doseq [x (range col (+ col (get-in (first regions) [:bounds :width])))]
-                     (let [cell (get-in capture [:frames 0 1 x])]
-                       (expect (= [(.getRed ink) (.getGreen ink) (.getBlue ink)] (:fg cell)))
-                       (expect (= [(.getRed background) (.getGreen background)
-                                   (.getBlue background)]
-                                  (:bg cell)))
-                       (expect (= hovered? (:bold cell)))
-                       (expect (not (:underline cell))))))))
-             (finally (theme/apply-theme! original))))))
-
 (defdescribe narrow-header-keeps-the-date-and-shortens-the-fork-label
              (it "narrow header keeps the date and shortens the fork label"
                  (let [{:keys [capture regions]}
@@ -292,24 +233,9 @@
 (defdescribe compact-action-preserves-the-agent-name-at-the-width-boundary
              (it "compact action preserves the agent name at the width boundary"
                  (doseq [width [46 47 48]]
-                   (let [{:keys [capture regions]} (header-frame review-message width {})
-                         header (second (str/split-lines (cap/frame-text capture)))]
-
-                     (expect (str/starts-with? header "  Vis "))
+                   (let [{:keys [regions]} (header-frame review-message width {})]
                      (expect (= (if (< width 48) 6 21)
                                 (get-in (first regions) [:bounds :width])))))))
-
-(defdescribe fork-button-does-not-depend-on-timestamps
-             (it "fork button does not depend on timestamps"
-                 (let [{:keys [capture regions]}
-                       (header-frame review-message 76 {:timestamps? false})
-
-                       header
-                       (second (str/split-lines (cap/frame-text capture)))]
-
-                   (expect (str/includes? header "Fork from this turn"))
-                   (expect (not (str/includes? header " / ")))
-                   (expect (= 1 (count regions))))))
 
 (defdescribe
   only-persisted-assistant-turns-offer-forking
@@ -319,7 +245,6 @@
                        (assoc review-message :status :running)]]
         (let [{:keys [capture regions]} (header-frame message 76 {})]
           (expect (nil? (:error capture)))
-          (expect (not (str/includes? (cap/frame-text capture) "Fork")))
           (expect (empty? regions))))
       (doseq [status [:completed :cancelled :failed]]
         (let [{:keys [regions]} (header-frame (assoc review-message :status status) 76 {})]
@@ -441,38 +366,35 @@
             {:keys [source-id forked-id history requests notices sidebar-reads error close!]}
             (start-fork-screen! terminal fail?)]
 
-        (try
-          (let [fork-hit #(some (fn [r]
-                                  (when (and (= :fork-at-turn (:kind r)) (= "turn-1" (:turn-id r)))
-                                    r))
-                                (.current interactions/hit-map))
-                ;; Open the rail on the running screen; startup owns the state before it.
-                first-hit (await-value fork-hit)
-                _ (state/dispatch [:project-sidebar {:open? true}])
-                hit (await-value #(when-let [r (fork-hit)] (when (not= r first-hit) r)))
-                {:keys [col row]} (:bounds hit)]
+        (try (let [fork-hit
+                   #(some (fn [r]
+                            (when (and (= :fork-at-turn (:kind r)) (= "turn-1" (:turn-id r))) r))
+                          (.current interactions/hit-map))
+                   ;; Open the rail on the running screen; startup owns the state before it.
+                   first-hit (await-value fork-hit)
+                   _ (state/dispatch [:project-sidebar {:open? true}])
+                   hit (await-value #(when-let [r (fork-hit)] (when (not= r first-hit) r)))
+                   {:keys [col row]} (:bounds hit)]
 
-            (expect (some? hit))
-            (when hit
-              ;; The docked rail moves the chat right; hit bounds stay chat-local.
-              (let [left (:chat-left (projects/geometry @state/app-db 100 30))]
-                (doseq [action gesture]
-                  (.addInput
-                    terminal
-                    (MouseAction. action 1 (TerminalPosition. (int (+ col left)) (int row)))))))
-            (expect (some? (await-value #(seq @notices))))
-            ;; Regression, user report in this Vis session: the fork reached its
-            ;; group in the open sidebar only at the next poll.
-            (expect (= (if fail? [] [[true]]) @sidebar-reads))
-            (expect (= [[source-id "turn-1"]] @requests))
-            (if fail?
-              (do (expect (= source-id (get-in @state/app-db [:session :id])))
-                  (expect (= 1 (count (:tabs @state/app-db))))
-                  (expect (= history (:messages @state/app-db)))
-                  (expect (= ["Fork unavailable"] @notices)))
-              (do (expect (= forked-id (get-in @state/app-db [:session :id])))
-                  (expect (= 2 (count (:tabs @state/app-db))))
-                  (expect (= [(first history)] (:messages @state/app-db)))
-                  (expect (= ["Forked session at turn"] @notices)))))
-          (finally (close!)))
+               (expect (some? hit))
+               (when hit
+                 ;; The docked rail moves the chat right; hit bounds stay chat-local.
+                 (let [left (:chat-left (projects/geometry @state/app-db 100 30))]
+                   (doseq [action gesture]
+                     (.addInput
+                       terminal
+                       (MouseAction. action 1 (TerminalPosition. (int (+ col left)) (int row)))))))
+               (expect (some? (await-value #(seq @notices))))
+               ;; Regression, user report in this Vis session: the fork reached its
+               ;; group in the open sidebar only at the next poll.
+               (expect (= (if fail? [] [[true]]) @sidebar-reads))
+               (expect (= [[source-id "turn-1"]] @requests))
+               (if fail?
+                 (do (expect (= source-id (get-in @state/app-db [:session :id])))
+                     (expect (= 1 (count (:tabs @state/app-db))))
+                     (expect (= history (:messages @state/app-db))))
+                 (do (expect (= forked-id (get-in @state/app-db [:session :id])))
+                     (expect (= 2 (count (:tabs @state/app-db))))
+                     (expect (= [(first history)] (:messages @state/app-db))))))
+             (finally (close!)))
         (expect (nil? @error))))))

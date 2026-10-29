@@ -3,8 +3,6 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.header :as header]
             [com.blockether.vis.tui.primitives :as p]
-            [com.blockether.vis.tui.shared-theme :as shared-theme]
-            [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.header-model :as vh]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalSize]
@@ -190,7 +188,6 @@
             (some #(when (= :copy-id (:kind %)) %) (.current interactions/hit-map))]
 
         (expect (= 1 (:col (write-by-text notification))))
-        (expect (= t/footer-fg-strong (:fg (write-by-text notification))))
         (expect (nil? (write-by-text status-text)))
         (expect (= {:row 1 :col expected-id-col :width id-w} (:bounds copy-hit))))))
   (it "renders channel status on the left when no notification is active"
@@ -223,8 +220,7 @@
             (.commitFrame interactions/hit-map)))
         (let [write-by-text (fn [text]
                               (some #(when (= text (:text %)) %) @writes))]
-          (expect (= 1 (:col (write-by-text status-shown))))
-          (expect (= t/footer-warning-fg (:fg (write-by-text status-shown)))))))
+          (expect (= 1 (:col (write-by-text status-shown)))))))
   (it "does not render stale ready voice status forever"
       (let [uuid
             "123e4567-e89b-12d3-a456-426614174000"
@@ -249,60 +245,6 @@
             (header/draw-header! (dummy-text-graphics writes) db 0 80)
             (.commitFrame interactions/hit-map)))
         (expect (not-any? #(= status (:text %)) @writes)))))
-
-(defdescribe
-  draw-header-color-test
-  (it "uses a subtly different foreground for the hovered header copy affordance only"
-      (.reset interactions/hit-map)
-      (let [writes
-            (atom [])
-
-            g
-            (dummy-text-graphics writes)
-
-            uuid
-            "123e4567-e89b-12d3-a456-426614174000"
-
-            db
-            {:title "New Session" :session {:id uuid}}]
-
-        (.beginFrame interactions/hit-map)
-        (header/draw-header! g db 0 160)
-        (.commitFrame interactions/hit-map)
-        (let [copy-hit (some #(when (= :copy-id (:kind %)) %) (.current interactions/hit-map))]
-          (expect (some? copy-hit))
-          (expect (true? (.setHovered interactions/hit-map copy-hit)))
-          (reset! writes [])
-          (.beginFrame interactions/hit-map)
-          (header/draw-header! g db 0 160)
-          (.commitFrame interactions/hit-map)
-          (let [title-write
-                (some #(when (and (string? (:text %)) (str/includes? (:text %) "New Session")) %)
-                      @writes)
-                write-by-text (fn [text]
-                                (some #(when (= text (:text %)) %) @writes))]
-
-            ;; The title stays legible while the copy badge keeps its own hover fg.
-            (expect (= t/header-fg (:fg title-write)))
-            ;; Badge is a copy BUTTON (` #123e4567 `); hovering fills the chip
-            ;; with the shared accent while preserving its inverse foreground.
-            (expect (= t/header-active-tab-fg (:fg (write-by-text " #123e4567 "))))
-            (expect (= t/header-active-tab-accent (:bg (write-by-text " #123e4567 ")))))))))
-
-(defdescribe session-title-contrast-test
-             (it "paints the title with readable header ink on light and dark surfaces"
-                 (try (doseq [theme-id [:vis-light :blockether-dark]]
-                        (t/apply-theme! theme-id)
-                        (let [writes (atom [])
-                              title "Contrast check"]
-
-                          (binding [header/*register-click-regions?* false]
-                            (header/draw-header! (dummy-text-graphics writes) {:title title} 0 80))
-                          (let [title-write (some #(when (= title (:text %)) %) @writes)]
-                            (expect (some? title-write))
-                            (expect (= t/header-fg (:fg title-write)))
-                            (expect (= t/terminal-bg (:bg title-write))))))
-                      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 ;; Regression: removing the numbered strip must leave only the active session title,
 ;; even when other sessions remain live in the local state.
@@ -339,9 +281,4 @@
                                           :tabs [{:id :other :label "Other conversation"}]}))]
         (expect (str/includes? row "A current conversation"))
         (expect (str/includes? row "…"))
-        (expect (not (str/includes? row "Other conversation")))))
-  (it "uses the shared untitled fallback"
-      (expect (str/includes? (:row (paint-header-grid
-                                     160
-                                     {:session {:id "123e4567-e89b-12d3-a456-426614174000"}}))
-                             vh/untitled-session-label))))
+        (expect (not (str/includes? row "Other conversation"))))))

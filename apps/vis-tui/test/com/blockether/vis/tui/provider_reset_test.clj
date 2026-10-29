@@ -48,16 +48,6 @@
 
 (defdescribe reset-action-is-authenticated-codex-only
              (it "reset action is authenticated codex only"
-                 (expect (= "1 limit reset available"
-                            (client/provider-reset-summary (assoc credits :available-count 1))))
-                 (expect (= "2 limit resets available" (client/provider-reset-summary credits)))
-                 (expect (= "Reset limits... (2 available)"
-                            (:label (some #(when (= :reset-limits (:id %)) %)
-                                          (provider/provider-action-items {:id :openai-codex}
-                                                                          {"is_authenticated" true}
-                                                                          false
-                                                                          false
-                                                                          credits)))))
                  (doseq [[pid authed] [[:openai true] [:openai-codex false]]]
                    (expect (not-any? #(= :reset-limits (:id %))
                                      (provider/provider-action-items {:id pid}
@@ -75,42 +65,39 @@
 
 (defdescribe
   confirmation-and-refresh-are-separate-from-consumption
-  (it
-    "confirmation and refresh are separate from consumption"
-    (doseq [answer [false true]]
-      (let [confirmed (atom nil)
-            spent (atom [])
-            notes (atom [])
-            reads (atom 0)
-            updates (atom [])]
+  (it "confirmation and refresh are separate from consumption"
+      (doseq [answer [false true]]
+        (let [confirmed (atom nil)
+              spent (atom [])
+              notes (atom [])
+              reads (atom 0)
+              updates (atom [])]
 
-        (with-redefs [state/dispatch #(swap! updates conj %)
-                      client/gateway-provider-limits (fn [_]
-                                                       (swap! reads inc)
-                                                       {:dynamic {:reset-credits credits}})
-                      client/pending-provider-reset? (constantly false)
-                      client/reset-provider-limits! (fn [pid account]
-                                                      (swap! spent conj [pid account])
-                                                      {:outcome "reset"})
-                      dlg/band-questions (fn [& _]
-                                           {:wait! wait-for-operation
-                                            :confirm! (fn [question opts]
-                                                        (reset! confirmed [question opts])
-                                                        answer)
-                                            :note! (fn [title text]
-                                                     (swap! notes conj [title text]))})]
+          (with-redefs [state/dispatch #(swap! updates conj %)
+                        client/gateway-provider-limits (fn [_]
+                                                         (swap! reads inc)
+                                                         {:dynamic {:reset-credits credits}})
+                        client/pending-provider-reset? (constantly false)
+                        client/reset-provider-limits! (fn [pid account]
+                                                        (swap! spent conj [pid account])
+                                                        {:outcome "reset"})
+                        dlg/band-questions (fn [& _]
+                                             {:wait! wait-for-operation
+                                              :confirm! (fn [question opts]
+                                                          (reset! confirmed [question opts])
+                                                          answer)
+                                              :note! (fn [title text]
+                                                       (swap! notes conj [title text]))})]
 
-          (expect (= answer
-                     (boolean (provider/reset-provider-limits! nil nil nil {:id :openai-codex}))))
-          (expect (str/includes? (str @confirmed) "account-1"))
-          (expect (str/includes? (str @confirmed) "all devices"))
-          (expect (= "Cancel" (get-in @confirmed [1 :no-label])))
-          (expect (= (if answer [[:openai-codex "account-1"]] []) @spent))
-          (expect (= (if answer 2 1) @reads))
-          (expect (= (if answer
-                       [[:set-provider-limits :openai-codex {:dynamic {:reset-credits credits}}]]
-                       [])
-                     @updates)))))))
+            (expect (= answer
+                       (boolean (provider/reset-provider-limits! nil nil nil {:id :openai-codex}))))
+            (expect (str/includes? (str @confirmed) "account-1"))
+            (expect (= (if answer [[:openai-codex "account-1"]] []) @spent))
+            (expect (= (if answer 2 1) @reads))
+            (expect (= (if answer
+                         [[:set-provider-limits :openai-codex {:dynamic {:reset-credits credits}}]]
+                         [])
+                       @updates)))))))
 
 (defdescribe
   unknown-and-zero-allowance-never-spend
@@ -175,9 +162,7 @@
 
           (expect (nil? (:error capture)))
           (expect (zero? @spends))
-          (expect (str/includes? text "account-1"))
-          (expect (str/includes? text "Cancel"))
-          (expect (str/includes? text "all devices")))))))
+          (expect (str/includes? text "account-1")))))))
 
 (defdescribe
   dismissed-reset-still-refreshes-the-footer

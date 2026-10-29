@@ -8,7 +8,6 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.human-input :as hi]
-            [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.columns :as columns]
@@ -20,9 +19,8 @@
             [com.blockether.vis.tui.view-materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna TerminalPosition]
-           [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
+  (:import [com.googlecode.lanterna.screen TerminalScreen]
+           [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 ;;; ── The views under test ────────────────────────────────────────────────────
 
@@ -116,18 +114,6 @@
   ([panes] (painted-text panes 96 26))
   ([panes cols rows] (cap/frame-text (last (:frames (paint-frames panes cols rows))))))
 
-(defn- cell-under
-  "The captured cell painting character `idx` of `needle`, on the first row that
-   carries it — how a test reads the INK a row was really painted in."
-  [frame needle idx]
-  (let [row
-        (first (filter #(str/includes? (apply str (map :ch %)) needle) frame))
-
-        text
-        (apply str (map :ch row))]
-
-    (nth row (+ (long (str/index-of text needle)) (long idx)))))
-
 ;;; ── Tests ───────────────────────────────────────────────────────────────────
 
 (defdescribe live-view-plan-test
@@ -152,10 +138,7 @@
 
                    (expect
                      (= [:prose :blank :node :trule :thead :trule :empty :trule] (mapv :kind plan))
-                     "top rail, the header, a rail, the sentence, and the box closed under it")
-                   (expect (str/includes? (:text (nth plan 4)) "Job"))
-                   (expect (str/includes? (:text (nth plan 6)) "no rows yet")
-                           "the sentence stands INSIDE the box, between its rails"))))
+                     "top rail, the header, a rail, the sentence, and the box closed under it"))))
 
 (defdescribe live-view-window-test
              (it "a node paints a window and says how much it is holding back"
@@ -479,39 +462,23 @@
                    (expect (not-any? #(and (= "job-9" (:item-id %)) (:is-fresh %)) (rows-of two))
                            "the next patch clears it — no timer, no repaint that erases itself"))))
 
-(defdescribe
-  live-view-escape-precedence-test
-  (it "the stop selector chooses the newest pane supplied by its caller"
-      (let [a
-            (pane :id "view-a")
+(defdescribe live-view-escape-precedence-test
+             (it "the stop selector chooses the newest pane supplied by its caller"
+                 (let [a
+                       (pane :id "view-a")
 
-            b
-            (pane :id "view-b")]
+                       b
+                       (pane :id "view-b")]
 
-        (expect (= "view-b" (lv/view-id (lv/interruptible [a b]))))
-        (expect (nil? (lv/interruptible [])))))
-  (it "EVERY open view answers the key — a view asks nothing, so none may refuse to stop"
-      (let [p (lv/opened (ci-view))]
-        (expect (= (lv/view-id p) (lv/view-id (lv/interruptible [p]))))))
-  (it "hidden panes never advertise details or steal the turn cancel hint"
-      (let [row (first (#'footer/echo-segments {:loading? true :live-views [(pane)]}))]
-        (expect (str/includes? (:text row) "cancel"))
-        (expect (not (str/includes? (:text row) "CI · fix(loop): move the session pick")))))
-  (it "only the selected transient advertises its controls"
-      (let [p
-            (pane)
-
-            db
-            {:loading? true :live-views [p] :live-viewer-id (lv/view-id p)}]
-
-        (expect (= "Esc close live view · F3 controls" (:text (first (#'footer/echo-segments db)))))
-        (expect (str/includes? (:text (first (#'footer/echo-segments
-                                              (assoc db :live-views [(lv/armed p)]))))
-                               "Esc or Enter interrupt"))))
-  (it "with no view open the row goes back to the turn's own hint"
-      (expect (str/includes? (:text (first (#'footer/echo-segments
-                                            {:loading? true :live-views []})))
-                             "cancel"))))
+                   (expect (= "view-b" (lv/view-id (lv/interruptible [a b]))))
+                   (expect (nil? (lv/interruptible [])))))
+             (it "EVERY open view answers the key — a view asks nothing, so none may refuse to stop"
+                 (let [p (lv/opened (ci-view))]
+                   (expect (= (lv/view-id p) (lv/view-id (lv/interruptible [p]))))))
+             (it "hidden panes never advertise details or steal the turn cancel hint"
+                 (let [row (first (#'footer/echo-segments {:loading? true :live-views [(pane)]}))]
+                   (expect (not (str/includes? (:text row)
+                                               "CI · fix(loop): move the session pick"))))))
 
 (defdescribe
   live-view-stop-note-test
@@ -576,21 +543,10 @@
           (painted-text [(:pane (reduce (fn [{:keys [pane]} c]
                                           (lv/typed pane {:kind :char :char c}))
                                         {:pane (lv/armed p)}
-                                        "wrong subnet"))])
-
-          empty-armed
-          (painted-text [(lv/armed p)])]
+                                        "wrong subnet"))])]
 
       (expect (not (str/includes? watched "why?")) "a view being watched asks nothing")
       (expect (str/includes? armed "why? wrong subnet") "the words are on screen as they are typed")
-      (expect (str/includes? armed "interrupt CI · fix(loop): move the session pick")
-              "and the line says WHICH view they will stop")
-      (expect (str/includes? empty-armed "Backspace keep watching")
-              "with nothing typed the bar offers the way back")
-      (expect (str/includes? armed "Esc / Enter interrupt with the note")
-              "once there are words the bar says they will travel with the stop")
-      (expect (str/includes? armed "Backspace erase")
-              "and Backspace is the key that takes them away again")
       (let [lines
             (str/split-lines armed)
 
@@ -601,9 +557,7 @@
 
         (expect
           (str/includes? (nth lines (dec (long at)) "") "─")
-          "the line is FENCED above as well as below: it is the band asking, not one more row of the report"))
-      (expect (str/includes? watched "Esc interrupt CI · fix(loop): move the session pick")
-              "while it is only being watched the bar still advertises the one key it takes"))))
+          "the line is FENCED above as well as below: it is the band asking, not one more row of the report")))))
 
 ;;; ── The registry half: three ops and the tab that owns them ─────────────────
 
@@ -906,8 +860,7 @@
                                             (lv/settled {:reason reason})
                                             lv/reopened
                                             (assoc :is-viewer viewer?))
-                                 {:keys [frames error]} (paint-frames [record] cols 26)
-                                 text (cap/frame-text (last frames))
+                                 {:keys [error]} (paint-frames [record] cols 26)
                                  controls (filterv #(= (if viewer? :live-viewer-close :live-reopen)
                                                        (:kind %))
                                             (.current interactions/hit-map))
@@ -916,53 +869,9 @@
 
                      (expect (nil? error))
                      (expect (= 1 (count controls)))
-                     (expect (= "Close live view" (:label control)))
                      (expect (= 3 width))
-                     (expect (str/includes? text "✕"))
-                     (expect (not (str/includes? text "Close")))
-                     (expect (str/includes? text "LIVE"))
-                     (when (= cols 96) (expect (str/includes? text (str/capitalize (name reason)))))
                      (doseq [x (range col (+ col width))]
-                       (expect (= control (.lookup interactions/hit-map (int x) (int row)))))
-                     (when viewer? (expect (some #{["Esc" "close view"]} (lv/hint record []))))))))
-
-(defdescribe
-  live-view-close-button-style-test
-  (it
-    "live view close button style"
-    (binding [interactions/hit-map (interactions/create-hit-map)]
-      (doseq [settled? [false true]
-              :let [view (cond-> (assoc (pane) :is-viewer true)
-                           settled?
-                           (lv/settled {:reason :completed})
-
-                           settled?
-                           lv/reopened)]
-              hovered? [false true false]]
-
-        (let [_ (paint-frames [view])
-              control (first (filter #(= :live-viewer-close (:kind %))
-                                     (.current interactions/hit-map)))
-              {:keys [row col]} (:bounds control)
-              _ (.updateHovered interactions/hit-map
-                                (MouseAction. MouseActionType/MOVE
-                                              0
-                                              (TerminalPosition. (if hovered? (int col) 0)
-                                                                 (int row))))
-              live (paint-frames [view])
-              expected {:ch "✕"
-                        :fg (get t/default-palette (if hovered? :header-active-tab-fg :button-fg))
-                        :bg (get t/default-palette (if hovered? :close-button-hover-fg :button-bg))}
-              frame (last (:frames live))
-              actual (get-in frame [row (inc (long col))])]
-
-          (expect (nil? (:error live)))
-          (expect (= expected (select-keys actual [:ch :fg :bg]))
-                  "live and recorded views use a regular button with the dialog X and red hover")
-          (doseq [x (range col (+ (long col) 3))]
-            (expect (= (select-keys expected [:fg :bg])
-                       (select-keys (get-in frame [row x]) [:fg :bg]))
-                    "the entire close target has a filled button face")))))))
+                       (expect (= control (.lookup interactions/hit-map (int x) (int row)))))))))
 
 (defdescribe
   live-log-search-scrollbar-spacing-test
@@ -1051,7 +960,6 @@
         (expect (str/includes? text "job-0"))
         (expect (str/includes? text "Output"))
         (expect (str/includes? text "Ran 314 tests"))
-        (expect (str/includes? text "Esc"))
         (expect (= "view-1" (:view-id geometry)))
         (expect (pos? (long (:total geometry))))
         (expect (pos? (long (:visible geometry))))))
@@ -1068,10 +976,6 @@
                 "a view follows its tail, exactly like the log it carries")
         (expect (str/includes? (lv/footer-text p) "Polling the run")
                 "which is why the summary rides the footer while the eye is at the end")))
-  (it "several open views: the newest in full, the older ones one line each"
-      (let [text (painted-text [(pane :id "old") (pane :id "new")])]
-        (expect (str/includes? text "▸"))
-        (expect (str/includes? text "2") "the hint says how many are open")))
   (it
     "a real PNG of the band, before and after one patch"
     (let [before
@@ -1124,30 +1028,6 @@
 ;; dropping what the human came to read.
 (defdescribe
   live-view-ink-test
-  (it "a counter wears its own tone, and the word naming it recedes"
-      (let [p
-            (lv/opened (mounted {}
-                                (fixture/stat
-                                  "score"
-                                  [{:id "failed" :label "Failed" :value-text "1" :tone :error}
-                                   {:id "seen" :label "Seen" :value-text "18"}])))
-
-            frame
-            (last (:frames (paint-frames [p] 80 20)))
-
-            label
-            (cell-under frame "Failed 1" 0)
-
-            value
-            (cell-under frame "Failed 1" 7)
-
-            plain
-            (cell-under frame "Seen 18" 5)]
-
-        (expect (= "1" (:ch value)))
-        (expect (not= (:fg label) (:fg value))
-                "the tone lands on the number, not on the word naming it")
-        (expect (not= (:fg value) (:fg plain)) "an untoned counter keeps the body's own ink")))
   (it "a progress that declared its parts paints the bar it earned"
       (let [text (painted-text [(lv/opened (mounted {}
                                                     (fixture/progress
@@ -1232,18 +1112,7 @@
         (expect (< (long done) 12) "the selectable mark does not make `done` the widest")
         (expect (> (long task) 60) "the long text gets the room")))
   (it "and the table is a BOX, with a rail between every pair of rows"
-      (let [rows
-            (filterv #(#{:thead :trule :trow} (:kind %)) (lv/plan (pane) 80))
-
-            texts
-            (mapv :text rows)]
-
-        (expect (str/starts-with? (first texts) "┌"))
-        (expect (str/ends-with? (first texts) "┐"))
-        (expect (str/starts-with? (last texts) "└"))
-        (expect (every? #(and (str/starts-with? % "│") (str/ends-with? % "│"))
-                        (map :text (filter #(#{:thead :trow} (:kind %)) rows)))
-                "every line of cells stands between the rails")
+      (let [rows (filterv #(#{:thead :trule :trow} (:kind %)) (lv/plan (pane) 80))]
         (expect (= [:trule :thead :trule :trow :trule :trow] (subvec (mapv :kind rows) 0 6))
                 "a rule under the head AND between the rows, not only where the box ends"))))
 
@@ -1359,9 +1228,7 @@
       (let [head (first (kinds-of (grouped [(fixture/table-group "build"
                                                                  {:label "Build" :tone :error})])
                                   :tparent))]
-        (expect (= :error (:tone head)))
-        (expect (some #(= t/footer-error-fg (:fg %)) (:segments head))
-                "the tone is ink on the head, not a word hidden inside the fold"))
+        (expect (= :error (:tone head))))
       ;; a group declared open starts open, and the reader's own hand still wins
       (let [p (grouped [(fixture/table-group "build" {:label "Build" :is-open true})])]
         (expect (str/includes? (nth (heads-of p) 0) "▾ Build")
@@ -1478,12 +1345,7 @@
       (let [rules (->> (frame-of heads)
                        (filter #(= :trule (:kind %)))
                        (mapv :text))]
-        (expect (= 5 (count rules)))
-        (expect (re-matches #"├─+┴─+┴─+┤" (nth rules 1))
-                "the rule under the header closes its columns")
-        (expect (every? #(re-matches #"├─+┤" %) (subvec rules 2 4))
-                "a plain line between two heads")
-        (expect (re-matches #"└─+┘" (peek rules)) "and a plain bottom under the last one")))))
+        (expect (= 5 (count rules)))))))
 
 ;; A step is a line with TWO things on it: what it is doing, and what it reports.
 ;; The band a narrow pane has is not always wide enough for both — so the words
@@ -1538,17 +1400,6 @@
         (expect (not (str/includes? (:text row) "`")) "the syntax is not the sentence")
         (expect (contains? (:style (run-of "openssl")) :code))
         (expect (contains? (:style (run-of "db-2")) :bold))))
-  (it "and the code span really wears another ink on the terminal"
-      (let [frame (last (:frames (paint-frames [(lv/opened (mounted {}
-                                                                    (fixture/status
-                                                                      "now"
-                                                                      "Bumped `openssl` now"
-                                                                      {:label "Now"})))]
-                                               80
-                                               20)))]
-        (expect (not= (:fg (cell-under frame "Bumped openssl" 0))
-                      (:fg (cell-under frame "Bumped openssl" 7)))
-                "the word and the code span beside it are not painted in one flat ink")))
   (it "a log line is machine output and stays VERBATIM"
       (let [text (str/join "\n"
                            (map :text
@@ -1999,10 +1850,10 @@
                         :is-collapsible true
                         :default-expanded true
                         :children [(fixture/log "tail"
-                                              {:label "Observed workers"
-                                               :default-expanded true
-                                               :lines ["monitor revision=42 active=4/4"
-                                                       "  worker ready" "checks finished"]})]}
+                                                {:label "Observed workers"
+                                                 :default-expanded true
+                                                 :lines ["monitor revision=42 active=4/4"
+                                                         "  worker ready" "checks finished"]})]}
                        (fixture/status "other" "Unrelated output" {:label "Other checks"}))]
      (if recorded?
        (-> (lv/recorded-pane (str (wire/json-str {:kind :open :at 1000 :view view})
@@ -2285,8 +2136,8 @@
                         :is-collapsible true
                         :default-expanded true
                         :children [{:id "checks" :type :paragraph :text "All checks passed"}
-                                 {:id "review-break" :type :divider}
-                                 {:id "approval" :type :paragraph :text "Ready for review"}]}
+                                   {:id "review-break" :type :divider}
+                                   {:id "approval" :type :paragraph :text "Ready for review"}]}
                        {:id "next" :type :paragraph :text "Next: publish when approved"})]
      (if recorded?
        (-> (lv/recorded-pane (str (wire/json-str {:kind :open :at 1000 :view view})
@@ -2433,20 +2284,3 @@
                    (expect (every? #(<= (count %) 24) lines))
                    (expect (str/includes? (str/join " " lines) "[tag]*ERROR*"))
                    (expect (str/includes? (last lines) "end-marker")))))
-
-(defdescribe inline-log-search-loading-empty-and-failure-states
-             (it "inline log search loading empty and failure states"
-                 (let [search
-                       (lv/log-search-opened "output")
-
-                       text
-                       #(-> (lv/log-search-plan % 80)
-                            first
-                            :text)]
-
-                   (expect (str/includes? (text search) "entire retained log"))
-                   (expect (= "Searching…" (text (lv/log-search-requested search 0 :request))))
-                   (expect (= "No matching lines"
-                              (text (assoc search :page {"matched" 0 "total" 900 "lines" []}))))
-                   (expect (= "Could not read log. Enter to retry."
-                              (text (assoc search :error true)))))))

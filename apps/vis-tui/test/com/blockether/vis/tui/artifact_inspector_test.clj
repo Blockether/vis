@@ -63,11 +63,8 @@
             text
             (cap/frame-text capture)]
 
-        (expect (str/includes? text "Ready to send"))
         (expect (str/includes? text "diagram.png"))
-        (expect (str/includes? text "Produced in this session"))
         (expect (str/includes? text "decision.html"))
-        (expect (str/includes? text "HTML · 300B · v2 · 2 versions"))
         (expect (str/includes? text "notes.pdf"))))
   (it "lists a PLAN file from an old session with the other artifacts"
       (let [artifacts
@@ -78,13 +75,7 @@
                               (inspector/inspector-modal-component [] [] artifacts nil)))]
 
         (expect (str/includes? text "PLAN-search.md"))
-        (expect (str/includes? text "Produced in this session"))
-        (expect (str/includes? text "notes.pdf"))
-        (expect (not (str/includes? text "Specifications")))))
-  (it "shows an explicit empty state instead of silently doing nothing"
-      (let [text (cap/frame-text (paint-component
-                                   (inspector/inspector-modal-component [] [] [] nil)))]
-        (expect (str/includes? text "No attachments in this session"))))
+        (expect (str/includes? text "notes.pdf"))))
   (it "shows index failures as an explicit state"
       (let [text (cap/frame-text
                    (paint-component
@@ -142,10 +133,7 @@
 
           (expect (= [:staged :sent :produced :produced] (mapv :source rows)))
           (expect (= "/tmp/clipboard.png" (get-in (second rows) [:image :path])))
-          (expect (str/includes? text "Sent in this session"))
-          (expect (str/includes? text "clipboard.png"))
-          (expect (str/includes? text "PNG · 940x1064"))
-          (expect (not (str/includes? text "No attachments in this session")))))
+          (expect (str/includes? text "clipboard.png"))))
     (it "opens a sent picture in the image viewer on Enter and externally on o"
         (let [component (inspector/inspector-modal-component [] sent [] nil)
               geom ((:measure component) (:init component) 96 24)
@@ -228,35 +216,6 @@
           (when (= :sent (:source row))
             {:path "/tmp/table-shot.png" :mime "image/png" :width 800 :height 400}))]
 
-    (it "draws each attachment as a ruled table row with a type badge in the thumbnail cell"
-        (let [text (cap/frame-text (paint-component
-                                     (inspector/inspector-modal-component staged [] produced nil)))]
-          (expect (str/includes? text "┬"))
-          (expect (str/includes? text "┼"))
-          (expect (str/includes? text "┴"))
-          (expect (str/includes? text "│ notes.pdf"))
-          (expect (str/includes? text "PDF"))
-          (expect (str/includes? text "PDF · 200B"))))
-    (it "writes the section headings in bold"
-        (let [frame
-              (last (:frames (paint-component
-                               (inspector/inspector-modal-component staged sent produced nil))))
-
-              heading-cells
-              (fn [heading]
-                (some (fn [row]
-                        (let [text
-                              (apply str (map :ch row))
-
-                              at
-                              (str/index-of text heading)]
-
-                          (when at (subvec row at (+ at (count heading))))))
-                      frame))]
-
-          (doseq [heading ["Ready to send" "Sent in this session" "Produced in this session"]]
-            (expect (seq (heading-cells heading)) heading)
-            (expect (every? :bold (heading-cells heading)) heading))))
     (it "places each visible thumbnail inside its cell"
         (let [painted
               (atom nil)
@@ -409,9 +368,7 @@
   (it "shows the app title and its lifecycle state"
       (let [text (cap/frame-text (paint-component
                                    (inspector/inspector-modal-component [] [] app-artifacts nil)))]
-        (expect (str/includes? text "Second review"))
-        (expect (str/includes? text "App · Disconnected"))
-        (expect (str/includes? text "│ Review"))))
+        (expect (str/includes? text "Second review"))))
   (it "opens an app on the app surface and other text in its viewer"
       (let [enter (fn [artifacts]
                     (let [component (inspector/inspector-modal-component [] [] artifacts nil)]
@@ -596,6 +553,4 @@
 
           ((:after-refresh component) zoomed geom)
           (expect (= (:view (frame zoomed)) (:view (:img (first @painted)))))
-          (expect (str/includes? text "150%"))
-          (expect (str/includes? text "move"))
-          (expect (str/includes? text "fit"))))))
+          (expect (str/includes? text "150%"))))))

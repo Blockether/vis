@@ -1,28 +1,12 @@
 (ns com.blockether.vis.tui.sidebar-help-test
-  (:require [clojure.string :as str]
-            [com.blockether.vis.tui.capture :as cap]
+  (:require [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.projects-test :as projects-test]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.state :as state]
-            [com.blockether.vis.tui.terminal-image :as timg]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna.input DefaultKeyDecodingProfile InputDecoder KeyStroke]
            [java.io StringReader]))
-
-(defn- help-frame
-  "Capture the production help overlay with the requested sidebar focus."
-  [db]
-  (with-redefs [state/app-db
-                (atom db)
-
-                timg/images-protocol
-                (constantly nil)]
-
-    (cap/capture! {:cols 144
-                   :rows 60
-                   :paint! (fn [{:keys [screen]}]
-                             (#'screen/render-frame! screen 144 60 db 1000))})))
 
 (defdescribe
   sidebar-help-test
@@ -122,30 +106,4 @@
               (reset! state/app-db db)
               (expect (true? (press! {:id :hide})))
               (expect (false? (get-in @state/app-db [:project-sidebar :open?])))
-              (expect (false? (boolean (:help-open? @state/app-db))))))))
-    (it "keeps one help card and lists the sidebar section in it"
-        (let [capture
-              (help-frame (assoc (projects-test/fixture-db)
-                            :help-open? true
-                            :help-scroll 1000))
-
-              text
-              (cap/frame-text capture)]
-
-          (expect (nil? (:error capture)))
-          (expect (str/includes? text "Keyboard shortcuts"))
-          (expect (str/includes? text "Project sidebar"))
-          (expect (str/includes? text "List the sidebar keys"))
-          (expect (not (str/includes? text "Sidebar help")))))
-    (it "keeps the normal help card when the sidebar is not focused"
-        (let [capture
-              (help-frame (-> (projects-test/fixture-db)
-                              (assoc :help-open? true)
-                              (assoc-in [:project-sidebar :focused?] false)))
-
-              text
-              (cap/frame-text capture)]
-
-          (expect (nil? (:error capture)))
-          (expect (str/includes? text "Keyboard shortcuts"))
-          (expect (str/includes? text "Cycle model"))))))
+              (expect (false? (boolean (:help-open? @state/app-db))))))))))

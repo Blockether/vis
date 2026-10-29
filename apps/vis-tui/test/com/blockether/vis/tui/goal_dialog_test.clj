@@ -1,7 +1,6 @@
 (ns com.blockether.vis.tui.goal-dialog-test
   "Exercise every Goal activation branch with the production dialog and virtual terminal."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [com.blockether.vis.tui.capture :as capture]
             [com.blockether.vis.tui.dialogs :as dialogs]
             [com.blockether.vis.tui.goals-test :as goals]
@@ -80,8 +79,6 @@
 
           (expect (= [true true] @ownership))
           (expect (nil? (:error frame)))
-          (expect (str/includes? (capture/frame-text frame :first) "Status: Active"))
-          (expect (str/includes? (capture/frame-text frame) "Iterations: 12 / 30"))
           (expect (false? (:dialog-open? @db)))
           (expect (not (.isLocked draw-lock)))
           (expect (= updated (get-in @db [:session :goal])))

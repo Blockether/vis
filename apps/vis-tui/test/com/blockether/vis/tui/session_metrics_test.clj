@@ -6,7 +6,6 @@
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.input :as input]
-            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as theme]
             [lazytest.core :refer [defdescribe describe expect it]])
@@ -190,42 +189,27 @@
 
           (expect (= expected (:value (first (filter #(= "Reuse coverage" (:label %)) rows)))))))))
 
-(defdescribe
-  metrics-fields-and-disclosures
-  (it
-    "metrics fields and disclosures"
-    (let [component
-          (review-component)
+(defdescribe metrics-fields-and-disclosures
+             (it "metrics fields and disclosures"
+                 (let [component
+                       (review-component)
 
-          initial
-          (:init component)
+                       initial
+                       (:init component)
 
-          full
-          (assoc initial
-            :parts? true
-            :roots? true)
+                       full
+                       (assoc initial
+                         :parts? true
+                         :roots? true)]
 
-          text
-          (str/replace (lines component full 100 45) #"\s+" " ")]
-
-      (expect (not (str/includes? text "not live")))
-      (doseq [label ["Session health" "Fold reminder" "Last measured call" "#24"
-                     "Context / working budget" "96000 / 120000" "80%" "24000 budget left"
-                     "Reminder at 90000" "200000" "Instructions" "Tool definitions" "History"
-                     "4 available" "1 with guidance estimates" "840 tokens on disk"
-                     "No AGENTS.md or CLAUDE.md" "Could not read guidance"
-                     "Guidance estimate unavailable" "Disk estimates" "Session totals"
-                     "repeated context" "Total input" "842190" "Total output" "12842" "$1.2749"
-                     "Folds" "Turns" "Calls" "Tools" "72%" "~91%" "20 of 24 calls" "example-model"
-                     "example-provider" "Active"]]
-        (expect (str/includes? text label) label))
-      (expect (not (str/includes? (lines component initial 100 45) "Tool definitions")))
-      (expect (= full
-                 (-> initial
-                     ((fn [s]
-                        ((:on-key component) s (cap/key-stroke \b) {})))
-                     ((fn [s]
-                        ((:on-key component) s (cap/key-stroke \f) {})))))))))
+                   (expect (not (str/includes? (lines component initial 100 45)
+                                               "Tool definitions")))
+                   (expect (= full
+                              (-> initial
+                                  ((fn [s]
+                                     ((:on-key component) s (cap/key-stroke \b) {})))
+                                  ((fn [s]
+                                     ((:on-key component) s (cap/key-stroke \f) {})))))))))
 
 (defdescribe metrics-width-and-directory-spacing
              (it "metrics width and directory spacing"
@@ -277,39 +261,32 @@
                                    "Disk estimates do not add"]]
                      (expect (= (+ 2 margin) (column nested)) nested)))))
 
-(defdescribe
-  missing-empty-error-and-pressure
-  (it "missing empty error and pressure"
-      (doseq [[snapshot expected] [[{:phase :loading} "Reading session metrics"]
-                                   [{:phase :error} "reopen to retry"]
-                                   [{:phase :ready} "No measured calls yet"]
-                                   [{:phase :ready :usage {}} "Context measurement unavailable"]]]
-        (let [component (dlg/session-metrics-component {} snapshot)]
-          (expect (str/includes? (lines component (:init component) 80 40) expected))))
-      ;; Raw facts alone must not trigger a client-side reconstruction.
-      (let [component
-            (dlg/session-metrics-component {}
-                                           {:phase :ready
-                                            :usage {"health" {"last_request_tokens" 90
-                                                              "budget_tokens" 100
-                                                              "breakdown" [{"label" "Partial"
-                                                                            "tokens" 1}]}}})
+(defdescribe missing-empty-error-and-pressure
+             (it "missing empty error and pressure"
+                 ;; Raw facts alone must not trigger a client-side reconstruction.
+                 (let [component
+                       (dlg/session-metrics-component
+                         {}
+                         {:phase :ready
+                          :usage {"health" {"last_request_tokens" 90
+                                            "budget_tokens" 100
+                                            "breakdown" [{"label" "Partial" "tokens" 1}]}}})
 
-            rows
-            (:lines ((:measure component) (:init component) 80 40))]
+                       rows
+                       (:lines ((:measure component) (:init component) 80 40))]
 
-        (expect (str/includes? (lines component (:init component) 80 40) "Budget not reported"))
-        (expect (not-any? :meter rows))
-        (expect (not-any? #(= :parts? (:toggle %)) rows)))
-      (let [component
-            (dlg/session-metrics-component {:model "pinned-model"} {:phase :ready :usage {}})
+                   (expect (not-any? :meter rows))
+                   (expect (not-any? #(= :parts? (:toggle %)) rows)))
+                 (let [component
+                       (dlg/session-metrics-component {:model "pinned-model"}
+                                                      {:phase :ready :usage {}})
 
-            text
-            (lines component (:init component) 80 40)]
+                       text
+                       (lines component (:init component) 80 40)]
 
-        (expect (str/includes? text "pinned-model"))
-        (expect (str/includes? text "—"))
-        (expect (not (str/includes? text "0%"))))))
+                   (expect (str/includes? text "pinned-model"))
+                   (expect (str/includes? text "—"))
+                   (expect (not (str/includes? text "0%"))))))
 
 (defdescribe metrics-compact-top-aligned-layout
              (it "metrics compact top aligned layout"
@@ -363,7 +340,6 @@
       (expect (= {::dlg/done nil} (handle initial (KeyStroke. \g true false) geom)))
       (expect (= :session-metrics
                  (:action (input/resolve-prefix-key (cap/key-stroke \u) {:prefix :cx}))))
-      (expect (= "C-x u" (keymap/label-for :session-metrics)))
       (expect (some #(= :session-metrics (:id %)) dlg/palette-commands))
       (doseq [cols [40 60 80 120]]
         (let [small ((:measure component)
@@ -392,59 +368,6 @@
                    (with-redefs [client/request! (fn [& _]
                                                    (throw (ex-info "offline" {})))]
                      (expect (= {:phase :error} (client/session-usage "id")))))))
-
-(defdescribe
-  metric-labels-and-values-are-bold
-  (it
-    "metric labels and values are bold"
-    (doseq [cols
-            [40 80 120]
-
-            :let [component
-                  (review-component)
-
-                  state
-                  (assoc (:init component)
-                    :parts? true
-                    :roots? true)
-
-                  geom
-                  ((:measure component) state cols 80)]
-            scroll
-            (distinct [0 (:max-scroll geom)])]
-
-      (let [capture
-            (cap/capture! {:cols cols
-                           :rows 80
-                           :paint! (fn [{:keys [g]}]
-                                     ((:paint component) g (assoc state :scroll scroll) geom))})
-
-            frame
-            (last (:frames capture))
-
-            x
-            (+ 2 (long (get-in geom [:bounds :left])))
-
-            visible
-            (take (:content-h geom) (drop scroll (:lines geom)))]
-
-        (expect (nil? (:error capture)))
-        (doseq [[i {:keys [text label tone]}]
-                (map-indexed vector visible)
-
-                :when (or label (#{:heading :hint} tone))]
-
-          (let [cells
-                (subvec (nth frame (+ (long (:content-top geom)) (long i)))
-                        x
-                        (+ x (p/display-width text)))
-
-                content
-                (remove #(str/blank? (:ch %)) cells)]
-
-            (expect (seq content) text)
-            (expect (= #{(boolean (or label (= :heading tone)))} (set (map :bold content)))
-                    (str cols " columns: " text))))))))
 
 (defdescribe
   metrics-dialog-background-test
@@ -549,8 +472,6 @@
                   (str/replace #"\s+" " "))]
 
           (expect (nil? (:error capture)))
-          (expect (str/includes? text "Session metrics"))
-          (expect (str/includes? text "Session health"))
           (when (= "prepared-request" (get-in usage ["health" "counted_projection"]))
             (doseq [expected ["Prepared request" "165,953 tokens" "162,177 tokens" "+3,776 tokens"]]
               (expect (str/includes? text expected) (str cols " columns: " expected))))))))

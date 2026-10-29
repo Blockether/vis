@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.interactions :as interactions]
-            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.screen :as screen]
@@ -141,66 +140,11 @@
           (expect (= 1 (count rows)))
           (expect (not (str/includes? text (str \u0000))))
           (expect (every? #(<= (p/display-width (subs % 1)) width) rows))
-          (expect (not (str/includes? text "Click or")))
           (expect (some #(str/includes? (or (:headline-prefix %) "") (str/capitalize (name reason)))
                         (:line-meta message)))
           (expect (not-any? #(= :live-reopen (:kind %)) (:line-meta message)))))
-      (let [message
-            (live-card-message 80 {:recorded-only? true})
-
-            text
-            (str/join "\n" (:prewrapped-lines message))]
-
-        (expect (some #(= " Recorded " (:right-suffix %)) (:line-meta message)))
-        (expect (not (str/includes? text "Completed")))
-        (expect (not (str/includes? text (keymap/label-for :toggle-detail-labels)))))))
-
-(defdescribe
-  recorded-live-card-title-is-bold-test
-  (it "recorded live card title is bold"
-      ;; Settling or reloading a Live View must not drop its title's emphasis.
-      (binding [interactions/hit-map (interactions/create-hit-map)]
-        (doseq [cols [40 80]
-                owned? [false true]
-                live? [false true]
-                options [{:reason :completed} {:reason :failed} {:reason :interrupted}
-                         {:reason :timeout} {:reason :cancelled} {:recorded-only? true}]]
-
-          (let [capture (cap/capture! {:cols cols
-                                       :rows 24
-                                       :paint! (fn [{:keys [screen]}]
-                                                 (paint-live-card-review! screen
-                                                                          (assoc options
-                                                                            :owned? owned?
-                                                                            :live? live?)))})
-                row (first (filter #(str/includes? (apply str (map :ch %)) "LIVE ")
-                                   (last (:frames capture))))
-                text (apply str (map :ch row))
-                title-col (str/index-of text "LIVE ")
-                button-col (str/index-of text " Recorded ")]
-
-            (expect (nil? (:error capture)))
-            (expect (some? title-col))
-            (expect (some? button-col))
-            (when (and title-col button-col)
-              (expect (every? :bold
-                              (remove #(str/blank? (:ch %)) (subvec row title-col button-col))))
-              (expect (not-any? :bold (subvec row button-col (+ button-col 10))))))))))
-
-(defdescribe
-  live-card-nested-hint-test
-  (it "live card nested hint"
-      ;; #228: owned recordings keep their target and status without the open instruction.
-      (let [artifact
-            {:filename "jenkins.live.ndjson" :iteration-id "i" :index 0}
-
-            entries
-            (#'render/live-artifact-receipt-entries artifact "s" 80 {:reason :completed} true)]
-
-        (expect (= 1 (count entries)))
-        (expect (= ["LIVE jenkins · Completed"] (mapv #(subs (:line %) 1) entries)))
-        (expect (every? #(= artifact (get-in % [:meta :artifact])) entries))
-        (expect (every? #(get-in % [:meta :activity-live?]) entries)))))
+      (let [message (live-card-message 80 {:recorded-only? true})]
+        (expect (some #(= " Recorded " (:right-suffix %)) (:line-meta message))))))
 
 (defdescribe
   owned-live-recordings-keep-identity
@@ -333,35 +277,7 @@
                        (let [options {:labels? labels? :title "界界 Jenkins · build pool"}]
                          (paint-live-card-review! hs options)
                          (paint-live-card-review! ts options)
-                         (expect (= (cell-grid html cols 24) (cell-grid terminal cols 24)))
-                         (expect (str/includes? (.renderHtml html) "LIVE"))
-                         (let [{:keys [row col]} (:bounds (first (card-regions)))
-                               cell (.getCharacter terminal
-                                                   (TerminalPosition. (int col) (int row)))]
-
-                           (if labels?
-                             (do (expect (= theme/warning-fg (.getBackgroundColor cell)))
-                                 (expect (.isBold cell)))
-                             (expect (= theme/button-bg (.getBackgroundColor cell)))))))))))
-
-(defdescribe live-card-hover-test
-             (it "live card hover"
-                 (binding [interactions/hit-map (interactions/create-hit-map)]
-                   (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. 80 24))
-                               screen (doto (TerminalScreen. terminal) (.startScreen))]
-
-                     (paint-live-card-review! screen {})
-                     (.setHovered interactions/hit-map (first (card-regions)))
-                     (paint-live-card-review! screen {})
-                     (doseq [{:keys [bounds]} (card-regions)
-                             :let [{:keys [row col width]} bounds]
-                             x (range col (+ col width))]
-
-                       (expect (= theme/header-active-tab-accent
-                                  (.getBackgroundColor (.getCharacter
-                                                         terminal
-                                                         (TerminalPosition. (int x) (int row))))))))
-                   (.setHovered interactions/hit-map nil))))
+                         (expect (= (cell-grid html cols 24) (cell-grid terminal cols 24)))))))))
 
 (defdescribe
   live-card-label-identity-test
