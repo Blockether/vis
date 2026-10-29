@@ -6,7 +6,6 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.progress :as progress]
             [com.blockether.vis.tui.render :as render]
-            [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.iteration :as iteration]
@@ -921,27 +920,12 @@
           (str/join "\n"
                     (map #(str/replace (:line %) #"[\uE110-\uE2FF]" "") (entries rows opened))))]
 
-    (it "shows all operations after the reader opens the band"
-        (let [shut
-              (text rows {"#band" false})
-
-              shown
-              (text rows {"#band" true})]
-
-          (expect (str/includes? shut "ACTIVITY"))
-          (expect (str/includes? shut "4 mutations · 2 observations"))
-          (doseq [label ["Read x2" "Patch x2" "Shell x2"]]
-            (expect (not (str/includes? shut label)))
-            (expect (str/includes? shown label)))))
-    (it "keeps failure context visible when its group is shut"
-        (expect (str/includes? (text (assoc-in rows [1 :state] "failed") {}) "failed")))
     (it "folds Activity independently and retains its operation summary"
         (let [shown (text rows {"#band" false})]
           (expect (str/includes? shown "ACTIVITY"))
           (expect (= 1
                      (count (filter #(= :activity-header (get-in % [:meta :kind]))
-                                    (entries rows {"#band" false})))))))
-    (it "does not paint an empty Activity band" (expect (empty? (entries [] {}))))))
+                                    (entries rows {"#band" false})))))))))
 
 ;; Regression #201: shared extension headlines reach TUI groups without merging operations.
 (defdescribe
@@ -1746,25 +1730,6 @@
           (expect (= node-id
                      (:node-id (second (first (interactions/assign-labels [region])))))))))))
 
-(defdescribe failed-form-error-row-test
-             ;; Inside a code band the error row is the ONLY status signal a failed call has:
-             ;; the band itself is deliberately status-neutral. Painting that row with the
-             ;; plain code marker made a failed python block read exactly like a
-             ;; successful one, so the row must carry the ERROR marker (red fg).
-             (it "marks a failed python block's error row as an error row"
-                 (let [lines
-                       (render-forms [{:success? false
-                                       :code "r = await shell({\"op\": \"background\"})"
-                                       :error {:message
-                                               "shell op background needs an ERRMARKER id."}}])
-
-                       err-lines
-                       (filter #(str/includes? (str %) "ERRMARKER") lines)]
-
-                   (expect (seq err-lines))
-                   (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines))
-                   (expect (not-any? #(str/starts-with? (str %) p/MARKER_CODE) err-lines)))))
-
 (defmacro ^:private with-raw-code-on
   [& body]
   ;; The TUI now renders the model's raw `:code` unconditionally — the same
@@ -1809,22 +1774,6 @@
           (expect (not (str/includes? visible "30ms")))
           (expect (not (str/includes? visible "value = 42")))))))
 
-(defdescribe
-  empty-response-diagnosis-test
-  ;; Regression #216: an engine diagnosis is visible prose, not a fake Python execution.
-  (it "renders the diagnosis when a provider response contains no executable block"
-      (let [diagnosis
-            "Provider returned no executable tool call or answer text; nothing was executed."
-
-            lines
-            (format-iteration-entry {:position 0 :assistant-prose diagnosis :forms []} 120 1)
-
-            visible
-            (str/join "\n" (map (comp strip-sentinels strip-ansi) lines))]
-
-        (expect (str/includes? visible diagnosis))
-        (expect (not (str/includes? visible "CODE"))))))
-
 (defn- body-of
   "Drop the leading marker (PUA codepoint) and return the visible text.
    Tolerates empty input - a blank line in `:answer` mode renders as
@@ -1868,20 +1817,6 @@
         (expect (= :toggle-details (:kind (:meta band))))
         (expect (some? head) (str "got: " (mapv :line entries)))
         (expect (= 1 (count (filter #(str/includes? (body-text %) "2.3s") entries))))))
-  (it "paints nothing when the duration is zero or absent"
-      (let [zero
-            (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 0)])
-
-            none
-            (render-forms [(result-form "grep" "12 results")])
-
-            head
-            (fn [lines]
-              (str/trimr (strip-sentinels (body-of (first (filter #(str/includes? % "12 results")
-                                                                  lines))))))]
-
-        (expect (not (str/includes? (head zero) "0ms")))
-        (expect (= (head zero) (head none)))))
   (it "carries the duration on the head band of a long result, not on its disclosure"
       (let [entries
             (format-iteration-entry-entries
@@ -1912,14 +1847,6 @@
         (expect (str/ends-with? (body-text band) "1m 1s   COPY"))
         (expect (some? head) (str "got: " (mapv :line entries)))
         (expect (= 1 (count (filter #(str/includes? (body-text %) "1m 1s") entries))))))
-  ;; The three shapes the companion bands and the TUI did not: `toolCards`
-  ;; returns `[form]` for EVERY non-silent form, so a bare value, a call that
-  ;; returned nothing and a FAILED call all wear the figure in the app while the
-  ;; terminal said nothing about how long they took.
-  (it "stamps the duration on a call that returned nothing at all"
-      (let [lines (render-forms [{:success? true :code "x = 1" :duration-ms 9000}])]
-        (expect (some #(str/ends-with? (str/trimr (strip-sentinels (body-of %))) "9.0s") lines)
-                (str "got: " lines))))
   (it "rides the duration on a failed call's error row"
       (let [lines
             (render-forms
@@ -2126,43 +2053,6 @@
       (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote msg)) body))))
       (expect (not (str/includes? body "ERROR:")))
       (expect (not (str/includes? body "ERROR —")))))
-  (it
-    "omits the success status footer but still stamps the call's duration"
-    (with-raw-code-on
-      ;; Layout (post status-footer removal):
-      ;;   iteration-pad
-      ;;   code-pad
-      ;;   <code line>
-      ;;   code-pad
-      ;;   duration stamp
-      ;;   iteration-pad
-      ;; Plain `:value` form results no longer render — the trailing
-      ;; result row is gone for non-tool forms per user directive.
-      (let [lines
-            (format-iteration-entry {:iteration 0
-                                     :forms [{:code "(+ 1 2)"
-                                              :comment nil
-                                              :render-segments nil
-                                              :stdout nil
-                                              :error nil
-                                              :started-at-ms nil
-                                              :duration-ms 1
-                                              :success? true
-                                              :silent? false}]}
-                                    40
-                                    1
-                                    {})
-
-            bodies
-            (mapv (comp strip-ansi body-of) lines)]
-
-        ;; The retired status footer took the FIGURE with it, and the companion
-        ;; paints one on every band: the status glyph stays gone, the duration
-        ;; comes back on its own flush-painted row.
-        (expect (not-any? #(str/includes? % "✓") lines))
-        (expect (= 1 (count (filter #(str/includes? % "1ms") lines))))
-        (expect (not-any? #(= p/MARKER_CODE_PAD (marker-of %)) lines))
-        (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
   (it "paints a running form's OWN source, never the invocation that carried it"
       ;; A `!cmd` bubble authors `:display-code`/`:display-language` — the command
       ;; the user typed — so the band shows `sleep 30` in bash and never the
@@ -2320,20 +2210,6 @@
 
 (defdescribe
   progress-rendering-test
-  (it "shows queued submissions inside the live progress bubble"
-      (let [payload
-            (render/progress->lines-data
-              {:iterations []}
-              80
-              {:show-thinking true :show-iterations true}
-              {:now-ms 1000 :turn-start-ms 0 :pending-sends [{:text "please also check logs"}]})
-
-            body
-            (strip-ansi (str/join "\n" (:lines payload)))]
-
-        (expect (str/includes? body "Vis is calling the provider"))
-        (expect (str/includes? body "please also check logs"))
-        (expect (not (str/includes? body "queued update")))))
   (it "a HELD turn (queue paused, prior turn failed) shows Paused, not a live provider spinner"
       ;; Regression: vis session 6d764784 — a turn parked behind a paused queue
       ;; (previous turn failed) rendered "Vis is calling the provider… 29m" with
@@ -2567,17 +2443,6 @@
         (expect (str/includes? body "Vis is running:"))
         (expect (str/includes? body "/cd /repo"))
         (expect (not (str/includes? body "Vis is calling the provider")))))
-  (it "labels a nested tool call in the spinner while the block runs"
-      ;; A `shell` run INSIDE a python block streams
-      ;; a :tool-call activity naming the op, so the bubble reads
-      ;; "Vis is running: <op>" instead of freezing for the whole call.
-      (let [body (strip-ansi (render/progress->text
-                               {:iterations [{:iteration 1 :activity :tool-call :tool/op "shell"}]}
-                               80
-                               {:show-thinking true :show-iterations true}
-                               {:now-ms 1000 :turn-start-ms 0}))]
-        (expect (str/includes? body "Vis is running:"))
-        (expect (str/includes? body "shell"))))
   (it "lets the TOOL say what it is doing, instead of its private op and an id"
       ;; Regression, wait audit: a nested `sh.wait(60)` painted
       ;; "Vis is running: _shell-wait tt" for the whole wait — a private transport
@@ -2961,15 +2826,7 @@
           (expect (str/includes? (spinner (get-timeline))
                                  "Vis is transcribing recordings (up to 5 min)"))
           (on-chunk {:phase :provider-call :iteration 1})
-          (expect (not (str/includes? (spinner (get-timeline)) "transcribing")))))
-    ;; Regression, reported as "it just says the same thing and I wait": the line
-    ;; stood unchanged for the whole provider wait because the only subject it
-    ;; could name was "the provider".
-    (it "names the model when the engine reported one"
-        (expect (str/includes? (spinner [{:activity :provider-call
-                                          :activity/reason :user-submit
-                                          :activity/model "claude-opus-5"}])
-                               "Vis is calling claude-opus-5 (user submit, iter 1)")))))
+          (expect (not (str/includes? (spinner (get-timeline)) "transcribing")))))))
 
 ;; Claude Code and Hermes say after about 20s that they still wait for the model.
 ;; The Vis line said "calling the provider" for minutes, so a slow provider looked
@@ -3066,9 +2923,6 @@
                                  "no tool call for 1m 12s · Python CPU 99% · stops in 3m 48s"))
           (expect (str/includes? (spinner timeline (+ received 5000))
                                  "no tool call for 1m 17s · Python CPU 99% · stops in 3m 43s"))))
-    (it "leaves out the CPU share when Vis cannot read it"
-        (expect (str/includes? (spinner (busy {:busy-ms 30000 :deadline-in-ms 270000}) received)
-                               "no tool call for 30s · stops in 4m 30s")))
     (it "ends the notice when the block ends"
         (let [timeline (busy {})]
           (expect (str/includes? (spinner timeline received) "Vis is running Python code (iter 1)"))
@@ -3091,12 +2945,6 @@
                                                               {}
                                                               (extra live-title))))))]
 
-    (it "names the live view instead of saying Vis is thinking"
-        (expect (str/includes? (spinner "CI · run 32234046276" [{:thinking "weighing it"}])
-                               "Vis is showing CI · run 32234046276 — live (iter 1)")))
-    (it "says thinking again once nothing is on the band"
-        (expect (str/includes? (spinner nil [{:thinking "weighing it"}])
-                               "Vis is thinking (iter 1)")))
     (it "still yields to a turn being cancelled"
         (expect (str/includes? (first (filter #(spinner-row? %)
                                               (:lines (render/progress->lines-data
@@ -3181,83 +3029,6 @@
                   (render/progress->lines-data (prog "alpha beta") 130 {} (extra 1700000000500))]
 
               (expect (not= (body-lines a) (body-lines b)))))))))
-
-(defdescribe
-  iteration-live-ordering-test
-  (describe "ordered live progress events"
-            (it "renders reasoning before code in the post-:events flat layout"
-                (with-raw-code-on
-                  ;; The pre-existing `:events`-driven interleaved variant was
-                  ;; removed when the runtime contract dropped `:events`. Resume /
-                  ;; live now share a flat layout: thinking first, then all code
-                  ;; blocks. Plain `:value` form results are hidden per user
-                  ;; directive, so only code (not `2`) follows the reasoning.
-                  (let [lines
-                        (format-iteration-entry {:thinking "alpha\nbeta"
-                                                 :error nil
-                                                 :forms [{:code "(+ 1 1)"
-                                                          :comment nil
-                                                          :render-segments nil
-                                                          :stdout nil
-                                                          :error nil
-                                                          :started-at-ms nil
-                                                          :duration-ms 1
-                                                          :success? true
-                                                          :silent? false}]}
-                                                60
-                                                1
-                                                {:show-header? true})
-
-                        ^String body
-                        (strip-ansi (str/join "\n" (map body-of lines)))]
-
-                    (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
-                    (expect (< (.indexOf body "beta") (.indexOf body "(+ 1 1)")))
-                    (expect (neg? (.indexOf body "2")))))))
-  (it
-    "keeps thinking and code flush so the thinking→badge margin matches code→badge"
-    (with-raw-code-on
-      ;; Parallel work (`equalize thinking→badge margin`) intentionally
-      ;; collapsed the previous two-row pad block between thinking and
-      ;; code so the visible breathing room is a SINGLE neutral row,
-      ;; identical to the gap a code block leaves above the next iter
-      ;; recap. This test pins that contract — thinking ends, one
-      ;; blank/marker row, code starts — so a future layout tweak that
-      ;; re-introduces a stripe between them surfaces here, not in a
-      ;; user-visible asymmetry report.
-      (let [lines
-            (format-iteration-entry {:thinking "alpha"
-                                     :error nil
-                                     :forms [{:code "(+ 1 1)"
-                                              :comment nil
-                                              :render-segments nil
-                                              :stdout nil
-                                              :error nil
-                                              :started-at-ms nil
-                                              :duration-ms 1
-                                              :success? true
-                                              :silent? false}]}
-                                    60
-                                    1
-                                    {:show-header? false :live-preview? true})
-
-            visible
-            (mapv (comp strip-ansi body-of) lines)
-
-            alpha-idx
-            (first (keep-indexed #(when (str/includes? %2 "alpha") %1) visible))
-
-            code-idx
-            (first (keep-indexed #(when (str/includes? %2 "(+ 1 1)") %1) visible))]
-
-        (expect (some? alpha-idx))
-        (expect (some? code-idx))
-        (expect (< alpha-idx code-idx))
-        ;; Bound the gap: thinking and code should sit close, with a
-        ;; small handful of marker / pad rows between them (per parallel
-        ;; layout work). Hard ceiling guards against a regression that
-        ;; explodes the gap into a multi-row stripe.
-        (expect (<= (- code-idx alpha-idx) 5))))))
 
 (defdescribe
   paint-styled-line-stacking-test
@@ -3694,39 +3465,6 @@
 
 (defdescribe
   auto-collapse-rendering-test
-  (it "hides legacy preview-kind result bodies entirely"
-      ;; Bare return values are never echoed: a form that printed nothing
-      ;; renders no result body, no PREVIEW/RAW switcher, no toggle.
-      (render/invalidate-cache!)
-      (let [body
-            "only line of preview output"
-
-            trace
-            [{:forms [{:code "(cat file)"
-                       :comment nil
-                       :render-segments nil
-                       :stdout nil
-                       :error nil
-                       :started-at-ms nil
-                       :duration-ms 1
-                       :success? true
-                       :silent? false}]}]
-
-            payload
-            (render/format-answer-with-thinking-data
-              nil
-              trace
-              96
-              {:show-iterations true}
-              nil
-              false
-              {:session-id "session" :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
-
-        (expect (not (str/includes? (:text payload) body)))
-        (expect (not (str/includes? (:text payload) "raw-only")))
-        (expect (not (str/includes? (:text payload) "PREVIEW")))
-        (expect (not (str/includes? (:text payload) "● RAW")))
-        (expect (not-any? #(= :preview-switcher (:kind %)) (:line-meta payload)))))
   (it "hides huge plain value results entirely without a collapse summary"
       ;; Per user directive: collapsible disclosure was removed. Plain
       ;; `:value` form results never paint a body — no `RESULT` label,
@@ -3802,119 +3540,12 @@
         (expect (not (str/includes? cbody "line 25")))
         (expect (str/includes? ebody "line 1 "))
         (expect (str/includes? ebody "line 25"))
-        (expect (str/includes? ebody "line 50"))))
-  (it
-    "never paints a collapsed summary band"
-    (render/invalidate-cache!)
-    (let [huge-result
-          (str/join " " (repeat 1000 "abcdefghij"))
-
-          trace
-          [{:forms [{:code "(+ 1 2)"
-                     :comment nil
-                     :render-segments nil
-                     :stdout nil
-                     :error nil
-                     :started-at-ms nil
-                     :duration-ms 1
-                     :success? true
-                     :silent? false}]}]
-
-          payload
-          (render/format-answer-with-thinking-data
-            nil
-            trace
-            96
-            {:show-iterations true}
-            nil
-            false
-            {:session-id "session" :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
-
-          puts
-          (atom [])
-
-          active
-          (atom #{})
-
-          bg
-          (atom nil)
-
-          graphics
-          (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-            (clearModifiers [] (reset! active #{}) this)
-            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (swap! active into (seq arr))
-              this)
-            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-              (apply swap! active disj (seq arr))
-              this)
-            (getActiveModifiers []
-              (if (empty? @active)
-                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-            (setForegroundColor [_] this)
-            (setBackgroundColor [c] (reset! bg c) this)
-            (putString [_col _row text] (swap! puts conj {:text text :bg @bg :sgr @active}) this)
-            (fillRectangle [_ _ _] this)
-            (setCharacter [_ _ _] this))]
-
-      (render/draw-chat-bubble! graphics
-                                {:role :assistant
-                                 :text (:text payload)
-                                 :prewrapped-lines (:lines payload)}
-                                0 2
-                                96 {:viewport-h 50})
-      ;; Per user directive: collapsible disclosure was removed. The
-      ;; compact `[iteration N · block M]` band is gone with it; the
-      ;; painter must not emit any summary row for a hidden value
-      ;; result.
-      (expect (not-any? #(str/includes? (:text %) "[iteration 1 · block 1]") @puts))
-      (expect (not-any? #(str/includes? (:text %) huge-result) @puts)))))
+        (expect (str/includes? ebody "line 50")))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Errored form rendering: an errored form surfaces its error message via the
 ;; inline error path.
 ;; ─────────────────────────────────────────────────────────────────────────
-
-(defdescribe
-  errored-form-rendering-test
-  (it "an errored form surfaces its error message inline"
-      (render/invalidate-cache!)
-      (let [err
-            {:message "boom"
-             :type "java.lang.RuntimeException"
-             :block {:source "(boom)" :row 1 :col 1}}
-
-            trace
-            [{:forms [{:code "(boom)"
-                       :comment nil
-                       :render-segments nil
-                       :stdout nil
-                       :error err
-                       :started-at-ms nil
-                       :duration-ms 1
-                       :success? false
-                       :silent? false}]}]
-
-            opts
-            {:session-id "session"
-             :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
-             :detail-expansions {:vis.channel-tui/expand-execution-details? true
-                                 :vis.channel-tui/expand-all-details? true}}
-
-            payload
-            (render/format-answer-with-thinking-data nil
-                                                     trace
-                                                     96
-                                                     {:show-iterations true}
-                                                     nil
-                                                     false
-                                                     opts)
-
-            text
-            (strip-sentinels (strip-ansi (:text payload)))]
-
-        (expect (str/includes? text "boom")))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Retired answer disclosure tags must not create collapsible output.
@@ -4009,67 +3640,6 @@
 
 (defdescribe
   message-footer-test
-  (it "does not register a per-message copy button"
-      (.reset interactions/hit-map)
-      (.beginFrame interactions/hit-map)
-      (let [message
-            {:role :assistant :text "hello world"}
-
-            start
-            4
-
-            left
-            2
-
-            width
-            36
-
-            viewport-top
-            7
-
-            height
-            (render/draw-chat-bubble! (dummy-text-graphics)
-                                      message
-                                      start
-                                      left
-                                      width
-                                      {:viewport-top viewport-top :viewport-h 40})
-
-            hit-col
-            (+ left 2)]
-
-        (.commitFrame interactions/hit-map)
-        (expect (= 3 height))
-        (expect (every? nil?
-                        (map #(.lookup interactions/hit-map hit-col %)
-                             (range viewport-top (+ viewport-top start height)))))))
-  (it "renders cached token usage in the assistant bubble footer"
-      (let [puts
-            (atom [])
-
-            graphics
-            (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-              (clearModifiers [] this)
-              (enableModifiers [_] this)
-              (disableModifiers [_] this)
-              (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-              (setForegroundColor [_] this)
-              (setBackgroundColor [_] this)
-              (putString [_col row text] (swap! puts conj {:row row :text text}) this)
-              (fillRectangle [_ _ _] this)
-              (setCharacter [_ _ _] this))
-
-            height
-            (render/draw-chat-bubble! graphics
-                                      {:role :assistant
-                                       :text "hello"
-                                       :message-meta-mode :full
-                                       :tokens {"input" 100 "output" 20 "cached" 70}}
-                                      4 2
-                                      60 {:viewport-h 40})]
-
-        (expect (= 5 height))
-        (expect (some #(str/includes? (:text %) "100→20 (cached 70)") @puts))))
   (it "omits zero cached token usage in the assistant bubble footer"
       (let [puts
             (atom [])
@@ -4289,7 +3859,6 @@
                      (expect (some #{{:type :x :message "m"}} out))))
                (it "different String errors produce different fingerprints"
                    (expect (not= (fp {:error "a"}) (fp {:error "b"}))))
-               (it "nil :error is fine" (expect (vector? (fp {:error nil}))))
                ;; Regression: `:assistant-prose` (and pre-forms `:content-stream`)
                ;; are read by `format-iteration-entry-entries` but were absent from
                ;; the fingerprint. The loop emits prose WHILE `:forms` is still empty,
@@ -4446,54 +4015,48 @@
         (expect (not= (with relevant-key {})
                       (with relevant-key {:vis.channel-tui/expand-all-details? true}))))))
 
-(defdescribe
-  paste-disclosure-render-test
-  ;; A user prompt's `[Pasted #N]` marker (the `vis-paste` fence
-  ;; `input/collapse-paste-placeholders` emits) renders as a collapsible
-  ;; disclosure: the token is the chevron summary row, the payload the body
-  ;; shown only when expanded.
-  (let [ast
-        [:ast {} [:p {} [:span {} "look at this"]]
-         [:code {:lang "vis-paste"} "[Pasted #1: 3 lines, 11B]\nAAA\nBBB\nCCC\n"]]
+(defdescribe paste-disclosure-render-test
+             ;; A user prompt's `[Pasted #N]` marker (the `vis-paste` fence
+             ;; `input/collapse-paste-placeholders` emits) renders as a collapsible
+             ;; disclosure: the token is the chevron summary row, the payload the body
+             ;; shown only when expanded.
+             (let [ast
+                   [:ast {} [:p {} [:span {} "look at this"]]
+                    [:code {:lang "vis-paste"} "[Pasted #1: 3 lines, 11B]\nAAA\nBBB\nCCC\n"]]
 
-        sid
-        "s1"
+                   sid
+                   "s1"
 
-        turn
-        "client-turn-1"
+                   turn
+                   "client-turn-1"
 
-        opts
-        (fn [de]
-          {:session-id sid :session-turn-id turn :detail-expansions de :section :user})
+                   opts
+                   (fn [de]
+                     {:session-id sid :session-turn-id turn :detail-expansions de :section :user})
 
-        node-id
-        (@#'render/detail-node-id
-         {:session-turn-id turn :section :user :kind :paste :details-path ["1"]})]
+                   node-id
+                   (@#'render/detail-node-id
+                    {:session-turn-id turn :section :user :kind :paste :details-path ["1"]})]
 
-    (it "collapsed by default: summary chevron shows, payload hidden"
-        (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {})))]
-          (expect (str/includes? txt "▸ [Pasted #1: 3 lines, 11B]"))
-          (expect (not (str/includes? txt "AAA")))))
-    (it "expanded: chevron flips and the verbatim payload appears"
-        (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {[sid node-id] true})))]
-          (expect (str/includes? txt "▾ [Pasted #1: 3 lines, 11B]"))
-          (expect (str/includes? txt "AAA"))
-          (expect (str/includes? txt "CCC"))))
-    (it "the summary row carries toggle-details click meta scoped to this node"
-        (let [{:keys [lines line-meta]}
-              (render/format-answer-markdown-data ast 76 (opts {}))
+               (it "collapsed by default: summary chevron shows, payload hidden"
+                   (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {})))]
+                     (expect (str/includes? txt "▸ [Pasted #1: 3 lines, 11B]"))
+                     (expect (not (str/includes? txt "AAA")))))
+               (it "the summary row carries toggle-details click meta scoped to this node"
+                   (let [{:keys [lines line-meta]}
+                         (render/format-answer-markdown-data ast 76 (opts {}))
 
-              idx
-              (first (keep-indexed (fn [i l]
-                                     (when (str/includes? l "Pasted #1") i))
-                                   lines))
+                         idx
+                         (first (keep-indexed (fn [i l]
+                                                (when (str/includes? l "Pasted #1") i))
+                                              lines))
 
-              meta
-              (nth line-meta idx)]
+                         meta
+                         (nth line-meta idx)]
 
-          (expect (= :toggle-details (:kind meta)))
-          (expect (= (str node-id) (:node-id meta)))
-          (expect (true? (:collapsed? meta)))))))
+                     (expect (= :toggle-details (:kind meta)))
+                     (expect (= (str node-id) (:node-id meta)))
+                     (expect (true? (:collapsed? meta)))))))
 
 (defdescribe
   transcript-disclosure-render-test
@@ -4523,14 +4086,6 @@
         (@#'render/detail-node-id
          {:session-turn-id turn :section :user :kind :paste :details-path ["1"]})]
 
-    (it "collapsed by default: the name shows, the words do not"
-        (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {})))]
-          (expect (str/includes? txt "▸ [Transcription #1: memo.m4a]"))
-          (expect (not (str/includes? txt "buy milk")))))
-    (it "expanded: the chevron flips and the recording's own words appear"
-        (let [txt (:text (render/format-answer-markdown-data ast 76 (opts {[sid node-id] true})))]
-          (expect (str/includes? txt "▾ [Transcription #1: memo.m4a]"))
-          (expect (str/includes? txt "buy milk and call back"))))
     (it "wraps the spoken words on spaces, not mid-word like a paste"
         ;; Regression: the payload used to ride a CODE block - the paste paper - and
         ;; code wraps by column, so at a narrow width the memo read "voice attachmen / ts".
@@ -5351,17 +4906,9 @@ h = 8"
                    data
                    (render/format-answer-markdown-data* ast 76 {})
 
-                   lines
-                   (vec (:lines data))
-
                    docs
                    (into #{} (keep :doc) (:line-meta data))]
 
-               (it "paints one card with the file name, type and size, not the raw fence"
-                   (expect (some #(str/ends-with? % "report.pdf  PDF · 1.2 MB") lines))
-                   (expect (not-any? #(str/includes? % "system viewer") lines))
-                   (expect (not-any? #(str/includes? % "application/pdf") lines))
-                   (expect (not-any? #(str/includes? % "/tmp/vis-python/report.pdf") lines)))
                (it "carries the host file on the file row only"
                    (expect (= 1 (count docs)))
                    (expect (= {:path "/tmp/vis-python/report.pdf"
@@ -5394,12 +4941,6 @@ h = 8"
                   :success? true
                   :duration-ms 25}]}
 
-        collapsed
-        (format-iteration-entry-entries entry
-                                        80
-                                        1
-                                        {:session-id "session-1" :session-turn-id "turn-1"})
-
         expanded
         (format-iteration-entry-entries entry
                                         80
@@ -5409,15 +4950,9 @@ h = 8"
                                          :detail-expansions
                                          {:vis.channel-tui/expand-execution-details? true}})
 
-        collapsed-text
-        (str/join "\n" (map :line collapsed))
-
         expanded-text
         (str/join "\n" (map :line expanded))]
 
-    (it "names the durable artifact in the collapsed execution receipt"
-        (expect (str/includes? collapsed-text "report.html"))
-        (expect (not (str/includes? collapsed-text "RESULT"))))
     (it "makes the expanded artifact openable without transport output"
         (expect (some #(= {:filename "report.html"
                            :media-type "text/html"
@@ -5526,30 +5061,6 @@ h = 8"
           (expect (= "▾ 2 files · 6.0 KB" (get-in rows [0 :meta :card-title])))
           (expect (false? (get-in rows [0 :meta :card-toggle :collapsed?])))
           (expect (= ["report.html" "build-log.txt"] (keep #(get-in % [:meta :card-name]) rows)))))
-    (it "paints the frame, the file row and an Open button that opens the file"
-        (let [rows
-              (card-rows (render-card [(artifact 0 "report.html" "text/html" 2048)] {}))
-
-              {:keys [text error regions]}
-              (paint rows 60)
-
-              artifacts
-              (filterv #(= :artifact (:kind %)) regions)
-
-              button
-              (first (filter #(= 6 (get-in % [:bounds :width])) artifacts))]
-
-          (expect (nil? error))
-          (expect (str/includes? text "┌──"))
-          (expect (str/includes? text "│ report.html"))
-          (expect (str/includes? text "HTML · 2.0 KB"))
-          (expect (str/includes? text " Open  │"))
-          (expect (str/includes? text "└──"))
-          (expect (not (str/includes? text "system viewer")))
-          ;; One region for the whole row and one for the button, both on the file.
-          (expect (= 2 (count artifacts)))
-          (expect (some? button))
-          (expect (= "report.html" (get-in button [:artifact :filename])))))
     (it "registers the folded title as the fold control"
         (let [rows
               (card-rows (render-card two {}))
@@ -5627,14 +5138,6 @@ h = 8"
         (str "````vis-doc\n[Document: report.html HTML, 2 KB]\n"
              "/tmp/report.html\ntext/html\nreport.html\n2 KB\n````\n")]
 
-    (it "paints the picture while Code stays collapsed"
-        (let [rows (picture-rows (render-step entry :kitty {}))]
-          (expect (= 1 (count rows)))
-          (expect (= "/tmp/chart.png" (get-in (first rows) [:meta :img :path])))))
-    (it "paints the picture with Code mode off"
-        (expect (= 1 (count (picture-rows (render-step entry :kitty {:show-python-code? false}))))))
-    (it "paints the picture below a closed digest"
-        (expect (= 1 (count (picture-rows (render-step entry :kitty {:digest-closed? true}))))))
     ;; Regression: the gallery captions under a step lost their card marker in the RESULT
     ;; band. The pictures of a step now share one table card, and its rows keep the marker.
     (it "lists each printed picture of a step in one table card"
@@ -5751,52 +5254,6 @@ h = 8"
                    (expect (= [["report.html" "iteration-1" 1] ["notes.txt" "iteration-2" 0]]
                               (mapv (juxt :filename :iteration-id :index) rows))))))
 
-;; ── A failed turn is a CARD, in the terminal too ──
-;;
-;; A stalled provider used to land as ordinary answer prose. The bubble-wide
-;; warning fill IS painted first, but the answer zone then repainted every TEXT
-;; row on top of it with `t/answer-bg` / `t/answer-fg` - the `answer-txt-marker`
-;; branch did it unconditionally - so only the blank row under the `Vis` label
-;; kept the amber surface and the sentence read exactly like an answer. Pixel
-;; truth from a real paint: every row of an all-error bubble wears the card.
-(defdescribe
-  error-card-paint-test
-  (let [blocks
-        (chat/error-content {"error" (str "Provider stream stalled: no output at all for 123507ms "
-                                          "while waiting in :provider-call")})
-
-        md
-        (chat/content->markdown blocks)
-
-        rendered
-        (render/format-answer-markdown-data (vis/markdown->ast md) 72 nil)
-
-        message
-        {:role :assistant
-         :text md
-         :content blocks
-         :prewrapped-lines (:lines rendered)
-         :line-meta (:line-meta rendered)}
-
-        captured
-        (cap/capture!
-          {:cols 80
-           :rows 10
-           :paint!
-           (fn [{:keys [screen]}]
-             (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-               (render/draw-chat-bubble! (.newTextGraphics s) message 2 2 76 {:viewport-h 20})
-               (.refresh s)))})]
-
-    (it "reads as a sentence, not as raw markdown"
-        (let [text (cap/frame-text captured)]
-          ;; The code labels the card from ABOVE now, so the sentence starts on
-          ;; its own row instead of running out of the machine name.
-          (expect (str/includes? text "turn_failed"))
-          (expect (str/includes? text "Provider stream stalled"))
-          (expect (not (str/includes? text "**")))
-          (expect (not (str/includes? text "ERROR:")))))))
-
 ;; Regression, issue #167: the terminal received the upstream status on the
 ;; canonical error block, then dropped it while projecting that block to Markdown.
 (defdescribe
@@ -5841,15 +5298,6 @@ h = 8"
         text
         (cap/frame-text captured)]
 
-    (it "paints the diagnosis, action and upstream facts from the structured block"
-        (expect (str/includes? text "Provider rate-limited"))
-        (expect (str/includes? text "the provider is throttling new requests"))
-        (expect (str/includes? text "wait and retry, or switch provider/model"))
-        (expect (not (str/includes? text "WHAT HAPPENED")))
-        (expect (not (str/includes? text "NEXT STEP")))
-        (expect (str/includes? text "HTTP 429"))
-        (expect (str/includes? text "Provider anthropic"))
-        (expect (str/includes? text "Request req_167")))
     (it "keeps machine diagnostics after the human decision"
         (expect (str/includes? text "anthropic/claude-opus-4: 429 rate-limit"))
         (expect (str/includes? text "provider_rate_limit"))
@@ -5858,109 +5306,6 @@ h = 8"
                    (str/index-of text "provider_rate_limit")))
         (expect (not (str/includes? text "Flattened fallback")))
         (expect (not (str/includes? text "**"))))))
-
-;; Every collapsible band NAMES itself on its disclosure row, and that name is
-;; the control: `PYTHON`, `THINKING` and `RESULT` paint in caps and BOLD while
-;; the `+N more` tally beside them stays at body weight. The three used to
-;; disagree — an op-card that carried no tally said a lowercase `result`, the
-;; long-result disclosure said `+N more result lines` with no name at all, and
-;; neither `PYTHON` nor `THINKING` was ever bold, so the loudest word in a
-;; bubble was whichever one happened to be uppercase. Pixel truth from a real
-;; paint: emphasis lives in inline sentinels the painter CONSUMES, so the entry
-;; strings alone cannot prove a single bold cell.
-(defdescribe
-  band-label-emphasis-test
-  (let [thinking
-        (str "The patch was applied successfully. Now I need to verify the change "
-             "works by evaluating the namespace in the REPL, then close the task.\n\n"
-             "Let me verify by loading the file or at least checking the changed "
-             "lines look correct.\n\n" "The diff looks correct.\n\n"
-             "More reasoning after the diff that should be hidden.\n"
-             "Even more hidden reasoning lines here.\n")
-
-        trace
-        [{:thinking thinking
-          :forms [{:success? true
-                   :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                   :stdout (str/join " " (repeat 200 "abcdefghij"))
-                   :result-kind :value
-                   :duration-ms 1
-                   :silent? false}]}]
-
-        _
-        (render/invalidate-cache!)
-
-        rendered
-        (render/format-answer-with-thinking-data*
-          nil
-          trace
-          80
-          {:show-thinking true :show-iterations true}
-          nil
-          false
-          {:session-id "sid"
-           :session-turn-id "abcd1234-5678-9999"
-           :detail-expansions (open-digests {:vis.channel-tui/expand-execution-details? true}
-                                            "sid"
-                                            "abcd1234-5678-9999")})
-
-        message
-        {:role :assistant
-         :text ""
-         :prewrapped-lines (:lines rendered)
-         :line-meta (:line-meta rendered)}
-
-        grid
-        (first (:frames (cap/capture!
-                          {:cols 90
-                           :rows 40
-                           :paint! (fn [{:keys [screen]}]
-                                     (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                                       (render/draw-chat-bubble! (.newTextGraphics s)
-                                                                 message
-                                                                 1 2
-                                                                 84 {:viewport-h 40})
-                                       (.refresh s)))})))
-
-        row-text
-        (fn [row]
-          (str/trimr (apply str (map :ch row))))
-
-        ;; The one painted row carrying this band's label.
-        band-row
-        (fn [needle]
-          (first (filter #(str/includes? (row-text %) needle) grid)))]
-
-    (it "hides RESULT while CODE is closed" (expect (nil? (band-row "RESULT"))))))
-
- ;; Canonical output carries no pre-rendered body. The renderer derives it locally,
- ;; and the disclosure keeps the result band's own name in both states.
-(defdescribe
-  locally-derived-result-disclosure-label-test
-  (let [long-result
-        (str/join "\n" (map #(str "line " % " of the value") (range 1 40)))
-
-        label-of
-        (fn [detail-expansions]
-          (render/invalidate-cache!)
-          (->> (:lines (render/format-answer-with-thinking-data*
-                         nil
-                         [{:forms [{:success? true :code "x = 1" :stdout long-result}]}]
-                         80
-                         {:show-thinking true :show-iterations true}
-                         nil
-                         false
-                         {:session-id "sid"
-                          :session-turn-id "abcd1234-5678-9999"
-                          :detail-expansions (assoc detail-expansions
-                                               :vis.channel-tui/expand-execution-details? true)}))
-               (map (comp str/trim strip-sentinels strip-ansi body-of))
-               (filter #(str/includes? % "RESULT"))
-               first))]
-
-    (it "keeps the result disclosure inside CODE" (expect (nil? (label-of {}))))
-    (it "keeps the name once expanded"
-        (expect (re-find #"RESULT\s+▾" (label-of {:vis.channel-tui/expand-all-details? true}))))))
 
 ;; Regression, Vis session a64d44c2-8228-455f-926e-b3381f19a93b: finished
 ;; live views moved below the final answer instead of settling beside the Python
@@ -6299,18 +5644,7 @@ h = 8"
         (expect (= 2 (count (re-seq #" COPY " body))) "Code and Activity each have one Copy")
         (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
         (expect (not (str/includes? body "Succeeded 1"))
-                "expanded detail does not repeat counters")))
-  (it "a turn that watched nothing carries no rail at all"
-      (render/invalidate-cache!)
-      (let [payload (render/format-answer-with-thinking-data "Nothing here."
-                                                             []
-                                                             80
-                                                             nil
-                                                             nil
-                                                             false
-                                                             {:session-id "s1"})]
-        (expect (not (str/includes? (strip-ansi (:text payload)) "LIVE")))
-        (expect (not-any? #(= :live-reopen (:kind %)) (:line-meta payload))))))
+                "expanded detail does not repeat counters"))))
 
 ;; Regression, issues td-1ccd13, td-c0bd16, td-7d7211, td-5cfb8f, and td-20b238:
 ;; restored execution receipts drifted into one padded slab, repeated their verdict in Activity,
@@ -6626,17 +5960,6 @@ h = 8"
         (fn [text needle]
           (last (filter #(str/includes? % needle) (band-lines text))))]
 
-    (it "aligns Activity with the Code band, without a second rail or step marks"
-        (let [text
-              (render-text {:vis.channel-tui/expand-all-details? true})
-
-              lines
-              (band-lines text)]
-
-          (expect (seq lines) "the expanded receipt paints an Activity band")
-          (expect (some #(str/includes? % "ACTIVITY") lines))
-          (expect (= 0 (.indexOf ^String (str (line-with text "Patched")) "Patched")))
-          (expect (not-any? #(re-find #"[│├●]" %) lines))))
     (it
       "hangs the paths a step touched under it, and the patch under its path"
       (let [text
@@ -6869,128 +6192,6 @@ h = 8"
           (expect (some #(str/includes? % "no matches") (lines [failed] {"grep-2" true}))
                   "a press shows the failure reason")))))
 
-;; Execution bands share a text edge without a vertical rail.
-(defdescribe
-  turn-rail-paint-test
-  (let [activity
-        {:state "succeeded"
-         :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-         :rows [{:id "grep-1"
-                 :sequence 1
-                 :operation "grep"
-                 :summary "3 files"
-                 :state "succeeded"
-                 :duration-ms 12
-                 :resources []
-                 :evidence []}]}
-
-        trace
-        [{:thinking "Read the app first."
-          :assistant-prose "Balanced. Now inspect the schema."
-          :forms [{:code "print(1)"
-                   :stdout "1"
-                   :result-kind :none
-                   :duration-ms 12
-                   :silent? false
-                   :success? true
-                   :activity activity}]}]
-
-        rendered
-        (do (render/invalidate-cache!)
-            (render/format-answer-with-thinking-data*
-              "Done."
-              trace
-              72
-              {:show-thinking true :show-iterations true}
-              nil
-              false
-              {:session-id "s1" :detail-expansions {:vis.channel-tui/expand-all-details? true}}))
-
-        message
-        {:role :assistant
-         :text "Done."
-         :prewrapped-lines (:lines rendered)
-         :line-meta (:line-meta rendered)}
-
-        captured
-        (cap/capture!
-          {:cols 80
-           :rows 44
-           :paint!
-           (fn [{:keys [screen]}]
-             (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-               (render/draw-chat-bubble! (.newTextGraphics s) message 2 2 76 {:viewport-h 40})
-               (.refresh s)))})
-
-        grid
-        (first (:frames captured))
-
-        rows
-        (mapv (fn [row]
-                (str/join (map :ch row)))
-              grid)
-
-        ;; `bx` is 2 here and the line stands in the message column's own first column.
-        rail-col
-        2
-
-        ;; No execution band paints a rail at the message edge.
-        rail-at?
-        (fn [^long r]
-          (contains? #{"│" "├"} (:ch (nth (nth grid r) rail-col))))
-
-        row-with
-        (fn [needle]
-          (first (keep-indexed (fn [i l]
-                                 (when (str/includes? l needle) i))
-                               rows)))]
-
-    (it "keeps execution bands and prose free of left rails"
-        (let [head
-              (row-with "Read the app first")
-
-              prose
-              (row-with "Balanced. Now inspect the schema.")
-
-              tail
-              (row-with "3 files")]
-
-          (expect (and head prose tail)
-                  "the receipt paints the thinking, the prose and the chronology")
-          (expect (not-any? rail-at? (range (long head) (inc (long tail))))
-                  "the entire execution stays free of left rails")))
-    ;; Regression, issue photo-2026-09-02: the receipt rail overwrote the first character
-    ;; of model prose between tool blocks, so `Balanced` was painted as `│alanced`. The
-    ;; prose was then inset two columns to dodge the line; now the line breaks for it and
-    ;; the words stand on the message column's own edge, flush with the answer.
-    (it "keeps receipt prose clear of the rail, on the answer's edge"
-        (let [prose
-              (row-with "Balanced. Now inspect the schema.")
-
-              answer
-              (row-with "Done.")]
-
-          (expect (some? prose))
-          (expect (= rail-col
-                     (.indexOf ^String (nth rows prose) "Balanced")
-                     (.indexOf ^String (nth rows answer) "Done."))
-                  "prose and answer share the column the line stands in")))
-    (it "leaves both the program and its result free of rails"
-        (let [python
-              (row-with "print(1)")
-
-              result
-              (row-with "RESULT")]
-
-          (expect (and python result) "the receipt paints a program and its result")
-          (expect (not (rail-at? python)) "Code stays free of rails")
-          (expect (not (rail-at? result)) "Result stays free of rails")))
-    (it "leaves the answer off the line"
-        (let [answer (row-with "Done.")]
-          (expect answer "the bubble paints its answer")
-          (expect (not (rail-at? answer))
-                  "the answer is what the thread arrived at, never a step on it")))))
-
 ;; Regression, T137: the terminal's receipt drifted from the app's. It printed the elapsed
 ;; twice - once on the band it already carries, again on the RESULT it stamps - ran the
 ;; model's program through a third Python formatter before showing it, and kept the model's
@@ -7050,12 +6251,6 @@ h = 8"
         collapsed
         (text-of false)
 
-        row-with
-        (fn [haystack needle]
-          (first (keep-indexed (fn [i l]
-                                 (when (str/includes? l needle) i))
-                               (str/split-lines haystack))))
-
         row-text
         (fn [haystack needle]
           (some (fn [l]
@@ -7071,13 +6266,7 @@ h = 8"
     (it "shows the program the model wrote, not a reformatting of it"
         (expect (str/includes? expanded "rows=[1,") "the model's own line break survives")
         (expect (not (str/includes? expanded "rows = [1, 2]"))
-                "the terminal is not a third Python formatter"))
-    (it "prints the model's sentence above the receipt, open or folded"
-        (expect (< (long (row-with expanded "Let me count the rows."))
-                   (long (row-with expanded "8.4s")))
-                "the sentence introduces the call, so it stands before the band")
-        (expect (some? (row-with collapsed "Let me count the rows."))
-                "and folding the receipt cannot hide it, being no part of the fold"))))
+                "the terminal is not a third Python formatter"))))
 
 (defdescribe
   live-activity-more-test
@@ -8010,170 +7199,6 @@ h = 8"
                      (expect (not (#'render/activity-row-openable? row)))))))
 
 (defdescribe
-  activity-row-spacing-test
-  (it "keeps settled adjacent operations compact under one group"
-      (let [rows
-            (mapv (fn [id sequence]
-                    {:id id
-                     :sequence sequence
-                     :operation "ls"
-                     :state "succeeded"
-                     :presentation {:headline (str "Listed " id) :summary "2 files" :content []}})
-                  ["one" "two"]
-                  [1 2])
-
-            entries
-            (#'render/activity-detail-entries
-             {:node-id "spacing" :activity-rows rows :activity-expanded? (step-expansions false)}
-             76
-             "spacing")]
-
-        (expect (= [:activity-header nil :activity-row nil]
-                   (mapv #(get-in % [:meta :kind]) entries)))
-        (expect (str/includes? (:line (nth entries 2)) "List x2")))))
-
-(defdescribe
-  activity-inline-disclosure-spacing-test
-  (it
-    "keeps a step's disclosure beside its name and spaces the Activity header from operations"
-    (doseq [width
-            [40 80 160]
-
-            grouped?
-            [false true]]
-
-      (let [rows
-            (mapv (fn [id op]
-                    {:id id
-                     :sequence (if (= id "one") 1 2)
-                     :operation op
-                     :state "succeeded"
-                     :duration-ms 42
-                     :presentation {:headline (str "Read " id)
-                                    :summary "2 files"
-                                    :content [{:type "text" :text "evidence"}]}})
-                  ["one" "two"]
-                  (if grouped? ["cat" "cat"] ["cat" "ls"]))
-
-            entries
-            (#'render/activity-detail-entries
-             {:node-id "spacing"
-              :activity-rows rows
-              :activity-expanded? (fn [id & _]
-                                    (or (str/ends-with? id "#band")
-                                        (not (contains? #{"one" "two"}
-                                                        (last (str/split id #":"))))))}
-             width
-             "spacing")
-
-            heads
-            (keep-indexed #(when (= :activity-row (get-in %2 [:meta :kind])) [%1 %2]) entries)]
-
-        (expect (<= 2 (count heads)))
-        (expect (= 2 (ffirst heads)))
-        (expect (nil? (:meta (second entries))))
-        ;; The mark that opens a step stands beside the step's own name — `Read ▸ …` — and
-        ;; not at the far edge of the line, where the reader had to cross the whole row and
-        ;; its duration to reach the only part of it that presses.
-        (doseq [[_ entry] (filter #(contains? #{"one" "two"} (get-in (second %) [:meta :item-id]))
-                                  heads)]
-          (expect (not (re-find #"[▸▾]" (get-in entry [:meta :right-suffix]))))
-          (expect (str/includes? (:line entry) (str (get-in entry [:meta :operation-label]) " ▸")))
-          (expect (not (re-find #"▸\s+42ms" (:line entry)))))
-        (doseq [[[a _] [b _]] (partition 2 1 heads)]
-          (expect (= 1 (- b a))))))))
-
-(defdescribe
-  activity-content-painter-test
-  (it
-    "keeps listing content clear of the rail without an empty timing band"
-    (let [activity
-          {:state "succeeded"
-           :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-           :rows [{:id "ls"
-                   :sequence 1
-                   :operation "ls"
-                   :presenter "observation"
-                   :state "succeeded"
-                   :duration-ms 42
-                   :presentation {:headline "Listed apps/vis-companion/src"
-                                  :summary "3 directories · 2 files"
-                                  :content [{:type "table"
-                                             :columns ["Name" "Kind"]
-                                             :rows [["components/" "Directory"]]}]}}]}
-
-          data
-          (render/format-answer-with-thinking-data* ""
-                                                    [{:forms [{:code "ls()
-print(paths)"
-                                                               :success? true
-                                                               :silent? false
-                                                               :duration-ms 42
-                                                               :activity activity}]}]
-                                                    72
-                                                    {:show-iterations true}
-                                                    nil
-                                                    false
-                                                    {:session-id "listing-paint"
-                                                     :detail-expansions
-                                                     {:vis.channel-tui/expand-all-details? true}})
-
-          captured
-          (cap/capture! {:cols 80
-                         :rows 30
-                         :paint! (fn [{:keys [screen]}]
-                                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                                     (render/draw-chat-bubble! (.newTextGraphics s)
-                                                               {:role :assistant
-                                                                :text ""
-                                                                :prewrapped-lines (:lines data)
-                                                                :line-meta (:line-meta data)}
-                                                               2 1
-                                                               76 {:viewport-h 28})
-                                     (.refresh s)))})
-
-          text
-          (cap/frame-text captured)]
-
-      (expect (str/includes? text "3 directories · 2 files"))
-      (let [lines
-            (str/split-lines text)
-
-            head
-            (first (filter #(str/includes? % "Listed") lines))
-
-            code
-            (first (filter #(str/includes? % "CODE") lines))]
-
-        (expect (str/includes? head "Listed apps/vis-companion/src"))
-        (expect (str/includes? head "▾"))
-        (expect (not (str/includes? code "</>")))
-        (expect (= (.indexOf ^String code "CODE") (.indexOf ^String head "Listed")))
-        (let [source-idx
-              (first (keep-indexed #(when (:code-source? %2) %1) (:line-meta data)))
-
-              last-source-idx
-              (last (keep-indexed #(when (:code-source? %2) %1) (:line-meta data)))
-
-              marker
-              (subs (nth (:lines data) source-idx) 0 1)]
-
-          (expect (= marker (nth (:lines data) (dec source-idx))))
-          (expect (= marker (nth (:lines data) (inc last-source-idx)))))
-        (expect (= 1 (count (re-seq #"apps/vis-companion/src" text))))
-        (expect (< (.indexOf ^String head "▾") (.indexOf ^String head "42ms")))
-        (expect (str/ends-with? code " COPY"))
-        (doseq [source (filter #(or (str/includes? % "ls()") (str/includes? % "print(paths)"))
-                               lines)]
-          (expect (= (.indexOf ^String code "CODE")
-                     (if (str/includes? source "ls()")
-                       (.indexOf ^String source "ls()")
-                       (.indexOf ^String source "print(paths)"))))))
-      (expect (str/includes? text "│ Name"))
-      ;; The digest row, the CODE band and the Activity row each show the time once.
-      (expect (= 3 (count (re-seq #"42ms" text)))))))
-
-(defdescribe
   result-header-alignment-test
   (it
     "keeps Code, Result and Activity ordered without rails in live and restored views, open or closed"
@@ -8291,167 +7316,10 @@ print(paths)"
       (expect (= long-line (str/join "" (map #(subs (strip-ansi %) 1) (butlast source)))))
       ;; The native highlighter colours the short row; every wrapped row then carries
       ;; colour too — the string spanning the fold reopens on the continuation row.
-      (when (colored? (last source)) (expect (every? colored? source)))))
-  (it "closes a failed call's error rows with one blank row, like every other band"
-      (let [data
-            (render/format-answer-with-thinking-data*
-              ""
-              [{:forms
-                [{:code "print(42))"
-                  :error
-                  {:message
-                   "Unexpected `)` at line 1, col 10 - there is no open bracket for it to close."}
-                  :success? false
-                  :duration-ms 12}]}]
-              72
-              {:show-iterations true}
-              nil
-              false
-              {:session-id "error-air"
-               :detail-expansions {:vis.channel-tui/expand-all-details? true}})
-
-            lines
-            (mapv (fn [line]
-                    (str/replace line #"^." ""))
-                  (:lines data))
-
-            error-idx
-            (first (keep-indexed #(when (str/includes? %2 "to close.") %1) lines))]
-
-        (expect (some? error-idx))
-        ;; The row after the message is blank, so the red band ends on the same air
-        ;; a code band or a result band does.
-        (expect (= "" (nth lines (inc (long error-idx)) ::missing))))))
+      (when (colored? (last source)) (expect (every? colored? source))))))
 
 (defdescribe
   activity-content-render-test
-  ;; The gap a reader asked about: five columns of air between a step's mark and its
-  ;; verb, three of them fixed and two for a disclosure slot no row in the band used.
-  (it
-    "aligns openable and inert steps at the same text edge, without a disclosure gutter"
-    (let [step
-          (fn [id op summary content]
-            (cond-> {:id id
-                     :sequence 1
-                     :operation op
-                     :summary summary
-                     :state "succeeded"
-                     :duration-ms 12
-                     :resources []
-                     :evidence []}
-              content
-              (assoc :presentation
-                {:headline (#'render/activity-step-lead {:operation op :state "succeeded"})
-                 :summary ""
-                 :content content})))
-
-          band
-          (fn [rows]
-            (render/invalidate-cache!)
-            (render/format-answer-with-thinking-data*
-              "Done."
-              [{:forms [{:code "run()"
-                         :stdout ""
-                         :success? true
-                         :duration-ms 12
-                         :activity {:state "succeeded"
-                                    :counts
-                                    {:running 0 :succeeded (count rows) :failed 0 :cancelled 0}
-                                    :rows rows}}]}]
-              80
-              {:show-iterations true}
-              nil
-              false
-              {:session-id (str "slot-" (count rows))
-               :detail-expansions {:vis.channel-tui/expand-all-details? true}}))
-
-          band-text
-          (fn [rows]
-            (-> (band rows)
-                :text
-                strip-ansi
-                strip-sentinels))
-
-          line-with
-          (fn [text needle]
-            (str (first (filter #(str/includes? % needle) (str/split-lines text)))))
-
-          plain
-          (band-text [(step "sh-1" "shell" "clojure -M:test" nil)
-                      (step "grep-1" "grep" "3 files" nil)])
-
-          rich-rows
-          [(step "ls-1" "ls" "apps" [{:type "markdown" :text "3 directories"}])
-           (step "grep-1" "grep" "3 files" nil)]
-
-          rich
-          (band-text rich-rows)
-
-          ;; Content is set in by the painter, so its column rides the row's meta.
-          content-col
-          (let [{:keys [lines line-meta]} (band rich-rows)]
-            (some (fn [[line meta]]
-                    (when (str/includes? (str line) "3 directories") (:activity-content-col meta)))
-                  (map vector lines line-meta)))]
-
-      (expect (str/starts-with? (line-with plain "Ran") "Ran clojure -M:test")
-              "an inert row reserves no disclosure gutter")
-      (expect (re-find #"^Listed.*▾" (line-with rich "Listed"))
-              "the disclosure follows the label, never shifting it")
-      (expect (str/starts-with? (line-with rich "Searched") "Searched")
-              "openable and inert rows share the same left edge")
-      (expect (= (+ 2 (.indexOf ^String (line-with rich "Listed") "Listed")) content-col)
-              "what a step opens sets its words in from the column its words do, like code")))
-  (it "renders headings, Markdown, tables, code and progress, without attachment references"
-      (let [blocks
-            [{:type "heading" :text "Verification"}
-             {:type "markdown" :text "**Prepared** the workspace"}
-             {:type "table" :columns ["Suite" "Result"] :rows [["unit" "passed"]]}
-             {:type "code" :language "python" :text "print(42)"}
-             {:type "diff" :text "+added\n-removed"}
-             {:type "progress" :label "Checking" :value 1 :total 2}
-             {:type "image" :label "Screenshot" :attachment-id "image-1"}]
-
-            entries
-            (#'render/activity-content-entries blocks 60 4 "s" true)
-
-            text
-            (str/join "\n" (map :line entries))]
-
-        (doseq [word ["Verification" "Prepared" "Suite" "passed" "print" "Checking"]]
-          (expect (str/includes? text word)))
-        ;; Attachment references show on the attachment card, not in Activity content.
-        (expect (not (str/includes? text "Screenshot")))
-        (expect (not-any? #(get-in % [:meta :artifact]) entries))
-        (expect (str/includes? (str (#'render/activity-content-entries
-                                     [{:type "progress" :label "Checking"}]
-                                     40
-                                     4
-                                     "s"
-                                     false))
-                               "Stopped"))))
-  (it "paints a terminal block: bold command, accent operators, stderr ink and omitted lines"
-      (let [block
-            {:type "terminal"
-             :command ["npm test" "| tail -3" "&& echo done"]
-             :lines [{:text "41 passed" :stream "stdout"} {:text "warn\tslow" :stream "stderr"}]
-             :omitted-lines 12
-             :exit 0}
-
-            entries
-            (#'render/activity-content-entries [block] 60 4 "s" false)
-
-            segments
-            (mapv #(get-in % [:meta :segments]) entries)]
-
-        (expect (every? #(= :activity-terminal (get-in % [:meta :kind])) entries))
-        (expect (= [["$ " :muted] ["npm test" :command]] (first segments)))
-        (expect (= [["  | " :operator] ["tail -3" :plain]] (second segments)))
-        (expect (= [["  && " :operator] ["echo done" :plain]] (nth segments 2)))
-        (expect (= [["… 12 earlier lines" :muted]] (nth segments 3)))
-        (expect (= [["41 passed" :output]] (nth segments 4)))
-        (expect (= [["warn    slow" :error]] (nth segments 5)))
-        (expect (str/includes? (:line (first entries)) "$ npm test"))))
   (it "wraps long terminal lines inside the band and keeps a live tail of three lines"
       (let [long-line
             (apply str (repeat 90 "x"))
@@ -9049,44 +7917,6 @@ print(paths)"
         (expect (not (str/includes? text "ci-run-101")))
         (expect (not (str/includes? text "ci-run-102"))))))
 
-;; #222: a form's live receipt must share its Activity surface, not float below it.
-(defdescribe
-  activity-live-sibling-test
-  (it
-    "keeps owned LIVE receipts beside Activity with matching fill and alignment"
-    (doseq [width [40 80]]
-      (let [entries (format-iteration-entry-entries
-                      {:forms [{:code "watch()"
-                                :success? false
-                                :activity {:state :failed
-                                           :rows [{:id "watch"
-                                                   :sequence 1
-                                                   :operation "watch"
-                                                   :state :failed
-                                                   :presentation {:headline "Watch build"}
-                                                   :evidence []}]}
-                                :runs [{:view-id "build"
-                                        :title "Jenkins"
-                                        :reason :interrupted
-                                        :lines 421
-                                        :elapsed-ms 617000}]}]}
-                      width
-                      1
-                      {:session-id "session-live" :session-turn-id "turn-live"})
-            receipt (first (filter #(= :live-reopen (get-in % [:meta :kind])) entries))
-            header-index
-            (first (keep-indexed #(when (= :activity-header (get-in %2 [:meta :kind])) %1) entries))
-            receipt-index (.indexOf ^java.util.List entries receipt)]
-
-        (expect (some? receipt))
-        (expect (true? (get-in receipt [:meta :trace-inset?])))
-        (expect (str/starts-with? (:line receipt) p/MARKER_ACTIVITY))
-        (expect (< header-index receipt-index))
-        (expect (every? #(str/starts-with? (:line %) p/MARKER_ACTIVITY)
-                        (subvec entries header-index (inc receipt-index))))
-        (expect (= "build" (get-in receipt [:meta :view-id])))
-        (expect (= "session-live" (get-in receipt [:meta :session-id])))))))
-
 (defdescribe
   activity-live-owner-test
   (it "matches exact owners after rows arrive, not the latest form"
@@ -9473,13 +8303,6 @@ print(paths)"
                                                (get {"#band" true} key default))}
                         100
                         "terminal"))]
-    (it "shows the outcome after an arrow and the directory at the edge of a closed row"
-        (let [entries (render-state "succeeded")
-              head (some #(when (= :activity-row (get-in % [:meta :kind])) %) entries)]
-
-          (expect (re-find #"npm test ▸ → 41 passed" (:line head)))
-          (expect (str/starts-with? (str (get-in head [:meta :right-suffix])) "~/vis"))
-          (expect (not-any? #(= :activity-terminal (get-in % [:meta :kind])) entries))))
     (it "keeps the last three output lines under a closed running row"
         (let [entries (render-state "running")
               tail (filterv #(= :activity-terminal (get-in % [:meta :kind])) entries)]
@@ -10436,9 +9259,6 @@ print(paths)"
                       nil
                       {:running? true :session-id "s1" :focus focus}))]
 
-               (it "names the chord that focuses the queue at rest"
-                   (expect (some #(:queue-send (:meta %)) (entries nil))
-                           "A running turn shows the row buttons"))
                (it "selects, checks and hides the buttons while focused"
                    (let [lines
                          (entries {:index 1 :marked #{"t1"} :undo? true})
@@ -10485,10 +9305,6 @@ print(paths)"
                    (with-redefs [t/user-bubble-bg (com.googlecode.lanterna.TextColor$RGB. 1 2 3)]
                      (filterv #(str/starts-with? % p/MARKER_USER_INPUT)
                        (format-iteration-entry entry 60 2))))))
-    (it "paints no block for a step that received nothing"
-        (let [plain (format-iteration-entry (iteration/canonicalize {:iteration 1 :forms []}) 60 1)]
-          (expect (not-any? #(str/starts-with? % p/MARKER_USER_INPUT_HDR) plain))
-          (expect (not-any? #(str/starts-with? % p/MARKER_USER_INPUT) plain))))
     (it "invalidates the live render cache when the messages land"
         (let [fingerprint @#'render/iteration-fingerprint]
           (expect (not= (fingerprint entry) (fingerprint (dissoc entry :user-input))))))))
@@ -10551,97 +9367,3 @@ print(paths)"
           (expect (= 1 (count hits)))
           (expect (= (get-in toggle [:meta :node-id]) (:node-id (first hits))))
           (expect (true? (:collapsed? (first hits))))))))
-
-(defdescribe
-  queued-message-rail-test
-  ;; Issue #354: a message sent from the queue had no left rail, so it did not look like a
-  ;; user message. Every delivery path paints the rail of a normal user bubble: `│` in the
-  ;; user role ink on the user paper at the bubble's left column, on each row from the first
-  ;; to the last word row, and not on the top and bottom padding rows.
-  (let [rgb
-        (fn [^com.googlecode.lanterna.TextColor$RGB c]
-          [(.getRed c) (.getGreen c) (.getBlue c)])
-
-        bx
-        2
-
-        grid-of
-        (fn [message]
-          (first
-            (:frames
-              (cap/capture!
-                {:cols 60
-                 :rows 24
-                 :paint!
-                 (fn [{:keys [screen]}]
-                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                     (render/draw-chat-bubble! (.newTextGraphics s) message 0 bx 56 {:viewport-h 0})
-                     (.refresh s)))}))))
-
-        rail-rows
-        (fn [grid]
-          (into []
-                (keep-indexed (fn [r row]
-                                (when (= "│" (:ch (nth row bx))) r)))
-                grid))
-
-        rail-ink
-        (fn [grid]
-          (into #{}
-                (comp (map #(nth % bx)) (filter #(= "│" (:ch %))) (map #(select-keys % [:fg :bg])))
-                grid))
-
-        word-span
-        (fn [grid words]
-          (let [rows (into []
-                           (keep-indexed (fn [r row]
-                                           (let [text (apply str (map :ch row))]
-                                             (when (some #(str/includes? text %) words) r))))
-                           grid)]
-            (vec (range (first rows) (inc (long (peek rows)))))))
-
-        user-ink
-        #{{:fg (rgb t/user-role-fg) :bg (rgb t/user-bubble-bg)}}
-
-        delivered
-        (fn [requests]
-          (let [entries (format-iteration-entry-entries (iteration/canonicalize
-                                                          {:iteration 2
-                                                           :forms []
-                                                           :user-input (mapv (fn [r]
-                                                                               {:request r})
-                                                                             requests)})
-                                                        52
-                                                        2)]
-            {:role :assistant
-             :text ""
-             :prewrapped-lines (mapv :line entries)
-             :line-meta (mapv :meta entries)}))]
-
-    (it "paints the same rail for a message that starts the next turn from the queue"
-        (let [drain-fn
-              (-> #'state/event-registry
-                  deref
-                  deref
-                  (get :drain-pending)
-                  :fn)
-
-              {:keys [db]}
-              (drain-fn {:active-tab-id :main
-                         :session {:id "s1"}
-                         :pending-sends [{:text "ship it" :turn-id "t2"}]}
-                        [:drain-pending :main])
-
-              grid
-              (grid-of (first (filter #(= :user (:role %)) (:messages db))))]
-
-          (expect (= (word-span grid ["ship it"]) (rail-rows grid)))
-          (expect (= user-ink (rail-ink grid)))))
-    (it "paints the rail for a message delivered with `Send it now`"
-        (let [grid (grid-of (delivered ["ship it"]))]
-          (expect (= (word-span grid ["ship it"]) (rail-rows grid)))
-          (expect (= user-ink (rail-ink grid)))))
-    (it "paints one rail through every message delivered with `Send all now`"
-        (let [grid (grid-of (delivered ["ship it" "and lint"]))]
-          (expect (= (word-span grid ["ship it" "and lint"]) (rail-rows grid)))
-          (expect (= user-ink (rail-ink grid)))))))

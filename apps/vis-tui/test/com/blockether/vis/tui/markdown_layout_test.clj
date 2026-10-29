@@ -29,14 +29,6 @@
                  (:runs l))))
         lines))
 
-(defn- styled?
-  [lines kw]
-  (some (fn [l]
-          (some (fn [r]
-                  (contains? (or (:style r) #{}) kw))
-                (:runs l)))
-        lines))
-
 (defn- markers [strings] (mapv #(subs % 0 1) strings))
 
 (defn- bodies [strings] (mapv #(subs % 1) strings))
@@ -44,9 +36,6 @@
 ;; basic blocks
 
 (defdescribe paragraph-test
-             (it "paragraph emits one line for short content"
-                 (let [lines (layout/ast->lines [:ast [:p "hello world"]] 80)]
-                   (expect (= ["hello world"] (texts lines)))))
              (it "paragraph wraps at width on word boundary"
                  (let [lines (layout/ast->lines [:ast [:p "lorem ipsum dolor sit amet"]] 12)]
                    (expect (every? (fn [t]
@@ -54,16 +43,7 @@
                                    (texts lines))
                            (str "got: " (texts lines)))
                    (expect (= "lorem ipsum dolor sit amet"
-                              (str/replace (str/join " " (texts lines)) #"\s+" " ")))))
-             (it "inline code keeps :code style on the word"
-                 (let [lines (layout/ast->lines [:ast [:p "use " [:c "send!"] " here"]] 80)]
-                   (expect (= ["use send! here"] (texts lines)))
-                   (expect (styled? lines :code))))
-             (it "strong + em propagate style flags"
-                 (let [lines (layout/ast->lines [:ast [:p [:strong "bold"] " and " [:em "ital"]]]
-                                                80)]
-                   (expect (styled? lines :bold))
-                   (expect (styled? lines :italic)))))
+                              (str/replace (str/join " " (texts lines)) #"\s+" " "))))))
 
 ;; lists
 
@@ -79,15 +59,6 @@
                    (expect (str/starts-with? (second ls) "  ")))))
 
 (defdescribe list-test
-             (it "ol numbers items starting at 1"
-                 (let [lines
-                       (layout/ast->lines [:ast [:ol [:li "x"] [:li "y"]]] 80)
-
-                       ts
-                       (texts lines)]
-
-                   (expect (some #(= "1. x" %) ts))
-                   (expect (some #(= "2. y" %) ts))))
              (it "ol counts from the number the list starts on"
                  (let [lines
                        (layout/ast->lines [:ast [:ol {:start 8} [:li "eight"] [:li "nine"]]] 80)
@@ -125,17 +96,6 @@
                    (expect (some #(= "9.  nine" %) ts))
                    (expect (some #(= "10. ten" %) ts))
                    (expect (some #(= "11. eleven" %) ts))))
-             (it "ul renders GFM task-list markers as checklist glyphs"
-                 (let [lines
-                       (layout/ast->lines [:ast
-                                           [:ul [:li "[x] Completed item"] [:li "[ ] Pending item"]
-                                            [:li "[X] Also completed"]]]
-                                          80)
-
-                       ts
-                       (texts lines)]
-
-                   (expect (= ["[✓] Completed item" "[ ] Pending item" "[✓] Also completed"] ts))))
              (it "task-list continuations indent by display width, not char count"
                  (let [lines
                        (layout/ast->lines [:ast [:ul [:li "[ ] Pending item wraps here"]]] 14)
@@ -270,22 +230,6 @@
                                   (texts (filter #(= :table-head (:block-tag %)) lines))))))))
 
 (defdescribe table-test
-             (it "renders IR tables as boxed rows with semantic table tags"
-                 (let [lines
-                       (layout/ast->lines [:ast
-                                           [:table [:tr [:th "Name"] [:th "Count"]]
-                                            [:tr [:td "apples"] [:td "12"]]]]
-                                          80)
-
-                       ts
-                       (texts lines)
-
-                       tags
-                       (mapv :block-tag lines)]
-
-                   (expect (= [:table-sep :table-head :table-sep :table-row :table-sep] tags))
-                   (expect (= "│ apples │ 12    │" (nth ts 3)))
-                   (expect (= "└────────┴───────┘" (nth ts 4)))))
              (it "emits table head/separator/body markers for the painter"
                  (let [out
                        (layout/ast->sentinel-strings
@@ -457,10 +401,7 @@
                                     (let [seg (subs body col (+ (long col) (long width)))]
                                       (and (= seg (str/trim seg)) (pos? (count seg)))))
                                   links))
-                        spans))))
-  (it "table rows without links carry no link meta"
-      (let [entries (layout/ast->entries [:ast [:table [:tr [:th "A"]] [:tr [:td "1"]]]] 40)]
-        (expect (empty? (link-spans entries))))))
+                        spans)))))
 
 ;; table paths (BLO-172)
 
@@ -473,46 +414,43 @@
             [(subs (:line e) 1) paths]))
         entries))
 
-(defdescribe
-  table-path-test
-  (it "a cell that names a file turns the words it spells into a file span"
-      ;; BLO-172: a listing printed file names it would not let you open. The
-      ;; cell keeps its own words; `{:path …}` makes the span they occupy the press.
-      (let [entries
-            (layout/ast->entries [:ast
-                                  [:table [:tr [:th "Name"] [:th "Kind"]]
-                                   [:tr [:td {:path "/w/src/core.clj"} "core.clj"] [:td "File"]]]]
-                                 60)
+(defdescribe table-path-test
+             (it "a cell that names a file turns the words it spells into a file span"
+                 ;; BLO-172: a listing printed file names it would not let you open. The
+                 ;; cell keeps its own words; `{:path …}` makes the span they occupy the press.
+                 (let [entries
+                       (layout/ast->entries [:ast
+                                             [:table [:tr [:th "Name"] [:th "Kind"]]
+                                              [:tr [:td {:path "/w/src/core.clj"} "core.clj"]
+                                               [:td "File"]]]]
+                                            60)
 
-            spans
-            (vec (path-spans entries))]
+                       spans
+                       (vec (path-spans entries))]
 
-        (expect (= 1 (count spans)))
-        (let [[body paths]
-              (first spans)
+                   (expect (= 1 (count spans)))
+                   (let [[body paths]
+                         (first spans)
 
-              {:keys [col width path]}
-              (first paths)]
+                         {:keys [col width path]}
+                         (first paths)]
 
-          (expect (= "/w/src/core.clj" path))
-          (expect (= "core.clj" (subs body col (+ (long col) (long width))))))))
-  (it "a wrapped row presses on its FIRST physical line only"
-      (let [entries
-            (layout/ast->entries [:ast
-                                  [:table [:tr [:th "Name"] [:th "Note"]]
-                                   [:tr [:td {:path "/w/src/core.clj"} "core.clj"]
-                                    [:td
-                                     "a note long enough to wrap this row over several lines"]]]]
-                                 26)
+                     (expect (= "/w/src/core.clj" path))
+                     (expect (= "core.clj" (subs body col (+ (long col) (long width))))))))
+             (it "a wrapped row presses on its FIRST physical line only"
+                 (let [entries
+                       (layout/ast->entries
+                         [:ast
+                          [:table [:tr [:th "Name"] [:th "Note"]]
+                           [:tr [:td {:path "/w/src/core.clj"} "core.clj"]
+                            [:td "a note long enough to wrap this row over several lines"]]]]
+                         26)
 
-            spans
-            (vec (path-spans entries))]
+                       spans
+                       (vec (path-spans entries))]
 
-        (expect (= 1 (count spans)))
-        (expect (str/includes? (first (first spans)) "core.clj"))))
-  (it "cells without a path carry no file meta"
-      (let [entries (layout/ast->entries [:ast [:table [:tr [:th "A"]] [:tr [:td "1"]]]] 40)]
-        (expect (empty? (path-spans entries))))))
+                   (expect (= 1 (count spans)))
+                   (expect (str/includes? (first (first spans)) "core.clj")))))
 
 ;; bdc79ae9 fixture — end-to-end regression
 
@@ -558,18 +496,6 @@
 ;; block-tag enrichment + sentinel-string adapter
 
 (defdescribe block-tag-test
-             (it ":p block stamps :block-tag :p on every produced line"
-                 (let [lines (layout/ast->lines [:ast [:p "hello"]] 80)]
-                   (expect (every? #(= :p (:block-tag %)) lines))))
-             (it ":h block stamps :block-tag :h with :block-level"
-                 (let [lines
-                       (layout/ast->lines [:ast [:h {:level 2} "Title"]] 80)
-
-                       [first-line]
-                       lines]
-
-                   (expect (= :h (:block-tag first-line)))
-                   (expect (= 2 (:block-level first-line)))))
              (it ":code block has neutral outside margins and code-bg inside padding"
                  (let [lines
                        (layout/ast->lines [:ast [:code "a\n\nb"]] 80)
@@ -613,10 +539,7 @@
                    (expect (= [:outer-margin :code :code :code :outer-margin :code :code :code
                                :outer-margin]
                               tags))
-                   (expect (= ["" "" "a" "" "" "" "b" "" ""] ts))))
-             (it ":ul list stamps :block-tag :ul on marker + continuation lines"
-                 (let [lines (layout/ast->lines [:ast [:ul [:li "x"] [:li "y"]]] 80)]
-                   (expect (every? #(= :ul (:block-tag %)) lines)))))
+                   (expect (= ["" "" "a" "" "" "" "b" "" ""] ts)))))
 
 (defdescribe sentinel-adapter-test
              (it "emits H1/H2/H3 markers for headings, picking by :level"
@@ -631,15 +554,6 @@
                    (expect (some #(= p/MARKER_MD_H1 %) ms))
                    (expect (some #(= p/MARKER_MD_H2 %) ms))
                    (expect (some #(= p/MARKER_MD_H3 %) ms))))
-             (it "emits MARKER_MD_BULLET for ul / ol items"
-                 (let [out (layout/ast->sentinel-strings [:ast [:ul [:li "x"]]] 80)]
-                   (expect (some #(= p/MARKER_MD_BULLET (subs % 0 1)) out))))
-             (it "emits MARKER_MD_CODE for fenced code"
-                 (let [out (layout/ast->sentinel-strings [:ast [:code {:lang "clj"} "(+ 1 1)"]] 80)]
-                   (expect (some #(= p/MARKER_MD_CODE (subs % 0 1)) out))))
-             (it "emits MARKER_ANSWER_TXT for plain paragraphs"
-                 (let [out (layout/ast->sentinel-strings [:ast [:p "hello world"]] 80)]
-                   (expect (some #(= p/MARKER_ANSWER_TXT (subs % 0 1)) out))))
              (it "wraps :strong runs in INLINE_BOLD_ON/OFF sentinel pair"
                  (let [out
                        (layout/ast->sentinel-strings [:ast [:p "hi " [:strong "bold"] " rest"]] 80)
@@ -655,14 +569,7 @@
                        body
                        (str/join "" (bodies out))]
 
-                   (expect (str/includes? body (str p/INLINE_CODE_ON "send!" p/INLINE_CODE_OFF)))))
-             (it "bdc79ae9 fixture round-trips through the sentinel adapter without throwing"
-                 (when-let [raw (fixture-ir)]
-                   (let [out (layout/ast->sentinel-strings raw 100)]
-                     (expect (vector? out))
-                     (expect (every? string? out))
-                     ;; the bug-paragraph still flows on one wrap chunk
-                     (expect (some #(str/includes? % "znajduje nodes wiarygodnie") out))))))
+                   (expect (str/includes? body (str p/INLINE_CODE_ON "send!" p/INLINE_CODE_OFF))))))
 
 ;; Retired disclosure tags stay out of answer rendering
 

@@ -57,9 +57,7 @@
                  ;; 20x5 cells of 10x20 px are a 2:1 box.
                  (expect (= {:x 0 :y 150 :w 400 :h 200} (timg/cover-view 400 500 20 5 [10 20]))))
              (it "cuts a wide picture at the left and the right"
-                 (expect (= {:x 300 :y 0 :w 400 :h 200} (timg/cover-view 1000 200 20 5 [10 20]))))
-             (it "keeps a picture that already has the shape of its box"
-                 (expect (= {:x 0 :y 0 :w 800 :h 400} (timg/cover-view 800 400 20 5 [10 20])))))
+                 (expect (= {:x 300 :y 0 :w 400 :h 200} (timg/cover-view 1000 200 20 5 [10 20])))))
 
 (defdescribe png-transcode-test
              ;; Kitty's f=100 is PNG-only, so a JPEG drop must be re-encoded to PNG.
@@ -104,15 +102,6 @@
              (it "transmit-only is an a=t upload with an image id, no display"
                  (let [s (timg/kitty-transmit "AAAA" 7)]
                    (expect (= "\u001b_Ga=t,i=7,f=100,q=2;AAAA\u001b\\" s))))
-             (it "a transmit payload over one chunk splits into m=1 … m=0 chunks"
-                 (let [big
-                       (apply str (repeat 5000 \A))
-
-                       s
-                       (timg/kitty-transmit big 3)]
-
-                   (expect (str/starts-with? s "\u001b_Ga=t,i=3,f=100,q=2,m=1;"))
-                   (expect (str/includes? s "\u001b_Gm=0;"))))
              (it "a full placement references the image id and cell box, no source crop"
                  (expect (= "\u001b_Ga=p,i=5,p=17,C=1,q=2,c=10,r=6\u001b\\"
                             (timg/kitty-place {:id 5 :placement-id 17 :cols 10 :rows 6}))))

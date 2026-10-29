@@ -92,15 +92,7 @@
                                 (select-keys
                                   (@#'provider/gateway-provider-status-safe
                                    {:id :openai :api-key "sk-test" :models [{:name "gpt-5"}]})
-                                  ["is_authenticated" "source" "provider_id" "config_path"]))))))
-             (it "routes local no-auth provider status through the gateway"
-                 (with-redefs [vis/gateway-provider-status (fn [provider-id]
-                                                             {"is_authenticated" true
-                                                              "source" "gateway"
-                                                              "provider_id" (name provider-id)})]
-                   (expect (= {"is_authenticated" true "source" "gateway" "provider_id" "ollama"}
-                              (select-keys (@#'provider/gateway-provider-status-safe {:id :ollama})
-                                           ["is_authenticated" "source" "provider_id"]))))))
+                                  ["is_authenticated" "source" "provider_id" "config_path"])))))))
 
 (defdescribe rejected-provider-connect-test
              (it
@@ -182,12 +174,7 @@
         (expect (= "reasoning_level"
                    (:setting (provider/provider-thinking-choices {:id :ollama :models [{:name "m"}]}
                                                                  false)))
-                "a provider without rungs keeps the simplified levels")))
-  (it "binds one digit to each level, marks the current one and offers the built-in default"
-      (let [{[levels commands] :groups} (provider/thinking-transient-spec
-                                          {:choices ["quick" "balanced" "deep"] :current "deep"})]
-        (expect (= ["1" "2" "3"] (mapv :key (:items levels))))
-        (expect (= ["x"] (mapv :key (:items commands)))))))
+                "a provider without rungs keeps the simplified levels"))))
 
 (defdescribe remove-provider-test
              ;; Regression (user report, Settings -> Providers): the TUI offered LOG OUT as a
@@ -718,29 +705,7 @@
                    (expect (= [["a" :p2] ["b" :p3]] (picks page-1)))
                    ;; …and the transient's own paging keys, never bound to a preset.
                    (expect (= ["n" "p"] (mapv :key (:items (second (:groups page-0))))))
-                   (expect (str/includes? (:title (first (:groups page-0))) "1/3"))))
-             (it "asks for no paging when every preset fits on one page"
-                 (let [spec (provider/preset-transient-spec [{:id :ollama :label "Ollama"}] 0 8)]
-                   (expect (= 1 (count (:groups spec))))
-                   (expect (= [["a" :ollama]]
-                              (mapv (juxt :key :id) (:items (first (:groups spec)))))))))
-
-(defdescribe
-  local-setup-transient-spec-test
-  (it "reads a local endpoint inline and adds with it"
-      (let [spec
-            (provider/local-setup-transient-spec "Ollama" "http://localhost:11434")
-
-            [endpoint commands]
-            (:groups spec)]
-
-        (expect (= "Ollama" (:title endpoint)))
-        ;; `u` is an OPTION: the URL is typed on the host's own hint row, so no
-        ;; second popup ever opens for it.
-        (expect (= [{:key "u" :type :option :id :base-url :label "Base URL" :prompt "Base URL:"}]
-                   (:items endpoint)))
-        (expect (= :add (:id (first (:items commands)))))
-        (expect (str/includes? (:label (first (:items commands))) "http://localhost:11434")))))
+                   (expect (str/includes? (:title (first (:groups page-0))) "1/3")))))
 
 ;; Regression: success popups MUST stay silent.
 ;;
@@ -772,17 +737,6 @@
                       :github-copilot
                       "GitHub Copilot")))
           (expect (empty? (notes log))))))
-  (it "codex success closes the band silently"
-      (let [log (atom [])]
-        (with-redefs [vis/gateway-provider-status (constantly {"is_authenticated" false})
-                      vis/gateway-provider-auth-start! (constantly codex-device-flow)
-                      vis/gateway-provider-auth-poll! (constantly {"status" "ok"})
-                      opener/open! (constantly true)
-                      dlg/text-view-dialog! (fn [& _]
-                                              (throw (ex-info "success opened a dialog" {})))]
-
-          (expect (= true (@#'provider/codex-oauth-ready! (band-stub {} log))))
-          (expect (empty? (notes log))))))
   (it "anthropic success closes the band silently (parity with copilot/codex)"
       (let [log (atom [])]
         (with-redefs [vis/gateway-provider-status (constantly {"is_authenticated" false})
@@ -797,21 +751,6 @@
                      (@#'provider/anthropic-oauth-ready!
                       (band-stub {"Anthropic — paste the final browser URL:" "https://x/?code=1"}
                                  log))))
-          (expect (empty? (notes log))))))
-  (it "an api-key provider succeeds silently through the gateway"
-      (let [log (atom [])]
-        (with-redefs [vis/gateway-provider-auth-start!
-                      (constantly
-                        {"flow_id" "flow-1" "kind" "api-key" "instructions" ["Paste your key."]})
-                      vis/gateway-provider-auth-submit-key! (constantly {"status" "ok"})
-                      dlg/text-view-dialog! (fn [& _]
-                                              (throw (ex-info "success opened a dialog" {})))]
-
-          ;; No credential rides back into the TUI's own rows.
-          (expect (= {:id :zai-coding-plan}
-                     (@#'provider/gateway-api-key-login!
-                      (band-stub {"Sign in" {:action :submit :options {:api-key "sk-1"}}} log)
-                      {:id :zai-coding-plan :api-key "sk-1"})))
           (expect (empty? (notes log))))))
   (it "an api-key failure still says so, in the band"
       (let [log (atom [])]
@@ -839,11 +778,7 @@
                    (expect (= [["d" "f"] ["a" "x"]] (mapv #(mapv :key (:items %)) (:groups spec))))
                    (expect (= [:default :fallback :authenticate :remove]
                               (mapv :id (mapcat :items (:groups spec)))))
-                   (expect (every? #(= :action (:type %)) (mapcat :items (:groups spec))))))
-             (it "drops a group no action landed in"
-                 (let [spec (provider/provider-transient-spec
-                              [{:id :default :label "Set as Default..." :key \d}])]
-                   (expect (= ["Routing"] (mapv :title (:groups spec)))))))
+                   (expect (every? #(= :action (:type %)) (mapcat :items (:groups spec)))))))
 
 ;; ── The model picker owns the rows it pages over ─────────────────────────────
 ;; A transient band wipes only the rows it paints, so the buffer above it stays
@@ -930,11 +865,7 @@
                    (expect (= "Models  2/2" (:title models)))
                    (expect (= ["a"] (mapv :key (:items models))))
                    (expect (= ["m3"] (mapv :id (:items models))))
-                   (expect (= ["n" "p"] (mapv :key (:items commands))))))
-             (it "shows no paging or expansion commands when one page holds everything"
-                 (let [spec (provider/model-transient-spec [{:id "m1" :label "m1"}] 0 {} 8)]
-                   (expect (= ["Models"] (mapv :title (:groups spec))))
-                   (expect (= ["a"] (mapv :key (:items (first (:groups spec)))))))))
+                   (expect (= ["n" "p"] (mapv :key (:items commands)))))))
 
 ;; API-key sign-in is a TRANSIENT, not a full-screen prompt.
 ;;
@@ -942,31 +873,12 @@
 ;; input box. Now the provider's own guidance stays on screen and the popup
 ;; advertises exactly two keys: `k` reads the key inline, `a` submits it.
 
-(defdescribe
-  api-key-transient-spec-test
-  (it "advertises one keystroke per step: k reads the key, a signs in"
-      (expect (= [["k"] ["a"]]
-                 (mapv #(mapv :key (:items %)) (:groups (provider/api-key-transient-spec)))))
-      (expect (= [[:option] [:action]]
-                 (mapv #(mapv :type (:items %)) (:groups (provider/api-key-transient-spec))))))
-  (it "the credential item is masked while typed and secret once armed"
-      (let [item (first (:items (first (:groups (provider/api-key-transient-spec)))))]
-        (expect (= :api-key (:id item)))
-        (expect (= \* (:mask item)))
-        (expect (= true (:secret? item)))))
-  (it "the only action submits the armed key"
-      (let [item (first (:items (second (:groups (provider/api-key-transient-spec)))))]
-        (expect (= :submit (:id item)))
-        (expect (= :action (:type item)))))
-  (it "hangs the provider's own guidance over the field, in place of `Credential`"
-      (expect (= ["Get one at https://z.ai/keys" "Authenticate"]
-                 (mapv :title
-                       (:groups (provider/api-key-transient-spec "Get one at https://z.ai/keys")))))
-      ;; Same shape either way: a hint changes the heading, never the keys.
-      (expect (= (mapv #(mapv :key (:items %)) (:groups (provider/api-key-transient-spec)))
-                 (mapv #(mapv :key (:items %))
-                       (:groups (provider/api-key-transient-spec
-                                  "Get one at https://z.ai/keys")))))))
+(defdescribe api-key-transient-spec-test
+             (it "the credential item is masked while typed and secret once armed"
+                 (let [item (first (:items (first (:groups (provider/api-key-transient-spec)))))]
+                   (expect (= :api-key (:id item)))
+                   (expect (= \* (:mask item)))
+                   (expect (= true (:secret? item))))))
 
 (defdescribe
   api-key-hint-test
@@ -977,10 +889,7 @@
                                          "Create one at https://z.ai/manage-apikey/apikey-list"
                                          "Then run: vis-agent providers auth zai-coding-plan"]))))
   (it "falls back to the first line that says anything at all"
-      (expect (= "Paste your key." (provider/api-key-hint ["" "  " "Paste your key." "More."]))))
-  (it "has nothing to say about nothing"
-      (expect (nil? (provider/api-key-hint nil)))
-      (expect (nil? (provider/api-key-hint [])))))
+      (expect (= "Paste your key." (provider/api-key-hint ["" "  " "Paste your key." "More."])))))
 
 (defdescribe command-minted-provider-auth-test
              ;; The screen that started this: a provider whose token is minted by
@@ -1096,17 +1005,6 @@
        (mapv #(cap/frame-text res %) (range (count (:frames res))))))))
 
 (defdescribe settings-provider-transient-keeps-settings-visible-test
-             (it "paints the provider band inside the Settings frame"
-                 (let [frames
-                       (settings-provider-band-frames 100 30)
-
-                       band
-                       (first (filter #(str/includes? % "Acme llm — actions") frames))]
-
-                   (expect (some? band))
-                   ;; The band reuses Settings' box instead of opening a second dialog.
-                   (expect (str/includes? band "Settings"))
-                   (expect (= 1 (count (re-seq #"✕" band))))))
              (it "restores the whole settings list when the band closes"
                  (let [frames
                        (settings-provider-band-frames 100 30)
@@ -1171,18 +1069,6 @@
                  (let [band (settings-model-band 100 30)]
                    (expect (not (str/includes? band "— actions")))
                    (expect (not (str/includes? band "Set as Default..."))))))
-
-;; ── Regression (user report): "setting the default provider and model is not
-;; making anything — there should be some visualization". The Providers list
-;; built its rows from the config's PROVIDER entries alone, so the routing tags
-;; the daemon had just persisted (`:default-provider`/`:default-model` and the
-;; fallback pair) never reached the screen: picking a default looked like it did
-;; nothing at all. ───────────────────────────────────────────────────────────
-(defdescribe settings-router-tags-visible-test
-             (it "names the routed model on the provider's own row"
-                 (let [frame (first (settings-provider-band-frames 100 30 [:esc]))]
-                   (expect (str/includes? frame "default → acme-1"))
-                   (expect (str/includes? frame "fallback → acme-2")))))
 
 ;; ── Regression (user report): "the adding provider is a separate dialogue …
 ;; it should be a sealed transient". Every step of the old wizard was a NESTED

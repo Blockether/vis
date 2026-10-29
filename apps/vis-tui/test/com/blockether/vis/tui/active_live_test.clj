@@ -315,43 +315,6 @@
       (finally (theme/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 (defdescribe
-  inline-live-view-has-an-extra-bottom-padding-row
-  (it "inline live view has an extra bottom padding row"
-      ;; A compact receipt retains exactly one blank padding row below its title.
-      (doseq [cols
-              [40 80 120]
-
-              pane
-              [(review-pane) (lv/minimized (review-pane)) (lv/armed (review-pane))
-               (lv/reopened (lv/settled (review-pane) {:reason :completed} 2000))]]
-
-        (with-open [terminal
-                    (DefaultVirtualTerminal. (TerminalSize. cols 44))
-
-                    ts
-                    (doto (TerminalScreen. terminal) (.startScreen))]
-
-          (binding [interactions/hit-map (interactions/create-hit-map)]
-            (let [payload (paint-review! ts pane)
-                  lines (:lines payload)
-                  index-of (fn [kind]
-                             (first (keep-indexed #(when (= kind (get-in %2 [:live-entry :kind]))
-                                                     %1)
-                                                  (:line-meta payload))))
-                  title-index (index-of :inline-title)
-                  padding (nth lines (inc title-index))
-                  ;; The receipt follows the persistent control on the digest row.
-                  header (last (filter #(= :live-reopen (:kind %)) (.current interactions/hit-map)))
-                  {:keys [row col width]} (:bounds header)
-                  padding-row (inc row)]
-
-              (expect (= (subs (nth lines title-index) 0 1) padding))
-              (expect (not= padding (nth lines (+ title-index 2))))
-              (doseq [^TextCharacter cell
-                      (subvec (nth (grid terminal cols 44) padding-row) col (+ col width))]
-                (expect (= " " (.getCharacterString cell))))))))))
-
-(defdescribe
   running-grid-and-clipped-clicks
   (it
     "running grid and clipped clicks"

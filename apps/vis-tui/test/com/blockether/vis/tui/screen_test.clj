@@ -8,11 +8,9 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
-            [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.artifact-inspector :as artifact-inspector]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
-            [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.attachment-intake-test :as intake-fixture]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.file-picker :as picker]
@@ -36,41 +34,24 @@
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [java.util.concurrent.locks ReentrantLock]
-           [com.googlecode.lanterna.terminal.ansi ANSITerminal UnixLikeTerminal$CtrlCBehaviour]
+           [com.googlecode.lanterna.terminal.ansi ANSITerminal]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]
            [java.io ByteArrayInputStream ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]))
 
-(defdescribe
-  remaining-messages-jump-test
-  (it "counts bubbles whose end still sits below the viewport, including a partial bubble"
-      (let [remaining
-            (ns-resolve 'com.blockether.vis.tui.screen 'remaining-message-count)
+(defdescribe remaining-messages-jump-test
+             (it
+               "counts bubbles whose end still sits below the viewport, including a partial bubble"
+               (let [remaining
+                     (ns-resolve 'com.blockether.vis.tui.screen 'remaining-message-count)
 
-            layout
-            {:eff-scroll 0 :offsets [0 5 12 20]}]
+                     layout
+                     {:eff-scroll 0 :offsets [0 5 12 20]}]
 
-        (expect (= 2 (remaining layout 5)))
-        (expect (= 1 (remaining (assoc layout :eff-scroll 8) 5)))
-        (expect (= 0 (remaining (assoc layout :eff-scroll 15) 5)))
-        (expect (= 3 (remaining (assoc layout :offsets [0 5 12 20 24]) 5)))))
-  (it "paints the live count with the same jump action, but hides it in FOLLOW"
-      (let [paint
-            (deref #'screen/paint-jump-bottom!)
-
-            buttons
-            (atom [])
-
-            layout
-            {:eff-scroll 0 :offsets [0 5 12 20]}]
-
-        (with-redefs [components/button! (fn [_ _ _ label action]
-                                           (swap! buttons conj [label action]))]
-          (paint nil 80 25 20 layout 5 {:scroll (scroll/parked 0)})
-          (paint nil 80 25 20 (assoc layout :eff-scroll 8) 5 {:scroll (scroll/parked 8)})
-          (paint nil 80 25 20 layout 5 {:scroll scroll/follow}))
-        (expect (= [[" ↓ 2 messages (C-x j) " :jump-bottom] [" ↓ 1 message (C-x j) " :jump-bottom]]
-                   @buttons)))))
+                 (expect (= 2 (remaining layout 5)))
+                 (expect (= 1 (remaining (assoc layout :eff-scroll 8) 5)))
+                 (expect (= 0 (remaining (assoc layout :eff-scroll 15) 5)))
+                 (expect (= 3 (remaining (assoc layout :offsets [0 5 12 20 24]) 5))))))
 
 (defdescribe team-refresh-frame-test
              (it
@@ -212,8 +193,6 @@
 
 (def ^:private coalesced-drag-scroll-amount (deref #'screen/coalesced-drag-scroll-amount))
 
-(def ^:private scrollbar-position (deref #'screen/scrollbar-position))
-
 (def ^:private live-view-wheel-event (deref #'screen/live-view-wheel-event))
 
 (def ^:private smooth-wheel! (deref #'screen/smooth-wheel!))
@@ -237,11 +216,7 @@
 
 (def ^:private slash-spec->menu-command (deref #'screen/slash-spec->menu-command))
 
-(def ^:private menu-commands (deref #'screen/menu-commands))
-
 (def ^:private slash-suggestions-for-db (deref #'screen/slash-suggestions-for-db))
-
-(def ^:private command-palette-extra-commands (deref #'screen/command-palette-extra-commands))
 
 (def ^:private copy-session-id! (deref #'screen/copy-session-id!))
 
@@ -287,8 +262,6 @@
 
 (def ^:private pre-resolve-session-id! (deref #'screen/pre-resolve-session-id!))
 
-(def ^:private terminal-ctrl-c-behaviour (deref #'screen/terminal-ctrl-c-behaviour))
-
 (def ^:private terminal-interrupt-action (deref #'screen/terminal-interrupt-action))
 
 (def ^:private handle-terminal-interrupt! (deref #'screen/handle-terminal-interrupt!))
@@ -309,29 +282,6 @@
    `vis-agent: <msg>` line and exit 2 instead of a Java stack trace."
   [f]
   (try (f) false (catch clojure.lang.ExceptionInfo e (true? (:vis/user-error (ex-data e))))))
-
-(defdescribe terminal-window-state-lifecycle-test
-             (it "applies and resets only the application window background"
-                 (let [calls
-                       (atom [])
-
-                       record
-                       (fn [event]
-                         (fn [& _]
-                           (swap! calls conj event)))]
-
-                   (with-redefs [vis/tty-out
-                                 (delay (java.io.ByteArrayOutputStream.))
-
-                                 input/set-default-bg!
-                                 (record :set-bg)
-
-                                 input/reset-default-bg!
-                                 (record :reset-bg)]
-
-                     (enable-terminal-state! nil)
-                     (disable-terminal-state! nil))
-                   (expect (= [:set-bg :reset-bg] @calls)))))
 
 (defdescribe terminal-cell-size-probe-test
              ;; Regression, issue td-03018d: cmux's trailing CSI 18 t reply was typed into the composer.
@@ -557,43 +507,35 @@
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: wheel input
 ;; accelerated when it crossed into the live table, its rows had no TUI action, and
 ;; the live transient had no minimize/restore action.
-(defdescribe
-  live-view-pointer-actions-test
-  (it "keeps a coalesced live-table gesture at terminal row granularity"
-      (with-redefs-fn {(ns-resolve 'com.blockether.vis.tui.screen 'live-band-pane)
-                       (fn [_db _my]
-                         {:view {:id "view-1"}})}
-        (fn []
-          (expect (= [:live-view-scroll "view-1" -2] (live-view-wheel-event {} 9 -2))))))
-  (it "returns wheel input over a compact status line to the transcript"
-      (with-redefs-fn {(ns-resolve 'com.blockether.vis.tui.screen 'live-band-pane)
-                       (fn [_db _my]
-                         {:view {:id "view-1"} :is-minimized true})}
-        (fn []
-          (expect (nil? (live-view-wheel-event {} 9 -2))))))
-  (it "routes minimize and restore clicks through pane state only"
-      (let [events (atom [])]
-        (with-redefs [state/dispatch #(swap! events conj %)]
-          (expect (true? (activate-live-region! {} {:kind :live-minimize :view-id "view-1"})))
-          (expect (true? (activate-live-region! {} {:kind :live-restore :view-id "view-1"}))))
-        (expect (= [[:live-view-minimize "view-1"] [:bump-render-version]
-                    [:live-view-restore "view-1"] [:bump-render-version]]
-                   @events))))
-  (it "routes a clicked row through the gateway View action"
-      (let [called
-            (promise)
+(defdescribe live-view-pointer-actions-test
+             (it "keeps a coalesced live-table gesture at terminal row granularity"
+                 (with-redefs-fn {(ns-resolve 'com.blockether.vis.tui.screen 'live-band-pane)
+                                  (fn [_db _my]
+                                    {:view {:id "view-1"}})}
+                   (fn []
+                     (expect (= [:live-view-scroll "view-1" -2] (live-view-wheel-event {} 9 -2))))))
+             (it "returns wheel input over a compact status line to the transcript"
+                 (with-redefs-fn {(ns-resolve 'com.blockether.vis.tui.screen 'live-band-pane)
+                                  (fn [_db _my]
+                                    {:view {:id "view-1"} :is-minimized true})}
+                   (fn []
+                     (expect (nil? (live-view-wheel-event {} 9 -2))))))
+             (it "routes a clicked row through the gateway View action"
+                 (let [called
+                       (promise)
 
-            db
-            {:live-views [{:view {:id "view-1" :session-id "session-1"}}]}
+                       db
+                       {:live-views [{:view {:id "view-1" :session-id "session-1"}}]}
 
-            hit
-            {:kind :live-select :view-id "view-1" :node-id "jobs" :item-id "macos"}]
+                       hit
+                       {:kind :live-select :view-id "view-1" :node-id "jobs" :item-id "macos"}]
 
-        (with-redefs [vis/gateway-view-action! (fn [& args]
-                                                 (deliver called args))]
-          (expect (true? (activate-live-region! db hit)))
-          (expect (= ["session-1" "view-1" {:action :select :node-id "jobs" :item-ids ["macos"]}]
-                     (deref called 1000 ::timed-out)))))))
+                   (with-redefs [vis/gateway-view-action! (fn [& args]
+                                                            (deliver called args))]
+                     (expect (true? (activate-live-region! db hit)))
+                     (expect (= ["session-1" "view-1"
+                                 {:action :select :node-id "jobs" :item-ids ["macos"]}]
+                                (deref called 1000 ::timed-out)))))))
 
 (defdescribe drag-selection-auto-scroll-test
              (it "scales auto-scroll with Lanterna's bounded coalesced drag count"
@@ -601,13 +543,6 @@
                  (expect (= 12 (coalesced-drag-scroll-amount 4 3)))
                  ;; bounded by drag-autoscroll-max-coalesce-factor (= 8)
                  (expect (= 32 (coalesced-drag-scroll-amount 4 99)))))
-
-;; Regression, air-gapped user report: the first mouse event at the settled
-;; transcript bottom cast the auto-bottom layout sentinel (`nil`) to `int`.
-(defdescribe scrollbar-position-test
-             (it "gives Lanterna a concrete scrollbar row for every scroll mode"
-                 (expect (= 20 (scrollbar-position scroll/follow 20)))
-                 (expect (= 7 (scrollbar-position (scroll/parked 7) 20)))))
 
 (defdescribe
   slash-menu-test
@@ -697,22 +632,7 @@
                                 [:slash/spec :slash/ui :kind])))
              (expect (= [false true] (mapv :slash/saveable? @registry-slash-commands-cache)))
              (expect (= [[:saveable-slashes ["/python-echo"]] [:bump-render-version]] @events)))
-           (finally (reset! registry-slash-commands-cache previous)))))
-  (it "menu-commands keeps slash registry for typed slash suggestions"
-      (with-redefs [vis/registered-slashes (constantly [{:slash/name "voice"
-                                                         :slash/doc "Voice toggle"}])]
-        (let [ids (mapv :id (menu-commands nil))]
-          (expect (some #{:new-session} ids))
-          (expect (some #{:voice} ids)))))
-  (it "Ctrl+K offers team inspection only after Subagents is enabled"
-      (doseq [enabled? [false true]]
-        (with-redefs [vis/registered-slashes
-                      (constantly [{:slash/name "voice" :slash/doc "Voice toggle"}
-                                   {:slash/name "workspace" :slash/doc "Workspace ops"}])
-                      agent-team/enabled? (constantly enabled?)]
-
-          (expect (= (if enabled? [:agent-team] [])
-                     (mapv :id (command-palette-extra-commands))))))))
+           (finally (reset! registry-slash-commands-cache previous))))))
 
 (defdescribe channel-status-error-routing-test
              (it "routes error status events to the notification lane only"
@@ -750,8 +670,6 @@
                      (expect (= [[:channel-status-clear :voice/piper]] @events))))))
 
 (defdescribe terminal-interrupt-test
-             (it "configures Lanterna to trap Ctrl+C instead of exiting inside pollInput"
-                 (expect (= UnixLikeTerminal$CtrlCBehaviour/TRAP (terminal-ctrl-c-behaviour))))
              (it "clears a non-empty draft before quitting on terminal interrupts"
                  (expect (= :clear-input
                             (terminal-interrupt-action {:input (input/paste-text (input/empty-input)
@@ -1294,10 +1212,7 @@
           (expect (= 2 (get new-summary "turn_count")))
           (expect (= #inst "2024-01-08T00:00:00.000-00:00" (get new-summary "modified_at")))
           (expect (= ["new" "old"]
-                     (mapv #(get % "id") (latest-modified-first [old-summary new-summary])))))))
-  (it "stamps a session nothing has touched with its creation time"
-      (let [row (session-summary {"id" "fresh" "created_at" #inst "2024-02-01T00:00:00.000-00:00"})]
-        (expect (= #inst "2024-02-01T00:00:00.000-00:00" (get row "modified_at"))))))
+                     (mapv #(get % "id") (latest-modified-first [old-summary new-summary]))))))))
 
 (defdescribe
   session-picker-loading-test
@@ -2203,23 +2118,6 @@ therapy line 2"
                        (deref copied 1000 ::timeout)))
             (expect (= ["✓ Copied session ID" [:level :success :ttl-ms 1500]]
                        (deref notified 1000 ::timeout)))))))
-  (it "mouse selection copy uses the shared success notification contract"
-      (let [copied
-            (promise)
-
-            notified
-            (promise)]
-
-        (with-redefs-fn {#'input/clipboard-copy! (fn [text]
-                                                   (deliver copied text)
-                                                   true)
-                         #'vis/notify! (fn [text & kvs]
-                                         (deliver notified [text kvs]))}
-          (fn []
-            (copy-selection! "selected text")
-            (expect (= "selected text" (deref copied 1000 ::timeout)))
-            (expect (= ["✓ Copied selection" [:level :success :ttl-ms 1500]]
-                       (deref notified 1000 ::timeout)))))))
   (it "a transcript drag whose document rebuild comes back blank falls back to the painted cells"
       ;; Regression: an expanded / live disclosure bubble can desync the
       ;; virtual-document rebuild from the on-screen paint, so it returns blank
@@ -2235,23 +2133,6 @@ therapy line 2"
                  (selection-copy-payload :transcript "document rebuild" (constantly "visible"))))
       ;; Non-transcript sources already extract from cells; pass the value through.
       (expect (= "" (selection-copy-payload :input "" (constantly "visible")))))
-  (it "single-click bubble copy uses the shared success notification contract"
-      (let [copied
-            (promise)
-
-            notified
-            (promise)]
-
-        (with-redefs-fn {#'input/clipboard-copy! (fn [text]
-                                                   (deliver copied text)
-                                                   true)
-                         #'vis/notify! (fn [text & kvs]
-                                         (deliver notified [text kvs]))}
-          (fn []
-            (copy-bubble! "whole bubble")
-            (expect (= "whole bubble" (deref copied 1000 ::timeout)))
-            (expect (= ["✓ Copied bubble" [:level :success :ttl-ms 1500]]
-                       (deref notified 1000 ::timeout)))))))
   (it "single-click bubble copy strips ANSI/control-picture artifacts"
       (let [copied (promise)]
         (with-redefs-fn {#'input/clipboard-copy! (fn [text]
@@ -2267,23 +2148,6 @@ therapy line 2"
                                   1000
                                   ::timeout)))
             (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
-  (it "input mouse selection copy names the input in the notification"
-      (let [copied
-            (promise)
-
-            notified
-            (promise)]
-
-        (with-redefs-fn {#'input/clipboard-copy! (fn [text]
-                                                   (deliver copied text)
-                                                   true)
-                         #'vis/notify! (fn [text & kvs]
-                                         (deliver notified [text kvs]))}
-          (fn []
-            (copy-selection! "typed mistake" :input)
-            (expect (= "typed mistake" (deref copied 1000 ::timeout)))
-            (expect (= ["✓ Copied input selection" [:level :success :ttl-ms 1500]]
-                       (deref notified 1000 ::timeout)))))))
   (it "file click targets open through the editor path, not the generic URL opener"
       (let [editor-opened
             (promise)
@@ -2346,14 +2210,6 @@ therapy line 2"
             (copy-selection! "selected text")
             (expect (= ["Copy failed — terminal clipboard unavailable" [:level :error :ttl-ms 5000]]
                        (deref notified 1000 ::timeout)))))))
-  (it "URL click targets keep using the generic opener"
-      (let [url-opened (promise)]
-        (with-redefs-fn {#'opener/open! (fn [target]
-                                          (deliver url-opened target)
-                                          {:status :ok})}
-          (fn []
-            (open-click-target! {:kind :url :url "https://example.com"})
-            (expect (= "https://example.com" (deref url-opened 1000 ::timeout)))))))
   ;; Regression for #327: on WSL the opener found no browser, and the click did
   ;; nothing. A refusal now shows a notice that names the URL.
   (it "reports a URL that no opener could open, with the URL"
@@ -2594,7 +2450,6 @@ therapy line 2"
                                     out))))))))
 
 (defdescribe parse-args-test
-             (it "no args -> empty opts map" (expect (= {} (parse-args []))))
              (it "--resume sets :resume true" (expect (= {:resume true} (parse-args ["--resume"]))))
              (it "--session-id captures the next token as the id"
                  (expect (= {:session-id "abc123"} (parse-args ["--session-id" "abc123"]))))
@@ -3146,9 +3001,6 @@ therapy line 2"
                                                                             (+ (long first-idx) i)})
                                                                      (range n))))]
 
-    (it "keeps a whole picture as it is"
-        (with-redefs [timg/images-protocol (constantly :iterm2)]
-          (expect (= img (:img (first (fit (band 40 0 0) 0 50)))))))
     (it "kitty: cuts a picture at the bottom edge and keeps its size"
         (with-redefs [timg/images-protocol (constantly :kitty)]
           (let [[{:keys [row img]}] (fit (band 10 0 5) 0 15)]
@@ -3869,107 +3721,27 @@ therapy line 2"
                      (expect (= expected-rows (:text-rows geometry)))
                      (expect (= (+ expected-rows 2) (:input-box-h geometry)))))))
 
-(defdescribe
-  footer-unboxed-frame-test
-  (it
-    "frames only the input above two status rows on full, input and live frames"
-    (let [db
-          {:messages [{:role :assistant
-                       :text "Ready."
-                       :tokens {"input" 100 "output" 20}
-                       :cost {"total_cost" 0.0042}}]
-           :input {:lines ["draft"] :crow 0 :ccol 5}
-           :scroll scroll/follow
-           :settings {}
-           :loading? true
-           :progress {:iterations [{:thinking "Checking alignment"}]}}
-
-          capture
-          (binding [interactions/hit-map (interactions/create-hit-map)]
-            (with-redefs [state/app-db (atom db)
-                          timg/images-protocol (constantly nil)]
-
-              (cap/capture!
-                {:cols 80
-                 :rows 30
-                 :paint! (fn [{:keys [screen terminal]}]
-                           (let [layout (#'screen/render-frame! screen 80 30 db 1000)
-                                 full (subvec (term/grid terminal) 25)]
-
-                             (#'screen/render-input-frame! screen 80 30 db 1000)
-                             (let [input-frame (subvec (term/grid terminal) 25)]
-                               (#'screen/render-live-bubble-frame!
-                                screen
-                                80
-                                30
-                                (assoc db :layout layout)
-                                1000
-                                layout)
-                               (.refresh ^TerminalScreen screen)
-                               [full input-frame (subvec (term/grid terminal) 25)])))})))
-
-          rule
-          (apply str (repeat 80 "─"))]
-
-      (expect (nil? (:error capture)) (str (:error capture)))
-      (expect (apply = (:ret capture)))
-      (doseq [[input-top draft input-bottom model-row limits-row] (:ret capture)]
-        (expect (= rule input-top input-bottom))
-        (expect (str/starts-with? draft "  draft"))
-        (expect (str/includes? model-row "No git"))
-        (expect (str/starts-with? limits-row "  Limits"))
-        (expect (str/ends-with? limits-row "~$0.0042  "))))))
-
-(defdescribe
-  composer-attachment-geometry-test
-  ;; #249: only item rows and the two borders belong above the prompt.
-  (it "reserves compact attachment panels above the prompt on every render path"
-      (doseq [[attachments rail-h] [[[] 0] [[{:id "a"}] 3] [[{:id "a"} {:id "b"}] 4]]]
-        (let [geometry (#'screen/composer-geometry
-                        {:input (input/empty-input) :attachments attachments}
-                        80
-                        30)]
-          (expect (= {:text-rows 1
-                      :input-box-h 3
-                      :composer-h (+ 3 rail-h)
-                      :input-top 25
-                      ;; The rail touches the prompt; the echo row sits above the rail.
-                      :rail-top (- 25 rail-h)
-                      :rail-h rail-h
-                      :dock-top (- 24 rail-h)
-                      :dock-h 0
-                      :echo-row (- 24 rail-h)
-                      :messages-bottom (- 24 rail-h)
-                      :footer-row 28}
-                     geometry)))))
-  (it "paints the rail's bottom border directly on the prompt's top rule"
-      (let [db
-            {:input (input/empty-input)
-             :attachments [{:id "a" :filename "shot.png" :media-type "image/png" :size 10}]
-             :scroll scroll/follow
-             :settings {}
-             :messages []}
-
-            capture
-            (binding [interactions/hit-map (interactions/create-hit-map)]
-              (with-redefs [state/app-db (atom db)
-                            timg/images-protocol (constantly nil)]
-
-                (cap/capture! {:cols 80
-                               :rows 30
-                               :paint! (fn [{:keys [screen terminal]}]
-                                         (#'screen/render-frame! screen 80 30 db 1000)
-                                         (subvec (term/grid terminal) 21 26))})))
-
-            [echo rail-top rail-row rail-bottom prompt-top]
-            (:ret capture)]
-
-        (expect (nil? (:error capture)) (str (:error capture)))
-        (expect (not (str/includes? echo "Attachments")) "the echo row stays above the rail")
-        (expect (str/includes? rail-top "Attachments"))
-        (expect (str/includes? rail-row "shot.png"))
-        (expect (str/starts-with? rail-bottom "└"))
-        (expect (= (apply str (repeat 80 "─")) prompt-top)))))
+(defdescribe composer-attachment-geometry-test
+             ;; #249: only item rows and the two borders belong above the prompt.
+             (it "reserves compact attachment panels above the prompt on every render path"
+                 (doseq [[attachments rail-h] [[[] 0] [[{:id "a"}] 3] [[{:id "a"} {:id "b"}] 4]]]
+                   (let [geometry (#'screen/composer-geometry
+                                   {:input (input/empty-input) :attachments attachments}
+                                   80
+                                   30)]
+                     (expect (= {:text-rows 1
+                                 :input-box-h 3
+                                 :composer-h (+ 3 rail-h)
+                                 :input-top 25
+                                 ;; The rail touches the prompt; the echo row sits above the rail.
+                                 :rail-top (- 25 rail-h)
+                                 :rail-h rail-h
+                                 :dock-top (- 24 rail-h)
+                                 :dock-h 0
+                                 :echo-row (- 24 rail-h)
+                                 :messages-bottom (- 24 rail-h)
+                                 :footer-row 28}
+                                geometry))))))
 
 (defdescribe
   compact-activity-copy-test

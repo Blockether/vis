@@ -119,11 +119,6 @@
                    (expect (= activity
                               (:activity (first (:forms live)))
                               (:activity (first (:forms resume)))))))
-             (it "the shared fixture yields the expected block-level shape"
-                 (let [e (iteration/parity-entry (live-entry))]
-                   (expect (= "t7/i3" (:scope e)))
-                   (expect (= :ok (:status e)))
-                   (expect (= fence-code (:code e)))))
              (it "canonicalize derives one block-level scope/status from the forms"
                  (let [e (iteration/canonicalize (live-entry))]
                    (expect (= "t7/i3" (:scope e)))

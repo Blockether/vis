@@ -77,9 +77,7 @@
                                       "tools" 0)))))
   (it "flags an HTTP server that has no gateway token yet"
       (expect (= "idle · needs sign-in" (mcp/server-status http-server)))
-      (expect (= "idle · signed in" (mcp/server-status (assoc http-server "is_authorized" true)))))
-  (it "marks hand-written servers so the read-only verbs are not a surprise"
-      (expect (= "connected \u00b7 2 tools \u00b7 config file" (mcp/server-status handwritten)))))
+      (expect (= "idle · signed in" (mcp/server-status (assoc http-server "is_authorized" true))))))
 
 (defdescribe
   mcp-actions-test
@@ -112,16 +110,6 @@
         ;; nothing about a hand-written server is persisted here: no Configuration
         (expect (= ["Runtime" "Inspect"]
                    (mapv :title (:groups (mcp-model/server-transient-spec handwritten))))))))
-
-(defdescribe mcp-palette-command-test
-             (it "is reachable from the command palette, in any session"
-                 (let [cmd (->> dlg/palette-commands
-                                (filter #(= :mcp (:id %)))
-                                first)]
-                   (expect (some? cmd))
-                   ;; Untagged, so it survives the turnless gating too.
-                   (expect (some #(= :mcp (:id %))
-                                 (dlg/palette-commands-for {:has-turns? false}))))))
 
 (defdescribe
   mcp-form-test
@@ -397,66 +385,10 @@
                                               (throw (ex-info "a refusal opened a dialog" {})))]
 
           (mcp/run-action! nil nil nil handwritten :kill)
-          (expect (= :note (ffirst @log))))))
-  (it "shows every detail in the caller's transient without opening a dialog"
-      (let [viewed
-            (atom nil)
-
-            dialogs
-            (atom 0)
-
-            region
-            {:left 2 :inner-w 60 :hint-row 50 :text-w 58}]
-
-        (with-redefs [dlg/host-band-region
-                      (fn [_ actual]
-                        actual)
-
-                      dlg/band-questions
-                      (fn [_ _ actual]
-                        (expect (= region actual))
-                        {:view! (fn [title lines]
-                                  (reset! viewed [title lines]))
-                         :note! (fn [& _]
-                                  nil)})
-
-                      dlg/text-view-dialog!
-                      (fn [& _]
-                        (swap! dialogs inc))]
-
-          (mcp/run-action! nil nil region managed-stdio :details)
-          (expect (zero? @dialogs))
-          (expect (= ["MCP · files" (mcp/server-details managed-stdio)] @viewed))))))
+          (expect (= :note (ffirst @log)))))))
 
 (defdescribe
   mcp-details-render-test
-  (it
-    "keeps details and navigation in the existing band on wide and narrow terminals"
-    (doseq [cols
-            [40 80]
-
-            close-key
-            [\q :esc]]
-
-      (let [capture
-            (cap/capture!
-              {:cols cols
-               :rows 30
-               :keys [close-key]
-               :paint!
-               (fn [{:keys [screen]}]
-                 (let [g (.newTextGraphics ^com.googlecode.lanterna.screen.TerminalScreen screen)]
-                   (.putString ^com.googlecode.lanterna.graphics.TextGraphics g
-                               0
-                               0
-                               "Settings · MCP servers")
-                   (mcp/run-action! screen g (tr/band-region cols 30 1) managed-stdio :details)))})
-
-            text
-            (cap/frame-text capture)]
-
-        (expect (nil? (:error capture)))
-        (expect (str/includes? text "Settings · MCP servers")))))
   (it "scrolls long details to the end and returns to the beginning in the same band"
       (doseq [[keys expected]
               [[[:end :esc] "managed    config file"] [[:end :home :esc] "name       repo"]

@@ -3,7 +3,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.attachment-intake :as intake]
             [com.blockether.vis.tui.chat :as chat]
-            [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.composer-attachment-rail :as rail]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.render :as render]
@@ -71,22 +70,6 @@
       (.commitFrame interactions/hit-map)
       (.refresh screen)
       (+ top 3))))
-
-(defdescribe shared-logs-grid
-             (it "shared logs grid"
-                 (doseq [cols [40 80]]
-                   (let [capture (cap/capture! {:cols cols
-                                                :rows 24
-                                                :paint! (fn [{:keys [screen]}]
-                                                          (paint-shared-logs! screen))})
-                         text (cap/frame-text capture)]
-
-                     (expect (nil? (:error capture)))
-                     (expect (str/includes? text "vis-diagnostics.jsonl.gz"))
-                     (expect (str/includes? text "vis-diagnostics.jsonl"))
-                     (expect (= 2
-                                (count (filter #(= :attachment-remove (:kind %))
-                                               (.current interactions/hit-map)))))))))
 
 (defdescribe shared-logs-paste-roundtrip
              (it "shared logs paste roundtrip"

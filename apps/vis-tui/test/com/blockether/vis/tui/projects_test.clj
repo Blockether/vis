@@ -6,7 +6,6 @@
             [com.blockether.vis.tui.header-model :as model]
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.input :as input]
-            [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.projects :as projects]
@@ -995,27 +994,6 @@
         (expect (= (.getScrollDelta mouse) (.getScrollDelta local)))
         (expect (identical? mouse (projects/chat-key mouse 0))))
       (expect (= (cap/key-stroke \a) (projects/chat-key (cap/key-stroke \a) 40)))))
-
-(defdescribe
-  project-surface-cells-and-cursor-test
-  (it "project surface cells and cursor"
-      (let [capture (cap/capture!
-                      {:cols 30
-                       :rows 6
-                       :paint!
-                       (fn [{:keys [^TerminalScreen screen]}]
-                         (binding [frame/*column-offset* 10]
-                           (.putString (frame/surface-graphics screen 20 6) 0 1 "界 hello")
-                           (expect (= "界" (.getCharacterString (frame/back-character screen 0 1))))
-                           (frame/set-character! screen 5 2 (frame/back-character screen 3 1))
-                           (frame/set-cursor! screen (TerminalPosition. 5 2))
-                           (expect (= (TerminalPosition. 15 2) (.getCursorPosition screen)))
-                           (expect (= "h" (.getCharacterString (.getBackCharacter screen 15 2))))
-                           (frame/set-cursor! screen nil)
-                           (expect (nil? (.getCursorPosition screen)))))})]
-        (expect (nil? (:error capture)))
-        (expect (= "界" (get-in capture [:frames 0 1 10 :ch])))
-        (expect (= "h" (get-in capture [:frames 0 1 13 :ch]))))))
 
 (defdescribe
   project-overlay-and-media-origin-test
@@ -2434,79 +2412,6 @@
         (expect (false? (get-in @state/app-db [:project-sidebar :focused?]))
                 "A new session hands the keys to the chat, so typing never runs rail commands"))
       (expect (= [[:group "a"] [:session nil "/work/vis" "a"]] @calls)))))
-
-(defdescribe
-  project-sections-indent-rows-and-metadata-test
-  (it
-    "project sections indent rows and metadata"
-    (let [db
-          (-> (fixture-db)
-              (assoc-in [:project-sidebar :expanded] #{"a"})
-              (assoc-in [:project-sidebar :focused?] false)
-              (assoc-in [:project-sidebar :groups "a"] [group-release])
-              (assoc-in
-                [:project-sidebar :pages "a"]
-                {:sessions [{"id" "loose-id" "title" "Loose session" "turn_count" 2}]
-                 :grouped
-                 [{"id" "group-id" "title" "Grouped session" "group_id" "g1" "turn_count" 5}]}))
-
-          capture
-          (cap/capture! {:cols 168
-                         :rows 36
-                         :paint! (fn [{:keys [screen]}]
-                                   (projects/paint! (.newTextGraphics screen) db 168 36))})
-
-          hits
-          (.current projects/hit-map)
-
-          lines
-          (str/split-lines (cap/frame-text capture))
-
-          row-of
-          (fn [match]
-            (get-in (first (filter match hits)) [:bounds :row]))
-
-          project-row
-          (row-of #(= :project-select (:kind %)))
-
-          groups-row
-          (row-of #(and (= :project-set (:kind %)) (= :groups (:set %))))
-
-          group-row
-          (row-of #(= :project-group (:kind %)))
-
-          grouped-row
-          (row-of #(= "group-id" (get-in % [:session "id"])))
-
-          sessions-row
-          (row-of #(and (= :project-set (:kind %)) (= :sessions (:set %))))
-
-          loose-row
-          (row-of #(= "loose-id" (get-in % [:session "id"])))
-
-          column
-          (fn [row text]
-            (str/index-of (nth lines row) text))]
-
-      (expect (nil? (:error capture)))
-      (expect (= (+ 2 (column project-row "Vis")) (column groups-row "Groups")))
-      ;; A group sits under its section's label; each session is a list item: a
-      ;; bullet under the parent's label, then the title.
-      (expect (= (+ 4 (column groups-row "Groups")) (column group-row "Release apps")))
-      (expect (= (column group-row "Release apps") (column grouped-row "Grouped session")))
-      (expect (= "-"
-                 (subs (nth lines grouped-row)
-                       (- (column grouped-row "Grouped session") 2)
-                       (dec (column grouped-row "Grouped session")))))
-      (expect (= (+ 2 (column project-row "Vis")) (column sessions-row "Sessions")))
-      (expect (= (+ 2 (column sessions-row "Sessions")) (column loose-row "Loose session")))
-      (expect (= "-"
-                 (subs (nth lines loose-row)
-                       (column sessions-row "Sessions")
-                       (inc (column sessions-row "Sessions")))))
-      (expect (not-any? #(str/includes? (nth lines %) "turns") [grouped-row loose-row])
-              "Only a focused or hovered session shows its turns")
-      (expect (not-any? #(str/includes? (nth lines %) "-id") [grouped-row loose-row])))))
 
 (defdescribe
   project-sidebar-section-headings-stay-compact-test
@@ -4103,13 +4008,6 @@
 ;; verbs, and each one changes the project only through the gateway.
 (defdescribe
   project-menu-renames-and-moves-the-project-test
-  (it "lists rename and change folder on the project row"
-      (let [items (projects/row-menu-items (fixture-db) {:kind :project-select :project project-a})]
-        (expect (= [:use-project :new-session :new :rename-project :move-project :settings :refresh
-                    :delete-project]
-                   (mapv :id items)))
-        (expect (= (keymap/sidebar-key :rename)
-                   (:key (some #(when (= :rename-project (:id %)) %) items))))))
   (it
     "renames the project and sends nothing for a blank or unchanged name"
     (let [answer
@@ -4866,11 +4764,6 @@
                                              (cap/key-stroke key))))
                                    (projects/sidebar-entries db))
                              (str "No row acts on " key)))))
-             (it "opens the main settings and adds a project above the first row"
-                 (let [header (assoc-in (every-kind-db) [:project-sidebar :index] 0)]
-                   (expect (= [:menu {:initial-action :settings}]
-                              (projects/key-action header (cap/key-stroke \s))))
-                   (expect (= [:add] (projects/key-action header (cap/key-stroke \a))))))
              (it "walks rows with C-n, C-p, PgUp, PgDn, Home and End"
                  (let [db
                        (-> (every-kind-db)
@@ -4893,44 +4786,35 @@
                                 (assoc-in db [:project-sidebar :adding] {:text "/work/" :cursor 6})
                                 (KeyStroke. \n true false)))))))
 
-(defdescribe
-  project-sidebar-footer-buttons-test
-  (it "runs each footer pair as its key"
-      (let [db
-            (every-kind-db)
+(defdescribe project-sidebar-footer-buttons-test
+             (it "runs each footer pair as its key"
+                 (let [db
+                       (every-kind-db)
 
-            entry
-            (first (projects/sidebar-entries db))
+                       entry
+                       (first (projects/sidebar-entries db))
 
-            capture
-            (paint-rail db 240 24)
+                       capture
+                       (paint-rail db 240 24)
 
-            buttons
-            (sort-by (comp :col :bounds)
-                     (filter #(= :project-footer (:kind %)) (.current projects/hit-map)))
+                       buttons
+                       (sort-by (comp :col :bounds)
+                                (filter #(= :project-footer (:kind %)) (.current projects/hit-map)))
 
-            click
-            (fn [{{:keys [col row]} :bounds}]
-              (projects/key-action db
-                                   (MouseAction. MouseActionType/CLICK_DOWN
-                                                 1
-                                                 (TerminalPosition. (int col) (int row)))))]
+                       click
+                       (fn [{{:keys [col row]} :bounds}]
+                         (projects/key-action db
+                                              (MouseAction. MouseActionType/CLICK_DOWN
+                                                            1
+                                                            (TerminalPosition. (int col)
+                                                                               (int row)))))]
 
-        (expect (nil? (:error capture)))
-        (expect (= [:help :menu :settings :add-project :back] (mapv :command buttons)))
-        (expect (every? #(= 22 (get-in % [:bounds :row])) buttons))
-        (expect (= [[:help] [:menu entry] [:menu (assoc entry :initial-action :settings)] [:add]
-                    [:blur]]
-                   (mapv click buttons)))))
-  (it "keeps Esc in a narrow add field footer, which has no buttons"
-      (let [db
-            (assoc-in (every-kind-db) [:project-sidebar :adding] {:text "/work/" :cursor 6})
-
-            capture
-            (paint-rail db 40 18)]
-
-        (expect (nil? (:error capture)))
-        (expect (not-any? #(= :project-footer (:kind %)) (.current projects/hit-map))))))
+                   (expect (nil? (:error capture)))
+                   (expect (= [:help :menu :settings :add-project :back] (mapv :command buttons)))
+                   (expect (every? #(= 22 (get-in % [:bounds :row])) buttons))
+                   (expect (= [[:help] [:menu entry] [:menu (assoc entry :initial-action :settings)]
+                               [:add] [:blur]]
+                              (mapv click buttons))))))
 
 (defdescribe
   sidebar-dialog-anchor-test

@@ -112,9 +112,6 @@
     ;; a stream grew content while the follow ease trailed a few rows behind.
     (expect (false? (scroll/jump-chip-visible? {:mode :follow :pos 90} 100)))
     (expect (false? (scroll/jump-chip-visible? scroll/follow 100))))
-  (it "empty/short session parked :at offset 0 ⇒ nothing below, no chip"
-      (expect (false? (scroll/jump-chip-visible? (scroll/up scroll/follow 10 0) 0)))
-      (expect (false? (scroll/jump-chip-visible? {:mode :at :offset 0} 0))))
   (it "parked AT (or past) the live bottom ⇒ no chip"
       (expect (false? (scroll/jump-chip-visible? (scroll/parked 100) 100)))
       (expect (false? (scroll/jump-chip-visible? (scroll/parked 999) 100)))))

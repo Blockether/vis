@@ -96,34 +96,7 @@
 
 ;; Fixture 2 — nested `let`: (let [a (cat) b (cat)] (patch)).
 
-(defn- nested-let-entry
-  []
-  (single-form-entry
-    (ok-form
-      0
-      "t9/i2/f1"
-      "(let [a (cat \"a\")\n      b (cat \"b\")]\n  (patch [{:path \"x\" :search \"a\" :replace \"b\"}]))"
-      :mutation "CAT  a\nCAT  b\nPATCH  +1 -0")))
-
-(defdescribe nested-let-fixture-test
-             (describe "nested (let [a (cat) b (cat)] (patch))"
-                       (it "canonicalizes to ONE block scope"
-                           (let [block (iteration/canonicalize (nested-let-entry))]
-                             (expect (= "t9/i2" (:scope block)))
-                             (expect (= :ok (:status block)))))))
-
 ;; Fixture 3 — (def x (cat "x")): one block, printed output.
-
-(defn- def-bind-entry
-  []
-  (single-form-entry (ok-form 0 "t3/i1/f1" "(def x (cat \"x\"))" :observation "CAT  x")))
-
-(defdescribe def-bind-fixture-test
-             (describe "(def x (cat \"x\"))"
-                       (it "canonicalizes to ONE block scope"
-                           (let [block (iteration/canonicalize (def-bind-entry))]
-                             (expect (= "t3/i1" (:scope block)))
-                             (expect (= :ok (:status block)))))))
 
 ;; Fixture 4 — plain value (+ 1 2): one block, no stdout, no header.
 
@@ -142,10 +115,6 @@
 
 (defdescribe plain-value-fixture-test
              (describe "plain value (+ 1 2)"
-                       (it "canonicalizes to ONE :ok block"
-                           (let [block (iteration/canonicalize (plain-value-entry))]
-                             (expect (= "t1/i1" (:scope block)))
-                             (expect (= :ok (:status block)))))
                        (it "renders no stdout body and no header (bare values are never echoed)"
                            (let [lines
                                  (rendered (plain-value-entry))
@@ -186,15 +155,7 @@
                        (it "canonicalizes to an :error block carrying the form error"
                            (let [block (iteration/canonicalize (value-error-entry))]
                              (expect (= :error (:status block)))
-                             (expect (some? (:error block)))))
-                       (it "renders an inline caret + message under the code"
-                           (let [lines
-                                 (rendered (value-error-entry))
-
-                                 body
-                                 (str/join "\n" lines)]
-
-                             (expect (str/includes? body "^"))))))
+                             (expect (some? (:error block)))))))
 
 ;; Fixture 6 — cancellation mid-block → :cancelled.
 

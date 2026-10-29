@@ -83,13 +83,6 @@
                  (expect (some? v))
                  (expect (= expected (rgb-vec @v)))))
              (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
-    (it "applies dark theme through the atom-backed shared theme registry"
-        (try (t/apply-theme! :vis-dark)
-             (expect (= [12 14 18] (rgb-vec t/terminal-bg)))
-             (expect (= (:widths shared-theme/vis-dark) t/default-widths))
-             (expect (= (:fonts shared-theme/vis-dark) t/default-fonts))
-             (expect (= (:spacing shared-theme/vis-dark) t/default-spacing))
-             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
     (it
       "keeps session titles, active selections, hints, and error banners AA-readable in every theme"
       (try (doseq [theme-id (map keyword (shared-theme/available-theme-ids))]

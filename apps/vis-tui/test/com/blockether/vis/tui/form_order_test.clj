@@ -20,70 +20,38 @@
 ;; (engine-chrome) form. Loop/emission order is the canonical order.
 (def ^:private loop-codes ["(f0)" "(f1-silent)" "(f2)"])
 
-(defdescribe
-  live-vs-restore-order-test
-  (it "LIVE re-slots out-of-order arrivals back into loop order (not arrival order)"
-      (let [{:keys [on-chunk get-timeline]}
-            (progress/make-progress-tracker)
+(defdescribe live-vs-restore-order-test
+             (it "LIVE re-slots out-of-order arrivals back into loop order (not arrival order)"
+                 (let [{:keys [on-chunk get-timeline]}
+                       (progress/make-progress-tracker)
 
-            chunk
-            (fn [pos code silent?]
-              {:phase :form-result
-               :iteration 1
-               :position pos
-               :code code
-               :stdout (str "r" pos)
-               :silent? silent?})]
+                       chunk
+                       (fn [pos code silent?]
+                         {:phase :form-result
+                          :iteration 1
+                          :position pos
+                          :code code
+                          :stdout (str "r" pos)
+                          :silent? silent?})]
 
-        ;; results land 2, 0, 1 — the WRONG order on the wire
-        (on-chunk (chunk 2 "(f2)" false))
-        (on-chunk (chunk 0 "(f0)" false))
-        (on-chunk (chunk 1 "(f1-silent)" true))
-        (let [live (first (get-timeline))]
-          ;; slotted by position back into loop order, NOT [f2 f0 f1]
-          (expect (= loop-codes (codes live))))))
-  (it "RESTORE keeps the DB forms-vector order"
-      ;; The DB persists one ordered :forms vector — restore re-derives order from
-      ;; it (map-indexed), never from a stored position field.
-      (let [it
-            {"id" "t1"
-             "code" ""
-             "forms" [{"src" "(f0)" "stdout" "r0"} {"src" "(f1-silent)" "stdout" "r1" "silent" true}
-                      {"src" "(f2)" "stdout" "r2"}]}
+                   ;; results land 2, 0, 1 — the WRONG order on the wire
+                   (on-chunk (chunk 2 "(f2)" false))
+                   (on-chunk (chunk 0 "(f0)" false))
+                   (on-chunk (chunk 1 "(f1-silent)" true))
+                   (let [live (first (get-timeline))]
+                     ;; slotted by position back into loop order, NOT [f2 f0 f1]
+                     (expect (= loop-codes (codes live))))))
+             (it "RESTORE keeps the DB forms-vector order"
+                 ;; The DB persists one ordered :forms vector — restore re-derives order from
+                 ;; it (map-indexed), never from a stored position field.
+                 (let [it
+                       {"id" "t1"
+                        "code" ""
+                        "forms" [{"src" "(f0)" "stdout" "r0"}
+                                 {"src" "(f1-silent)" "stdout" "r1" "silent" true}
+                                 {"src" "(f2)" "stdout" "r2"}]}
 
-            restored
-            (it->iteration-entry {:produced-answer? false :last-iteration-id nil} it)]
+                       restored
+                       (it->iteration-entry {:produced-answer? false :last-iteration-id nil} it)]
 
-        (expect (= loop-codes (codes restored)))))
-  (it "LIVE order == RESTORE order == loop order (no divergence)"
-      (let [{:keys [on-chunk get-timeline]}
-            (progress/make-progress-tracker)
-
-            chunk
-            (fn [pos code silent?]
-              {:phase :form-result
-               :iteration 1
-               :position pos
-               :code code
-               :stdout (str "r" pos)
-               :silent? silent?})]
-
-        (on-chunk (chunk 2 "(f2)" false))
-        (on-chunk (chunk 0 "(f0)" false))
-        (on-chunk (chunk 1 "(f1-silent)" true))
-        (let [live
-              (codes (first (get-timeline)))
-
-              it
-              {"id" "t1"
-               "code" ""
-               "forms" [{"src" "(f0)" "stdout" "r0"}
-                        {"src" "(f1-silent)" "stdout" "r1" "silent" true}
-                        {"src" "(f2)" "stdout" "r2"}]}
-
-              restored
-              (codes (it->iteration-entry {:produced-answer? false :last-iteration-id nil} it))]
-
-          (expect (= loop-codes live))
-          (expect (= loop-codes restored))
-          (expect (= live restored))))))
+                   (expect (= loop-codes (codes restored))))))

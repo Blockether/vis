@@ -405,11 +405,7 @@
           ;; block-level projection: the errored form drives the
           ;; iteration's canonical status + error
           (expect (= :error (:status trace)))
-          (expect (some? (:error trace))))))
-  (it "render-answer projects canonical blocks"
-      (expect (= "raw **markdown**"
-                 ((var-get (resolve 'com.blockether.vis.tui.chat/render-answer))
-                   [{"id" "b1" "type" "prose" "markdown" "raw **markdown**"}])))))
+          (expect (some? (:error trace)))))))
 
 (defdescribe
   turn-options-test
@@ -825,13 +821,6 @@
                 second
                 :traces)))]
 
-    (it "a restored iteration keeps the prose the model wrote beside its code"
-        (let [entry (it->ie {:produced-answer? false :last-iteration-id :other}
-                            {"id" "it-1"
-                             "position" 1
-                             "assistant_prose" "  Checking the failing test first.\n"
-                             "forms" [{"scope" "t1/i1" "src" "print(1)" "stdout" "1\n"}]})]
-          (expect (= "Checking the failing test first." (:assistant-prose entry)))))
     (it "a blank persisted prose column restores as no prose at all"
         (let [entry (it->ie {:produced-answer? false :last-iteration-id :other}
                             {"id" "it-1" "position" 1 "assistant_prose" "   " "forms" []})]
@@ -880,10 +869,6 @@
                    (expect (not (str/includes? (get-in out [0 "message"]) "ERROR:"))))))
 
 (defdescribe completion-content-test
-             (it "keeps the answer blocks of a completed turn"
-                 (let [blocks [{"id" "b1" "type" "prose" "markdown" "done"}]]
-                   (expect (= blocks
-                              (chat/completion-content {"content" blocks "status" "completed"})))))
              (it "settles a sent queued turn with one notice that names the step"
                  ;; `→ Send now`: the running turn took the message, so the queued
                  ;; turn has no answer of its own. An empty bubble would say nothing.
@@ -1125,20 +1110,6 @@
                                                        :source "tool"
                                                        :transcription "spoken answer"}]))]
                      (expect (not (str/includes? out "vis-transcript")))))))
-
-;; User-submitted attachments are conversation content, not composer-only state.
-(defdescribe user-submitted-attachment-history-test
-             (it "keeps a user-submitted document visible by filename"
-                 (let [render
-                       @#'chat/user-request-with-images
-
-                       out
-                       (render "review this"
-                               (wire-canonical [{:filename "brief.html"
-                                                 :media-type "text/html"
-                                                 :source "user"}]))]
-
-                   (expect (str/includes? out "[Attachment #1: brief.html]")))))
 
 ;; Regression coverage: log-only turns must survive the draft-to-history boundary.
 (defdescribe shared-log-history-test

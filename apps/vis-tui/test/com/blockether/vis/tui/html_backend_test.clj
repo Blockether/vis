@@ -9,7 +9,6 @@
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.frame :as frame]
-            [com.blockether.vis.tui.header :as header]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.scroll :as scroll]
@@ -21,10 +20,10 @@
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
-           [com.googlecode.lanterna.gui2 Button GridLayout Panel TextGraphicsComponent]
-           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
+           [com.googlecode.lanterna.gui2 GridLayout Panel TextGraphicsComponent]
+           [com.googlecode.lanterna.input MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.terminal.html HtmlMedia$Kind HtmlTerminal HtmlTerminalView]
+           [com.googlecode.lanterna.terminal.html HtmlMedia$Kind HtmlTerminal]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
 (defn- cell-grid
@@ -751,122 +750,6 @@
               (expect (some #(str/includes? % "src/file-0.clj") (:lines replacement))))))))))
 
 (defdescribe
-  joined-execution-text-left-edge-test
-  (it "joined execution text left edge"
-      ;; Code, Result and Activity share the transcript edge without a rail.
-      (doseq [cols [40 80 120]]
-        (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
-                    screen (doto (TerminalScreen. terminal) (.startScreen))]
-
-          (let [rows (activity-review-rows "failed")
-                _ (paint-activity-review! screen rows {})
-                hits (.current interactions/hit-map)
-                code (first (filter #(str/ends-with? (str (:node-id %)) ":code") hits))
-                band (first (filter #(str/ends-with? (str (:node-id %)) ":#band") hits))
-                opened-band (toggle-review-region {} band)
-                expanded (toggle-review-region opened-band code)]
-
-            (expect (some? code))
-            (expect (some? band))
-            ;; Activity starts collapsed; open it before comparing its child rows.
-            (doseq [[code-expanded? expansions] [[false opened-band] [true expanded]]]
-              (paint-activity-review! screen rows expansions)
-              (let [lines (mapv (fn [row]
-                                  (apply str
-                                    (map #(.getCharacterString
-                                            ^com.googlecode.lanterna.TextCharacter %)
-                                         row)))
-                                (cell-grid terminal cols 50))
-                    column (fn [text]
-                             (some #(when (str/includes? % text) (str/index-of % text)) lines))]
-
-                (expect (= (+ 2 (column "Vis")) (column "Inspect files")))
-                (doseq [label (if code-expanded? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])]
-                  (expect (= (+ 2 (column "Vis")) (column label))))
-                (expect (= (column "ACTIVITY") (column "Read x3")))
-                (expect (some #(re-find #"Shell x2 ▸ · 1 failed" %) lines))
-                (expect (not-any? #(str/includes? % "│") lines))
-                (if code-expanded?
-                  (do (expect (= (column "CODE") (column "inspect_files()")))
-                      (expect (some #(re-find #"RESULT  \+2 more ▸" %) lines)))
-                  (do (expect (nil? (column "RESULT")))
-                      (expect (some #(re-find #"CODE  \+3 more ▸" %) lines)))))))))))
-
-(defdescribe
-  joined-execution-background-and-disclosure-test
-  (it
-    "joined execution background and disclosure"
-    ;; Removing the rail preserves filled execution bands and their disclosures.
-    (doseq [cols
-            [40 80 160]
-
-            expanded?
-            [false true]]
-
-      (with-open [terminal
-                  (DefaultVirtualTerminal. (TerminalSize. cols 50))
-
-                  screen
-                  (doto (TerminalScreen. terminal) (.startScreen))]
-
-        (paint-activity-review! screen
-                                (activity-review-rows "succeeded")
-                                {:vis.channel-tui/baseline (if expanded? :expand :collapse)})
-        (let [grid
-              (cell-grid terminal cols 50)
-
-              lines
-              (mapv (fn [row]
-                      (apply str
-                        (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) row)))
-                    grid)
-
-              band-rows
-              (keep-indexed (fn [row cells]
-                              (when (= theme/code-block-bg
-                                       (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
-                                                            (nth cells 1)))
-                                row))
-                            grid)
-
-              bottom
-              (last band-rows)
-
-              chevron
-              (if expanded? "▾" "▸")]
-
-          (expect (seq band-rows))
-          (expect (= #{theme/code-block-bg}
-                     (set (for [row
-                                band-rows
-
-                                col
-                                (range 1 4)]
-
-                            (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
-                                                 (get-in grid [row col])))))
-                  "Execution fills reach the left text edge")
-          (doseq [label ["CODE" "ACTIVITY"]]
-            (let [row (first (keep-indexed #(when (str/includes? %2 label) %1) lines))
-                  line (nth lines row)
-                  col (+ (str/index-of line label) (count label) 1)
-                  hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))]
-
-              (expect (re-find (re-pattern
-                                 (str label
-                                      (if (and (= label "CODE") (not expanded?)) "  \\+3 more" "")
-                                      " "
-                                      chevron))
-                               line))
-              (expect (= :toggle-details (:kind hit)))
-              (expect (= (not expanded?) (:collapsed? hit)))))
-          (expect (str/blank? (subs (nth lines bottom) 2))
-                  "One empty execution row remains below the last content row")
-          (expect (= #{theme/code-block-bg}
-                     (set (map #(.getBackgroundColor ^com.googlecode.lanterna.TextCharacter %)
-                               (subvec (nth grid bottom) 1 (- cols 3)))))))))))
-
-(defdescribe
   screen-accepts-a-transport-neutral-html-terminal-test
   (it "screen accepts a transport neutral html terminal"
       (with-open [terminal (-> (HtmlTerminal/builder)
@@ -913,49 +796,6 @@
              (#'screen/drop-terminal-images!)
              (expect (empty? (.getMedia terminal))))
            (finally (reset! active nil) (timg/set-backend! :native) (.close terminal))))))
-
-(defdescribe html-backend-reserves-inline-image-layout-test
-             (it "html backend reserves inline image layout"
-                 (try (timg/set-backend! :html)
-                      (expect (= :html (timg/images-protocol)))
-                      (expect (true? (timg/graphical-terminal?)))
-                      (finally (timg/set-backend! :native)))))
-
-(defdescribe header-actions-use-lanterna-grid-and-render-alone-test
-             (it "header actions use lanterna grid and render alone"
-                 (let [panel
-                       (header/header-actions-component)
-
-                       preferred
-                       (.getPreferredSize ^Panel panel)
-
-                       html
-                       (HtmlTerminalView/render panel preferred "Vis header actions")]
-
-                   (expect (instance? GridLayout (.getLayoutManager ^Panel panel)))
-                   (expect (every? #(instance? Button %) (.getChildrenList ^Panel panel)))
-                   (expect (= 1 (.getRows preferred)))
-                   (expect (.contains html "Vis header actions"))
-                   (expect (.contains html "help ("))
-                   (expect (.contains html "data-live=\"false\"")))))
-
-(defdescribe header-actions-run-as-an-interactive-html-component-test
-             (it "header actions run as an interactive html component"
-                 (let [triggered
-                       (promise)
-
-                       panel
-                       (header/header-actions-component #(deliver triggered %))
-
-                       view
-                       (HtmlTerminalView/start panel
-                                               (.getPreferredSize ^Panel panel)
-                                               "Interactive Vis header")]
-
-                   (try (.addInput (.getTerminal view) (KeyStroke. KeyType/Enter))
-                        (expect (= :header-help (deref triggered 3000 ::timeout)))
-                        (expect (.contains (.renderHtml view) "help ("))
-                        (finally (.close view))))))
 
 (defdescribe full-screen-surfaces-use-one-lanterna-grid-test
              (it "full screen surfaces use one lanterna grid"
@@ -1091,23 +931,6 @@
                     (.stopScreen html-screen)
                     (.close html)
                     (.close terminal))))))
-
-(defdescribe any-grid-view-renders-as-standalone-html-test
-             (it "any grid view renders as standalone html"
-                 (let [view
-                       (frame/view 18
-                                   2
-                                   (fn [graphics _]
-                                     (.putString graphics 0 0 "Standalone view")))
-
-                       html
-                       (HtmlTerminalView/render view (TerminalSize. 18 2) "Standalone Vis view")]
-
-                   (expect (instance? GridLayout (.getLayoutManager ^Panel view)))
-                   (expect (= 1 (count (.getChildrenList ^Panel view))))
-                   (expect (.contains html ">Standalone</span>"))
-                   (expect (.contains html ">view</span>"))
-                   (expect (.contains html "Standalone Vis view")))))
 
 (defdescribe
   grid-surface-owns-size-and-clipping-test

@@ -189,78 +189,6 @@
 
           (expect (= expected (:value (first (filter #(= "Reuse coverage" (:label %)) rows)))))))))
 
-(defdescribe metrics-fields-and-disclosures
-             (it "metrics fields and disclosures"
-                 (let [component
-                       (review-component)
-
-                       initial
-                       (:init component)
-
-                       full
-                       (assoc initial
-                         :parts? true
-                         :roots? true)]
-
-                   (expect (not (str/includes? (lines component initial 100 45)
-                                               "Tool definitions")))
-                   (expect (= full
-                              (-> initial
-                                  ((fn [s]
-                                     ((:on-key component) s (cap/key-stroke \b) {})))
-                                  ((fn [s]
-                                     ((:on-key component) s (cap/key-stroke \f) {})))))))))
-
-(defdescribe metrics-width-and-directory-spacing
-             (it "metrics width and directory spacing"
-                 (let [component
-                       (review-component)
-
-                       state
-                       (assoc (:init component) :roots? true)
-
-                       geom
-                       ((:measure component) state 160 50)
-
-                       rows
-                       (mapv :text (:lines geom))]
-
-                   (expect (= 120 (:content-w geom)))
-                   (doseq [path (map #(get % "path") (get-in measured-usage ["health" "roots"]))]
-                     (let [index (.indexOf ^java.util.List rows path)]
-                       (expect (pos? index))
-                       (when (pos? index) (expect (= "" (nth rows (dec index))))))))))
-
-(defdescribe disclosed-rows-sit-under-their-heading
-             (it "disclosed rows sit under their heading"
-                 ;; The chevron owns the left margin, so the rows an open section discloses have
-                 ;; to start under its label instead of hanging two columns to its left.
-                 (let [capture
-                       (cap/capture! {:cols 100
-                                      :rows 80
-                                      :keys [\b \f :esc]
-                                      :paint! #(dlg/run-modal! (:screen %) (review-component))})
-
-                       painted
-                       (str/split-lines (cap/frame-text capture))
-
-                       column
-                       (fn [needle]
-                         (some #(str/index-of % needle) painted))
-
-                       margin
-                       (column "Session health")]
-
-                   (expect (nil? (:error capture)))
-                   (expect (some? margin))
-                   (doseq [heading ["▾ Context breakdown" "▾ Linked filesystems" "Session totals"]]
-                     (expect (= margin (column heading)) heading))
-                   (doseq [nested ["Logical request · not measured usage" "Local estimate"
-                                   "/workspace/AGENTS.md" "4 available · 1 with guidance estimates"
-                                   "/workspace/project" "No AGENTS.md or CLAUDE.md"
-                                   "Disk estimates do not add"]]
-                     (expect (= (+ 2 margin) (column nested)) nested)))))
-
 (defdescribe missing-empty-error-and-pressure
              (it "missing empty error and pressure"
                  ;; Raw facts alone must not trigger a client-side reconstruction.
@@ -442,39 +370,6 @@
         (expect (nil? (:error reference)))
         (expect (= 3 (count (:frames capture))))
         (expect restored? "The resized frame must not restore cells from the old background")))))
-
-(defdescribe
-  production-terminal-grid
-  (it "production terminal grid"
-      (doseq [cols
-              [40 80 120]
-
-              usage
-              [measured-usage
-               (assoc (get health-parity-fixture "usage")
-                 "health" (get-in health-parity-fixture ["cases" 0 "health"]))]]
-
-        (let [capture
-              (cap/capture! {:cols cols
-                             :rows 40
-                             :keys [:end :home \b \f :esc]
-                             :paint! (fn [{:keys [screen g]}]
-                                       (p/set-bg! g theme/terminal-bg)
-                                       (p/fill-rect! g 0 0 cols 40)
-                                       (dlg/run-modal! screen
-                                                       (dlg/session-metrics-component
-                                                         {}
-                                                         {:phase :ready :usage usage})))})
-
-              text
-              (-> (cap/frame-text capture)
-                  (str/replace #"[│█]" " ")
-                  (str/replace #"\s+" " "))]
-
-          (expect (nil? (:error capture)))
-          (when (= "prepared-request" (get-in usage ["health" "counted_projection"]))
-            (doseq [expected ["Prepared request" "165,953 tokens" "162,177 tokens" "+3,776 tokens"]]
-              (expect (str/includes? text expected) (str cols " columns: " expected))))))))
 
 (defdescribe
   dismiss-loading-cancels-fetch

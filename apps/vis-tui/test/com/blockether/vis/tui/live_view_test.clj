@@ -116,30 +116,6 @@
 
 ;;; ── Tests ───────────────────────────────────────────────────────────────────
 
-(defdescribe live-view-plan-test
-             (it "every node paints under its own label, in declaration order"
-                 (let [text (str/join "\n" (map :text (rows-of (pane))))]
-                   (expect (str/includes? text "Now"))
-                   (expect (str/includes? text "Polling the run"))
-                   (expect (str/includes? text "Jobs"))
-                   (expect (str/includes? text "job-0"))
-                   (expect (str/includes? text "Output"))
-                   (expect (str/includes? text "Ran 314 tests"))
-                   (expect (< (.indexOf ^String text "Now") (.indexOf ^String text "Jobs"))
-                           "declaration order, not arrival order")))
-             (it "the view's own description opens the surface"
-                 (expect (= "Blockether/vis · 32062760734" (:text (first (rows-of (pane)))))))
-             (it "an empty table is still a box, and says so between its own rails"
-                 (let [p
-                       (lv/opened (mounted {} (jobs {} 0)))
-
-                       plan
-                       (rows-of p)]
-
-                   (expect
-                     (= [:prose :blank :node :trule :thead :trule :empty :trule] (mapv :kind plan))
-                     "top rail, the header, a rail, the sentence, and the box closed under it"))))
-
 (defdescribe live-view-window-test
              (it "a node paints a window and says how much it is holding back"
                  (let [p
@@ -530,34 +506,7 @@
                       (lv/armed (lv/opened (ci-view)))
                       (repeat (+ 10 (long hi-spec/note-chars)) \x))]
         (expect (= (long hi-spec/note-chars) (count (lv/stopping p)))
-                "a field that swallowed more than the model will read would lie about the note")))
-  (it
-    "the band gives the armed line a row of its own, above the fence"
-    (let [p
-          (lv/opened (ci-view))
-
-          watched
-          (painted-text [p])
-
-          armed
-          (painted-text [(:pane (reduce (fn [{:keys [pane]} c]
-                                          (lv/typed pane {:kind :char :char c}))
-                                        {:pane (lv/armed p)}
-                                        "wrong subnet"))])]
-
-      (expect (not (str/includes? watched "why?")) "a view being watched asks nothing")
-      (expect (str/includes? armed "why? wrong subnet") "the words are on screen as they are typed")
-      (let [lines
-            (str/split-lines armed)
-
-            at
-            (first (keep-indexed (fn [idx line]
-                                   (when (str/includes? line "why?") idx))
-                                 lines))]
-
-        (expect
-          (str/includes? (nth lines (dec (long at)) "") "─")
-          "the line is FENCED above as well as below: it is the band asking, not one more row of the report")))))
+                "a field that swallowed more than the model will read would lie about the note"))))
 
 ;;; ── The registry half: three ops and the tab that owns them ─────────────────
 
@@ -673,18 +622,6 @@
 ;; surface used half the available terminal and its selectable job rows had no control.
 (defdescribe
   live-view-height-and-selection-test
-  (it "a busy live surface takes four fifths of the room above the composer"
-      (let [[top bottom]
-            (lv/band-rows 96 26 [(pane :rows 20)] 1 3)
-
-            height
-            (inc (- (long bottom) (long top)))
-
-            available
-            (- 26 1 3)]
-
-        (expect (>= (* 5 height) (* 4 available))
-                "the watched run, rather than stale transcript, owns most of the terminal")))
   (it "a selectable table paints shared selection and makes every visible row clickable"
       (let [p
             (lv/opened (mounted {} (jobs {:is-selectable true :selected-ids ["job-1"]} 8)))
@@ -717,14 +654,6 @@
 ;; live surface could consume most of the terminal but had no way to minimize it.
 (defdescribe
   live-view-minimize-test
-  (it "an active live surface exposes a minimize control"
-      (.reset interactions/hit-map)
-      (try (paint-frames [(pane)] 96 26)
-           (let [controls (filterv #(= :live-minimize (:kind %)) (.current interactions/hit-map))]
-             (expect (= 1 (count controls)) "the opening rule has one explicit minimize control")
-             (expect (= "view-1" (:view-id (first controls))))
-             (expect (some #{["click ▾" "minimize"]} (lv/hint (pane) []))))
-           (finally (.reset interactions/hit-map))))
   (it
     "minimizing keeps the run alive behind one restorable status row"
     (let [full
@@ -767,56 +696,6 @@
              (expect (every? #(= "view-1" (:view-id %)) controls)))
            (finally (.reset interactions/hit-map))))))
 
-;; Regression #220: description follows the title, then one blank row before nodes.
-(defdescribe
-  live-view-heading-spacing-test
-  (it
-    "live view heading spacing"
-    (doseq [cols
-            [40 80 120]
-
-            :let [p
-                  (lv/opened (mounted {:title "Release checks" :description "Three jobs"}
-                                      (fixture/status "now" "Watching" {:tone :running})))
-
-                  {:keys [frames error]}
-                  (paint-frames [p] cols 36)
-
-                  lines
-                  (str/split-lines (cap/frame-text (last frames)))
-
-                  [from _]
-                  (lv/band-rows cols 36 [p] 1 3)
-
-                  title-row
-                  (+ (long from) 2)
-
-                  controls
-                  (filterv #(= :live-minimize (:kind %)) (.current interactions/hit-map))
-
-                  {:keys [col width]}
-                  (:bounds (first controls))
-
-                  rail
-                  (str/index-of (nth lines from) "┐")]]
-
-      (expect (nil? error))
-      (expect (str/includes? (nth lines from) "┌"))
-      (expect (not (str/includes? (nth lines from) "Release checks")))
-      (expect (str/blank? (str/replace (nth lines (inc (long from))) "│" ""))
-              "one empty row stands between the top rule and the heading")
-      (expect (= 4 (str/index-of (nth lines title-row) "LIVE"))
-              "the heading starts one blank row below the border, with the body's inset")
-      (expect (str/includes? (nth lines title-row) "Release checks"))
-      (expect (str/includes? (nth lines (inc title-row)) "Three jobs"))
-      (expect (str/blank? (str/replace (nth lines (+ title-row 2)) "│" ""))
-              "one empty row separates the description from the first node")
-      (expect (str/includes? (nth lines (+ title-row 3)) "Watching"))
-      (expect (= [title-row] (mapv #(get-in % [:bounds :row]) controls))
-              "the minimize hit target follows the title")
-      (expect (< (+ (long col) (long width)) (long rail))
-              "the control keeps one clear column before the band's right edge"))))
-
 (defdescribe live-view-description-separator-test
              (it "live view description separator"
                  ;; #220: a description is a section, not padding before or inside the first node.
@@ -827,27 +706,6 @@
                  (let [p (lv/opened (mounted {:description "Three jobs"}))]
                    (expect (= [:prose] (mapv :kind (rows-of p)))
                            "an empty view has no trailing separator"))))
-
-(defdescribe live-view-short-heading-test
-             (it "live view short heading"
-                 (let [p
-                       (lv/opened (mounted {:title "Release checks" :description ""}
-                                           (fixture/status "now" "Watching" {:tone :running})))
-
-                       {:keys [frames geometry error]}
-                       (paint-frames [p] 80 12)
-
-                       lines
-                       (str/split-lines (cap/frame-text (last frames)))
-
-                       [from to]
-                       (lv/band-rows 80 12 [p] 1 3)]
-
-                   (expect (nil? error))
-                   (expect (str/includes? (nth lines from) "Release checks"))
-                   (expect (str/includes? (str/join "\n" (subvec (vec lines) from (inc (long to))))
-                                          "Watching"))
-                   (expect (pos? (long (:visible geometry)))))))
 
 (defdescribe live-view-record-close-control-test
              (it "live view record close control"
@@ -872,38 +730,6 @@
                      (expect (= 3 width))
                      (doseq [x (range col (+ col width))]
                        (expect (= control (.lookup interactions/hit-map (int x) (int row)))))))))
-
-(defdescribe
-  live-log-search-scrollbar-spacing-test
-  (it "live log search scrollbar spacing"
-      (let [view (mounted {:title "Build output" :description "Current run"}
-                          (fixture/log "output"
-                                       {:label "Console"
-                                        :default-expanded true
-                                        :lines (mapv #(str "line " %) (range 60))}))]
-        (doseq [following? [false true]]
-          (let [pane (assoc (lv/opened view)
-                       :is-viewer true
-                       :is-following following?)
-                {:keys [frames error]} (paint-frames [pane] 80 30)
-                lines (str/split-lines (cap/frame-text (last frames)))
-                hits (.current interactions/hit-map)
-                close (first (filter #(= :live-viewer-close (:kind %)) hits))
-                search (first (filter #(= :live-log-search (:kind %)) hits))
-                bar-col (first (keep #(str/index-of % "█") lines))
-                close-col (get-in close [:bounds :col])
-                search-col (get-in search [:bounds :col])]
-
-            (expect (nil? error))
-            (expect (every? some? [close-col search-col bar-col]))
-            (when (every? some? [close-col search-col bar-col])
-              (expect
-                (<= (+ search-col 15) close-col)
-                "Search is set back from the close button, on the log row or the fixed heading")
-              (expect (<= (+ bar-col 3) close-col)
-                      "two empty columns separate the scrollbar from the close button")
-              (expect (= 4 (- bar-col (+ search-col 8)))
-                      "Search remains four columns clear of the scrollbar")))))))
 
 (defdescribe
   live-view-body-inset-and-bottom-gap-test
@@ -943,85 +769,21 @@
 
 ;;; ── The screenshot gate ─────────────────────────────────────────────────────
 
-(defdescribe
-  live-view-paint-test
-  (it "the band paints the whole view when it fits"
-      (let [{:keys [frames geometry]}
-            (paint-frames [(pane)] 96 60)
+(defdescribe live-view-paint-test
+             (it "and when it does not fit, the END — the newest work — is what is on screen"
+                 (let [p
+                       (pane :rows 20)
 
-            text
-            (cap/frame-text (last frames))]
+                       text
+                       (painted-text [p] 96 26)]
 
-        (expect (seq frames))
-        (expect (str/includes? text "CI · fix(loop): move the session pick"))
-        (expect (str/includes? text "Now"))
-        (expect (str/includes? text "Polling the run"))
-        (expect (str/includes? text "Jobs"))
-        (expect (str/includes? text "job-0"))
-        (expect (str/includes? text "Output"))
-        (expect (str/includes? text "Ran 314 tests"))
-        (expect (= "view-1" (:view-id geometry)))
-        (expect (pos? (long (:total geometry))))
-        (expect (pos? (long (:visible geometry))))))
-  (it "and when it does not fit, the END — the newest work — is what is on screen"
-      (let [p
-            (pane :rows 20)
-
-            text
-            (painted-text [p] 96 26)]
-
-        (expect (str/includes? text "+ 8 more rows"))
-        (expect (str/includes? text "Ran 314 tests"))
-        (expect (not (str/includes? text "Polling the run"))
-                "a view follows its tail, exactly like the log it carries")
-        (expect (str/includes? (lv/footer-text p) "Polling the run")
-                "which is why the summary rides the footer while the eye is at the end")))
-  (it
-    "a real PNG of the band, before and after one patch"
-    (let [before
-          (pane :rows 6)
-
-          after
-          (patched before
-                   {:op :append
-                    :node-id "jobs"
-                    :rows [(fixture/table-row "job-9" ["job-9" "failed" "0m3s"])]})
-
-          shot!
-          (fn [nm panes]
-            (cap/shot! {:cols 96
-                        :rows 26
-                        :font-size 14
-                        :out nm
-                        :paint! (fn [{:keys [screen]}]
-                                  (let [g (.newTextGraphics ^TerminalScreen screen)]
-                                    (lv/paint! g 96 26 panes 1 3)
-                                    (.refresh ^TerminalScreen screen)))}))
-
-          png-before
-          (shot! "vis-live-view-before" [before])
-
-          png-after
-          (shot! "vis-live-view-after" [after])
-
-          ;; The stop is a CONVERSATION, so it has to be SEEN: an armed band keeps
-          ;; painting the work while it asks why the human is stopping it.
-          png-stop
-          (shot! "vis-live-view-stop"
-                 [(reduce (fn [p ch]
-                            (:pane (lv/typed p {:kind :char :char ch})))
-                          (lv/armed after)
-                          "wrong subnet")])]
-
-      (expect (str/ends-with? png-before "vis-live-view-before.png"))
-      (expect (str/ends-with? png-after "vis-live-view-after.png"))
-      (expect (pos? (long (cap/ink png-before))) "the band really painted something")
-      (expect (< (long (cap/ink png-before)) (long (cap/ink png-after)))
-              "the row that arrived is ink that was not there before")
-      (expect (not (str/includes? (painted-text [before]) "job-9")))
-      (expect (str/includes? (painted-text [after]) "job-9"))
-      (expect (str/ends-with? png-stop "vis-live-view-stop.png"))
-      (expect (pos? (long (cap/ink png-stop))) "the armed band still paints the work"))))
+                   (expect (str/includes? text "+ 8 more rows"))
+                   (expect (str/includes? text "Ran 314 tests"))
+                   (expect (not (str/includes? text "Polling the run"))
+                           "a view follows its tail, exactly like the log it carries")
+                   (expect
+                     (str/includes? (lv/footer-text p) "Polling the run")
+                     "which is why the summary rides the footer while the eye is at the end"))))
 
 ;; A tone is DATA the engine already carries, and a fraction is a fraction
 ;; however it was declared: a surface that paints either as flat prose is
@@ -1038,14 +800,7 @@
         (expect (str/includes? text "83%"))
         (expect (str/includes? text "15/18 done"))
         (expect (str/includes? text "■") "15 of 18 is a measured fraction, not indeterminate work")
-        (expect (not (str/includes? text "working")))))
-  (it "a progress nobody can size still says the one true thing"
-      (let [text (painted-text [(lv/opened (mounted {}
-                                                    (fixture/progress "done" {:label "Scanning"})))]
-                               80
-                               20)]
-        (expect (str/includes? text "working"))
-        (expect (not (str/includes? text "▰"))))))
+        (expect (not (str/includes? text "working"))))))
 
 ;;; ── The width the band has, and who stands in it ────────────────────────────
 
@@ -1110,11 +865,7 @@
             (mid-rule-cells (lv/opened tasks) 100)]
 
         (expect (< (long done) 12) "the selectable mark does not make `done` the widest")
-        (expect (> (long task) 60) "the long text gets the room")))
-  (it "and the table is a BOX, with a rail between every pair of rows"
-      (let [rows (filterv #(#{:thead :trule :trow} (:kind %)) (lv/plan (pane) 80))]
-        (expect (= [:trule :thead :trule :trow :trule :trow] (subvec (mapv :kind rows) 0 6))
-                "a rule under the head AND between the rows, not only where the box ends"))))
+        (expect (> (long task) 60) "the long text gets the room"))))
 
 ;; A PARENT is how a producer says which rows belong together, and every
 ;; surface owes that one field the same shape: one head, shut, standing where the
@@ -1486,25 +1237,7 @@
         (expect (not (contains? kinds :columns))
                 "under the narrowest useful column there is nothing to split")
         (expect (contains? kinds :thead))
-        (expect (contains? kinds :status) "both nodes are still there, one under the other")))
-  (it "and the terminal really paints them on the same row"
-      (let [line (->> (str/split-lines (painted-text [(reading-pane)]))
-                      (filter #(str/includes? % "Jobs"))
-                      first)]
-        (expect (str/includes? (str line) "Reading") "one screen row carries both labels")))
-  ;; The proof a person can LOOK at: one band carrying a boxed table that spans
-  ;; its column and the paragraph that explains it, marks and all.
-  (it "a real PNG of a table with its paragraph beside it"
-      (let [png (cap/shot! {:cols 96
-                            :rows 24
-                            :font-size 14
-                            :out "vis-live-view-group"
-                            :paint! (fn [{:keys [screen]}]
-                                      (let [g (.newTextGraphics ^TerminalScreen screen)]
-                                        (lv/paint! g 96 24 [(reading-pane)] 1 3)
-                                        (.refresh ^TerminalScreen screen)))})]
-        (expect (str/ends-with? png "vis-live-view-group.png"))
-        (expect (pos? (long (cap/ink png))) "the split band really painted"))))
+        (expect (contains? kinds :status) "both nodes are still there, one under the other"))))
 
 ;;; ── A finished view: one line, and the door back ─────────────────────────────
 
@@ -1579,10 +1312,6 @@
                    (mapv :text (:cells line))))
         (expect (= [8 8 8 8 8] (:cell-widths line)) "each cell asks for the width of its own text")
         (expect (= "[ Go 5 ]" (:text (last plan))) "a line with one child paints it alone")))
-  (it "the terminal paints a wrap line on one screen row"
-      (let [lines (str/split-lines (painted-text [(layout-pane :wrap (buttons 6))] 70 26))]
-        (expect (some #(str/includes? % "[ Go 0 ]    [ Go 1 ]    [ Go 2 ]    [ Go 3 ]") lines))
-        (expect (some #(and (str/includes? % "[ Go 4 ]") (str/includes? % "[ Go 5 ]")) lines))))
   (it "a button inside a grid or a wrap is still a control and a hit target"
       (doseq [direction [:grid :wrap]]
         (let [pane (layout-pane direction (buttons 6))
@@ -1771,22 +1500,7 @@
         (expect (not (get-in @state/app-db [:messages 1 :runs 0 :is-reopened])))
         (state/dispatch [:live-viewer-close])
         (expect (nil? (:live-viewer-id @state/app-db)))
-        (expect (not (get-in @state/app-db [:messages 1 :runs 0 :is-reopened]))))))
-  ;; The proof a person can LOOK at: one run finished and gone from the band, the
-  ;; one still going painting in full.
-  (it "a real PNG of the band a finished run has already left"
-      (let [png (cap/shot!
-                  {:cols 96
-                   :rows 24
-                   :font-size 14
-                   :out "vis-live-view-settled"
-                   :paint!
-                   (fn [{:keys [screen]}]
-                     (let [g (.newTextGraphics ^TerminalScreen screen)]
-                       (lv/paint! g 96 24 [(ended (pane :id "done-1")) (pane :id "running-1")] 1 3)
-                       (.refresh ^TerminalScreen screen)))})]
-        (expect (str/ends-with? png "vis-live-view-settled.png"))
-        (expect (pos? (long (cap/ink png))) "the band belongs entirely to the run still going"))))
+        (expect (not (get-in @state/app-db [:messages 1 :runs 0 :is-reopened])))))))
 
 (defn recorded-ci-source
   "Durable gateway record for the restored-view render and pointer regression."

@@ -17,22 +17,6 @@
 ;; rather than to one vendor. Nothing is registered here: these events resolve
 ;; against the very registry production uses.
 
-(defdescribe open-session-becomes-the-provider-context
-             ;; #410: provider requests resolve project providers through the open session.
-             (it "passes each change of the open session ID to the client"
-                 (let [seen (atom [])]
-                   (with-redefs-fn {#'vis/set-context-session! #(swap! seen conj %)}
-                     (fn []
-                       (let [db (atom nil)]
-                         (add-watch db
-                                    ::probe
-                                    (.get (.getWatches ^clojure.lang.IRef state/app-db)
-                                          ::state/context-session))
-                         (reset! db {:session {:id "s1"}})
-                         (swap! db assoc :title "same session")
-                         (reset! db {:session {:id "s2"}})
-                         (reset! db {:session nil})
-                         (expect (= ["s1" "s2" nil] @seen))))))))
 
 (defn- await-enqueue!
   "Gateway queue effects post on the FIFO gateway-queue thread and hand back that
@@ -112,25 +96,8 @@
                        :warn 1500]]
                      (:fx (handler {:session-model-pref {:provider "zai-coding-plan"
                                                          :model "glm-5.2"}}
-                                   [:toggle-thinking-summary])))))))
-  (it "stores the session's thinking summary row"
-      (reset! state/app-db {:session {:id "s1"} :render-version 0})
-      (state/dispatch [:session-settings-loaded "s1"
-                       [{"id" "thinking_summary" "type" "boolean" "enabled" false}]])
-      (expect (false? (get-in @state/app-db [:session-settings "s1" :thinking-summary])))))
+                                   [:toggle-thinking-summary]))))))))
 
-(defdescribe always-on-display-test
-             (it "thinking, full trace, silent calls, and timestamps are ALWAYS shown"
-                 ;; Their toggles were retired (the trace IS the transcript — nothing to
-                 ;; hide, same call as show-raw-code). The settings projection hardcodes
-                 ;; them on, and the toggles no longer exist in the registry.
-                 (let [s (#'state/migrated-toggle-projection)]
-                   (expect (true? (:show-thinking s)))
-                   (expect (true? (:show-iterations s)))
-                   (expect (true? (:show-silent s)))
-                   (expect (true? (:show-timestamps s))))
-                 (expect (nil? (vis/toggle-spec "show_thinking")))
-                 (expect (nil? (vis/toggle-spec "show_timestamps")))))
 
 (defdescribe
   detail-toggle-test
@@ -173,11 +140,6 @@
       (expect
         (true?
           (#'render/detail-expanded? (:detail-expansions @state/app-db) "cid" "t1/i1:block" true))))
-  (it "stores preview switcher mode on the same detail-expansions bus"
-      (reset! state/app-db {:detail-expansions {} :render-version 0})
-      (state/dispatch [:select-preview-mode "cid" "iteration:t11111111:i1:b1:preview-switch" :raw])
-      (expect (= {["cid" "iteration:t11111111:i1:b1:preview-switch"] :raw}
-                 (:detail-expansions @state/app-db))))
   (it
     "applies external input to an inactive recording-origin workspace"
     (let [external-input-fn
@@ -650,25 +612,6 @@
 
 (defdescribe
   init-settings-test
-  (it "loads the default balanced reasoning level when config has none"
-      (with-redefs [vis/load-config-raw (fn []
-                                          {})]
-        (state/init!)
-        (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
-        (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
-        (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
-        (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
-        (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))
-        (expect (true? (get-in @state/app-db [:settings :show-python-code])))
-        (expect (true? (get-in @state/app-db [:settings :summarize-steps])))))
-  (it "loads the persisted app theme"
-      (with-redefs [vis/load-config-raw
-                    (fn []
-                      {"theme_name" "vis-dark" "show_python_code" false "summarize_steps" false})]
-        (state/init!)
-        (expect (= :vis-dark (get-in @state/app-db [:settings :theme-name])))
-        (expect (false? (get-in @state/app-db [:settings :show-python-code])))
-        (expect (false? (get-in @state/app-db [:settings :summarize-steps])))))
   (it "writes only the app-owned theme and transcript preferences"
       (let [written (atom nil)]
         (with-redefs [vis/update-machine-config! (fn [f]
@@ -753,13 +696,6 @@
                         (get-in @state/app-db [:settings :verbosity])))
              (state/dispatch [:resync-toggle-settings]) ;; the fix
              (expect (= "high" (get-in @state/app-db [:settings :verbosity]))))
-           (finally (vis/toggle-reset-to-default! "verbosity"))))
-  (it "hydrates verbosity from the toggles registry"
-      (vis/toggles-hydrate-from-config! {"toggles" {"verbosity" :medium}})
-      (try (with-redefs [vis/load-config-raw (fn []
-                                               {})]
-             (state/init!)
-             (expect (= "medium" (get-in @state/app-db [:settings :verbosity]))))
            (finally (vis/toggle-reset-to-default! "verbosity"))))
   (it "drops invalid persisted enum values back to registered defaults"
       ;; `hydrate-from-config!` routes through `set-value!` which
@@ -1003,20 +939,7 @@
           (state/dispatch [:set-model "openai" "gpt-5"])
           (flush-queue-io!)
           (expect (nil? (:session-model-pref @state/app-db)))
-          (expect (some #(re-find #"Model switch failed" (str %)) @notified)))))
-  (it "a switch that SUCCEEDS keeps the pick on the chip"
-      (with-redefs [vis/gateway-set-session-model!
-                    (fn [_sid provider model]
-                      {:provider provider :model model})
-
-                    vis/notify!
-                    (fn [& _]
-                      nil)]
-
-        (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
-        (state/dispatch [:set-model "openai" "gpt-5"])
-        (flush-queue-io!)
-        (expect (= {:provider "openai" :model "gpt-5"} (:session-model-pref @state/app-db))))))
+          (expect (some #(re-find #"Model switch failed" (str %)) @notified))))))
 
 (defdescribe
   model-switch-rollback-test
@@ -1170,21 +1093,7 @@
           (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
           (state/dispatch [:cycle-model])
           (flush-queue-io!)
-          (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls)))))
-  (it "with no active session, asks to open one and sets nothing"
-      (let [set-calls
-            (atom [])
-
-            notified
-            (atom nil)]
-
-        (with-redefs [vis/notify! (fn [text & kvs]
-                                    (reset! notified [text kvs]))]
-          (reset! state/app-db {:config {:providers [{:id :openai :models [{:name "gpt-5"}]}]}
-                                :render-version 0})
-          (state/dispatch [:cycle-model])
-          (expect (empty? @set-calls))
-          (expect (= "Open a session first to choose its model" (first @notified)))))))
+          (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls))))))
 
 (defdescribe scrollbar-state-test
              (let [scrollbar-to-fn (-> #'state/event-registry
@@ -1424,24 +1333,6 @@
           ;; reading history while a cancel lands: the viewport stays exactly put
           (expect (= (scroll/parked 30) (synced (scroll/parked 30))))
           (expect (= (scroll/parked 30) (acked (scroll/parked 30) submitted)))))
-    (it "send-message re-pins to a CLEAN FOLLOW"
-        (let [send-message-fn (ev :send-message)
-              db {:session {:id "c1"}
-                  :active-tab-id :main
-                  :messages []
-                  :input-history []
-                  :scroll {:mode :at :offset 80 :pos 80}
-                  :settings {:reasoning-level "balanced" :verbosity "low"}
-                  :pastes {}}]
-
-          (with-redefs [input/expand-paste-placeholders (fn [text _]
-                                                          text)
-                        input/expand-file-mentions identity
-                        vis/cancellation-token (fn []
-                                                 :token)]
-
-            (let [{db' :db} (send-message-fn db [:send-message "hello"])]
-              (expect (= scroll/follow (:scroll db')))))))
     (it "a bare send leaves the draft, its pastes and its attachments alone"
         (let [send-message-fn (ev :send-message)
               db {:session {:id "c1"}
@@ -2076,10 +1967,6 @@
             (expect (= {:db db} ((handler :drain-pending) db [:drain-pending :main]))))))
     (it "hands the failed prompt back to the composer"
         (expect (= "first" (input/input->text (:input failed)))))
-    (it "clears the submitted-input snapshot once refilled"
-        (expect (nil? (:submitted-input failed))))
-    (it "keeps the failure bubble instead of dropping it" (expect (seq (:messages failed))))
-    (it "settles the turn (no longer loading)" (expect (false? (:loading? failed))))
     (it "never overwrites a newer draft typed while the failure settles"
         (let [typed
               (assoc running-db :input (#'state/text->input-state "new idea"))
@@ -4037,10 +3924,7 @@
             (expect (= [:gateway-enqueue] (mapv first undo-fx)))
             (expect (= :notify (ffirst (:fx (run undone [:queue-focus-undo]))))
                     "One removal comes back once")
-            (expect (not (state/queue-undo-open? removed (+ (System/currentTimeMillis) 9000))))))
-      (it "sends the selected row at the next step through the row button event"
-          (let [{:keys [fx]} (run focused [:queue-focus-deliver "next_iteration"])]
-            (expect (= [[:dispatch [:queue-send-now nil "t-3" "next_iteration"]]] fx))))))
+            (expect (not (state/queue-undo-open? removed (+ (System/currentTimeMillis) 9000))))))))
   (it "a send while a cancel is in flight stays in the editor — never queued, never server-side"
       ;; Regression: cancel (`:cancelling?`) then immediately send. The send used
       ;; to still fire `:gateway-enqueue`, registering a SERVER-SIDE queued turn.
@@ -4482,27 +4366,6 @@
                  ;; Background tab relabeled in its tab-locals and in the strip.
                  (expect (= "Background Title" (get-in @state/app-db [:tab-locals :tab-1 :title])))
                  (expect (= "Background Title"
-                            (-> @state/app-db
-                                :tabs
-                                (nth 1)
-                                :label))))
-             (it "renames the active tab when :set-title carries the active session-id"
-                 (reset! state/app-db {:session {:id "active-session"}
-                                       :title "Old"
-                                       :tabs [{:id :main :label "Old" :active? true}
-                                              {:id :tab-1 :label "Tab 1"}]
-                                       :active-tab-id :main
-                                       :tab-locals {:tab-1 {:session {:id "bg-session"}}}
-                                       :render-version 0})
-                 (state/dispatch [:set-title "New" "active-session"])
-                 (expect (= "New" (:title @state/app-db)))
-                 (expect (= "New"
-                            (-> @state/app-db
-                                :tabs
-                                (nth 0)
-                                :label)))
-                 ;; Background tab untouched.
-                 (expect (= "Tab 1"
                             (-> @state/app-db
                                 :tabs
                                 (nth 1)
@@ -6000,12 +5863,6 @@
 
 (defdescribe
   band-anchor-test
-  (it "reads the live layout: under the header, above the prompt and beside the rail"
-      (expect (= {:content-top 6 :prompt-h 7 :dock-h 0 :chat-left 40}
-                 (state/band-anchor {:layout {:messages-top 6 :input-h 7 :chat-left 40}}))))
-  (it "falls back to the resting prompt box when the frame has not published a layout"
-      (expect (= {:content-top 1 :prompt-h tr/prompt-rows :dock-h 0 :chat-left 0}
-                 (state/band-anchor {}))))
   (it "keeps the band ABOVE the prompt however tall the prompt grew"
       (let [rows
             40

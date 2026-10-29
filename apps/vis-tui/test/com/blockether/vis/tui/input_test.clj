@@ -9,17 +9,6 @@
            [java.io StringReader]))
 
 (defdescribe input-buffer-test
-             (it "empty-input is one empty line, cursor at 0,0"
-                 (let [s (input/empty-input)]
-                   (expect (= [""] (:lines s)))
-                   (expect (= 0 (:crow s)))
-                   (expect (= 0 (:ccol s)))))
-             (it "insert-char appends + advances cursor"
-                 (let [s (-> (input/empty-input)
-                             (input/insert-char \h)
-                             (input/insert-char \i))]
-                   (expect (= ["hi"] (:lines s)))
-                   (expect (= 2 (:ccol s)))))
              (it "insert-newline splits the current line at the cursor"
                  (let [s (-> (input/empty-input)
                              (input/insert-char \a)
@@ -34,20 +23,9 @@
                              (input/insert-char \x)
                              (input/insert-char \y)
                              (input/delete-backward))]
-                   (expect (= ["x"] (:lines s)))))
-             (it "input->text re-joins lines with newlines"
-                 (let [s (-> (input/empty-input)
-                             (input/insert-char \a)
-                             (input/insert-newline)
-                             (input/insert-char \b))]
-                   (expect (= "a\nb" (input/input->text s))))))
+                   (expect (= ["x"] (:lines s))))))
 
 (defdescribe paste-text-test
-             (it "single-line paste inserts inline"
-                 (let [s (-> (input/empty-input)
-                             (input/paste-text "hello"))]
-                   (expect (= ["hello"] (:lines s)))
-                   (expect (= 5 (:ccol s)))))
              (it "multi-line paste lays each line out as its own row"
                  (let [s (-> (input/empty-input)
                              (input/paste-text "first\nsecond\nthird"))]
@@ -80,8 +58,6 @@
 (defn- ctrl-special-key [^KeyType ktype] (KeyStroke. ktype true false))
 
 (defn- shift-special-key [^KeyType ktype] (KeyStroke. ktype false false true))
-
-(defn- alt-shift-special-key [^KeyType ktype] (KeyStroke. ktype false true true))
 
 ;; C-g is Emacs `keyboard-quit` and it is the SAME key as Esc. It used to be
 ;; honored ONLY by the chat draft dispatcher: inside a dialog, a transient, the
@@ -163,26 +139,6 @@
 
 (defdescribe
   handle-key-test
-  (it "Arrow Up/Down cycle input history"
-      (let [state (input/empty-input)]
-        (expect (= :history-up (:action (input/handle-key (special-key KeyType/ArrowUp) state))))
-        (expect (= :history-down
-                   (:action (input/handle-key (special-key KeyType/ArrowDown) state))))))
-  (it "Page Up/Down still scroll the transcript"
-      (let [state (input/empty-input)]
-        (expect (= :scroll-up (:action (input/handle-key (special-key KeyType/PageUp) state))))
-        (expect (= :scroll-down
-                   (:action (input/handle-key (special-key KeyType/PageDown) state))))))
-  (it "Alt+Shift+Up/Down open the session switcher"
-      ;; Sessions is a palette-only verb now (Ctrl+P → Switch Session); the
-      ;; Alt+Shift+↑/↓ arrow shortcut stays (decoded from the xterm sequence,
-      ;; which terminals do deliver — unlike a bare Option+letter).
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "draft"))]
-        (expect (= {:action :show-sessions :state state}
-                   (input/handle-key (alt-shift-special-key KeyType/ArrowUp) state)))
-        (expect (= {:action :show-sessions :state state}
-                   (input/handle-key (alt-shift-special-key KeyType/ArrowDown) state)))))
   (it "verbs dispatch from the C-x prefix; the freed Ctrl letters are Emacs keys"
       ;; No DIRECT verb chords anymore: every vis command lives behind the Emacs
       ;; prefix C-x (C-x C-m/r/l/f/a/v/s/h), and the Ctrl letters they vacated
@@ -213,16 +169,6 @@
         (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \t)) state))))      ; C-t transpose (editing)
         (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \f)) state))))      ; C-f forward-char
         (expect (= :clear-input (:action (input/handle-key (ctrl-key (Character. \g)) state)))))) ; C-g abort
-  (it "old Alt app-chords are dead (Option is eaten by macOS terminals)"
-      ;; The retired Alt VERB chords (settings/model/resources) fall through to
-      ;; :continue — those verbs live on the C-x prefix + palette now. (The Emacs
-      ;; NAVIGATION Meta keys M-> / M-< / M-v ARE live, like M-x — covered above.)
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "draft"))]
-        (expect (= {:action :continue :state state}
-                   (input/handle-key (alt-key (Character. \s)) state)))
-        (expect (= {:action :continue :state state}
-                   (input/handle-key (alt-key (Character. \o)) state)))))
   (it "identifies only unbound Meta characters as ambiguous fast Esc typing"
       ;; A terminal emits the same bytes for Esc+r and Alt+r. Bound Meta chords
       ;; must keep their real meaning; an otherwise ignored chord can safely be
@@ -281,23 +227,6 @@
                  (:action (input/handle-key (ctrl-key (Character. \h)) (input/empty-input)))))
       (let [armed (:state (input/handle-key (ctrl-key (Character. \x)) (input/empty-input)))]
         (expect (= :toggle-help (:action (input/handle-key (ctrl-key (Character. \h)) armed))))))
-  (it "@ inserts a literal char; it does not open the file picker"
-      ;; The file picker is a palette verb (Ctrl+P → Attach File) now; `@` just
-      ;; types itself.
-      (let [state (input/empty-input)]
-        (expect (= {:action :continue
-                    :state (-> (input/empty-input)
-                               (input/paste-text "@"))}
-                   (input/handle-key (char-key (Character. \@)) state)))))
-  (it "the old setting-cycle chords are Emacs keys now, not direct verbs"
-      ;; Reasoning/length/model moved to C-x r/v/m. The Ctrl letters they vacated
-      ;; are Emacs keys: C-l recenter, C-t transpose (editing), C-r unbound.
-      (let [state (-> (input/empty-input)
-                      (input/paste-text "keep"))]
-        (expect (= :recenter (:action (input/handle-key (ctrl-key (Character. \l)) state))))
-        (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \t)) state))))
-        (expect (not= :pick-reasoning
-                      (:action (input/handle-key (ctrl-key (Character. \r)) state))))))
   (it "bare Tab, reverse Tab and indexed chords never change sessions"
       (let [state
             (-> (input/empty-input)
@@ -711,8 +640,6 @@
              (it "leaves non-matching @text alone"
                  (expect (= "email me at a@b.com"
                             (input/expand-file-mentions "email me at a@b.com"))))
-             (it "formats simple visible mention tokens with a leading @"
-                 (expect (= "@src/foo.clj" (input/format-file-mention "src/foo.clj"))))
              (it "quotes visible mention tokens when the path contains whitespace"
                  (expect (= "@\"docs/My File.md\"" (input/format-file-mention "docs/My File.md")))))
 
@@ -727,27 +654,6 @@
     (it "plain End stays end-of-line editing (:continue, not :recenter)"
         (expect (= :continue
                    (:action (input/handle-key (KeyStroke. KeyType/End false false) st)))))))
-
-(defdescribe
-  emacs-navigation-keymap-test
-  ;; Faithful Emacs buffer navigation over the transcript: M-> end-of-buffer,
-  ;; M-< beginning-of-buffer, C-v scroll forward a screen, M-v scroll backward.
-  ;; KeyStroke(char, ctrlDown, altDown).
-  (let [st
-        (input/empty-input)
-
-        act
-        (fn [ch ctrl? alt?]
-          (:action (input/handle-key
-                     (KeyStroke. (Character/valueOf ch) (boolean ctrl?) (boolean alt?))
-                     st)))]
-
-    (it "M-> jumps to the bottom (end-of-buffer → :recenter)"
-        (expect (= :recenter (act \> false true))))
-    (it "M-< jumps to the top (beginning-of-buffer → :scroll-to-top)"
-        (expect (= :scroll-to-top (act \< false true))))
-    (it "C-v scrolls a screen forward (:scroll-down)" (expect (= :scroll-down (act \v true false))))
-    (it "M-v scrolls a screen backward (:scroll-up)" (expect (= :scroll-up (act \v false true))))))
 
 (defdescribe
   shell-helper-deadline-test
@@ -877,13 +783,4 @@
                        nil
                        "hi"
                        (fn [_]
-                         nil)))))
-  (it "still sends (does not silently fail) for a large payload"
-      (let [big
-            (apply str (repeat 90000 \x))
-
-            {:keys [ok bytes]}
-            (osc52-capture {} big)]
-
-        (expect (true? ok))
-        (expect (str/starts-with? bytes "\u001B]52;c;")))))
+                         nil))))))

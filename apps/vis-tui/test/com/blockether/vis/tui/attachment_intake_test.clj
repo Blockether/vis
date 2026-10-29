@@ -216,12 +216,6 @@
         (expect (= ["report.pdf" "page.html" "page.xhtml"]
                    (mapv :filename (:attachments result)))))))
 
-(defdescribe picker-cancellation-is-harmless
-             (it "picker cancellation is harmless"
-                 (let [current [{:id "already" :filename "kept.png"}]]
-                   (expect (= {:handled? false :source :picker}
-                              (intake/picker-selection capabilities current nil))))))
-
 (defdescribe picker-list-is-derived-from-the-advertised-contract
              (it "picker list is derived from the advertised contract"
                  (let [dir

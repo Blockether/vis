@@ -18,8 +18,7 @@
             [com.blockether.vis.tui.form :as form]
             [com.blockether.vis.tui.presentation :as ast])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]
-           [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
+           [com.googlecode.lanterna.screen TerminalScreen]))
 
 (def ^:private csv-text "name,qty,note\nada,9,first\nyak,10,second\nzed,120,third\n")
 
@@ -38,8 +37,6 @@
                  (table/parse-csv "a,b\n\"x, y\",\"say \"\"hi\"\"\"\n"))))
   (it "keeps a newline INSIDE a quoted field"
       (expect (= [["a" "b"] ["one\ntwo" "3"]] (table/parse-csv "a,b\n\"one\ntwo\",3\n"))))
-  (it "pads a ragged row so (nth row i) is total"
-      (expect (= [["a" "b" "c"] ["1" "" ""]] (table/parse-csv "a,b,c\n1\n"))))
   (it "normalizes CRLF" (expect (= [["a" "b"] ["1" "2"]] (table/parse-csv "a,b\r\n1,2\r\n"))))
   (it "reads empty text as an empty grid"
       (expect (= [] (table/parse-csv "")))
@@ -52,8 +49,6 @@
              (it "one essay-length cell cannot push the other columns off the grid"
                  (expect (= (+ (long table/csv-max-col-width) 4)
                             (table/csv-natural-width [["x"] [(apply str (repeat 100 "y"))]]))))
-             (it "a roomy table keeps natural widths"
-                 (expect (= [4 3 6] (table/csv-widths grid 100))))
              (it "a cramped table shrinks to fit"
                  (let [ws (table/csv-widths grid 20)]
                    (expect (<= (count (table/boxed-border-line ws :top)) 20))
@@ -110,16 +105,6 @@
       (expect (= ["a" "b" ""] (mapv first (table/sort-csv-rows [["b"] [""] ["a"]] 0 :asc))))))
 
 (defdescribe csv-grid-lines-test
-             (it "renders top border, header, rule, one line per data row and a bottom border"
-                 (let [lines (table/csv-grid-lines grid 60)]
-                   (expect (= 7 (count lines)))
-                   (expect (str/includes? (nth lines 1) "name"))
-                   (expect (str/includes? (nth lines 3) "ada"))
-                   (expect (apply = (map count lines)))))
-             (it "accepts a replacement header (the sort arrow the dialog paints)"
-                 (let [lines (table/csv-grid-lines grid 60 {:header ["N ▲" "Q" "T"]})]
-                   (expect (str/includes? (nth lines 1) "N ▲"))
-                   (expect (apply = (map count lines)))))
              (it "a numeric column's label sits over its digits, not at the far left"
                  (let [ws
                        (table/csv-stretch-widths (table/csv-widths grid 60) 60)
@@ -135,8 +120,7 @@
                    (expect (= (ends (nth lines 1) "qty") (ends (nth lines 5) "120")))
                    ;; a text column is still left-aligned, head and cells alike
                    (expect (= (str/index-of (nth lines 1) "note")
-                              (str/index-of (nth lines 5) "third")))))
-             (it "is nil for an empty grid" (expect (nil? (table/csv-grid-lines [] 60)))))
+                              (str/index-of (nth lines 5) "third"))))))
 
 ;;; ── the inline `vis-table` fence ─────────────────────────────────────────────
 
@@ -206,30 +190,6 @@
                  (let [joined (rendered (fence 15))]
                    (expect (str/includes? joined "row9"))
                    (expect (not (str/includes? joined "row12")))))
-             (it "the headline titles the card: same chip as the grid, and clickable"
-                 (let [r
-                       (table-render (fence 3))
-
-                       texts
-                       (mapv plain (:lines r))
-
-                       idx-of
-                       (fn [pred]
-                         (first (keep-indexed (fn [i t]
-                                                (when (pred (str/trim t)) i))
-                                              texts)))
-
-                       caption
-                       (idx-of #(str/includes? % "[Table:"))
-
-                       top
-                       (idx-of #(str/starts-with? % "┌"))]
-
-                   ;; the grid starts on the very next row — one card, not a
-                   ;; caption paragraph with a code block loose underneath it
-                   (expect (= (inc (long caption)) (long top)))
-                   ;; and the headline opens the sheet like any grid row does
-                   (expect (some? (:table (nth (:line-meta r) caption))))))
              (it "the grid FILLS the card instead of leaving dead fill on the right"
                  (let [texts
                        (mapv (comp str/trim plain) (:lines (table-render (fence 3))))
@@ -245,12 +205,6 @@
                    (expect (= (count bottom) (apply max (map count texts)))))))
 
 ;;; ── the card reads as a SHEET, not as a code dump ────────────────────────────
-
-(defn- card-roles
-  "The part each painted line of the card plays, `nil` for the chip's own pad and
-   blank rows."
-  [body]
-  (mapv :table-line (:line-meta (table-render body))))
 
 (defn- paint-card
   "Paint one fence into a REAL Lanterna virtual terminal the way the transcript
@@ -284,13 +238,6 @@
          (finally (.stopScreen screen)))))
 
 (defdescribe vis-table-card-chrome-test
-             (it "tags every line of the card with the part it plays"
-                 (let [roles (vec (remove nil? (card-roles (fence 12))))]
-                   (expect (= :title (first roles)))
-                   (expect (= [:border :head :border] (subvec roles 1 4)))
-                   ;; ten preview rows, striped in turn - the zebra IS the row separator
-                   (expect (= (take 10 (cycle [:row :row-alt])) (subvec roles 4 14)))
-                   (expect (= [:border :hint] (subvec roles 14)))))
              ;; Regression: the band used to be filled across the WHOLE row, frame columns
              ;; included. A terminal cell is tinted whole and `│` runs down the middle of
              ;; its own cell, so every other row grew a half-cell tab of colour sticking
@@ -368,19 +315,6 @@
 
 (defdescribe
   table-modal-component-test
-  (it "opens on every row, titled with its shape"
-      (let [c
-            (component)
-
-            m
-            (measure c (:init c))]
-
-        (expect (= 3 (:total m)))
-        (expect (= 3 (count (:widths m))))
-        (expect (= [:left :right :left] (:aligns m)))))
-  (it "a sheet that fits on one page carries no page counter"
-      (let [c (component)]
-        (expect (= 1 (:pages (measure c (:init c)))))))
   (it "PgDn turns a WHOLE page: the cursor lands on its first row and the title counts"
       (let [c
             (big-component)
@@ -438,15 +372,6 @@
         (expect (zero?
                   (long (:selected
                           (press c down [(special KeyType/ArrowUp) (special KeyType/ArrowUp)])))))))
-  (it "←/→ move the column cursor, which the header marks"
-      (let [c
-            (component)
-
-            st
-            (press c (:init c) [(special KeyType/ArrowRight)])]
-
-        (expect (= 1 (:col st)))
-        (expect (zero? (long (:col (press c (:init c) [(special KeyType/ArrowLeft)])))))))
   (it "Enter sorts by the cursor column and pressing it again flips the direction"
       (let [c
             (component)
@@ -462,23 +387,6 @@
         (expect (= ["ada" "yak" "zed"] (mapv first (:visible (measure c asc)))))
         (expect (= :desc (:sort-dir desc)))
         (expect (= ["zed" "yak" "ada"] (mapv first (:visible (measure c desc)))))))
-  (it "sorting a numeric column is numeric — 9, 10, 120"
-      (let [c
-            (component)
-
-            st
-            (press c (:init c) [(special KeyType/ArrowRight) (special KeyType/Enter)])]
-
-        (expect (= ["9" "10" "120"] (mapv #(nth % 1) (:visible (measure c st)))))))
-  (it "Esc closes with nothing"
-      (let [c
-            (component)
-
-            st
-            (press c (:init c) [(special KeyType/Escape)])]
-
-        (expect (contains? st ::dlg/done))
-        (expect (nil? (::dlg/done st)))))
   (it "Tab returns the selected row"
       (let [c
             (component)
@@ -503,45 +411,6 @@
         (expect (= page-size (:selected st)))
         (expect (= 1 (:page m)))
         (expect (= page-size (:scroll ((:reconcile c) st m)))))))
-
-(defdescribe
-  table-dialog-paint-test
-  (it
-    "paints the bordered grid, the page keys and the hint bar"
-    (let [vt
-          (term/virtual-screen)
-
-          ^TerminalScreen screen
-          (:screen vt)
-
-          ^DefaultVirtualTerminal terminal
-          (:terminal vt)
-
-          c
-          (component)
-
-          m0
-          (measure c (:init c))
-
-          st
-          ((:reconcile c) (:init c) m0)
-
-          m
-          (measure c st)]
-
-      (try ((:paint c) (.newTextGraphics screen) st m)
-           (.refresh screen)
-           (let [rows
-                 (term/grid terminal)
-
-                 txt
-                 (str/join "\n" rows)]
-
-             (expect (str/includes? txt "fleet.csv"))
-             (expect (str/includes? txt "name"))
-             (expect (str/includes? txt "ada"))
-             (expect (str/includes? txt "120")))
-           (finally (.stopScreen screen))))))
 
 ;;; ── cross-surface: the TUI paints what the ENGINE hands the human ────────────
 

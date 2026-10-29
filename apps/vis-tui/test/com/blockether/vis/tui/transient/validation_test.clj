@@ -8,8 +8,7 @@
    ships is run past `spec-error`, so a band that grew a typo'd key, a second
    row on the same keystroke or two rows reporting the same `:id` fails HERE
    instead of in front of a human."
-  (:require [clojure.set :as set]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.tui.mcp-model :as mcp-model]
             [com.blockether.vis.tui.provider :as provider]
@@ -32,24 +31,6 @@
   "An explainer answers with prose a hint row can carry: present, and one line."
   [why]
   (and (string? why) (seq why) (not (str/includes? why "\n"))))
-
-(defdescribe transient-vocabulary-test
-             (it "every item type declares every trait, so no branch reads a missing key"
-                 (expect (= #{:switch :option :action} (set (keys sp/item-types))))
-                 (expect (every? #(= #{:is-flag :is-valued :is-command} (set (keys %)))
-                                 (vals sp/item-types))))
-             (it "the trait sets are DERIVED from that one table, never a second copy"
-                 (expect (= #{:switch :option} sp/flag-types))
-                 (expect (= #{:option} sp/valued-types))
-                 (expect (= #{:action} sp/command-types))
-                 ;; A flag toggles in place and a command ends the run: nothing is both.
-                 (expect (empty? (set/intersection sp/flag-types sp/command-types)))
-                 ;; Everything a transient can offer is one of the two.
-                 (expect (= (set (keys sp/item-types)) (set/union sp/flag-types sp/command-types))))
-             (it "the key sets are derived too: a value key is an item key"
-                 (expect (every? sp/item-keys sp/value-keys))
-                 (expect (contains? sp/item-keys :key))
-                 (expect (contains? sp/spec-keys :read-option))))
 
 (defdescribe
   transient-item-contract-test

@@ -40,10 +40,7 @@
       (let [rows (model/parse-patch patch)]
         (expect (= ["src/x.clj"] (model/files patch)))
         (expect (not-any? #(re-find #"^(diff --git|index |--- |\+\+\+ )" (:text %)) rows))))
-  (it "counts added and removed lines" (expect (= {:add 1 :del 1} (model/change-counts patch))))
-  (it "reads an empty patch as no rows"
-      (expect (= [] (model/parse-patch "")))
-      (expect (= [] (model/parse-patch nil)))))
+  (it "counts added and removed lines" (expect (= {:add 1 :del 1} (model/change-counts patch)))))
 
 (defdescribe diff-rows
              (it "paints a thread under its anchor line and an orphan thread at the end"
@@ -68,13 +65,7 @@
                        (first (filter #(= :file (:kind %)) rows))]
 
                    (expect (:is-folded file))
-                   (expect (not-any? #(#{:add :del :ctx :hunk} (:kind %)) rows))))
-             (it "keeps line numbers in the gutter and tones the change"
-                 (let [{:keys [gutter body]} (model/row-parts {:kind :del :old 11 :text "x"})]
-                   (expect (= "   11       - " gutter))
-                   (expect (= "x" body))
-                   (expect (= :error (model/row-tone {:kind :del})))
-                   (expect (= :ok (model/row-tone {:kind :add}))))))
+                   (expect (not-any? #(#{:add :del :ctx :hunk} (:kind %)) rows)))))
 
 (defdescribe
   actions

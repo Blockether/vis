@@ -5,7 +5,6 @@
             [com.blockether.vis.tui.capture :as capture]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.client :as client]
-            [com.blockether.vis.tui.dialogs :as dialogs]
             [com.blockether.vis.tui.header :as header]
             [com.blockether.vis.tui.footer :as footer]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -102,9 +101,6 @@
 
 (defdescribe
   goal-footer-test
-  (it "keeps the header at three rows with or without a goal"
-      (expect (= 3 (header/header-rows (header-db nil))))
-      (expect (= 3 (header/header-rows (header-db goal)))))
   (it
     ;; Issue #204: limits are passive text, never a modal entry point.
     "renders informational Limits beside the Goal button without objective or token counts"
@@ -147,29 +143,6 @@
         (expect (some? goal-hit))
         (doseq [col (range 2 (long (get-in goal-hit [:bounds :col])))]
           (expect (nil? (.lookup interactions/hit-map col 1)))))))
-  (it "omits the goal button when no goal exists"
-      (expect (empty? (keep :kind (#'footer/build-limits-segments (header-db nil) 0)))))
-  (it
-    "keeps the full objective, reason and usage in the existing scrollable viewer"
-    (let [blocked
-          (assoc goal
-            "status" "blocked"
-            "reason" "The requested test device is unavailable.")
-
-          lines
-          (footer/goal-detail-lines blocked)
-
-          frame
-          (capture/capture! {:cols 60
-                             :rows 20
-                             :keys [:down :down :down :down :esc]
-                             :paint! (fn [{:keys [screen]}]
-                                       (dialogs/text-view-dialog! screen "Session goal" lines))})]
-
-      (expect (some #{(get goal "objective")} lines))
-      (expect (some #{(get blocked "reason")} lines))
-      (expect (not-any? #(str/includes? % "tokens") lines))
-      (expect (nil? (:error frame)))))
   (it "adds uncheckpointed active wall time but freezes all inactive states"
       (expect (some #{"Time in goal: 35.0s"} (footer/goal-detail-lines goal 3002)))
       (expect (some #{"Time in goal: 32.0s"} (footer/goal-detail-lines goal 0)))

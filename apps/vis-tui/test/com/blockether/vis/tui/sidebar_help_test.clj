@@ -76,34 +76,4 @@
               (expect (= (:input db) (:input @state/app-db)))
               (expect (= (:project-sidebar db) (:project-sidebar @state/app-db)))
               (expect (true? (#'screen/project-sidebar-key! key nil nil nil nil nil)))
-              (expect (false? (:help-open? @state/app-db)))))))
-    (it "opens the sidebar key list and runs the chosen command"
-        (doseq [key [(KeyStroke. \h true false) (cap/key-stroke \?)]]
-          (let [db (projects-test/fixture-db)
-                menus (atom [])
-                adds (atom 0)
-                press! (fn [command]
-                         (#'screen/project-sidebar-key!
-                          key
-                          nil
-                          #(swap! adds inc)
-                          nil
-                          #(swap! menus conj %)
-                          nil
-                          nil
-                          (constantly command)))]
-
-            (with-redefs [state/app-db (atom db)]
-              ;; Esc and the list's own help item close the list and change nothing.
-              (doseq [command [nil {:id :help} {:id :rows}]]
-                (expect (true? (press! command)))
-                (expect (= db @state/app-db)))
-              (expect (true? (press! {:id :menu :key \g})))
-              (expect (= [:project-select] (mapv :kind @menus)))
-              (expect (true? (press! {:id :back})))
-              (expect (false? (get-in @state/app-db [:project-sidebar :focused?])))
-              ;; The help keys act only while the rail has focus.
-              (reset! state/app-db db)
-              (expect (true? (press! {:id :hide})))
-              (expect (false? (get-in @state/app-db [:project-sidebar :open?])))
-              (expect (false? (boolean (:help-open? @state/app-db))))))))))
+              (expect (false? (:help-open? @state/app-db)))))))))

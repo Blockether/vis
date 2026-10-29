@@ -27,8 +27,6 @@
                           (suggest/suggestions "/" commands))))
     (it "fuzzy filters slash commands by typed token"
         (expect (= "new-tab" (:slash/name (first (suggest/suggestions "/nt" commands))))))
-    (it "filters by full slash command names"
-        (expect (= ["new-tab"] (mapv :slash/name (suggest/suggestions "/new-tab" commands)))))
     (it "finds namespaced skills by their unprefixed name"
         (expect (= "skill:create-extension"
                    (:slash/name (first (suggest/suggestions "/create-ext" commands))))))

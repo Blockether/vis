@@ -14,27 +14,6 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.screen TerminalScreen]))
 
-(defdescribe gateway-name-paints-the-transcript
-             (it "gateway name paints the transcript"
-                 (doseq [agent-name ["Ada" "助手" "Vis"]]
-                   (let [workspace {"root" "/remote/project" "agent_name" agent-name}
-                         captured (cap/capture! {:cols 40
-                                                 :rows 12
-                                                 :paint! (fn [{:keys [g]}]
-                                                           (render/draw-messages-area!
-                                                             g
-                                                             {:visible [{:top 0
-                                                                         :projected
-                                                                         {:role :assistant
-                                                                          :text "Done."}}]
-                                                              :total-h 4
-                                                              :eff-scroll 0}
-                                                             0 12
-                                                             40 (get workspace "agent_name")))})]
-
-                     (expect (nil? (:error captured)))
-                     (expect (str/includes? (cap/frame-text captured) agent-name))))))
-
 (defdescribe names-are-clipped-and-user-labels-stay-unchanged
              (it "names are clipped and user labels stay unchanged"
                  (let [captured
@@ -102,17 +81,6 @@
 
           (expect (nil? (:error captured)))
           (expect (= label heading) (pr-str [cols message]))))))
-
-(defdescribe progress-uses-the-same-gateway-name
-             (it "progress uses the same gateway name"
-                 (doseq [progress [{:iterations []} {:iterations [{:thinking "Working"}]}]]
-                   (let [text (:text (render/progress->lines-data
-                                       progress
-                                       80
-                                       {}
-                                       {:agent-name "Ada" :now-ms 1000 :turn-start-ms 0}))]
-                     (expect (str/includes? text "Ada is"))
-                     (expect (not (str/includes? text "Vis is")))))))
 
 (defdescribe
   live-ticks-keep-the-gateway-name

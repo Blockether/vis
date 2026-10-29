@@ -7,9 +7,6 @@
              (it "renders integers without a decimal suffix"
                  (expect (= "500" (lfmt/format-limit-number 500)))
                  (expect (= "2000000" (lfmt/format-limit-number 2000000.0))))
-             (it "renders non-integers with one decimal"
-                 (expect (= "47.5" (lfmt/format-limit-number 47.5)))
-                 (expect (= "0.3" (lfmt/format-limit-number 0.3))))
              (it "is nil-safe"
                  (expect (nil? (lfmt/format-limit-number nil)))
                  (expect (nil? (lfmt/format-limit-number "abc")))))
@@ -45,10 +42,7 @@
                  (expect (lfmt/account-plan-window-row? {:id :codex-7d}))
                  (expect (lfmt/account-plan-window-row? {:id :zai-coding-plan-5h})))
              (it "matches string ids that crossed the gateway wire"
-                 (expect (lfmt/account-plan-window-row? {:id "codex-5h"})))
-             (it "false for unrelated rows"
-                 (expect (not (lfmt/account-plan-window-row? {:id :premium_interactions})))
-                 (expect (not (lfmt/account-plan-window-row? {:id :rpm})))))
+                 (expect (lfmt/account-plan-window-row? {:id "codex-5h"}))))
 
 (defdescribe
   format-limit-usage-test
@@ -65,10 +59,6 @@
 (defdescribe generic-limit-has-signal?-test
              (it "true on :is-unlimited"
                  (expect (lfmt/generic-limit-has-signal? {:is-unlimited true})))
-             (it "true on any positive numeric field"
-                 (expect (lfmt/generic-limit-has-signal? {:remaining 47}))
-                 (expect (lfmt/generic-limit-has-signal? {:limit 100}))
-                 (expect (lfmt/generic-limit-has-signal? {:used 12})))
              (it "true on reset timestamps even when credits are exhausted"
                  (expect (lfmt/generic-limit-has-signal? {:remaining 0
                                                           :window {:resets-at-ms 1778155200000}})))

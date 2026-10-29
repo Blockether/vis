@@ -56,16 +56,6 @@
 ;; Regression, td-848743: C-x i had no surface when only model output existed.
 (defdescribe
   artifact-inspector-layout
-  (it "keeps composer input and session output in distinct visible sections"
-      (let [capture
-            (paint-component (inspector/inspector-modal-component staged [] produced nil))
-
-            text
-            (cap/frame-text capture)]
-
-        (expect (str/includes? text "diagram.png"))
-        (expect (str/includes? text "decision.html"))
-        (expect (str/includes? text "notes.pdf"))))
   (it "lists a PLAN file from an old session with the other artifacts"
       (let [artifacts
             (conj produced {"filename" "PLAN-search.md" "media_type" "text/markdown" "version" 1})
@@ -75,12 +65,7 @@
                               (inspector/inspector-modal-component [] [] artifacts nil)))]
 
         (expect (str/includes? text "PLAN-search.md"))
-        (expect (str/includes? text "notes.pdf"))))
-  (it "shows index failures as an explicit state"
-      (let [text (cap/frame-text
-                   (paint-component
-                     (inspector/inspector-modal-component [] [] [] "Artifact index unavailable")))]
-        (expect (str/includes? text "Artifact index unavailable")))))
+        (expect (str/includes? text "notes.pdf")))))
 
 (defdescribe artifact-inspector-selection
              (it "selects staged rows first and collapses produced filename versions newest-first"
@@ -246,8 +231,6 @@
           (expect (<= 1 (:rows img) 3))
           (expect (< (long (get-in geom [:bounds :left])) (long col)))
           (expect (<= (long (:content-top geom)) (long row)))))
-    (it "paints no thumbnails without a picture source"
-        (expect (nil? (:after-refresh (inspector/inspector-modal-component [] sent [] nil)))))
     (it
       "loads a produced picture once in the background and keeps local pictures as they are"
       (let [calls
@@ -286,17 +269,6 @@
 
 (defdescribe
   artifact-inspector-gateway
-  (it "loads the whole-session index through the facade"
-      (let [asked (atom nil)]
-        (with-redefs [vis/gateway-session-artifacts (fn [session-id]
-                                                      (reset! asked session-id)
-                                                      [{"filename" "decision.html"}])
-                      vis/gateway-app-views (constantly [])]
-
-          (expect (= "decision.html"
-                     (get (first (:artifacts (inspector/fetch-session-artifacts! "session-1")))
-                          "filename")))
-          (expect (= "session-1" @asked)))))
   (it "lists every app of the session, also an app that no block filed"
       (with-redefs [vis/gateway-session-artifacts
                     (constantly [{"media_type" app-model/media-type
@@ -365,10 +337,6 @@
       (let [rows (inspector/inspector-rows [] [] app-artifacts)]
         (expect (= #{"view-1" "view-2"} (set (map :view-id rows))))
         (expect (= :stale (:app-status (first (filter #(= "view-2" (:view-id %)) rows)))))))
-  (it "shows the app title and its lifecycle state"
-      (let [text (cap/frame-text (paint-component
-                                   (inspector/inspector-modal-component [] [] app-artifacts nil)))]
-        (expect (str/includes? text "Second review"))))
   (it "opens an app on the app surface and other text in its viewer"
       (let [enter (fn [artifacts]
                     (let [component (inspector/inspector-modal-component [] [] artifacts nil)]

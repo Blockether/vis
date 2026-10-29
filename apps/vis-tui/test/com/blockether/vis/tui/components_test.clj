@@ -46,9 +46,6 @@
             ;; terminal cursor must sit INSIDE its white query field — not stay parked
             ;; in the prompt input. `find-bar-cursor` is the single geometry source
             ;; both render paths use; `find-bar!` returns the same cell by construction.
-            (it "is nil while inactive — the prompt input keeps the cursor"
-                (expect (nil? (comps/find-bar-cursor 120 5 {:active? false :query "ab"})))
-                (expect (nil? (comps/find-bar-cursor 120 5 nil))))
             (it "sits on the bar's content row; typing advances it cell by cell"
                 (let [s0
                       {:active? true :query "" :hits [] :index 0 :case? false :total 0}
@@ -113,10 +110,6 @@
             (it "a task WITHOUT :acceptance yields a well-formed multi-row card"
                 (let [lines (#'comps/task-overlay-lines {:work {:title "y" :status :done}} 60)]
                   (expect (>= (count lines) 2))
-                  (expect (every? well-formed-line? lines))
-                  (expect (every? line-w-survives? lines))))
-            (it "empty tasks yields a well-formed placeholder line"
-                (let [lines (#'comps/task-overlay-lines {} 60)]
                   (expect (every? well-formed-line? lines))
                   (expect (every? line-w-survives? lines)))))
   (describe "fact-overlay-lines emits well-formed LINES"

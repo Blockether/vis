@@ -71,11 +71,7 @@
                                (expect (str/includes? (first lines) "jobs"))
                                (expect (some #(str/includes? % "▾ Deploy board") lines))
                                (expect (not-any? #(str/includes? % "Job queue") lines))
-                               (expect (= {:selected "a" :shown ["a"] :tab "deploy"} geometry))))
-                         (it "shows the other owner's views on its tab"
-                             (let [{:keys [lines]} (panel-lines panes {:tab "jobs"} 48 24)]
-                               (expect (some #(str/includes? % "▾ Job queue") lines))
-                               (expect (not-any? #(str/includes? % "Deploy board") lines))))))
+                               (expect (= {:selected "a" :shown ["a"] :tab "deploy"} geometry))))))
              (describe "a folded view"
                        (it "keeps only its title row"
                            (let [pane

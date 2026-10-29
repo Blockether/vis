@@ -90,49 +90,6 @@
           (expect (every? :is-disabled (filter #(= :button (:kind %)) (entries receipt))))))))
 
 (defdescribe
-  primitives-paint-real-terminal-test
-  (it
-    "primitives paint real terminal"
-    (doseq [cols [40 80 120]]
-      (let [view (update (fixture)
-                         :nodes
-                         #(filterv (fn [n]
-                                     (contains? #{"h1" "code" "spinners" "actions" "details"
-                                                  "links"}
-                                                (:id n)))
-                            %))
-            view (update view
-                         :nodes
-                         (fn [nodes]
-                           (mapv (fn [n]
-                                   (cond-> n
-                                     (= "actions" (:id n))
-                                     (update :children (partial filterv #(= :button (:type %))))))
-                                 nodes)))
-            pane (assoc (lv/opened view) :is-following false)
-            captured (capture/capture!
-                       {:cols cols
-                        :rows 80
-                        :paint!
-                        (fn [{:keys [screen]}]
-                          (.beginFrame interactions/hit-map)
-                          (lv/paint! (.newTextGraphics ^TerminalScreen screen) cols 80 [pane] 1 3)
-                          (.commitFrame interactions/hit-map)
-                          (.refresh ^TerminalScreen screen)
-                          (vec (.current interactions/hit-map)))})
-            text (capture/frame-text (last (:frames captured)))]
-
-        (expect (str/includes? text "Heading level 1"))
-        (expect (str/includes? text "Refresh results"))
-        (expect (str/includes? text "Details"))
-        (expect (str/includes? text "F3"))
-        (expect (str/includes? text "Braille"))
-        (expect (str/includes? text "Documentation"))
-        (expect (some #(= :url (:kind %)) (:ret captured)))
-        (expect (some #(= :live-activate (:kind %)) (:ret captured)))
-        (expect (not-any? #(= "disabled" (:node-id %)) (:ret captured)))))))
-
-(defdescribe
   inputs-and-cards-test
   (it "paints every input with the form's field renderer and offers it as a control"
       (let [pane

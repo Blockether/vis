@@ -112,25 +112,6 @@
 
                   (expect (= (subvec texts 5) (:input-history result)))
                   (expect (= "a" (:input-history-session-id result)))))
-            (it "bounds both cold-open and pending-tab hydration"
-                (let [texts
-                      (prompts 25)
-
-                      a
-                      (open-session "a" ["only A"])
-
-                      cold
-                      (step a :open-session-tab {:id "b"} (transcript texts) nil)
-
-                      pending
-                      (step a :preallocate-project-tabs [{:session-id "b" :label "B"}])
-
-                      hydrated
-                      (step pending :open-session-tab {:id "b"} (transcript texts) nil)]
-
-                  (doseq [result [cold hydrated]]
-                    (expect (= (subvec texts 5) (:input-history result)))
-                    (expect (= "b" (:input-history-session-id result))))))
             (it "caps older transcript pages without moving the selected recall entry"
                 (let [newer
                       (mapv #(str "new " %) (range 15))

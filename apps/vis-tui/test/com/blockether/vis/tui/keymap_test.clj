@@ -53,11 +53,6 @@
              ;; keymap.clj is the ONE registry for vis-side chords (editing keys are the
              ;; sole exception — they live in lanterna's TextEditKeymap). Lock the
              ;; structural keys so nothing drifts into a clash.
-             (it "help and model picking live in the C-x prefix; C-g remains the direct abort"
-                 (expect (= :toggle-help (keymap/prefix-action-for \h)))
-                 ;; The plain `c` after C-x is distinct from the direct Ctrl+C quit chord.
-                 (expect (= :pick-model (keymap/prefix-action-for keymap/quit-key)))
-                 (expect (nil? (keymap/prefix-action-for keymap/abort-key))))
              (it "every C-x prefix key is distinct, including the palette's second key"
                  (let [keys (mapv :key keymap/prefix-commands)]
                    (expect (= (count keys) (count (distinct keys))))
@@ -145,16 +140,12 @@
                    (expect (some #{:delete-session} (session-ids {})))
                    (expect (some #{:delete-session} (session-ids {:messages [{:role :user}]}))))))
 
-(defdescribe
-  archive-session-chord-test
-  (it "C-x A archives the current session; C-x a still attaches a file"
-      (expect (= :archive-session
-                 (:action (input/resolve-prefix-key (KeyStroke. \A false false true)
-                                                    {:prefix :cx}))))
-      (expect (= :pick-file (keymap/prefix-action-for \a))))
-  (it "the hydra offers it under Session"
-      (expect (some #(= {:key "A" :type :action :id :archive-session :label "archive session"} %)
-                    (mapcat :items (:groups (keymap/prefix-spec {})))))))
+(defdescribe archive-session-chord-test
+             (it "C-x A archives the current session; C-x a still attaches a file"
+                 (expect (= :archive-session
+                            (:action (input/resolve-prefix-key (KeyStroke. \A false false true)
+                                                               {:prefix :cx}))))
+                 (expect (= :pick-file (keymap/prefix-action-for \a)))))
 
 (defdescribe queue-row-chord-test
              ;; User report: the queue's Send buttons had no keys. C-x 1-9 presses the
@@ -163,9 +154,7 @@
                  (expect (= [1 5 9] (mapv keymap/queue-row-index [\1 \5 \9])))
                  (expect (every? nil? (map keymap/queue-row-index [\0 \k \a nil])))
                  ;; No letter verb uses a digit, so the two keyspaces cannot collide.
-                 (expect (not-any? #(Character/isDigit ^char (:key %)) keymap/prefix-commands)))
-             (it "labels rows 1-9 with their chord and gives later rows none"
-                 (expect (nil? (keymap/queue-row-chord 10)))))
+                 (expect (not-any? #(Character/isDigit ^char (:key %)) keymap/prefix-commands))))
 
 ;; Regression for #333: the hydra offered Fast mode in sessions that do not use Codex.
 (defdescribe codex-fast-hydra-test

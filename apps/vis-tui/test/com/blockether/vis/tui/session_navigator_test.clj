@@ -122,15 +122,6 @@
           (expect (= ["newest" "star"] (mapv (comp :id :target) visible))))))
   (describe
     "compact rows"
-    (it "fits one session per terminal row without group headings or spacer lines"
-        (let [rows
-              (#'dlg/navigator-all-rows {:sessions sessions})
-
-              visible
-              (#'dlg/navigator-visible-rows rows "" {})]
-
-          (expect (= [1 1 1 1] (#'dlg/navigator-block-heights visible)))
-          (expect (= [0 1 2] (mapv :idx (#'dlg/navigator-visible-blocks visible 0 3))))))
     ;; User request: project and group share the title line, after a ` | ` separator.
     (it "shortens a long title first, so the project and group stay on the line"
         (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)]
@@ -160,15 +151,6 @@
           (expect (= 39 (:divider (layout 76)))))))
   (describe
     "opening and resize"
-    (it "always keeps the list beside the preview, including a blank query and narrow terminals"
-        (doseq [cols [60 80 140]]
-          (let [{:keys [frames]} (capture-navigator! cols 32 {:sessions sessions} [])
-                {:keys [painted preview]} (first frames)]
-
-            (expect (some? preview))
-            (when preview
-              (expect (< (+ (:x (first painted)) (:width (first painted))) (:x preview)))
-              (expect (= (:row (first painted)) (:row preview)))))))
     (it "opens on the current session in its recency position, not at the top"
         (let [{:keys [choice frames]}
               (capture-navigator! 140

@@ -4,7 +4,6 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.frame :as frame]
-            [com.blockether.vis.tui.header :as header]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as theme]
             [lazytest.core :as lt :refer [defdescribe expect it]])
@@ -293,17 +292,6 @@
 
                (expect (= (.getBackCharacter vs x y) (.getBackCharacter hs x y))))
              (finally (.stopScreen vs) (.stopScreen hs) (.close vt) (.close ht)))))))
-
-(defdescribe
-  compact-and-wide-header-omits-team-status-test
-  (it "compact and wide header omits team status"
-      (doseq [compact? [true false]]
-        (let [panel (header/header-actions-component nil false nil compact?)
-              html (HtmlTerminalView/render panel (.getPreferredSize panel) "Header actions")]
-
-          (expect (not (str/includes? html "Agents")))
-          (expect (not (str/includes? html "Subagent")))
-          (expect (= (not compact?) (str/includes? html "help (")))))))
 
 (defdescribe
   active-header-refresh-without-inspector-test

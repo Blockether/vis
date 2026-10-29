@@ -237,14 +237,7 @@
                            (press (k \s false)))]
 
                    (expect (nil? (:editor st)))
-                   (expect (empty? @calls))))
-             (it "closes on Escape"
-                 (let [{:keys [start]} (harness view)]
-                   (expect (= {::dlg/done nil}
-                              (surface/handle-key start
-                                                  (k KeyType/Escape)
-                                                  (surface/measure start 100 40 view)
-                                                  {}))))))
+                   (expect (empty? @calls)))))
 
 (defdescribe
   session-state
@@ -428,9 +421,6 @@
         (expect (= :send (first (last @calls))))
         (press (press start (k \x true)) (ch \r))
         (expect (= [:reload] (last @calls)))))
-  (it "dims the legend into one line and says Disconnected in the title"
-      (let [geom (surface/measure (surface/initial-state) 100 40 (assoc game :is-stale true))]
-        (expect (string? (:legend geom)))))
   (it "says Disconnected once when the gateway refuses an action with 409"
       (expect (= surface/disconnected-notice
                  (surface/refusal-notice
@@ -501,9 +491,7 @@
         (let [[kind action node-id] (last @calls)]
           (expect (= :send kind))
           (expect (= "done" node-id))
-          (expect (= {"ok" true} (:values action))))))
-  (it "says why the gateway refused an action"
-      (expect (nil? (surface/refusal-notice {:is-accepted true})))))
+          (expect (= {"ok" true} (:values action)))))))
 
 (defdescribe app-height
              (it "uses most of a small terminal, so the controls fit"

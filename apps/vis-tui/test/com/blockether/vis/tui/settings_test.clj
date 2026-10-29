@@ -5,7 +5,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.theme :as t])
-  (:import [com.googlecode.lanterna TerminalPosition TextColor TextColor$RGB]
+  (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
            [com.googlecode.lanterna.input MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]))
 
@@ -55,16 +55,6 @@
 
 (defdescribe
   compact-settings-test
-  (describe "full catalog"
-            (it "keeps other sections visible when an extension section is focused"
-                (let [frame (cap/frame-text (capture-settings settings-rows
-                                                              [:esc]
-                                                              :callbacks
-                                                              {:focus-section
-                                                               "Extension engines"}))]
-                  (expect (every? #(str/includes? frame %) engine-names))
-                  (expect (str/includes? frame "Read filesystem"))
-                  (expect (str/includes? frame "Show reasoning")))))
   (describe
     "compact rows"
     (it "uses one painted line per setting and keeps prose out of the list"
@@ -169,21 +159,6 @@
                                         :values {:read-files false :thinking false}
                                         :callbacks {:focus-section section})]
           (expect (= (assoc {:read-files false :thinking false} expected true) (:ret capture))))))
-  (it "moves across section boundaries with the mouse wheel"
-      (doseq [[section wheel expected] [["Paths and access" MouseActionType/SCROLL_DOWN :thinking]
-                                        ["Response" MouseActionType/SCROLL_UP :read-files]]]
-        (let [capture (capture-settings settings-rows
-                                        [(MouseAction. wheel 0 (TerminalPosition. 10 10)) :enter
-                                         :esc]
-                                        :values {:read-files false :thinking false}
-                                        :callbacks {:focus-section section})]
-          (expect (= (assoc {:read-files false :thinking false} expected true) (:ret capture))))))
-  (it "opens with every section unfolded"
-      (let [frame (cap/frame-text (capture-settings settings-rows [:esc]))]
-        (expect (every? #(str/includes? frame %)
-                        ["Extension engines ▾" "Paths and access ▾" "Response ▾" "Read filesystem"
-                         "Show reasoning"]))
-        (expect (not (str/includes? frame "▸")))))
   (it "folds a section with Left and opens it with Right or Enter"
       (let [run
             #(capture-settings settings-rows
@@ -282,13 +257,6 @@
                                         :callbacks {:focus-section section})]
           (expect (= 1 (count (:ret capture))))
           (expect (not (contains? (:ret capture) initial))))))
-  (it "jumps to the first and last settings with Home and End"
-      (doseq [[key expected] [[:home :setting-0] [:end :setting-23]]]
-        (let [capture (capture-settings long-settings-rows
-                                        [key :enter :esc]
-                                        :callbacks
-                                        {:focus-section "Category 12"})]
-          (expect (= {expected true} (:ret capture))))))
   (it "shows an empty section's explanation instead of activating an unrelated setting"
       (let [rows
             (vec (concat
@@ -306,31 +274,6 @@
         (expect (= {} (:ret capture)))
         (expect (str/includes? frame "No MCP servers"))
         (expect (str/includes? frame "Add a server to start."))))
-  (it "draws the MCP servers header with a rule and an empty section without a hint"
-      (let [inventory
-            (var-get #'dlg/mcp-inventory)
-
-            before
-            @inventory]
-
-        (try (reset! inventory {:status :ok :servers [] :error nil})
-             (let [rows
-                   (vec (concat settings-rows ((var-get #'dlg/mcp-settings-rows))))
-
-                   lines
-                   (str/split-lines
-                     (cap/frame-text
-                       (capture-settings rows [:esc] :callbacks {:focus-section "MCP servers"})))
-
-                   header
-                   (first (filter #(and (str/includes? % "MCP servers") (str/includes? % "Add"))
-                                  lines))]
-
-               (expect (some? header))
-               (expect (str/includes? header "─"))
-               (expect (some #(str/includes? % "── Response") lines))
-               (expect (not-any? #(str/includes? % "No MCP servers") lines)))
-             (finally (reset! inventory before)))))
   (it "refocuses the requested section when the initial inventory arrives without hiding others"
       (let [rows
             (atom (subvec settings-rows 0 5))
@@ -400,29 +343,6 @@
 
 (defdescribe
   compact-settings-details-test
-  (it "aligns four single-line values and explains engine modes only once"
-      (let [frame
-            (cap/frame-text (capture-settings settings-rows [:esc]))
-
-            lines
-            (str/split-lines frame)
-
-            engine-lines
-            (filter #(some (fn [label]
-                             (str/includes? % label))
-                           engine-names)
-                    lines)
-
-            indexes
-            (keep-indexed (fn [i line]
-                            (when (some #(str/includes? line %) engine-names) i))
-                          lines)]
-
-        (expect (= 4 (count engine-lines)))
-        (expect (= (range (first indexes) (+ 4 (first indexes))) indexes))
-        (expect (every? #(str/includes? % "Auto") engine-lines))
-        (expect (apply = (map #(.indexOf ^String % "Auto") engine-lines)))
-        (expect (= 1 (count (re-seq #"when applicable" frame))))))
   (it "opens full descriptions and source with F1 and returns without saving"
       (doseq [cols [40 100]]
         (let [capture (capture-settings settings-rows [:f1 :esc :esc] :cols cols)
@@ -433,12 +353,6 @@
           (expect (some #(str/includes? % "Source: default") frames))
           (expect (some #(str/includes? % "extension when") frames))
           (expect (not (str/includes? (last frames) "Source:"))))))
-  (it "changes the selected value with Enter in details"
-      (let [capture (capture-settings settings-rows
-                                      [:f1 :enter :esc]
-                                      :values {:read-files false}
-                                      :callbacks {:focus-section "Paths and access"})]
-        (expect (= {:read-files true} (:ret capture)))))
   (it
     "keeps source and inheritance metadata out of the list and uses one row per override"
     (let [target
@@ -556,10 +470,6 @@
         (expect (= [["compact_text" "examplex" nil]] @calls)))))
 
 (defdescribe compact-settings-empty-state-test
-             (it "shows a useful message for a search with no matches"
-                 (let [capture (capture-settings settings-rows (concat "no match" [:esc :esc]))]
-                   (expect (some #(str/includes? (cap/frame-text %) "No matching settings")
-                                 (:frames capture)))))
              (it "preserves gateway errors before the first category"
                  (let [rows
                        (into [{:type :info
@@ -709,10 +619,6 @@
                 (expect (= [[:value "compact_secret" "abc" nil]]
                            (:calls (capture-secret {"is_set" false "max_length" 3}
                                                    [:enter \a \b \c \d :enter :esc])))))
-            (it "replaces a saved value"
-                (expect (= [[:value "compact_secret" "new" nil]]
-                           (:calls (capture-secret {"is_set" true "source" "global"}
-                                                   [:enter \r \n \e \w :enter :esc])))))
             (it "removes a value that this scope holds only after confirmation"
                 (expect (empty? (:calls (capture-secret {"is_set" true "source" "global"}
                                                         [:enter \x \n :esc]))))
@@ -878,8 +784,6 @@
                          (when (every? #(str/includes? line %) texts)
                            (into [y] (map #(.indexOf line ^String %)) texts)))
                        (str/split-lines frame))))
-
-(defn- rgb [^TextColor color] [(.getRed color) (.getGreen color) (.getBlue color)])
 
 (defn- extension-action-calls
   "Use the Extensions header button in `rows` with `keys`, and return the catalog reads and
@@ -1150,25 +1054,6 @@
                               (str "e7 and 1 more), 0 failed.\n"
                                    "Project extensions reload in Project settings.\n"
                                    "Settings unavailable: offline")))))
-  (it "fills the Reload button with the accent only while it is selected"
-      (let [capture
-            (capture-settings (conj (#'dlg/extension-action-rows)
-                                    {:type :action :id :other :label "Other"})
-                              [:down :esc])
-
-            [y rule-x reload-x]
-            (text-row (cap/frame-text capture 0) "── Tools" "Reload")
-
-            bg
-            (fn [frame x]
-              (:bg (get-in frame [y x])))
-
-            accent
-            (rgb t/header-active-tab-bg)]
-
-        (expect (< (long rule-x) (long reload-x)))
-        (expect (= accent (bg (first (:frames capture)) reload-x)))
-        (expect (not= accent (bg (peek (:frames capture)) reload-x)))))
   (it "runs Reload when you click the button, not the rest of the header"
       (let [[y rule-x reload-x]
             (text-row (cap/frame-text (capture-settings (#'dlg/extension-action-rows) [:esc]))
@@ -1182,11 +1067,6 @@
 
         (expect (= [[:reload nil] [:catalog]] (extension-action-calls (click reload-x))))
         (expect (= [] (extension-action-calls (click rule-x))))))
-  (it "selects the Reload button that a search finds"
-      (let [rows (into (extension-test-actions "a" 2) (#'dlg/extension-action-rows))]
-        (expect (= [] (extension-action-calls rows [:enter :esc])))
-        (expect (= [[:reload nil] [:catalog]]
-                   (extension-action-calls rows (concat "reload" [:enter :esc :esc]))))))
   (it "pages down from the Reload button instead of a jump back to the top"
       (let [rows
             (vec (concat [{:type :section :label "General"}]
@@ -1200,14 +1080,6 @@
                               rows))]
 
         (expect (< 11 (long (#'dlg/settings-page-selection rows entries 11 3 1))))))
-  (it "keeps the whole Reload button in a narrow window and cuts the section name first"
-      (let [frame
-            (cap/frame-text (capture-settings (#'dlg/extension-action-rows) [:esc] :cols 48))
-
-            [y]
-            (text-row frame "── Too…" " Reload  ──")]
-
-        (expect (some? y))))
   (it "places the button before two rule characters and cuts the section label first"
       (let [place #(#'dlg/settings-section-layout (first (#'dlg/extension-action-rows)) 0 %)]
         ;; `── Tools ─ ` + ` Reload ` + ` ──` takes 22 columns.

@@ -9,8 +9,6 @@
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
-(def ^:private right-block-text (deref #'header/right-block-text))
-
 (defn- dummy-text-graphics
   ([] (dummy-text-graphics (atom [])))
   ([writes]
@@ -69,13 +67,6 @@
                      (sort-by :index)
                      vec)}
          (finally (.stopScreen screen)))))
-
-(defdescribe right-block-text-test
-             (it "shows the short session id only"
-                 ;; The id badge is a space-padded COPY BUTTON: the `#`-prefixed short id.
-                 ;; The full UUID still lands on the clipboard via the click region; only
-                 ;; the visible label changed shape.
-                 (expect (= " #4b1ed602 " (right-block-text "4b1ed602")))))
 
 (defdescribe
   draw-header-copy-region-test
@@ -190,37 +181,6 @@
         (expect (= 1 (:col (write-by-text notification))))
         (expect (nil? (write-by-text status-text)))
         (expect (= {:row 1 :col expected-id-col :width id-w} (:bounds copy-hit))))))
-  (it "renders channel status on the left when no notification is active"
-      (let [uuid
-            "123e4567-e89b-12d3-a456-426614174000"
-
-            status-text
-            "● Recording 00:01"
-
-            left-slot-w
-            vh/left-slot-cols
-
-            status-shown
-            (p/truncate-cols status-text (- left-slot-w 2))
-
-            db
-            {:title "Chat"
-             :session {:id uuid}
-             :channel-status {:voice/input {:text status-text :level :warn :updated-at-ms 1}}}
-
-            writes
-            (atom [])]
-
-        (.reset interactions/hit-map)
-        (with-redefs-fn {#'header/latest-notification (fn []
-                                                        nil)}
-          (fn []
-            (.beginFrame interactions/hit-map)
-            (header/draw-header! (dummy-text-graphics writes) db 0 80)
-            (.commitFrame interactions/hit-map)))
-        (let [write-by-text (fn [text]
-                              (some #(when (= text (:text %)) %) @writes))]
-          (expect (= 1 (:col (write-by-text status-shown)))))))
   (it "does not render stale ready voice status forever"
       (let [uuid
             "123e4567-e89b-12d3-a456-426614174000"

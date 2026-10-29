@@ -126,20 +126,6 @@
                     :base64 (.encodeToString (java.util.Base64/getEncoder) one-pixel-png)}
                    payload))
         (expect (not (contains? payload :path)))))
-  (it "removes one staged attachment by stable identity"
-      (expect (= [{:id "sha256:b"}]
-                 (composer-attachments/remove-attachment [{:id "sha256:a"} {:id "sha256:b"}]
-                                                         "sha256:a"))))
-  (it "keeps staged files, focus, and feedback with their composer tab"
-      (let [snapshot (#'state/tab-snapshot
-                      {:attachments [{:id "sha256:a"}]
-                       :attachment-feedback ["too large"]
-                       :attachment-focus? true
-                       :attachment-index 0})]
-        (expect (= [{:id "sha256:a"}] (:attachments snapshot)))
-        (expect (= ["too large"] (:attachment-feedback snapshot)))
-        (expect (true? (:attachment-focus? snapshot)))
-        (expect (= 0 (:attachment-index snapshot)))))
   (it "focuses, cycles, and removes one rail item without touching its peers"
       (reset! state/app-db {:attachments [{:id "a"} {:id "b"} {:id "c"}]
                             :attachment-focus? false

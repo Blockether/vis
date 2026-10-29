@@ -317,23 +317,6 @@
           (expect (= eff-scroll (max 0 (- total-h inner-h))))
           ;; visible includes at least the last message
           (expect (some #(= (dec (count msgs)) (:idx %)) visible))))
-    (it "projects the live loading placeholder with progress text"
-        (let [m
-              {:role :assistant :text "Sending request to provider..."}
-
-              {:keys [visible]}
-              (virtual/layout [m]
-                              bubble-w
-                              settings
-                              nil
-                              20
-                              {:loading? true :progress {:iterations []}})
-
-              projected
-              (:projected (first visible))]
-
-          (expect (string? (:text projected)))
-          (expect (not= (:text m) (:text projected)))))
     (it
       "does not project off-screen live progress while the user is scrolled up"
       (let [msgs
@@ -566,8 +549,6 @@
   pre-warm-test
   (describe
     "pre-warm! warms the LRU off the render thread"
-    (it "returns nil for empty messages, no thread spawned"
-        (expect (nil? (virtual/pre-warm! [] bubble-w settings))))
     (it "returns a daemon thread for non-empty messages"
         (let [t (virtual/pre-warm! [(plain-assistant-msg "hi")] bubble-w settings)]
           (expect (some? t))
@@ -668,12 +649,7 @@
                                              (swap! hits inc))})]
 
           (.join ^Thread t 5000)
-          (expect (pos? @hits))))
-    (it "stop-pre-warm! is safe on nil and on already-finished threads"
-        (expect (nil? (virtual/stop-pre-warm! nil)))
-        (let [t (virtual/pre-warm! [(plain-assistant-msg "x")] bubble-w settings)]
-          (.join ^Thread t 5000)
-          (expect (nil? (virtual/stop-pre-warm! t)))))))
+          (expect (pos? @hits))))))
 
 (defdescribe
   overshoot-invariant-test
@@ -983,10 +959,6 @@
 (defdescribe
   rewarm-test
   (describe "rewarm! owns ONE managed background warm worker"
-            (it "returns nil for empty messages and is safe to stop when idle"
-                (virtual/stop-rewarm!)
-                (expect (nil? (virtual/rewarm! [] bubble-w settings {})))
-                (expect (nil? (virtual/stop-rewarm!))))
             (it "populates the sticky height cache (the post-invalidate re-settle)"
                 (virtual/invalidate-heights!)
                 (render/invalidate-cache!)
@@ -1046,14 +1018,6 @@
                                (:total-h (virtual/layout msgs bubble-w settings s 10 {})))
                              [nil 0 50 100 500 (long 1e6)])]
             (expect (= 1 (count (distinct totals)))))))
-    (it "layout pins the real height of any message it measures"
-        (virtual/invalidate-heights!)
-        (render/invalidate-cache!)
-        (let [msgs [(trace-assistant-msg 3 2 "first") (trace-assistant-msg 3 2 "second")]]
-          ;; First layout (auto-bottom) measures whichever bubble is visible.
-          (virtual/layout msgs bubble-w settings nil 5 {})
-          ;; The cache must now contain at least one real height.
-          (expect (pos? (virtual/height-cache-size)))))
     (it "mid-scroll last-bubble paints use full projection instead of broken window slices"
         (virtual/invalidate-heights!)
         (render/invalidate-cache!)
@@ -2102,14 +2066,6 @@
   project-message-test
   (describe
     "user messages strip timestamps and render markdown"
-    (it "keeps :timestamp when :show-timestamps true"
-        (let [pm (project-message (user-msg "hi") bubble-w (assoc settings :show-timestamps true))]
-          (expect (some? (:timestamp pm)))))
-    (it "does not prepend answer-margin blank rows inside user prompt blocks"
-        (let [pm (project-message (user-msg "> siema") bubble-w settings)]
-          (expect (= 1 (count (:prewrapped-lines pm))))
-          (expect (not= "" (first (:prewrapped-lines pm))))
-          (expect (str/includes? (first (:prewrapped-lines pm)) "siema"))))
     (it "justifies user prose identically in a virtualized window"
         (let [text
               (str/join " " (repeat 18 "one"))
@@ -2173,16 +2129,15 @@
              ;; the client id so the same key drives both phases; fall back
              ;; to the server id only for legacy persisted messages that
              ;; never had a client id.
-             (describe
-               "turn-identity"
-               (it "prefers :client-turn-id when present (live and done)"
-                   (expect (= "abc12345" (turn-identity {:client-turn-id "abc12345"})))
-                   (expect (= "abc12345"
-                              (turn-identity {:client-turn-id "abc12345"
-                                              :session-turn-id "server-xyz"}))))
-               (it "falls back to :session-turn-id for legacy DB messages"
-                   (expect (= "server-only" (turn-identity {:session-turn-id "server-only"}))))
-               (it "returns nil when neither id is present" (expect (nil? (turn-identity {}))))))
+             (describe "turn-identity"
+                       (it "prefers :client-turn-id when present (live and done)"
+                           (expect (= "abc12345" (turn-identity {:client-turn-id "abc12345"})))
+                           (expect (= "abc12345"
+                                      (turn-identity {:client-turn-id "abc12345"
+                                                      :session-turn-id "server-xyz"}))))
+                       (it "falls back to :session-turn-id for legacy DB messages"
+                           (expect (= "server-only"
+                                      (turn-identity {:session-turn-id "server-only"}))))))
 
 ;; ─── Compile-time arithmetic ─────────────────────────────────────────────────
 

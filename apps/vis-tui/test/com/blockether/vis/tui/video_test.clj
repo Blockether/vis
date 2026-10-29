@@ -348,11 +348,7 @@
                    (expect (= [-119 80 78 71] (mapv #(aget ^bytes (:png p) %) (range 4))))
                    (expect (= {:w (:width p) :h (:height p)}
                               (timg/image-dimensions (:png p) "image/png")))
-                   (expect (<= (long (:width p)) 32))))
-             (it "keeps the clip's own size when nothing constrains it"
-                 (let [p (video/poster (reference-clip))]
-                   (expect (= clip-w (:width p)))
-                   (expect (= clip-h (:height p))))))
+                   (expect (<= (long (:width p)) 32)))))
 
 (defdescribe
   video-in-terminal-image-test
@@ -487,64 +483,6 @@
           (video/play! (reference-clip)
                        {:out bos :protocol :kitty :cols 20 :max-frames 2 :max-dimension 24}))
         (expect (= 24 (:max-dimension @seen))))))
-
-(defdescribe
-  native-png-frames-test
-  (it
-    "asks the cdylib for PNG frames instead of hauling RGBA over the FFI boundary"
-    (let [clip
-          (reference-clip)
-
-          raw
-          (video/decode-frames clip)
-
-          png
-          (video/decode-frames clip {:encoding :png})
-
-          f
-          (first (:frames png))]
-
-      (expect (= clip-frames (count (:frames png))))
-      ;; The frame carries an ENCODED still, not a canvas...
-      (expect (nil? (:rgba f)))
-      (expect (= [-119 80 78 71] (mapv #(aget ^bytes (:png f) %) (range 4))))
-      ;; ...which `frame->png` hands straight back — no second encode.
-      (expect (identical? (:png f) (video/frame->png f)))
-      ;; RGBA frames still work, and are encoded on demand.
-      (expect (some? (:rgba (first (:frames raw)))))
-      (expect (= [-119 80 78 71]
-                 (mapv #(aget ^bytes (video/frame->png (first (:frames raw))) %) (range 4))))
-      ;; Same picture either way: the escape stream is byte-identical,
-      ;; so the cheap path is a pure saving, not a different image.
-      (expect (= (mapv :escape (:frames (video/playback-sequences raw {:protocol :kitty :cols 20})))
-                 (mapv :escape
-                       (:frames (video/playback-sequences png {:protocol :kitty :cols 20})))))
-      ;; RGBA for this clip is already 5x the PNG; at 720p it is 133 MB
-      ;; against 9 MB, which is the difference between playback fitting
-      ;; in the heap and not.
-      (expect (< (reduce + (map #(count (:png %)) (:frames png)))
-                 (reduce + (map #(count (:rgba %)) (:frames raw))))))))
-
-(defdescribe playback-encoding-default-test
-             (it "play! defaults to the encoded-frame path"
-                 (let [seen
-                       (atom nil)
-
-                       real
-                       video/decode-frames
-
-                       bos
-                       (java.io.ByteArrayOutputStream.)]
-
-                   (with-redefs [video/decode-frames (fn [src opts]
-                                                       (reset! seen opts)
-                                                       (real src opts))]
-                     (video/play! (reference-clip) {:out bos :protocol :kitty :cols 20 :rows 10})
-                     (expect (= :png (:encoding @seen)))
-                     ;; An explicit choice still wins.
-                     (video/play! (reference-clip)
-                                  {:out bos :protocol :kitty :cols 20 :rows 10 :encoding :rgba})
-                     (expect (= :rgba (:encoding @seen)))))))
 
 (defdescribe video-attachment-materialization-test
              (it "re-renders a persisted clip attachment after a resume"

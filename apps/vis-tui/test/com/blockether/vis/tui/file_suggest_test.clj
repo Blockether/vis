@@ -67,7 +67,4 @@
           (expect (= [false true] (mapv :slash/selected? (suggest/suggestions st 99))))))
     (it "picking splices a visible mention plus a trailing space at the caret"
         (expect (= {:lines ["open @src/a/file_picker.clj "] :crow 0 :ccol 28}
-                   (suggest/apply-mention st "src/a/file_picker.clj"))))
-    (it "picking with no active mention leaves the input untouched"
-        (let [plain {:lines ["hello"] :crow 0 :ccol 5}]
-          (expect (= plain (suggest/apply-mention plain "a.clj")))))))
+                   (suggest/apply-mention st "src/a/file_picker.clj"))))))

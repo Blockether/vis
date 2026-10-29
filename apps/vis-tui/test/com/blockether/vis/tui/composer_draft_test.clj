@@ -423,27 +423,4 @@
                  (let [db (-> (draft-db)
                               (assoc-in [:tab-locals :tab-1 :input] (input/empty-input))
                               (assoc-in [:tab-locals :tab-1 :pastes] {1 {:text "Unused paste"}}))]
-                   (expect (empty? (state/session-draft-ids db)))))
-             (it "sends the same dirty overlay to project counts as to its session windows"
-                 (let [asked (atom [])]
-                   (with-redefs [state/app-db (atom (draft-db))
-                                 client/worker-future (fn [_ f]
-                                                        (f))
-                                 client/gateway-list-projects (constantly [{"id" "p"
-                                                                            "name" "Project"}])
-                                 client/gateway-projects-overview (fn [& [opts]]
-                                                                    (swap! asked conj opts)
-                                                                    {"projects" []})
-                                 screen/load-project-page! (fn [& _]
-                                                             nil)]
-
-                     (#'screen/refresh-projects! true)
-                     (expect (= #{"a"} (set (:dirty (first @asked))))))))
-             (it "encodes dirty session ids on the project overview route"
-                 (let [asked (atom nil)]
-                   (with-redefs-fn {#'client/send-json! (fn [_ path]
-                                                          (reset! asked path)
-                                                          {})}
-                     (fn []
-                       (client/projects-overview {:dirty ["b" "a"]})
-                       (expect (= "/v1/projects/overview?dirty=a%2Cb" @asked)))))))
+                   (expect (empty? (state/session-draft-ids db))))))

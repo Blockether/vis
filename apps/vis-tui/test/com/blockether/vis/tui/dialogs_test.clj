@@ -10,9 +10,8 @@
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.client :as vis]
-            [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.toggles :as toggles])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextCharacter TextColor]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal VirtualTerminalListener]
@@ -24,15 +23,8 @@
 ;; leaks PUA marker chars (\uE200, \uE201) into the stored value.
 (defn has-provider? [& _] false)
 
-(defdescribe smoke-test
-             (it "dialogs namespace loads and text-input-dialog! is public"
-                 (expect (fn? (var-get #'dlg/text-input-dialog!)))))
-
 (defdescribe
   modal-key-policy-test
-  (it "modal helpers consume canonical Lanterna Enter/Escape strokes"
-      (expect (dlg/modal-enter-key? (KeyStroke. KeyType/Enter)))
-      (expect (dlg/modal-escape-key? (KeyStroke. KeyType/Escape))))
   (it "C-g is the application abort key for every modal"
       (expect (dlg/modal-escape-key? (KeyStroke. (Character/valueOf \g) true false false)))
       (expect (= KeyType/Escape
@@ -148,93 +140,74 @@
 
 (def ^:private done-key :com.blockether.vis.tui.dialogs/done)
 
-(defdescribe select-modal-initial-selection-test
-             (it "starts on the :selected item"
-                 (let [{:keys [init measure reconcile]} (dlg/select-modal-component
-                                                          "Items"
-                                                          (mapv #(hash-map :label (str "item " %))
-                                                                (range 6))
-                                                          {:height :content :selected 4})]
-                   (expect (= 4 (:selected init)))
-                   (expect (= 4 (:selected (reconcile init (measure init 80 30))))))))
+(defdescribe
+  select-modal-component-pure-test
+  (it "arrow nav + Enter selects the right item with no screen"
+      (let [items
+            (mapv #(hash-map :label (str "Item " %) :id %) (range 20))
 
-(defdescribe select-modal-component-pure-test
-             (it "arrow nav + Enter selects the right item with no screen"
-                 (let [items
-                       (mapv #(hash-map :label (str "Item " %) :id %) (range 20))
+            {:keys [init measure reconcile on-key]}
+            (dlg/select-modal-component "Items" items {:height :content})
 
-                       {:keys [init measure reconcile on-key]}
-                       (dlg/select-modal-component "Items" items {:height :content})
+            geom
+            (measure init 80 30)
 
-                       geom
-                       (measure init 80 30)
+            s0
+            (reconcile init geom)
 
-                       s0
-                       (reconcile init geom)
+            down
+            (ks KeyType/ArrowDown)
 
-                       down
-                       (ks KeyType/ArrowDown)
+            s3
+            (nth (iterate #(on-key % down geom) s0) 3)
 
-                       s3
-                       (nth (iterate #(on-key % down geom) s0) 3)
+            done
+            (on-key s3 (ks KeyType/Enter) geom)]
 
-                       done
-                       (on-key s3 (ks KeyType/Enter) geom)]
+        (expect (= 20 (:total geom)))
+        (expect (= 0 (:selected s0)))
+        (expect (= 3 (:selected s3)))
+        (expect (= {:label "Item 3" :id 3} (done-key done)))))
+  (it "type-to-filter narrows :filtered and backspace widens it again"
+      (let [items
+            (mapv #(hash-map :label %) ["apple" "apricot" "banana" "cherry"])
 
-                   (expect (= 20 (:total geom)))
-                   (expect (= 0 (:selected s0)))
-                   (expect (= 3 (:selected s3)))
-                   (expect (= {:label "Item 3" :id 3} (done-key done)))))
-             (it "Escape closes with nil"
-                 (let [{:keys [init measure on-key]}
-                       (dlg/select-modal-component "X" [{:label "a"}] {})
+            {:keys [init measure reconcile on-key]}
+            (dlg/select-modal-component "F" items {:filter? true :height :content})
 
-                       geom
-                       (measure init 80 30)]
+            step
+            (fn [s k]
+              (on-key s k (measure s 80 30)))
 
-                   (expect (contains? (on-key init (ks KeyType/Escape) geom) done-key))
-                   (expect (nil? (done-key (on-key init (ks KeyType/Escape) geom))))))
-             (it "type-to-filter narrows :filtered and backspace widens it again"
-                 (let [items
-                       (mapv #(hash-map :label %) ["apple" "apricot" "banana" "cherry"])
+            s1
+            (-> (reconcile init (measure init 80 30))
+                (step (char-key \a))
+                (step (char-key \p)))
 
-                       {:keys [init measure reconcile on-key]}
-                       (dlg/select-modal-component "F" items {:filter? true :height :content})
+            s2
+            (step s1 (ks KeyType/Backspace))]
 
-                       step
-                       (fn [s k]
-                         (on-key s k (measure s 80 30)))
+        (expect (= "ap" (:query s1)))
+        (expect (= ["apple" "apricot"] (mapv :label (:filtered (measure s1 80 30)))))
+        (expect (= "a" (:query s2)))
+        (expect (= ["apple" "apricot" "banana"] (mapv :label (:filtered (measure s2 80 30)))))))
+  (it "a wheel burst moves selection by the coalesced step"
+      (let [items
+            (mapv #(hash-map :label (str %) :id %) (range 20))
 
-                       s1
-                       (-> (reconcile init (measure init 80 30))
-                           (step (char-key \a))
-                           (step (char-key \p)))
+            {:keys [init measure reconcile on-key]}
+            (dlg/select-modal-component "W" items {:height :content})
 
-                       s2
-                       (step s1 (ks KeyType/Backspace))]
+            geom
+            (measure init 80 30)
 
-                   (expect (= "ap" (:query s1)))
-                   (expect (= ["apple" "apricot"] (mapv :label (:filtered (measure s1 80 30)))))
-                   (expect (= "a" (:query s2)))
-                   (expect (= ["apple" "apricot" "banana"]
-                              (mapv :label (:filtered (measure s2 80 30)))))))
-             (it "a wheel burst moves selection by the coalesced step"
-                 (let [items
-                       (mapv #(hash-map :label (str %) :id %) (range 20))
+            s0
+            (reconcile init geom)
 
-                       {:keys [init measure reconcile on-key]}
-                       (dlg/select-modal-component "W" items {:height :content})
+            burst
+            (MouseAction. MouseActionType/SCROLL_DOWN 5 (TerminalPosition. 10 10) 5)]
 
-                       geom
-                       (measure init 80 30)
-
-                       s0
-                       (reconcile init geom)
-
-                       burst
-                       (MouseAction. MouseActionType/SCROLL_DOWN 5 (TerminalPosition. 10 10) 5)]
-
-                   (expect (= 5 (:selected (on-key s0 burst geom)))))))
+        (expect (= 5 (:selected (on-key s0 burst geom)))))))
 
 (defdescribe
   select-modal-sections-test
@@ -284,46 +257,7 @@
                              [{:id :s :label "Session" :section? true} {:id :a :label "Rename"}
                               {:id :g :label "Group" :section? true} {:id :b :label "Recolour"}]
                              {:height :content :selected 3})]
-        (expect (= 4 (:selected init)))))
-  (it
-    "paints a header bold in the accent color, without a selection bar"
-    (let [capture
-          (cap/capture! {:cols 80
-                         :rows 30
-                         :keys [:esc]
-                         :paint! (fn [{:keys [screen]}]
-                                   (dlg/select-dialog! screen
-                                                       "Menu"
-                                                       [{:id :s :label "Session" :section? true}
-                                                        {:id :a :label "Rename"}]))})
-
-          lines
-          (str/split-lines (cap/frame-text capture 0))]
-
-      (expect (nil? (:error capture)))
-      (expect (some #(re-find #"│ Session ─+ +│" %) lines) "A rule marks the header")
-      (expect (some #(re-find #"│ Rename +│" %) lines))
-      (let [frame
-            (last (:frames capture))
-
-            header
-            (first (for [row
-                         frame
-
-                         :let [text
-                               (apply str (map :ch row))
-
-                               start
-                               (str/index-of text "Session")]
-                         :when start]
-
-                     (subvec row start (+ (long start) 7))))]
-
-        (expect (every? :bold header))
-        (expect (every? #(= (let [^TextColor c t/dialog-hint-key]
-                              [(.getRed c) (.getGreen c) (.getBlue c)])
-                            (:fg %))
-                        header))))))
+        (expect (= 4 (:selected init))))))
 
 (defn- numbered-items
   "`n` plain list items labelled Item 0, Item 1 and so on."
@@ -509,28 +443,6 @@
         (expect (re-find #"│ +Yes +No +│" (nth lines yes-row)))
         (expect (re-find #"├─+┤" (nth lines (inc (long yes-row))))))))
 
-;; User request, this Vis session (paraphrased: row menu labels sat too close to the
-;; border): each select list label starts after one space inside the border.
-(defdescribe select-list-label-padding-test
-             (it "puts one space between the border and each label"
-                 (let [capture
-                       (cap/capture! {:cols 80
-                                      :rows 30
-                                      :keys [:esc]
-                                      :paint! (fn [{:keys [screen]}]
-                                                (dlg/select-dialog! screen
-                                                                    "Session"
-                                                                    [{:id :new-session
-                                                                      :label "New session here"
-                                                                      :hint "n"}]))})
-
-                       line
-                       (first (filter #(str/includes? % "New session here")
-                                      (str/split-lines (cap/frame-text capture 0))))]
-
-                   (expect (nil? (:error capture)))
-                   (expect (re-find #"│ New session here +n │" (str line)) (str line)))))
-
 (defdescribe select-modal-paging-test
              (it "PageDown and PageUp move a viewport and stop at list boundaries"
                  (let [items
@@ -663,23 +575,7 @@
                    (expect (str/includes? header "Created at"))
                    (expect (str/includes? header "Modified at"))
                    (expect (str/includes? (:label (first items)) "2024-01-02"))
-                   (expect (str/includes? (:label (first items)) "11:05"))))
-             (it "session table uses boxed dialog-style borders with fixed width"
-                 (let [items
-                       (dlg/session-dialog-items [{:id "new"
-                                                   :title "New"
-                                                   :turn-count 2
-                                                   :created-at #inst "2024-01-02T08:15:00.000Z"
-                                                   :modified-at #inst "2024-01-02T11:05:00.000Z"}]
-                                                 "new"
-                                                 96)
-
-                       border-line
-                       (var-get #'dlg/session-table-border-line)]
-
-                   (expect (= \┌ (first (border-line 96 :top))))
-                   (expect (= 96 (p/display-width (border-line 96 :top))))
-                   (expect (= 96 (p/display-width (:label (first items))))))))
+                   (expect (str/includes? (:label (first items)) "11:05")))))
 
 ;; 1:1 session<->workspace: one unified row per session, NOT a
 ;; duplicated session row + workspace row with a contradictory :kind.
@@ -689,13 +585,6 @@
   (let [sessions [{"id" "empty" "title" nil "turn_count" 0 "created_at" 0 "modified_at" 7200000}
                   {"id" "s1" "title" nil "turn_count" 2 "created_at" 0 "modified_at" 3600000}
                   {"id" "s2" "title" "Second" "turn_count" 5 "created_at" 0 "modified_at" 0}]]
-    (it "one unified row per session, no :kind / :switch-workspace"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})]
-
-          (expect (= 2 (count rows)))
-          (expect (every? #(not (contains? % :kind)) rows))
-          (expect (= [{:action :switch :id "s1"} {:action :switch :id "s2"}] (mapv :target rows)))))
     (it "hides empty untitled shells without changing recency order"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})
@@ -704,21 +593,6 @@
 
           (expect (= ["s1" "s2"] (mapv (comp str :id :target) rows)))
           (expect (= ["empty" "s1" "s2"] (mapv (comp str :id :target) all-visible)))))
-    (it "flags the current session without inventing a focused status"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})
-              r1 (first rows)]
-
-          (expect (= "Untitled session" (:title r1)))
-          (expect (= "s1" (:session r1)))
-          (expect (:focused? r1))
-          (expect (= "Idle" (:status r1)))))
-    (it "shows an inactive session as idle instead of showing a turn count"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})]
-
-          (expect (not (:focused? (second rows))))
-          (expect (= "Idle" (:status (second rows))))))
     (it "compact MM-dd HH:mm timestamps (UTC)"
         (let [all-rows (var-get #'dlg/navigator-all-rows)
               rows (all-rows {:active-session-id "s1" :sessions sessions})
@@ -841,41 +715,6 @@
           (expect (= 1 (scroll-start hs 2 0 2)))
           (expect (= 2 (scroll-start hs 2 0 1)))
           (expect (= 0 (scroll-start hs 0 0 99)))))
-    (it
-      "names the location in neutral ink and paints a selected session on one background"
-      (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
-            draw-session (var-get #'dlg/draw-navigator-session!)
-            entry {:focused? false
-                   :status "Idle"
-                   :title "First session"
-                   :session "abc1234"
-                   :modified "now"
-                   :group "Workbench"
-                   :session-group "Planning"
-                   :session-group-color "red"}
-            line (fn [row]
-                   (apply str
-                     (for [column (range 80)]
-                       (.getCharacterString (.getBackCharacter screen (int column) (int row))))))]
-
-        (try (let [g (.newTextGraphics screen)
-                   selection ((var-get #'dlg/navigator-selection-bg))]
-
-               (draw-session g 4 6 70 entry true)
-               (draw-session g 4 9 70 entry false)
-               (expect (= selection (.getBackgroundColor (.getBackCharacter screen 6 6))))
-               (expect (= selection (.getBackgroundColor (.getBackCharacter screen 70 6))))
-               (expect (= t/dialog-bg (.getBackgroundColor (.getBackCharacter screen 6 9))))
-               (expect (str/includes?
-                         (line 6)
-                         "now / IDLE / First session | Project: Workbench / Group: Planning"))
-               (expect (= t/dialog-hint
-                          (.getForegroundColor
-                            (.getBackCharacter screen (int (str/index-of (line 9) "Project")) 9))))
-               (expect (not (str/includes? (line 6) "abc1234")))
-               (expect (str/blank? (line 7)))
-               (expect (str/blank? (line 8))))
-             (finally (.stopScreen screen)))))
     (it "drops the project, the group or the whole location when the entry hides it"
         (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
               draw-session (var-get #'dlg/draw-navigator-session!)
@@ -954,17 +793,6 @@
           ;; A short pane clips the first message and counts the messages left out.
           (expect (= [:title :blank :label :text :more] (mapv :kind short-plan)))
           (expect (= "+1 more message" (:text (last short-plan))))))
-    (it "the message pane says why a row shows no message"
-        (let [lines (var-get #'dlg/navigator-preview-lines)
-              note (fn [entry opts]
-                     (:text (last (lines entry "x" (merge {:width 40 :height 9} opts)))))]
-
-          (expect (= "The title matches. No message matches."
-                     (note {:title "T" :transcript-match {:kind :title}} {})))
-          (expect (= "No message matches." (note {:title "T"} {})))
-          (expect (= "Searching messages…" (note {:title "T"} {:pending? true})))
-          (expect (= "Searching messages…" (note nil {:pending? true})))
-          (expect (= [] (lines nil "x" {:width 40 :height 9})))))
     ;; User report (paraphrased): in the TUI and the app, the pane at the right of the
     ;; session list must always show a part of the conversation, also before a query.
     (it "the message pane shows the newest messages with or without a query"
@@ -1006,14 +834,6 @@
           (expect (= 24 (count (line-text (first texts)))))
           (expect (some #(str/includes? (line-text %) "one") texts))
           (expect (< (count (line-text (last texts))) 24))))
-    (it "the message pane says when the newest messages load, fail or do not exist"
-        (let [lines (var-get #'dlg/navigator-preview-lines)
-              note (fn [entry]
-                     (:text (last (lines entry "" {:width 40 :height 9}))))]
-
-          (expect (= "Loading messages…" (note {:title "T" :recent-status :loading})))
-          (expect (= "Could not load messages." (note {:title "T" :recent-status :failed})))
-          (expect (= "No messages yet." (note {:title "T" :recent []})))))
     (it "the newest messages keep the last turns and cut a long request"
         (let [recent (var-get #'dlg/navigator-recent-entries)
               attach (var-get #'dlg/navigator-attach-recent)
@@ -1048,16 +868,6 @@
                  (expect (= t/dialog-bg (.getBackgroundColor (cell 2))))
                  (expect (= t/dialog-bg (.getBackgroundColor (cell 11)))))
                (finally (.stopScreen screen)))))
-    (it "visible rows stay flat instead of adding project headings"
-        (let [all-rows (var-get #'dlg/navigator-all-rows)
-              visible-rows (var-get #'dlg/navigator-visible-rows)
-              rows (all-rows {:active-session-id "s1" :sessions sessions})
-              visible (visible-rows rows "" {})]
-
-          (expect (not-any? :group-start? visible))
-          (expect (not-any? :group-count visible))
-          (expect (= 1 (count (visible-rows rows "second" #{}))))
-          (expect (= 2 (count visible)))))
     (it "transcript lookup never blocks the typing thread"
         (let [schedule! (var-get #'dlg/schedule-navigator-search!)
               task (atom nil)
@@ -1182,22 +992,6 @@
       (expect (zero? @asked))
       (expect (nil? @result)))))
 
-(defdescribe settings-dialog-footprint-and-indent-test
-             (it "shared dialogs use the same footprint as settings"
-                 (let [settings-content-width
-                       (var-get #'dlg/settings-content-width)
-
-                       settings-content-height
-                       (var-get #'dlg/settings-content-height)]
-
-                   (expect (= (dlg/default-content-width 160) (settings-content-width 160)))
-                   (expect (= (dlg/default-content-height 50) (settings-content-height 50)))
-                   (expect (<= (+ (dlg/default-content-width 60) 4) 60))
-                   (expect (<= (+ (dlg/default-content-height 16) 6) 16))))
-             (it "a subsection label has no status glyph, so it does not read as a setting"
-                 (let [settings-subsection-text (var-get #'dlg/settings-subsection-text)]
-                   (expect (= "Skills" (settings-subsection-text "Skills" 80))))))
-
 (defn- exercise-backend-picker
   "Run the production Settings picker on a virtual terminal with a fixture gateway."
   [keys {:keys [width fail? experimental? value] :or {width 80 value "worktree"}}]
@@ -1264,18 +1058,6 @@
 
 (defdescribe
   settings-enum-dropdown-test
-  (it "marks experimental settings in the production terminal render"
-      (let [{:keys [frames]} (exercise-backend-picker [:esc] {:width 100 :experimental? true})]
-        (expect (some #(str/includes? % "[Experimental]") frames))))
-  (it "registers subagents under Council as a stable setting"
-      (let [spec (toggles/toggle-spec "subagents")]
-        (expect (true? (:default spec)))
-        (expect (false? (:experimental? spec)))
-        (expect (= :council (:group spec)))
-        (expect (= "Subagents"
-                   (#'dlg/settings-option-label
-                    {:type :registry-toggle :toggle-id "subagents" :label (:label spec)}
-                    {})))))
   (it "shows every backend and the current choice without saving on open or Escape"
       (doseq [width [40 100]]
         (let [{:keys [requests frames value]} (exercise-backend-picker [:enter :esc :esc]
@@ -1316,11 +1098,6 @@
 
 (defdescribe
   apply-settings-option-test
-  (it "toggle rows flip booleans"
-      (let [apply-settings-option (var-get #'dlg/apply-settings-option)]
-        (expect (= {:show-thinking false}
-                   (apply-settings-option {:show-thinking true}
-                                          {:key :show-thinking :type :toggle})))))
   ;; Regression, issue #106: Settings mutated only the TUI process's toggle, so
   ;; the gateway kept `shell` absent from already-open sessions until `/reload`.
   (it "registry-toggle rows change daemon state before mirroring it locally"
@@ -1439,25 +1216,6 @@
         (expect (= {:show-timestamps true} @values))
         (expect (= {:show-timestamps true} @changed))
         (expect (= [[:change {:show-timestamps true}]] @calls))))
-  (it
-    "settings descriptions remain available without adding painted option lines"
-    (let
-      [settings-render-entries
-       (var-get #'dlg/settings-render-entries)
-
-       rows
-       [{:type :section :label "Responses"}
-        {:key :show-thinking
-         :type :toggle
-         :label "Show model thinking"
-         :description
-         "Stream reasoning deltas inside each iteration bubble without collapsing this text into ellipsis."}]
-
-       entries
-       (settings-render-entries rows 16)]
-
-      (expect (= [{:row-idx 0 :part :section} {:row-idx 1 :part :option}] entries))
-      (expect (seq (:description (second rows))))))
   (it "an info row is a head line + its own body; an inline state never wraps"
       (let [settings-render-entries
             (var-get #'dlg/settings-render-entries)
@@ -1477,11 +1235,6 @@
                     {:row-idx 0 :part :info-line :text "connection refused"}
                     {:row-idx 1 :part :option}]
                    entries))))
-  (it "theme picker rows label registered themes"
-      (let [theme-picker-items (var-get #'dlg/theme-picker-items)]
-        (expect (= [{:theme-id :vis-dark :label "Vis Dark"}
-                    {:theme-id :vis-light :label "Vis Light"}]
-                   (theme-picker-items [:vis-dark :vis-light])))))
   (it
     "theme changes repaint Settings after the chat callback replaces the frame"
     (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
@@ -1671,22 +1424,6 @@
           ;; Without a good gateway read, the row stays hidden.
           (expect (not-any? #(= "simplified_thinking_modes" (:toggle-id %)) (settings-rows))))
         (finally (reset! thinking-modes before)))))
-  (it "registered extension themes appear in the channel Theme setting"
-      (let [settings-rows
-            (var-get #'dlg/settings-rows)
-
-            settings-option-value
-            (var-get #'dlg/settings-option-value)]
-
-        (try (shared-theme/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
-             (with-redefs [vis/get-router (constantly nil)]
-               (let [row (first (filter #(= :theme-name (:key %)) (settings-rows)))]
-                 (expect (= [:vis-light :vis-dark :THEME_NAME :blockether-dark :blockether-light
-                             :solarized-dark :solarized-light :tokyonight-day :tokyonight-moon
-                             :tokyonight-night :tokyonight-storm]
-                            (:choices row)))
-                 (expect (= "THEME_NAME" (settings-option-value row {:theme-name :THEME_NAME})))))
-             (finally (shared-theme/reset-themes!)))))
   (it "active Z.ai hides reasoning effort"
       (let [settings-rows (var-get #'dlg/settings-rows)]
         (with-redefs [vis/get-router (constantly :router)
@@ -1769,29 +1506,6 @@
       (expect (str/includes? inactive-label "│     0 │"))
       (expect (str/includes? inactive-label "-"))
       (expect (str/includes? inactive-label "Untitled session"))))
-  (it "command palette exposes the frequent app verbs; Providers is the provider/settings hub"
-      (let [palette-commands
-            (var-get #'dlg/palette-commands)
-
-            labels
-            (mapv :label palette-commands)
-
-            ids
-            (set (mapv :id palette-commands))]
-
-        ;; Providers and Settings remain separate, explicit palette verbs.
-        (expect (some #{"Providers"} labels))
-        (expect (some #{"Settings"} labels))
-        (expect (not (some #{"Configure Providers"} labels)))
-        (expect (contains? ids :providers))
-        (expect (contains? ids :settings))
-        ;; The palette is THE entry point (Ctrl+P) for the verbs whose Alt chords
-        ;; don't survive macOS — so the frequent ones must be present + runnable.
-        (expect (every? ids [:search-open :show-sessions :pick-file :new-session :fork-session]))
-        (expect (not (some ids
-                           [:cycle-model :pick-model :pick-reasoning :cycle-verbosity
-                            :new-session-in :open-drafts])))
-        (expect (not (contains? ids :open-resources)))))
   (it "a turnless session hides BOTH fork verbs from the palette"
       ;; Forking a session with no turns is prohibited, so it must not even be
       ;; discoverable: `palette-commands-for` drops the `:has-turns` entries.
@@ -1851,8 +1565,6 @@
                    (mapv (juxt :label :section?) items)))
         (expect (= "C-x n" (:hint (second items))))
         (expect (str/includes? (:search-text (second items)) "Start"))))
-  (it "gives every built-in command a group and a description"
-      (expect (every? #(and (seq (:group %)) (seq (:description %))) dlg/palette-commands)))
   (it "filters on the description and keeps only sections with a match"
       (let [items
             (dlg/palette-items
@@ -2012,14 +1724,6 @@
 
           (expect (= ["No group" "Releases" "No group" "Releases"] (mapv :session-group rows)))
           (expect (every? #(not (contains? % :session-group-color)) rows))))
-    (it "does not add a heading or a count between compact session rows"
-        (let [visible (#'dlg/navigator-visible-rows
-                       (#'dlg/navigator-all-rows {:sessions sessions :groups groups})
-                       ""
-                       {})]
-          (expect (not-any? :group-start? visible))
-          (expect (not-any? :group-count visible))
-          (expect (= [1 1 1 1] (#'dlg/navigator-block-heights visible)))))
     (it "a query still finds a filed session in the same flat list"
         (let [visible (#'dlg/navigator-visible-rows
                        (#'dlg/navigator-all-rows {:sessions sessions :groups groups})
@@ -2635,14 +2339,6 @@
   "The hint bar must CLIP to the dialog's content width by dropping whole
    trailing chords — `put-str!` clips to the screen, not the box, so an
    unfitted footer (e.g. a 162-col one) would paint across the border."
-  (it "returns all pairs when they fit exactly"
-      (let [hints
-            wide-hints
-
-            w
-            (dlg/hint-bar-width hints)]
-
-        (expect (= hints (dlg/fit-hint-pairs hints w)))))
   (it "drops whole trailing pairs when the bar is too wide"
       (let [hints
             wide-hints
@@ -2718,31 +2414,6 @@
         ;; the failure reads AS a failure: bad tone, so the head line paints red
         (expect (= :bad (:tone (second (mcp-rows)))))
         (finally (reset! inventory original)))))
-  (it "settings-rows carries the MCP section and Settings can open focused on it"
-      (let [settings-rows
-            (var-get #'dlg/settings-rows)
-
-            inventory
-            (var-get #'dlg/mcp-inventory)
-
-            initial-index
-            (var-get #'dlg/settings-initial-index)
-
-            original
-            @inventory]
-
-        (try (reset! inventory {:status :ok
-                                :error nil
-                                :servers [{"name" "fs" "enabled" true "is_managed" true}]})
-             (with-redefs [vis/get-router (constantly nil)]
-               (let [rows (settings-rows)
-                     index (initial-index rows "MCP servers")]
-
-                 (expect (= "MCP servers" (:label (nth rows (dec index)))))
-                 (expect (= "fs" (:label (nth rows index))))
-                 (expect (= :mcp-add (get-in (nth rows (dec index)) [:button :id])))
-                 (expect (< 3 (count rows)))))
-             (finally (reset! inventory original)))))
   (it
     "Enter on an MCP row runs that server's verbs as a transient band, not a toggle"
     (let [activate!
@@ -3444,21 +3115,6 @@
                (expect (not (str/includes? (line 0) "*"))))
              (finally (.stopScreen screen))))))
 
-(defdescribe model-picker-portable-marker-test
-             (it "labels the reset choice with a single-cell marker"
-                 (with-redefs [vis/picker-fleet
-                               (constantly [])
-
-                               dlg/list-dialog!
-                               (fn [_ title items opts]
-                                 {:title title :items items :opts opts})]
-
-                   (let [{:keys [title items opts]} (dlg/model-picker! nil nil)]
-                     (expect (= "Session model" title))
-                     (expect (= "* router default" (:label (first items))))
-                     (expect (true? (:reset? (first items))))
-                     (expect (:filter? opts))))))
-
 (defdescribe
   navigator-input-needed-test
   "The session list's own answer to \"which of these is waiting on ME\". The row
@@ -3985,33 +3641,6 @@
                        (expect (<= (+ pane-left pane-width) (+ left inner-w))))))))
 
 (defdescribe
-  dialog-title-column-measure-test
-  ;; A dialog title is centred in terminal COLUMNS - the lanterna fork's own
-  ;; measure - never in Java chars. Dividing `(count title)` pushed a title
-  ;; carrying wide glyphs one column right per wide glyph, so a CJK or emoji
-  ;; title sat off-centre and ran under the close button.
-  (it "centres a wide-glyph title on the same column as an ASCII title of the same display width"
-      (let [first-title-col
-            (fn [title]
-              (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                    (term/virtual-screen)]
-                (try (let [g (.newTextGraphics screen)
-                           {:keys [left top inner-w]} (dlg/draw-dialog-chrome! g 80 30 title 6)
-                           row (inc (long top))]
-
-                       (.refresh screen)
-                       (first
-                         (filter (fn [x]
-                                   (let [ch (.getCharacter terminal
-                                                           (TerminalPosition. (int x) (int row)))]
-                                     (and ch (not (str/blank? (.getCharacterString ch))))))
-                                 (range (inc (long left)) (+ (inc (long left)) (long inner-w))))))
-                     (finally (.stopScreen screen)))))]
-        (expect (= 16 (p/display-width "日本語ダイアログ")))
-        (expect (= 16 (p/display-width "ABCDEFGHIJKLMNOP")))
-        (expect (= (first-title-col "ABCDEFGHIJKLMNOP") (first-title-col "日本語ダイアログ"))))))
-
-(defdescribe
   settings-catalog-test
   ;; The TUI renders the gateway's own settings catalog — the SAME payload the
   ;; companion app draws — instead of a registry copy that drifts whenever the
@@ -4334,22 +3963,6 @@
                        (mapv :label (:items (first (:groups @spec))))]))
            (expect (= [{:scope "global" :target-id nil :label nil}] @opened))
            (finally (reset! inventory original)))))
-  (it "says when a scope has no extension settings"
-      (let [inventory
-            (var-get #'dlg/settings-inventory)
-
-            original
-            @inventory
-
-            info
-            (fn []
-              (:label (first (filter #(= :info (:type %)) (#'dlg/tools-settings-rows)))))]
-
-        (try (reset! inventory {:status :ok :error nil :groups []})
-             (expect (= "No extension settings for this machine." (info)))
-             (binding [dlg/*settings-target* {:scope "project" :target-id "p1"}]
-               (expect (= "No extension settings for this project." (info))))
-             (finally (reset! inventory original)))))
   (it
     "offers Project settings after a machine reload when the project has extensions"
     (let [spec

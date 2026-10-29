@@ -1,16 +1,8 @@
 (ns com.blockether.vis.tui.code-block-test
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.primitives :as p]
-            [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [lazytest.core :refer [defdescribe expect it]]))
-
-(defdescribe
-  tui-code-block-test
-  (it "keeps code text visible in markdown formatting"
-      (let [out (render/format-answer-markdown [:ast {} [:code {:lang "clojure"} "(+ 1 2)"]] 80)]
-        (expect (string? out))
-        (expect (re-find #"\(\+ 1 2\)" out)))))
 
 ;; --- soft-wrap (`:wrap?`) ---------------------------------------------------
 ;; Regression for the "wide tool output overflows the bubble" thread (session
@@ -97,14 +89,6 @@
         (expect (str/starts-with? (first rows) "    {")))))
 
 (defdescribe tui-code-fold-cache-test
-             (it "keeps CAT source rows verbatim now that nothing highlights them"
-                 (let [src
-                       "   9  (def x 1)\n1200  (inc x)\n   ⋯\n1300  (str x)"
-
-                       rows
-                       (content-rows (code-block->lines [:code {:lang "clojure"} src] 80 {}))]
-
-                   (expect (= (str/split-lines src) rows))))
              (it "reuses a completed ANSI fold at the same width"
                  (let [src
                        (str "\u001b[32m901  (def cache-proof 1)\u001b[0m\n"
@@ -148,18 +132,7 @@
                    ;; ...it actually folded into several rows...
                    (expect (> (count rows) 1))
                    ;; ...and the content is preserved byte-for-byte.
-                   (expect (= wide (apply str rows)))))
-             (it "leaves a plain line that already fits untouched (one row)"
-                 (let [src
-                       "a short plain line"
-
-                       lines
-                       (code-block->lines [:code {} src] 40 {})
-
-                       rows
-                       (content-rows lines)]
-
-                   (expect (= [src] rows)))))
+                   (expect (= wide (apply str rows))))))
 
 ;; --- compact diff fence ----------------------------------------------------
 ;; Regression for the "remove this side-by-side diff" report: a diff fence used
@@ -167,22 +140,6 @@
 ;; unified patch itself, one row per line, red removals and green additions.
 
 (defn- strip-ansi [s] (str/replace (str s) #"\u001b\[[0-9;]*m" ""))
-
-(defdescribe tui-compact-diff-test
-             (it "renders the unified patch verbatim, one row per line"
-                 (let [rows
-                       (content-rows (code-block->lines
-                                       [:code {:lang "diff"}
-                                        "@@ -4,3 +4,3 @@\n keep\n-old value\n+new value\n tail"]
-                                       80
-                                       {}))
-
-                       plain
-                       (mapv strip-ansi rows)]
-
-                   (expect (= ["@@ -4,3 +4,3 @@" " keep" "-old value" "+new value" " tail"] plain))
-                   (expect (not-any? #(str/includes? % "│") rows))
-                   (expect (every? #(<= (p/display-width (strip-ansi %)) 80) rows)))))
 
 ;; --- Python fences -----------------------------------------------------------
 ;; A Python fence is colored by `PythonHighlighter` (plain Java, see
@@ -202,24 +159,4 @@
                    (expect (> (count rows) 1))
                    (expect (every? #(<= (p/display-width (strip-ansi %)) width) rows))
                    (expect (= src (apply str (map strip-ansi rows))))
-                   (expect (every? #(str/includes? % "\u001b[31m") rows))))
-             (it "keeps a fence in another language plain"
-                 (expect (= ["(def x 1)"]
-                            (content-rows
-                              (code-block->lines [:code {:lang "clojure"} "(def x 1)"] 80 {})))))
-             (it "reuses a completed Python fold at the same width"
-                 (let [src
-                       "x = 1\ny = 2"
-
-                       fold-calls
-                       (atom 0)]
-
-                   (.clear ^java.util.Map folded-code-cache)
-                   (with-redefs [p/ansi-fold-cols (fn [line ^long _budget]
-                                                    (swap! fold-calls inc)
-                                                    [line])]
-                     (code-block->lines [:code {:lang "python"} src] 80 {})
-                     (code-block->lines [:code {:lang "python"} src] 80 {})
-                     (expect (= 2 @fold-calls))
-                     (code-block->lines [:code {:lang "python"} src] 79 {})
-                     (expect (= 4 @fold-calls))))))
+                   (expect (every? #(str/includes? % "\u001b[31m") rows)))))

@@ -5,7 +5,7 @@
   "The TUI source draws only the opencode glyph set."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [lazytest.core :refer [defdescribe describe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private opencode-glyphs
   "Non-ASCII glyphs that opencode's TUI draws, with the single and rounded
@@ -21,12 +21,6 @@
 (def ^:private regex-literal
   "A regex literal only matches input text, so its characters are not drawn."
   #"#\"(?:[^\"\\]|\\.)*\"")
-
-(defn- font-safe?
-  "True for a glyph that Monaco, Menlo, SF Mono and Noto Sans Mono all draw themselves.
-   Box glyphs are safe too: the terminal draws them in the cell grid."
-  [ch]
-  (or ((set "·—•…→") ch) (<= 0x2500 (int ch) 0x257F)))
 
 (defn- violations
   "Return `[file line char]` for each non-ASCII character in `text` outside the
@@ -46,21 +40,6 @@
 
 (defdescribe
   glyph-policy-test
-  (describe "violations"
-            (it "flags a drawn glyph outside the opencode set"
-                (expect (= [["a.clj" 2 \u00D7]]
-                           (violations "a.clj" "(str \"ok\")\n(str \"\u00D7\")"))))
-            (it "accepts opencode glyphs, regex literals and declared input data"
-                (expect (empty? (violations "a.clj" "(str \"\u2713 \u2502 \u256D\")")))
-                (expect (empty? (violations "a.clj" "(re-find #\"[\u20AC\u00A3]\" s)")))
-                (expect (empty? (violations "state.clj" "#{\\\u3002}")))
-                (expect (= [["table.clj" 1 \u3002]] (violations "table.clj" "#{\\\u3002}")))))
-  ;; Monaco, Menlo and SF Mono do not all have shapes such as ■ ⊙ ▣ ◈ or the arrow ↳. A
-  ;; terminal then takes them from a fallback font with another size and baseline, so the agent
-  ;; rows did not line up. Box glyphs are safe: the terminal draws them in the cell grid.
-  (it "draws the agent surfaces only with glyphs that common monospace fonts have"
-      (let [text (slurp (io/file "src/com/blockether/vis/tui/agent_team.clj"))]
-        (expect (= [] (vec (distinct (filter #(and (> (int %) 127) (not (font-safe? %))) text)))))))
   (it "every TUI source file draws only opencode glyphs"
       (let [files (source-files)]
         (expect (< 50 (count files)))

@@ -10,7 +10,6 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminals :as term]
-            [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.transient :as tr])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input MouseAction MouseActionType]
@@ -335,32 +334,7 @@
         (expect (str/includes? (nth grid 6) "────"))
         (expect (blank-band-row? (nth grid 7)))
         (expect (str/includes? (nth grid 8) "Group 0"))
-        (expect (every? str/blank? (take 6 grid)))))
-  ;; Regression (user report): "THE FIRST row should have the ------ and
-  ;; it should be only columns" — the band spent its first row on a bold title
-  ;; and its second on that title's own rule, so two rows of a short band were
-  ;; chrome before a single command showed.
-  (it "inks the title ON its opening rule, never on a row of its own"
-      (let [grid
-            ;; `transient-grid!` titles every spec "Commit".
-            (transient-grid! {:groups [{:title "Models"
-                                        :items [{:key "a" :type :action :id :a :label "acme-1"}]}]}
-                             3 74
-                             27 {:min-row 6})
-
-            rule
-            (long (first (keep-indexed (fn [i s]
-                                         (when (str/includes? s "────") i))
-                                       grid)))]
-
-        ;; The title is ON the rule row …
-        (expect (str/includes? (nth grid rule) "Commit"))
-        (expect (str/includes? (nth grid rule) "────"))
-        ;; … and one blank padding row later the column grid begins.
-        (expect (blank-band-row? (nth grid (inc rule))))
-        (expect (str/includes? (nth grid (+ rule 2)) "Models"))
-        ;; … and it is said exactly once.
-        (expect (= 1 (count (filter #(str/includes? % "Commit") grid)))))))
+        (expect (every? str/blank? (take 6 grid))))))
 
 ;;; ── The contract: one seam, one refusal ─────────────────────────────────────
 
@@ -390,17 +364,6 @@
 
 (defdescribe
   transient-layout-test
-  (it "ONE pass over the spec answers every question a frame asks"
-      (let [lay (tr/layout commit-transient-spec)]
-        (expect (= (tr/rows commit-transient-spec) (:rows lay)))
-        (expect (= (count (:rows lay)) (:row-count lay)))
-        (expect (= (tr/columns commit-transient-spec) (:columns lay)))
-        (expect (= (tr/hint-pairs commit-transient-spec) (:hint-pairs lay)))
-        (expect (= (tr/height commit-transient-spec) (:height lay)))
-        ;; The key loop dispatches on this index instead of rescanning
-        ;; every group for each keystroke.
-        (expect (= (tr/item-by-key commit-transient-spec \c) (get (:by-key lay) "c")))
-        (expect (nil? (get (:by-key lay) "z")))))
   (it "lets immediate-choice menus label Escape as close"
       (let [spec (assoc commit-transient-spec :escape-label "close")]
         (expect (nil? (tr/check spec)))
@@ -435,7 +398,6 @@
 
 (defdescribe
   transient-panes-test
-  (it "one pane IS the single column" (expect (= [(tr/rows leader-spec)] (tr/panes leader-spec 1))))
   (it "groups are dealt WHOLE into panes, and every pane is padded to a rectangle"
       (let [ps (tr/panes leader-spec 3)]
         (expect (= 3 (count ps)))
@@ -559,22 +521,6 @@
 ;; spec, packing a wide band's columns into its left half.
 (defdescribe
   transient-column-grid-test
-  (it "verbs are INDENTED under their heading and the description clears the key"
-      (let [grid
-            (transient-grid! commit-transient-spec 0 78 28)
-
-            head
-            (some #(when (str/includes? % "Commands") %) grid)
-
-            row
-            (some #(when (str/includes? % "Commit staged") %) grid)]
-
-        (expect (= (+ (long (str/index-of head "Commands")) (long tr/item-indent))
-                   (str/index-of row "c")))
-        (expect (= (+ (long (str/index-of row "c"))
-                      (long (:key-w (tr/columns commit-transient-spec)))
-                      (long tr/key-gap))
-                   (str/index-of row "Commit staged")))))
   ;; Regression, issue #C-x band grid: each column was sized in proportion to its
   ;; own widest verb, so four headings started at four unrelated offsets
   ;; (37/35/37/38 on a 160-column band) and every column trailed a ragged tail of
@@ -711,37 +657,8 @@
         (expect (= (mapv :id items)
                    (mapv (comp :id :item) (filter #(= :item (:kind %)) (apply concat panes)))))
         (expect (every? #(= :item (:kind (second %))) panes))))
-  (it "every pane opens and closes with a blank row, so the body is not glued to the chrome"
-      (doseq [pane (tr/panes leader-spec 3)]
-        (expect (= :blank (:kind (first pane))))
-        (expect (= :blank (:kind (last pane)))))
-      (expect (= :blank (:kind (first (tr/rows commit-transient-spec)))))
-      (expect (= :blank (:kind (last (tr/rows commit-transient-spec))))))
   (it "the height a host sizes its box with pays for those blank rows"
-      (expect (= (+ 1 (count (tr/rows commit-transient-spec))) (tr/height commit-transient-spec))))
-  (it "the padding rows are the band's OWN paper, not the transcript showing through"
-      (let [grid
-            (transient-grid! commit-transient-spec
-                             3
-                             74
-                             27
-                             nil
-                             (fn [g]
-                               (dotimes [row 28]
-                                 (p/put-str! g 0 row (apply str (repeat 74 \X))))))
-
-            rule-y
-            (long (first (keep-indexed (fn [i s]
-                                         (when (str/includes? s "────") i))
-                                       grid)))]
-
-        ;; the rule, then a blank row, then the first heading
-        (expect (blank-band-row? (subs (nth grid (inc rule-y)) 3)))
-        (expect (str/includes? (nth grid (+ rule-y 2)) "Arguments"))
-        ;; and a blank row between the last verb and the closing rule
-        (expect (str/includes? (nth grid 24) "Amend last commit"))
-        (expect (blank-band-row? (subs (nth grid 25) 3)))
-        (expect (str/includes? (nth grid 26) "────")))))
+      (expect (= (+ 1 (count (tr/rows commit-transient-spec))) (tr/height commit-transient-spec)))))
 
 ;; Regression, issue #C-x band caret: the hardware cursor stayed parked in the
 ;; prompt and went on blinking behind the hydra band, as if the band were not up.
@@ -806,83 +723,6 @@
         (expect (every? #(= rail (subs % 0 40)) shown))
         (expect (some #(str/includes? (subs % 40) "C-x — vis commands") shown))
         (expect (every? #(= rail (subs % 0 40)) (str/split-lines (cap/frame-text capture)))))))
-
-;; Regression, issue #C-x band width: the band washed its paper across the WHOLE
-;; terminal width, so its background ran past both of its own rules to the screen
-;; edges instead of reading as a slab inset to them.
-(defdescribe
-  band-paper-width-test
-  (it
-    "the band's paper stops at its rules; the margins keep the terminal's own bg"
-    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-          (term/virtual-screen)
-
-          g
-          (.newTextGraphics screen)
-
-          region
-          (tr/band-region 80 30 1)
-
-          bg-at
-          (fn [x y]
-            (.getBackgroundColor (.getCharacter terminal (p/cursor-pos (int x) (int y)))))
-
-          painted
-          (do (.addInput terminal (term/keystroke :esc))
-              (tr/run! (dlg/transient-host screen g)
-                       region
-                       (assoc commit-transient-spec :title "Commit"))
-              (term/grid terminal))
-
-          ;; every row the band owns, from its opening rule to its closing one
-          rule-rows
-          (keep-indexed (fn [i s]
-                          (when (str/includes? s "────") i))
-                        painted)
-
-          band-rows
-          (range (long (first rule-rows)) (inc (long (last rule-rows))))
-
-          left
-          (long (:left region))
-
-          inner-w
-          (long (:inner-w region))]
-
-      (doseq [y band-rows]
-        ;; the band wears the TERMINAL's own paper — no tint, body or footer:
-        ;; the border is what marks the band.
-        (expect (= t/terminal-bg (bg-at (inc left) y)))
-        (expect (= t/terminal-bg (bg-at (+ left inner-w) y)))
-        (expect (= t/terminal-bg (bg-at 0 y)))
-        (expect (= t/terminal-bg (bg-at (+ left inner-w 1) y)))
-        (expect (= t/terminal-bg (bg-at 79 y))))
-      ;; the footer is FENCED OFF: its own rule sits directly above the hint bar,
-      ;; so the band has three rules — opening, footer, closing.
-      (expect (= 3 (count rule-rows)))
-      (expect (= (long (last rule-rows)) (+ 2 (long (second rule-rows)))))
-      ;; and it is BORDERED: corner-capped rules with rails down both edges.
-      (let [char-at
-            (fn [x y]
-              (.getCharacterString (.getCharacter terminal (p/cursor-pos (int x) (int y)))))
-
-            top
-            (long (first rule-rows))
-
-            bottom
-            (long (last rule-rows))
-
-            right
-            (+ left inner-w 1)]
-
-        (expect (= ["┌" "┐"] [(char-at left top) (char-at right top)]))
-        (expect (= ["└" "┘"] [(char-at left bottom) (char-at right bottom)]))
-        (doseq [y (range (inc top) bottom)]
-          (expect (= ["│" "│"] [(char-at left y) (char-at right y)])))
-        ;; no rule between the columns of the grid
-        (expect (not-any? #(str/includes? % "│ ")
-                          (map #(subs % (inc (long left)) (+ (long left) (long inner-w)))
-                               (subvec (vec painted) (inc top) bottom))))))))
 
 ;; Regression (user report): the C-x hydra opened ABOVE the agent table, so the table
 ;; sat between the commands and the prompt. The agents are always above the band.

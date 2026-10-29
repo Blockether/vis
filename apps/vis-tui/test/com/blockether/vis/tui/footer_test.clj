@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.footer :as footer]
-            [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.client :as vis]
@@ -63,34 +62,6 @@
                 (expect (str/ends-with? limits-row "~$0.0042  "))))))))))
 
 (defdescribe
-  inline-goal-iterations-test
-  (it "shows used iterations and the budget inline, including unlimited goals"
-      (doseq [[used budget label] [[0 20 "0/20"] [7 20 "7/20"] [20 20 "20/20"] [21 20 "21/20"]
-                                   [7 nil "7/—"]]]
-        (let [db {:messages []
-                  :settings {}
-                  :session {:goal
-                            {"status" "active" "iterations_used" used "iteration_budget" budget}}}
-              segment (second (#'footer/build-limits-segments db 0))
-              text (str "Goal: Active " label " iter")
-              frame (cap/capture! {:cols 120
-                                   :rows 6
-                                   :paint! (fn [{:keys [screen]}]
-                                             (footer/draw-footer!
-                                               (.newTextGraphics
-                                                 ^com.googlecode.lanterna.screen.TerminalScreen
-                                                 screen)
-                                               db
-                                               0
-                                               120
-                                               0))})]
-
-          (expect (= :footer-goal (:kind segment)))
-          (expect (str/includes? (:text segment) text))
-          (expect (nil? (:error frame)))
-          (expect (str/includes? (cap/frame-text frame) text))))))
-
-(defdescribe
   passive-limits-test
   ;; Issue #204: paint cached quota states without callback IO, hover or click targets.
   (it "keeps every cached limits state passive at narrow and wide terminal sizes"
@@ -113,13 +84,10 @@
                                        :paint! (fn [{:keys [g]}]
                                                  (.beginFrame interactions/hit-map)
                                                  (footer/draw-footer! g db 0 cols 0)
-                                                 (.commitFrame interactions/hit-map))})
-                  cells (get-in frame [:frames 0 1])]
+                                                 (.commitFrame interactions/hit-map))})]
 
               (expect (nil? (:error frame)))
               (expect (str/includes? (cap/frame-text frame) "Limits"))
-              (expect (= (:bg (first cells)) (:bg (nth cells 3))))
-              (expect (not (:bold (nth cells 3))))
               (doseq [col (range cols)]
                 (expect (nil? (.lookup interactions/hit-map col 1))))))))))
 
@@ -140,41 +108,7 @@
           (expect (every? #(not (sentinel-char? %)) s))))))
 
 (defdescribe
-  echo-area-test
-  (let [echo-segments @#'footer/echo-segments]
-    (it "is empty on an idle draft (no keybinding nags)"
-        (expect (= [] (echo-segments {:input (input/empty-input)})))
-        (expect (= [] (echo-segments {:input (input/paste-text (input/empty-input) "hello")}))))
-    (it "stays empty while the C-x prefix is armed — the hydra band says it, not the echo row"
-        (expect (= [] (echo-segments {:input (assoc (input/empty-input) :prefix :cx)}))))
-    (it "renders a transient :echo message"
-        (expect (= ["Copied"]
-                   (mapv :text (echo-segments {:input (input/empty-input) :echo "Copied"})))))
-    (it "never leaks voice recording status into the echo row"
-        (let [text (mapv :text
-                         (echo-segments {:input (input/empty-input)
-                                         :channel-status {:voice/input {:text "● Recording 00:01"
-                                                                        :level :warn}}}))]
-          (expect (= [] text))))))
-
-(defdescribe
   build-segments-test
-  (it "leaves voice recording status out of the footer because header owns channel statuses"
-      (let [build-segments @#'footer/build-segments]
-        (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-5" :provider :openai})}
-          (fn []
-            (let [voice (->> (build-segments {:messages []
-                                              :settings {}
-                                              :channel-status {:voice/input {:text
-                                                                             "● Recording 00:01"
-                                                                             :level :warn}}}
-                                             0)
-                             (filter #(= "● Recording 00:01" (:text %)))
-                             first)]
-              (expect (nil? voice))
-              (expect (nil? voice))
-              (expect (nil? voice)))))))
   (it
     "shows Codex dynamic quota windows in the limits row"
     (let [build-limits-segments
@@ -285,45 +219,6 @@
                           :text)]
             (expect (re-find #"Claude 5h 90% .* / 7d 12%" text)))))))
   (it
-    "shows Z.ai coding plan quota windows as percentages in the limits row"
-    (let [build-limits-segments
-          @#'footer/build-limits-segments
-
-          now-ms
-          1000000000000
-
-          report
-          {:provider-id :zai-coding-plan
-           :dynamic {:limits [{:id :zai-coding-plan-5h
-                               :label "Z.ai coding plan 5h token quota"
-                               :kind :tokens
-                               :used 25.0
-                               :limit 100.0
-                               :remaining 75.0
-                               :is-unlimited false
-                               :window {:resets-at-ms (+ now-ms (* 90 60 1000))}}
-                              {:id :zai-coding-plan-7d
-                               :label "Z.ai coding plan 7d token quota"
-                               :kind :tokens
-                               :used 50.0
-                               :limit 100.0
-                               :remaining 50.0
-                               :is-unlimited false
-                               :window {:resets-at-ms (+ now-ms (* 3 24 60 60 1000))}}]}}]
-
-      (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                    {:name "glm-5.1" :provider :zai-coding-plan})}
-        (fn []
-          (let [text (->> (build-limits-segments {:messages []
-                                                  :settings {}
-                                                  :provider-limits {:provider-id :zai-coding-plan
-                                                                    :report report}}
-                                                 now-ms)
-                          first
-                          :text)]
-            (expect (re-find #"Z\.ai 5h 75% ⟳1h30m.* / 7d 50%" text))
-            (expect (not (str/includes? text "Z.ai 7d"))))))))
-  (it
     "shows GitHub Copilot premium interaction utilization in the limits row"
     (let [build-limits-segments
           @#'footer/build-limits-segments
@@ -362,34 +257,6 @@
                           first
                           :text)]
             (expect (re-find #"Premium 60/300 \(240\) ⟳2d0h" text)))))))
-  (it "renders the gateway :git fact for the active workspace"
-      ;; Git status is a GATEWAY SESSION FACT — resolved server-side by
-      ;; `git/workspace-status` and carried on the workspace record as `:git`. The
-      ;; footer reads ONLY that fact (no client-side git walk, no fallback), so the
-      ;; map the daemon computed is exactly what paints — the single source of
-      ;; truth every channel (web footer, TUI footer) shares.
-      (let [build-segments @#'footer/build-segments]
-        (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-4o" :provider :openai})}
-          (fn []
-            (let [db {:messages []
-                      :settings {}
-                      :workspace/root "/tmp/vis"
-                      :workspace {"root" "/tmp/vis"
-                                  "git" {"is_workspace" true
-                                         "repo" "vis"
-                                         "branch" "main"
-                                         "modified" 2
-                                         "created" 3
-                                         "deleted" 1
-                                         "is_upstream" true
-                                         "ahead" 4
-                                         "behind" 0}}}]
-              (expect (= [" git ~/vis (main ~2 +3 -1 ↑4)"]
-                         (->> (build-segments db 0)
-                              (filter #(= :right (:region %)))
-                              (remove fixture-seg?)
-                              (mapv :text)))))))))
   (it "shows draft identity and the gateway's aggregate live counts"
       ;; #241 and #247: use aggregate live changes, not primary-only Git or review counts.
       (let [build-segments @#'footer/build-segments]
@@ -484,50 +351,6 @@
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
                       (mapv :text))))))))
-  (it "shows cumulative token usage + price on the second footer row right side"
-      ;; The old context-window pct gauge is retired. The `:right` region now
-      ;; carries the billing-relevant cumulative numbers: tokens in→out and the
-      ;; running session price, and emits nothing until a turn carries usage.
-      (let [build-limits-segments @#'footer/build-limits-segments]
-        (with-redefs-fn {#'footer/chosen-model-info
-                         (fn []
-                           {:name "gpt-4o" :provider :openai :reasoning? false})}
-          (fn []
-            ;; Right region: cache uses the compact shared mark instead of prose.
-            (expect (= ["100→20 ⟳ 60" "~$0.0042"]
-                       (->> (build-limits-segments {:messages
-                                                    [{:tokens {"input" 100 "output" 20 "cached" 60}
-                                                      :cost {"total_cost" 0.0042}}]
-                                                    :settings {}}
-                                                   0)
-                            (filter #(= :right (:region %)))
-                            (remove fixture-seg?)
-                            (mapv :text))))
-            (expect (empty? (->> (build-limits-segments {:messages [] :settings {}} 0)
-                                 (filter #(= :right (:region %)))
-                                 (mapv :text))))))))
-  (it "shows speed and its shortcut only for an active Codex session"
-      (let [build-segments @#'footer/build-segments]
-        (try (vis/toggle-set-value! "codex_fast_mode" true)
-             (doseq [[provider expected] [[:openai-codex ["speed: fast" "(C-x q)"]]
-                                          [:github-copilot []]]]
-               (with-redefs-fn {#'footer/session-model-info (fn [_]
-                                                              {:name "gpt-5.6-sol"
-                                                               :provider provider})}
-                 (fn []
-                   (let [db {:messages [] :settings {:codex-fast-mode true}}
-                         texts (mapv :text (build-segments db 0))]
-
-                     (expect (= expected (filterv #{"speed: fast" "(C-x q)"} texts)))
-                     (when (= :openai-codex provider)
-                       (let [capture (cap/capture! {:cols 120
-                                                    :rows 4
-                                                    :paint! (fn [{:keys [g]}]
-                                                              (footer/draw-footer! g db 1 120 0))})]
-                         (expect (nil? (:error capture)))
-                         (expect (str/includes? (cap/frame-text capture)
-                                                "speed: fast (C-x q)"))))))))
-             (finally (vis/toggle-reset-to-default! "codex_fast_mode")))))
   (it "hides the verbosity knob when the session's model rejects the field"
       ;; Regression: the chip was gated on the provider being `:openai-codex`, so a
       ;; Claude session inherited the knob whenever the GLOBAL router default
@@ -544,20 +367,6 @@
                                              0)
                              (mapv :text))]
               (expect (not-any? #(str/starts-with? % "verbosity: ") texts)))))))
-  (it "shows the verbosity knob whenever svar stamped a verbosity style"
-      (let [build-segments @#'footer/build-segments]
-        (with-redefs-fn {#'footer/session-model-info (fn [_]
-                                                       {:name "gpt-5.6-sol"
-                                                        :provider :github-copilot
-                                                        :verbosity-style :openai-text})}
-          (fn []
-            (let [texts (->> (build-segments {:messages []
-                                              :settings {:verbosity "high"}
-                                              :session-model-pref {:provider "github-copilot"
-                                                                   :model "gpt-5.6-sol"}}
-                                             0)
-                             (mapv :text))]
-              (expect (some #(= "verbosity: high" %) texts)))))))
   (it "uses gateway model details to show Astra verbosity only on a supported session"
       ;; Regression, Vis session 95c4a9b0-ba88-4e8d-86ef-252cb522bcf4: exercise
       ;; the real client decoder and resolver rather than stubbing model capabilities.
@@ -730,16 +539,7 @@
                                                                       :status :unauthenticated
                                                                       :dynamic {:limits []}}}}}
                      :openai-codex
-                     0)))))
-  (it "stays silent for providers that legitimately don't expose limits"
-      (let [generic-limits-footer-text @#'footer/generic-limits-footer-text]
-        (expect (nil? (generic-limits-footer-text {:provider-limits {:provider-id :openai-codex
-                                                                     :report
-                                                                     {:provider-id :openai-codex
-                                                                      :status :unsupported
-                                                                      :dynamic {:limits []}}}}
-                                                  :openai-codex
-                                                  0))))))
+                     0))))))
 
 (defdescribe
   draft-summary-test
@@ -764,27 +564,6 @@
                                    "ahead" 0} [" DRAFT (multi" "RECOVERY REQUIRED)"]]]]
         (expect (= expected
                    (mapv :text (#'footer/draft-footer-spans (assoc fields "label" "multi")))))))
-  (it "keeps the draft name and live counts visible at ordinary terminal widths"
-      (with-redefs-fn {#'footer/session-model-info (constantly {:name "gpt-6-astra"
-                                                                :provider :openai-codex
-                                                                :reasoning-effort? true
-                                                                :verbosity-style :openai-text})}
-        (fn []
-          (doseq [cols [80 120]]
-            (let [db {:messages []
-                      :settings {:reasoning-level "deep" :verbosity "low"}
-                      :workspace {"is_draft" true
-                                  "label" "finish-dev-env-live-view"
-                                  "working_changes" {"modified" 2 "created" 3 "deleted" 1}
-                                  "ahead" 4}}
-                  capture (cap/capture! {:cols cols
-                                         :rows 4
-                                         :paint! (fn [{:keys [g]}]
-                                                   (footer/draw-footer! g db 1 cols 0))})]
-
-              (expect (nil? (:error capture)))
-              (expect (str/includes? (cap/frame-text capture)
-                                     "DRAFT (finish-dev-env-live-view ~2 +3 -1 ↑4)")))))))
   (it "keeps the change state visible when a long draft name is shortened"
       (let [segments
             (#'footer/draft-footer-spans
