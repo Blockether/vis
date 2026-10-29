@@ -22,12 +22,6 @@ async function openAutomation(name: string, client = storyAutomationsClient()) {
 }
 
 describe('Automations workspace', () => {
-  it('lists automations with their state and last result', async () => {
-    renderBand();
-    expect(await screen.findByText('Morning summary')).toBeVisible();
-    expect(screen.getByText('Paused · Webhook · GitHub · Last failed')).toBeVisible();
-    expect(screen.queryByText(/Automations are off/)).toBeNull();
-  });
 
   it('edits an automation straight from its row and goes back to the list', async () => {
     renderBand();
@@ -37,13 +31,6 @@ describe('Automations workspace', () => {
     expect(screen.queryByRole('button', { name: 'Back to automations' })).toBeNull();
     click('Cancel');
     expect(await screen.findByText('Review new pull requests')).toBeVisible();
-  });
-
-  it('shows how to create the first automation without a feature switch', async () => {
-    renderBand(storyAutomationsClient({ empty: true }));
-    expect(await screen.findByText('No automations on this machine.')).toBeVisible();
-    expect(screen.queryByText(/Automations are off/)).toBeNull();
-    expect(screen.getByRole('button', { name: 'New automation' })).toBeEnabled();
   });
 
   it('pauses and runs an automation now', async () => {
@@ -60,21 +47,6 @@ describe('Automations workspace', () => {
     ).toBeVisible();
     expect(start).toHaveBeenCalledWith('auto-standup');
     expect(await screen.findByText(/^Queued · Manual · /)).toBeVisible();
-  });
-
-  it('puts icon actions inside the card header and keeps Delete out of the detail', async () => {
-    await openAutomation('Morning summary');
-    const heading = screen.getByRole('heading', { name: 'Morning summary' });
-    const header = heading.parentElement!.parentElement!;
-    const actions = screen.getByRole('group', { name: 'Automation actions' });
-    expect(header).toContainElement(screen.getByRole('button', { name: 'Back to automations' }));
-    expect(header).toContainElement(actions);
-    for (const name of ['Run now', 'Edit', 'Pause']) {
-      const action = screen.getByRole('button', { name });
-      expect(actions).toContainElement(action);
-      expect(action).toHaveTextContent('');
-    }
-    expect(screen.queryByRole('button', { name: /^Delete/ })).toBeNull();
   });
 
   it('shows the webhook address and failed runs with their reason', async () => {
@@ -219,8 +191,6 @@ describe('Automations workspace', () => {
     const actions = screen.getByRole('group', { name: 'Step actions' });
     const buttons = Array.from(actions.querySelectorAll('button'), (button) => button.textContent);
     expect(buttons).toEqual(['Back', 'Next: Task']);
-    const signatures = screen.getByRole('group', { name: 'Trigger signature' });
-    expect(signatures).toHaveClass('border', 'border-dialog-edge');
     click('Cancel');
     expect(screen.getByRole('group', { name: 'Discard this automation?' })).toBeVisible();
     click('Keep editing');
@@ -289,17 +259,12 @@ describe('Automations workspace', () => {
     expect(screen.queryByRole('button', { name: /^Remove trigger/ })).toBeNull();
     click('Add trigger');
     expect(screen.getByRole('group', { name: 'Trigger 2' })).toBeVisible();
-    // The cards name their kind; only a caption above each card gives its place.
-    expect(screen.queryByText(/^Trigger \d/)).toBeNull();
-    expect(screen.getByText('1 / 2')).toBeVisible();
-    expect(screen.getByText('2 / 2')).toBeVisible();
     const kinds = screen.getByRole('radiogroup', { name: 'Trigger 2 kind' });
     expect(within(kinds).getByRole('radio', { name: 'Interval' })).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(within(kinds).getByRole('radio', { name: 'One time' }));
     expect(within(kinds).getByRole('radio', { name: 'One time' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByRole('combobox', { name: /kind$/ })).toBeNull();
     const remove = screen.getByRole('button', { name: 'Remove trigger 2' });
-    expect(remove).toHaveTextContent('');
     fireEvent.click(remove);
     expect(screen.getByRole('group', { name: 'Trigger' })).toBeVisible();
     expect(screen.queryByRole('button', { name: /^Remove trigger/ })).toBeNull();

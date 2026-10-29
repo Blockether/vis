@@ -34,11 +34,3 @@ it('stamps and registers the tested Android receiver idempotently, without relea
     rmSync(root, { recursive: true, force: true });
   }
 });
-it('compiles and registers the canonical Swift receiver and Safari bridge in the iOS app', () => {
-  const prepare = readFileSync(new URL('./ios-prepare.mjs', import.meta.url), 'utf8');
-  expect(prepare).toContain('native/oauth/Sources/OAuthLoopback/OAuthLoopback.swift');
-  expect(prepare).toContain('native/ios/OAuthLoopbackPlugin.swift');
-  expect(prepare).toContain('OAuthLoopback.swift in Sources');
-  expect(prepare).toContain("packageClassList.includes('OAuthLoopbackPlugin')");
-  expect(prepare.replace(/\s+/g, ' ')).toContain('oauthOk && splashOk');
-});

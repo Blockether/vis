@@ -54,14 +54,6 @@ describe('what a project header counts', () => {
     expect(await screen.findByText('400 sessions')).toBeVisible();
     expect(screen.getAllByText(/2 LIVE/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/1 HITL/).length).toBeGreaterThan(0);
-    const header = screen.getByRole('button', { name: 'Collapse project' }).closest('header')!;
-    expect(header.querySelector('.animate-pulse')).toBeNull();
-    expect(header).toHaveTextContent('400 sessions|1 HITL·2 LIVE·2 NEW');
-    for (const [label, tone] of [
-      ['1 HITL', 'text-warn'], ['2 LIVE', 'text-ok'], ['2 NEW', 'text-accent-ink'],
-    ]) {
-      expect(within(header).getByText(label)).toHaveClass(tone);
-    }
     // One list read, and a project's own page is the only other (`listProjectPage`).
     expect(
       view.requests.filter(

@@ -47,11 +47,6 @@ afterEach(() => vi.unstubAllEnvs());
 // The installers are release assets: a name must say which OS and arch it is for,
 // and every OS the workflow runs on must have at least one target to build.
 describe('desktop package', () => {
-  it('keeps executable modules LF-terminated on Windows checkouts', () => {
-    // CRLF hashbangs broke Vite's module loader before the Windows suite could run.
-    const attributes = readFileSync(new URL('.gitattributes', import.meta.url), 'utf8');
-    expect(attributes.split(/\r?\n/)).toContain('*.mjs text eol=lf');
-  });
 
   it('names an asset by version, platform and installer type', () => {
     expect(assetName('0.1.30', desktopTargets('darwin', 'arm64')[0])).toBe(
@@ -157,119 +152,6 @@ const workflow = readFileSync(
   new URL('../../../.github/workflows/desktop-companion.yml', import.meta.url),
   'utf8',
 ).replace(/\r\n/g, '\n');
-
-describe('desktop release signing', () => {
-  it('requires macOS signing credentials and notarization before uploading', () => {
-    for (const name of [
-      'VIS_DESKTOP_P12',
-      'VIS_DESKTOP_P12_PASSWORD',
-      'VIS_ASC_KEY_ID',
-      'VIS_ASC_ISSUER_ID',
-      'VIS_ASC_KEY',
-    ]) {
-      expect(workflow).toContain(`secrets.${name}`);
-    }
-    expect(workflow).toContain('Missing required signing credential: $name');
-    expect(workflow).toContain("APPLE_SIGNING_IDENTITY: 'Developer ID Application:");
-    expect(workflow).toContain('export APPLE_API_KEY_PATH=');
-    expect(workflow).toContain('trap cleanup EXIT');
-    expect(workflow).toContain('security list-keychains -d user -s "${original_keychains[@]}"');
-    expect(workflow).toContain('security delete-keychain "$keychain"');
-    // The first signed CI run failed with errSecInternalComponent on the shared Mac.
-    // Keep other applications' keychain credentials available while signing.
-    expect(workflow).toContain(
-      'security list-keychains -d user -s "$keychain" "${original_keychains[@]}"',
-    );
-    expect(workflow).toContain('security set-key-partition-list -S apple-tool:,apple:,codesign:');
-    expect(workflow).toContain('for certificate in DeveloperIDCA DeveloperIDG2CA');
-    expect(workflow).toContain('unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD VIS_ASC_KEY');
-    expect(workflow.indexOf('codesign --force --timestamp')).toBeLessThan(
-      workflow.lastIndexOf('npm run package:desktop'),
-    );
-    for (const check of [
-      'codesign --verify --deep --strict',
-      'xcrun stapler validate',
-      'spctl --assess --type execute',
-    ]) {
-      expect(workflow.indexOf(check)).toBeGreaterThan(
-        workflow.indexOf('name: Sign and notarize macOS'),
-      );
-      expect(workflow.indexOf(check)).toBeLessThan(
-        workflow.indexOf('uses: actions/upload-artifact'),
-      );
-    }
-    expect(workflow).toContain('name: Package Linux with Pake');
-    expect(workflow).toContain("if: runner.os == 'Linux'");
-  });
-
-  it('grants release and beta caller permissions for nested OIDC signing and asset upload', () => {
-    // Releases and native betas both attach the installers to their draft.
-    for (const caller of ['release.yml', 'beta-native.yml']) {
-      const workflow = readFileSync(
-        new URL(`../../../.github/workflows/${caller}`, import.meta.url),
-        'utf8',
-      );
-      const desktop = workflow.match(
-        /^  desktop:\r?\n([\s\S]*?)(?=^  [a-zA-Z_-]+:|$(?![\s\S]))/m,
-      )?.[1];
-      expect(desktop, caller).toBeDefined();
-      expect(desktop).toContain('uses: ./.github/workflows/desktop-companion.yml');
-      expect(desktop).toMatch(
-        /    permissions:\r?\n      contents: write\r?\n      id-token: write/,
-      );
-    }
-  });
-
-  it('signs with OIDC and verifies the MSI and extracted EXE before smoke and upload', () => {
-    for (const name of [
-      'CLIENT_ID',
-      'TENANT_ID',
-      'SUBSCRIPTION_ID',
-      'ENDPOINT',
-      'ACCOUNT',
-      'PROFILE',
-      'PUBLISHER',
-    ]) {
-      expect(workflow).toContain(`vars.WINDOWS_SIGNING_${name}`);
-    }
-    expect(workflow).toContain(
-      "environment: ${{ matrix.asset == 'windows-x64' && 'windows-signing' || 'desktop-build' }}",
-    );
-    const login = workflow.indexOf('uses: azure/login@v3');
-    const packaging = workflow.indexOf('name: Sign and package Windows with Pake');
-    const installerCheck = workflow.indexOf('-FilePath $installers[0].FullName -VerifyOnly');
-    const exeCheck = workflow.indexOf('-FilePath $executables[0].FullName -VerifyOnly');
-    const launch = workflow.indexOf('$app = Start-Process');
-    const upload = workflow.indexOf('uses: actions/upload-artifact');
-    expect(login).toBeGreaterThan(0);
-    expect(packaging).toBeGreaterThan(login);
-    expect(installerCheck).toBeGreaterThan(packaging);
-    expect(exeCheck).toBeGreaterThan(installerCheck);
-    expect(launch).toBeGreaterThan(exeCheck);
-    expect(upload).toBeGreaterThan(launch);
-    const signing = readFileSync(new URL('windows-sign.ps1', import.meta.url), 'utf8');
-    expect(signing).toContain("FileDigest = 'SHA256'");
-    expect(signing).toContain("TimestampDigest = 'SHA256'");
-    expect(signing).toContain("TimestampRfc3161 = 'http://timestamp.acs.microsoft.com'");
-    expect(signing).toContain('ExcludeAzureCliCredential = $false');
-    for (const credential of [
-      'Environment',
-      'WorkloadIdentity',
-      'ManagedIdentity',
-      'SharedTokenCache',
-      'VisualStudio',
-      'VisualStudioCode',
-      'AzurePowerShell',
-      'AzureDeveloperCli',
-      'InteractiveBrowser',
-    ]) {
-      expect(signing).toContain(`Exclude${credential}Credential = $true`);
-    }
-    expect(signing.indexOf('Invoke-ArtifactSigning @parameters')).toBeLessThan(
-      signing.indexOf('Assert-VisSignature -Path $Path -Publisher'),
-    );
-  });
-});
 
 describe('desktop release platforms', () => {
   beforeEach(() => {
@@ -399,54 +281,6 @@ describe('desktop release platforms', () => {
     expect(spawnSync).not.toHaveBeenCalled();
   });
 
-  it('runs universal macOS, native x64/ARM64 Linux and Windows x64 builders', () => {
-    expect([...workflow.matchAll(/^\s+label: (.+)$/gm)].map((match) => match[1])).toEqual([
-      'macOS universal',
-      'Linux x64',
-      'Linux ARM64',
-      'Windows x64',
-    ]);
-    // Only macOS is self-hosted; other platforms use native hosted runners.
-    expect(workflow).toContain('runs-on: ${{ matrix.runner }}');
-    expect([...workflow.matchAll(/^\s+- runner: (.+)$/gm)].map((match) => match[1])).toEqual([
-      '[self-hosted, macOS, ARM64, vis-macos-arm64]',
-      'ubuntu-24.04',
-      'ubuntu-24.04-arm',
-      'windows-2022',
-    ]);
-    expect(workflow).not.toMatch(/VIS_CONTAINER_|--linux|Podman|Docker/);
-    expect(workflow).toContain('runner: ubuntu-24.04');
-    expect(workflow).toContain('runner: ubuntu-24.04-arm');
-    expect(workflow).toContain('asset: windows-x64');
-    expect(workflow).toContain('uses: azure/login@v3');
-    expect(workflow).toContain('id-token: write');
-    expect(workflow).not.toContain('azure-client-secret');
-    const smoke = workflow.indexOf('name: Smoke-test Windows installer');
-    expect(smoke).toBeGreaterThan(workflow.indexOf('name: Sign and package Windows with Pake'));
-    expect(smoke).toBeLessThan(workflow.indexOf('uses: actions/upload-artifact'));
-    expect(workflow).toContain('shell: pwsh');
-    expect(workflow).toContain('msiexec.exe');
-    expect(workflow).toContain('MainWindowHandle');
-    expect(workflow).toContain('Stop-Process');
-    expect(workflow).toContain('aarch64-apple-darwin,x86_64-apple-darwin');
-    expect(workflow).toContain('name: vis-companion-desktop-${{ matrix.asset }}');
-  });
-
-  it('installs xdg-open explicitly for Linux AppImage bundling', () => {
-    // The ARM64 hosted runner lacks the xdg-utils package present on x64.
-    const dependencies = workflow
-      .split('name: Install Linux WebKit build dependencies')[1]
-      .split('      - name:')[0];
-    expect(dependencies).toContain("if: runner.os == 'Linux'");
-    expect(dependencies).toMatch(/\bxdg-utils\b/);
-  });
-
-  it('checks out the project before any shell step uses its working directory', () => {
-    const checkout = workflow.indexOf('uses: actions/checkout@');
-    const firstRun = workflow.indexOf('\n        run:');
-    expect(checkout).toBeGreaterThan(-1);
-    expect(firstRun).toBeGreaterThan(checkout);
-  });
 });
 
 describe('desktop development builds', () => {

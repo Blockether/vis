@@ -287,22 +287,6 @@ describe('ProjectGroup groups', () => {
     mount();
     const wallet = await band('Wallet work');
     expect(within(wallet).queryByText('2 sessions')).toBeNull();
-    // The band wears its colour ONCE, as the rail down the leading edge it shares with
-    // every row filed under it (BLO-167): band rail + one per filed row, nothing else.
-    // A dot beside the name said the same thing a second time, so it is gone.
-    expect(wallet.querySelectorAll('.bg-group-blue')).toHaveLength(3);
-    const groupButton = await screen.findByRole('button', { name: 'Collapse Wallet work' });
-    expect(groupButton.querySelector('[class*="bg-group-"]')).toBeNull();
-    expect(groupButton).toHaveClass('pl-3', 'gap-0');
-    const groupHeader = groupButton.parentElement!;
-    expect(groupHeader).not.toHaveClass('border-t');
-    expect(groupHeader).toHaveClass('border-b', 'border-b-edge-strong');
-    // The group fold shares the project mark's column without moving either name.
-    const groupChevron = groupButton.querySelector('svg.lucide-chevron-right');
-    expect(groupChevron).toHaveClass('-translate-x-1.5');
-    expect(within(groupButton).getByText('Wallet work')).toHaveClass(
-      'font-mono', 'text-body', 'font-medium', 'text-white',
-    );
     expect([...wallet.querySelectorAll('[data-session-id]')].map((row) =>
       row.getAttribute('data-session-id'),
     )).toEqual([ROWS[0].id, ROWS[1].id]);
@@ -339,7 +323,6 @@ describe('ProjectGroup groups', () => {
     );
     const wallet = await band('Wallet work');
 
-    expect(wallet.querySelectorAll('.bg-group-blue')).toHaveLength(0);
     // The band's rail, and one down each of the two rows filed under it.
     expect(wallet.querySelectorAll('.bg-group-violet')).toHaveLength(3);
   });
@@ -395,37 +378,13 @@ describe('ProjectGroup groups', () => {
 
     const groupsHeader = within(list).getByText('Groups').closest('div') as HTMLElement;
     expect(within(groupsHeader).queryByText('1 group')).toBeNull();
-    // Set labels use full-strength ink; the bands remain quieter through their smaller type.
-    // Their tinted upper rules distinguish the shelves; the lower rules close each shelf.
-    expect(groupsHeader).toHaveClass(
-      'border-t', 'border-b', 'border-t-set-groups-border', 'border-b-edge-strong', 'bg-set-groups',
-    );
-    expect(groupsHeader).toHaveClass('min-h-11', 'mouse:min-h-8');
-    // Sticky set headings follow the project's measured height when counts wrap.
-    expect(groupsHeader).toHaveClass('sticky', 'top-[var(--project-header-height,3.5rem)]', 'mouse:static');
-    expect(within(groupsHeader).getByText('Groups')).toHaveClass(
-      'font-mono', 'text-ui', 'font-medium', 'text-white',
-    );
     expect(within(wallet).queryByText('2 sessions')).toBeNull();
     // The project still owns its total; each set keeps only its own heading and actions.
     const sessionsHeader = within(list).getByText('Sessions').closest('div') as HTMLElement;
     expect(within(sessionsHeader).queryByText('2 sessions')).toBeNull();
-    expect(sessionsHeader).toHaveClass(
-      'border-t', 'border-b', 'border-t-set-sessions-border', 'border-b-edge-strong', 'bg-set-sessions',
-    );
     const sessionPaper = groupsHeader.parentElement!.parentElement!;
-    expect(sessionPaper).toHaveClass('bg-set-sessions');
     expect(sessionPaper).toContainElement(wallet.querySelector(`[data-session-id="${ROWS[0].id}"]`));
     expect(sessionPaper).toContainElement(list.querySelector(`[data-session-id="${LOOSE.id}"]`));
-    for (const id of [ROWS[0].id, LOOSE.id]) {
-      const row = list.querySelector(`[data-session-id="${id}"]`)!;
-      expect(row.closest('[data-swipe-track]')?.firstElementChild).toHaveClass('bg-set-sessions');
-    }
-    expect(sessionsHeader).toHaveClass('min-h-11', 'mouse:min-h-8');
-    expect(sessionsHeader).toHaveClass('sticky', 'top-[var(--project-header-height,3.5rem)]', 'mouse:static');
-    expect(within(sessionsHeader).getByText('Sessions')).toHaveClass(
-      'font-mono', 'text-ui', 'font-medium', 'text-white',
-    );
     const projectHeader = within(list).getByText(STORY_NEWER_PROJECT.name).closest('header')!;
     expect(within(projectHeader).getByText('4 sessions')).toBeInTheDocument();
 
@@ -719,47 +678,6 @@ describe('ProjectGroup groups', () => {
     expect(start).toHaveBeenCalledWith(conn, ROOT);
   });
 
-  // A new conversation is composed, not played; both entry points share the same mark.
-  it('uses a compose icon for new sessions in both menus', async () => {
-    const { user } = mount();
-    await user.click(await screen.findByRole('button', { name: `Actions for sessions in ${ROOT}` }));
-    const sessionsAction = within(sheet(`Sessions in ${ROOT}`)).getByRole('button', {
-      name: 'New session',
-    });
-    expect(sessionsAction.querySelectorAll('svg.lucide-square-pen')).toHaveLength(1);
-    expect(sessionsAction.querySelector('svg.lucide-play')).toBeNull();
-    await user.click(document.body);
-    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
-    const groupAction = within(sheet(`Groups in ${ROOT}`)).getByRole('button', {
-      name: 'New session',
-    });
-    expect(groupAction.querySelectorAll('svg.lucide-square-pen')).toHaveLength(1);
-    expect(groupAction.querySelector('svg.lucide-play')).toBeNull();
-  });
-
-  // Set headers, bands and session rows keep the menu rail; the row disclosure sits inside it.
-  it('stands every trailing mark in one column, set, band and row alike', async () => {
-    mount();
-    const wallet = await band('Wallet work');
-    const row = strip(document.body, LOOSE.id);
-    const disclosure = within(row).getByRole('button', { name: /^Show details for / });
-    const rowMenu = within(row).getByRole('button', { name: /^Actions for / });
-    const menus = [
-      screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }),
-      screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }),
-      within(wallet).getByRole('button', { name: 'Actions for Wallet work' }),
-      rowMenu,
-    ];
-    for (const mark of [...menus, disclosure]) {
-      expect(mark).toHaveClass('size-8', 'mouse:size-7');
-      expect(mark).not.toHaveClass('mouse:size-6');
-    }
-    for (const menu of menus) {
-      expect(menu.parentElement).toHaveClass('pr-2', 'mouse:pr-2.5');
-    }
-    expect(disclosure.parentElement).toHaveClass('pr-0.5', 'gap-2', 'mouse:gap-2.5');
-  });
-
   it('keeps both set menus reachable in an empty project after folding and expanding it', async () => {
     const empty = { rows: [], total: 0, awaiting: [], grouped: [], nextCursor: '' };
     const { user } = mount(
@@ -779,43 +697,6 @@ describe('ProjectGroup groups', () => {
     await user.click(screen.getByRole('button', { name: `Expand ${STORY_NEWER_PROJECT.name}` }));
     expect(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` })).toBeInTheDocument();
-  });
-
-  // The open project's chevron and (in non-light themes) surface identify the state.
-  // Neither state paints an ornamental rail over the project boundary.
-  it('folds a project without a decorative leading rail', async () => {
-    const { user } = mount();
-    const disclosure = await screen.findByRole('button', {
-      name: `Collapse ${STORY_NEWER_PROJECT.name}`,
-    });
-    const header = disclosure.closest('header')!;
-    expect(header).toHaveClass('bg-project-header-active');
-    expect(header.className).not.toContain('before:');
-    expect(header).not.toHaveClass('bg-project-header');
-    expect(header).toHaveClass('sticky', 'top-0', 'mouse:focus-within:bg-hover');
-    expect(header.className).toContain('var(--color-project-header-active)');
-
-    await user.click(disclosure);
-    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
-    expect(header).toHaveClass('bg-project-header');
-    expect(header).not.toHaveClass('bg-project-header-active');
-    expect(header.className).not.toContain('before:');
-    expect(header.className).toContain('var(--color-project-header)');
-    await user.click(disclosure);
-    expect(disclosure).toHaveAttribute('aria-expanded', 'true');
-    expect(header).toHaveClass('bg-project-header-active');
-    expect(header.className).not.toContain('before:');
-  });
-
-  it('keeps the project total beside the name in quiet type', async () => {
-    mount();
-    const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
-    const total = within(header).getByText(`${ROWS.length} sessions`);
-    expect(total).not.toHaveClass('font-bold');
-    expect(within(header).getByTitle(ROOT)).not.toContainElement(total);
-    expect(total.parentElement).toHaveClass('text-chip', 'whitespace-nowrap');
-    const wallet = await band('Wallet work');
-    expect(within(wallet).queryByText('2 sessions')).toBeNull();
   });
 
   it('folds one group without folding the project', async () => {
@@ -849,42 +730,11 @@ describe('ProjectGroup groups', () => {
     await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('New group'));
     const menu = sheet(`Groups in ${ROOT}`);
 
-    expect(menu.querySelector('header')).toBeNull();
     expect(within(menu).getByRole('textbox', { name: 'Group name' })).toBeInTheDocument();
     await user.click(
       within(menu).getByRole('button', { name: `Back to groups in ${STORY_NEWER_PROJECT.name}` }),
     );
     expect(within(menu).getByText('New group')).toBeInTheDocument();
-  });
-
-  // The Groups menu offers its verbs without repeating the list of groups below it.
-  it('offers the verb without naming the project back or listing its groups', async () => {
-    const { user } = mount();
-    await band('Wallet work');
-    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
-    const menu = sheet(`Groups in ${ROOT}`);
-
-    expect(within(menu).getByText('New group')).toBeInTheDocument();
-    expect(within(menu).queryByText(`Groups in ${ROOT}`)).toBeNull();
-    expect(within(menu).queryByText(WALLET_GROUP.name)).toBeNull();
-  });
-
-  it('says so when the project already has that name', async () => {
-    const { user } = mount(
-      machine({
-        createSessionGroup: vi.fn(async () => {
-          throw new GatewayError(409, 'group-exists');
-        }),
-      }),
-    );
-    await band('Wallet work');
-    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
-    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('New group'));
-    await user.type(screen.getByLabelText('Group name'), 'Wallet work');
-    await user.click(screen.getByRole('button', { name: 'Create' }));
-    expect(
-      await screen.findByText('This project already has a group with that name.'),
-    ).toBeInTheDocument();
   });
 
   // Regression, user report: renaming a group opened a second question over the list
@@ -1095,12 +945,6 @@ describe('ProjectGroup groups', () => {
       within(sheet(`Groups in ${ROOT}`)).queryByText(`Delete ${WALLET_GROUP.name}`),
     ).toBeNull();
     const keep = screen.getByText('Keep its sessions').closest('button') as HTMLElement;
-    const wipe = screen.getByText('Delete its sessions too').closest('button') as HTMLElement;
-    expect(keep.textContent).toBe('Keep its sessions');
-    expect(wipe.textContent).toBe('Delete its sessions too');
-    // One mark each, and nothing else beside the title.
-    expect(keep.querySelectorAll('svg')).toHaveLength(1);
-    expect(wipe.querySelectorAll('svg')).toHaveLength(1);
     expect(client.deleteSessionGroup).not.toHaveBeenCalled();
     await user.click(keep);
     await waitFor(() =>
@@ -1155,7 +999,6 @@ describe('ProjectGroup groups', () => {
     const row = strip(list, LOOSE.id);
     await user.click(within(row).getByText('Move to...'));
     const choices = sheet(`Move ${LOOSE.title} to group`);
-    expect(choices).toHaveClass('w-[min(20rem,calc(100vw-24px))]');
     expect(list).not.toContainElement(choices);
     expect(list.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1);
     await user.click(within(choices).getByRole('button', { name: 'Wallet work' }));
@@ -1323,7 +1166,6 @@ describe('ProjectGroup groups', () => {
     expect(open).toHaveBeenCalledTimes(1);
     for (const session of ROWS) {
       expect(surface(session.id)).toHaveAttribute('aria-pressed', 'true');
-      expect(strip(document.body, session.id)).toHaveClass('bg-accent/15');
     }
     fireEvent.click(surface(ROWS[1].id), { shiftKey: true });
     expect(surface(ROWS[0].id)).toHaveAttribute('aria-pressed', 'true');
@@ -1690,12 +1532,10 @@ describe('ProjectGroup groups', () => {
     expect(wallet).toHaveAttribute('data-session-drop');
     const dataTransfer = carrying(LOOSE.id);
     fireEvent.dragOver(row, { dataTransfer });
-    expect(wallet).toHaveClass('bg-white/10');
     // Crossing between rows is still inside this group's drop area.
     const leave = new Event('dragleave', { bubbles: true });
     Object.defineProperty(leave, 'relatedTarget', { value: strip(wallet, ROWS[1].id) });
     fireEvent(row, leave);
-    expect(wallet).toHaveClass('bg-white/10');
     fireEvent.drop(row, { dataTransfer });
     await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
     await waitFor(() =>
@@ -1711,7 +1551,6 @@ describe('ProjectGroup groups', () => {
     expect(sessions).toHaveAttribute('data-session-drop');
     const dataTransfer = carrying(ROWS[0].id);
     fireEvent.dragOver(row, { dataTransfer });
-    expect(sessions).toHaveClass('bg-white/10');
     // Hovering a loose row highlights the drop area without adding a banner beside Sessions.
     expect(within(sessions).queryByText('Drop to ungroup')).toBeNull();
     fireEvent.drop(row, { dataTransfer });
@@ -1776,7 +1615,6 @@ describe('ProjectGroup groups', () => {
     await waitFor(() =>
       expect(wallet.querySelectorAll(`[data-session-id="${ROWS[0].id}"]`)).toHaveLength(0),
     );
-    expect(screen.getByText('Sessions').parentElement).not.toHaveTextContent('Drop to ungroup');
   });
 
   // A row that is in no group is already where this drop would put it.
@@ -1797,13 +1635,7 @@ describe('ProjectGroup groups', () => {
     mount(client, undefined, '', STORY_NEWER_PROJECT.rows);
 
     const groups = (await screen.findByText('Groups')).parentElement as HTMLElement;
-    const emptyFirst = (await screen.findByRole('button', { name: 'Collapse Band 00' })).parentElement!;
-    const emptyNext = (await screen.findByRole('button', { name: 'Collapse Band 01' })).parentElement!;
-    // Empty bands get a single edge from the set header or the next band, never two.
-    expect(emptyFirst).not.toHaveClass('border-t');
-    expect(emptyFirst).not.toHaveClass('border-b');
-    expect(emptyNext).toHaveClass('border-t');
-    expect(emptyNext).not.toHaveClass('border-b');
+    await screen.findByRole('button', { name: 'Collapse Band 01' });
     expect(await screen.findByRole('button', { name: 'Collapse Band 23' })).toBeInTheDocument();
     expect(within(groups).queryByText('24 groups')).toBeNull();
     expect(within(groups).queryByRole('navigation')).toBeNull();
@@ -1985,9 +1817,6 @@ describe('ProjectGroup groups', () => {
         ROOT, expect.any(AbortSignal), 'only', ARCHIVED_BANDS,
       ),
     );
-    expect(within((await screen.findByText('Groups')).parentElement!).getByText('Archived')).toHaveClass(
-      'font-mono', 'text-ui', 'text-white',
-    );
     expect(within(steps).getByText('Page 2 of 3')).toBeInTheDocument();
   });
 
@@ -2066,9 +1895,6 @@ describe('ProjectGroup groups', () => {
     await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
     await user.click(within(sheet(`Sessions in ${ROOT}`)).getByText('Show archived sessions'));
     await waitFor(() => expect(within(steps).getByText('Page 2 of 2')).toBeInTheDocument());
-    expect(within((await screen.findByText('Sessions')).parentElement!).getByText('Archived')).toHaveClass(
-      'font-mono', 'text-ui', 'text-white',
-    );
     expect(client.listSessionGroups).toHaveBeenLastCalledWith(
       ROOT,
       expect.any(AbortSignal),

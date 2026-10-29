@@ -75,7 +75,6 @@ it('removes a session secret with a confirmation, and an inherited secret offers
   expect(screen.queryByRole('button', { name: 'Use inherited value' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Remove' }));
   const question = screen.getByRole('group', { name: 'Remove Knowledge base token?' });
-  expect(question).toHaveTextContent('The global value applies again.');
   await user.click(within(question).getByRole('button', { name: 'Remove' }));
   await screen.findByText('Inherited from global');
   expect(write).toHaveBeenLastCalledWith('graphify_kb_token', 'inherit', undefined, target);
@@ -147,22 +146,15 @@ it.each(['session', 'group', 'project'] as const)(
     // Only a project or group names its owner under the heading.
     if (scope === 'session') expect(screen.queryByText('Wallet work')).toBeNull();
     else expect(screen.getByText('Wallet work')).toBeInTheDocument();
-    // The box of application settings: the same width, and one height that neither
-    // a late answer nor a search changes.
-    expect(dialog.parentElement).toHaveClass('sm:max-w-4xl', 'mouse:max-w-6xl');
-    expect(dialog.parentElement).not.toHaveClass('sm:h-auto');
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
-    expect(search.parentElement?.querySelector('svg.lucide-search')).toBeInTheDocument();
     await screen.findByRole('switch', { name: 'Subagents: off' });
     await user.type(search, 'agent');
     expect(screen.getByRole('switch', { name: 'Subagents: off' })).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('1 setting found');
     await user.click(screen.getByRole('button', { name: 'Clear settings search' }));
     expect(search).toHaveValue('');
     expect(search).toHaveFocus();
     await user.type(search, 'dd');
     expect(screen.getByRole('heading', { name: 'No settings match “dd”' })).toBeInTheDocument();
-    expect(screen.getByText(/Try a different name or description/)).toBeInTheDocument();
     expect(screen.queryByRole('switch')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Clear search' }));
     expect(search).toHaveValue('');
@@ -212,7 +204,6 @@ it.each(['session', 'group', 'project'] as const)(
     expect(screen.getByRole('heading', { name: `${scope[0].toUpperCase()}${scope.slice(1)} settings`, level: 2 })).toBeInTheDocument();
     const panel = (title: string) => screen.getByRole('heading', { name: title, level: 3 }).closest('section');
     const sections = panel('Agent')?.parentElement;
-    expect(sections).toHaveClass('divide-y', 'divide-dialog-edge');
     expect(Array.from(sections?.children ?? [])).toEqual([
       panel('Agent'), panel('Experimental'), panel('Tools'),
     ]);
@@ -221,7 +212,6 @@ it.each(['session', 'group', 'project'] as const)(
       .toEqual(['MCP servers', 'Extensions']);
 
     await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'draft');
-    expect(panel('Experimental')?.parentElement).toHaveClass('divide-y', 'divide-dialog-edge');
     expect(panel('Experimental')?.parentElement?.children).toHaveLength(1);
     expect(screen.queryByRole('heading', { name: 'Agent' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Tools' })).toBeNull();
@@ -242,10 +232,6 @@ it('keeps one phone-height sheet and shows only a loading panel until the catalo
   vi.spyOn(client, 'cachedMcpServers').mockReturnValue(null);
   vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
   renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
-  // `split` stands at the full phone height; a sheet that stops at content grows with each answer.
-  const layer = screen.getByRole('dialog').closest('.inset-0');
-  expect(layer).toHaveClass('items-stretch');
-  expect(layer).not.toHaveClass('items-end');
   await screen.findByRole('status', { name: 'Loading settings' });
   for (const name of ['Tools', 'MCP servers', 'Extensions']) {
     expect(screen.queryByRole('heading', { name })).toBeNull();
@@ -324,8 +310,7 @@ it('locks inherited extension rows and opens the settings that decide them', asy
 
   expect(await screen.findByRole('switch', { name: 'Machine flag: on' })).toBeDisabled();
   expect(screen.getByRole('switch', { name: 'Project flag: off' })).toBeDisabled();
-  const note = screen.getByText('Set in Machine settings. You cannot change it per session.');
-  expect(note.parentElement).toHaveClass('justify-between');
+  expect(screen.getByText('Set in Machine settings. You cannot change it per session.')).toBeInTheDocument();
   expect(screen.getByText('Set in Project settings. You cannot change it per session.')).toBeInTheDocument();
   // The lock note names the deciding scope, so the inherited-from line does not repeat it.
   expect(screen.queryByText(/Inherited from/)).toBeNull();

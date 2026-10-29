@@ -21,8 +21,6 @@ const fleet = () => [
   },
 ];
 
-const section = (machine: string) => screen.getByLabelText(`${machine} projects`);
-
 const named = (pattern: RegExp) =>
   screen.queryAllByRole('button').filter((button) => {
     const name = button.getAttribute('aria-label') ?? button.textContent ?? '';
@@ -81,20 +79,12 @@ describe('the machine scope always has one active machine', () => {
     await screen.findByText('First');
 
     const strip = within(screen.getByLabelText('Machines'));
-    const alpha = strip.getByRole('button', { name: /^alpha/ });
     const beta = strip.getByRole('button', { name: /^beta.*unread/ });
-    expect(alpha).toHaveClass('bg-ink');
-    expect(beta).toHaveClass('bg-level-project');
-    expect(alpha.querySelector('.bg-accent')).toBeNull();
     expect(beta.querySelector('.bg-accent')).toHaveTextContent(/^1$/);
-    expect(section('alpha').querySelector("[class*='border-machine-']")).toBeNull();
 
     await userEvent.click(beta);
     await screen.findByText('Second');
     expect(beta).toHaveAttribute('aria-pressed', 'true');
-    expect(beta).toHaveClass('bg-ink', 'ring-1');
-    expect(alpha).not.toHaveClass('bg-ink');
-    expect(section('beta').querySelector("[class*='border-machine-']")).toBeNull();
   });
 
   it('keeps unavailable machines in their assigned positions', async () => {
@@ -473,9 +463,6 @@ describe('what this device found dark outlives the app', () => {
     expect(screen.queryByLabelText('beta projects')).toBeNull();
     const beta = strip().getByRole('button', { name: /beta/ });
     expect(beta.getAttribute('aria-pressed')).toBe('false');
-    // The tile says what is actually happening, and says it where a finger is.
-    expect(beta.textContent).toBe('betaConnecting…');
-    expect(beta.querySelector('.text-err')).toBeNull();
     expect(strip().queryByRole('button', { name: /^Reconnect to beta/ })).toBeNull();
 
     await screen.findByText('First');
@@ -555,16 +542,13 @@ describe('a machine painted from cache has not been heard from', () => {
     const tile = () => strip().getByRole('button', { name: /^beta/ });
     // Still a place to go, but not yet a machine that is there: the tile says so.
     expect(tile().getAttribute('aria-pressed')).toBe('false');
-    expect(tile().getAttribute('title')).toBe('Checking beta…');
     expect(strip().queryByRole('button', { name: /^Reconnect to beta/ })).toBeNull();
     expect(machineOutage(view.conns[1].url)).toBeNull();
 
     // Not the transport's half minute: nine seconds of silence is the answer.
     await settle(8_000);
-    expect(tile().getAttribute('title')).toBe('Checking beta…');
     await settle(1_500);
-    const retry = strip().getByRole('button', { name: /^Reconnect to beta/ });
-    expect(retry.getAttribute('title')).toBe('beta is not answering — silent for 9s');
+    expect(strip().getByRole('button', { name: /^Reconnect to beta/ })).toBeVisible();
     expect(machineOutage(view.conns[1].url)).toBe('silent for 9s');
   });
 

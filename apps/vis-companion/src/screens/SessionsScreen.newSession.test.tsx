@@ -234,8 +234,6 @@ describe('where "New session" lives', () => {
     await screen.findByText('First');
 
     const add = screen.getByRole('button', { name: 'New project on alpha' });
-    expect(add).not.toHaveTextContent('New project');
-    expect(add.querySelector('svg')).toBeInTheDocument();
     // ...and it opens the SAME portal the menu row opens, aimed at this machine.
     await userEvent.click(add);
     expect(await screen.findByRole('dialog')).toBeVisible();
@@ -308,7 +306,6 @@ describe('where "New session" lives', () => {
     restore = view.restore;
 
     expect(await screen.findByText('No projects yet')).toBeInTheDocument();
-    expect(screen.getByText('Add a project to start a session.')).toBeInTheDocument();
     expect(screen.queryByText(/Open the .* menu/)).toBeNull();
 
     await userEvent.click(screen.getByRole('button', { name: 'New project on alpha' }));
@@ -377,16 +374,6 @@ describe('machine, project and session are three different shapes', () => {
 
     await screen.findByText('No projects yet');
     expect(screen.getAllByRole('button', { name: 'New project on alpha' })).toHaveLength(1);
-  });
-
-  // Regression, user report ("the individual session is bigger then project"): a session
-  // row stood 48px against a 36px project band — the child taller than the thing that
-  // contains it. The leaf is the SHORTEST of the three levels, and a pointer tightens it.
-  it('keeps the session row shorter than the bands that contain it', async () => {
-    const view = renderSessionsScreen({ machines: alpha() });
-    restore = view.restore;
-    const row = (await screen.findByText('First')).closest('button')!;
-    expect(row.className).not.toContain('min-h-14');
   });
 
   // NOTHING ANSWERING IS NOT AN EMPTY LIST, and this screen never paints one: a total

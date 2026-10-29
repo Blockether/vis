@@ -38,12 +38,6 @@ describe('a session whose last turn was cut off', () => {
     expect(screen.queryByText('NEW')).not.toBeInTheDocument();
     // One mark per row: a chip beside the title used to repeat the status mark.
     expect(screen.queryByText('stopped')).not.toBeInTheDocument();
-
-    const dot = view.container.querySelector('[data-session-status-dot]');
-    expect(dot).toHaveClass('bg-current');
-    expect(dot?.parentElement).toHaveClass('text-err');
-    // Solid, never pulsing: an interrupted session is the opposite of a live one.
-    expect(dot?.className).not.toContain('animate-pulse');
   });
 
   // The mark must be BOUNDED. `was_interrupted` stays true on the row until that

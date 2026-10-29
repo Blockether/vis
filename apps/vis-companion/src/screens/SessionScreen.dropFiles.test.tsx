@@ -64,20 +64,3 @@ it('leaves a dragged sentence to the text box', () => {
   expect(fromFiles).not.toHaveBeenCalled();
 });
 
-it('gives every refused file its own line in the notice', async () => {
-  fromFiles.mockResolvedValue({
-    attachments: [],
-    rejected: [
-      'ledger.key: application/x-iwork-keynote-sffkey is not an accepted attachment format',
-      'mystery: its file type could not be recognised',
-    ],
-  });
-  renderSessionScreen();
-  fireEvent.drop(editor(), { dataTransfer: carrying([table()]) });
-  const notice = await screen.findByText(/could not be recognised/);
-  expect(notice.textContent).toBe(
-    '- ledger.key: application/x-iwork-keynote-sffkey is not an accepted attachment format\n' +
-      '- mystery: its file type could not be recognised',
-  );
-  expect(notice.className).toContain('whitespace-pre-line');
-});

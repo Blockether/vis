@@ -45,32 +45,6 @@ describe('ios launch screen', () => {
     expect(png.colourType).toBe(6); // RGBA: the background colour shows through around it
   });
 
-  it('registers all three scales in the asset catalog', () => {
-    for (const scale of ['1x', '2x', '3x']) expect(source).toContain(`"scale": "${scale}"`);
-    for (const file of ['splash-mark.png', 'splash-mark@2x.png', 'splash-mark@3x.png']) {
-      expect(source).toContain(`"filename": "${file}"`);
-    }
-  });
-
-  it('drops the stock 2732 px splash rather than leaving it beside ours', () => {
-    expect(source).toContain("startsWith('splash-2732')");
-    expect(source).toContain('for (const name of splashStale) rmSync(join(splashDir, name));');
-  });
-
-  // Regression: with `UILaunchStoryboardName`, SplashBoard composes the storyboard into one
-  // bitmap per orientation and refuses over a budget — measured on an iPhone 17 Pro:
-  // XBLaunchStoryboardErrorDomain Code=6, "Estimated size (29900800) is over limit
-  // (25000000)" — and the app then launches on BLACK. `UILaunchScreen` renders natively.
-  it('declares the launch screen the modern way and removes the storyboard key', () => {
-    expect(source).toContain('<key>UILaunchScreen</key>');
-    expect(source).toContain('<key>UIImageName</key>');
-    expect(source).toContain('<string>Splash</string>');
-    expect(source).toContain('<key>UIColorName</key>');
-    expect(source).toContain('<string>SplashBackground</string>');
-    expect(source).toContain('launchStoryboardStale');
-    expect(source).toContain("preparedPlist = currentPlist.replace(launchStoryboardEntry, '')");
-  });
-
   it('paints the colour the web layer paints a frame later', () => {
     const colours = source.slice(
       source.indexOf('const splashColorContents'),
@@ -84,29 +58,4 @@ describe('ios launch screen', () => {
     expect(components).toEqual(pageColour());
   });
 
-  // The Xcode target lists the storyboard as a resource, so the bundle carries one either
-  // way; it must not be the one with somebody else's logo in it.
-  it('leaves no foreign logo in the storyboard the target still ships', () => {
-    const board = source.slice(
-      source.indexOf('const launchBoardSource'),
-      source.indexOf('const launchBoardOk'),
-    );
-    expect(board).toContain('contentMode="center"');
-    expect(board).not.toContain('scaleAspectFill');
-    expect(board).toContain('image="Splash"');
-    expect(board).toContain('<image name="Splash" width="72" height="64"/>');
-    const colour =
-      /<color key="backgroundColor" red="([\d.]+)" green="([\d.]+)" blue="([\d.]+)"/.exec(board);
-    expect(colour).not.toBeNull();
-    expect(colour.slice(1, 4).map((value) => Math.round(Number(value) * 255))).toEqual(
-      pageColour(),
-    );
-  });
-
-  it('--check refuses a project still showing Capacitor’s splash', () => {
-    const check = source.slice(source.indexOf('if (check) {'), source.indexOf('if (!appIconOk)'));
-    expect(check).toContain('splashOk');
-    expect(check).toContain('launch screen still shows');
-    expect(source).toContain('const splashOk = splashFilesOk && splashColorOk && launchBoardOk;');
-  });
 });

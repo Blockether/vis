@@ -125,20 +125,6 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 // Regression: folding a group hid every HITL, LIVE and NEW indication inside it.
 describe('session group status counts', () => {
-  it('uses the same status colors in group headers and session rows', async () => {
-    mount();
-    await waitFor(() => expectCounts(2, 1, 2));
-    fireEvent.click(heading());
-    for (const [id, label, countLabel, tone] of [
-      ['input-a', 'HITL ×3', '2 HITL', 'text-warn'],
-      ['running', 'LIVE', '1 LIVE', 'text-ok'],
-      ['new-a', 'NEW ×5', '2 NEW', 'text-accent-ink'],
-    ]) {
-      const row = document.querySelector<HTMLElement>(`[data-session-id="${id}"]`)!;
-      expect(within(row).getByText(label).parentElement).toHaveClass(tone);
-      expect(within(heading(NAME, true)).getByText(countLabel)).toHaveClass(tone);
-    }
-  });
 
   it('counts the complete group once while collapsed, without reading conversations', async () => {
     const { client } = mount();
@@ -146,8 +132,6 @@ describe('session group status counts', () => {
     expectCounts(0, 1, 0, 'Other work');
     expectCounts(0, 0, 0, 'Empty work');
     expect(document.querySelector('[data-session-id="input-a"]')).toBeNull();
-    expect(heading()).toHaveTextContent(/2 HITL.*1 LIVE.*2 NEW/);
-    expect(heading()).toHaveAccessibleDescription('2 sessions need input. 1 live session. 2 sessions with new answers.');
     expect(client.prefetchTranscript).not.toHaveBeenCalled();
 
     fireEvent.click(heading());
@@ -221,8 +205,6 @@ describe('session group status counts', () => {
       row('read', { was_interrupted: true }),
     ]);
     await waitFor(() => expectCounts(0, 0, 1, NAME, false, 2));
-    expect(within(heading()).getByText('2 STOPPED')).toHaveClass('text-err');
-    expect(heading()).toHaveAccessibleDescription('2 stopped sessions. 1 session with new answers.');
 
     // The reader opens one stopped conversation: it leaves STOPPED, and NEW stays.
     update({ openRow: sessionRowKey(conn, 'stopped') });

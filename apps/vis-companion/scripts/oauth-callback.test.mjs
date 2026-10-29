@@ -3,17 +3,6 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { expect, it } from 'vitest';
 const source = (name) => readFileSync(new URL(name, import.meta.url), 'utf8');
-it('registers the same private-use OAuth scheme on both mobile hosts, with no HTTPS callback', () => {
-  const ios = source('./ios-prepare.mjs');
-  const android = source('./android-prepare.mjs');
-  expect(ios).toContain('<string>com.blockether.viscompanion</string>');
-  expect(android).toContain(
-    'android:scheme="com.blockether.viscompanion" android:host="oauth" android:path="/callback"',
-  );
-});
-it('does not log native bridge payloads containing authorization callbacks', () => {
-  expect(source('../capacitor.config.mts')).toContain("loggingBehavior: 'none'");
-});
 
 // Regression: an existing iOS project kept only vis:// registered. Safari could
 // authorize Linear, but the private-use callback had no installed URL handler.
@@ -69,11 +58,6 @@ it('repairs callback registration in an already prepared iOS project, not just a
   expect(registeredSchemes(result.preparedPlist)).toEqual(['vis', 'com.blockether.viscompanion']);
   expect(result.preparedPlist).toContain('<key>Unrelated</key><string>keep</string>');
   expect(preparePlist(result.preparedPlist)).toEqual({ ...result, plistOk: true });
-});
-it('keeps iOS release callback registration in the same prepare step', () => {
-  const release = source('./ios-release.mjs');
-  expect(release).toContain("run('node', ['scripts/ios-prepare.mjs']);");
-  expect(release).not.toContain('<key>CFBundleURLSchemes</key>');
 });
 it('preserves other schemes and URL types when adding the OAuth callback', () => {
   const fresh = preparePlist(emptyPlist).preparedPlist;

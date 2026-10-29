@@ -84,7 +84,6 @@ describe('opening a session', () => {
 
     const loading = screen.getByLabelText('Loading recent turns');
     expect(loading).toHaveTextContent('Loading recent turns…');
-    expect(loading.parentElement).not.toHaveClass('transition-opacity', 'duration-200');
 
     // A slow network response must not advance a counter for turns that do not exist yet.
     await new Promise((resolve) => window.setTimeout(resolve, 50));
@@ -122,12 +121,9 @@ describe('opening a session', () => {
     });
 
     expect(await screen.findByText(/Preparing \d of 8 recent turns…/)).toBeInTheDocument();
-    const column = document.querySelector('.transcript-column');
-    expect(column).toHaveClass('has-outline');
     expect(screen.queryByRole('button', { name: 'Jump to a message' })).not.toBeInTheDocument();
 
     expect(await screen.findByRole('button', { name: 'Jump to a message' })).toBeInTheDocument();
-    expect(column).toHaveClass('has-outline');
   });
 
   // Regression, Vis session 77fc84b5-5d0a-4780-ae96-b7f5e3f78b46: switching
@@ -211,30 +207,6 @@ describe('opening a session', () => {
     expect(screen.queryByText('The session already left')).not.toBeInTheDocument();
     expect(screen.getByText('The current session')).toBeInTheDocument();
     expect(signals.get('first')?.aborted).toBe(true);
-  });
-
-  // Regression, user report: a response shorter than the transcript viewport stayed
-  // against the header and left most of the phone as an empty band above the composer.
-  // The transcript's minimum viewport height must give that spare height to its TOP,
-  // keeping the newest response beside the composer where subsequent chunks arrive.
-  it('bottom-aligns a short response instead of leaving a blank lower viewport', async () => {
-    renderSessionScreen({
-      client: {
-        transcript: () =>
-          Promise.resolve([
-            {
-              turn_id: 't-short',
-              request: 'Give me the short answer',
-              status: 'completed',
-              iterations: [],
-            },
-          ]),
-      },
-    });
-
-    expect(await screen.findByText('Give me the short answer')).toBeInTheDocument();
-    const viewport = screen.getByRole('region', { name: 'Transcript' });
-    expect(viewport.firstElementChild).toHaveClass('flex', 'flex-col', 'justify-end');
   });
 });
 

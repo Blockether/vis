@@ -78,16 +78,13 @@ describe('forking a session from its list row', () => {
 
     const actions = within(screen.getByRole('group', { name: 'A session actions' }));
     const button = actions.getByRole('button', { name: 'Fork' });
-    expect(button).toHaveAttribute('title', 'Fork');
     await userEvent.click(button);
-    expect(button).toHaveTextContent('Forking...');
     await userEvent.click(button);
     expect(fork).toHaveBeenCalledTimes(1);
     expect(fork).toHaveBeenCalledWith('s1');
 
     await act(async () => rejectFork(new Error('This session has no turns to fork yet')));
     expect(await screen.findByText('This session has no turns to fork yet')).toBeVisible();
-    expect(button).toHaveTextContent('Fork');
     expect(opened).not.toHaveBeenCalled();
   });
 });

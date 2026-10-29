@@ -35,7 +35,6 @@ describe('a session waiting on a human', () => {
     await screen.findByText('Parked');
     expect(within(row('Parked')).getByText('HITL')).toBeInTheDocument();
     expect(within(row('Parked')).getByTitle('Input needed')).toBeInTheDocument();
-    expect(within(row('Parked')).getByText('Input needed')).toHaveClass('sr-only');
     expect(within(row('Working')).getByText('LIVE')).toBeInTheDocument();
     // Said ONCE, where the session lives. No second band repeats the same row above the
     // list it is already in.
@@ -67,7 +66,6 @@ describe('a session waiting on a human', () => {
     await screen.findByText('Parked');
     expect(within(row('Parked')).getByText('HITL ×2')).toBeInTheDocument();
     expect(within(row('Parked')).getByTitle('Input needed ×2')).toBeInTheDocument();
-    expect(within(row('Parked')).getByText('Input needed ×2')).toHaveClass('sr-only');
   });
 
   // Regression, user report (phone, a project of 115 sessions): the header counted

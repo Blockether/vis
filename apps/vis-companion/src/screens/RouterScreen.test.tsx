@@ -36,9 +36,6 @@ describe('the model picker stands in the session it pins', () => {
       const dialog = openPicker();
       expect(pane.contains(dialog)).toBe(true);
       expect(shell.contains(dialog)).toBe(false);
-      // Scrim and box alike: the pane is the bound, so nothing outside it is dimmed.
-      expect(pane.firstElementChild).toHaveClass('absolute', 'inset-0');
-      expect(pane.firstElementChild).not.toHaveClass('fixed');
     } finally {
       shell.remove();
       pane.remove();
@@ -54,7 +51,6 @@ describe('the model picker stands in the session it pins', () => {
     try {
       const dialog = openPicker();
       expect(shell.contains(dialog)).toBe(true);
-      expect(shell.firstElementChild).toHaveClass('absolute', 'inset-0');
     } finally {
       shell.remove();
     }

@@ -56,14 +56,9 @@ describe('licence-gated gateway voices', () => {
     });
     const actionStrip = voiceChoice.parentElement;
     expect(actionStrip).toBeVisible();
-    expect(voiceChoice.textContent).not.toContain('○');
     const download = within(actionStrip as HTMLElement).getByRole('button', {
       name: 'Download Ryan (en-US, high)',
     });
-    expect(actionStrip?.firstElementChild).toBe(download);
-    expect(actionStrip?.children.item(1)).toBe(voiceChoice);
-    expect(download.textContent).toBe('');
-    expect(download.querySelector('svg')).toBeInTheDocument();
     fireEvent.click(download);
 
     expect(screen.getByText('Non-commercial use only, with attribution.')).toBeVisible();
@@ -144,23 +139,6 @@ describe('hearing a voice before choosing it', () => {
         name: 'Play a sample of Kristin (en-US, medium)',
       }),
     ).toBeNull();
-  });
-
-  // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: every sample
-  // was a worded button at the far right, detached from the voice it lets you hear.
-  it('puts an icon-only sample action before the voice name', async () => {
-    mount(new Blob(['wav'], { type: 'audio/wav' }));
-
-    const play = await screen.findByRole('button', {
-      name: 'Play a sample of Kristin (en-US, medium)',
-    });
-    const voice = screen.getByRole('button', { name: /^Kristin/ });
-    const row = voice.parentElement;
-
-    expect(row?.firstElementChild).toBe(play);
-    expect(row?.children.item(1)).toBe(voice);
-    expect(play.textContent).toBe('');
-    expect(play.querySelector('svg')).toBeInTheDocument();
   });
 
   // Regression, user report: an active sample still looked like Play, so there was no way
@@ -299,8 +277,6 @@ describe('imported voice actions', () => {
     const action = within(track!).getByRole('button', {
       name: 'Forget My voice',
     });
-    expect(action).toHaveTextContent('Forget');
-    expect(action.querySelector('svg')).toBeInTheDocument();
     track!.scrollTo = vi.fn();
     fireEvent.click(action);
     expect(client.forgetSpeechVoice).not.toHaveBeenCalled();

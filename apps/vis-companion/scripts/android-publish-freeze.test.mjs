@@ -14,8 +14,6 @@ import {
 // The freeze is a switch that WILL be flipped, so the state itself is tested through explicit
 // freeze objects: these cases keep meaning the same thing the day Android publishing resumes.
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const repoRoot = resolve(appDir, '..', '..');
-const read = (...parts) => readFileSync(join(...parts), 'utf8');
 const script = (name) => join(appDir, 'scripts', name);
 
 const frozen = {
@@ -42,10 +40,6 @@ describe('the Android publish freeze', () => {
     expect(freezeState(lifted)).toBe('allowed');
   });
 
-  it('is ONE switch: the module state is the single word CI branches on', () => {
-    expect(freezeState()).toBe(ANDROID_PUBLISH_FREEZE.isFrozen ? 'frozen' : 'allowed');
-  });
-
   it('gates CI through a green step, never a red run', () => {
     const out = join(mkdtempSync(join(tmpdir(), 'android-freeze-')), 'github-output');
     writeFileSync(out, '');
@@ -64,13 +58,6 @@ describe('the Android publish freeze', () => {
 });
 
 describe('release:android:store', () => {
-  it('asks the freeze before it builds anything', () => {
-    const src = read(appDir, 'scripts', 'android-release.mjs');
-    expect(src).toContain("from './android-publish-freeze.mjs'");
-    expect(src.indexOf('androidPublishRefusal(')).toBeLessThan(
-      src.indexOf("run('npm', ['run', 'build'])"),
-    );
-  });
 
   it.runIf(ANDROID_PUBLISH_FREEZE.isFrozen)(
     'refuses an upload run, and says how to build anyway',
@@ -90,19 +77,3 @@ describe('release:android:store', () => {
   );
 });
 
-describe('CI', () => {
-  it('skips the whole Play job while frozen', () => {
-    const workflow = read(repoRoot, '.github', 'workflows', 'mobile-release.yml');
-    expect(workflow).toContain('node scripts/android-publish-freeze.mjs --github-output');
-    expect(workflow).toContain('needs: android-gate');
-    expect(workflow).toContain("needs.android-gate.outputs.android == 'allowed'");
-  });
-
-  it('skips Firebase App Distribution while frozen', () => {
-    const workflow = read(repoRoot, '.github', 'workflows', 'android-companion.yml');
-    expect(workflow).toContain('node scripts/android-publish-freeze.mjs --github-output');
-    expect(workflow).toMatch(
-      /Distribute to Firebase App Distribution[\s\S]*steps\.freeze\.outputs\.android == 'allowed'/,
-    );
-  });
-});

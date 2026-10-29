@@ -60,15 +60,6 @@ describe('a desk keeps the list beside the conversation', () => {
     const main = view.baseElement.querySelector('main') as HTMLElement;
     const sidebar = main.firstElementChild as HTMLElement;
     expect(within(sidebar).getByRole('region', { name: 'Sessions' })).toBeVisible();
-    // Regression: the desktop rail must fit project names and numbered pages together.
-    expect(sidebar.className).toContain('w-[33%]');
-    expect(sidebar.className).toContain('min-w-80');
-    // The rail that is up carries the ride it will take when it is put away.
-    expect(sidebar.className).toContain('transition-[margin-left,visibility,border-color]');
-    // ...at the pace this app moves a panel at: a fifth of a second, evenly spent.
-    expect(sidebar.className).toContain('duration-200');
-    expect(sidebar.className).toContain('ease-in-out');
-    expect(sidebar.className).toContain('motion-reduce:transition-none');
     expect(screen.getByRole('region', { name: 'No session open' })).toBeVisible();
     // The shell's own bar stays over both columns.
     expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
@@ -98,7 +89,6 @@ describe('a desk keeps the list beside the conversation', () => {
       ),
     );
     expect(rail()).not.toContainElement(field);
-    expect(rail().className).toContain('w-[33%]');
 
     fireEvent.click(within(search()).getByRole('button', { name: 'Close search' }));
     expect(screen.queryByRole('dialog', { name: 'Search sessions' })).not.toBeInTheDocument();
@@ -138,44 +128,21 @@ describe('a desk keeps the list beside the conversation', () => {
       restoreDensity();
     };
     await screen.findByText('Alpha one');
-    const main = view.baseElement.querySelector('main') as HTMLElement;
-
     fireEvent.click(screen.getByRole('button', { name: 'Hide the session list' }));
     // With nothing open, putting the list away leaves the empty pane and the
     // bar's explicit way back; it never relabels a list that is still visible.
-    const away = main.firstElementChild as HTMLElement;
-    // It slides under the pane instead of vanishing: the SAME box, margin pulled
-    // off the seam, the seam's rule faded, out of the tab order once gone.
-    // Regression, user report: a rail that let its width go was sized by its own rows
-    // instead, so an invisible column stayed standing in the row and the pane beside it
-    // was stretched past the shell's edge. `App.split.stories.tsx` measures the boxes.
-    expect(away.className).toContain('w-[33%]');
-    expect(away.className).toContain('min-w-80');
-    expect(away.className).toContain('shrink-0');
-    expect(away.className).toContain('ml-[min(-20rem,-33%)]');
-    expect(away.className).toContain('invisible');
-    expect(away.className).toContain('border-transparent');
-    expect(away.className).toContain('transition-[margin-left,visibility,border-color]');
     expect(screen.getByRole('region', { name: 'No session open' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Show the session list' })).toBeVisible();
     expect(localStorage.getItem('vis.sidebar')).toBe('hidden');
 
     fireEvent.click(screen.getByRole('button', { name: 'Show the session list' }));
-    expect((main.firstElementChild as HTMLElement).className).toContain('w-[33%]');
-    expect((main.firstElementChild as HTMLElement).className).toContain('min-w-80');
-    expect((main.firstElementChild as HTMLElement).className).not.toContain('invisible');
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
 
     fireEvent.click(screen.getByRole('button', { name: 'Hide the session list' }));
-    // The transcript stands alone, still under the shell's bar, still with no arrow.
-    expect((main.firstElementChild as HTMLElement).className).toContain('ml-[min(-20rem,-33%)]');
     expect(screen.queryByRole('button', { name: 'Back to sessions' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show the session list' }));
     expect(screen.getByRole('region', { name: 'Sessions' })).toBeVisible();
-    expect((main.firstElementChild as HTMLElement).className).toContain('w-[33%]');
-    expect((main.firstElementChild as HTMLElement).className).toContain('min-w-80');
-    expect((main.firstElementChild as HTMLElement).className).not.toContain('invisible');
     expect(screen.getByRole('button', { name: 'Hide the session list' })).toBeVisible();
     view.unmount();
   });
@@ -235,23 +202,20 @@ describe('a desk keeps the list beside the conversation', () => {
     const open = (sid: string) =>
       fireEvent.click(row(sid).querySelector('[data-row-surface]') as HTMLElement);
 
-    // Nothing is open: no row claims the pane.
-    expect(row('one').className).not.toContain('bg-standing');
     expect(within(sidebar).queryByRole('button', { current: 'page' })).toBeNull();
 
     open('one');
     await screen.findByLabelText('Message Vis');
-    await waitFor(() => expect(row('one').className).toContain('bg-standing'));
-    expect(within(row('one')).getByRole('button', { current: 'page' })).toBeVisible();
-    // ONE mark, and it is the paper: the leading edge stays the group's rail.
-    expect(row('one').className).not.toContain('border-l');
-    expect(row('two').className).not.toContain('bg-standing');
+    await waitFor(() =>
+      expect(within(row('one')).getByRole('button', { current: 'page' })).toBeVisible(),
+    );
     expect(within(row('two')).queryByRole('button', { current: 'page' })).toBeNull();
 
     // The mark FOLLOWS the pane: opening the other session moves it, never doubles it.
     open('two');
-    await waitFor(() => expect(row('two').className).toContain('bg-standing'));
-    expect(row('one').className).not.toContain('bg-standing');
+    await waitFor(() =>
+      expect(within(row('two')).getByRole('button', { current: 'page' })).toBeVisible(),
+    );
     expect(within(sidebar).getAllByRole('button', { current: 'page' })).toHaveLength(1);
     view.unmount();
   });

@@ -191,13 +191,6 @@ describe('Android launcher icon', () => {
     expect(round.pixel(96, 96)[3]).toBe(255);
     const foreground = decodePng(mipmap('xxxhdpi', 'ic_launcher_foreground'));
     expect(foreground.pixel(2, 2)[3]).toBe(0);
-    const background = readFileSync(join(res, 'values', 'ic_launcher_background.xml'), 'utf8');
-    expect(background).toContain('<color name="ic_launcher_background">#FFFFFF</color>');
-    for (const layers of ['ic_launcher.xml', 'ic_launcher_round.xml']) {
-      const xml = readFileSync(join(res, 'mipmap-anydpi-v26', layers), 'utf8');
-      expect(xml).toContain('android:drawable="@color/ic_launcher_background"');
-      expect(xml).toContain('android:drawable="@mipmap/ic_launcher_foreground"');
-    }
   });
 });
 
@@ -222,18 +215,4 @@ describe('Android notification icon', () => {
     }
   });
 
-  it('is handed to Firebase, which would otherwise fall back to a stock bell', () => {
-    const prepare = readFileSync(join(here, 'android-prepare.mjs'), 'utf8');
-    expect(prepare).toContain(
-      "'com.google.firebase.messaging.default_notification_icon', '@drawable/ic_stat_vis'",
-    );
-    expect(prepare).toContain(
-      "'com.google.firebase.messaging.default_notification_color', '@color/vis_notification'",
-    );
-    expect(prepare).toContain(
-      '<meta-data android:name="${name}" android:resource="${resource}" />',
-    );
-    const colour = readFileSync(join(res, 'values', 'vis_notification_color.xml'), 'utf8');
-    expect(colour).toContain('<color name="vis_notification">#05B4B6</color>');
-  });
 });

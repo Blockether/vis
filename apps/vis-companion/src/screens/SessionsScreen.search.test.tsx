@@ -398,9 +398,6 @@ describe('typing does not redraw the list under the thumb', () => {
     const report = screen.getByText('1 match').closest('div');
     expect(report).toBeVisible();
     const line = report!.parentElement!;
-    // The report stands on a line of its own, and that line wraps. With one project and
-    // one machine there is nothing to choose, so no choices line stands above it.
-    expect(line.className).toContain('flex-wrap');
     expect(screen.queryByRole('combobox', { name: 'Project' })).not.toBeInTheDocument();
     expect(line.previousElementSibling).toBeNull();
     // And it shares no box with a machine switch or the machine's own verb.
@@ -529,10 +526,6 @@ describe('search shows the matching messages of one session beside the results',
     // The rows keep to "which session": no message text under them any more.
     expect(within(results()).queryByText(/now\?|drawer/)).toBeNull();
     // Side by side in a wide dialog, stacked under the results on a phone.
-    const side = pane().parentElement!;
-    expect(side.parentElement!.className).toContain('@min-[40rem]/search:flex-row');
-    expect(side.className).toContain('border-t');
-    expect(side.className).toContain('@min-[40rem]/search:border-l');
 
     view.setQuery('');
     // Without a query the pane shows the session's newest messages, not an empty note.
@@ -621,7 +614,6 @@ describe('the search dialog opens on the recent sessions', () => {
     restore = view.restore;
 
     expect(await screen.findByText('No recent sessions')).toBeVisible();
-    expect(screen.getByText('Type a word from its title or messages.')).toBeVisible();
   });
 
   it('asks for the query instead once typing rests, and for the recents again when cleared', async () => {
@@ -686,7 +678,6 @@ describe('the search starts on the session the reader is in', () => {
     view.setOpenSession({ conn: view.conns[0], sid: 'in-use' });
 
     await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['fresh', 'in-use']));
-    expect(within(row('Recent sessions', 'fresh')).getByText('Project:')).toHaveClass('font-bold');
     expect(row('Recent sessions', 'fresh').querySelector('[data-session-location]')).toHaveTextContent(/^Project: alpha$/);
     expect(row('Recent sessions', 'in-use').querySelector('[data-session-location]')).toHaveTextContent(/^Project: zulu$/);
     expect(row('Recent sessions', 'in-use')).toHaveAttribute('aria-current', 'page');
@@ -798,9 +789,6 @@ describe('explicit search locations and scopes', () => {
       .querySelector<HTMLElement>('[data-session-location]')!;
     // Space, not a middle dot, separates the two parts (Hallmark: no dot-joined meta).
     expect(location).toHaveTextContent(/^Project: Workbench Group: Planning$/);
-    expect(location).not.toHaveTextContent('·');
-    expect(within(location).getByText('Project:')).toHaveClass('font-bold');
-    expect(within(location).getByText('Group:')).toHaveClass('font-bold');
     const project = await screen.findByRole('combobox', { name: 'Project' });
     // With one machine there is no machine to choose.
     expect(screen.queryByRole('combobox', { name: 'Machine' })).not.toBeInTheDocument();

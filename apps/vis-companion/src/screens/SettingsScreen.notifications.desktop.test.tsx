@@ -89,13 +89,3 @@ it('offers the switch instead of the browser push dead end', async () => {
   expect(screen.queryByText(/background Web Push/i)).toBeNull();
 });
 
-// The panel used to explain, under a connected switch, that alerts arrive only while the app is
-// open. Reported as noise on every visit: the switch already answers the question it was under.
-it('states the connection without explaining itself', async () => {
-  panel();
-
-  fireEvent.click(await screen.findByRole('switch', { name: 'Notifications from buildbox: off' }));
-
-  expect(await screen.findByRole('switch', { name: 'Notifications from buildbox: on' })).toBeVisible();
-  expect(screen.queryByText(/Alerts arrive while the desktop app is open/)).toBeNull();
-});

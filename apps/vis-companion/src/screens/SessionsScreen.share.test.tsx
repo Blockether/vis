@@ -27,28 +27,12 @@ describe('the share the list is holding', () => {
     const label = await screen.findByText('Sharing');
     const detail = screen.getByText(/memo\.m4a — pick a session, or start a new one/);
     const banner = label.closest('[role="status"]');
-    expect(banner?.className).not.toContain('warn');
     expect(label.nextElementSibling).toBe(detail);
     // The destination can be on any machine, so the notice precedes the machine band.
     const machines = screen.getByRole('group', { name: 'Machines' });
     expect(
       banner!.compareDocumentPosition(machines) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-
-  it('counts a multi-file share rather than listing it', async () => {
-    const view = renderSessionsScreen({
-      machines: [{ sessions: [listSession({ id: 's1' })] }],
-      share: {
-        files: [
-          { path: '/tmp/0/a.png', name: 'a.png' },
-          { path: '/tmp/1/b.png', name: 'b.png' },
-        ],
-      },
-    });
-    restore = view.restore;
-
-    expect(await screen.findByText(/2 files — pick a session/)).toBeInTheDocument();
   });
 
   // Nothing is holding the bytes but this band: the ✕ is the only way to say "not

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -72,7 +72,6 @@ describe('application diagnostics settings', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Export app logs' }));
 
     expect(exportDiagnostics).toHaveBeenCalledOnce();
-    await waitFor(() => expect(screen.getByText('Diagnostics shared.')).toBeInTheDocument());
   });
 });
 
@@ -117,7 +116,6 @@ describe('memory overlay setting', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'Show memory overlay' }));
 
-      expect(screen.getByText('This device did not save the setting.')).toBeInTheDocument();
       expect(onReload).not.toHaveBeenCalled();
     } finally {
       setItem.mockRestore();

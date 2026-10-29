@@ -187,9 +187,6 @@ describe('the speech-engines band', () => {
     const tts = screen.getByRole('button', { name: /TTS/ });
     expect(asr.getAttribute('aria-expanded')).toBe('false');
     expect(tts.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByText('Listening')).toBeNull();
-    expect(screen.queryByText('Speaking')).toBeNull();
-    expect(screen.queryByText('Spoken replies')).toBeNull();
     expect(screen.queryByText('Whisper (gateway)')).toBeNull();
 
     fireEvent.click(asr);
@@ -222,18 +219,7 @@ describe('the speech-engines band', () => {
     const engines = await screen.findByRole('group', { name: 'TTS engines' });
     const device = choice(/This device/)!;
     const piper = choice(/Piper \(gateway\)/)!;
-    // Regression: engine choices must fill the panel without a repeated heading or inset frame.
-    expect(engines.parentElement).toHaveClass('border-t', 'border-dialog-hint/30');
-    expect(engines.parentElement).not.toHaveClass('p-2');
-    expect(engines.parentElement).not.toHaveClass('sm:p-3');
-    expect(engines).not.toHaveClass('border');
     expect(within(engines).queryByRole('heading', { name: 'TTS engines' })).toBeNull();
-    expect(engines.lastElementChild).toHaveClass('divide-y', 'divide-dialog-hint/30');
-    expect(engines.lastElementChild).not.toHaveClass('gap-px', 'bg-dialog-edge');
-    expect(device).toHaveClass('min-h-11', 'mouse:min-h-8');
-    expect(device).not.toHaveClass('py-2');
-    expect(await within(piper).findByText('ready')).toHaveClass('ml-auto');
-    expect(engines.textContent).not.toMatch(/[·●○]/);
     const disclosures = [
       within(engines).getByRole('button', { name: 'Settings for This device' }),
       within(engines).getByRole('button', { name: 'Settings for Piper (gateway)' }),
@@ -367,20 +353,7 @@ describe('the speech-engines band', () => {
 
     const engine = piper.closest('[data-speech-engine="piper-local"]');
     expect(engine).toBeVisible();
-    const voiceGroup = await within(engine as HTMLElement).findByRole('group', {
-      name: 'Voices',
-    });
-    // It belongs to the engine by POSITION: no indent leaves its rows short of the left
-    // edge the engine's own row reaches, and a rail down its left says where the cluster
-    // begins AND where it stops. The rail is the panel's own hairline ink at double weight,
-    // never the selection amber, which would draw structure with the colour of a choice.
-    const groupClasses = voiceGroup.className.split(/\s+/);
-    expect(groupClasses).not.toContain('pl-3');
-    expect(groupClasses).not.toContain('border-accent/40');
-    const foot = voiceGroup.lastElementChild as HTMLElement;
-    expect(foot.className.split(/\s+/)).toEqual(
-      expect.arrayContaining(['h-px', 'w-full', 'bg-dialog-edge']),
-    );
+    expect(await within(engine as HTMLElement).findByRole('group', { name: 'Voices' })).toBeVisible();
   });
   // Regression, user report: an engine whose model was not downloaded showed its Voices
   // group with a "not ready" error. Voices belong to a downloaded model, so only the

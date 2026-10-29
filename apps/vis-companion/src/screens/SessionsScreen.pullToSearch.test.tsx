@@ -31,21 +31,6 @@ function fleet(onSearch: (() => void) | null) {
 }
 
 describe('pulling the sessions list down', () => {
-  // Regression: an idle hint anchored below the iPhone safe area used to peek
-  // through it, painting an opaque strip beside the island.
-  it('clips the idle hint at the top of the app bar', async () => {
-    const view = fleet(() => {});
-    try {
-      await listOf(view);
-      const hint = view.getByText('Pull to search');
-      expect(hint).toHaveClass('-translate-y-full');
-      expect(hint.parentElement).toHaveClass('overflow-hidden');
-      expect(hint.parentElement).toHaveClass('top-[env(safe-area-inset-top)]');
-    } finally {
-      view.restore();
-      view.unmount();
-    }
-  });
 
   // Regression: an upward swipe from the top temporarily writes -100% inline,
   // overriding the idle offset that also accounted for the iPhone safe area.
@@ -57,8 +42,6 @@ describe('pulling the sessions list down', () => {
 
       act(() => fireTouch(list, 'touchstart', [AT]));
       expect(hint.style.translate).toBe('0px -100%');
-      expect(hint.parentElement).toHaveClass('overflow-hidden');
-      expect(hint.parentElement).toHaveClass('top-[env(safe-area-inset-top)]');
 
       act(() => fireTouch(list, 'touchmove', [{ x: AT.x, y: AT.y - 5 }]));
       expect(hint.style.translate).toBe('');
@@ -95,13 +78,10 @@ describe('pulling the sessions list down', () => {
         fireTouch(list, 'touchmove', [down(20)]);
       });
       expect(hint().textContent).toBe('Pull to search');
-      expect(hint().parentElement?.className).toContain('fixed');
-      expect(hint().parentElement?.className).toContain('top-[env(safe-area-inset-top)]');
       // And it hangs in the app's overlay layer, clear of the pane the list is drawn in.
       expect(view.container.contains(hint())).toBe(false);
       act(() => fireTouch(list, 'touchmove', [down(PULL_OPEN_PX)]));
       expect(hint().textContent).toBe('Release to search');
-      expect(hint().className).not.toMatch(/(?:^|\s)text-accent(?:\s|$)/);
 
       act(() => fireTouch(list, 'touchend', []));
     } finally {

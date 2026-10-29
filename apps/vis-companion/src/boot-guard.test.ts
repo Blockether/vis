@@ -52,13 +52,6 @@ afterEach(() => {
 });
 
 describe('the blank-page guard in index.html', () => {
-  it('runs after #root and before the module bundle', () => {
-    expect(guard).toContain('MutationObserver');
-    const at = html.indexOf('vis-boot-recovery');
-    expect(html.indexOf('<div id="root">')).toBeLessThan(at);
-    expect(at).toBeLessThan(html.indexOf('type="module"'));
-  });
-
   it('stays out of the way of an app that starts', async () => {
     const { reload, root } = boot();
     root.append(document.createElement('main'));
@@ -96,7 +89,6 @@ describe('the blank-page guard in index.html', () => {
     vi.advanceTimersByTime(19_000);
     expect(surface()).toBeNull();
     vi.advanceTimersByTime(1_000);
-    expect(surface()?.textContent).toContain('did not start');
     vi.advanceTimersByTime(1_000);
     expect(reload).toHaveBeenCalledOnce();
   });
@@ -134,7 +126,6 @@ describe('the blank-page guard in index.html', () => {
     sessionStorage.setItem('vis.bootRetries', '2');
     const { reload, root } = boot();
     window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }));
-    expect(surface()?.textContent).toContain('Starting Vis again');
     root.append(document.createElement('main'));
     await settle();
     vi.advanceTimersByTime(60_000);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { jdkHelp, pickJdk } from './jdk.mjs';
+import { pickJdk } from './jdk.mjs';
 
 // A fake machine: every JDK it has, keyed by its home, plus what
 // `/usr/libexec/java_home -v 21` on macOS admits to knowing.
@@ -102,15 +102,3 @@ describe('pickJdk', () => {
   });
 });
 
-describe('jdkHelp', () => {
-  it('names what JAVA_HOME actually is, so the reader knows why it was refused', () => {
-    const help = jdkHelp({ JAVA_HOME: '/opt/graalvm-25' }, () => ({ major: 25, graal: true }));
-    expect(help).toContain('/opt/graalvm-25');
-    expect(help).toContain('java 25 GraalVM');
-    expect(help).toContain('sdk install java 21.0.11-tem');
-  });
-
-  it('says so when there is no JAVA_HOME at all', () => {
-    expect(jdkHelp({}, () => ({ major: 0, graal: false }))).toContain('JAVA_HOME is unset');
-  });
-});

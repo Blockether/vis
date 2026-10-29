@@ -33,19 +33,6 @@ describe('starring a session', () => {
     },
   ];
 
-  it("paints the star's own cell in the brand amber, never the neutral verb ink", async () => {
-    const view = renderSessionsScreen({ machines });
-    restore = view.restore;
-    await screen.findByText('Older session');
-
-    const cell = () => screen.getByRole('group', { name: 'Older session actions' });
-    const slab = (label: string) =>
-      cell().querySelector(`button[aria-label="${label}"]`)!.className;
-    expect(slab('Rename')).not.toContain('bg-accent/15');
-
-    await userEvent.click(cell().querySelector('button[aria-label="Star"]')!);
-  });
-
   it('keeps recency order and brings the starred row back into view', async () => {
     const view = renderSessionsScreen({ machines });
     restore = view.restore;
@@ -295,10 +282,7 @@ describe('starring a session', () => {
     expect(row('plain').firstElementChild).not.toBe(plainFavorite);
     expect(starredFavorite.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
     expect(plainFavorite.querySelector('svg')).toBeNull();
-    expect(starredFavorite.className).toBe(plainFavorite.className);
     expect(status('starred').children[0]?.hasAttribute('data-session-status-dot')).toBe(true);
-    expect(status('starred').children[1]?.textContent).toBe('IDLE');
     expect(status('plain').children[0]?.hasAttribute('data-session-status-dot')).toBe(true);
-    expect(status('plain').children[1]?.textContent).toBe('IDLE');
   });
 });

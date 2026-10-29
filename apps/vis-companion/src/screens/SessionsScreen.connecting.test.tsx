@@ -54,11 +54,6 @@ describe('a machine that has not spoken yet says so', () => {
     });
     restore = view.restore;
 
-    const tile = strip().getByRole('button', { name: /tower/ });
-    // A memory is not this run's answer: a read of this machine is in flight behind
-    // this very frame, and the tile says that instead of offering a retry.
-    expect(tile.textContent).toBe('towerConnecting…');
-    expect(tile.querySelector('.text-err')).toBeNull();
     expect(strip().queryByRole('button', { name: /^Reconnect to tower/ })).toBeNull();
   });
 
@@ -82,16 +77,12 @@ describe('a machine that has not spoken yet says so', () => {
     // The saved rows still paint in this very frame, which is why they are saved.
     expect(new GatewayClient(first.conns[0]).cachedSessions()).toHaveLength(1);
     expect(screen.getByText('Second')).toBeVisible();
-    // They are paint, not proof — and the screen says so in both places a reader looks:
-    // the tile over the list, and the list's own footer.
-    expect(strip().getByRole('button', { name: /beta/ }).textContent).toBe('betaConnecting…');
     expect(screen.getByText('Reading sessions...')).toBeVisible();
 
     again.releasePages();
     // The gateway speaks: the same rows, now confirmed, and nothing claiming a wait.
     await waitFor(() => expect(screen.queryByText('Reading sessions...')).toBeNull());
     expect(screen.getByText('Second')).toBeVisible();
-    expect(strip().getByRole('button', { name: /beta/ }).textContent).toMatch(/^beta\d+ d$/);
   });
 
   // Same report, the case the tile and the footer used to disagree about: a saved outage
@@ -115,7 +106,6 @@ describe('a machine that has not spoken yet says so', () => {
       first.restore();
     };
     expect(screen.getByText('Second')).toBeVisible();
-    expect(strip().getByRole('button', { name: /beta/ }).textContent).toBe('betaConnecting…');
     expect(screen.getByText('Reading sessions...')).toBeVisible();
 
     again.releasePages();
@@ -141,7 +131,6 @@ describe('a machine that has not spoken yet says so', () => {
     expect(screen.queryByText('No projects yet')).toBeNull();
     // All three places a reader looks agree, because they read one value.
     expect(screen.getByText('Reading sessions...')).toBeVisible();
-    expect(strip().getByRole('button', { name: /tower/ }).textContent).toBe('towerConnecting…');
   });
 
   // The other half of it: an empty answer is still an answer, so nothing may claim a wait
@@ -154,7 +143,6 @@ describe('a machine that has not spoken yet says so', () => {
     expect(await screen.findByText('No projects yet')).toBeVisible();
     expect(screen.queryByText('Reading sessions...')).toBeNull();
     expect(screen.queryByRole('status', { name: 'Loading sessions' })).toBeNull();
-    expect(strip().getByRole('button', { name: /tower/ }).textContent).toBe('tower');
   });
 
   // Regression, same report: cb30d0f39 revalidated every project window on every

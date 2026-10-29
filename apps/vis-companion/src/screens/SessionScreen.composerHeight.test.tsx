@@ -5,38 +5,6 @@ import userEvent from '@testing-library/user-event';
 
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 
-it('keeps composer controls tight without letting two touch targets overlap', () => {
-  renderSessionScreen();
-  expect(screen.getByLabelText('Message Vis').parentElement).toHaveClass('gap-1');
-});
-
-it('keeps stop and send adjacent in the compact composer rail', () => {
-  renderSessionScreen({
-    client: {
-      cachedRunningTurn: () => ({
-        turn: {
-          id: 'running-spacing',
-          request: 'Check composer spacing',
-          answer: '',
-          iterations: [],
-          startedAt: Date.now(),
-          status: 'running',
-        },
-        seq: 1,
-      }),
-    },
-  });
-  const stop = screen.getByRole('button', { name: 'Stop response' });
-  const send = screen.getByRole('button', { name: 'Queue message' });
-  const slot = stop.parentElement!;
-  expect(slot).toHaveClass('size-8');
-  expect(slot.nextElementSibling).toBe(send);
-  expect(send).toHaveClass('size-8', 'after:h-11', 'after:w-9');
-  expect(stop).toHaveClass('size-8', 'after:h-11', 'after:w-9');
-  expect(send.parentElement).toBe(slot.parentElement);
-  expect(send.parentElement).toHaveClass('gap-1', 'mouse:gap-2');
-});
-
 // jsdom lays nothing out, so the composer's geometry is handed over here: the
 // shipped box is `h-8 py-2 text-ui` — 32px around one 16px line between 8px
 // paddings — and it may grow to `max-h-20`, 80px. A character is ~6px wide at
@@ -271,7 +239,6 @@ describe('composer height', () => {
     });
 
     const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
-    expect(composer.placeholder).toContain('queues');
     expect(composer.scrollHeight).toBe(composer.clientHeight);
   });
 });

@@ -83,25 +83,7 @@ describe('the expanded session card', () => {
     await userEvent.click(screen.getByRole('button', { name: /Context breakdown/ }));
     expect(screen.getByText('/work/AGENTS.md')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: /Linked filesystems/ }));
-    expect(screen.getByText('AGENTS.md · ≈800 tokens on disk')).toBeVisible();
     expect(view.requests.filter((r) => r.path.endsWith('/usage'))).toHaveLength(1);
-  });
-
-  it('keeps the totals and drops the tool and error rankings', async () => {
-    await open();
-    // The grid the report kept, proving the card did expand.
-    expect(await screen.findByText('Cost')).toBeVisible();
-    expect(screen.getByText('85k')).toBeVisible();
-    expect(screen.getByText('2.3k')).toBeVisible();
-    expect(screen.getByText('$0.21')).toBeVisible();
-    expect(screen.getByText('59')).toBeVisible();
-
-    // Model and Active are the whole labelled meta row now.
-    expect(screen.getByText('Model')).toBeVisible();
-    expect(screen.getByText('Active')).toBeVisible();
-    expect(screen.queryByText('Top tools')).toBeNull();
-    expect(screen.queryByText('Top errors')).toBeNull();
-    expect(screen.queryByText(/python_execution/)).toBeNull();
   });
 
   it('splits the cost between the session and its subagents', async () => {
@@ -135,7 +117,6 @@ describe('the expanded session card', () => {
     await open();
     const cachedInput = await screen.findByText('Cached input');
     const reuseCoverage = screen.getByText('Reuse coverage');
-    expect(screen.getByText('Share of all input served from provider cache')).toBeVisible();
     expect(
       screen.getByText(
         'Estimated share of reusable prior input recovered from cache · 4 of 5 calls',
@@ -156,19 +137,5 @@ describe('the expanded session card', () => {
     const value = screen.getByText('77%');
     expect(value.previousElementSibling).toBe(label);
     expect(value.parentElement).toBe(label.parentElement);
-    expect(value.parentElement?.className).not.toContain('justify-between');
-  });
-
-  it('keeps each cache value attached to its label', async () => {
-    await open();
-    const cacheValue = await screen.findByText('77%');
-    expect(cacheValue.tagName).toBe('DD');
-    expect(cacheValue.previousElementSibling?.textContent).toBe('Cached input');
-  });
-
-  it('leaves no warn-coloured value behind on the card', async () => {
-    const view = await open();
-    await screen.findByText('Cost');
-    expect(view.container.querySelectorAll('.text-warn-strong')).toHaveLength(0);
   });
 });

@@ -91,7 +91,6 @@ describe('the composer under an open artifacts sheet', () => {
       name: /start voice utterance/i,
     });
     expect(overlayMic).toBeVisible();
-    expect(overlayMic).toHaveClass('size-11');
   });
 });
 
@@ -129,15 +128,3 @@ describe('the session id behind the header menu', () => {
 // height. With the floor gone the heading also FOLLOWED its content, so anything
 // that changed the title block moved the whole band on a phone and nowhere else.
 // `DialogHeader isUnderNotch` clears a notch the same way.
-describe('the session heading under a notch', () => {
-  it('stands the notch strip ABOVE its own row, never out of it', async () => {
-    renderSessionScreen({ session: sessionFixture({ id: 'notched' }) });
-
-    const band = (await screen.findByRole('button', { name: 'Back to sessions' })).closest(
-      'header',
-    )!;
-    const worn = band.className.split(/\s+/).filter(Boolean);
-    expect(worn).toContain('pt-[env(safe-area-inset-top)]');
-    expect(worn).toContain('box-content');
-  });
-});

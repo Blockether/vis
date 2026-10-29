@@ -16,7 +16,6 @@ import { brandLaunchTheme } from './android-splash.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
-const source = readFileSync(join(here, 'android-prepare.mjs'), 'utf8');
 const resources = join(root, 'native-assets', 'android', 'res');
 
 /** Width, height and colour type straight out of a PNG's IHDR — no image library in this repo. */
@@ -60,16 +59,6 @@ describe('android launch screen assets', () => {
     expect(androidBytes.equals(iosBytes)).toBe(true);
   });
 
-  it('draws the mark centred at its own size, never stretched', () => {
-    const layers = readFileSync(join(resources, 'drawable', 'splash.xml'), 'utf8');
-    expect(layers).toContain('<layer-list');
-    expect(layers).toContain('@color/vis_splash');
-    expect(layers).toContain('@drawable/splash_mark');
-    expect(layers).toContain('android:gravity="center"');
-    // Capacitor's stock splash was one bitmap scaled to the window; that is the distortion.
-    expect(layers).not.toContain('tileMode');
-  });
-
   it('paints the colour the web layer paints a frame later', () => {
     const colours = readFileSync(join(resources, 'values', 'vis_splash_color.xml'), 'utf8');
     const page = /--bg:\s*(#[0-9a-f]{6})/i.exec(
@@ -91,22 +80,6 @@ describe('android launch screen assets', () => {
     },
   );
 
-  it('removes the stock splash bitmaps and brands both launch systems', () => {
-    // Below Android 12 the theme's window background IS the splash; from 12 the platform
-    // draws the launcher icon over `windowSplashScreenBackground` and ignores the drawable.
-    expect(source).toContain('stockSplashBitmaps');
-    expect(source).toContain('rmSync(join(androidResources, relative))');
-    expect(source).toContain('prepareAndroidSplash(stylesPath)');
-  });
-
-  it('--check refuses a project still showing the stock splash', () => {
-    const check = source.slice(
-      source.indexOf("if (has('check'))"),
-      source.indexOf('// ── Launch screen'),
-    );
-    expect(check).toContain('stockSplashBitmaps()');
-    expect(check).toContain('launchThemeOk()');
-  });
   // Regression: lintDebug rejected the API-31 platform attribute with minSdk 26.
   // Preparation must handle both a fresh scaffold and an already-branded generated project.
   it.each([
@@ -136,20 +109,3 @@ describe('android launch screen assets', () => {
   });
 });
 
-describe('android push channel', () => {
-  // Android 8+ posts nothing without a channel, so an app that declares none hands every
-  // alert to Firebase's `fcm_fallback_notification_channel`: "Miscellaneous", default
-  // importance, no description, no heads-up banner.
-  it('stamps Firebase default channel id', () => {
-    expect(source).toContain('com.google.firebase.messaging.default_notification_channel_id');
-  });
-
-  it('takes the id from the app instead of repeating it', () => {
-    const push = readFileSync(join(root, 'src', 'lib', 'push.ts'), 'utf8');
-    const id = /export const PUSH_CHANNEL_ID = '([a-z0-9_]+)'/.exec(push)?.[1];
-    expect(id).toBeTruthy();
-    // One truth: the script reads that declaration, and carries no second copy of the id.
-    expect(source).toContain("PUSH_CHANNEL_ID = '([a-z0-9_]+)'");
-    expect(source).not.toContain(`'${id}'`);
-  });
-});

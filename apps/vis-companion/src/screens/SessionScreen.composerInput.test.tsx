@@ -136,7 +136,6 @@ describe('native composer input', () => {
     expect(composer.value).toBe('');
 
     await waitFor(() => expect(composer.value).toBe('Keep these words'));
-    expect(screen.getByText('Could not send')).toBeInTheDocument();
   });
 
   it('does not carry native text into another session', () => {

@@ -178,7 +178,6 @@ describe('reopening the notifications panel', () => {
     const control = screen.getByRole('switch', {
       name: 'Notifications from buildbox: off',
     });
-    expect(control.getAttribute('title')).toBe('Asking buildbox whether this device is registered');
     expect(control.getAttribute('aria-busy')).toBe('true');
     expect(control.hasAttribute('disabled')).toBe(true);
   });

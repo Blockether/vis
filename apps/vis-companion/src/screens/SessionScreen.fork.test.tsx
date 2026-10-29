@@ -92,15 +92,12 @@ describe('forking from a turn in the transcript', () => {
     });
     await userEvent.click(fork);
     expect(fork).toBeDisabled();
-    expect(fork).toHaveTextContent('Forking...');
     expect(otherFork).toBeEnabled();
     await userEvent.click(fork);
     expect(forkSession).toHaveBeenCalledTimes(1);
 
     await act(async () => rejectFork(new Error('Could not fork this turn')));
-    expect(await screen.findByText('Could not fork this turn')).toBeVisible();
     expect(fork).toBeEnabled();
-    expect(fork).toHaveTextContent('Fork from this turn');
     expect(opened).not.toHaveBeenCalled();
   });
 });

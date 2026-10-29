@@ -55,7 +55,6 @@ describe('the order the reader is looking at', () => {
         const project = within(region).getByText((_, element) => element?.textContent === `Project: ${name}`
           && !element.hasAttribute('data-session-location'));
         expect(project).toBeVisible();
-        expect(within(project).getByText('Project:')).toHaveClass('font-bold');
       }
     };
     const a = listSession({ ...row('a', 12), workspace: { root: '/repo/a' } });

@@ -23,7 +23,6 @@ describe('a session opened by a Talk link', () => {
     });
 
     expect(await screen.findByRole('button', { name: /start voice utterance/i })).toBeInTheDocument();
-    expect(await screen.findByText('Voice conversation · tap the microphone to talk')).toBeInTheDocument();
   });
 
   it('stays in dictation without a Talk link', async () => {

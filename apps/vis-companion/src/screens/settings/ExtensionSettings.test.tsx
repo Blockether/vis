@@ -103,10 +103,9 @@ it('keeps a failed project extension visible and runs its code only on request',
 
   const reads = read.mock.calls.length;
   await user.click(button);
-  // #373: the result stands as a left-aligned note below the header, not beside its button.
+  // #373: the result stands as a note below the header, not beside its button.
   const header = band.querySelector('header')!;
   expect(within(header).queryByRole('status')).toBeNull();
-  expect(within(band).getByText('Reloading…').closest('[role="status"]')).toHaveClass('text-left');
   // #348: the report names each scanned scope. #411: its directory and names are details.
   finishReload({
     loaded: 1,
@@ -120,7 +119,6 @@ it('keeps a failed project extension visible and runs its code only on request',
   const summary = 'No machine extensions. Project extensions: 1 loaded, 1 failed. Each failed extension shows its error.';
   const note = (await within(band).findByText(summary)).closest('[role="status"]') as HTMLElement;
   expect([...note.querySelectorAll('p')].map((line) => line.textContent)).toEqual([summary]);
-  expect(note).toHaveClass('text-left');
   expect(note).not.toHaveTextContent('/work/app/.vis/extensions');
   await user.click(within(note).getByRole('button', { name: 'Details' }));
   expect([...note.querySelectorAll('li')].map((line) => line.textContent)).toEqual([

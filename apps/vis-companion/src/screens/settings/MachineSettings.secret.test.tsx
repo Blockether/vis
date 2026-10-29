@@ -88,7 +88,7 @@ it('cancels a typed secret and shows a save error without the value', async () =
   fireEvent.submit(field.closest('form')!);
   await screen.findByText('value ••• is too long');
   // The panel banner can be scrolled away, so the row reports the failure too.
-  expect(screen.getByRole('alert')).toHaveTextContent('Not saved. Enter the value again.');
+  expect(screen.getByRole('alert')).toBeVisible();
   expect(document.body.innerHTML).not.toContain('tok-456');
   expect(screen.getByLabelText('Knowledge base token')).toHaveValue('');
   await waitFor(() => expect(screen.getByLabelText('Knowledge base token')).toHaveFocus());

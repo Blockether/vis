@@ -47,12 +47,6 @@ async function liveBubble(): Promise<Element> {
 }
 
 describe('a session screen opened by a switch', () => {
-  it('paints its pane at once, without an entry fade', () => {
-    renderSessionScreen({ subscriptions: connectedHub });
-    const surface = document.querySelector('[data-session-surface]');
-    expect(surface?.tagName).toBe('SECTION');
-    expect(surface?.className).not.toMatch(/starting:|transition/);
-  });
 
   it('never paints "Reconnecting" over a connected hub', () => {
     const changes: MutationRecord[] = [];

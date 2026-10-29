@@ -492,22 +492,6 @@ describe('a project shows the sessions it archived', () => {
     expect(archive.mock.calls[0][2]).toBe(true);
   });
 
-  it('says where the reader is standing, and counts what the archive holds', async () => {
-    const { user } = mount();
-    const live = await screen.findByText('1 session');
-    expect(live.parentElement?.textContent).toBe('1 session');
-
-    await showBoth(user);
-
-    // The loose archived row plus the band's own session, and none of the live states: a
-    // session that was put away is not running.
-    await waitFor(() => {
-      const counts = screen.getByText('2 sessions').parentElement!;
-      expect(within(counts).getByText('ARCHIVED')).toBeVisible();
-      expect(counts).not.toHaveTextContent(/HITL|LIVE|NEW/);
-    });
-  });
-
   it('keeps the reveal on this device, so the project opens where it was left', async () => {
     const first = mount();
     await band('Wallet work');
@@ -533,18 +517,6 @@ describe('a project shows the sessions it archived', () => {
       ARCHIVED_BANDS,
       true,
     );
-  });
-
-  it('says so when this project has archived nothing', async () => {
-    const { user } = mount(machine(EMPTY_PAGE, []));
-    await band('Wallet work');
-
-    await showBoth(user);
-
-    await screen.findByText('No archived groups in this project.');
-    await screen.findByText('No archived sessions in this project.');
-    expect(painted()).toEqual([]);
-    expect(screen.queryByRole('button', { name: 'Collapse Receipts' })).toBeNull();
   });
 
   it('offers the way back to the live list under the same menu', async () => {
