@@ -114,6 +114,7 @@
                          :text
                          :prewrapped-lines
                          :line-meta
+                         :answer-line
                          :turn-separator?
                          :agent-team-card))]
           (when (> (long (.size ^IdentityHashMap message-fp-memo)) 4096)
@@ -922,21 +923,22 @@
                                                                        (long window-start))))})
                            strip-ts))
            (and (= :assistant (:role message)) trace)
-           (let [{:keys [text lines line-meta]} (render/format-answer-with-thinking-data
-                                                  (:text message)
-                                                  trace
-                                                  bubble-w
-                                                  settings
-                                                  (:confidence message)
-                                                  cancelled?
-                                                  {:session-id session-id
-                                                   :session-turn-id (turn-identity message)
-                                                   :detail-expansions detail-expansions
-                                                   :runs (:runs message)})]
+           (let [{:keys [text lines line-meta answer-at]}
+                 (render/format-answer-with-thinking-data (:text message)
+                                                          trace
+                                                          bubble-w
+                                                          settings
+                                                          (:confidence message)
+                                                          cancelled?
+                                                          {:session-id session-id
+                                                           :session-turn-id (turn-identity message)
+                                                           :detail-expansions detail-expansions
+                                                           :runs (:runs message)})]
              (-> message
                  (assoc :text text
                         :prewrapped-lines lines
-                        :line-meta line-meta)
+                        :line-meta line-meta
+                        :answer-line answer-at)
                  strip-ts))
            (#{:assistant :user} (:role message)) (let [ast
                                                        (ast/markdown->ast (or (:text message) ""))
@@ -954,7 +956,9 @@
                                                    (-> message
                                                        (assoc :text text
                                                               :prewrapped-lines lines
-                                                              :line-meta line-meta)
+                                                              :line-meta line-meta
+                                                              ;; The whole bubble is its answer.
+                                                              :answer-line 0)
                                                        strip-ts))
            :else (strip-ts message)))))
 
@@ -980,7 +984,7 @@
                                             {:session-id session-id
                                              :detail-expansions detail-expansions}))]
 
-    ;; The turn that started a team ends with its team card.
+    ;; The turn that started a team shows its team card before its answer.
     (if team-card
       (render/with-cache projection-cache
                          projection-cache-gen

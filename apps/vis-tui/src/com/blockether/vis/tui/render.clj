@@ -10671,9 +10671,14 @@
         ;; margin / answer-pad / cancel block) can still stack
         ;; blanks. Same exempt rule for THINKING pad rows.
         entries
-        (vec (coalesce-bubble-blanks entries))]
+        (vec (coalesce-bubble-blanks entries))
 
-    (entries->payload entries)))
+        ;; The coalesce pass only drops rows and keeps their order, so the coalesced trace
+        ;; is a prefix of the bubble: its length is the first line of the answer.
+        answer-at
+        (if has-trace? (count (coalesce-bubble-blanks trace-entries)) 0)]
+
+    (assoc (entries->payload entries) :answer-at (min (long answer-at) (count entries)))))
 
 (defn format-answer-with-thinking*
   [answer trace bubble-w settings confidence cancelled?]

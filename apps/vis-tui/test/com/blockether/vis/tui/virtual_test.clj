@@ -1247,7 +1247,53 @@
             (expect (= (- h-b h-a)
                        (- (agent-team/card-height card-b bubble-w)
                           (agent-team/card-height card-a bubble-w))))
-            (expect (= h-b (first (:heights off-screen)))))))))
+            (expect (= h-b (first (:heights off-screen))))))))
+  ;; Regression: the team block of an ended turn stood under its final answer. It now
+  ;; stands after the trace and before the answer, with or without a trace.
+  (it "puts the team block of a turn before its final answer"
+      (render/invalidate-cache!)
+      (let [card
+            (agent-team/card "turn-1"
+                             [{"team_id" "turn-1"
+                               "session_id" "c1"
+                               "status" "completed"
+                               "outcome" "passed"
+                               "role" "implement"
+                               "title" "Fix parser"
+                               "created_at" 1000
+                               "finished_at" 5000}])
+
+            project
+            (fn [message]
+              (:prewrapped-lines (#'virtual/project-message-cached
+                                  (assoc message
+                                    :session-turn-id "turn-1"
+                                    :agent-team-card card)
+                                  bubble-w
+                                  settings
+                                  {}
+                                  "cid")))
+
+            index-of
+            (fn [lines text]
+              (first (keep-indexed (fn [i line]
+                                     (when (str/includes? (str line) text) i))
+                                   lines)))]
+
+        (doseq [message [(trace-assistant-msg 2 1 "Final answer here")
+                         (plain-assistant-msg "Final answer here")]]
+          (let [lines (project message)
+                bare (:prewrapped-lines
+                       (project-message message bubble-w settings {:session-id "cid"}))
+                card-at (index-of lines "Fix parser")
+                answer-at (index-of lines "Final answer here")]
+
+            (expect (some? card-at))
+            (expect (< (long card-at) (long answer-at)))
+            (expect (= (- (count lines) (count bare)) (agent-team/card-height card bubble-w))
+                    "The card adds exactly the rows that layout reserves for it")
+            (when (:traces message)
+              (expect (< (long (index-of lines "EXECUTION")) (long card-at)))))))))
 
 (defdescribe
   long-transcript-scroll-test

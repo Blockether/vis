@@ -1,9 +1,9 @@
 (ns com.blockether.vis.tui.agent-team
   "Managed team inspection through the same gateway as the conversation.
 
-   The cached team snapshot also feeds two surfaces: the team card under the turn that
-   started a team and the breadcrumb of a child session. None of them fetches during
-   painting."
+   The cached team snapshot also feeds two surfaces: the team card in the turn that
+   started a team, before its answer, and the breadcrumb of a child session. None of them
+   fetches during painting."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
@@ -641,20 +641,40 @@
     (+ 3 (count (table-lines rows)))
     0))
 
+(defn- gap-line?
+  "True for a terminal-bg blank row: empty, or the iteration pad marker (U+206C) alone."
+  [line]
+  (let [line (str line)]
+    (or (= "" line) (and (str/starts-with? line "\u206C") (str/blank? (subs line 1))))))
+
 (defn with-card-lines
-  "Append the team block of `projected` (an assistant message with `:agent-team-card`) to its
-   painted lines at bubble width `bubble-w`. A windowed slice keeps its lines."
+  "Put the team block of `projected` (an assistant message with `:agent-team-card`) into its
+   painted lines at bubble width `bubble-w`: before the answer at `:answer-line`, else at the
+   end. One blank row parts the block from the side that has no gap yet. A windowed slice
+   keeps its lines."
   [projected bubble-w]
   (if-let [team-card (and (not (:lines-window projected))
                           (:prewrapped-lines projected)
                           (:agent-team-card projected))]
     (let [lines (vec (:prewrapped-lines projected))
-          line-meta (or (:line-meta projected) (vec (repeat (count lines) nil)))
-          entries (card-entries team-card (card-width bubble-w))]
+          line-meta (vec (or (:line-meta projected) (repeat (count lines) nil)))
+          at (min (long (or (:answer-line projected) (count lines))) (count lines))
+          entries (card-entries team-card (card-width bubble-w))
+          ;; The block always adds one blank row, so `card-height` stays exact.
+          gap-after? (and (< at (count lines))
+                          (not (gap-line? (nth lines at)))
+                          (or (zero? at) (gap-line? (nth lines (dec at)))))
+          block (if gap-after?
+                  (conj (vec entries) {:line "" :meta nil})
+                  (into [{:line "" :meta nil}] entries))]
 
       (assoc projected
-        :prewrapped-lines (into (conj lines "") (map :line) entries)
-        :line-meta (into (conj (vec line-meta) nil) (map :meta) entries)))
+        :prewrapped-lines (-> (subvec lines 0 at)
+                              (into (map :line) block)
+                              (into (subvec lines at)))
+        :line-meta (-> (subvec line-meta 0 at)
+                       (into (map :meta) block)
+                       (into (subvec line-meta at)))))
     projected))
 
 (defn dock-team-ids
