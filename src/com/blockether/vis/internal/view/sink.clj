@@ -158,6 +158,74 @@
     (.write writer "\n"))
   file)
 
+;; --- Compaction of an app record ---
+
+(def compact-floor-bytes
+  "The smallest app record that is compacted. A record below it keeps every line."
+  262144)
+
+(declare log-range)
+
+(defn- full-logs
+  "`nodes` with each log node carrying every line of its record in `file`, not only
+   its live window."
+  [^File file nodes]
+  (mapv (fn [node]
+          (let [log?
+                (= "log"
+                   (some-> (:type node)
+                           name))
+
+                full
+                (when log? (log-range file (:id node) 0 Long/MAX_VALUE))]
+
+            (cond-> node
+              log?
+              (-> (assoc :lines (:lines full)
+                         :total-lines (count (:lines full)))
+                  (cond->
+                    (:line-tones full)
+                    (assoc :line-tones (:line-tones full))
+
+                    (nil? (:line-tones full))
+                    (dissoc :line-tones)))
+
+              (seq (:children node))
+              (update :children #(full-logs file %)))))
+        (or nodes [])))
+
+(defn compact!
+  "Replace the record of an open app in `file` with one open line, and answer the
+   new size in bytes.
+
+   An app records its picture, not its data: a game patches on every tick, and
+   only the current picture is worth a restart. The open line holds `view`, the
+   current picture, with every line of each log, so a log page reads the same
+   lines. `node-seqs` maps each node id to the seq of its last write; it is kept
+   as pairs, so a node id is never read as a key. The new file replaces the old
+   one atomically, so a crash keeps one of them whole, and a second call keeps the
+   same picture and lines. Call it under the lock of the view."
+  [^File file view node-seqs]
+  (let [line
+        {:kind :open
+         :at (util/now-ms)
+         :is-compacted true
+         :view (update view :nodes #(full-logs file %))
+         :node-seqs (mapv (fn [[node-id node-seq]]
+                            [node-id node-seq])
+                          node-seqs)}
+
+        tmp
+        (io/file (.getParentFile file) (str "." (.getName file) ".compact"))]
+
+    (spit tmp (str (wire/json-str (materializer/redact-presentation line)) "\n"))
+    (Files/move (.toPath tmp)
+                (.toPath file)
+                (into-array java.nio.file.CopyOption
+                            [java.nio.file.StandardCopyOption/REPLACE_EXISTING
+                             java.nio.file.StandardCopyOption/ATOMIC_MOVE]))
+    (.length file)))
+
 (defn fold-lines
   "Fold `f` over each line of the record in `file`, decoded like [[read-range]].
    One streamed pass; answers `init` for a record that nothing wrote. A line that

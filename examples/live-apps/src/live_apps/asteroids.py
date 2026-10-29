@@ -192,6 +192,16 @@ def initial():
     return new_game(status="ready")
 
 
+def save(state):
+    """The data that outlives the owner: the best score. A game in flight is a
+    picture, so a restart starts a new game."""
+    return {"best": state["best"]}
+
+
+def load(saved):
+    return new_game(best=int(saved.get("best") or 0), status="ready")
+
+
 def _burst(state, at, count):
     for _ in range(count):
         vx, vy = _velocity(_uniform(state, 0, 2 * math.pi), _uniform(state, 0.2, 0.7))

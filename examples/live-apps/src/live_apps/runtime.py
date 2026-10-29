@@ -481,6 +481,11 @@ class Runner:
     session. `store` keeps the model state under the app key, so an owner that
     starts again adopts the app with its state. `on_effect(runner, effect)`
     runs each effect that the model asks for.
+
+    The store keeps data, not the picture. A model with `save(state)` stores only
+    what that answers, and `load(saved)` makes a state from it again. The runner
+    writes the store only when the saved data changes, so a tick that only moves
+    objects writes nothing.
     """
 
     def __init__(
@@ -500,6 +505,7 @@ class Runner:
         self._lock = threading.RLock()
         self.view = None
         self.state = None
+        self._saved = None
         self._rendered: list = []
         self._shortcuts: list = []
         self.errors: list[str] = []
@@ -535,8 +541,11 @@ class Runner:
         """Open the app, or adopt the open app with the same key."""
         with self._lock:
             saved = self._store.get(self.key)
+            self._saved = copy.deepcopy(saved)
             self.state = (
-                copy.deepcopy(saved) if saved is not None else self.app.initial()
+                self._load(copy.deepcopy(saved))
+                if saved is not None
+                else self.app.initial()
             )
             self._rendered = self._render(self.state)
             self._shortcuts = self._shortcuts_of(self.state)
@@ -661,8 +670,17 @@ class Runner:
         self._rendered = nodes
         self._shortcuts = shortcuts
 
+    def _load(self, saved):
+        load = getattr(self.app, "load", None)
+        return load(saved) if load else saved
+
     def _save(self):
-        self._store[self.key] = copy.deepcopy(self.state)
+        """Store the data of the state when it changed since the last write."""
+        save = getattr(self.app, "save", None)
+        data = copy.deepcopy(save(self.state) if save else self.state)
+        if data != self._saved:
+            self._store[self.key] = data
+            self._saved = copy.deepcopy(data)
 
     def start(self):
         """Start the tick loop of a model with `TICK_SECONDS`. Answers the thread."""

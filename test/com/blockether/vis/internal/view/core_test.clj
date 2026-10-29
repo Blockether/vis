@@ -3563,6 +3563,50 @@
                    (hi/action! view-id {:action :activate :node-id "go"})
                    (expect (= ["activate"] (event-types sid view-id cursor))))
                  (finally (hi/close-live! view-id)))))))
+  (it "compacts the record of a busy app and restores the same picture and log"
+      ;; App frames: a game patched its record on every tick, so the record grew
+      ;; without a bound while only the current picture was ever replayed.
+      (recorded
+        (fn []
+          (with-redefs [live-sink/compact-floor-bytes 4096]
+            (let [sid (str (random-uuid))
+                  view-id (get (sdk-door! sid
+                                          "demo"
+                                          {"op" "open"
+                                           "view" {"title" "Board"
+                                                   "session_id" sid
+                                                   "placement" "attachment"
+                                                   "key" "board"
+                                                   "nodes"
+                                                   [{"id" "go" "type" "button" "label" "Go"}
+                                                    {"id" "tail" "type" "log" "window_lines" 5}]}})
+                               "view_id")
+                  file (live-sink/view-file sid view-id)
+                  lines (mapv #(str "line " %) (range 300))]
+
+              (try (doseq [[n line] (map-indexed vector lines)]
+                     (hi/patch-live! view-id
+                                     [(cond-> {:op "append" :node-id "tail" :lines [line]}
+                                        (even? n)
+                                        (assoc :tone "ok"))])
+                     (when (zero? (mod n 50))
+                       (hi/action! view-id {:action :activate :node-id "go"})))
+                   (let [before (hi/app-view sid view-id)
+                         node-seqs @(:node-seqs (get @(var-get #'hi/pending) view-id))
+                         line-count (count (str/split-lines (slurp file)))]
+
+                     (expect (< line-count 100) (str line-count " record lines for 306 patches"))
+                     (restart-app! view-id)
+                     (expect (= before (dissoc (hi/app-view sid view-id) :is-stale))
+                             "the compacted record replays the live picture")
+                     (expect (= node-seqs @(:node-seqs (get @(var-get #'hi/pending) view-id))))
+                     (let [page (live-sink/log-range file "tail" 0 1000)]
+                       (expect (= lines (:lines page)) "the log keeps every line")
+                       (expect (= (mapv #(when (even? %) "ok") (range 300))
+                                  (mapv #(some-> %
+                                                 name)
+                                        (:line-tones page))))))
+                   (finally (hi/close-live! view-id))))))))
   (it
     "judges an input that names itself with name alone"
     (recorded

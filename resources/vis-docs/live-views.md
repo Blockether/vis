@@ -1033,6 +1033,22 @@ app keeps its state, but its owner does not listen yet.
   without a key cannot come back to its program: Vis logs an error and stops the events of that app.
 - An owner that opens an app again gets only the events that come after that open.
 
+### Keep app data apart from its picture
+
+Vis keeps the picture of an app: the nodes that people see, and the Sends of people. It does not
+keep the data of your app. Keep that data yourself, and draw the picture from it.
+
+- Vis keeps only the last picture of an open app. When the record of a busy app grows large, Vis
+  rewrites it as that picture. A log node keeps every line.
+- Store the data that must outlive your process in your own store, for example
+  [`vis.state`](extension-api.md#durable-state) in an extension.
+- Write that data when it changes, not on each tick. A game that writes on each tick fills the
+  store with pictures.
+- After a restart, read your data, draw the picture again and update the adopted app.
+
+The Asteroids app of the live apps example stores only its best score. A restart starts a new game
+with that best score.
+
 ### Keep and end an app
 
 - `vis.attach(row)` with the app row from `vis.list_attachments()` returns a new handle for the

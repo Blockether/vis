@@ -44,7 +44,7 @@ In the TUI, the extension adds keys after `C-x` and changes one built-in key:
 - Press `C-x a i` to open the incident dashboard.
 - Press `C-x a e` to focus the attachments. The extension moves this built-in key from `C-x a i` to `C-x a e`, so that `C-x a i` is free for the incident dashboard.
 
-After a gateway restart, the apps stay in the session but they have no owner. Type `/apps` with their names again. The extension adopts each app by its key, with the same id and its saved state.
+After a gateway restart, the apps stay in the session but they have no owner. Type `/apps` with their names again. The extension adopts each app by its key, with the same id and its saved state. Asteroids starts a new game with its best score.
 
 ## Run the SDK program
 
@@ -78,8 +78,9 @@ An app model is a Python module with these names:
 - `effects(old, new)`: optional, the side effects that the runner does after a step, such as a reply in a thread.
 - `READS`: optional, the ids of the tables whose selection the reducer reads.
 - `TICK_SECONDS`: optional, the interval of a `tick` event for an app that changes without a person.
+- `save(state)` and `load(saved)`: optional, the data that outlives a restart and the state that it gives back. Without them, the runner stores the whole state.
 
-`runtime.Runner` drives a model through one app handle. After each event, it compares the old picture with the new one and sends only the changes. Add the model to `apps()` in `src/live_apps/__init__.py` to show it in the gallery and in `/apps`.
+`runtime.Runner` drives a model through one app handle. After each event, it compares the old picture with the new one and sends only the changes. It writes the store only when the saved data changes. Asteroids saves only its best score, so a tick writes nothing. Add the model to `apps()` in `src/live_apps/__init__.py` to show it in the gallery and in `/apps`.
 
 Keep a view under 64 nodes. Put a long collection in the rows of a table, not in one node for each item.
 

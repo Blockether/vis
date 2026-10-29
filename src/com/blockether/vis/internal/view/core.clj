@@ -2073,7 +2073,9 @@
    :direction view-spec/group-directions
    :target-kind view-spec/link-targets
    :placement view-spec/placements
-   :reason view-spec/live-reasons})
+   :reason view-spec/live-reasons
+   ;; A replayed button must stay a Send: `:submit` is compared as a keyword.
+   :action view-spec/button-actions})
 
 (defn- live<-wire
   "One decoded live value as the engine holds it: canonical keys back to their
@@ -2328,7 +2330,10 @@
                      (case (str (:kind line))
                        "open"
                        (let [view (materializer/materialize (live<-wire (:view line)))]
-                         (if (app/app? view) {:view view :node-seqs {}} (reduced nil)))
+                         (if (app/app? view)
+                           ;; A compacted record keeps the node seqs as pairs.
+                           {:view view :node-seqs (into {} (:node-seqs line))}
+                           (reduced nil)))
 
                        "patch"
                        (let [patch (live<-wire (:patch line))]
@@ -2361,6 +2366,8 @@
    :is-app true
    :app-key (app-key view)
    :node-seqs (atom node-seqs)
+   ;; The size of the record after its last compaction.
+   :compacted-bytes (atom 0)
    ;; The Sends on their way to a listener of this process.
    :delivering (atom #{})})
 
@@ -2713,6 +2720,25 @@
 
     op))
 
+(defn- compact-app-record!
+  "Compact the record of app `entry` when it grew past twice its last compacted
+   size. The doubling keeps the cost of a rewrite in step with the lines that it
+   drops. A failed rewrite keeps the whole record and waits for the next doubling."
+  [entry]
+  (when-let [floor (:compacted-bytes entry)]
+    (let [^java.io.File file (:file entry)
+          size (.length file)]
+
+      (when (> size (max (long sink/compact-floor-bytes) (* 2 (long @floor))))
+        (try (reset! floor (sink/compact! file @(:view entry) @(:node-seqs entry)))
+             (catch Exception e
+               (reset! floor size)
+               (tel/log! {:level :warn
+                          :id ::app-record-compaction-failed
+                          :data {:view-id (:id entry) :file (str file) :error (ex-message e)}
+                          :msg
+                          "Vis kept the whole record of an app that it could not compact"})))))))
+
 (defn patch-live!
   "Apply `patch` to live view `view-id` and return the view it made.
 
@@ -2747,6 +2773,7 @@
         (sink/append! (:file entry) applied)
         (some-> (:node-seqs entry)
                 (swap! merge (patch-node-seqs applied)))
+        (compact-app-record! entry)
         (when (:owned-key entry) (save-owned-soon!))
         ;; An app patch is marked so the gateway keeps it out of the session journal.
         (publish! (:channel-ids entry)

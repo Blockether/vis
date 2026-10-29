@@ -682,6 +682,34 @@ def test_adopting_by_key_paints_the_saved_state(recorder):
     assert rows(recorder, "items")["t1"][1] == "keep me"
 
 
+class _CountingStore(dict):
+    """A store that keeps every value that the runner writes."""
+
+    def __init__(self):
+        super().__init__()
+        self.writes = []
+
+    def __setitem__(self, key, value):
+        self.writes.append(value)
+        super().__setitem__(key, value)
+
+
+def test_asteroids_stores_only_the_best_score(recorder):
+    # App state: the runner wrote the whole game to vis.state on every tick.
+    store = _CountingStore()
+    runner = start(recorder, asteroids, store)
+    runner.dispatch({"type": "activate", "node_id": "pause"})
+    for _ in range(30):
+        runner.dispatch({"type": "tick"})
+    assert runner.state["tick"] == 30
+    assert store.writes == [{"best": 0}]
+    store["asteroids"] = {"best": 700}
+    # A new owner process: the best score stays, the game in flight does not.
+    second = runtime.Runner(asteroids, open_app, store=store).open()
+    assert (second.state["best"], second.state["status"]) == (700, "ready")
+    assert second.state["score"] == 0
+
+
 def test_a_failing_event_is_logged_and_the_app_keeps_working(recorder, caplog):
     runner = start(recorder, counter)
     original = counter.reduce

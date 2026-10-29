@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Live views: app frames stay out of the session journal and the replay of the transcript. The app record keeps the current picture. A playing game no longer fills the session event files.
 - Live views: an app view no longer freezes after a few minutes. A race let a frame wait for a flush that never came.
 - TUI: an app applies a frame that holds several patches without a full read of the view. A game in the TUI uses about a third of the CPU that it used before.
+- Live views: the record of a busy app stays small. Vis rewrites a large record as the last picture of the app, and log nodes keep every line. After 4000 ticks of Asteroids, its record holds 234 KB, not 3.1 MB.
+- Live views: an app that a gateway restart reads back keeps the action of each button as the engine term, not as text.
+- Examples: a live app stores its data only when the data changes. Asteroids stores only its best score, not the game on each tick.
 
 ## [v0.3.4] - 2026-10-26
 
