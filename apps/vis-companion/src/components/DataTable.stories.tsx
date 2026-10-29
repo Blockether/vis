@@ -25,7 +25,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Opened as an artifact: it takes the body and pages inside it. */
-export const Opened: Story = {
+export const Default: Story = {
   args: { body: TABLE_BLOCK, compact: false, fill: true },
   decorators: [
     (Story) => (

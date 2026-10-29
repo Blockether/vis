@@ -23,11 +23,11 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** A decision with a reason and two answers. */
-export const Approve: Story = { args: { state: 'approve' } };
+export const Approval: Story = { args: { state: 'approve' } };
 /** The engine refused the answer: field errors and a sheet-level one at once. */
 export const Rejected: Story = { args: { state: 'rejected' } };
 /** A code, digit by digit, with a second field that failed validation. */
-export const Otp: Story = { args: { state: 'otp' } };
+export const OneTimeCode: Story = { args: { state: 'otp' } };
 /** Fields that belong together, and one of them wrong. */
 export const Grouped: Story = {
   args: { state: 'grouped' },

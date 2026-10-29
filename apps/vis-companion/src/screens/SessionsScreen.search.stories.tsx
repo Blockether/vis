@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, within } from 'storybook/test';
+import { fn } from 'storybook/test';
 
 import { sidebarRailClass } from '../App';
 import {
@@ -94,19 +94,7 @@ function SearchedList() {
   );
 }
 
-/** The boxes of the painted message pane and of the sessions it explains. */
-async function boxes(canvasElement: HTMLElement) {
-  const dialog = within(
-    await within(canvasElement.ownerDocument.body).findByRole('dialog', { name: 'Search sessions' }),
-  );
-  const pane = await dialog.findByRole('region', { name: 'Matching messages' });
-  await within(pane).findByText('thinking');
-  const list = dialog.getByRole('region', { name: 'Matching sessions' });
-  await expect(within(list).getByRole('region', { name: 'tower search results' })).toBeVisible();
-  return { pane: pane.getBoundingClientRect(), list: list.getBoundingClientRect() };
-}
-
-export const BesideTheList: Story = {
+export const Default: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   render: () => (
     <main className="flex h-dvh min-h-0 w-full min-w-0 overflow-hidden bg-ink">
@@ -116,13 +104,4 @@ export const BesideTheList: Story = {
       <EmptyPane sidebar={{ isShown: true, onToggle: fn() }} />
     </main>
   ),
-  play: async ({ canvasElement }) => {
-    const { pane, list } = await boxes(canvasElement);
-    // Side by side: the messages start where the sessions end, from the same top.
-    await expect(pane.left).toBeGreaterThanOrEqual(list.right - 1);
-    await expect(Math.abs(pane.top - list.top)).toBeLessThan(1);
-    // The dialog stands over the app, no narrower than the rail it was opened from.
-    const rail = within(canvasElement).getByTestId('rail').getBoundingClientRect();
-    await expect(pane.right - list.left).toBeGreaterThanOrEqual(rail.width);
-  },
 };

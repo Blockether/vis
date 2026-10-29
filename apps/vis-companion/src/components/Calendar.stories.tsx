@@ -31,6 +31,6 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const DateAndTime: Story = {
+export const Default: Story = {
   render: () => <Field initial="2026-10-11T14:00" isFutureOnly />,
 };

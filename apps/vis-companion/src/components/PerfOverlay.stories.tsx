@@ -76,7 +76,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const ManySessions: Story = {};
+export const Open: Story = {};
 
 /** How every launch starts: one dot, with the figures behind a click. */
 export const Minimized: Story = {

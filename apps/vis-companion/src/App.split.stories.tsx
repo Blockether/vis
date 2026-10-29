@@ -18,7 +18,7 @@ import { SessionsScreen } from './screens/SessionsScreen';
  * sometimes to nothing. Real CSS, real rows, real boxes.
  */
 const meta = {
-  title: 'App/Desk split',
+  title: 'App/Split view',
   // The rail is a DESK shape: 1280x800, where a third of the shell is wider than
   // the 20rem floor, so both halves of the mirror are exercised.
   globals: { viewport: { value: 'desktop', isRotated: false } },
@@ -59,7 +59,7 @@ function DeskSplit() {
   );
 }
 
-export const RailRidesOffTheSeam: Story = {
+export const Default: Story = {
   render: () => <DeskSplit />,
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);

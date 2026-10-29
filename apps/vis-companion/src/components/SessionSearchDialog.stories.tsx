@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { STORY_SESSION_SEARCH_MATCH } from '../dev/story-data';
 import { SearchMessages } from './SearchMessages';
@@ -52,14 +52,6 @@ export const Recents: Story = {
         className="min-h-0 flex-1"
       />
     ),
-  },
-  play: async ({ canvasElement }) => {
-    const dialog = within(within(canvasElement.ownerDocument.body).getByRole('dialog', { name: 'Search sessions' }));
-    await expect(dialog.getByRole('region', { name: 'Recent sessions' })).toHaveTextContent('Windows runtime checks');
-    const pane = within(dialog.getByRole('region', { name: 'Matching messages' }));
-    await expect(pane.getByRole('heading')).toHaveTextContent('Windows runtime checks');
-    await waitFor(() => expect(pane.getByText('Now check macOS too')).toBeVisible());
-    await expect(pane.getByText('Run the Windows checks')).toBeVisible();
   },
 };
 

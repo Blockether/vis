@@ -5,7 +5,7 @@ import { STORY_FLEET_CONNS, storyFleetFetch } from '../dev/story-data';
 import { SessionsScreen } from './SessionsScreen';
 
 const meta = {
-  title: 'Session list/Project hierarchy',
+  title: 'Session list/Projects/Hierarchy',
   component: SessionsScreen,
   parameters: { layout: 'fullscreen' },
   decorators: [
@@ -39,7 +39,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const GroupedSessions: Story = {
+export const Default: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const title = await page.findByText('infrastructure');

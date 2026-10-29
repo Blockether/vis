@@ -44,9 +44,61 @@ const preview: Preview = {
   parameters: {
     layout: 'fullscreen',
 
-    // The tree follows the app: its parts first, then the screens in the order you meet them.
+    // The tree follows the app: the shared controls first, then each area in the order you meet it.
+    // Inside an area, its whole screen comes first and its parts follow in the order of use.
     options: {
-      storySort: { order: ['Foundations', 'App', 'Session list', 'Session', 'Settings'] },
+      storySort: {
+        order: [
+          'Foundations',
+          ['Controls', 'Menu', 'Calendar'],
+          'App',
+          ['Header', 'Split view', 'Model picker', 'Pairing scanner', 'Memory overlay', 'Error recovery'],
+          'Session list',
+          [
+            'Screen',
+            'Row',
+            'Swipe actions',
+            'Projects',
+            ['Groups', 'Hierarchy', 'Folder picker'],
+            'Archive',
+            'Search',
+            ['Dialog', 'Matches', 'Split'],
+          ],
+          'Session',
+          [
+            'Screen',
+            'Header',
+            'Transcript',
+            ['Request', 'Answer', 'Steps', 'Prose', 'Mermaid', 'Provider failure', 'Outline'],
+            'Composer',
+            ['Suggestions', 'Attachment picker', 'Attachments', 'Paste editor', 'Response controls', 'Queue'],
+            'Activity',
+            'Human input',
+            'Subagents',
+            'Live view',
+            ['Panel', 'In transcript', 'Side panel', 'Apps', 'App cards'],
+            'Artifacts',
+            ['Sheet', 'Markdown', 'Text', 'Diff', 'Code review', 'File preview', 'Table', 'Media', 'Image viewer', 'PDF', 'ZIP'],
+            'Context usage',
+          ],
+          'Settings',
+          [
+            'Screen',
+            'Layout',
+            'Machines',
+            ['List', 'Add machine', 'Machine settings'],
+            'Providers',
+            ['Accounts', 'Limit reset'],
+            'Automations',
+            ['Screen', 'Band'],
+            'Voice setup',
+            'Scoped settings',
+            'Diagnostics',
+            'Fields',
+            ['Text', 'Choice', 'Secret', 'Structured'],
+          ],
+        ],
+      },
     },
 
     viewport: {

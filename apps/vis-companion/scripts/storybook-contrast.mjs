@@ -62,12 +62,12 @@ try {
     .sort();
   const hoverStories = new Set([
     ...storyIds.filter((id) => id.startsWith('foundations-controls--')),
-    'foundations-menu--verbs',
-    'foundations-menu--danger-focused',
-    'session-list-screen--desktop',
-    'session-list-project-folder--browsing',
+    'foundations-menu--default',
+    'foundations-menu--destructive-focused',
+    'session-list-screen--default',
+    'session-list-projects-folder-picker--browsing',
     'session-artifacts-sheet--files',
-    'session-artifacts-table--opened',
+    'session-artifacts-table--default',
     'session-live-view-panel--settled',
     'session-transcript-steps--code-with-result',
   ]);

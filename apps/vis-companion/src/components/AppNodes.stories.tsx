@@ -116,7 +116,7 @@ function width(px: string) {
 }
 
 /** A desktop: a keyboard activates a line number and saves a new comment. */
-export const Desktop: Story = {
+export const Default: Story = {
   decorators: width('64rem'),
   play: async ({ args, canvasElement }) => {
     await fits(canvasElement);

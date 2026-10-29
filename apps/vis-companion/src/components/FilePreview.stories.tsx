@@ -24,4 +24,4 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** A press that carried a line: that line is marked, and the window is built around it. */
-export const AtTheAnchor: Story = { args: { line: STORY_FILE_WINDOW.line } };
+export const MarkedLine: Story = { args: { line: STORY_FILE_WINDOW.line } };

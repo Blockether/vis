@@ -27,7 +27,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** The body meets the title band on one edge, with compact chrome above the fleet. */
-export const Fleet: Story = {
+export const Default: Story = {
   play: async ({ args, canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await expect(await page.findByRole('dialog', { name: 'Model' })).toBeVisible();

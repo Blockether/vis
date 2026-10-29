@@ -112,7 +112,7 @@ const band = async (page: ReturnType<typeof within>, name: string) => {
   return disclosure.closest('div')!.parentElement as HTMLElement;
 };
 
-export const ShowsWhatItArchived: Story = {
+export const Default: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const sheets = within(canvasElement.ownerDocument.body);

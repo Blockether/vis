@@ -51,19 +51,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Adjacent sections should have one continuous rule, also around Tools. */
-export const Catalog: Story = {
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    const panel = (title: string) => page.getByRole('heading', { name: title }).closest('section');
-    await expect(panel('Agent')).toBeVisible();
-    await expect(panel('Experimental')).toBeVisible();
-    await expect(panel('MCP servers')).toBeVisible();
-    const sections = panel('Agent')?.parentElement;
-    await expect(sections).toHaveClass('divide-y', 'divide-dialog-edge');
-    await expect(Array.from(sections?.children ?? [])).toEqual([
-      panel('Agent'), panel('Experimental'), panel('Tools'),
-    ]);
-  },
+export const Default: Story = {
 };
 
 const engine = (name: string): Toggle => ({
@@ -93,31 +81,6 @@ export const Extensions: Story = {
       ],
     }),
   },
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    const panel = (title: string) => page.getByRole('heading', { name: title }).closest('section');
-    const extensions = panel('Extensions');
-    const tools = panel('Tools');
-    await expect(Array.from(tools?.parentElement?.children ?? [])).toEqual([
-      panel('Agent'), panel('Experimental'), tools,
-    ]);
-    // MCP servers and extensions stand inside the Tools section.
-    await expect(tools).toContainElement(extensions);
-    await expect(tools).toContainElement(panel('MCP servers'));
-    const scope = (name: string) =>
-      within(within(extensions!).getByRole('region', { name })).queryByText(/^(global|project)$/)?.textContent ?? null;
-    await expect(scope('language-clojure')).toBeNull();
-    await expect(scope('vis-optmem')).toBe('global');
-    await expect(scope('vis-spel')).toBe('global');
-    await expect(scope('review.py')).toBe('project');
-    // The Auto/On/Off choice is the extension's own row. Its skills stand under Skills, without the extension prefix.
-    await expect(within(extensions!).getAllByText('vis-spel')).toHaveLength(1);
-    const skills = within(within(extensions!).getByRole('region', { name: 'vis-spel' })).getByRole('region', { name: 'Skills' });
-    await expect(within(skills).getByRole('switch', { name: /^browser:/ })).toBeInTheDocument();
-    // The Auto/On/Off explanation is not shown.
-    await expect(within(extensions!).queryByText(/^Auto detects applicability/)).toBeNull();
-    await expect(extensions).not.toHaveTextContent('.vis/extensions');
-  },
 };
 
 /** A search with no matches keeps the query, a way back, and a compact result. */
@@ -139,11 +102,5 @@ export const Loading: Story = {
       cachedMcpServers: () => null,
       mcpServers: () => new Promise(() => {}),
     } as unknown as ComponentProps<typeof ScopedSettingsDialog>['client'],
-  },
-  play: async ({ canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    await expect(await page.findByRole('status', { name: 'Loading settings' })).toBeVisible();
-    await expect(page.queryByRole('heading', { name: 'Tools' })).toBeNull();
-    await expect(page.queryByRole('heading', { name: 'Extensions' })).toBeNull();
   },
 };

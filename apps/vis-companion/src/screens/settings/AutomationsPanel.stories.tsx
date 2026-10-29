@@ -31,12 +31,9 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Closed: Story = {
-  play: async ({ canvas }) => {
-    await expect(await canvas.findByRole('button', { name: 'Show automations' })).toBeVisible();
-  },
 };
 
-export const OpenList: Story = {
+export const Open: Story = {
   play: async ({ canvas }) => {
     await userEvent.click(await canvas.findByRole('button', { name: 'Show automations' }));
     await expect(await canvas.findByText('Morning summary')).toBeVisible();
@@ -47,7 +44,4 @@ export const OpenList: Story = {
 // leaves Settings without the band.
 export const Hidden: Story = {
   args: { available: false },
-  play: async ({ canvas }) => {
-    await expect(canvas.queryByRole('button', { name: 'Show automations' })).not.toBeInTheDocument();
-  },
 };

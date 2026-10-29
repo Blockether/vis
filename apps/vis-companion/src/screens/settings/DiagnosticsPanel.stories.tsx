@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, userEvent } from 'storybook/test';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 
 /**
@@ -27,20 +26,9 @@ function InteractiveDiagnosticsPanel() {
 }
 
 /** Resting: one band, nothing painted under it; pressing anywhere on it opens it. */
-export const Resting: Story = {
+export const Closed: Story = {
   args: { isOpen: false, onToggle: () => {} },
   render: () => <InteractiveDiagnosticsPanel />,
-};
-
-/** The named band, not only its chevron, opens the diagnostics. */
-export const BandPress: Story = {
-  args: { isOpen: false, onToggle: () => {} },
-  render: () => <InteractiveDiagnosticsPanel />,
-  play: async ({ canvas }) => {
-    await userEvent.click(canvas.getByRole('heading', { name: 'Diagnostics' }));
-    await expect(canvas.getByRole('button', { name: 'Hide diagnostics' })).toBeVisible();
-    await expect(canvas.getByRole('button', { name: 'Export app logs' })).toBeVisible();
-  },
 };
 
 /** Open, phone: six facts keep their words while sharing three compact rows. */

@@ -22,7 +22,7 @@ import type { ViewAction } from '../lib/view';
  * events as a real extension or SDK owner: actions, `view.open` and `view.patch`.
  */
 const meta = {
-  title: 'Session/Live View/Apps',
+  title: 'Session/Live view/Apps',
   parameters: { layout: 'fullscreen' },
 } satisfies Meta;
 

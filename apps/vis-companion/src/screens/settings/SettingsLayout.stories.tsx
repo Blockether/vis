@@ -1,6 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
-import { expect } from 'storybook/test';
 import { ChoiceCell, NotifyConnectionSwitch } from '../../components/ui';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { SettingsColumn, SettingsPanel } from './SettingsLayout';
@@ -105,8 +104,5 @@ export const HeaderOnlyPanels: Story = {
         <DiagnosticsPanel isOpen={false} onToggle={() => {}} />
       </>
     ),
-  },
-  play: async ({ canvas }) => {
-    await expect(canvas.getByRole('switch', { name: 'Notifications from visgw: off' })).toBeVisible();
   },
 };

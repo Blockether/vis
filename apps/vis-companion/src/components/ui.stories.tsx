@@ -705,7 +705,7 @@ function MachineSwitcherDemo() {
  * The switcher is a segmented control: a raised chosen segment, a yellow news chip, error ink for retry.
  * A cached machine keeps its pending-check tooltip alongside any unread activity.
  */
-export const Machines: Story = {
+export const Switcher: Story = {
   render: () => (
     <Sheet>
       <Group of="The switcher: news on one tile, one still being checked, one that is down">
@@ -788,7 +788,7 @@ function SettingsChoiceDemo() {
 }
 
 /** A SETTINGS PANEL IS ROWS, and a row is a question with its answer beside it. */
-export const Settings: Story = {
+export const SettingRows: Story = {
   render: () => (
     <Sheet>
       <Group of="A setting that opens, and the value it already holds">

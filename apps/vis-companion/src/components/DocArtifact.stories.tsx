@@ -40,4 +40,4 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** A page artifact, opened. */
-export const Opened: Story = {};
+export const Default: Story = {};

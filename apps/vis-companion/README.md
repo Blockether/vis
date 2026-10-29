@@ -104,10 +104,19 @@ The Storybook tree follows the app, in the order that `.storybook/preview.tsx`
 sets:
 
 - `Foundations`: the control vocabulary, the menu and the calendar.
-- `App`: the frame around the screens, such as the header, the split and pairing.
+- `App`: the frame around the screens, such as the header, the split view and pairing.
 - `Session list`: the list, its rows, the projects and the search.
-- `Session`: one session, with its header, composer, transcript, Live View and artifacts.
-- `Settings`: providers, machines, automations and the settings panels.
+- `Session`: one session, with its header, transcript, composer, Live view and artifacts.
+- `Settings`: machines, providers, automations and the settings fields.
+
+Name a story file's title `Area/Part`, or `Area/Group/Part` for a group of parts.
+Write each title segment in sentence case. Name the whole screen of an area
+`Screen`. Put each new title into the `storySort` order: the screen first, then
+the parts in the order of use.
+
+Name a story by the state that it shows, such as `Running`, `Failed`, `Empty` or
+`SignedOut`. Name the usual state `Default`. Do not name a story after a
+viewport, a fixture or a sentence.
 
 Add a story only for a state that can break: a long name, zero, busy or
 failed. Do not add a story for a viewport, a theme or a pointer. Use the

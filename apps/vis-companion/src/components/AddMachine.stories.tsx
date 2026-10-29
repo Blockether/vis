@@ -10,7 +10,7 @@ import { AddMachine } from './Machines';
  * gets here, which is the pointer's word, not the frame's.
  */
 const meta = {
-  title: 'Settings/Add machine',
+  title: 'Settings/Machines/Add machine',
   component: AddMachine,
   parameters: { layout: 'padded' },
   args: { onAdd: async () => {} },
@@ -20,7 +20,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** The connect page on a desktop: one plane, the steps side by side. */
-export const Page: Story = {
+export const Default: Story = {
   decorators: [
     (Story) => (
       <div className="border border-dialog-edge bg-panel p-5">

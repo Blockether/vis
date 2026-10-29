@@ -15,7 +15,7 @@ const browsing = (path: string, parent: string) =>
 
 /** The folder browser that adds a project, or gives an existing project another folder. */
 const meta = {
-  title: 'Session list/Project folder',
+  title: 'Session list/Projects/Folder picker',
   component: ProjectFolderSheet,
   args: {
     label: 'tower',

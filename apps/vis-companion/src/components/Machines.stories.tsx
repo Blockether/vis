@@ -6,7 +6,7 @@ import { MachineRows } from './Machines';
 
 /** The paired fleet, including one machine whose latest probe failed. */
 const meta = {
-  title: 'Settings/Machines',
+  title: 'Settings/Machines/List',
   component: MachineRows,
   parameters: { layout: 'padded' },
   args: {
@@ -25,7 +25,7 @@ type Story = StoryObj<typeof meta>;
 const pick = fn();
 
 /** Rank, latency, long name and failure all compete in the same one-line rail. */
-export const Fleet: Story = {
+export const Default: Story = {
   args: { onPick: pick },
   play: async ({ args, canvas }) => {
     await userEvent.click(canvas.getByRole('button', { name: /tower/i }));

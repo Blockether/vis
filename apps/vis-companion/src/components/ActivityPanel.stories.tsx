@@ -71,12 +71,12 @@ export const Failed: Story = {
 };
 
 /** The thread doing its job: reads, a patch, a failed check, one step still moving. */
-export const Chronology: Story = {
+export const Running: Story = {
   args: { activity: ACTIVITY_CHRONOLOGY },
 };
 
 /** All groups are available immediately; individual step details still fold independently. */
-export const AllOperationGroups: Story = {
+export const AllGroups: Story = {
   args: { activity: ACTIVITY_ALL_GROUPS },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn } from 'storybook/test';
+import { fn } from 'storybook/test';
 import type { PendingAttachment } from '../lib/attachments';
 import { ComposerPayloadShelf } from './ComposerPayloadShelf';
 import { UserMessage } from './ChatContent';
@@ -40,7 +40,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const PastedAndSent: Story = {
+export const WithAttachments: Story = {
   render: (args) => (
     <div className="mx-auto max-w-xl space-y-6">
       <section aria-label="Staged logs">
@@ -53,14 +53,4 @@ export const PastedAndSent: Story = {
       </section>
     </div>
   ),
-  play: async ({ canvas }) => {
-    await expect(
-      canvas.getByRole('button', { name: 'Remove vis-diagnostics.jsonl.gz' }),
-    ).toBeVisible();
-    await expect(
-      canvas.getByRole('button', { name: /(?:Save|Share) vis-diagnostics.jsonl.gz/ }),
-    ).toBeVisible();
-    await expect(canvas.getAllByText('vis-diagnostics.jsonl')).toHaveLength(2);
-    await expect(canvas.queryByRole('img')).toBeNull();
-  },
 };

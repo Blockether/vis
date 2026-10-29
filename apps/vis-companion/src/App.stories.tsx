@@ -24,7 +24,7 @@ type Story = StoryObj<typeof meta>;
  * The glass opens the search dialog, and so does `/` unless a field holds the caret.
  * `Ctrl+/` is no character, so it opens the search from inside the field too.
  */
-export const Search: Story = {
+export const SearchShortcut: Story = {
   play: async ({ args, canvas }) => {
     const glass = canvas.getByRole('button', { name: 'Search sessions' });
     await expect(glass).toHaveAttribute('aria-keyshortcuts', 'Control+/ /');

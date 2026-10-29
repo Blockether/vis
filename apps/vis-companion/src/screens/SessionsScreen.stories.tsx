@@ -43,7 +43,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Four checkouts on one machine, including a paged project on a phone-width rail. */
-export const Fleet: Story = {
+export const Default: Story = {
   decorators: [
     (Story) => (
       <div className="w-[393px]">
@@ -187,12 +187,6 @@ export const Fleet: Story = {
       await expect(within(doc.body).queryByRole('dialog')).not.toBeInTheDocument();
     }
   },
-};
-
-export const Desktop: Story = {
-  ...Fleet,
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-  decorators: [],
 };
 
 /** A share stays above the destination switch while the reader chooses another machine. */

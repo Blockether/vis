@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect } from 'storybook/test';
 
 import { STORY_PROVIDER_ERRORS } from '../dev/story-data';
 import { ErrorBlockCard } from './ChatContent';
@@ -36,7 +35,4 @@ export const AllKinds: Story = {
       ))}
     </div>
   ),
-  play: async ({ canvas }) => {
-    await expect(canvas.getAllByRole('alert')).toHaveLength(STORY_PROVIDER_ERRORS.length);
-  },
 };

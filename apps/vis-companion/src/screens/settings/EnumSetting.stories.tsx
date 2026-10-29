@@ -26,7 +26,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Saving: Story = { args: { busy: true } };
-export const ChooseBackend: Story = {
+export const Choosing: Story = {
   play: async ({ canvasElement }) => {
     const select = within(canvasElement).getByRole('combobox', { name: 'Draft backend' });
     const page = within(canvasElement.ownerDocument.body);

@@ -89,7 +89,7 @@ async function expectSteady(element: HTMLElement, frames = 12) {
   for (const box of boxes) expect(box).toEqual(boxes[0]);
 }
 
-export const ResponsiveParagraphs: Story = {
+export const Default: Story = {
   // Line geometry needs real browser layout, which the jsdom story run lacks: open this
   // story in Storybook to play it.
   tags: ['!test'],

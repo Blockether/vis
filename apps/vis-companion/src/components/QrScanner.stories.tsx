@@ -23,7 +23,7 @@ const cancel = fn();
 const photo = fn();
 
 /** Frames are being decoded; both exits remain explicit and testable. */
-export const Live: Story = {
+export const Scanning: Story = {
   args: { phase: 'live', onCancel: cancel, onPhoto: photo },
   play: async ({ args, canvas }) => {
     await userEvent.click(canvas.getByRole('button', { name: 'Take a photo instead' }));
@@ -34,7 +34,7 @@ export const Live: Story = {
 };
 
 /** Permission failed; the reason stands next to the two remaining exits. */
-export const Denied: Story = {
+export const CameraDenied: Story = {
   args: {
     phase: 'error',
     error: 'Camera access was denied — enable it in Settings ▸ Vis',

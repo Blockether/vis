@@ -19,7 +19,7 @@ type Story = StoryObj<typeof meta>;
 const reload = fn();
 
 /** The tree failed, but durable sessions and the one honest recovery remain visible. */
-export const Recovery: Story = {
+export const Default: Story = {
   args: { onReload: reload },
   play: async ({ args, canvas }) => {
     await userEvent.click(canvas.getByRole('button', { name: 'Reload Vis' }));

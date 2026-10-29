@@ -21,7 +21,7 @@ type Story = StoryObj<typeof meta>;
 const encode = (text: string) => new TextEncoder().encode(text);
 
 /** A typical results bundle: notes, a table and a binary file without a preview. */
-export const Results: Story = {
+export const Default: Story = {
   args: {
     name: 'results.zip',
     blob: storedZip([

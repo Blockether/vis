@@ -123,7 +123,7 @@ export const SingleMachine: Story = {
  * ＋ that opens it becomes − to hide it again, and the fleet stays on the same
  * plane as the form that joins it.
  */
-export const PairingInline: Story = {
+export const Pairing: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);

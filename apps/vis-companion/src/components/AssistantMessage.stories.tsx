@@ -37,7 +37,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const AnswerTable: Story = {
+export const Table: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const table = canvas.getByRole('table');
@@ -77,7 +77,7 @@ Loose items keep the marker on the first line:
 // User report (screenshot): the numbered list under a paragraph started further left than
 // the bulleted list above it, because a native marker box is sized by the engine. The
 // markers are painted from CSS now.
-export const AnswerLists: Story = {
+export const Lists: Story = {
   args: {
     turn: {
       turn_id: 'answer-lists',

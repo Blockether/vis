@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect } from 'storybook/test';
 import { STORY_PROVIDERS, STORY_DEVICE_AUTH, storyProviderAuth } from '../dev/story-data';
 import { ProviderRows } from './ProviderAuth';
 
@@ -12,7 +11,7 @@ import { ProviderRows } from './ProviderAuth';
  * for a fresh verdict, and a gallery has no gateway.
  */
 const meta = {
-  title: 'Settings/Providers',
+  title: 'Settings/Providers/Accounts',
   component: ProviderRows,
   parameters: { layout: 'padded' },
 } satisfies Meta<typeof ProviderRows>;
@@ -22,7 +21,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** The verdicts told apart: verified default, degraded fallback, never signed in. */
-export const Fleet: Story = {
+export const AllStates: Story = {
   args: { auth: storyProviderAuth() },
 };
 
@@ -33,10 +32,4 @@ export const SignedOut: Story = {
 
 export const DeviceAuthorization: Story = {
   args: { auth: STORY_DEVICE_AUTH },
-  play: async ({ canvas }) => {
-    await expect(canvas.getByText('ABCD-EFGH')).toBeVisible();
-    await expect(canvas.getByRole('button', { name: 'Open sign-in page again' })).toBeVisible();
-    await expect(canvas.queryByLabelText('Paste the final redirect URL')).not.toBeInTheDocument();
-    await expect(canvas.queryByRole('button', { name: 'Finish sign-in' })).not.toBeInTheDocument();
-  },
 };

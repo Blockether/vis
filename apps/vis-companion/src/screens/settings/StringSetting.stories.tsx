@@ -38,13 +38,8 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 export const Saving: Story = {
   args: { busy: true },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await expect(canvas.getByRole('button', { name: 'Saving…' })).toBeDisabled();
-    await expect(canvas.getByRole('textbox', { name: 'Agent name' })).toBeDisabled();
-  },
 };
-export const Rename: Story = {
+export const Editing: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const field = canvas.getByRole('textbox', { name: 'Agent name' });

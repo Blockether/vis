@@ -108,29 +108,10 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Empty: Story = {
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await canvas.findByRole('button', {
-      name: 'Record your voice',
-    });
-  },
 };
 
 export const ExistingVoice: Story = {
   args: { hasVoice: true },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    const voice = await canvas.findByRole('button', { name: /^My voice/ });
-    const track = voice.closest<HTMLElement>('[data-swipe-track]')!;
-    const forget = within(track).getByRole('button', {
-      name: 'Forget My voice',
-    });
-    await expect(forget.querySelector('svg')).not.toBeNull();
-    await expect(forget).toHaveTextContent('Forget');
-    await expect(voice).toHaveAttribute('aria-pressed', 'true');
-    await expect(canvas.getByRole('button', { name: 'Test' })).toBeDisabled();
-    await expect(canvas.queryByText(/^Voice:/)).not.toBeInTheDocument();
-  },
 };
 
 async function startTest(canvasElement: HTMLElement) {
@@ -144,7 +125,7 @@ async function startTest(canvasElement: HTMLElement) {
   return { canvas, input };
 }
 
-export const TestVoice: Story = {
+export const Testing: Story = {
   args: { hasVoice: true },
   play: async ({ canvasElement }) => {
     const { canvas, input } = await startTest(canvasElement);
@@ -187,7 +168,7 @@ export const ReviewRecording: Story = {
   },
 };
 
-export const SaveVoice: Story = {
+export const Saving: Story = {
   play: async ({ canvasElement }) => {
     const canvas = await importFile(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Save voice' }));

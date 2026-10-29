@@ -77,7 +77,7 @@ function fittedParagraph(prose: HTMLElement) {
 }
 
 /** The actual artifact reader, including rich text, code and responsive composition. */
-export const RichReadOnlyArtifact: Story = {
+export const RichText: Story = {
   // Line fitting measures text in real browser layout, which the jsdom story run lacks: open
   // this story in Storybook to play it.
   tags: ['!test'],

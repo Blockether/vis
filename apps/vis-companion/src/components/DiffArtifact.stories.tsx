@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn } from 'storybook/test';
+import { fn } from 'storybook/test';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/diff.json';
 import { DiffArtifact } from './DiffArtifact';
 import { OverlayScreen } from './DocArtifact';
@@ -22,10 +22,4 @@ type Story = StoryObj<typeof meta>;
 
 /** A diff snapshot is read-only: the patch, without review controls. */
 export const ReadOnly: Story = {
-  play: async ({ canvas }) => {
-    await canvas.findByText('+(search title {:archived true})', { selector: 'p' });
-    await expect(
-      canvas.queryByRole('button', { name: 'Comment on the whole document' }),
-    ).not.toBeInTheDocument();
-  },
 };

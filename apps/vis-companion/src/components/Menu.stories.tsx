@@ -31,7 +31,7 @@ const selectedVerb = fn();
 const closedMenu = fn();
 
 /** The session row's own verbs, with the row's name in the band. */
-export const Verbs: Story = {
+export const Default: Story = {
   args: {
     label: `Actions for ${STORY_SESSION.title}`,
     at: AT,
@@ -71,8 +71,8 @@ export const Verbs: Story = {
 };
 
 // Keep the destructive focus paint mounted for the all-theme contrast scan.
-export const DangerFocused: Story = {
-  ...Verbs,
+export const DestructiveFocused: Story = {
+  ...Default,
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     const action = page.getByRole('button', { name: 'Delete session' });

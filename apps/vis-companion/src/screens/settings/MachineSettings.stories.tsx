@@ -115,7 +115,7 @@ function Panel({ servers }: { servers: McpServer[] }) {
 }
 
 const meta = {
-  title: 'Settings/Machine settings',
+  title: 'Settings/Machines/Machine settings',
   component: Panel,
   // These stories show what the bands hold, so every band starts open.
   decorators: [
@@ -132,7 +132,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Every reach a server can have: connected, waiting for sign-in, killed, off, and a config-file tier. */
-export const Fleet: Story = {
+export const AllStates: Story = {
   args: { servers: SERVERS },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -168,7 +168,7 @@ export const Fleet: Story = {
 
 /** A row opens on the whole spec its one line cannot carry. */
 export const Details: Story = {
-  ...Fleet,
+  ...AllStates,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: /^filesystem/ }));
@@ -181,8 +181,8 @@ export const Details: Story = {
 };
 
 /** Removing asks in the row itself, at the row's own height. */
-export const RemoveAsks: Story = {
-  ...Fleet,
+export const Removing: Story = {
+  ...AllStates,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Remove scratch from this machine' }));

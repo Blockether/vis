@@ -21,7 +21,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const MarkdownMatches: Story = {
+export const Default: Story = {
   play: async ({ canvas, canvasElement, args }) => {
     await expect(canvas.getAllByRole('listitem')).toHaveLength(3);
     await expect(canvasElement.querySelector('h2 mark')).toHaveTextContent('Windows');

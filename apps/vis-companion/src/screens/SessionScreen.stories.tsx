@@ -44,7 +44,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Native typing stays independent of the deferred screen snapshot. */
-export const ComposerInput: Story = {
+export const Typing: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const composer = await page.findByRole('textbox', { name: 'Message Vis' });
@@ -114,7 +114,7 @@ const runningClient = new Proxy(client, {
 });
 
 /** The queued message and composer share a square frame at every input density. */
-export const QueuedComposer: Story = {
+export const QueuedMessage: Story = {
   args: {
     client: new Proxy(runningClient, {
       get(target, key) {
@@ -157,7 +157,7 @@ export const ReadingLayout: Story = {
 };
 
 /** File intake, stable labels and keyboard removal share the same editor. */
-export const ImageReferences: Story = {
+export const AttachedImages: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const composer = await page.findByRole('textbox', { name: 'Message Vis' });
@@ -188,7 +188,7 @@ export const ImageReferences: Story = {
  * rail stands at the right edge of the reading column. The session opens at its
  * newest turn, and picking the first prompt puts that turn at the top.
  */
-export const JumpToAMessage: Story = {
+export const Outline: Story = {
   args: { client: STORY_OUTLINE_CLIENT, sid: STORY_OUTLINE_SESSION.id },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);

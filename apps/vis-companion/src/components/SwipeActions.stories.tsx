@@ -41,7 +41,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Star, rename, delete — the three a session row carries. */
-export const SessionRow: Story = {
+export const Default: Story = {
   args: {
     label: `Actions for ${STORY_SESSION.title}`,
     actions,

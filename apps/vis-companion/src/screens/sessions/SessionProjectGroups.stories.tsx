@@ -16,7 +16,7 @@ const conn = STORY_FLEET_CONNS[0];
 const fixture = STORY_NEWER_PROJECT;
 
 const meta = {
-  title: 'Session list/Projects',
+  title: 'Session list/Projects/Groups',
   component: ProjectGroup,
   parameters: { layout: 'fullscreen' },
   beforeEach: ({ args }) => {
@@ -67,7 +67,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const NewerSession: Story = {};
+export const Default: Story = {};
 
 export const Collapsed: Story = { args: { initiallyOpen: false } };
 
@@ -97,7 +97,7 @@ const GROUPED = [
   fixture.rows[3],
 ];
 
-export const Groups: Story = {
+export const Grouped: Story = {
   // The rows name their band and nothing more, so this story serves the GROUPS as well:
   // that is where a band takes its name and its colour from.
   beforeEach: () => {
@@ -139,8 +139,8 @@ export const Groups: Story = {
 
 // THE BAND'S OWN ⋮ CARRIES THE VERBS — one mark each, and nothing that only repeats the
 // name the reader pressed. The palette waits a step behind a row that names the verb.
-export const GroupVerbs: Story = {
-  ...Groups,
+export const GroupMenu: Story = {
+  ...Grouped,
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     await userEvent.click(await page.findByRole('button', { name: 'Actions for Wallet work' }));

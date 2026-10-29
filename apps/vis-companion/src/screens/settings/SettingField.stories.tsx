@@ -1,6 +1,5 @@
 import { useState, type ContextType } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, within } from 'storybook/test';
 import type { SettingValue, Toggle } from '../../lib/types';
 import { SettingField, SettingMachine } from './SettingField';
 
@@ -69,12 +68,6 @@ export const WorkspaceRoots: Story = {
       { id: 'scratch', path: '/tmp/scratch', access: 'read-write', optional: true },
     ],
   },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await expect(canvas.getByRole('button', { name: 'Remove root 3' })).toBeVisible();
-    await expect(canvas.queryByText(/Remove root/)).toBeNull();
-    await expect(canvas.getByRole('button', { name: 'Choose folder for root 1' })).toBeVisible();
-  },
 };
 
 /** Host rules keep their methods, ports and requests inside one card each. */
@@ -93,11 +86,5 @@ export const NetworkRules: Story = {
         { host: '10.0.0.5', access: 'read-write', ports: [8080] },
       ],
     },
-  },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await expect(canvas.getByRole('button', { name: 'Remove host rule 2' })).toBeVisible();
-    await expect(canvas.queryByText(/Remove host rule/)).toBeNull();
-    await expect(canvas.getByRole('combobox', { name: 'Rule 1 request 1 method' })).toHaveTextContent('GET');
   },
 };

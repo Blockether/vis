@@ -25,6 +25,6 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Machine output stays machine-faced, and long lines wrap rather than scroll away. */
-export const Log: Story = {
+export const LongLines: Story = {
   args: { text: LOG_TEXT, name: 'gateway.log', mime: 'text/plain' },
 };

@@ -31,7 +31,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const SessionHealth: Story = {
+export const Healthy: Story = {
   args: { usage: { ...STORY_HEALTH_USAGE, health: STORY_SESSION_HEALTH } },
 };
 

@@ -49,7 +49,7 @@ const client = {
 } as unknown as typeof STORY_INERT_CLIENT;
 
 const meta = {
-  title: 'Session/Live View/Side panel',
+  title: 'Session/Live view/Side panel',
   component: LivePanel,
   parameters: { layout: 'fullscreen' },
   args: { views: [DEPLOY, JOBS], client, sid: 's1', onClose: fn() },
@@ -69,7 +69,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Views from two extensions: one tab for each, and each view folds to its title. */
-export const TwoOwners: Story = {
+export const TwoExtensions: Story = {
   play: async ({ canvas }) => {
     const tabs = canvas.getAllByRole('tab');
     await expect(tabs.map((tab) => tab.textContent)).toEqual(['deploy', 'jobs']);

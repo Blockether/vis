@@ -26,8 +26,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const MixedPayload: Story = {
-  name: 'Paste, image and recording',
+export const Mixed: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
     for (const attachment of args.attachments) {

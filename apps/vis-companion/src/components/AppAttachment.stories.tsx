@@ -25,7 +25,7 @@ const APPS = [
 ];
 
 const meta = {
-  title: 'Session/Live View/App cards',
+  title: 'Session/Live view/App cards',
   component: AppListRow,
   args: { view: APPS[0], onOpen: fn() },
   render: (args) => (
@@ -43,7 +43,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** Each card names its app and its state, and a press opens that app. */
-export const States: Story = {
+export const AllStates: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
     await expect(canvas.getByRole('button', { name: 'Open app Code review' })).toHaveTextContent('Live');

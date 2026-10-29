@@ -5,7 +5,7 @@ import { ProviderLimitReset } from './ProviderLimitReset';
 import { OpenBands } from '../dev/OpenBands';
 
 const meta = {
-  title: 'Settings/Provider limit reset',
+  title: 'Settings/Providers/Limit reset',
   component: ProviderLimitReset,
   // These stories show what the bands hold, so every band starts open.
   decorators: [

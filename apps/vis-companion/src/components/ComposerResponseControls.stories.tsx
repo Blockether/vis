@@ -46,8 +46,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const AvailableOptions: Story = {
-  name: 'All provider options',
+export const AllOptions: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
     const buttons = canvas.getAllByRole('button');
