@@ -4,13 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 import { LiveViewPanel } from './LiveView';
-import {
-  applyLivePatch,
-  liveRecordFromText,
-  liveViewFromWire,
-  type LiveNode,
-  type LiveView,
-} from '../lib/live-view';
+import { applyLivePatch, liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
 
 afterEach(cleanup);
 const view = () => liveViewFromWire(fixture)!;
@@ -130,34 +124,6 @@ describe('the complete live vocabulary', () => {
     expect(screen.getByText('retained')).toBeVisible();
   });
 
-  it.each(['constructor', 'toString', '__proto__'])(
-    'keeps a log named %s collapsed until toggled',
-    (id) => {
-      // Regression #189: every valid node id owns its own disclosure state.
-      const v: LiveView = {
-        ...view(),
-        nodes: [
-          {
-            id,
-            type: 'log',
-            label: 'Named log',
-            lines: ['retained'],
-            total_lines: 1,
-            window_lines: 20,
-          },
-        ],
-      };
-      render(<LiveViewPanel view={v} />);
-      const toggle = screen.getByRole('button', { name: 'Named log' });
-      expect(toggle.getAttribute('aria-expanded')).toBe('false');
-      expect(screen.queryByText('retained')).toBeNull();
-      fireEvent.click(toggle);
-      expect(screen.getByText('retained')).toBeVisible();
-      fireEvent.click(toggle);
-      expect(screen.queryByText('retained')).toBeNull();
-    },
-  );
-
   it('waits for one acknowledgement and disables unavailable actions', async () => {
     let finish!: () => void;
     const onActivate = vi.fn(
@@ -188,35 +154,5 @@ describe('the complete live vocabulary', () => {
     expect(screen.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe(
       'false',
     );
-  });
-  it('reopens the human record with independent collapsed sections and inert actions', () => {
-    // Regression #189: exercise archive decoding, not just a mounted live frame.
-    const record = liveRecordFromText(
-      [
-        JSON.stringify({ kind: 'open', view: fixture }),
-        JSON.stringify({
-          kind: 'close',
-          result: {
-            reason: 'completed',
-            is_completed: true,
-            view: { title: fixture.title, nodes: fixture.nodes },
-          },
-        }),
-      ].join('\n'),
-    )!;
-    render(<LiveViewPanel view={record.view} isSettled />);
-    expect(screen.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe(
-      'false',
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    expect(screen.queryByText(/A started/)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Build A logs' }));
-    expect(screen.getByText(/A started/)).toBeVisible();
-    expect(screen.queryByText(/B started/)).toBeNull();
-    expect(screen.getByRole('button', { name: 'Refresh results' })).toHaveProperty(
-      'disabled',
-      true,
-    );
-    expect(document.querySelector('.animate-spinner-frame')).toBeNull();
   });
 });

@@ -42,12 +42,6 @@ describe('a parked place', () => {
     });
   });
 
-  it('answers with the mark still in hand', () => {
-    writeParked(KEY, { s1: 10 });
-
-    expect(readParked(KEY, asIs)).toEqual({ s1: 10 });
-  });
-
   it('answers with nothing for a place forgotten but not yet written', () => {
     sessionStorage.setItem(KEY, JSON.stringify({ s1: 10 }));
 

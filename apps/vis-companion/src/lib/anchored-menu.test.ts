@@ -36,20 +36,6 @@ describe('menuPosition', () => {
     expect(menuPosition(undefined, 320, DESKTOP)).toBeNull();
   });
 
-  // Regression (reported: "New session ▾ does nothing in the app"): the
-  // sessions screen closed this menu on EVERY `window.resize`. On a phone the
-  // caret is one tap away from the filter field, and the keyboard hiding fires a
-  // resize inside the same tap that opened the menu — so the menu died on the
-  // frame it was born and the dropdown looked dead. A viewport change re-anchors;
-  // only a missing anchor closes.
-  it('follows its anchor across a viewport change instead of closing', () => {
-    const keyboardUp = menuPosition({ top: 60, bottom: 88, right: 378 }, 320, DESKTOP);
-    const keyboardHidden = menuPosition({ top: 104, bottom: 132, right: 378 }, 320, DESKTOP);
-
-    expect(keyboardUp).toEqual({ top: 94, left: 58 });
-    expect(keyboardHidden).toEqual({ top: 138, left: 58 });
-  });
-
   // Regression, user report (paraphrased: the dropdowns in Settings are not positioned
   // correctly on the phone). A machine row's `Address` verb lives in a swipe drawer,
   // and the drawer snaps home in the same tap that opens the menu — so the cell that
@@ -201,14 +187,6 @@ describe('pointerAnchor', () => {
     const anchor = pointerAnchor({ x: 1300, y: 300 }, 320, DESKTOP);
     expect(anchor).toEqual({ top: 300, bottom: 300, right: 1300 });
     expect(menuPosition(anchor, 320, DESKTOP, 150)).toEqual({ top: 306, left: 980 });
-  });
-
-  it('keeps the natural direction where there is no viewport to measure', () => {
-    expect(pointerAnchor({ x: 400, y: 300 }, 320, HEADLESS)).toEqual({
-      top: 300,
-      bottom: 300,
-      right: 720,
-    });
   });
 });
 

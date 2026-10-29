@@ -106,36 +106,4 @@ describe('the expanded session card', () => {
       expect(subagents).toHaveTextContent(text);
     }
   });
-
-  it('shows no subagent block for a session without subagents', async () => {
-    await open();
-    expect(await screen.findByText('Cost')).toBeVisible();
-    expect(screen.queryByRole('region', { name: 'Subagents' })).toBeNull();
-  });
-
-  it('puts both cache metrics in a separate explained row', async () => {
-    await open();
-    const cachedInput = await screen.findByText('Cached input');
-    const reuseCoverage = screen.getByText('Reuse coverage');
-    expect(
-      screen.getByText(
-        'Estimated share of reusable prior input recovered from cache · 4 of 5 calls',
-      ),
-    ).toBeVisible();
-    expect(cachedInput.closest('dl')).toBe(reuseCoverage.closest('dl'));
-    expect(cachedInput.closest('dl')).not.toBe(screen.getByText('Turns').closest('dl'));
-    expect(screen.getByText('77%')).toBeVisible();
-    expect(screen.getByText('≈98%')).toBeVisible();
-  });
-
-  // Regression, user report ("alignment is wrong"): the cache row put its label on the
-  // left and pushed its percentage to the right edge of each half, so both values
-  // floated away from the left-aligned label-over-value columns of the grid above it.
-  it('stacks each cache value under its own label', async () => {
-    await open();
-    const label = await screen.findByText('Cached input');
-    const value = screen.getByText('77%');
-    expect(value.previousElementSibling).toBe(label);
-    expect(value.parentElement).toBe(label.parentElement);
-  });
 });

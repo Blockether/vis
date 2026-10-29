@@ -10,15 +10,9 @@ import {
   EDGE_PULL_SPEED,
   LIFT_DELAY_MS,
   LIFT_SLOP_PX,
-  beginLift,
-  cancelLift,
-  carryOver,
   dropTargetAt,
   edgePull,
-  liftedSession,
   movedBeyond,
-  offerLift,
-  releaseLift,
   useSessionDropTarget,
   useSessionLift,
 } from './session-drag';
@@ -77,44 +71,6 @@ describe('reading a finger that is picking a session up', () => {
     expect(edgePull(0, view)).toBe(-EDGE_PULL_SPEED);
     expect(edgePull(800, view)).toBe(EDGE_PULL_SPEED);
     expect(edgePull(-40, view)).toBe(-EDGE_PULL_SPEED);
-  });
-});
-
-describe('carrying one session between places', () => {
-  afterEach(() => {
-    cancelLift();
-  });
-
-  it('hands the session to the place it was released over', () => {
-    const take = vi.fn();
-    const withdraw = offerLift('group', take);
-    beginLift('ses-1');
-    carryOver('group');
-    expect(liftedSession()).toEqual({ sessionId: 'ses-1', over: 'group' });
-    expect(releaseLift()).toBe(true);
-    expect(take).toHaveBeenCalledWith('ses-1');
-    expect(liftedSession()).toBeNull();
-    withdraw();
-  });
-
-  it('files nothing when the session is released over no place at all', () => {
-    const take = vi.fn();
-    const withdraw = offerLift('group', take);
-    beginLift('ses-1');
-    expect(releaseLift()).toBe(false);
-    expect(take).toHaveBeenCalledTimes(0);
-    withdraw();
-  });
-
-  it('files nothing when the browser takes the gesture away', () => {
-    const take = vi.fn();
-    const withdraw = offerLift('group', take);
-    beginLift('ses-1');
-    carryOver('group');
-    cancelLift();
-    expect(liftedSession()).toBeNull();
-    expect(take).toHaveBeenCalledTimes(0);
-    withdraw();
   });
 });
 

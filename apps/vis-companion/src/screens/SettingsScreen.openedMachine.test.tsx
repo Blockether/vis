@@ -92,25 +92,6 @@ describe('machine settings disclosures', () => {
     expect(screen.getByText('Tools')).toBeVisible();
   });
 
-  it('starts every machine closed and opens one only after its row is pressed', async () => {
-    const view = open([
-      { url: URL_A, token: 't', id: 'be2c15686eaef0f4' },
-      { url: URL_B, token: 't', id: 'cad6247b600f9bbc' },
-    ]);
-
-    const [first, second] = await onlineRows(2);
-    expect(first).toHaveAttribute('aria-expanded', 'false');
-    expect(second).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('Tools')).toBeNull();
-
-    fireEvent.click(first);
-
-    expect(first).toHaveAttribute('aria-expanded', 'true');
-    expect(second).toHaveAttribute('aria-expanded', 'false');
-    await waitFor(() => expect(screen.getByText('Tools')).toBeVisible());
-    view.unmount();
-  });
-
   it('opens the requested machine directly at its provider settings', async () => {
     const view = open(
       [

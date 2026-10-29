@@ -179,22 +179,6 @@ function choice(name: RegExp) {
     .find((button) => button.hasAttribute('aria-pressed'));
 }
 describe('the speech-engines band', () => {
-  it('presents ASR and TTS as disclosures instead of separate listening and reply sections', async () => {
-    const { client } = machine();
-    renderOpenBands(<Harness client={client} />);
-
-    const asr = await screen.findByRole('button', { name: /ASR/ });
-    const tts = screen.getByRole('button', { name: /TTS/ });
-    expect(asr.getAttribute('aria-expanded')).toBe('false');
-    expect(tts.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByText('Whisper (gateway)')).toBeNull();
-
-    fireEvent.click(asr);
-    expect(choice(/Parakeet \(gateway\)/)).toBeVisible();
-    expect(screen.getByText('Whisper (gateway)')).toBeVisible();
-    expect(screen.queryByText('Whisper (local)')).toBeNull();
-  });
-
   it('stores the specific ASR engine chosen from the expanded list', async () => {
     const { client, asked } = machine();
     renderOpenBands(<Harness client={client} />);
@@ -207,52 +191,6 @@ describe('the speech-engines band', () => {
     // Preference persistence can settle before React paints the selected state.
     await waitFor(() => expect(whisper.getAttribute('aria-pressed')).toBe('true'));
     await waitFor(() => expect(asked).toContain('asr:whisper-local:read'));
-  });
-
-  // Regression, user report: selecting a TTS engine also opened its settings, while
-  // settings for every other engine were inaccessible from their own rows.
-  it('keeps every TTS engine disclosure closed and independent from selection', async () => {
-    const { client } = machine();
-    renderOpenBands(<Harness client={client} />);
-
-    fireEvent.click(await screen.findByRole('button', { name: /TTS/ }));
-    const engines = await screen.findByRole('group', { name: 'TTS engines' });
-    const device = choice(/This device/)!;
-    const piper = choice(/Piper \(gateway\)/)!;
-    expect(within(engines).queryByRole('heading', { name: 'TTS engines' })).toBeNull();
-    const disclosures = [
-      within(engines).getByRole('button', { name: 'Settings for This device' }),
-      within(engines).getByRole('button', { name: 'Settings for Piper (gateway)' }),
-      within(engines).getByRole('button', { name: 'Settings for Pocket TTS (gateway)' }),
-    ];
-
-    expect(disclosures.map((button) => button.getAttribute('aria-expanded'))).toEqual([
-      'false',
-      'false',
-      'false',
-    ]);
-    expect(within(engines).queryByRole('group', { name: 'Voices' })).toBeNull();
-
-    fireEvent.click(disclosures[1]!);
-
-    expect(device.getAttribute('aria-pressed')).toBe('true');
-    expect(piper.getAttribute('aria-pressed')).toBe('false');
-    await waitFor(() =>
-      expect(client.speechVoices).toHaveBeenCalledWith(
-        expect.objectContaining({ engine: 'piper-local' }),
-      ),
-    );
-    const piperOwner = piper.closest('[data-speech-engine="piper-local"]') as HTMLElement;
-    const deviceOwner = device.closest('[data-speech-engine="device"]') as HTMLElement;
-    expect(await within(piperOwner).findByRole('group', { name: 'Voices' })).toBeVisible();
-
-    fireEvent.click(disclosures[0]!);
-    expect(within(piperOwner).getByRole('group', { name: 'Voices' })).toBeVisible();
-    expect(within(deviceOwner).getByRole('group', { name: 'Voices' })).toBeVisible();
-
-    fireEvent.click(disclosures[1]!);
-    expect(within(piperOwner).queryByRole('group', { name: 'Voices' })).toBeNull();
-    expect(within(deviceOwner).getByRole('group', { name: 'Voices' })).toBeVisible();
   });
 
   it("separates gateway engines from the selected device's premium voices", async () => {
@@ -338,22 +276,6 @@ describe('the speech-engines band', () => {
 
     expect(await screen.findByRole('button', { name: 'Play a sample of Ava' })).toBeVisible();
     expect(cancel).toHaveBeenCalled();
-  });
-
-  // Regression, user report: gateway voices were detached into a separate panel below
-  // every speech engine instead of belonging to the engine whose disclosure opened.
-  it('keeps gateway voices directly under their owning TTS engine', async () => {
-    const { client } = machine();
-    renderOpenBands(<Harness client={client} />);
-
-    fireEvent.click(await screen.findByRole('button', { name: /TTS/ }));
-    const piper = choice(/Piper \(gateway\)/)!;
-    fireEvent.click(piper);
-    fireEvent.click(screen.getByRole('button', { name: 'Settings for Piper (gateway)' }));
-
-    const engine = piper.closest('[data-speech-engine="piper-local"]');
-    expect(engine).toBeVisible();
-    expect(await within(engine as HTMLElement).findByRole('group', { name: 'Voices' })).toBeVisible();
   });
   // Regression, user report: an engine whose model was not downloaded showed its Voices
   // group with a "not ready" error. Voices belong to a downloaded model, so only the

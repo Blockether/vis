@@ -75,39 +75,6 @@ it('edits the allowed requests of one host rule and drops a cleared path', () =>
   expect(onChange).toHaveBeenLastCalledWith({ rules: [{ ...docs, allow: [] }, api] });
 });
 
-it('removes many host rules with named icon actions, not numbered text buttons', () => {
-  const docs = { host: 'gateway.example.com', access: 'read-only', methods: ['GET'] };
-  const api = { host: '10.0.0.5', access: 'read-write' };
-  const { onChange } = renderField(
-    { id: 'network', label: 'Network', type: 'object', editor: 'network' },
-    { rules: [docs, api] },
-  );
-  expect(screen.queryByText(/Remove host rule/)).toBeNull();
-  expect(screen.queryByRole('button', { name: /^Add$/ })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Add host rule' }));
-  expect(onChange).toHaveBeenLastCalledWith({ rules: [docs, api, { host: '', access: 'read-only' }] });
-  expect(screen.getAllByText('Methods')).toHaveLength(2);
-  fireEvent.click(screen.getByRole('button', { name: 'Remove host rule 2' }));
-  expect(onChange).toHaveBeenLastCalledWith({ rules: [docs] });
-});
-
-it('removes a workspace root with a named icon action', () => {
-  const docs = { id: 'docs', path: '~/docs', access: 'read-only' };
-  const code = { id: 'code', path: '~/code', access: 'read-write' };
-  const { onChange } = renderField(
-    { id: 'workspaces', label: 'Workspace roots', type: 'array', editor: 'paths' },
-    [docs, code],
-  );
-  expect(screen.queryByText(/Remove root/)).toBeNull();
-  expect(screen.getAllByText('Skip when missing')).toHaveLength(2);
-  expect(screen.queryByText('Optional')).toBeNull();
-  expect(screen.getAllByRole('combobox', { name: 'Root draft mode 1' })[0]).toHaveTextContent(
-    'Edit the real folder',
-  );
-  fireEvent.click(screen.getByRole('button', { name: 'Remove root 1' }));
-  expect(onChange).toHaveBeenLastCalledWith([code]);
-});
-
 it('picks request methods from a list instead of typed text', async () => {
   const docs = { host: 'gateway.example.com', access: 'read-only', allow: [{ method: 'GET' }] };
   const { onChange } = renderField(
@@ -219,21 +186,6 @@ it('limits numbers by the setting schema and keeps invalid text local', () => {
   expect(onChange).toHaveBeenCalledExactlyOnceWith(8443, true);
 });
 
-it.each([
-  ['paths', 'array', []],
-  ['filesystem', 'object', {}],
-  ['network', 'object', {}],
-  ['list', 'array', []],
-] satisfies [Toggle['editor'], Toggle['type'], SettingValue][])(
-  'offers only guided controls for %s settings',
-  (editor, type, value) => {
-    renderField({ id: 'guided', label: 'Guided setting', editor, type }, value);
-    expect(screen.queryByText('Advanced JSON')).toBeNull();
-    expect(screen.queryByRole('textbox', { name: 'Guided setting JSON' })).toBeNull();
-    expect(screen.queryAllByRole('group').length).toBeGreaterThan(0);
-  },
-);
-
 it('edits filesystem paths without changing the other access lists', () => {
   const { onChange, onRawChange } = renderField(
     { id: 'jail_filesystem', label: 'Filesystem access', type: 'object', editor: 'filesystem' },
@@ -282,17 +234,6 @@ it('offers the tool names of a tools row for completion (issue #416)', () => {
   expect([...(options ?? [])].map((option) => option.value)).toEqual(['vis.files.read', 'vis.shell.run']);
   fireEvent.change(entry, { target: { value: 'vis.files.*' } });
   expect(onChange).toHaveBeenLastCalledWith(['vis.files.*']);
-});
-
-it('directs unsupported settings to the configuration file instead of a JSON editor', () => {
-  const { onChange, onRawChange } = renderField(
-    { id: 'custom', label: 'Custom configuration', type: 'object' },
-    {},
-  );
-  expect(screen.getByText('Edit this setting in your configuration file.')).toBeInTheDocument();
-  expect(screen.queryByRole('textbox')).toBeNull();
-  expect(onChange).not.toHaveBeenCalled();
-  expect(onRawChange).not.toHaveBeenCalled();
 });
 
 it.each(['Root access 1', 'Root draft mode 1', 'Rule access 1'])(

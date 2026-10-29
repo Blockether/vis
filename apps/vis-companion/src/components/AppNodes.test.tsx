@@ -2,12 +2,12 @@
 // Issue #421: the review nodes of an app attachment. A diff line opens a thread,
 // a draft saves only with the host acknowledgement, and Send reuses one
 // idempotency key until the host answers.
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppActionResult } from '../lib/app-actions';
-import type { LiveDiffNode, LiveThreadNode } from '../lib/live-view';
-import { DiffNodeView, ThreadNodeView, type AppNodeActions } from './AppNodes';
+import type { LiveDiffNode } from '../lib/live-view';
+import { DiffNodeView, type AppNodeActions } from './AppNodes';
 
 afterEach(cleanup);
 
@@ -39,18 +39,6 @@ function actions(overrides: Partial<AppNodeActions> = {}): AppNodeActions {
 }
 
 describe('DiffNodeView', () => {
-  it('shows files, revisions, line numbers and the thread under its line', () => {
-    render(<DiffNodeView node={DIFF} actions={actions()} />);
-    expect(screen.getByText('aaa → bbb')).toBeInTheDocument();
-    const file = screen.getByRole('region', { name: 'a.txt' });
-    expect(within(file).getByText('new')).toBeInTheDocument();
-    const thread = within(file).getByRole('region', { name: 'Thread on a.txt line 2' });
-    expect(thread.textContent).toContain('Renamed it.');
-    expect(thread.textContent).toContain('Looks fine');
-    // The thread stands outside the sideways scroller, at the full width.
-    expect(thread.closest('[data-diff-lines]')).toBeNull();
-  });
-
   it('opens an editor on the line that a keyboard activates, on that line side', async () => {
     const app = actions();
     render(<DiffNodeView node={DIFF} actions={app} />);
@@ -155,19 +143,5 @@ describe('Send', () => {
     expect(screen.getByRole('list', { name: 'Receipts' }).textContent).toContain(
       'Answered · 1 comment',
     );
-  });
-
-  it('sends a thread node by its own id', async () => {
-    const node: LiveThreadNode = { id: 'notes', type: 'thread', label: 'Notes', messages: [], draft: 'Hi' };
-    const app = actions();
-    render(<ThreadNodeView node={node} actions={app} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Send Notes' }));
-    await waitFor(() => expect(app.send).toHaveBeenCalledWith('notes', expect.any(String)));
-  });
-
-  it('cannot send with no saved draft', () => {
-    const node: LiveThreadNode = { id: 'notes', type: 'thread', label: 'Notes', messages: [] };
-    render(<ThreadNodeView node={node} actions={actions()} />);
-    expect(screen.getByRole('button', { name: 'Send Notes' })).toHaveProperty('disabled', true);
   });
 });

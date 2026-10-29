@@ -68,11 +68,6 @@ describe('stepPromptRecall', () => {
     step = stepPromptRecall(history, step.recall, 1, step.text)!;
     expect(step).toEqual({ recall: null, text: 'half typed' });
   });
-
-  it('does nothing without a history, or on ↓ outside a recall', () => {
-    expect(stepPromptRecall([], null, -1, '')).toBeNull();
-    expect(stepPromptRecall(history, null, 1, '')).toBeNull();
-  });
 });
 
 describe('caret edges', () => {

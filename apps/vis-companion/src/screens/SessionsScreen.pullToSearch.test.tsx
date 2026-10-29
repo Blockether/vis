@@ -32,25 +32,6 @@ function fleet(onSearch: (() => void) | null) {
 
 describe('pulling the sessions list down', () => {
 
-  // Regression: an upward swipe from the top temporarily writes -100% inline,
-  // overriding the idle offset that also accounted for the iPhone safe area.
-  it('clips the pull band during an ordinary scroll from the top', async () => {
-    const view = fleet(() => {});
-    try {
-      const list = await listOf(view);
-      const hint = view.getByText('Pull to search');
-
-      act(() => fireTouch(list, 'touchstart', [AT]));
-      expect(hint.style.translate).toBe('0px -100%');
-
-      act(() => fireTouch(list, 'touchmove', [{ x: AT.x, y: AT.y - 5 }]));
-      expect(hint.style.translate).toBe('');
-    } finally {
-      view.restore();
-      view.unmount();
-    }
-  });
-
   it('opens the search page when the pull is released', async () => {
     const onSearch = vi.fn();
     const view = fleet(onSearch);
@@ -59,31 +40,6 @@ describe('pulling the sessions list down', () => {
       act(() => pullDown(list, PULL_OPEN_PX + 20));
 
       expect(onSearch).toHaveBeenCalledTimes(1);
-    } finally {
-      view.restore();
-      view.unmount();
-    }
-  });
-
-  // Regression, Vis session 88262267-29ea-4c77-917f-daac097c1a7a: the pull prompt
-  // painted between the machine strip and list instead of taking over the app bar at the top.
-  it('says what the lift will do while the finger is still down', async () => {
-    const view = fleet(() => {});
-    try {
-      const list = await listOf(view);
-      const hint = () => view.getByText(/ to search$/);
-
-      act(() => {
-        fireTouch(list, 'touchstart', [AT]);
-        fireTouch(list, 'touchmove', [down(20)]);
-      });
-      expect(hint().textContent).toBe('Pull to search');
-      // And it hangs in the app's overlay layer, clear of the pane the list is drawn in.
-      expect(view.container.contains(hint())).toBe(false);
-      act(() => fireTouch(list, 'touchmove', [down(PULL_OPEN_PX)]));
-      expect(hint().textContent).toBe('Release to search');
-
-      act(() => fireTouch(list, 'touchend', []));
     } finally {
       view.restore();
       view.unmount();

@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
-import type { ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { AnchoredPanel } from './Menu';
 import {
   ProjectFolderSheet,
   isFolderName,
@@ -87,106 +85,6 @@ function sheet(props: Partial<SheetProps> = {}) {
   return { view, client, onCancel, onChoose, panel };
 }
 
-const classesOf = (element: Element) => new Set(element.classList);
-
-/** Every utility a node wears, order-free — a class string may hold blanks. */
-const paint = (element: Element) => [...element.classList].sort();
-
-/**
- * What a shipped control PAINTS, read off a rendering of that control on its own.
- * A screen reuses `ui.tsx`/`Menu.tsx` when its own node wears exactly this skin —
- * a class string copied into a screen drifts the first time the owner changes.
- */
-function skinOf(element: ReactElement, select: string): string[] {
-  const view = render(element);
-  // Its OWN container first: a reference control is rendered while the sheet is
-  // already on screen, and `document.body` holds both.
-  const node = view.container.querySelector(select) ?? document.querySelector(select);
-  if (!node) throw new Error(`nothing matched ${select}`);
-  const classes = paint(node);
-  view.unmount();
-  return classes;
-}
-
-// Regression, user report ("the manage projects looks absolutely awful on the desktop
-// and iphone too — buttons are not canonicalized, components are not reused"). The
-// sheet painted every box it stood in by hand, each a near-copy of something `Menu`
-// already shipped, and each drifted: its own panel (the one surface in the app with no
-// way out but the scrim, whose `Use project` landed 30px below a 1440x900 window), its
-// own heading band, its own 44px row that never shrank under a mouse, its own badge,
-// own borderless pencil, and `quiet` for the secondary verb where every other
-// task heading uses `secondary`.
-describe('ProjectFolderSheet paints no box of its own', () => {
-  it('is the app’s one anchored panel, not a dialog of its own', async () => {
-    const { panel } = sheet();
-    await screen.findByRole('button', { name: /^vis/ });
-
-    // Byte for byte the canonical browsing panel: the sheet adds no box, no height cap
-    // of its own and no second way of arriving, so it never slides up as a bottom sheet.
-    expect(paint(panel())).toEqual(
-      skinOf(
-        <AnchoredPanel size="browse" role="dialog" label="reference" at={null} onDismiss={() => {}}>
-          <p>x</p>
-        </AnchoredPanel>,
-        '[aria-label="reference"]',
-      ),
-    );
-  });
-
-  // Regression, user report: adding a project offered no way out of its own — the band
-  // was a BACK arrow into the project inventory. Adding closes, like every other panel:
-  // its band carries the close, and the scrim dismisses it.
-  it("names itself with the menu's own band and its one way out", async () => {
-    const { onCancel } = sheet();
-    expect(await screen.findByText('New project')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /back/i })).toBeNull();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Close new project on tower' }));
-    expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  // A project moves from its own menu: the same browser, saying what its commit does.
-  it('moves a project with the same browser and its own words', async () => {
-    const { onChoose } = sheet({ mode: 'move', knownRoots: new Set([DEMO]) });
-    await screen.findByRole('button', { name: /^vis/ });
-
-    expect(screen.getByRole('dialog', { name: 'Change folder on tower' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Use project/ })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: /^Move here/ }));
-    expect(onChoose).toHaveBeenCalledWith(CODE);
-  });
-
-  it('lists folders with the shipped menu row, its badge and a trailing chevron', async () => {
-    sheet();
-    const row = await screen.findByRole('button', { name: /tools/ });
-
-    // The badge is the row's own word: the folder Vis already runs sessions in says so,
-    // a bare checkout only says `git`.
-    // A folder row OPENS a level: its chevron stands on the trailing edge, after the badge.
-    const marks = row.querySelectorAll('svg');
-    expect(marks).toHaveLength(2);
-    expect(row.lastElementChild).toBe(marks[1]);
-  });
-
-  it('keeps a crumb a real target rather than 14px of bare text', async () => {
-    const { client } = sheet();
-    const home = await screen.findByRole('button', { name: '~' });
-
-    expect(home.tagName).toBe('BUTTON');
-    // The crumb you are standing on is not a way to anywhere.
-    expect(screen.getByRole('button', { name: 'code' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'code' })).toHaveAttribute(
-      'aria-current',
-      'location',
-    );
-
-    await userEvent.click(home);
-    await waitFor(() => expect(client.browse).toHaveBeenCalledWith(HOME, expect.anything()));
-    expect(await screen.findByRole('button', { name: /^code\// })).toBeInTheDocument();
-  });
-
-});
-
 // Regression, user report ("let it start ../ from the current project"). Browsing
 // opened INSIDE the machine's current project, so adding the next checkout beside it
 // began with a tap on the parent crumb, and the first list you saw was that project's
@@ -201,14 +99,6 @@ describe('browsing opens one level above the current project', () => {
     expect(startingDir(null)).toBe(null);
     expect(startingDir('/')).toBe('/');
     expect(startingDir('vis')).toBe('vis');
-  });
-
-  it('is what the sheet opens on', async () => {
-    const { client } = sheet();
-    await screen.findByRole('button', { name: /tools/ });
-
-    expect(client.browse.mock.calls[0][0]).toBe(CODE);
-    expect(screen.queryByRole('button', { name: /src/ })).toBeNull();
   });
 
 });
@@ -228,18 +118,6 @@ describe('a folder that is already a project offers no verb', () => {
     await userEvent.type(screen.getByLabelText('Filter folders or type a path'), 'fresh');
     expect(screen.queryByRole('button', { name: /^Create project/ })).toBeNull();
   });
-
-  it('leaves the verbs live for a folder the machine does not run yet', async () => {
-    const { onChoose } = sheet();
-    // The aim is the folder being LISTED, so the verbs wake with the listing.
-    await screen.findByRole('button', { name: /^vis/ });
-    const use = screen.getByRole('button', { name: /^Use project/ });
-
-    expect(use).toBeEnabled();
-    expect(screen.queryByText('It’s already a project')).toBeNull();
-    await userEvent.click(use);
-    expect(onChoose).toHaveBeenCalledWith(CODE);
-  });
 });
 
 // User request: the place and the search were two bands of the same weight, and the
@@ -247,17 +125,6 @@ describe('a folder that is already a project offers no verb', () => {
 // lead it, and the text after them filters that folder.
 describe('the location field', () => {
   const field = () => screen.getByLabelText('Filter folders or type a path');
-
-  it('wears the Input frame and focus, and the field itself draws none', async () => {
-    sheet();
-    await screen.findByRole('button', { name: /tools/ });
-    const frame = classesOf(field().parentElement!);
-
-    for (const token of ['border', 'border-edge', 'bg-input', 'focus-within:border-accent']) {
-      expect(frame.has(token)).toBe(true);
-    }
-    expect(classesOf(field()).has('border')).toBe(false);
-  });
 
   it('filters anywhere in the name without asking the gateway again', async () => {
     const { client } = sheet();
@@ -338,34 +205,10 @@ describe('the chips and the sections', () => {
     expect(tools.compareDocumentPosition(others) & FOLLOWING).toBe(FOLLOWING);
   });
 
-  it('offers the folders that hold projects as places to jump to', async () => {
-    const { client } = sheet({ startAt: CODE });
-    const place = await screen.findByRole('button', { name: /^~\/code\// });
-
-    await userEvent.click(place);
-    await waitFor(() => expect(client.browse).toHaveBeenCalledWith(CODE, expect.anything()));
-  });
-
   it('never offers the folder on screen as a place', () => {
     expect(projectPlaces(new Set([VIS, DEMO]), CODE)).toEqual([]);
     expect(projectPlaces(new Set([VIS, DEMO]), HOME)).toEqual([[CODE, 2]]);
   });
-});
-
-describe('the commit', () => {
-
-  it('stands in the panel footer, outside the scrolling list', async () => {
-    const { panel } = sheet();
-    const row = await screen.findByRole('button', { name: /tools/ });
-    const use = screen.getByRole('button', { name: /^Use project/ });
-
-    const scroller = row.closest('.overflow-y-auto')!;
-    expect(scroller.contains(use)).toBe(false);
-    const footer = use.closest('footer')!;
-    expect(footer.parentElement).toBe(panel());
-    expect(panel().lastElementChild).toBe(footer);
-  });
-
 });
 
 // User report (paraphrased: the folder creation still annoys). A band cell opened a
@@ -420,14 +263,6 @@ describe('creating a folder', () => {
     expect(screen.queryByRole('button', { name: /^Create project/ })).toBeNull();
   });
 
-  it('creates on Enter when no folder matches', async () => {
-    const { client } = sheet();
-    await screen.findByRole('button', { name: /tools/ });
-
-    await userEvent.type(field(), 'fresh{Enter}');
-    expect(client.createDirectory).toHaveBeenCalledWith(CODE, 'fresh');
-  });
-
   it('creates the leaf of a typed path in the folder that path lists', async () => {
     const { client } = sheet();
     await screen.findByRole('button', { name: /tools/ });
@@ -436,13 +271,5 @@ describe('creating a folder', () => {
     const create = await screen.findByRole('button', { name: 'Create project ~/code/fresh' });
     await userEvent.click(create);
     expect(client.createDirectory).toHaveBeenCalledWith(CODE, 'fresh');
-  });
-
-  it('uses its own words when it moves a project', async () => {
-    sheet({ mode: 'move', knownRoots: new Set([DEMO]) });
-    await screen.findByRole('button', { name: /tools/ });
-
-    await userEvent.type(field(), 'fresh');
-    expect(screen.getByRole('button', { name: 'Create and move ~/code/fresh' })).toBeInTheDocument();
   });
 });

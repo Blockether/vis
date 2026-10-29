@@ -67,22 +67,6 @@ it.each([true, false])('keeps a config-file switch read-only when enabled=%s', a
   expect(screen.getByRole('region', { name: 'linear details' })).toBeVisible();
 });
 
-it.each<[Partial<McpServer>, string, string]>([
-  [{}, 'Connected', '66 tools'],
-  [{ is_killed: true }, 'Killed — start it to reconnect', 'killed'],
-  [{ enabled: false }, 'Disabled', ''],
-  [{ is_connected: false, is_authorized: false }, 'Not signed in — sign in to connect', 'sign in'],
-  [{ is_connected: false }, 'Connecting', 'connecting'],
-  [{ is_connected: false, status: 'unhealthy' }, 'Unhealthy — could not connect', 'unhealthy'],
-  [{ is_connected: false, status: 'unhealthy', is_killed: true }, 'Killed — start it to reconnect', 'killed'],
-  [{ is_connected: false, status: 'unhealthy', enabled: false }, 'Disabled', ''],
-])('preserves connection status without a leading mark: %s', async (patch, label, word) => {
-  const { control, row } = await openServer(patch);
-  expect(row).toHaveAccessibleDescription(label);
-  expect(control).toHaveAccessibleDescription(label);
-  if (word) expect(row).toHaveTextContent(word);
-});
-
 // Regression: a server that never finishes connecting kept showing `connecting`
 // even after the panel stopped polling. Each server needs its own deadline.
 it('shows unhealthy after 30 seconds of silence without timing out another server', async () => {

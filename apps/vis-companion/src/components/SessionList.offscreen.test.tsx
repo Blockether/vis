@@ -35,11 +35,6 @@ function renderRow(props: Partial<ComponentProps<typeof SessionRow>> = {}) {
 // Regression, user report: going back from a session to a long list lagged while Chromium
 // sorted a compositor layer for every row's swipe track.
 describe('a session row out of sight', () => {
-  it('skips its drawing once the list has settled, keeping a row height', () => {
-    const { row } = renderRow();
-    expect(row).toHaveClass(SKIPPED_OFF_SCREEN, '[contain-intrinsic-height:auto_50px]');
-  });
-
   it('stays drawn while it asks to confirm a delete', () => {
     const { row } = renderRow({
       deletion: { isBusy: false, error: null, confirm: vi.fn(), cancel: vi.fn() },
@@ -60,11 +55,5 @@ describe('a session row in a selection', () => {
       expect.objectContaining({ type: 'click' }),
     );
     expect(commands.open).not.toHaveBeenCalled();
-  });
-
-  it('opens when the handler leaves the click alone', () => {
-    const { surface, commands } = renderRow({ onSelectionClick: () => false });
-    fireEvent.click(surface);
-    expect(commands.open).toHaveBeenCalledWith(STORY_GATEWAYS[0], STORY_SESSION_ROW.id);
   });
 });

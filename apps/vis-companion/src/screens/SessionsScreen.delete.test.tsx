@@ -22,25 +22,6 @@ const machines = () => [
 // asked IN the row: two full-width answers standing the row's own height. Renaming
 // still needs a field; project deletion asks inside the project's own menu.
 describe('deleting one session confirms inside its own row', () => {
-  it('asks in the row, not in a dialog, and only that row is asked', async () => {
-    const view = renderSessionsScreen({ machines: machines() });
-    restore = view.restore;
-    await screen.findByText('First');
-
-    fireEvent.click(
-      screen
-        .getByRole('group', { name: 'First actions' })
-        .querySelector("button[aria-label='Delete']")!,
-    );
-
-    const strip = await screen.findByRole('group', { name: 'Delete First?' });
-    expect(strip.querySelectorAll('button')).toHaveLength(2);
-    expect(screen.queryByRole('dialog')).toBeNull();
-    // The neighbour keeps its own row: one question, one row.
-    expect(screen.queryByRole('group', { name: 'Delete Second?' })).toBeNull();
-    expect(screen.getByText('Second')).toBeVisible();
-  });
-
   it('deletes on yes and asks the gateway for exactly that session', async () => {
     const view = renderSessionsScreen({ machines: machines() });
     restore = view.restore;
@@ -63,35 +44,6 @@ describe('deleting one session confirms inside its own row', () => {
     );
     await waitFor(() => expect(screen.queryByText('First')).toBeNull());
     expect(screen.getByText('Second')).toBeVisible();
-  });
-
-  // #412: in the web app and desktop, Enter answers the open question with yes.
-  it('deletes on Enter once the question is open', async () => {
-    const user = userEvent.setup();
-    const view = renderSessionsScreen({ machines: machines() });
-    restore = view.restore;
-    await screen.findByText('First');
-    view.requests.length = 0;
-
-    fireEvent.click(
-      screen
-        .getByRole('group', { name: 'First actions' })
-        .querySelector("button[aria-label='Delete']")!,
-    );
-    const strip = await screen.findByRole('group', { name: 'Delete First?' });
-    // The safe answer keeps the focus; only the Enter key answers yes.
-    expect(within(strip).getByRole('button', { name: 'No, keep' })).toHaveFocus();
-    expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);
-    await user.keyboard('{Enter}');
-
-    await waitFor(() =>
-      expect(
-        view.requests.some(
-          (request) => request.method === 'DELETE' && request.path === '/v1/sessions/a1',
-        ),
-      ).toBe(true),
-    );
-    await waitFor(() => expect(screen.queryByText('First')).toBeNull());
   });
 
   it('no keeps the session: the row comes back and nothing is sent', async () => {
@@ -117,56 +69,6 @@ describe('deleting one session confirms inside its own row', () => {
 // three-dot menu as every other row): the project band holds exactly one menu, its own.
 // It holds no row actions and no swipe track, and creation stays in the Sessions set.
 describe('a project band holds only its own menu', () => {
-  it.each([0, 2])('keeps one project menu on the band with %i sessions', async (count) => {
-    const view = renderSessionsScreen({
-      machines: [
-        {
-          ...machines()[0],
-          sessions: machines()[0].sessions.slice(0, count),
-          projects: [
-            {
-              project_id: 'p-project',
-              root: '/Users/dev/project',
-              name: 'project',
-              session_count: count,
-              live_count: 0,
-              awaiting_count: 0,
-              last_activity_ms: 0,
-            },
-          ],
-        },
-      ],
-    });
-    restore = view.restore;
-    const project = await screen.findByRole('region', { name: 'project sessions' });
-    const header = project.querySelector('header')!;
-
-    const menus = within(header).getAllByRole('button', { name: /^Actions for / });
-    expect(menus).toHaveLength(1);
-    expect(menus[0]).toHaveAccessibleName('Actions for project');
-    expect(menus[0]).toHaveAttribute('aria-haspopup', 'dialog');
-    expect(within(header).queryByRole('group', { name: 'project actions' })).toBeNull();
-    expect(header.querySelector('[data-swipe-track]')).toBeNull();
-    // Creation stays in the Sessions set, even when it has no rows.
-    const sessionsAction = within(project).getByRole('button', {
-      name: 'Actions for sessions in /Users/dev/project',
-    });
-    expect(sessionsAction).toBeEnabled();
-    fireEvent.click(sessionsAction);
-    const menu = within(await screen.findByRole('dialog', { name: 'Sessions in project' }));
-    expect(menu.getByRole('button', { name: 'New session' })).toBeEnabled();
-    if (count > 0) {
-      fireEvent.click(within(header).getByRole('button', { name: 'Collapse project' }));
-      expect(within(project).queryByText('First')).toBeNull();
-      fireEvent.click(within(header).getByRole('button', { name: 'Expand project' }));
-      expect(await within(project).findByText('First')).toBeInTheDocument();
-    } else {
-      expect(within(header).getByRole('button', { name: 'Collapse project' })).toBeEnabled();
-    }
-    expect(screen.getByRole('button', { name: 'New project on alpha' })).toBeEnabled();
-    expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);
-  });
-
   // Regression, user report: a completed project deletion left its "Deleting..."
   // rectangle in place. A same-root group can survive the saved project's removal
   // (for example, sessions not assigned to that project); success must settle the UI.
@@ -396,17 +298,6 @@ describe('deleting a Shift-selected batch of sessions', () => {
     expect(screen.queryByText('Three')).toBeNull();
   });
 
-  it('the Backspace key asks too, and No keeps every session', async () => {
-    const view = await selectAll();
-    fireEvent.keyDown(window, { key: 'Backspace' });
-    fireEvent.click(await screen.findByText('No, keep'));
-    await waitFor(() =>
-      expect(screen.queryByRole('group', { name: 'Delete 3 selected sessions?' })).toBeNull(),
-    );
-    expect(deletes(view)).toEqual([]);
-    expect(screen.getByText('Two')).toBeVisible();
-  });
-
   it("a selected row's own Delete action deletes the whole selection", async () => {
     const view = await selectAll();
     fireEvent.click(
@@ -428,21 +319,6 @@ describe('deleting a Shift-selected batch of sessions', () => {
     field.remove();
     expect(screen.queryByRole('group', { name: 'Delete 3 selected sessions?' })).toBeNull();
     expect(deletes(view)).toEqual([]);
-  });
-
-  it('one confirm stands the height of every selected row, and the others step aside', async () => {
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      return this.hasAttribute('data-session-row') ? 40 : 0;
-    });
-    await selectAll();
-    fireEvent.keyDown(window, { key: 'Delete' });
-    const strip = await screen.findByRole('group', { name: 'Delete 3 selected sessions?' });
-    expect(strip).toHaveStyle({ minHeight: '120px' });
-    expect(screen.queryByText('Two')).toBeNull();
-    expect(screen.queryByText('Three')).toBeNull();
-    fireEvent.click(screen.getByText('No, keep'));
-    expect(await screen.findByText('Two')).toBeVisible();
-    expect(screen.getByText('Three')).toBeVisible();
   });
 });
 

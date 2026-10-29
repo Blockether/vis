@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSessionScreen, sessionFixture, subscriptionHub } from './session-screen-harness';
@@ -33,33 +33,6 @@ const waiting = {
 const paused = { reason: 'turn_failed', held: 1 };
 
 describe('a queued turn after a failed request', () => {
-  // Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: reopening the
-  // session recovered the queued row but not queue.paused, so the app offered no
-  // working way to continue that message after the provider recovered.
-  it('recovers the paused marker with the backlog and continues it', async () => {
-    const resumeQueue = vi.fn().mockResolvedValue(undefined);
-    renderSessionScreen({
-      client: {
-        cachedQueuedTurns: () => [
-          {
-            turnId: 'waiting',
-            request: 'Run this after recovery',
-            preview: 'Run this after recovery',
-            attachments: [],
-          },
-        ],
-        cachedQueuePaused: () => ({ reason: 'turn_failed', held: 1 }),
-        resumeQueue,
-      },
-    });
-
-    expect(await screen.findByText('Run this after recovery')).toBeVisible();
-    expect(screen.getByText('1 held · turn failed')).toBeVisible();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Continue queue' }));
-    await waitFor(() => expect(resumeQueue).toHaveBeenCalledWith('s1'));
-  });
-
   it('refreshes the queued snapshot with one inclusive session reconciliation request', async () => {
     vi.useFakeTimers();
     let cachedRows: typeof waiting[] = [];

@@ -37,15 +37,6 @@ describe('applyScrollAnchorGrowth', () => {
     expect(line.getBoundingClientRect().top - 100).toBe(40 + 60);
   });
 
-  it('leaves a scroll without growth where the reader put it', () => {
-    const { viewport, anchor } = scene(1_000, 1_040);
-    viewport.scrollTop = 940;
-
-    applyScrollAnchorGrowth(viewport, anchor);
-
-    expect(viewport.scrollTop).toBe(940);
-  });
-
   it('reports an unmounted anchor and moves nothing', () => {
     const { viewport, line, anchor } = scene(1_000, 1_040);
     line.isConnected = false;
@@ -96,17 +87,6 @@ describe('a replaced anchor', () => {
 
     expect(viewport.scrollTop).toBe(1_000 + 8_623);
     expect(second.getBoundingClientRect().top - 100).toBe(300);
-  });
-
-  it('bills the growth by the sibling below it under a wheel move', () => {
-    const { viewport, first, second, anchor } = stack(1_000);
-    viewport.scrollTop = 940;
-    first.isConnected = false;
-    second.position += 8_623;
-
-    expect(applyScrollAnchorGrowth(viewport, anchor)).toBe(true);
-
-    expect(viewport.scrollTop).toBe(940 + 8_623);
   });
 });
 

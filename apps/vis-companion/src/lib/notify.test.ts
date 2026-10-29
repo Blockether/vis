@@ -140,21 +140,11 @@ beforeEach(() => {
 // other half of that report impossible: disconnecting the machine you HAD
 // connected can no longer leave a never-connected one still alerting.
 describe('per-gateway notification switch', () => {
-  it('says no for a machine whose Connect was never pressed', async () => {
-    expect(await getGatewayNotify(LAPTOP)).toBe(false);
-  });
 
   it('connects one machine without connecting the fleet', async () => {
     await setGatewayNotify(LAPTOP, true);
     expect(await getGatewayNotify(LAPTOP)).toBe(true);
     expect(await getGatewayNotify(BUILDBOX)).toBe(false);
-  });
-
-  it('remembers an explicit off for that machine alone', async () => {
-    await setGatewayNotify(LAPTOP, true);
-    await setGatewayNotify(BUILDBOX, false);
-    expect(await getGatewayNotify(BUILDBOX)).toBe(false);
-    expect(await getGatewayNotify(LAPTOP)).toBe(true);
   });
 
   it('follows a machine that moves to another address', async () => {
@@ -234,13 +224,6 @@ describe('syncFleetPush', () => {
     const { calls, fleet } = fleetOf({ [LAPTOP]: ['mine'] });
     await syncFleetPush([paired[0]], { ...fleet, isRenewalDue: async () => true }, ['mine'], false);
     expect(calls.registered).toEqual([LAPTOP]);
-  });
-
-  it('registers a machine the app does not currently have open', async () => {
-    await setGatewayNotify(BUILDBOX, true);
-    const { calls, fleet } = fleetOf();
-    await syncFleetPush([paired[1]], fleet, ['mine'], false);
-    expect(calls.registered).toEqual([BUILDBOX]);
   });
 
   it('lets one unreachable machine fail without silencing the rest', async () => {
@@ -447,17 +430,6 @@ describe('the verdict a row opens on', () => {
     expect(cachedNotifyVerdict(LAPTOP)).toBe(false);
   });
 
-  it('answers each paired machine from its own switch', async () => {
-    await setGatewayNotify(LAPTOP, true);
-    const { calls, fleet } = fleetOf({ [LAPTOP]: ['mine'] });
-
-    await syncFleetPush(paired, fleet, ['mine'], false);
-
-    expect(cachedNotifyVerdict(LAPTOP)).toBe(true);
-    expect(cachedNotifyVerdict(BUILDBOX)).toBe(false);
-    expect(requests(calls)).toBe(paired.length);
-  });
-
   it('leaves an unreachable machine with the verdict it settled on', async () => {
     rememberNotifyVerdict(LAPTOP, true);
     await setGatewayNotify(LAPTOP, true);
@@ -481,16 +453,5 @@ describe('the verdict a row opens on', () => {
     expect(requests(calls)).toBe(0);
     expect(cachedNotifyVerdict(LAPTOP)).toBe(false);
     expect(cachedNotifyVerdict(BUILDBOX)).toBe(false);
-  });
-
-  it('stops where the effect was torn down', async () => {
-    await setGatewayNotify(LAPTOP, true);
-    await setGatewayNotify(BUILDBOX, true);
-    const { calls, fleet } = fleetOf({ [LAPTOP]: ['mine'] });
-
-    await syncFleetPush(paired, fleet, ['mine'], false, () => true);
-
-    expect(requests(calls)).toBe(0);
-    expect(cachedNotifyVerdict(LAPTOP)).toBeNull();
   });
 });

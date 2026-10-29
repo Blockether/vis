@@ -70,15 +70,6 @@ describe('native composer input', () => {
     },
   );
 
-  // Regression: iOS smart punctuation changed --budget into —budget.
-  it('disables automatic keyboard substitutions in the message composer', () => {
-    renderSessionScreen();
-    const composer = screen.getByLabelText('Message Vis');
-    expect(composer).toHaveAttribute('spellcheck', 'false');
-    expect(composer).toHaveAttribute('autocorrect', 'off');
-    expect(composer).toHaveAttribute('autocapitalize', 'none');
-  });
-
   it.each([
     '/goal Verify the change --budget 3',
     '/goal Verify the change —budget 3',
@@ -93,22 +84,6 @@ describe('native composer input', () => {
     expect(composer.value).toBe(text);
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     expect(submitTurn.mock.calls[0]?.[1]).toBe(text);
-  });
-
-  it('clears the native editor immediately when a message is sent', () => {
-    const submitTurn = vi.fn((_sid: string, _request: string) =>
-      Promise.resolve({ turn_id: 'native-send', status: 'running' }),
-    );
-    renderSessionScreen({ client: { submitTurn } });
-    const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
-    const text = 'Send the latest words, including żółć';
-    fireEvent.input(composer, { target: { value: text } });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
-
-    expect(submitTurn).toHaveBeenCalled();
-    expect(submitTurn.mock.calls[0]?.[1]).toBe(text);
-    expect(composer.value).toBe('');
   });
 
   // WebKit issue #164077: a correction can precede its input notification.

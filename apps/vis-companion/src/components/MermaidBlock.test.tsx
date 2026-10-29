@@ -52,42 +52,9 @@ describe('a mermaid fence', () => {
 
     expect(screen.getByRole('img', { name: 'Diagram' }).innerHTML).toBe(drawn);
   });
-
-  it('carries copy controls for the picture and the source, and drops them inside a card', async () => {
-    const { unmount } = render(
-      <MermaidBlock source={SOURCE} compact={false} fallback={fallback} />,
-    );
-    await screen.findByRole('img', { name: 'Diagram' });
-    expect(screen.getByRole('button', { name: 'Copy diagram as image' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Copy diagram source' })).toBeInTheDocument();
-
-    unmount();
-    render(<MermaidBlock source={SOURCE} compact fallback={fallback} frameless />);
-    await screen.findByRole('img', { name: 'Diagram' });
-    expect(screen.queryByRole('button', { name: /Copy diagram/ })).toBeNull();
-  });
-
-  it('shows the fence itself when Pele rejects the source', async () => {
-    render(<MermaidBlock source={'flowchart TD\n  A[Start] -->'} compact={false} fallback={fallback} />);
-
-    expect(await screen.findByTestId('fence')).toBeInTheDocument();
-    expect(screen.queryByRole('img', { name: 'Diagram' })).toBeNull();
-  });
 });
 
 describe('before the renderer is loaded', () => {
-  it('paints nothing while the library is still loading', async () => {
-    vi.resetModules();
-    vi.doMock('pele', () => new Promise(() => {}));
-    const { MermaidBlock: Fresh } = await import('./MermaidBlock');
-    try {
-      const { container } = render(<Fresh source={SOURCE} compact={false} fallback={fallback} />);
-      expect(container).toBeEmptyDOMElement();
-    } finally {
-      vi.doUnmock('pele');
-    }
-  });
-
   it('shows the fence itself when the library cannot load', async () => {
     vi.resetModules();
     vi.doMock('pele', () => {

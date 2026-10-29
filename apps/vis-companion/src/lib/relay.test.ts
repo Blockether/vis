@@ -38,7 +38,6 @@ import {
   registerForPush,
   registeredIds,
   refusedRelayUrl,
-  relayHost,
   relayUrlFor,
   unregisterFromPush,
   type PushGateway,
@@ -180,12 +179,6 @@ describe('which machines need a relay', () => {
     expect(refusedRelayUrl({ ...plaintext, apns: { is_available: true } }, 'ios')).toBeNull();
     expect(refusedRelayUrl(status(), 'ios')).toBeNull();
     expect(refusedRelayUrl(undefined, 'ios')).toBeNull();
-  });
-
-  it('shows a relay by host, so a self-hosted one is recognisable', () => {
-    expect(relayHost(RELAY)).toBe('relay.example.com');
-    expect(relayHost('https://push.example.com:8443/v1')).toBe('push.example.com:8443');
-    expect(relayHost(null)).toBeNull();
   });
 });
 

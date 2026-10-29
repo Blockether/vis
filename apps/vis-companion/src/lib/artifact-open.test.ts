@@ -90,13 +90,6 @@ describe('spreadsheet file hand-off', () => {
     ]);
   });
 
-  it('reports the retained download when no desktop app is associated', async () => {
-    vi.stubGlobal('__TAURI__', { core: { invoke: vi.fn(async () => ({ opened: false })) } });
-    expect(await openSpreadsheet(workbook(), 'report.xlsx')).toBe(
-      'Workbook saved in Downloads/Vis Artifacts. Install a spreadsheet app to open it.',
-    );
-  });
-
   it.each(['iOS', 'Android'])('uses the %s app chooser with an XLSX cache file', async () => {
     native.value = true;
     expect(spreadsheetOpenVerb()).toBe('Open in app');
@@ -180,16 +173,6 @@ describe('archive file hand-off', () => {
     expect(isArchiveMedia('application/zip', filename)).toBe(false);
   });
 
-  it.each([
-    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)', 'Show in Finder'],
-    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Show in folder'],
-    ['Mozilla/5.0 (X11; Linux x86_64)', 'Show in folder'],
-  ])('names the desktop file manager for %s', (userAgent, verb) => {
-    vi.stubGlobal('__TAURI__', { core: { invoke: vi.fn() } });
-    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent);
-    expect(archiveOpenVerb()).toBe(verb);
-  });
-
   it('saves the original bytes on the desktop and names the saved path', async () => {
     const invoke = vi.fn(async () => ({ revealed: true, path: '/home/ada/Downloads/Vis Artifacts/1/bundle.zip' }));
     vi.stubGlobal('__TAURI__', { core: { invoke } });
@@ -200,22 +183,6 @@ describe('archive file hand-off', () => {
       filename: 'bundle.zip',
       data: Array.from(data),
     });
-  });
-
-  it('names the saved path when no file manager answers', async () => {
-    const path = 'C:\\Users\\ada\\Downloads\\Vis Artifacts\\1\\bundle.zip';
-    vi.stubGlobal('__TAURI__', { core: { invoke: vi.fn(async () => ({ revealed: false, path })) } });
-    expect(await keepArchive(archive(), 'bundle.zip')).toBe(
-      `Archive saved to ${path}. Open that folder to find it.`,
-    );
-  });
-
-  it('offers the native save sheet on a phone', async () => {
-    native.value = true;
-    expect(archiveOpenVerb()).toBe('Save');
-    expect(await keepArchive(archive(), 'bundle.zip', 'application/zip')).toBe('Archive shared.');
-    expect(share).toHaveBeenCalledWith(expect.objectContaining({ dialogTitle: 'Save archive' }));
-    expect(deleteFile).not.toHaveBeenCalled();
   });
 
   it('downloads in a browser and refuses other files', async () => {

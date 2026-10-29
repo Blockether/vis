@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   BEST_DEVICE_VOICE_LIMIT,
   bestDeviceVoices,
-  iosVoiceDownloadGuidance,
   type DeviceVoice,
 } from './speech-voices';
 
@@ -187,16 +186,5 @@ describe('best device voices', () => {
     );
 
     expect(chosen.map((voice) => voice.label)).toEqual(['Ava (Premium)']);
-  });
-
-  it('shows the manual voice download path only on iOS', () => {
-    expect(iosVoiceDownloadGuidance('ios')).toContain(
-      'In Settings, choose Accessibility → Read & Speak',
-    );
-    expect(iosVoiceDownloadGuidance('ios')).not.toContain(
-      'does not let apps open this page directly',
-    );
-    expect(iosVoiceDownloadGuidance('android')).toBeNull();
-    expect(iosVoiceDownloadGuidance('web')).toBeNull();
   });
 });

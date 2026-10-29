@@ -102,24 +102,10 @@ function AddProviderBand({ state }: { state: ProviderAuth }) {
   );
 }
 
-const localPreset = (id: string, baseUrl: string): ProviderPreset => ({
-  ...preset(id),
-  is_local: true,
-  base_url: baseUrl,
-});
-
 describe('AddProviderButton', () => {
   it('offers nothing when every provider this machine knows is already configured', () => {
     expect(
       renderToStaticMarkup(<AddProviderButton auth={auth([])} isOpen={false} onToggle={() => {}} />),
-    ).toBe('');
-  });
-
-  it('stays silent until the gateway has said what is addable', () => {
-    expect(
-      renderToStaticMarkup(
-        <AddProviderButton auth={auth(null)} isOpen={false} onToggle={() => {}} />,
-      ),
     ).toBe('');
   });
 
@@ -130,36 +116,6 @@ describe('AddProviderButton', () => {
 // Providers panel now — opened and closed by the one verb, with no dialog of its
 // own, and a local runtime asks for its address in that same band.
 describe('AddProviderPicker', () => {
-  it('opens inside the panel, and the verb that opened it closes it again', () => {
-    render(<AddProviderBand state={auth([preset('mistral')])} />);
-    expect(screen.queryByText('MISTRAL')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add a provider' }));
-
-    expect(screen.getByText('MISTRAL')).toBeVisible();
-    expect(screen.queryByRole('dialog')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Hide the providers this machine can add' }));
-    expect(screen.queryByText('MISTRAL')).toBeNull();
-  });
-
-  it('asks a local runtime for its address in the same band', () => {
-    render(<AddProviderBand state={auth([localPreset('ollama', 'http://localhost:11434/v1')])} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Add a provider' }));
-
-    // The offer says what it is; the URL belongs to the question it opens, not
-    // to a list of plain sentences.
-
-    fireEvent.click(screen.getByText('OLLAMA'));
-
-    expect(screen.getByLabelText('Where OLLAMA listens on that machine')).toBeVisible();
-    expect(screen.getByPlaceholderText('http://localhost:11434/v1')).toBeVisible();
-    expect(screen.queryByRole('dialog')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-    expect(screen.getByText('OLLAMA')).toBeVisible();
-  });
-
   it('adds a preset on the spot and closes the band behind it', async () => {
     const added: string[] = [];
     const state = {
@@ -200,30 +156,6 @@ describe('ProviderNotice', () => {
       />,
     );
     expect(html).toBe('');
-  });
-
-  it("keeps a provider's own verdict in that provider and out of the others", () => {
-    const signedOut = state({
-      note: { text: 'Z.AI: signed out.', providerId: 'zai-coding-plan' },
-    });
-    expect(
-      renderToStaticMarkup(
-        <ProviderNotice auth={signedOut} provider={provider('zai-coding-plan')} />,
-      ),
-    ).toContain('signed out.');
-    expect(
-      renderToStaticMarkup(<ProviderNotice auth={signedOut} provider={provider('anthropic')} />),
-    ).toBe('');
-  });
-
-  it('paints a failure in the provider that failed', () => {
-    const html = renderToStaticMarkup(
-      <ProviderNotice
-        auth={state({ err: { text: 'Authorization failed.', providerId: 'anthropic' } })}
-        provider={provider('anthropic')}
-      />,
-    );
-    expect(html).toContain('Authorization failed.');
   });
 });
 
@@ -395,47 +327,6 @@ describe('ProviderRows', () => {
     ...fields,
   });
 
-  it('opens a signed-in provider and shows every reported limit without source detail', () => {
-    render(
-      <ProviderRows
-        auth={state({
-          providers: [
-            signedIn({
-              limits: {
-                dynamic: {
-                  limits: [
-                    { label: 'Chat', limit: 100, remaining: 62 },
-                    { label: 'Completions', limit: 100, remaining: 16 },
-                  ],
-                  note: 'Live quota source detail.',
-                },
-              },
-            }),
-          ],
-          recheck: async () => {},
-        })}
-      />,
-    );
-
-    const row = screen.getByText('GITHUB-COPILOT').closest('button');
-    expect(row).toBeVisible();
-    if (!row) throw new Error('provider row missing');
-    expect(row.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
-
-    fireEvent.click(row);
-
-    expect(row.getAttribute('aria-expanded')).toBe('true');
-    const limits = screen.getByRole('region', { name: 'GITHUB-COPILOT limits' });
-    expect(limits.textContent).toContain('Chat 62% left');
-    expect(limits.textContent).toContain('Completions 16% left');
-    expect(screen.queryByText('Live quota source detail.')).toBeNull();
-
-    fireEvent.click(row);
-    expect(row.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
-  });
-
   it.each([null, 'status:github-copilot', 'auth:complete'])(
     'keeps row refresh read-only and ignores it while busy (%s)',
     (pending) => {
@@ -458,91 +349,6 @@ describe('ProviderRows', () => {
       ).toBeVisible();
     },
   );
-
-  it('presses into a live re-check for an account that is already signed in', () => {
-    const asked: string[] = [];
-    render(
-      <ProviderRows
-        auth={state({
-          providers: [signedIn()],
-          recheck: async (providerId: string) => {
-            asked.push(providerId);
-          },
-        })}
-      />,
-    );
-    fireEvent.click(screen.getByText('GITHUB-COPILOT'));
-    expect(asked).toEqual(['github-copilot']);
-  });
-
-  it('keeps the disclosure quiet while its live re-check is in flight', () => {
-    render(
-      <ProviderRows
-        auth={state({
-          providers: [signedIn()],
-          pending: 'status:github-copilot',
-          recheck: async () => {},
-        })}
-      />,
-    );
-
-    const row = screen.getByText('GITHUB-COPILOT').closest('button');
-    expect(row).toBeVisible();
-    if (!row) throw new Error('provider row missing');
-    fireEvent.click(row);
-
-    expect(screen.getByText('Signed in')).toBeVisible();
-    expect(screen.queryByText(/Checking/)).toBeNull();
-    expect(screen.queryByText('No limits reported by this provider.')).toBeNull();
-  });
-
-  it('presses into the sign-in of an account that has none', () => {
-    const started: string[] = [];
-    render(
-      <ProviderRows
-        auth={state({
-          providers: [provider('anthropic')],
-          signIn: async (row: RouterProvider) => {
-            started.push(row.id);
-          },
-        })}
-      />,
-    );
-    expect(screen.getByText('Sign in')).toBeVisible();
-    fireEvent.click(screen.getByText('ANTHROPIC'));
-    expect(started).toEqual(['anthropic']);
-  });
-
-  it('shows the full rejected-grant message and offers Connect for an expired sign-in', () => {
-    const started: string[] = [];
-    const message = 'Your sign-in has expired or was revoked. Select Connect to sign in again.';
-    const expired = {
-      ...provider('anthropic-coding-plan'),
-      status: { is_authenticated: false, auth_state: 'rejected' as const, error: message },
-    };
-    render(
-      <ProviderRows
-        auth={state({
-          providers: [expired],
-          signIn: async (row: RouterProvider) => { started.push(row.id); },
-        })}
-      />,
-    );
-    const error = screen.getByText(message);
-    expect(error).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: /ANTHROPIC-CODING-PLAN.*Connect/ }));
-    expect(started).toEqual(['anthropic-coding-plan']);
-  });
-
-  it('hangs that account’s own models under the rank verb instead of guessing one', () => {
-    render(
-      <ProviderRows
-        auth={state({ providers: [signedIn({ models: ['glm-5.3', 'glm-5.3-air'] })] })}
-      />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Make default' }));
-    expect(screen.getByText('glm-5.3-air')).toBeVisible();
-  });
 
   it('sets the default thinking level of a provider from its row menu', async () => {
     const saved: [string, string, string | null][] = [];

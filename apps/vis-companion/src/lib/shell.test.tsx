@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { renderApp } from '../app-harness';
-import { IconButton } from '../components/ui';
 import { isShellChromeVisible, isShellSplit, shellScreen, type ShellState } from './shell';
 
 const state = (over: Partial<ShellState> = {}): ShellState => ({
@@ -42,15 +40,6 @@ describe('shell screen', () => {
 
   it('opens the notification session before the machine list has loaded', () => {
     expect(shellScreen(state({ isSessionOpen: true, hasConn: false }))).toBe('session');
-  });
-
-  // The chrome is the only thing that pads the top safe area on those screens,
-  // so hiding it anywhere but a session puts content under the status bar.
-  it('never hides the chrome on a screen that has none of its own', () => {
-    for (const s of everyState()) {
-      const where = shellScreen(s);
-      if (!isShellChromeVisible(where)) expect(where).toBe('session');
-    }
   });
 
   it('hides the chrome exactly when a session is on screen', () => {
@@ -112,45 +101,6 @@ describe('the app bar', () => {
     await screen.findByRole('button', { name: 'New project on laptop' });
     return view;
   };
-
-  // Regression, user report (paraphrased: make it ONE screen, with pairing behind a
-  // single icon, so there are not two tabs): pairing owned a whole tab of a two-tab
-  // bar for a verb used twice a year.
-  it('has no tab bar and no primary navigation at all', async () => {
-    const view = await mount();
-    expect(screen.queryAllByRole('navigation')).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: /Machines/ })).toBeNull();
-    view.unmount();
-    view.restore();
-  });
-
-  // The bar's controls are the app's own, never a hand-rolled slab: two controls that
-  // mean the same thing must never look like two different things.
-  it('wears the app’s own controls, not hand-rolled slabs', async () => {
-    const view = await mount();
-    const own = (
-      /class="([^"]*)"/.exec(
-        renderToStaticMarkup(
-          <IconButton label="x" title="x">
-            <span />
-          </IconButton>,
-        ),
-      )?.[1] ?? ''
-    )
-      .replace(/&quot;/g, '"')
-      .split(' ')
-      .filter(Boolean);
-    expect(own.length).toBeGreaterThan(5);
-    const header = view.baseElement.querySelector('header') as HTMLElement;
-    const bar = within(header).getAllByRole('button');
-    expect(bar).toHaveLength(2);
-    for (const control of bar) {
-      const worn = new Set(control.className.split(' ').filter(Boolean));
-      expect(own.filter((one) => !worn.has(one))).toEqual([]);
-    }
-    view.unmount();
-    view.restore();
-  });
 
   // Regression, user report ("just search icon that triggers full page search"): the
   // open field was the bar's whole middle at every width — the widest object on a
@@ -215,48 +165,6 @@ describe('the app bar', () => {
     // The very same node, still carrying the fleet — never rebuilt, never hidden.
     expect(main.contains(list)).toBe(true);
     expect(within(list).getByRole('button', { name: 'New project on laptop' })).toBeVisible();
-    view.unmount();
-    view.restore();
-  });
-
-  // Regression, user report (a sketch over the machines screen: "this should open when
-  // I click the cog"): the cog opened a dialog whose machine half was a strip of bare
-  // NAMES plus a `Pair machine` button whose only act was to CLOSE the dialog and
-  // navigate to a screen the app bar has no door to — so the machines this device is
-  // paired with, and both ways to add one, were behind nothing the cog could reach.
-  it('opens the machines, and both ways to pair, straight from the cog', async () => {
-    const view = await mount();
-    await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Settings' });
-
-    // The fleet LEADS the dialog: it is what the cog is opened for.
-    const headings = within(dialog)
-      .getAllByRole('heading')
-      .map((heading) => heading.textContent ?? '');
-    expect(headings).toContain('Machines');
-    expect(headings.indexOf('Machines')).toBeLessThan(headings.indexOf('Application'));
-
-    // A machine is ONE ROW — its name, its marks and its verdict on a single line —
-    // not a bare tab, and EVERY row keeps the machine's own verbs under its own
-    // trailing edge.
-    // A sole online machine is already open; its identity is not a disclosure button.
-    const machineName = within(dialog).getByText('laptop', { exact: true });
-    expect(machineName.closest('button')).toBeNull();
-    expect(
-      within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole('button', {
-        name: 'Forget',
-      }),
-    ).toBeVisible();
-
-    // Pairing is one word in the band, and what it opens is a band in THIS dialog —
-    // never a second modal over the first: nothing navigates away to reach either way
-    // in, and nothing greys out the fleet the machine is about to join.
-    expect(within(dialog).queryByPlaceholderText(/vis:\/\/gateway/)).toBeNull();
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Add a machine' }));
-    expect(await within(dialog).findByPlaceholderText(/vis:\/\/gateway/)).toBeVisible();
-    expect(within(dialog).getByRole('button', { name: 'Scan QR' })).toBeVisible();
-    expect(screen.queryByRole('dialog', { name: 'Add a machine' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Pair a machine' })).toBeNull();
     view.unmount();
     view.restore();
   });

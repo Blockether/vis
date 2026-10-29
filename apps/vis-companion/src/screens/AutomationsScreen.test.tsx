@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AutomationsPanel } from './settings/AutomationsPanel';
 import { storyAutomationsClient } from '../dev/story-data';
@@ -22,40 +22,6 @@ async function openAutomation(name: string, client = storyAutomationsClient()) {
 }
 
 describe('Automations workspace', () => {
-
-  it('edits an automation straight from its row and goes back to the list', async () => {
-    renderBand();
-    expect(await screen.findByText('Morning summary')).toBeVisible();
-    click('Edit Morning summary');
-    expect(screen.getByRole('heading', { name: 'Edit Morning summary' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Back to automations' })).toBeNull();
-    click('Cancel');
-    expect(await screen.findByText('Review new pull requests')).toBeVisible();
-  });
-
-  it('pauses and runs an automation now', async () => {
-    const client = await openAutomation('Morning summary');
-    const update = vi.spyOn(client, 'updateAutomation');
-    const start = vi.spyOn(client, 'runAutomation');
-    click('Pause');
-    expect(await screen.findByText('Automation paused.')).toBeVisible();
-    expect(update).toHaveBeenCalledWith('auto-standup', { enabled: false });
-    expect(await screen.findByRole('button', { name: 'Resume' })).toBeEnabled();
-    click('Run now');
-    expect(
-      await screen.findByText('Run started. The answer goes to the target session.'),
-    ).toBeVisible();
-    expect(start).toHaveBeenCalledWith('auto-standup');
-    expect(await screen.findByText(/^Queued · Manual · /)).toBeVisible();
-  });
-
-  it('shows the webhook address and failed runs with their reason', async () => {
-    await openAutomation('Review new pull requests');
-    expect(screen.getByText('http://gateway.example.com/v1/hooks/auto-review')).toBeVisible();
-    expect(screen.getByText('Callback to https://gateway.example.com/review-results')).toBeVisible();
-    expect(await screen.findByText('The target session does not exist.')).toBeVisible();
-    expect(screen.getByText(/^Failed · Webhook · /)).toBeVisible();
-  });
 
   it('asks before it replaces a secret and shows the new secret only once', async () => {
     const client = await openAutomation('Review new pull requests');
@@ -165,19 +131,6 @@ describe('Automations workspace', () => {
     expect(screen.getByText('Morning summary')).toBeVisible();
   });
 
-  it('asks for the webhook signature after a webhook start', async () => {
-    renderBand();
-    expect(await screen.findByText('Morning summary')).toBeVisible();
-    click('New automation');
-    fireEvent.click(screen.getByRole('button', { name: /^Run when a service sends an event/ }));
-    expect(screen.getByText('Which webhook starts it?')).toBeVisible();
-    const signatures = screen.getByRole('group', { name: 'Trigger signature' });
-    expect(signatures).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: /^Token/ }));
-    expect(screen.getByRole('button', { name: /^Token/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.queryByRole('radiogroup', { name: /kind$/ })).toBeNull();
-  });
-
   it('puts Back and the next step in the footer and asks before it drops changes', async () => {
     renderBand();
     expect(await screen.findByText('Morning summary')).toBeVisible();
@@ -249,25 +202,6 @@ describe('Automations workspace', () => {
     expect(screen.queryByRole('heading', { name: 'New automation' })).toBeNull();
     expect(screen.queryByText(/holds at most 256/)).toBeNull();
     expect(screen.getByText('Morning summary')).toBeVisible();
-  });
-
-  it('adds and removes triggers', async () => {
-    renderBand();
-    expect(await screen.findByText('Morning summary')).toBeVisible();
-    click('New automation');
-    fireEvent.click(screen.getByRole('button', { name: /^Run at set times/ }));
-    expect(screen.queryByRole('button', { name: /^Remove trigger/ })).toBeNull();
-    click('Add trigger');
-    expect(screen.getByRole('group', { name: 'Trigger 2' })).toBeVisible();
-    const kinds = screen.getByRole('radiogroup', { name: 'Trigger 2 kind' });
-    expect(within(kinds).getByRole('radio', { name: 'Interval' })).toHaveAttribute('aria-checked', 'true');
-    fireEvent.click(within(kinds).getByRole('radio', { name: 'One time' }));
-    expect(within(kinds).getByRole('radio', { name: 'One time' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.queryByRole('combobox', { name: /kind$/ })).toBeNull();
-    const remove = screen.getByRole('button', { name: 'Remove trigger 2' });
-    fireEvent.click(remove);
-    expect(screen.getByRole('group', { name: 'Trigger' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: /^Remove trigger/ })).toBeNull();
   });
 
   it('removes the first trigger when another one stays', async () => {

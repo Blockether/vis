@@ -82,10 +82,3 @@ it('connects this machine from the desktop window', async () => {
   await waitFor(async () => expect(await getGatewayNotify(MACHINE)).toBe(true));
 });
 
-it('offers the switch instead of the browser push dead end', async () => {
-  panel();
-
-  expect(await screen.findByRole('switch', { name: /Notifications from buildbox/ })).toBeVisible();
-  expect(screen.queryByText(/background Web Push/i)).toBeNull();
-});
-

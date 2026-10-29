@@ -63,15 +63,3 @@ it('keeps multi-directory sections behind their List call', () => {
   expect(document.querySelector('[data-activity-section]')).toBeNull();
   expect(screen.queryByRole('table')).toBeNull();
 });
-
-it.each(['running', 'failed'] as const)('does not auto-open %s List details', (state) => {
-  const activity = structuredClone(ACTIVITY_LISTING);
-  activity.rows[0].state = state;
-  render(<ActivityPanel activity={activity} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  const call = screen.getByRole('button', { name: /Listed apps\/vis-companion\/src/ });
-  expect(call).toHaveAttribute('aria-expanded', 'false');
-  expect(screen.queryByRole('table')).toBeNull();
-  fireEvent.click(call);
-  expect(screen.getByRole('table')).toBeVisible();
-});

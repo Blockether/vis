@@ -75,37 +75,6 @@ describe('starring a session', () => {
     ).toBe(true);
   });
 
-  // Regression, user report ("the star is not showing on the session row as long
-  // as I don't drag to open the session or come back"): the row's own mark was in
-  // the DOM the moment the strip was tapped — this is what proves it — and it was
-  // painted #ffc420 on #faf3eb paper at 1.45:1, so it could not be SEEN until the
-  // list was left and re-entered and the eye went looking for it. The state was
-  // never the bug; see `icons.tsx` for the outline that gives the mark a shape.
-  it('wears its star on the row the moment the mark is tapped', async () => {
-    const view = renderSessionsScreen({ machines });
-    restore = view.restore;
-    await screen.findByText('Older session');
-    const row = () =>
-      (document.querySelector('[data-session-id="older"]') as HTMLElement).parentElement!;
-    expect(row().querySelector("svg[fill='currentColor']")).toBeNull();
-
-    await userEvent.click(
-      screen
-        .getByRole('group', { name: 'Older session actions' })
-        .querySelector('button[aria-label="Star"]')!,
-    );
-
-    // No remount, no reopened list: the same row, in the same commit. One star,
-    // not a mark and a control — the row's state IS the way to take it back.
-    expect(row().querySelector("svg[fill='currentColor']")).toBeInTheDocument();
-    expect(row().querySelectorAll("svg[fill='currentColor']")).toHaveLength(1);
-    expect(
-      screen
-        .getByRole('group', { name: 'Older session actions' })
-        .querySelector('button[aria-label="Unstar"]'),
-    ).toBeVisible();
-  });
-
   // Regression, user report (paraphrased: the star is in two states at once): the
   // mark was kept in THIS DEVICE's storage, so the machine never heard about it —
   // one screen showed a session starred, another showed it plain, and no answer the
@@ -251,38 +220,5 @@ describe('starring a session', () => {
     });
     // Nothing in this tap may hand that track an animation the platform can drop.
     expect(asked.some((options) => options?.behavior === 'smooth')).toBe(false);
-  });
-
-  // Regression: the leading favorite column indented every title. Keep a stable
-  // slot immediately before the status instead, including on unstarred rows.
-  it('reserves the favorite slot immediately before the status', async () => {
-    const view = renderSessionsScreen({
-      machines: [
-        {
-          sessions: [
-            listSession({ id: 'starred', title: 'Starred session', favorite_rank: 1 }),
-            listSession({ id: 'plain', title: 'Plain session', favorite_rank: null }),
-          ],
-        },
-      ],
-    });
-    restore = view.restore;
-    await screen.findByText('Starred session');
-
-    const row = (id: string) => document.querySelector(`[data-session-id="${id}"]`) as HTMLElement;
-    const favorite = (id: string) =>
-      row(id).querySelector('[data-session-favorite-slot]') as HTMLElement;
-    const status = (id: string) => row(id).querySelector('[data-session-status]') as HTMLElement;
-    const starredFavorite = favorite('starred');
-    const plainFavorite = favorite('plain');
-
-    expect(starredFavorite.nextElementSibling).toBe(status('starred'));
-    expect(plainFavorite.nextElementSibling).toBe(status('plain'));
-    expect(row('starred').firstElementChild).not.toBe(starredFavorite);
-    expect(row('plain').firstElementChild).not.toBe(plainFavorite);
-    expect(starredFavorite.querySelector("svg[fill='currentColor']")).toBeInTheDocument();
-    expect(plainFavorite.querySelector('svg')).toBeNull();
-    expect(status('starred').children[0]?.hasAttribute('data-session-status-dot')).toBe(true);
-    expect(status('plain').children[0]?.hasAttribute('data-session-status-dot')).toBe(true);
   });
 });

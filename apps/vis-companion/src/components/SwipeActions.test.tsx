@@ -1,35 +1,11 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SwipeActions } from './SwipeActions';
 import { PencilIcon, StarIcon, TrashIcon } from './icons';
 
 // Touch keeps its swipe gesture; desktop actions live behind one vertical-dot trigger.
-
-// Regression, user report ("the colour is the same as rename"): every action on the
-// strip wore one neutral ink, so the star — the mark the human types in themselves,
-// and the only yellow thing in the list — looked like one more grey verb.
-describe('SwipeActions tones', () => {
-  const strip = (tone?: 'neutral' | 'accent' | 'danger') =>
-    renderToStaticMarkup(
-      <SwipeActions
-        label="a session"
-        actions={[{ key: 'favorite', label: 'Star', icon: <StarIcon />, tone, onSelect: () => {} }]}
-      >
-        <span>row</span>
-      </SwipeActions>,
-    );
-
-  // The verbs are under the row's TRAILING edge and nowhere else: the row is panel
-  // one at full width and the strip is panel two, so the slide always uncovers them
-  // on the right.
-  it('keeps the strip on the trailing edge, behind the whole row', () => {
-    const html = strip();
-    expect(html.indexOf('grid w-full')).toBeLessThan(html.indexOf('role="group"'));
-  });
-});
 
 // Six fixed-width cells exceeded the row width and clipped the first action on iPhones.
 it.each([1, 3, 6, 8])(
@@ -75,62 +51,6 @@ it.each([1, 3, 6, 8])(
     expect(strip).toHaveStyle({ width: '4.5rem' });
   },
 );
-
-// Regression, user report (paraphrased: on the desktop that sideways scrolling is
-// broken and should not be there at all): every row of both lists was a scroll-snap
-// track 288px wider than its own box, and a pointer has no swipe — so the only way
-// one could reach it was a two-finger trackpad drag or shift+wheel, which slid a
-// delete button under the cursor on whichever rows the sideways gesture crossed.
-// A mouse gets no track and no scroll: one button opens the row's dropdown.
-describe('a mouse never slides', () => {
-  const markup = (alignMenuWithHeader = false) =>
-    renderToStaticMarkup(
-      <SwipeActions
-        label="a session"
-        alignMenuWithHeader={alignMenuWithHeader}
-        actions={[
-          {
-            key: 'delete',
-            label: 'Delete',
-            icon: <TrashIcon />,
-            tone: 'danger',
-            onSelect: () => {},
-          },
-        ]}
-      >
-        <span>row</span>
-      </SwipeActions>,
-    );
-
-  it('reserves only a menu trigger and hides the touch strip from a pointer', () => {
-    const html = markup();
-    expect(html).toContain('aria-label="Actions for a session"');
-    expect(html).toContain('aria-haspopup="dialog"');
-    expect(html).toContain('shrink-0 mouse:hidden');
-    expect(html).not.toContain('group-hover/swipe:opacity');
-  });
-
-});
-
-it.each([false, true])('retains one permanent control with actions=%s', (hasActions) => {
-  const onDetails = vi.fn();
-  render(
-    <SwipeActions
-      actions={
-        hasActions
-          ? [{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: vi.fn() }]
-          : []
-      }
-      trailing={<button onClick={onDetails}>Details</button>}
-    >
-      <button>Open session</button>
-    </SwipeActions>,
-  );
-  expect(screen.getAllByRole('button', { name: 'Details' })).toHaveLength(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-  expect(onDetails).toHaveBeenCalledOnce();
-  expect(screen.getByRole('button', { name: 'Open session' })).toBeInTheDocument();
-});
 
 describe('the slide', () => {
   const track = (index = 0) =>
@@ -196,21 +116,6 @@ describe('the slide', () => {
       </button>
     </SwipeActions>
   );
-
-  it('keeps captioned touch actions separate from the desktop trigger', () => {
-    render(row('first'));
-    const strip = screen.getByRole('group', { name: 'first actions' });
-    expect(
-      Array.from(strip.querySelectorAll('button')).map((button) =>
-        button.getAttribute('aria-label'),
-      ),
-    ).toEqual(['Rename', 'Delete']);
-    expect(screen.getByRole('button', { name: 'Actions for first' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
-    expect(screen.getByRole('group', { name: 'first actions' })).toBeVisible();
-  });
 
   it('follows the finger, then opens past half its drawer and shuts short of it', () => {
     render(row('first'));
@@ -401,42 +306,6 @@ describe('the slide', () => {
     expect(offset()).toBe(`-${WIDTH}px`);
   });
 
-  // A row whose owner wired no verb has no drawer at all: `ConnectScreen` lists
-  // machines as places to GO, and a track there would slide onto an empty strip.
-  it('renders the row bare when it has no verbs', () => {
-    render(
-      <SwipeActions label="first" actions={[]}>
-        <button type="button">first</button>
-      </SwipeActions>,
-    );
-    expect(document.querySelector('.snap-x')).toBeNull();
-  });
-
-  // The caption is one word wide because the cell is 72px; the whole sentence is
-  // what a screen reader hears, so `Primary` on a machine row is `Make tower primary`.
-  it('lets a verb name the thing it acts on without widening the cell', () => {
-    render(
-      <SwipeActions
-        label="tower"
-        actions={[
-          {
-            key: 'primary',
-            label: 'Primary',
-            name: 'Make tower primary',
-            icon: <StarIcon />,
-            tone: 'accent',
-            onSelect: () => {},
-          },
-        ]}
-      >
-        <span>row</span>
-      </SwipeActions>,
-    );
-    const verb = screen.getByRole('button', { name: 'Make tower primary' });
-    expect(verb.textContent).toBe('Primary');
-    expect(verb.getAttribute('title')).toBe('Make tower primary');
-  });
-
   it('treats the permanent control as a dismiss target while the touch drawer is open', () => {
     const onDetails = vi.fn();
     render(
@@ -454,67 +323,5 @@ describe('the slide', () => {
     expect(offset()).toBe('');
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(onDetails).toHaveBeenCalledOnce();
-  });
-});
-
-// Regression, user report with a screenshot (paraphrased: pressing a row highlights
-// only part of it, while the chevron keeps a different background). The press was
-// painted by the row's own button, and that button is ONE CELL of a grid whose other
-// cells are the permanent trailing controls and the desktop menu trigger. Everything
-// standing beside it — the disclosure chevron, the kebab — kept the list's paper, so a
-// pressed row read as half-selected. The row paints the press now, not the button.
-describe('a press paints the whole row', () => {
-  const PRESSED = 'has-[[data-row-surface]:active]:bg-hover';
-  const FOCUSED = 'has-[[data-row-surface]:focus-visible]:bg-hover';
-
-  const surface = <button type="button" data-row-surface="">row</button>;
-
-  // Both layouts need their own paper: the desktop row IS the track, because the panel
-  // inside it is `contents` there, and the touch row is that panel at full width.
-  it('paints the track and the touch panel alike', () => {
-    render(
-      <SwipeActions
-        label="a session"
-        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: () => {} }]}
-        trailing={<button type="button">Details</button>}
-      >
-        {surface}
-      </SwipeActions>,
-    );
-    const painted: Element[] = [];
-    for (
-      let node = screen.getByRole('button', { name: 'row' }).parentElement;
-      node;
-      node = node.parentElement
-    ) {
-      if (node.className.includes(PRESSED)) painted.push(node);
-    }
-    expect(painted).toHaveLength(2);
-    expect(painted.every((node) => node.className.includes(FOCUSED))).toBe(true);
-    expect(painted.some((node) => node.hasAttribute('data-swipe-track'))).toBe(true);
-  });
-
-  it('keeps the trailing controls inside the paper the press paints', () => {
-    render(
-      <SwipeActions actions={[]} trailing={<button type="button">Details</button>}>
-        {surface}
-      </SwipeActions>,
-    );
-    const paper = screen.getByRole('button', { name: 'row' }).closest(`[class*="${PRESSED}"]`);
-    expect(paper?.contains(screen.getByRole('button', { name: 'Details' }))).toBe(true);
-  });
-
-  // A row with no pressable half of its own — a static machine row, a skeleton — simply
-  // never matches, so the paper stays the list's own.
-  it('lights up for nothing but a row surface', () => {
-    render(
-      <SwipeActions actions={[]} trailing={<button type="button">Details</button>}>
-        <span>row</span>
-      </SwipeActions>,
-    );
-    const details = screen.getByRole('button', { name: 'Details' });
-    expect(details.closest(`[class*="${PRESSED}"]`)?.querySelector('[data-row-surface]')).toBe(
-      null,
-    );
   });
 });

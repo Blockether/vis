@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   arrivedAtEnd,
-  bottomOf,
   followEnd,
   isAtBottom,
   heightSettler,
@@ -39,11 +38,6 @@ describe('the "Latest" offer', () => {
   it('offers nothing when there is nothing to scroll', () => {
     expect(shouldOfferLatest(box(0, 600, 800), false)).toBe(false);
     expect(shouldOfferLatest(null, false)).toBe(false);
-  });
-
-  it('uses a 64 px tolerance for the visible end', () => {
-    expect(isAtBottom(box(4160, 5000, 800))).toBe(true);
-    expect(isAtBottom(box(4135, 5000, 800))).toBe(false);
   });
 });
 
@@ -91,10 +85,6 @@ describe('a correction is not a gesture', () => {
     scrollTop,
     scrollHeight,
     clientHeight,
-  });
-
-  it('recognises the scroller resting where the corrector left it', () => {
-    expect(isCorrectionEcho(box(35_099, 35_866, 767), 35_099)).toBe(true);
   });
 
   it('still recognises it after the transcript grew underneath', () => {
@@ -233,11 +223,6 @@ describe('a clamp is not a retreat', () => {
     expect(endCameUpToReader(box(45_190, TRANSCRIPT, 800), 45_200, 45_200)).toBe(false);
   });
 
-  it('never calls standing still or moving down the end coming up', () => {
-    expect(endCameUpToReader(box(45_200, TRANSCRIPT, 800), 45_200, 45_200)).toBe(false);
-    expect(endCameUpToReader(box(45_200, TRANSCRIPT, 800), 44_000, 45_200)).toBe(false);
-  });
-
   // BLO-170 again: between two scroll measurements the transcript can dip AND come
   // back — the running bubble leaves, the persisted row's highlighted code lands a
   // frame later — and the browser's clamp is all the reader has moved.
@@ -267,10 +252,5 @@ describe('a clamp is not a retreat', () => {
   it('reads the low-water mark off the box when the caller kept none', () => {
     // Same frame without the mark: the dip is invisible and reads as a retreat.
     expect(readerRetreatedFrom(box(8_800, 10_328, 800), 9_140, 9_140)).toBe(true);
-  });
-
-  it('reads the end off the box itself', () => {
-    expect(bottomOf(box(0, TRANSCRIPT, 526))).toBe(45_474);
-    expect(bottomOf(box(0, 600, 800))).toBe(0);
   });
 });

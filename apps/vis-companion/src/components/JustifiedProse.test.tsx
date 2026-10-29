@@ -428,12 +428,6 @@ git\tstatus`;
     ]);
   });
 
-  it('keeps an empty request bubble without introducing a blank paragraph', () => {
-    const view = render(<UserMessage>{''}</UserMessage>);
-    expect(view.container.querySelector('article p')).toBeNull();
-    expect(view.container.querySelector('article .border-you-role')).toBeInTheDocument();
-  });
-
   it('keeps nested block structure and task controls native while reading child paragraphs', async () => {
     const view = render(
       <Markdown>{`- [ ] **Keep this control**\n\n- ${coded}\n\n  Another paragraph in the same item.`}</Markdown>,

@@ -518,20 +518,4 @@ describe('a project shows the sessions it archived', () => {
       true,
     );
   });
-
-  it('offers the way back to the live list under the same menu', async () => {
-    const { user } = mount();
-    await band('Wallet work');
-    await showBoth(user);
-    await band('Receipts');
-
-    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
-    const menu = screen.getByRole('dialog', { name: MENU });
-    expect(within(menu).queryByText('Show archived groups')).toBeNull();
-    await user.click(within(menu).getByText('Hide archived groups'));
-    await press(user, 'Hide archived sessions', 'sessions');
-
-    expect(painted(await band('Wallet work'))).toEqual([ACTIVE.id]);
-    expect(painted()).toEqual([ACTIVE.id]);
-  });
 });

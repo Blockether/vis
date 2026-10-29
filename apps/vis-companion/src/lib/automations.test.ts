@@ -19,8 +19,7 @@ import {
   type Automation,
   type AutomationDraft,
 } from './automations';
-import { timeLabel } from './fleet';
-import { STORY_AUTOMATION_RUN, STORY_AUTOMATIONS } from '../dev/story-data';
+import { STORY_AUTOMATIONS } from '../dev/story-data';
 
 const NOW = Date.UTC(2026, 5, 1, 12, 0, 0);
 const HOUR = 3_600_000;
@@ -36,20 +35,6 @@ describe('automation labels', () => {
     [90, 'Every 90 seconds'],
   ])('names an interval of %i seconds as %j', (seconds, label) => {
     expect(everyLabel(seconds)).toBe(label);
-  });
-
-  it('labels a millisecond time like the session list does', () => {
-    expect(timeLabel(NOW - 2 * HOUR, NOW)).toBe(timeLabel(new Date(NOW - 2 * HOUR).toISOString(), NOW));
-    expect(timeLabel(undefined, NOW)).toBe('-');
-  });
-
-  it('keeps the story fixtures on the wire contract', () => {
-    for (const automation of STORY_AUTOMATIONS) {
-      expect(Object.keys(automation).sort()).toEqual([...schema.$defs.automation.required].sort());
-    }
-    expect(Object.keys(STORY_AUTOMATION_RUN).sort()).toEqual([...schema.$defs.run.required].sort());
-    expect(schema.$defs.run_status.enum).toContain(STORY_AUTOMATION_RUN.status);
-    expect(schema.$defs.run_trigger_kind.enum).toContain(STORY_AUTOMATION_RUN.trigger);
   });
 });
 

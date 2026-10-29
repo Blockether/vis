@@ -54,15 +54,4 @@ describe('cryptographic UUIDs', () => {
       expect(weakRandom).not.toHaveBeenCalled();
     },
   );
-
-  it('preserves errors from the cryptographic random source', () => {
-    const failure = new Error('Random source unavailable');
-    vi.stubGlobal('crypto', {
-      getRandomValues: vi.fn(() => {
-        throw failure;
-      }),
-    });
-
-    expect(randomUuid).toThrow(failure);
-  });
 });

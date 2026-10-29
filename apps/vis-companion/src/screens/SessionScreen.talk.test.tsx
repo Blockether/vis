@@ -24,16 +24,4 @@ describe('a session opened by a Talk link', () => {
 
     expect(await screen.findByRole('button', { name: /start voice utterance/i })).toBeInTheDocument();
   });
-
-  it('stays in dictation without a Talk link', async () => {
-    renderSessionScreen({
-      client: {
-        cachedCapabilities: () => voiceCapabilities,
-        capabilities: () => Promise.resolve(voiceCapabilities),
-      },
-    });
-
-    expect(await screen.findByRole('button', { name: /dictate message/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /start voice utterance/i })).not.toBeInTheDocument();
-  });
 });

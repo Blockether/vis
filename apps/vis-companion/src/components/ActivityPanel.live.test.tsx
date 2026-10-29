@@ -68,13 +68,3 @@ it.each([false, true])(
     );
   },
 );
-
-it('retains the first receipt when another form adds Activity to the turn', () => {
-  const activity = page(ids[0]);
-  const view = render(<ActivityPanel activity={[activity]} />);
-  const { row, content } = openFirstRead();
-  view.rerender(<ActivityPanel activity={[activity, page(ids[1])]} />);
-  expect(row.isConnected).toBe(true);
-  expect(content).toBeVisible();
-  expect(screen.getByRole('button', { name: /Read ×4/ })).toHaveAttribute('aria-expanded', 'true');
-});

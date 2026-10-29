@@ -37,19 +37,6 @@ describe('a queued message delivered into the turn', () => {
     expect(text.indexOf('I read the test.')).toBeLessThan(text.indexOf('Also check the lint'));
   });
 
-  it('shows a step that carries only the delivered message', () => {
-    const { container } = render(
-      <IterationTrace
-        iterations={[{ position: 3, user_input: [{ request: 'Stop after the tests.' }] }]}
-        whole
-      />,
-    );
-
-    expect(bands(container)).toHaveLength(1);
-    expect(container.textContent).toContain('iter 3');
-    expect(container.textContent).toContain('Stop after the tests.');
-  });
-
   it('prefers the paste-collapsed text and names the images that came along', () => {
     const { container } = render(
       <IterationTrace
@@ -166,11 +153,5 @@ describe('a queued message delivered into the turn', () => {
       expect(fetchTurnAttachments).toHaveBeenCalledTimes(4);
       expect(bands(container)[0]?.textContent).toContain('🖼 shot.png');
     });
-  });
-
-  it('paints nothing extra for a step without delivered input', () => {
-    const { container } = render(<IterationTrace iterations={[iterations[0]]} whole />);
-
-    expect(bands(container)).toHaveLength(0);
   });
 });

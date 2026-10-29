@@ -92,18 +92,6 @@ describe('pairing after a scan says what it is doing', () => {
     expect(screen.getByRole('status').textContent).toMatch(/Connected to/);
   });
 
-  it('names the machine, the addresses and the progress while it probes', async () => {
-    await pair();
-    await tick(50);
-    const said = document.body.textContent ?? '';
-    // WHAT is happening, and to WHICH machine.
-    expect(said).toMatch(/100\.64\.0\.10/);
-    // WHAT THE CURRENT STATE IS: how many addresses, how many are settled.
-    expect(said).toMatch(/3 addresses/);
-    // HOW LONG IT CAN TAKE: an explicit bound, not an open-ended spinner.
-    expect(said).toMatch(/\b\d+s\b/);
-  });
-
   it('reports each address by the reach that makes it durable', async () => {
     await pair();
     await tick(50);

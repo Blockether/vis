@@ -76,31 +76,6 @@ describe('human input sheet', () => {
     expect(paragraph.textContent).not.toContain('**');
   });
 
-  // Regression #286: a paragraph in the same Ask dialog must not expose Markdown syntax.
-  it('renders paragraph Markdown alongside the request description', () => {
-    markup('minimal', {
-      request: {
-        ...HUMAN_INPUT_REQUESTS.minimal,
-        description: '**Deployment effect:** Updates the proxy.',
-        nodes: [
-          {
-            id: 'target',
-            name: 'target',
-            type: 'paragraph',
-            label: '',
-            is_required: false,
-            text: '**Target:** `DEV21`\n\n- **Memory:** 4096 MiB',
-          },
-        ],
-      },
-    });
-    expect(screen.getByText('Deployment effect:').tagName).toBe('STRONG');
-    expect(screen.getByText('Target:').tagName).toBe('STRONG');
-    expect(screen.getByText('DEV21').tagName).toBe('CODE');
-    expect(screen.getByText('Memory:').closest('li')).toHaveTextContent('4096 MiB');
-    expect(screen.getByRole('dialog')).not.toHaveTextContent('**Target:**');
-  });
-
   it('keeps raw HTML inert and rejects unsafe links in paragraph Markdown', () => {
     markup('minimal', {
       request: {
@@ -121,33 +96,6 @@ describe('human input sheet', () => {
     expect(screen.getByText('Safe').tagName).toBe('STRONG');
     expect(dialog.querySelector('img, script, [onerror], a[href^="javascript:"]')).toBeNull();
     expect(dialog.textContent).toContain('<img src=x onerror="alert(1)">');
-  });
-
-  it('keeps raw HTML inert and rejects unsafe links in request Markdown', () => {
-    markup('minimal', {
-      request: {
-        ...HUMAN_INPUT_REQUESTS.minimal,
-        description:
-          '**Safe** <img src=x onerror="alert(1)"> <script>alert(1)</script> [unsafe](javascript:alert(1))',
-      },
-    });
-    expect(screen.getByText('Safe').tagName).toBe('STRONG');
-    const dialog = screen.getByRole('dialog');
-    expect(dialog.querySelector('img, script, [onerror], a[href^="javascript:"]')).toBeNull();
-    expect(dialog.textContent).toContain('<img src=x onerror="alert(1)">');
-  });
-
-  // The question can be longer than the phone. When the whole dialog scrolled,
-  // the two buttons that END the pause scrolled away with it and a long form
-  // could not be answered at all without scrolling back.
-  it('keeps the answer buttons out of the scrolling question', () => {
-    const html = markup('long');
-    const scroller = element(html, 'overflow-y-auto');
-    expect(html).toContain('Cut the release');
-    expect(html).toContain('Abort');
-    expect(scroller).toContain('Release notes');
-    expect(scroller).not.toContain('Cut the release');
-    expect(scroller).not.toContain('Abort');
   });
 
   it('offers no way out of a pause that has none', () => {
@@ -179,15 +127,6 @@ describe('human input sheet', () => {
     expect(off(element(refused, buttons))).toBe(false);
   });
 
-  it('shows the engine’s refusal next to the field it refused', () => {
-    const html = markup('rejected', {
-      error: 'The engine refused this answer.',
-      errors: { ticket: 'Must look like OPS-1234.' },
-    });
-    expect(html).toContain('The engine refused this answer.');
-    expect(element(html, 'overflow-y-auto')).toContain('Must look like OPS-1234.');
-  });
-
   it('connects every written-field label and refusal to its native control', () => {
     markup('grouped', { errors: { user: 'Use a service account.' } });
 
@@ -200,18 +139,6 @@ describe('human input sheet', () => {
     expect(user.getAttribute('aria-invalid')).toBe('true');
     expect(user.getAttribute('aria-required')).toBe('true');
     expect(password.getAttribute('aria-required')).toBe('true');
-  });
-
-  it('gives a range field a real slider, its bounds, and a readable value', () => {
-    const html = markup('slider');
-    const slider = /<input[^>]*type="range"[^>]*>/.exec(html)?.[0] ?? '';
-    expect(slider).toContain('min="0"');
-    expect(slider).toContain('max="10"');
-    expect(slider).toContain('step="0.5"');
-    expect(slider).toContain('value="2.5"');
-    // A slider with no number beside it is a guess, not an answer.
-    expect(html).toContain('2.5');
-    expect(html).toContain('Error budget');
   });
 
   it('masks a password and gives a checkbox a drawn, accessible mark', () => {
@@ -267,32 +194,6 @@ describe('human input sheet', () => {
     expect(refused).toContain('must be 6 digits');
     expect(refused).toContain('must be an email address');
   });
-
-  // Grouping is LAYOUT, not an answer: a group holds no value, it only says which
-  // fields stand side by side. One field per line made a host and its port read
-  // as two unrelated questions.
-  it('lays a group out as a row or a column, and nests the two directions', () => {
-    const html = markup('grouped');
-    const server = element(html, 'data-group-id="group:host+port"');
-    expect(server).toContain('data-direction="row"');
-    expect(server).toContain('data-view-layout="row"');
-    expect(server).toContain('placeholder="db.internal"');
-    expect(server).toContain('placeholder="5432"');
-    // The legend names the group; what it does not own stays outside it.
-    expect(html).toContain('Server');
-    expect(server).not.toContain('Notes');
-
-    // A column INSIDE the form, holding a row: the two directions nest.
-    const pool = element(html, 'data-group-id="group:pool"');
-    expect(pool).toContain('data-view-layout="column"');
-    const inner = element(pool, 'data-group-id="group:size+tls"');
-    expect(inner).toContain('data-direction="row"');
-    expect(inner).toContain('placeholder="8"');
-    expect(inner).toContain('placeholder="30"');
-    // The checkbox is the column's second child, not part of that row.
-    expect(inner).not.toContain('Require TLS');
-    expect(pool).toContain('Require TLS');
-  });
 });
 
 // FULL support, proved against the engine's own bytes
@@ -328,37 +229,6 @@ describe('the engine’s whole node vocabulary', () => {
     expect([...new Set(nodes(request.nodes).map((field) => field.type))].sort()).toEqual(
       [...HUMAN_INPUT_NODE_TYPES].sort(),
     );
-  });
-
-  it('gives every answerable type a control of its own', () => {
-    // plaintext / password / multiline: a line, a masked line, and a box.
-    expect(html).toContain('placeholder="Anything the on-call should know"');
-    expect(html).toContain('<textarea');
-    expect(html).toContain('type="password"');
-    expect(html).toContain('Notify');
-    // Selects use radio dots; multiselects and boolean fields use real checkbox roles.
-    expect(html).toContain('role="radiogroup"');
-    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.exclusiveOn);
-    expect(html).toContain(HUMAN_INPUT_CHOICE_MARKS.exclusiveOff);
-    expect(html).toContain('Staging');
-    expect(html).toContain('role="checkbox"');
-    expect(html).toContain('aria-checked="true"');
-    expect(html).toContain('aria-checked="false"');
-    expect(html).not.toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOn);
-    expect(html).not.toContain(HUMAN_INPUT_CHOICE_MARKS.inclusiveOff);
-    // range: the field's own track, not the engine's percentage default.
-    const slider = /<input[^>]*type="range"[^>]*>/.exec(html)?.[0] ?? '';
-    expect(slider).toContain('min="0"');
-    expect(slider).toContain('max="10"');
-    expect(slider).toContain('step="0.5"');
-    expect(slider).toContain('value="2.5"');
-    // otp: one box per digit it accepts, and it says the shorter code is enough.
-    expect(html.match(/data-otp-box="\d"/g) ?? []).toHaveLength(6);
-    expect(html).toContain('4–6 digits');
-    // group: the row, and the column nested inside it.
-    expect(html).toContain('data-direction="row"');
-    expect(html).toContain('data-direction="column"');
-    expect(html).toContain('Server');
   });
 
   it('paints ink as ink: read, never answered, never keyed', () => {

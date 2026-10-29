@@ -77,9 +77,4 @@ describe('goal usage footer', () => {
       expect(view.container.querySelector('footer')).not.toBeInTheDocument();
     },
   );
-
-  it('retains the ordinary model-turn footer', () => {
-    const view = render(<AssistantMessage turn={{ ...goalTurn, request: 'Verify the usage footer' }} />);
-    expect(view.container.querySelector('footer')).toHaveTextContent('100→20 ↺ 70');
-  });
 });

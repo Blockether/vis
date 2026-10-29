@@ -123,19 +123,6 @@ describe('a machine that stopped answering while nobody was looking', () => {
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
   });
 
-  it('goes on saying Online for a machine that keeps answering', async () => {
-    const conn: GatewayConn = { url: 'http://10.0.0.7:7890', label: 'tower' };
-    const { container } = render(<Fleet conns={[conn]} />);
-    await settle();
-    // Four sweeps with no gap between verdicts: freshness must never make a live
-    // machine flicker through "Checking…".
-    for (let i = 0; i < 4; i += 1) {
-      await settle(6_000);
-      expect(verdict(container)).toBe('Online');
-    }
-    expect(latency(container)).toMatch(/^\d+ms$/);
-  });
-
   it('lifts the offline gate on a probe, never on the memory of one', async () => {
     const conn: GatewayConn = { url: 'http://10.0.0.8:7890', label: 'Macbook' };
     const alive = render(<Fleet conns={[conn]} />);

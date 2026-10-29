@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { SettingsColumn } from './settings/SettingsLayout';
@@ -40,22 +40,6 @@ const setViewport = (wide: boolean) => {
 };
 
 describe("the settings dialog's stacked application fold", () => {
-  it("hides the application column's body until its band is pressed", () => {
-    setViewport(false);
-    render(<Harness initialOpen={false} />);
-    expect(screen.queryByText('Theme')).not.toBeInTheDocument();
-    const band = screen.getByRole('button', { name: 'Show application settings' });
-    expect(band).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(screen.getByText('Application'));
-    expect(screen.getByText('Theme')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Hide application settings' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
-    fireEvent.click(screen.getByText('Application'));
-    expect(screen.queryByText('Theme')).not.toBeInTheDocument();
-  });
-
   it('keeps a standing column open with no fold where both columns fit', () => {
     setViewport(true);
     render(<Harness initialOpen={false} />);

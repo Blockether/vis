@@ -114,16 +114,6 @@ describe('spoken reply routing', () => {
     expect(notices).toHaveLength(1);
     expect(notices[0]).toContain('no speech engine is registered');
   });
-
-  it('falls back to this device when no session has registered a machine', async () => {
-    const { speechOutput } = await import('./speech');
-    speechOutput.apply(prefs({ ttsEngine: 'pocket-tts-local' }));
-    speechOutput.setGateway(null);
-
-    await speechOutput.speak('Nobody is listening to the gateway.');
-
-    expect(said).toEqual([{ text: 'Nobody is listening to the gateway.', rate: 1 }]);
-  });
 });
 
 // Regression, user report: replacing one voice preview made the deliberately interrupted

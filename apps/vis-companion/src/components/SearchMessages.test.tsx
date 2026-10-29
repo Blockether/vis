@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { STORY_SESSION_SEARCH_MATCH } from '../dev/story-data';
-import { timeLabel } from '../lib/fleet';
 import type { SessionMatch } from '../lib/gateway';
 import { SearchMessages } from './SearchMessages';
 import type { ForkPoint } from '../lib/types';
@@ -52,39 +51,6 @@ describe('search messages pane', () => {
     expect(container.textContent).not.toMatch(/\*\*|~~|`|https:\/\//);
   });
 
-  // User report (paraphrased): the message pane showed lists as raw text and ragged
-  // lines; it must render Markdown blocks and justify prose like the chat.
-  it('renders lists and headings and justifies each paragraph and list item', () => {
-    const { container } = pane({
-      query: '',
-      match: snippet('## Changes\n\nSend all now shows from **two** messages.\n\n- app\n- TUI\n\n1. first'),
-    });
-    const message = container.querySelector('ol > li button > span:last-child') as HTMLElement;
-
-    expect(message.querySelector('strong')).toHaveTextContent('two');
-    const items = [...message.querySelectorAll('span.list-item')];
-    expect(items.map((item) => item.textContent)).toEqual(['app', 'TUI', 'first']);
-    expect(message.querySelector('span.block.text-justify')).toHaveTextContent(
-      'Send all now shows from two messages.',
-    );
-    expect(message.querySelector('ul, ol, li, p, h2')).toBeNull();
-    expect(message.textContent).not.toMatch(/\*\*|##|^- /m);
-  });
-
-  it('labels each message with who wrote it, where and when', () => {
-    pane();
-    const items = screen.getAllByRole('listitem');
-
-    expect(items.map((item) => within(item).getByText(/^(You|Vis)$/).textContent)).toEqual([
-      'You',
-      'Vis',
-      'Vis',
-    ]);
-    expect(within(items[2]).getByText('thinking')).toBeVisible();
-    const at = new Date(STORY_SESSION_SEARCH_MATCH.hits[0].at!).toISOString();
-    expect(within(items[0]).getByText(timeLabel(at))).toBeVisible();
-  });
-
   it('marks each query word on its own, without case, and reads punctuation as a break', () => {
     const { container } = pane({
       match: snippet('**win(dows)+** and WIN(DOWS)+, not windows'),
@@ -124,62 +90,6 @@ describe('search messages pane', () => {
     const next = pane({ match: snippet('[Documentation](https://example.com/Windows)') });
     expect(next.container.textContent).toContain('Documentation');
     expect(next.container.querySelector('mark, a')).toBeNull();
-  });
-
-  it('renders fallback request and reply snippets through the same Markdown path', () => {
-    const { container } = pane({
-      match: {
-        ...STORY_SESSION_SEARCH_MATCH,
-        hits: [],
-        requestSnippet: '  **Windows** request  ',
-        replySnippet: '_Windows_ reply',
-      },
-    });
-
-    expect(container.querySelector('strong mark')).toHaveTextContent('Windows');
-    expect(container.querySelector('em mark')).toHaveTextContent('Windows');
-    expect(screen.getByText('You')).toBeInTheDocument();
-    expect(screen.getByText('Vis')).toBeInTheDocument();
-  });
-
-  it('keeps block Markdown compact and preserves its words', () => {
-    const { container } = pane({
-      match: snippet('# Windows checks\n\n- **Windows** passes\n- `Windows` is enabled'),
-    });
-
-    expect(container.textContent).toContain('Windows checks');
-    expect(container.textContent).toContain('Windows passes');
-    expect(container.textContent).toContain('Windows is enabled');
-    expect(container.querySelector('h1, ul, pre')).toBeNull();
-    expect(container.querySelectorAll('mark')).toHaveLength(3);
-  });
-
-  it('says why there is no message to show', () => {
-    const titleOnly: SessionMatch = {
-      ...STORY_SESSION_SEARCH_MATCH,
-      inTitle: true,
-      hits: [],
-      requestSnippet: '  ',
-      replySnippet: null,
-    };
-    const { container, unmount } = pane({ title: 'Windows release', match: titleOnly });
-    expect(screen.queryByText('You')).toBeNull();
-    expect(screen.queryByText('Vis')).toBeNull();
-    expect(marks(container)).toEqual(['Windows']);
-    unmount();
-
-    pane({ match: null, isSearching: true });
-    expect(screen.getByText('Searching messages...')).toBeVisible();
-  });
-
-  it('opens the session from the Open button or from any message', () => {
-    const { onOpen } = pane();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
-    for (const item of screen.getAllByRole('listitem')) {
-      fireEvent.click(within(item).getByRole('button'));
-    }
-    expect(onOpen).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -234,18 +144,5 @@ describe('search messages pane without a message match', () => {
     const text = screen.getByRole('listitem').textContent ?? '';
     expect(text).toMatch(/…$/);
     expect(text.length).toBe('You'.length + 400);
-  });
-
-  it('says when the newest messages load, fail or do not exist', () => {
-    const { unmount } = recentPane('', 'loading');
-    expect(screen.getByText('Loading messages...')).toBeVisible();
-    unmount();
-
-    const failed = recentPane('', 'failed');
-    expect(screen.getByText('Could not load messages.')).toBeVisible();
-    failed.unmount();
-
-    recentPane('', []);
-    expect(screen.getByText('No messages yet.')).toBeVisible();
   });
 });

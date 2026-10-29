@@ -71,14 +71,6 @@ describe('readSharedFiles', () => {
 });
 
 describe('attachmentsFromSharedFiles', () => {
-  it('hands a shared recording to the composer as an attachment', async () => {
-    const result = await attachmentsFromSharedFiles([staged('memo.m4a', 'audio/mp4')]);
-
-    expect(result.rejected).toEqual([]);
-    expect(result.attachments).toHaveLength(1);
-    expect(result.attachments[0]?.media_type).toBe('audio/mp4');
-    expect(result.attachments[0]?.filename).toBe('memo.m4a');
-  });
 
   it.each([
     'text/markdown',

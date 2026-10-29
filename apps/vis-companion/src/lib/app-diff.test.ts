@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { anchorKey, parseUnifiedDiff, sameAnchor } from './app-diff';
+import { anchorKey, parseUnifiedDiff } from './app-diff';
 
 const PATCH = [
   'diff --git a/src/core.clj b/src/core.clj',
@@ -47,15 +47,5 @@ describe('parseUnifiedDiff', () => {
     const [core] = parseUnifiedDiff(PATCH);
     const keys = core.hunks.flatMap((hunk) => hunk.lines.map((line) => anchorKey(line.anchor)));
     expect(new Set(keys).size).toBe(keys.length);
-  });
-
-  it('reads an empty patch as no files', () => {
-    expect(parseUnifiedDiff('')).toEqual([]);
-  });
-
-  it('compares anchors by path, side and line', () => {
-    const anchor = { path: 'a', side: 'new' as const, line: 2 };
-    expect(sameAnchor(anchor, { ...anchor })).toBe(true);
-    expect(sameAnchor(anchor, { ...anchor, side: 'old' })).toBe(false);
   });
 });

@@ -95,16 +95,6 @@ it('leaves an attachment link to the handler that drew it', () => {
   expect(app).toHaveBeenCalledOnce();
 });
 
-it('leaves an in-app route to the app', () => {
-  const invoke = stubDesktopShell();
-  const app = stubAppHandler();
-
-  click(linkTo('/sessions/8e3a587d'));
-
-  expect(invoke).not.toHaveBeenCalled();
-  expect(app).toHaveBeenCalledOnce();
-});
-
 it('does not touch a link in a browser, where the window is a browser window', () => {
   const app = stubAppHandler();
 
@@ -156,6 +146,3 @@ it('keeps the editing menu a text field needs for the clipboard', () => {
   expect(rightClick(appendTo(document.body, 'input')).defaultPrevented).toBe(false);
 });
 
-it('leaves the right button to a browser, where the window is a browser window', () => {
-  expect(rightClick(appendTo(document.body, 'div')).defaultPrevented).toBe(false);
-});

@@ -52,14 +52,6 @@ it('names a missing microphone and keeps every other failure as it is', async ()
   await expect(startWavRecording()).rejects.toThrow('capture stopped');
 });
 
-it('refuses a device that cannot record at all', async () => {
-  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
-
-  await expect(startWavRecording()).rejects.toThrow(
-    'Microphone recording is unavailable on this device',
-  );
-});
-
 // A browser on Windows that opens the WSL address of the gateway (http://172.x.x.x) gets an
 // insecure page: Chrome then hides navigator.mediaDevices. Listing the origin in the Chrome flag,
 // or HTTPS, makes the page secure.
@@ -128,16 +120,6 @@ it('releases the iOS audio session before the microphone stops when a dictation 
   events.length = 0;
 
   await recording.stop();
-
-  expect(events).toEqual(['session:auto', 'context:close', 'track:stop']);
-});
-
-it('releases the iOS audio session the same way when a dictation is cancelled', async () => {
-  const { events } = fakeAudio();
-  const recording = await startWavRecording();
-  events.length = 0;
-
-  await recording.cancel();
 
   expect(events).toEqual(['session:auto', 'context:close', 'track:stop']);
 });

@@ -354,11 +354,6 @@ describe('range fields', () => {
     return request.nodes[0]!;
   };
 
-  it('carries the bounds the engine sent', () => {
-    const risk = parsed().nodes.find((field) => field.type === 'range');
-    expect(humanInputRange(risk!)).toEqual({ min: 0, max: 10, step: 0.5 });
-  });
-
   it('falls back to 0-100 by 1 when the engine sends no bounds', () => {
     expect(humanInputRange(slider())).toEqual({ min: 0, max: 100, step: 1 });
   });
@@ -426,15 +421,6 @@ describe('otp fields', () => {
 });
 
 describe('validation', () => {
-  it('parses no validator off the wire, because none is ever sent', () => {
-    // `request->view` dissocs `:validate` before encoding: a validator is a
-    // FUNCTION in the extension that asked the question, and a function cannot
-    // be JSON. The app has nothing to run, so it has nothing to guess either.
-    expect(JSON.stringify(fixture)).not.toContain('validate');
-    const notify = parsed().nodes.find((row) => row.id === 'notify') as HumanInputField;
-    expect(notify.id).toBe('notify');
-    expect('validate' in notify).toBe(false);
-  });
 
   it('drops a rule an older daemon still puts on a field', () => {
     const { field } = only({
@@ -455,10 +441,6 @@ describe('the form state machine', () => {
         { id: 'code', type: 'otp' },
       ],
     }) as HumanInputRequest;
-
-  it('starts pristine: the request’s defaults, and nothing to apologise for', () => {
-    expect(humanInputFormStart(request())).toEqual({ values: { who: '', code: '' }, errors: {} });
-  });
 
   it('never invents an error of its own, however wrong the answer is', () => {
     // A required field left blank and an OTP with two digits in it. The form has

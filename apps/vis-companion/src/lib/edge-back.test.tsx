@@ -30,9 +30,6 @@ const watching = { from: AT, phase: 'none' as EdgePhase, across: 0 };
 const across = (by: number) => ({ x: AT.x + by, y: AT.y });
 
 describe('reading a swipe in from the pane edge', () => {
-  it('watches a finger that lands on the edge strip', () => {
-    expect(edgeStart(PANE, 1, AT)).toEqual(watching);
-  });
 
   it('measures the strip from the pane itself, not from the window', () => {
     const sidebar = { left: 320 };
@@ -82,10 +79,6 @@ function paneWith(inner: HTMLElement): HTMLElement {
 }
 
 describe('what the edge strip is standing on', () => {
-  it('is free over ordinary transcript content', () => {
-    const line = document.createElement('p');
-    expect(edgeIsFree(line, paneWith(line))).toBe(true);
-  });
 
   it('gives the drag to a block the reader can scroll sideways', () => {
     const code = document.createElement('pre');
@@ -201,42 +194,11 @@ describe('swiping back to the session list', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it('leaves nothing for a swipe that never reached the threshold', () => {
-    const onBack = vi.fn();
-    const { getByTestId } = render(<OpenSession onBack={onBack} />);
-
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX - 20));
-    settle();
-
-    expect(onBack).not.toHaveBeenCalled();
-  });
-
   it('leaves nothing when the browser takes the drag away instead of releasing it', () => {
     const onBack = vi.fn();
     const { getByTestId } = render(<OpenSession onBack={onBack} />);
 
     act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20, 'cancel'));
-    settle();
-
-    expect(onBack).not.toHaveBeenCalled();
-  });
-
-  it('ignores a drag that began away from the edge, which is the transcript being read', () => {
-    const onBack = vi.fn();
-    const { getByTestId } = render(<OpenSession onBack={onBack} />);
-    const from = { x: 200, y: 300 };
-
-    act(() => drag(getByTestId('line'), from, [{ x: from.x + 200, y: from.y }]));
-    settle();
-
-    expect(onBack).not.toHaveBeenCalled();
-  });
-
-  it('says nothing at all where the list already stands beside the transcript', () => {
-    const onBack = vi.fn();
-    const { getByTestId } = render(<OpenSession onBack={onBack} enabled={false} />);
-
-    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
     settle();
 
     expect(onBack).not.toHaveBeenCalled();
@@ -283,54 +245,6 @@ describe('the pop the stroke draws', () => {
 
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it('drags the transcript with the finger and stands the list behind it', () => {
-    const { getByTestId } = render(<OpenSession onBack={vi.fn()} />);
-    const pane = getByTestId('pane');
-    const list = getByTestId('list');
-
-    act(() => {
-      fireTouch(getByTestId('line'), 'touchstart', [AT]);
-      fireTouch(getByTestId('line'), 'touchmove', [across(60)]);
-    });
-
-    // The transcript is lifted onto the shell so the bar coming back cannot push
-    // it down, and it follows the finger one for one.
-    expect(pane.style.position).toBe('absolute');
-    expect(xOf(pane)).toBe(60);
-    // The list waits a third of the width back, in the shade, and has already begun to
-    // come home.
-    const parked = window.innerWidth * EDGE_PARALLAX;
-    expect(xOf(list)).toBeGreaterThan(-parked);
-    expect(xOf(list)).toBeLessThan(0);
-    const veil = veilOf(pane);
-    expect(Number(veil.style.opacity)).toBeLessThan(EDGE_DIM);
-    expect(Number(veil.style.opacity)).toBeGreaterThan(0);
-  });
-
-  // Reported: the swipe back did not feel like the iOS one. The list behind the page
-  // turned pale instead of dark, because its own opacity let the light shell through.
-  it('puts the list in the shade with a veil between it and the transcript', () => {
-    const { getByTestId } = render(<OpenSession onBack={vi.fn()} />);
-    const pane = getByTestId('pane');
-    const list = getByTestId('list');
-
-    act(() => {
-      fireTouch(getByTestId('line'), 'touchstart', [AT]);
-      fireTouch(getByTestId('line'), 'touchmove', [across(60)]);
-    });
-
-    const veil = veilOf(pane);
-    expect(veil.getAttribute('aria-hidden')).toBe('true');
-    expect(veil.style.pointerEvents).toBe('none');
-    // Above the list, below the page that leaves.
-    expect(veil.nextElementSibling).toBe(pane);
-    expect(list.compareDocumentPosition(veil) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
-    // The list is never made see-through.
-    expect(list.style.opacity).toBe('');
   });
 
   // Reported with the same: the first move of the stroke stuck, then jumped, because

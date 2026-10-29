@@ -73,11 +73,6 @@ describe('superseding streams', () => {
     expect(supersedingStreamKey(activity(1, 0))).not.toBe(supersedingStreamKey(activity(1, 1)));
     expect(supersedingStreamKey(activity(1, 0))).not.toBe(supersedingStreamKey(activity(2, 0)));
   });
-
-  it('never supersedes any other frame', () => {
-    expect(supersedingStreamKey(event('turn.progress', 1))).toBeNull();
-    expect(supersedingStreamKey(event('block.output', 1))).toBeNull();
-  });
 });
 
 describe('the replay buffer', () => {

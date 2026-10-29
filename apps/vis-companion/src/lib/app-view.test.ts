@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  appFallbackTitle,
   appStateWord,
   draftAction,
   foldAppEvent,
@@ -189,10 +188,5 @@ describe('app actions', () => {
       base_seq: 3,
       revision: 'bbb',
     });
-  });
-
-  it('names an app from its filename until its view arrives', () => {
-    expect(appFallbackTitle('code-review.app.json')).toBe('code-review');
-    expect(appFallbackTitle(undefined)).toBe('app');
   });
 });

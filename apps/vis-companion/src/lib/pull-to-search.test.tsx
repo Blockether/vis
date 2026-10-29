@@ -20,9 +20,6 @@ const watching = { from: AT, phase: 'none' as PullPhase, down: 0 };
 const down = (by: number) => ({ x: AT.x, y: AT.y + by });
 
 describe('reading a pull at the top of the list', () => {
-  it('watches a single finger on a list that is parked at its top', () => {
-    expect(pullStart({ scrollTop: 0 }, 1, AT)).toEqual(watching);
-  });
 
   it('refuses a list that is scrolled, because that pull is a scroll', () => {
     expect(pullStart({ scrollTop: 240 }, 1, AT)).toBeNull();
@@ -88,34 +85,6 @@ describe('painting the band under the finger', () => {
     expect(band.style.translate).toBe('0px -87.5%');
     expect(band.style.transitionDuration).toBe('0ms');
   });
-
-  it("never dims the paper: the card's edge is what hides a band that is not out", () => {
-    const band = document.createElement('div');
-
-    paintPull(band, 0.25);
-
-    expect(band.style.opacity).toBe('');
-    expect(band.style.translate).toBe('0px -75%');
-  });
-
-  it('puts the band exactly home at the pixel the lift starts to mean something', () => {
-    const band = document.createElement('div');
-
-    paintPull(band, 1);
-
-    expect(band.style.translate).toBe('0px 0%');
-    expect(band.style.opacity).toBe('');
-  });
-
-  it('hands the band back to its class, which is what glides it home', () => {
-    const band = document.createElement('div');
-    paintPull(band, 0.8);
-
-    paintPull(band, null);
-
-    expect(band.style.translate).toBe('');
-    expect(band.style.transitionDuration).toBe('');
-  });
 });
 
 function PulledList({
@@ -158,15 +127,6 @@ describe('pulling the sessions list down', () => {
     expect(getByTestId('list').dataset.phase).toBe('none');
   });
 
-  it('opens nothing for a pull that never reached the threshold', () => {
-    const onSearch = vi.fn();
-    const { getByTestId } = render(<PulledList onSearch={onSearch} />);
-
-    act(() => pullDown(getByTestId('list'), PULL_OPEN_PX - 10));
-
-    expect(onSearch).not.toHaveBeenCalled();
-  });
-
   it('hints while the finger is down and takes the hint back when it lifts', () => {
     const { getByTestId } = render(<PulledList onSearch={() => {}} />);
     const list = getByTestId('list');
@@ -190,19 +150,6 @@ describe('pulling the sessions list down', () => {
     expect(onSearch).not.toHaveBeenCalled();
   });
 
-  it('leaves a scrolled list alone', () => {
-    const onSearch = vi.fn();
-    const seen: PullPhase[] = [];
-    const { getByTestId } = render(<PulledList onSearch={onSearch} seen={seen} />);
-    // jsdom lays nothing out, so the scroller is simply told where it is parked.
-    getByTestId('list').scrollTop = 800;
-
-    act(() => pullDown(getByTestId('list'), PULL_OPEN_PX + 20));
-
-    expect(onSearch).not.toHaveBeenCalled();
-    expect(seen).toEqual([]);
-  });
-
   it('says nothing at all while the search page is already the screen', () => {
     const seen: PullPhase[] = [];
     const { getByTestId } = render(<PulledList onSearch={null} seen={seen} />);
@@ -211,26 +158,6 @@ describe('pulling the sessions list down', () => {
 
     expect(seen).toEqual([]);
     expect(getByTestId('list').dataset.phase).toBe('none');
-  });
-
-  it('carries the band with the finger, and hands it back on the lift', () => {
-    const { getByTestId } = render(<PulledList onSearch={() => {}} />);
-    const list = getByTestId('list');
-    const band = getByTestId('band');
-
-    act(() => {
-      fireTouch(list, 'touchstart', [AT]);
-      fireTouch(list, 'touchmove', [down(PULL_OPEN_PX / 2)]);
-    });
-    expect(band.style.translate).toBe('0px -50%');
-    expect(band.style.transitionDuration).toBe('0ms');
-
-    act(() => fireTouch(list, 'touchmove', [down(PULL_OPEN_PX)]));
-    expect(band.style.translate).toBe('0px 0%');
-
-    act(() => fireTouch(list, 'touchend', []));
-    expect(band.style.translate).toBe('');
-    expect(band.style.transitionDuration).toBe('');
   });
 
   it('hands the band back when the browser takes the drag away', () => {

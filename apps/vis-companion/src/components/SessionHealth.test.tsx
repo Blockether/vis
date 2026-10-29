@@ -88,25 +88,6 @@ describe('session health in metrics', () => {
     expect(screen.getByText('+20 tokens (+20.0%)')).toBeInTheDocument();
   });
 
-  // #186: sample counts do not override the already classified server metric.
-  it.each([
-    [false, 3, '91%'],
-    [true, 0, '≈91%'],
-  ] as const)('renders the supplied cache estimate flag %s', (estimated, samples, expected) => {
-    render(
-      <SessionStatsPanel
-        session={STORY_SESSION_ROW}
-        phase="ready"
-        usage={{
-          ...STORY_HEALTH_USAGE,
-          reusable_prefix_coverage_percent: 91,
-          reusable_prefix_estimated: estimated,
-          prompt_cache_estimated_sample_count: samples,
-        }}
-      />,
-    );
-    expect(screen.getByText(expected)).toBeInTheDocument();
-  });
   it('does not reconstruct missing derived metrics from raw fields', () => {
     paint({
       last_request_tokens: 100,

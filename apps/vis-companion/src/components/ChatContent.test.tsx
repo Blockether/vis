@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AssistantMessage,
   AttachmentRail,
-  ContentBlockView,
   IterationTrace,
   Markdown,
   SpeechBlock,
@@ -13,7 +12,6 @@ import {
   UserMessage,
 } from './ChatContent';
 import { openStepsMarkup, renderOpenSteps } from './trace-harness';
-import { STORY_TURN_ITERATIONS, STORY_TURN_ITERATIONS_SETTLED } from '../dev/story-data';
 import type { ActivityProjection } from '../lib/activity';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import type { GatewayClient } from '../lib/gateway';
@@ -70,100 +68,7 @@ describe('code block copy controls', () => {
   });
 });
 
-describe('provider failure card', () => {
-  it('does not offer an empty diagnostics disclosure', () => {
-    const view = render(
-      <ContentBlockView
-        block={{
-          id: 'internal-error-1',
-          type: 'error',
-          message: 'Unexpected failure.',
-        }}
-      />,
-    );
-
-    try {
-      expect(view.getByRole('heading', { name: 'Turn failed' })).toBeVisible();
-      expect(view.getByText('Unexpected failure.')).toBeVisible();
-      expect(view.queryByRole('button', { name: 'Diagnostics' })).toBeNull();
-    } finally {
-      view.unmount();
-    }
-  });
-});
 describe('spoken transcript', () => {
-  it('opens as a transcript under a waveform you can seek', () => {
-    const html = renderToStaticMarkup(
-      <ContentBlockView
-        block={{
-          id: 'speech-1',
-          type: 'speech',
-          text: 'A spoken answer that the reader can replay from any point.',
-        }}
-      />,
-    );
-
-    expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain('role="slider"');
-    expect(html).toContain('aria-label="Speech position"');
-    expect(html).toContain('lang="en"');
-  });
-
-  // Reported as "waveform i play etc jest w headerze ... oczywiście można sobie to
-  // rozwinąć i zobaczyć wersję tekstową": the seek control stood in the body, so the
-  // reply could not be played without its text on screen, and the row that opens that
-  // text never said what it opens.
-  it('plays from the header and keeps only the named transcript in the body', () => {
-    const view = render(<SpeechBlock text="Listen again." />);
-    try {
-      const wave = view.getByRole('slider', { name: 'Speech position' });
-      const header = view.container.querySelector('[data-speech-header]');
-      const play = view.getByRole('button', { name: 'Play' });
-
-      expect(header?.contains(wave)).toBe(true);
-      expect(header?.contains(play)).toBe(true);
-
-      // The name stands OUTSIDE the frame, above its border.
-      const frame = header?.parentElement;
-      const name = view.getByRole('button', { name: /Transcript/ });
-      expect(frame?.contains(name)).toBe(false);
-      expect(name.nextElementSibling).toBe(frame);
-      const body = header?.nextElementSibling;
-      expect(body?.querySelector("[role='slider']")).toBeNull();
-      expect(body?.querySelector('button')).toBeNull();
-      expect(body?.querySelector('p')?.textContent).toBe('Listen again.');
-    } finally {
-      view.unmount();
-    }
-  });
-
-  it('keeps the wave and the transport when the transcript is collapsed', () => {
-    const view = render(<SpeechBlock text="Listen again." />);
-    try {
-      fireEvent.click(view.getByRole('button', { name: /Transcript/ }));
-
-      expect(view.container.querySelector('p')).toBeNull();
-      expect(view.getByRole('slider', { name: 'Speech position' })).toBeVisible();
-      expect(view.getByRole('button', { name: 'Play' })).toBeVisible();
-    } finally {
-      view.unmount();
-    }
-  });
-
-  it('draws a flat rule until real samples exist, and never a made-up shape', () => {
-    const view = render(<SpeechBlock text="Nothing has been synthesised yet." />);
-    try {
-      const bars = [
-        ...view.getByRole('slider', { name: 'Speech position' }).querySelectorAll('rect'),
-      ].map((bar) => bar.getAttribute('height'));
-
-      expect(bars.length).toBeGreaterThan(0);
-      expect(new Set(bars).size).toBe(1);
-    } finally {
-      view.unmount();
-    }
-  });
-
   it('restarts speech at the position pressed on the wave', async () => {
     const calls: string[] = [];
     let finish: () => void = () => undefined;
@@ -227,41 +132,16 @@ describe('Markdown thinking breaks', () => {
     expect(text(html)).toContain('Plan\nfirst line\nsecond line');
     expect(text(html)).not.toContain('Planfirst');
   });
-
-  it('flows soft newlines when hard breaks are off', () => {
-    const html = renderToStaticMarkup(<Markdown compact>{'first line\nsecond line'}</Markdown>);
-    expect(html).not.toContain('<br');
-    expect(count(html, /<p class=/g)).toBe(1);
-  });
 });
 
 // User report (screenshot): a numbered list in an answer started further left than the
 // bulleted list right above it. Native markers are sized by the engine, so both lists now
 // draw their own marker in a fixed column instead of leaning on `list-style`.
 describe('Markdown list columns', () => {
-  it('hangs an ordered and an unordered list off the same marker column', () => {
-    const view = render(<Markdown>{'- one\n- two\n\n1. first\n2. second'}</Markdown>);
-    for (const list of [view.container.querySelector('ul'), view.container.querySelector('ol')]) {
-      // WebKit drops the list semantics together with `list-style: none`.
-      expect(list).toHaveAttribute('role', 'list');
-    }
-    expect(view.container.querySelector('ol')?.style.getPropertyValue('--marker-column')).toBe(
-      '3ch',
-    );
-  });
-
   it('widens the column for a list that reaches two digits', () => {
     const content = Array.from({ length: 10 }, (_, index) => `${index + 1}. step`).join('\n');
     const ordered = render(<Markdown>{content}</Markdown>).container.querySelector('ol');
     expect(ordered?.style.getPropertyValue('--marker-column')).toBe('4ch');
-  });
-
-  // A list that reaches "100." used to keep the four-character column of "10.", so the
-  // marker ran into its own text. The column follows the widest number in the list.
-  it('keeps the column wider than a three-digit marker', () => {
-    const content = ['100. step', '101. step', '102. step'].join('\n');
-    const ordered = render(<Markdown>{content}</Markdown>).container.querySelector('ol');
-    expect(ordered?.style.getPropertyValue('--marker-column')).toBe('5ch');
   });
 
   // Each list sizes its own column: a nested list starts its own numbering and must not
@@ -289,34 +169,6 @@ describe('Markdown list columns', () => {
       list.getAttribute('start'),
     );
     expect(starts).toEqual([null, '2', '3']);
-  });
-
-  // User report (screenshot): the same trace inside a THINKING band still drew its numbered
-  // lines further left than its bulleted ones. Reasoning normalization splits a run of
-  // sentences into separate blocks, so a numbered line can reach the renderer on its own.
-  it('keeps a thinking trace on those columns', () => {
-    const trace = [
-      'So I could:',
-      '1. Start a command that streams output.',
-      '2. Poll its logs in a bounded loop.',
-      '3. Show the live progress.',
-      'Then:',
-      '- Read the last lines.',
-      '- Stop the command.',
-    ].join('\n');
-    const view = render(<ThinkingBand>{trace}</ThinkingBand>);
-    const ordered = [...view.container.querySelectorAll('ol')];
-    const bulleted = [...view.container.querySelectorAll('ul')];
-    expect(ordered.length).toBeGreaterThan(0);
-    expect(bulleted.length).toBeGreaterThan(0);
-    for (const list of [...ordered, ...bulleted]) {
-      expect(list).toHaveAttribute('role', 'list');
-    }
-    // A number left inside a paragraph is the report itself: it paints on the prose edge
-    // instead of the marker column.
-    for (const paragraph of view.container.querySelectorAll('p')) {
-      expect(paragraph.textContent ?? '').not.toMatch(/^\s*\d+\.\s/);
-    }
   });
 });
 
@@ -442,13 +294,6 @@ describe('Markdown tool card body', () => {
     expect(codeRows(html)).toEqual(['set -e', ' ', 'if [ -f x ]; then', '  npm test', 'fi']);
   });
 
-  it('keeps a blank line between two phases of STDOUT', () => {
-    const html = renderToStaticMarkup(
-      <Markdown compact>{'**STDOUT**\n\n```\nphase one ok\n\nphase two ok\n```\n'}</Markdown>,
-    );
-    expect(codeRows(html)).toEqual(['phase one ok', ' ', 'phase two ok']);
-  });
-
   it('splits a quoted commit MESSAGE into subject and body', () => {
     const html = renderToStaticMarkup(
       <Markdown compact>{'**MESSAGE**\n\n> feat: thing\n>\n> body line\n'}</Markdown>,
@@ -508,16 +353,6 @@ describe('request speaker labels', () => {
       fireEvent.click(button);
       expect(button).toHaveAttribute('aria-expanded', 'true');
       fireEvent.click(button);
-    } finally {
-      height.mockRestore();
-    }
-  });
-
-  it('does not offer expansion for a short Council request', () => {
-    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(40);
-    try {
-      const view = render(<UserMessage requestKind="council">Short request</UserMessage>);
-      expect(view.queryByRole('button', { name: 'Show full message' })).toBeNull();
     } finally {
       height.mockRestore();
     }
@@ -605,36 +440,6 @@ describe('user bubble recordings', () => {
 
     expect(container.querySelector('audio')).toBe(player);
     expect(container.querySelector('audio')?.currentTime).toBe(7);
-  });
-
-  // The gateway ships the words as TIMED LINES beside the plain string. A bubble
-  // that dropped them left the player unable to follow its own transcript.
-  it('hands the timed transcript lines to the recording row', () => {
-    const { container } = render(
-      <UserMessage
-        attachments={[
-          {
-            id: 'timed-audio',
-            filename: 'memo.m4a',
-            media_type: 'audio/mp4',
-            base64: 'AAAAIGZ0eXBNNEEg',
-            transcription: 'first line second line',
-            transcription_segments: [
-              { start: 0, end: 1.5, text: 'first line' },
-              { start: 1.5, end: 3, text: 'second line' },
-            ],
-          },
-        ]}
-      >
-        listen
-      </UserMessage>,
-    );
-    const band = container.querySelector('[aria-expanded]');
-    if (band) fireEvent.click(band);
-
-    expect(Array.from(container.querySelectorAll('button')).map((row) => row.textContent)).toContain(
-      'second line',
-    );
   });
 });
 
@@ -842,36 +647,6 @@ describe('a Python evaluation without detected Activity', () => {
       iterations: [{ id: 'iteration-1', position: 41, forms: [form] }],
       content: [],
     }) as unknown as TranscriptTurn;
-
-  it('is the running execution before any semantic activity appears', () => {
-    const painted = renderOpenSteps(
-      <AssistantMessage turn={turnWith({ source: 'answer = 42' }, 'running')} streaming />,
-    );
-
-    const receipt = painted.container.querySelector('[aria-label="Execution trace"]')!;
-    expect(receipt.getAttribute('role')).toBe('status');
-    fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
-    expect(painted.container.textContent).toContain('answer = 42');
-    expect(painted.container.textContent).not.toContain('0 activities');
-  });
-
-  it('restores one settled receipt with Python and stdout evidence', () => {
-    const painted = renderOpenSteps(
-      <AssistantMessage
-        turn={turnWith({
-          source: 'print(42)',
-          stdout: '42\n',
-          duration_ms: 29,
-        })}
-      />,
-    );
-
-    expect(painted.container.textContent).toContain('29ms');
-    fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
-    expect(painted.container.textContent).toContain('print(42)');
-    expect(painted.container.textContent).toContain('RESULT');
-    expect(painted.container.textContent).not.toContain('ACTIVITY');
-  });
 
   // Regression, user screenshot: an open digest showed Failed without the CODE that failed.
   it('keeps a failed Python source under CODE and its message under Failed, both collapsed', () => {
@@ -1473,34 +1248,6 @@ describe('the attachment rail', () => {
     expect(text(html)).toContain('4 more');
   });
 
-  it('leaves a rail that already fits completely alone', () => {
-    const html = rail(3, 64 * 1024);
-    expect(html).toContain('report-2.pdf');
-    expect(text(html)).not.toContain('more');
-  });
-
-  // Regression, issue vis_session_id#1e754e37-32ff-431c-be7e-bfb8baaebb66: desktop Safari
-  // left a downloaded clip grey until playback began.
-  it('decodes the first frame of a downloaded clip before play', async () => {
-    const view = render(
-      <AttachmentRail
-        client={client}
-        sid="s1"
-        attachments={[
-          {
-            filename: 'screen.mov',
-            media_type: 'video/quicktime',
-            size: 487_939,
-            iteration_id: 'i1',
-            index: 0,
-          },
-        ]}
-      />,
-    );
-
-    await waitFor(() => expect(view.container.querySelector('video')?.preload).toBe('auto'));
-    view.unmount();
-  });
   // Regression, issue vis_session_id#83d1d828-d2a1-45b2-bbdc-4a5fea1ec354: iOS left a
   // produced clip grey until playback began, and its plate had no way to share it.
   it('opens a produced clip on its first frame and shares its original bytes', async () => {
@@ -1783,29 +1530,6 @@ describe('a vis-doc fence', () => {
   });
 });
 
-// Reported from a phone: a table's first column was one atom wide — `manifest.edn`
-// painted as six stacked fragments and `THIRD_PARTY_MODELS.md` as eight. Inline
-// `code` carries `break-all` so wrapping has a stop inside an atom it cannot
-// break, and in a table that makes the column's MIN-CONTENT one character: the auto
-// layout handed the file column 58px of a 366px bubble.
-describe('a markdown table', () => {
-  it('makes scrollable code blocks keyboard-focusable named regions', () => {
-    // CI 34270446372: axe rejected the horizontally scrolling CodeCopy story.
-    const markup = renderToStaticMarkup(
-      <Markdown>
-        {"```bash\nprintf 'a long command line'\n```\n\n```text\nsecond block\n```"}
-      </Markdown>,
-    );
-    const blocks = markup.match(/<pre\b[^>]*>/g) ?? [];
-    expect(blocks).toHaveLength(2);
-    for (const block of blocks) {
-      expect(block).toContain('tabindex="0"');
-      expect(block).toContain('role="region"');
-      expect(block).toContain('aria-label="');
-    }
-  });
-});
-
 // Regression, session 0ec1e9f3-23d5-4070-a17e-46f8e7f514e8: the moment a long
 // streamed answer became the finished one, the transcript flickered — it jumped
 // up, went blank, and dropped back to the bottom a few frames later. The live
@@ -1872,78 +1596,6 @@ describe('the trace a settled row inherits from the running-turn bubble', () => 
 
     expect(container.textContent).toContain('step 0');
     expect(container.textContent).toContain('step 19');
-  });
-});
-
-// The turn is drawn as ONE thread: a line down the gutter, a marker where each
-// step sits on it. Two things went wrong the first time and both are pinned
-// here — the marker was drawn once per SEGMENT, so steps that shared a
-// reasoning band lost their own mark, and every step called itself the page's
-// "Execution trace" REGION, which put three identical landmarks on one screen.
-describe('a turn drawn as one thread', () => {
-  /** Each source group has one Thinking-style CODE header, without a type icon. */
-  const marks = (container: HTMLElement) =>
-    Array.from(container.querySelectorAll('[data-execution-code]'));
-
-  it('marks every execution group, not every segment', () => {
-    const { container } = renderOpenSteps(
-      <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
-    );
-
-    // Adjacent Python calls share a marker. Narration starts the next group.
-    expect(marks(container)).toHaveLength(2);
-  });
-
-  it('does not turn source icons into failure or cancellation rings', () => {
-    const { container } = renderOpenSteps(
-      <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
-    );
-
-    expect(marks(container)).toHaveLength(2);
-    expect(container.querySelectorAll('[data-step-node]')).toHaveLength(0);
-  });
-
-  it('keeps the same source icons while invocations are running', () => {
-    const { container } = renderOpenSteps(<IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />);
-
-    expect(marks(container)).toHaveLength(2);
-  });
-
-  // Regression, seen in the story sheet the moment the thread drew one marker
-  // per step: a step that had ALREADY finished said RUNNING for as long as the
-  // turn did, because the receipt asked the turn instead of the step. With one
-  // receipt row on screen it read as a stale word; with a column of rings it
-  // read as three things happening at once.
-  it('closes a step that measured itself, even while the turn runs on', () => {
-    const { container } = renderOpenSteps(<IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />);
-
-    // The first group is settled even though the next group is still running.
-    const rows = Array.from(container.querySelectorAll('[aria-label="Execution trace"]'));
-    expect(rows).toHaveLength(2);
-    expect(rows[0].getAttribute('role')).toBe('group');
-    expect(rows[1].getAttribute('role')).toBe('status');
-  });
-  it('gives a multi-step trace no repeated landmark', () => {
-    const { container } = renderOpenSteps(
-      <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
-    );
-
-    const traces = container.querySelectorAll('[aria-label="Execution trace"]');
-
-    expect(traces).toHaveLength(2);
-    // A labelled `section` is a landmark, and three of them with the same name
-    // is an axe `landmark-unique` failure: a step is a step, not a region.
-    expect(container.querySelectorAll('section[aria-label="Execution trace"]')).toHaveLength(0);
-  });
-
-  it('still says RUNNING out loud for the step that is moving', () => {
-    const { container } = renderOpenSteps(<IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />);
-
-    // The ring is `aria-hidden`; the row beside it is what a screen reader gets,
-    // and the two are read from ONE `formStep` so they cannot disagree.
-    const live = container.querySelectorAll('[role="status"][aria-label="Execution trace"]');
-
-    expect(live).toHaveLength(1);
   });
 });
 

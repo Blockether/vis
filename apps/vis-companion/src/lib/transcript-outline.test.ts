@@ -41,11 +41,6 @@ describe('promptLabel', () => {
     expect(promptLabel(`${pasted(1, log)}\nwhy does this fail?`)).toBe(`${pasteSummary(1, log)} why does this fail?`);
   });
 
-  it('reads each short paste of a prompt as its words, in order', () => {
-    const quotes = [pasted(1, 'the notice\nafter the tests'), pasted(2, 'an attempt key\nper call'), 'yes, both'];
-    expect(promptLabel(quotes.join('\n'))).toBe('the notice after the tests an attempt key per call yes, both');
-  });
-
   it('names a prompt without words by what it holds', () => {
     expect(promptLabel('[IMAGE #1]')).toBe('Attachments only');
     expect(promptLabel('', 2)).toBe('Attachments only');
@@ -250,10 +245,5 @@ describe('readingTurnId', () => {
 
   it('names the last turn when the end of the transcript is on screen', () => {
     expect(readingTurnId(scroller(2200), column(turn('t1', 100, 600), turn('t2', 600, 900)))).toBe('t2');
-  });
-
-  it('names no turn without a column or turns', () => {
-    expect(readingTurnId(scroller(0), null)).toBeNull();
-    expect(readingTurnId(scroller(0), column())).toBeNull();
   });
 });

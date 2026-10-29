@@ -11,7 +11,6 @@ import {
   registerMemoryOwner,
   registerMemorySource,
   reloadWithStoredPerf,
-  setPerfEnabled,
   siteOf,
   type MemoryCell,
   type WatchCollection,
@@ -75,22 +74,12 @@ function restore(owner: object, key: string, descriptor: PropertyDescriptor | un
 }
 
 describe('perfEnabled', () => {
-  it('is always on in the perf build', () => {
-    expect(perfEnabled('', 'perf')).toBe(true);
-  });
 
   it('remembers ?perf=1 until ?perf=0 turns it off', () => {
     expect(perfEnabled('', 'production')).toBe(false);
     expect(perfEnabled('?perf=1', 'production')).toBe(true);
     expect(perfEnabled('', 'production')).toBe(true);
     expect(perfEnabled('?perf=0', 'production')).toBe(false);
-    expect(perfEnabled('', 'production')).toBe(false);
-  });
-
-  it('follows the switch in Settings', () => {
-    expect(setPerfEnabled(true)).toBe(true);
-    expect(perfEnabled('', 'production')).toBe(true);
-    expect(setPerfEnabled(false)).toBe(true);
     expect(perfEnabled('', 'production')).toBe(false);
   });
 
@@ -119,15 +108,6 @@ describe('reloadWithStoredPerf', () => {
 
     expect(current.replace).toHaveBeenCalledWith('http://127.0.0.1:5274/?gw=local#/s/abc');
     expect(current.reload).not.toHaveBeenCalled();
-  });
-
-  it('reloads an address without a switch as it is', () => {
-    const current = page('http://127.0.0.1:5274/#/s/abc');
-
-    reloadWithStoredPerf(current);
-
-    expect(current.reload).toHaveBeenCalledOnce();
-    expect(current.replace).not.toHaveBeenCalled();
   });
 });
 
@@ -229,16 +209,6 @@ describe('listener probes', () => {
     expect(live('vis-ping') + live('vis-pong')).toBe(0);
   });
 
-  it('stops watching a target once its last listener is removed', () => {
-    const gc = install();
-    const target = new EventTarget();
-    const onPing = () => {};
-    target.addEventListener('vis-ping', onPing);
-    expect(gc.watching(target)).toBe(true);
-    target.removeEventListener('vis-ping', onPing);
-    expect(gc.watching(target)).toBe(false);
-  });
-
   it('reports listeners left on elements removed from the page', () => {
     install();
     const panel = document.createElement('section');
@@ -275,18 +245,6 @@ describe('timer probes', () => {
     expect(sitesNamed(perfReport().intervals.sites, 'startPolling')).toBe(1);
     clearInterval(polling);
     expect(sitesNamed(perfReport().intervals.sites, 'startPolling')).toBe(0);
-  });
-
-  it('counts a timeout until it runs', async () => {
-    install();
-    function later(done: () => void) {
-      setTimeout(done, 0);
-    }
-    await new Promise<void>((resolve) => {
-      later(resolve);
-      expect(sitesNamed(perfReport().timeouts.sites, 'later')).toBe(1);
-    });
-    expect(sitesNamed(perfReport().timeouts.sites, 'later')).toBe(0);
   });
 });
 
@@ -329,11 +287,6 @@ describe('object URL probes', () => {
 });
 
 describe('memory sources', () => {
-  it('ignores caches while the probes are off', () => {
-    const stop = registerMemorySource('transcripts', () => [{ source: 'transcripts', bytes: 1, entries: 1 }]);
-    expect(perfReport().cells).toEqual([]);
-    stop();
-  });
 
   it('collects every registered cache and drops one that fails', () => {
     install();

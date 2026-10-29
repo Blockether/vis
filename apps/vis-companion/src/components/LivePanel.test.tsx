@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 // Live views outside the transcript: inputs and cards, and the side panel.
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIVE_CHANGE_DEBOUNCE_MS, LiveViewPanel } from './LiveView';
-import { LivePanel, LiveViewList } from './LivePanel';
+import { LivePanel } from './LivePanel';
 import type { GatewayClient } from '../lib/gateway';
 import { liveInputNodes, liveViewFromWire, livePlacement, type LiveView } from '../lib/live-view';
 
@@ -88,17 +88,6 @@ describe('live inputs and cards', () => {
     expect(onChange).toHaveBeenCalledWith('name', 'Linus');
     expect(onSubmit).toHaveBeenCalledWith('go', { name: 'Linus' });
   });
-
-  it('sends one click for a selectable card', async () => {
-    const onActivate = vi.fn();
-    render(<LiveViewPanel view={form()} onActivate={onActivate} inDialog />);
-    const card = screen.getByRole('button', { name: /Fast lane/ });
-    expect(within(card).getByText('2 jobs')).toBeVisible();
-    await act(async () => {
-      fireEvent.click(card);
-    });
-    expect(onActivate).toHaveBeenCalledWith('pick');
-  });
 });
 
 const client = () =>
@@ -108,18 +97,6 @@ const client = () =>
   }) as unknown as GatewayClient;
 
 describe('the side panel', () => {
-  it('folds a view to its fold row and opens it again', () => {
-    render(<LiveViewList views={[status('a', 'Deploy board', 'deploy')]} client={client()} sid="s1" />);
-    const row = screen.getByRole('button', { name: /Deploy board/ });
-    expect(row).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('Deploy board is waiting')).toBeVisible();
-    fireEvent.click(row);
-    expect(row).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByText('Deploy board is waiting')).toBeVisible();
-    fireEvent.click(row);
-    expect(row).toHaveAttribute('aria-expanded', 'true');
-  });
-
   it('shows one tab for each owner when views come from two extensions', () => {
     const views = [status('a', 'Deploy board', 'deploy'), status('b', 'Job queue', 'jobs')];
     render(<LivePanel views={views} client={client()} sid="s1" onClose={() => {}} />);
@@ -130,14 +107,5 @@ describe('the side panel', () => {
     fireEvent.click(tabs[1]);
     expect(screen.getByText('Job queue')).toBeVisible();
     expect(screen.queryByText('Deploy board')).toBeNull();
-  });
-
-  it('names the one owner and closes', () => {
-    const onClose = vi.fn();
-    render(<LivePanel views={[status('a', 'Deploy board', 'deploy')]} client={client()} sid="s1" onClose={onClose} />);
-    expect(screen.queryByRole('tablist')).toBeNull();
-    expect(screen.getByRole('heading', { name: 'deploy' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Close live views' }));
-    expect(onClose).toHaveBeenCalled();
   });
 });

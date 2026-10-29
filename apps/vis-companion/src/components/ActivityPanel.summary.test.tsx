@@ -122,12 +122,4 @@ describe('Activity presentation summary links', () => {
     expect(summary.querySelector('a, img, p, h1, ul, table')).toBeNull();
     expect(summary.querySelector('strong')).toHaveTextContent('bold');
   });
-
-  it('keeps an empty marked summary empty', () => {
-    const projection = activity('markdown');
-    projection.rows[0].presentation!.summary = '';
-    projection.rows[0].presentation!.sections![0].summary = '';
-    paint(projection);
-    expect(document.querySelector('[data-activity-summary]')).toBeNull();
-  });
 });

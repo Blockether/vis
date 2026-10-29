@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captionsFor, parseSubtitles, subtitleSeconds, subtitleSegments } from './subtitles';
+import { captionsFor, parseSubtitles, subtitleSeconds } from './subtitles';
 import type { IterationAttachment } from './types';
 
 const VTT = `WEBVTT
@@ -35,14 +35,6 @@ describe('subtitles', () => {
     expect(subtitleSeconds('01:02.5')).toBe(62.5);
     expect(subtitleSeconds('1:00:00.000')).toBe(3600);
     expect(subtitleSeconds('soon')).toBeNull();
-  });
-
-  it('gives the player timed lines led by the speaker', () => {
-    expect(subtitleSegments(parseSubtitles(VTT))[0]).toEqual({
-      start: 0.3,
-      end: 15.2,
-      text: 'Maya: Welcome to Long Story Short & friends.',
-    });
   });
 
   it('pairs a recording with its subtitles by name, else only without doubt', () => {

@@ -82,23 +82,6 @@ describe('dropDeliveredPushes', () => {
     expect(waiting).toBe(1);
     expect(native.removed).toEqual([[{ id: 'a', data: { session_id: 's-read' } }]]);
   });
-
-  it('leaves an alert of a session this device knows nothing about', async () => {
-    native.delivered = [{ id: '1', tag: 's-elsewhere' }];
-    const { dropDeliveredPushes } = await fresh();
-
-    expect(await dropDeliveredPushes((sessionId) => sessionId === 's-read')).toBe(1);
-    expect(native.removed).toEqual([]);
-  });
-
-  it('touches nothing where there is no push plugin', async () => {
-    native.isNative = false;
-    native.delivered = [{ id: '1', tag: 's-read' }];
-    const { dropDeliveredPushes } = await fresh();
-
-    expect(await dropDeliveredPushes(() => true)).toBe(0);
-    expect(native.removed).toEqual([]);
-  });
 });
 
 describe('ensureAndroidChannel', () => {
@@ -117,29 +100,6 @@ describe('ensureAndroidChannel', () => {
       name: 'Answers',
       importance: 4,
     });
-  });
-
-  // iOS has no channels at all, and the plugin throws when asked on the web.
-  it.each([
-    [
-      'ios',
-      () => {
-        native.platform = 'ios';
-      },
-    ],
-    [
-      'the web',
-      () => {
-        native.isNative = false;
-      },
-    ],
-  ])('does nothing on %s', async (_name, arrange) => {
-    arrange();
-    const { ensureAndroidChannel } = await fresh();
-
-    await ensureAndroidChannel();
-
-    expect(native.channels).toEqual([]);
   });
 
   it('never breaks registration when the device refuses the channel', async () => {

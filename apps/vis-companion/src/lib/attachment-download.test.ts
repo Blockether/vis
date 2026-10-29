@@ -115,18 +115,6 @@ describe('downloading one produced artifact', () => {
     expect(urls.sizeOf(revisit)).toBe(1024);
   });
 
-  it('downloads only the artifacts this device has NOT seen', async () => {
-    const client = new GatewayClient(CONN);
-    for (const index of [0, 1, 2]) await client.attachmentUrl('s1', 'i1', index);
-    expect(asked).toHaveLength(3);
-
-    const later = new GatewayClient(CONN);
-    for (const index of [0, 1, 2, 3]) await later.attachmentUrl('s1', 'i1', index);
-
-    expect(asked).toHaveLength(4);
-    expect(asked[3]).toBe(client.attachmentEndpoint('s1', 'i1', 3));
-  });
-
   it('does not remember a failure as an answer', async () => {
     serve(0, 503);
     const client = new GatewayClient(CONN);

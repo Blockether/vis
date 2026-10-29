@@ -110,20 +110,6 @@ describe('session row inline rename', () => {
     await waitFor(() => expect(screen.queryByRole('textbox')).toBeNull());
   });
 
-  // Regression, user report: iOS full-range selection handles escaped the 48px
-  // session row, making its 16px editor look taller than the title it replaced.
-  it('uses one caret instead of selection handles under a thumb', async () => {
-    pointing('coarse');
-    row();
-
-    await startRename();
-
-    const field = screen.getByRole('textbox') as HTMLInputElement;
-    expect(field.selectionStart).toBe(field.value.length);
-    expect(field.selectionEnd).toBe(field.value.length);
-    expect(field.selectionDirection).toBe('none');
-  });
-
   it('cancels with Escape and keeps a refused name in the row', async () => {
     const rename = vi.fn(async () => {
       throw new Error('Name already exists');

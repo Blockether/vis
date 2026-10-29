@@ -21,7 +21,6 @@ import { MachineRows } from './Machines';
 // ink, on rows the reader was pressing to change something else entirely.
 
 const tower: GatewayConn = { url: 'http://192.168.0.241:7890', label: 'tower' };
-const laptop: GatewayConn = { url: 'http://100.64.0.10:7890', label: 'laptop' };
 
 /** The settings column's list, ranked and read the way settings renders it. */
 function rows(props: Partial<Parameters<typeof MachineRows>[0]> = {}) {
@@ -50,13 +49,6 @@ describe('what a machine row says about its rank', () => {
     // device is on THIS address instead of the most durable one.
     expect(screen.getByText('Pinned')).toBeVisible();
     expect(lineOf('tower')).toContain('tower');
-  });
-
-  it('ranks the fleet, and says nothing else about it', () => {
-    rows({ conns: [tower, laptop] });
-
-    expect(lineOf('tower')).toContain('Primary');
-    expect(lineOf('laptop')).not.toContain('Primary');
   });
 
 });

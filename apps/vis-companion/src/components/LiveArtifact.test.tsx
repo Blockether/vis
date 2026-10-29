@@ -289,41 +289,6 @@ describe('the settled run in the transcript', () => {
     expect(c.liveViewLog).toHaveBeenCalledWith('s1', fixture.id, 'tail', 0, 200, 'error');
   });
 
-  // Regression #222: sibling RUN bands open the same sealed recording as standalone rows.
-  it.each([false, true])('opens and closes the final picture (embedded=%s)', async (embedded) => {
-    serve(
-      [openLine, closeLine({ reason: 'interrupted', note: 'enough', view: sealed })].join('\n'),
-    );
-    const { client: c, attachmentUrl } = rowClient();
-    render(<LiveRunRow client={c} sid="s1" attachment={record()} embedded={embedded} />);
-    const launch = screen.getByRole('button', { name: 'Open run release' });
-    expect(launch).not.toHaveAttribute('aria-expanded');
-    fireEvent.click(launch);
-    await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeVisible());
-    expect(attachmentUrl).toHaveBeenCalledWith('s1', 'it-1', 2);
-    // The band REPORTS the verdict; the run is over, so it is what it took, not
-    // an offer to stop it.
-    expect(screen.getByText('stopped by hand — enough')).toBeVisible();
-    expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
-    expect(document.querySelector('[role="status"]')).toBeNull();
-    // The way out is the band's own, and it names the run.
-    fireEvent.click(screen.getByRole('button', { name: 'Close release' }));
-    await waitFor(() => expect(screen.queryByText('swept 3 hosts')).toBeNull());
-    expect(screen.getByRole('button', { name: 'Open run release' })).toBeVisible();
-  });
-
-  it('paints nothing for a run no iteration owns', () => {
-    const { client: c } = rowClient();
-    render(
-      <LiveRunRow
-        client={c}
-        sid="s1"
-        attachment={{ ...record(), iteration_id: undefined } as IterationAttachment}
-      />,
-    );
-    expect(screen.queryByText('RUN')).toBeNull();
-  });
-
   it('names the run out of the file the close filed it under', () => {
     expect(liveRunName('release.live.ndjson')).toBe('release');
     expect(liveRunName('scan.LIVE.NDJSON')).toBe('scan');

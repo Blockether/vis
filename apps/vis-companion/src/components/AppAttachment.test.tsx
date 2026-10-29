@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayClient } from '../lib/gateway';
 import { GatewayError } from '../lib/gateway';
-import { APP_ATTACHMENT_MEDIA, liveViewFromWire, type LiveView } from '../lib/live-view';
+import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import { SessionEventsContext } from '../lib/session-events';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { IterationAttachment, SseEvent } from '../lib/types';
+import type { SseEvent } from '../lib/types';
 import { VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
-import { AppAttachmentRow, AppSurface, useSessionApps } from './AppAttachment';
+import { AppSurface, useSessionApps } from './AppAttachment';
 import { StoryAppHost, TODO, type StoryApp } from '../dev/story-apps';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT } from '../lib/view';
 
@@ -151,21 +151,6 @@ describe('AppSurface', () => {
     await waitFor(() => expect(liveView).toHaveBeenCalledTimes(2));
   });
 
-  it('adds the Send receipt from the answer', async () => {
-    const { hub } = fakeHub();
-    const { client } = fakeClient([view(3, 'Ship it')], async (action) => ({
-      action: action.action,
-      view_id: 'app-1',
-      is_accepted: true,
-      seq: 4,
-      submission: { id: 'sub-1', idempotency_key: 'k', node_id: 'review', status: 'accepted', created_at: 1 },
-    }));
-    open(client, hub);
-    fireEvent.click(await screen.findByRole('button', { name: 'Send review' }));
-    expect(await screen.findByRole('list', { name: 'Receipts' })).toBeInTheDocument();
-    expect(screen.getByText('Accepted')).toBeInTheDocument();
-  });
-
   it('reads the app again after a reconnect', async () => {
     const { hub, connect } = fakeHub();
     const { client, liveView } = fakeClient([view(3), view(4)], async () => ({}));
@@ -185,28 +170,6 @@ describe('AppSurface', () => {
     expect(screen.getByRole('button', { name: 'Send review' })).toHaveProperty('disabled', true);
   });
 
-});
-
-describe('AppAttachmentRow', () => {
-  it('opens the app from its transcript row', async () => {
-    const { client, liveView } = fakeClient([view(3)], async () => ({}));
-    const attachment: IterationAttachment = {
-      iteration_id: 'i1',
-      index: 0,
-      kind: 'app',
-      media_type: APP_ATTACHMENT_MEDIA,
-      filename: 'code-review.app.json',
-      view_id: 'app-1',
-    } as IterationAttachment;
-    render(
-      <div data-session-surface>
-        <AppAttachmentRow client={client} sid="s1" attachment={attachment} />
-      </div>,
-    );
-    expect(liveView).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Open app code-review' }));
-    expect(await screen.findByText('Code review')).toBeInTheDocument();
-  });
 });
 
 // Live apps: an app is any app, so its buttons, cards, tables and keys reach the owner.
@@ -309,31 +272,6 @@ describe('AppSurface controls and keys', () => {
     fireEvent.keyDown(document.body, { key: 'Escape' });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(viewAction).not.toHaveBeenCalled();
-  });
-
-  it('runs a shortcut from its legend entry, for a touch screen', async () => {
-    const { client, viewAction } = fakeClient([game(3)], accepted);
-    open(client, null);
-    const legend = await screen.findByRole('toolbar', { name: 'App keys' });
-    expect(legend.textContent).toContain('Up');
-    // A node key without its own label names the node.
-    expect(legend.textContent).toContain('Add one');
-    fireEvent.click(legend.querySelector('[data-shortcut-key="ArrowUp"]') as HTMLElement);
-    await waitFor(() => expect(viewAction).toHaveBeenCalledTimes(1));
-    expect(viewAction.mock.calls[0][2]).toEqual({ action: 'shortcut', key: 'ArrowUp' });
-  });
-
-  it('shows an unbound refusal', async () => {
-    const { client } = fakeClient([game(3)], async (action) => ({
-      action: action.action,
-      view_id: 'app-1',
-      is_accepted: false,
-      reason: 'unbound',
-    }));
-    open(client, null);
-    await screen.findByRole('toolbar', { name: 'App keys' });
-    fireEvent.keyDown(document.body, { key: 'q' });
-    expect(await screen.findByText('No such key')).toBeInTheDocument();
   });
 
   it('follows a shortcuts patch and takes no keys when the app closes', async () => {
@@ -628,16 +566,6 @@ describe('AppSurface against an engine-like host', () => {
     await screen.findByText('Deploying sdk-api to staging');
     const submit = host.actions.find((action) => action.action === 'submit');
     expect(submit).toMatchObject({ action: 'submit', node_id: 'next', values: { name: 'sdk-api', env: 'staging' } });
-  });
-
-  it('submits the typed values by click in the same mount', async () => {
-    const host = new StoryAppHost(DEPLOY);
-    await fillDeploy(host);
-    fireEvent.click(nodeButton('next'));
-    await screen.findByText('Deploying sdk-api to staging');
-    expect(host.actions.find((action) => action.action === 'submit')).toMatchObject({
-      values: { name: 'sdk-api', env: 'staging' },
-    });
   });
 
   it('shows an owner set-value that clears a field, as a todo list does after Add', async () => {

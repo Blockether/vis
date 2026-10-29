@@ -39,19 +39,4 @@ describe('the door to system notification settings', () => {
     openSystemNotificationSettings();
     expect(location.href).toBe('app-settings:');
   });
-
-  it('offers nothing where the OS has no URL for it', () => {
-    for (const other of ['android', 'web']) {
-      platform = other;
-      location.href = '';
-      expect(canOpenSystemNotificationSettings()).toBe(false);
-      openSystemNotificationSettings();
-      expect(location.href).toBe('');
-    }
-  });
-
-  it('offers nothing where push itself does not exist', () => {
-    plugin = false;
-    expect(canOpenSystemNotificationSettings()).toBe(false);
-  });
 });

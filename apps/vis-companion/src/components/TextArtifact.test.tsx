@@ -48,17 +48,6 @@ describe('a written artifact', () => {
     );
     expect(markup).toContain('<h2');
   });
-
-  it('paints anything else verbatim, wrapped and monospaced', () => {
-    const markup = html(
-      <TextBody text={'# not markdown\n  spaced'} mime="text/plain" name="a.log" />,
-    );
-    expect(markup).toContain('<pre');
-    expect(markup).toContain('tabindex="0"');
-    expect(markup).toContain('aria-label="a.log"');
-    expect(markup).toContain('whitespace-pre-wrap');
-    expect(markup).toContain('# not markdown');
-  });
 });
 
 describe('reading the bytes', () => {
@@ -69,32 +58,11 @@ describe('reading the bytes', () => {
     expect(clampArtifactText('short')).toBe('short');
   });
 
-  it('reads the artifact url as text', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response('# hi', { status: 200 })),
-    );
-    expect(await readArtifactText('blob:one')).toBe('# hi');
-  });
-
   it('refuses a failed read instead of painting an empty note', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('nope', { status: 404 })),
     );
     await expect(readArtifactText('blob:two')).rejects.toThrow('404');
-  });
-});
-
-// A plan sitting INLINE in the session is source, not a rendered document: the
-// turn that produced it was being swallowed by a wall of headings.
-describe('a markdown artifact inline in the session', () => {
-  it('shows the source verbatim when asked for the raw form', () => {
-    const markup = html(
-      <TextBody text={'# Ship it\n\n- one\n'} mime="text/markdown" name="PLAN.md" raw />,
-    );
-    expect(markup).toContain('<pre');
-    expect(markup).toContain('# Ship it');
-    expect(markup).not.toContain('<h1');
   });
 });

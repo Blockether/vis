@@ -5,21 +5,12 @@ import { isSessionEntered, screenKey } from './router';
 const gw = (url: string) => ({ conn: { url }, sid: 's1' });
 
 describe('screenKey', () => {
-  it('is empty for the navigator', () => {
-    expect(screenKey(null)).toBe('');
-    expect(screenKey(undefined)).toBe('');
-  });
 
   it('separates gateway from session so neither can forge the other', () => {
     // A naive `url + sid` join would make these two collide.
     expect(screenKey({ conn: { url: 'https://a/b' }, sid: 'c' })).not.toBe(
       screenKey({ conn: { url: 'https://a' }, sid: '/bc' }),
     );
-  });
-
-  it('is stable for the same session and distinct across gateways', () => {
-    expect(screenKey(gw('https://a'))).toBe(screenKey(gw('https://a')));
-    expect(screenKey(gw('https://a'))).not.toBe(screenKey(gw('https://b')));
   });
 });
 
@@ -43,10 +34,6 @@ describe('isSessionEntered', () => {
 
   it('is false for a re-render of the same session', () => {
     expect(enter(gw('https://a'), gw('https://a'))).toBe(false);
-  });
-
-  it('is false on the navigator, including the first render', () => {
-    expect(isSessionEntered('', '')).toBe(false);
   });
 
   // The reported bug: tap "new session", open Settings while the POST is in

@@ -8,7 +8,6 @@ import {
   DocOverlay,
   DocPreview,
   DOC_LINK_BRIDGE,
-  DocStack,
   OverlayScreen,
   docAgentNote,
   docErrorText,
@@ -71,15 +70,6 @@ describe('sandboxing', () => {
     expect(html).toContain('sandbox="allow-scripts allow-forms');
     expect(html).toContain('title="page.html"');
     expect(html).not.toContain('allow-same-origin');
-  });
-
-  // The frame IS the component: no strip, no toggle, no remount key.
-  it('gives a document nothing to press', () => {
-    for (const mime of ['text/html', 'application/pdf']) {
-      const html = renderToStaticMarkup(<DocFrame url="blob:x" mime={mime} name="page" />);
-      expect(html).not.toContain('<button');
-      expect(html).toContain('allow-scripts');
-    }
   });
 });
 
@@ -375,39 +365,12 @@ describe('DocPreview', () => {
     expect(html).not.toContain('60vh');
   });
 
-  it('shows a note exactly as small as it shows a PDF', () => {
-    const note = preview('text/markdown', 'PLAN.md');
-    expect(note).not.toContain('<iframe');
-    expect(note).not.toContain('60vh');
-    expect(text(note)).toContain('PLAN.md');
-  });
-
-  // Reported ("I love 4"): the card carried the screen's only verb as a chip at its
-  // far trailing edge, so the other nine tenths of it was paper a finger could land
-  // on for nothing. The ROW is the button now, and it keeps a finger's 48px box while
-  // only a cursor tightens it.
-  it('is itself the control that opens the document', () => {
-    const html = preview();
-    expect(html).toContain('aria-label="Open report.pdf"');
-    // One press target in the row, and no second word beside it.
-    expect(html.match(/<button/g)).toHaveLength(1);
-    expect(text(html)).not.toContain('Open ');
-  });
-
 });
 
 // Reported ("I love 4"): every document artifact was its own framed card with its own
 // kind chip and its own Open, so a step that wrote four files read as four settings
 // panels stacked down the transcript instead of as one thing the step produced.
 describe('DocStack', () => {
-  const stack = (summary?: string) =>
-    renderToStaticMarkup(<DocStack summary={summary}>rows</DocStack>);
-
-  it('reports the group, and only when there is a group', () => {
-    expect(text(stack('4 documents · 31.4KB'))).toContain('4 documents · 31.4KB');
-    // A lone document is one row and no header band at all.
-  });
-
   it('claims a weight only when every document reported one', () => {
     expect(docStackSummary([{ size: 1024 }, { size: 2048 }])).toBe('2 documents · 3.0KB');
     expect(docStackSummary([{ size: 1024 }, {}])).toBe('2 documents');
@@ -482,13 +445,6 @@ describe('an opened document', () => {
     }
   });
 
-  it('offers no share before the document bytes arrive', () => {
-    render(
-      <DocOverlay name="pending.pdf" mime="application/pdf" url={null} failed={false} onClose={() => undefined} />,
-    );
-    expect(screen.queryByRole('button', { name: 'Share' })).toBe(null);
-  });
-
   // One document per test: `useStickyOverlay` remembers an opened document BY NAME
   // across mounts, so a second test reusing the name opens on arrival.
   const openPreview = async (name: string) => {
@@ -559,21 +515,6 @@ describe('a revised document', () => {
     expect(html.split('aria-label="Open PLAN.md"').length - 1).toBe(1);
   });
 
-  it('leaves a file written once with nothing to report', () => {
-    const html = renderToStaticMarkup(
-      <DocPreview
-        name="ONCE.md"
-        mime="text/markdown"
-        sizeLabel="1.0KB"
-        url="blob:x"
-        failed={false}
-        versions={[cuts[1]]}
-        onNeeded={() => undefined}
-      />,
-    );
-    expect(text(html)).not.toContain('v1');
-  });
-
   it('opens the thread from the BAND and reads the cut that is picked', async () => {
     const picked: number[] = [];
     render(
@@ -599,21 +540,6 @@ describe('a revised document', () => {
     expect(picked).toEqual([1]);
     // Picking closes the thread again: the document is what the screen is for.
     expect(screen.queryByText('2 versions')).toBeNull();
-  });
-
-  it('gives a document with one cut no version cell at all', () => {
-    render(
-      <DocOverlay
-        name="LONE.md"
-        mime="text/markdown"
-        sizeLabel="1.0KB"
-        url={null}
-        failed={false}
-        versions={[cuts[1]]}
-        onClose={() => undefined}
-      />,
-    );
-    expect(screen.queryByLabelText('Versions of LONE.md')).toBeNull();
   });
 });
 

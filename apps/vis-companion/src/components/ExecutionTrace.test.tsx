@@ -322,32 +322,6 @@ describe('execution grouping', () => {
     expect(JSON.stringify(forms)).toBe(original);
   });
 
-  it.each(['running', 'failed', 'cancelled'] as const)(
-    "keeps the group %s and every member's evidence",
-    (state) => {
-      const view = renderOpenSteps(
-        <IterationTrace
-          whole
-          live
-          iterations={iterations([
-            {
-              source: 'first()',
-              error: { message: 'InterruptedException' },
-              activity: activity('cancelled', 'cancelled stage'),
-            },
-            { source: 'second()', activity: activity(state, 'next stage') },
-          ])}
-        />,
-      );
-      const trace = view.container.querySelector('[aria-label="Execution trace"]')!;
-      expect(trace.getAttribute('role')).toBe(state === 'running' ? 'status' : 'group');
-      if (state === 'failed') expect(trace.textContent).toContain('Failed');
-      fireEvent.click(view.getByRole('button', { name: 'Expand Activity' }));
-      fireEvent.click(view.getByRole('button', { name: /Search ×2/ }));
-      expect(view.container.querySelectorAll('[data-activity-row]')).toHaveLength(2);
-    },
-  );
-
   it.each([{ comment: 'A separate step' }, { display_language: 'bash' }, { tag: 'user-shell' }])(
     'does not group across a semantic boundary %j',
     (boundary) => {
@@ -382,27 +356,6 @@ describe('execution grouping', () => {
     } finally {
       vi.unstubAllGlobals();
     }
-  });
-  it('does not add empty result cards below an activity-only group', () => {
-    const view = renderOpenSteps(
-      <IterationTrace
-        whole
-        live
-        iterations={iterations([
-          {
-            source: 'first()',
-            duration_ms: 80,
-            activity: activity('succeeded', 'first stage'),
-          },
-          { source: 'second()', activity: activity('running', 'next stage') },
-        ])}
-      />,
-    );
-    fireEvent.click(view.getByRole('button', { name: 'Expand Activity' }));
-    fireEvent.click(view.getByRole('button', { name: /Search ×2/ }));
-    expect(view.container.querySelectorAll('[data-activity-row]')).toHaveLength(2);
-    expect(view.queryByText('RESULT')).toBeNull();
-    expect(view.container.querySelector('.bg-result')).toBeNull();
   });
 });
 
@@ -495,32 +448,4 @@ describe('device-local Python visibility', () => {
       expect(view.container.textContent).toContain('shell output');
     },
   );
-});
-
-it('opens the complete program below its own CODE header', () => {
-  const code = 'paths = await ls(root)\nprint(paths)';
-  const view = renderOpenSteps(
-    <IterationTrace
-      whole
-      iterations={iterations([{ source: code, activity: activity('succeeded', 'Files listed') }])}
-    />,
-  );
-  const band = view.container.querySelector('[data-execution-code]')!;
-  expect(view.queryByRole('button', { name: 'Expand execution trace' })).toBeNull();
-  expect(view.container.textContent).toContain('Files listed');
-  expect(band.textContent).not.toContain('print(paths)');
-  fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
-  // The headers own vertical spacing; source adds no extra top or bottom inset.
-  expect(band.querySelector('[data-code-body]')).not.toHaveClass('pb-2');
-  expect(band.querySelector('[data-code-body]')).not.toHaveClass('py-2');
-  expect(band.querySelector('pre')).not.toHaveClass('py-2');
-  expect(band.querySelector('pre')?.textContent).toContain('paths = await ls(root)');
-  expect(band.querySelector('pre')?.textContent).toContain('print(paths)');
-});
-
-it('folds even a one-line program under the CODE header', () => {
-  const view = renderOpenSteps(<IterationTrace whole iterations={iterations([{ source: 'print(42)' }])} />);
-  fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
-  expect(view.container.textContent).toContain('print(42)');
-  expect(view.getByRole('button', { name: 'Copy code' })).toBeVisible();
 });

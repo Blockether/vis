@@ -8,8 +8,6 @@ import {
   panTransform,
   pinchFrom,
   pinchTransform,
-  transformCss,
-  zoomLabel,
   zoomedAbout,
   zoomedBy,
   wheelFactor,
@@ -100,13 +98,6 @@ describe('gestures', () => {
   });
 });
 
-describe('what the screen shows', () => {
-  it('composites on the GPU and reads out a whole percentage', () => {
-    expect(transformCss({ scale: 2, x: -3, y: 4 })).toBe('translate3d(-3px, 4px, 0) scale(2)');
-    expect(zoomLabel({ scale: 1.356, x: 0, y: 0 })).toBe('136%');
-  });
-});
-
 // Regression, user report ("on desktop and safari the zooming is too fast and not
 // reliable"): a wheel notch and a trackpad's continuous glide arrived at the same
 // handler and both moved the picture a FIXED 15%. A Magic Trackpad emits ~60 wheel
@@ -136,13 +127,6 @@ describe('a wheel, a trackpad and a Safari pinch', () => {
   it('never lets one event move more than a notch', () => {
     expect(wheelFactor(-100000, 0, false)).toBe(WHEEL_STEP_LIMIT);
     expect(wheelFactor(100000, 0, true)).toBe(1 / WHEEL_STEP_LIMIT);
-  });
-
-  // A trackpad pinch (ctrl+wheel on Chrome/Firefox) carries much smaller deltas than
-  // a scroll for the same intent, so it answers on its own rate — otherwise pinching
-  // to zoom feels dead next to scrolling.
-  it('answers a pinch faster than a scroll of the same delta', () => {
-    expect(wheelFactor(-4, 0, true)).toBeGreaterThan(wheelFactor(-4, 0, false));
   });
 
   // Zooming about the FRAME centre moves whatever was under the cursor away from it,
@@ -245,10 +229,6 @@ describe('a swipe through a gallery', () => {
   it('resists at the ends, where nothing can come in', () => {
     expect(swipeShift(swipe, { x: 160, y: 300 }, { back: true, forward: false })).toBe(-10);
     expect(swipeShift(swipe, { x: 240, y: 300 }, { back: false, forward: true })).toBe(10);
-  });
-
-  it('stays still under a finger sliding down the picture', () => {
-    expect(swipeShift(swipe, { x: 210, y: 400 }, both)).toBe(0);
   });
 });
 

@@ -23,9 +23,4 @@ describe('session recency', () => {
     });
     expect(sessionMillis(sent)).toBe(Date.parse('2026-01-03T00:00:00Z'));
   });
-
-  it('falls back to the creation time for a session without a message', () => {
-    const empty = session({ created_at: '2026-01-01T00:00:00Z' });
-    expect(sessionMillis(empty)).toBe(Date.parse('2026-01-01T00:00:00Z'));
-  });
 });

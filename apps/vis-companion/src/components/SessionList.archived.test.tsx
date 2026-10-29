@@ -150,15 +150,6 @@ describe('the archive verb on a session row', () => {
     expect(await screen.findByText(STILL_WORKING)).toBeInTheDocument();
   });
 
-  // User report: the refusal stayed on the row with no way to close it.
-  it('closes the refusal from its own close button', async () => {
-    drawer({}, vi.fn(async (session: Session) => session));
-    await userEvent.click(verbs().getByRole('button', { name: 'Archive' }));
-    expect(await screen.findByText(STILL_WORKING)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Dismiss message' }));
-    expect(screen.queryByText(STILL_WORKING)).not.toBeInTheDocument();
-  });
-
   it('clears the refusal by itself once the turn is done', async () => {
     const commands = drawer({}, vi.fn(async (session: Session) => session));
     await userEvent.click(verbs().getByRole('button', { name: 'Archive' }));

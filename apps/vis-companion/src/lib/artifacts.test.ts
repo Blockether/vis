@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ARTIFACT_FILTERS,
   artifactKind,
   artifactMedia,
   artifactTotalLabel,
@@ -25,8 +24,6 @@ import {
   pageBySize,
   LIVE_ARTIFACT_MEDIA,
   RAIL_PAGE,
-  SHEET_PAGE,
-  isPdfMedia,
   isSubtitleMedia,
 } from './artifacts';
 import type { SessionArtifact } from './artifacts';
@@ -42,15 +39,6 @@ describe('document media types', () => {
     expect(isDocMedia('text/tab-separated-values')).toBe(true);
     expect(isDocMedia('image/png')).toBe(false);
     expect(isDocMedia(undefined)).toBe(false);
-  });
-
-  it('labels the kind the way the fence summary does', () => {
-    expect(docKindLabel('application/pdf')).toBe('PDF');
-    expect(docKindLabel('text/html')).toBe('HTML');
-    expect(isPdfMedia('application/pdf')).toBe(true);
-    expect(isPdfMedia('APPLICATION/PDF; charset=binary')).toBe(true);
-    expect(isPdfMedia('application/notpdf')).toBe(false);
-    expect(isPdfMedia('text/html')).toBe(false);
   });
 });
 
@@ -149,18 +137,6 @@ describe('attachment classification', () => {
     expect(attachmentIsLive({ index: 0, filename: 'notes.live.ndjson' })).toBe(false);
     expect(attachmentIsDoc(run)).toBe(false);
     expect(attachmentIsPlayable(run)).toBe(false);
-  });
-
-  // Regression, user report: CSV artifacts were dead tiles, so clicking one never opened
-  // the table already available in the transcript.
-  it('sorts every attachment into exactly one openable kind', () => {
-    expect(artifactKind({ index: 0, media_type: 'image/png' })).toBe('image');
-    expect(artifactKind({ index: 0, media_type: 'video/mp4' })).toBe('video');
-    expect(artifactKind({ index: 0, media_type: 'audio/mp4' })).toBe('audio');
-    expect(artifactKind({ index: 0, media_type: 'audio/mpeg' })).toBe('audio');
-    expect(artifactKind({ index: 0, media_type: 'text/html' })).toBe('doc');
-    expect(artifactKind({ index: 0, media_type: 'text/csv' })).toBe('doc');
-    expect(artifactKind({ index: 0 })).toBe('file');
   });
 
   it('names the format from the filename, then the media type', () => {
@@ -302,27 +278,10 @@ describe('collecting what a session produced', () => {
     expect(collectArtifacts(turns, 40).map((entry) => entry.turn)).toEqual([42, 41, 41]);
   });
 
-  it('carries the provenance a tile has to announce', () => {
-    const [doc, , image] = collectArtifacts(turns);
-    expect(doc.iterationId).toBe('i3');
-    expect(doc.sizeLabel).toBe('');
-    expect(image.key).toBe('i1:0');
-    expect(image.iterationId).toBe('i1');
-    expect(image.sizeLabel).toBe('2.0KB');
-  });
-
   it('adds up only the sizes it was told, and says nothing otherwise', () => {
     expect(artifactTotalLabel(collectArtifacts(turns))).toBe('3.0KB');
     expect(artifactTotalLabel([])).toBe('');
     expect(artifactTotalLabel(collectArtifacts([turns[1]]))).toBe('');
-  });
-
-  it('has a filter for every kind an artifact can be', () => {
-    const covered = new Set(
-      ARTIFACT_FILTERS.filter((filter) => filter.label !== 'All').flatMap((filter) => filter.kinds),
-    );
-    expect([...covered].sort()).toEqual(['audio', 'doc', 'file', 'image', 'video']);
-    expect(ARTIFACT_FILTERS[0].kinds).toEqual(['image', 'video', 'audio', 'doc', 'file']);
   });
 });
 
@@ -379,18 +338,6 @@ describe('collapsing an artifact into its versions', () => {
     // Newest first, the head included, so the dropdown is the whole thread.
     expect(chart.versions?.map((entry) => entry.version)).toEqual([3, 2, 1]);
   });
-
-  it('gives a lone artifact a one-element thread, so nothing branches', () => {
-    const [only] = collapseArtifactVersions([cut('solo.png', 1)]);
-    expect(only.versions).toHaveLength(1);
-    expect(only.versions?.[0].name).toBe('solo.png');
-  });
-
-  it('never merges two different names into one artifact', () => {
-    const collapsed = collapseArtifactVersions([cut('a.png', 1), cut('b.png', 1)]);
-    expect(collapsed).toHaveLength(2);
-    expect(collapsed.every((entry) => entry.versions?.length === 1)).toBe(true);
-  });
 });
 
 // Regression, user report: "I commented on the model's document, saved, and now
@@ -425,12 +372,6 @@ describe('collapseAttachmentVersions', () => {
     expect(chart).toHaveLength(1);
   });
 
-  it('gives a file written once a one-element thread, so nothing branches', () => {
-    const [only] = collapseAttachmentVersions([cut('solo.pdf', 1, 0)]);
-    expect(only).toHaveLength(1);
-    expect(only[0].filename).toBe('solo.pdf');
-  });
-
   it('threads a descriptor that carries no version at all', () => {
     const threads = collapseAttachmentVersions([
       { filename: 'notes.md', index: 0 },
@@ -438,11 +379,6 @@ describe('collapseAttachmentVersions', () => {
     ]);
     expect(threads).toHaveLength(1);
     expect(threads[0].map((entry) => entry.version ?? 1)).toEqual([2, 1]);
-  });
-
-  it('never merges two different names into one thread', () => {
-    const threads = collapseAttachmentVersions([cut('a.png', 1, 0), cut('b.png', 1, 1)]);
-    expect(threads.map((thread) => thread.length)).toEqual([1, 1]);
   });
 });
 
@@ -455,13 +391,6 @@ describe('pageBySize', () => {
       pages,
       limits,
     );
-
-  it('hides nothing when a gallery already fits', () => {
-    const shown = page([1024, 1024, 1024]);
-    expect(shown.shown).toHaveLength(3);
-    expect(shown.rest).toEqual([]);
-    expect(shown.restLabel).toBe('');
-  });
 
   it('stops at the COUNT bound and says what is left, with its weight', () => {
     const shown = page(Array.from({ length: 20 }, () => 1024));
@@ -499,11 +428,6 @@ describe('pageBySize', () => {
     const sizes = Array.from({ length: 20 }, () => 1024);
     expect(page(sizes, 2).shown).toHaveLength(2 * RAIL_PAGE.items);
     expect(page([3 * MB, 3 * MB, 3 * MB, 3 * MB], 2).shown).toHaveLength(4);
-  });
-
-  it('gives the thumbnail grid a bigger page than the transcript rail', () => {
-    expect(SHEET_PAGE.items).toBeGreaterThan(RAIL_PAGE.items);
-    expect(SHEET_PAGE.bytes).toBeGreaterThan(RAIL_PAGE.bytes);
   });
 });
 

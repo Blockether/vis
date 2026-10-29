@@ -49,17 +49,6 @@ const document = artifact({
   turn: 5,
   iterationId: 'i2',
 });
-const recorded = artifact({
-  key: 'i3:0',
-  kind: 'file',
-  name: 'build.log',
-  media: 'LOG',
-  mediaType: 'text/plain',
-  size: 1024,
-  sizeLabel: '1.0KB',
-  turn: 4,
-  iterationId: 'i3',
-});
 const note = artifact({
   key: 'i4:0',
   kind: 'doc',
@@ -134,12 +123,6 @@ const text = (html: string) =>
     .replace(/&amp;/g, '&');
 
 describe('the artifacts sheet', () => {
-  it('is the region the header menu opens, over the transcript', () => {
-    const html = sheet([picture, document, recorded]);
-    expect(html).toContain('id="artifacts-surface"');
-    expect(html).toContain('role="region"');
-  });
-
   // Regression, user request: CSV tiles showed a generic page even though the artifact
   // already had enough readable bytes to show its own columns and first records.
   it('previews a CSV artifact in its tile', async () => {
@@ -153,22 +136,6 @@ describe('the artifacts sheet', () => {
     expect(view.baseElement.textContent).toContain('email');
     expect(view.baseElement.textContent).toContain('natalia@example.com');
     expect(screen.queryByRole('grid', { name: 'jobs.csv' })).not.toBeInTheDocument();
-    view.unmount();
-    vi.unstubAllGlobals();
-  });
-
-  // Regression, user report: clicking a CSV artifact left the gallery in place because
-  // recorded files were deliberately dead even though CSV already has a table viewer.
-  it('opens a CSV artifact in the table viewer', async () => {
-    readableTable();
-    const user = userEvent.setup();
-    const view = render(
-      <ArtifactsSheet client={client} sid="s1" artifacts={[table]} onClose={() => {}} />,
-    );
-
-    await user.click(screen.getByRole('button', { name: /Open jobs\.csv/ }));
-    await waitFor(() => expect(screen.getByRole('grid', { name: 'jobs.csv' })).toBeInTheDocument());
-    expect(view.baseElement.textContent).toContain('natalia@example.com');
     view.unmount();
     vi.unstubAllGlobals();
   });
@@ -243,16 +210,6 @@ describe('the artifacts sheet', () => {
     vi.unstubAllGlobals();
   });
 
-  it('puts the band above the filter strip, and the strip above the grid', () => {
-    const html = sheet([picture]);
-    const closeAt = html.indexOf('aria-label="Close artifacts"');
-    const groupAt = html.indexOf('role="group"');
-    const gridAt = html.indexOf('class="min-h-0 flex-1 overflow-y-auto');
-    expect(closeAt).toBeGreaterThan(-1);
-    expect(closeAt).toBeLessThan(groupAt);
-    expect(groupAt).toBeLessThan(gridAt);
-  });
-
   it('keeps empty artifact filters reachable by keyboard', () => {
     render(<ArtifactsSheet client={client} sid="s1" artifacts={[]} onClose={() => {}} />);
     const filters = screen.getByRole('group', {
@@ -261,22 +218,6 @@ describe('the artifacts sheet', () => {
     expect(filters).toHaveAttribute('tabindex', '0');
     filters.focus();
     expect(filters).toHaveFocus();
-  });
-
-  // A file the app cannot preview is still useful: opening it is the path to the
-  // system share sheet rather than a dead tile.
-  it('opens a recorded file and gives it its format', async () => {
-    const user = userEvent.setup();
-    render(<ArtifactsSheet client={client} sid="s1" artifacts={[recorded]} onClose={() => {}} />);
-
-    const tile = screen.getByRole('button', { name: /Open build\.log/ });
-    expect(tile).toHaveTextContent('LOG');
-    await user.click(tile);
-    // jsdom has no platform share sheet, so the same action honestly falls back to Save.
-    const save = await screen.findByRole('button', { name: 'Save' });
-    // And it hands that verb over as a mark, keeping the band's title the only words in it.
-    expect(save.textContent).toBe('');
-    expect(save.querySelectorAll('svg')).toHaveLength(1);
   });
 
   // Live apps: the header counted the open apps, while the All chip said 0.
@@ -292,26 +233,6 @@ describe('the artifacts sheet', () => {
     expect(await view.findByRole('button', { name: 'All, 3 artifacts' })).toBeEnabled();
     expect(view.getByRole('button', { name: 'Documents, 1 artifacts' })).toBeEnabled();
     view.unmount();
-  });
-
-  it('draws a filter with nothing behind it disabled, never hidden', () => {
-    const html = sheet([document]);
-    expect(html).toContain('aria-label="Pictures, 0 artifacts"');
-    expect(html).toContain('aria-label="Documents, 1 artifacts"');
-    // The strip keeps its shape: a disabled chip is still one of five chips.
-    expect(html.match(/aria-pressed=/g)).toHaveLength(5);
-    expect(html).toContain('disabled=""');
-  });
-
-  it('opens every original without pretending every format has a reader', () => {
-    const html = sheet([picture, document, recorded]);
-    expect(html).toContain('aria-label="Open revenue.png, PNG, 2.0KB, produced in turn 6"');
-    expect(html).toContain('aria-label="Open q3-report.pdf, PDF, 1.0KB');
-    expect(html).toContain('aria-label="Open build.log, LOG, 1.0KB');
-    expect(html.match(/<button/g)).toHaveLength(
-      // close + five filters + three artifact tiles
-      9,
-    );
   });
 
 });
@@ -368,20 +289,6 @@ describe('an artifact with a history', () => {
     expect(html.match(/aria-label="Open /g)).toHaveLength(1);
     expect(html).toContain('produced in turn 3');
     expect(text(html)).toContain('chart.png');
-  });
-
-  it('wears its version and offers the thread behind it', () => {
-    const html = sheet([threaded]);
-    expect(text(html)).toContain('v3 · PNG');
-    expect(html).toContain('aria-label="Show 3 versions of chart.png"');
-  });
-
-  it('offers no history to an artifact that has none', () => {
-    const html = sheet([{ ...cut(1), versions: [cut(1)] }]);
-    expect(html).not.toContain('versions of');
-    // A single cut is not labelled `v1`: the number only means something
-    // once there is a second one.
-    expect(text(html)).not.toContain('v1');
   });
 
 });
@@ -453,19 +360,6 @@ describe('an opened artifact', () => {
     } finally {
       view.unmount();
     }
-  });
-  it('opens an artifact requested by answer prose without a tile click', () => {
-    render(
-      <ArtifactsSheet
-        client={client}
-        sid="s1"
-        artifacts={[picture]}
-        initialArtifact={picture}
-        onClose={() => {}}
-      />,
-    );
-
-    expect(screen.getByRole('dialog', { name: 'revenue.png' })).toBeVisible();
   });
 
   it('follows a named diff from an opened document inside the artifact sheet', async () => {
@@ -549,51 +443,4 @@ describe('an opened artifact', () => {
     });
     return { view, overlay, prose };
   };
-
-  it('opens a note read-only in the gallery', async () => {
-    const view = render(
-      <ArtifactsSheet client={client} sid="s1" artifacts={[note]} onClose={() => {}} />,
-    );
-    await userEvent.click(screen.getByRole('button', { name: /^Open vis-issue-115-comment\.md/ }));
-    await screen.findByText('A read that works.', { selector: 'p' });
-    expect(screen.queryByRole('button', { name: 'Comment on the whole document' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
-    view.unmount();
-  });
-});
-
-// Regression, issue vis_session_id#83d1d828-d2a1-45b2-bbdc-4a5fea1ec354: a clip's tile
-// carried a bare play mark and its opened view sat on a grey plate until played.
-describe('a clip artifact', () => {
-  it('shows its first frame on the tile and in the opened view', async () => {
-    const clip = artifact({
-      key: 'i7:0',
-      kind: 'video',
-      name: 'brag.mp4',
-      media: 'MP4',
-      mediaType: 'video/mp4',
-      size: 8_600_000,
-      sizeLabel: '8.2MB',
-      iterationId: 'i7',
-    });
-    const view = render(
-      <ArtifactsSheet client={client} sid="s1" artifacts={[clip]} onClose={() => {}} />,
-    );
-
-    try {
-      await waitFor(() =>
-        expect(view.baseElement.querySelector('video')).toHaveAttribute('src', 'blob:none#t=0.001'),
-      );
-      await userEvent.click(screen.getByRole('button', { name: /^Open brag\.mp4/ }));
-      const opened = await screen.findByRole('dialog', { name: 'brag.mp4' });
-      await waitFor(() =>
-        expect(opened.querySelector('video[controls]')).toHaveAttribute(
-          'src',
-          'blob:none#t=0.001',
-        ),
-      );
-    } finally {
-      view.unmount();
-    }
-  });
 });

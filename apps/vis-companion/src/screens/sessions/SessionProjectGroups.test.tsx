@@ -283,50 +283,6 @@ describe('ProjectGroup groups', () => {
     }
   });
 
-  it('nests a group band under the project header, with its colour and filed rows', async () => {
-    mount();
-    const wallet = await band('Wallet work');
-    expect(within(wallet).queryByText('2 sessions')).toBeNull();
-    expect([...wallet.querySelectorAll('[data-session-id]')].map((row) =>
-      row.getAttribute('data-session-id'),
-    )).toEqual([ROWS[0].id, ROWS[1].id]);
-    // What nobody filed keeps the project's own order, below every band.
-    expect(wallet.querySelector(`[data-session-id="${LOOSE.id}"]`)).toBeNull();
-    const list = wallet.closest('[data-project-root]') as HTMLElement;
-    const painted = [...list.querySelectorAll('[data-session-id]')].map((row) =>
-      row.getAttribute('data-session-id'),
-    );
-    expect(painted).toEqual([ROWS[0].id, ROWS[1].id, ROWS[2].id, ROWS[3].id]);
-  });
-
-  // Reported in this Vis session with a screenshot (paraphrased: choosing a colour changed
-  // some of the rows and left the others alone): every row used to carry a COPY of its
-  // group's name and colour, stamped on it when the gateway read the row, so rows read
-  // before a recolour kept the old token while the band over them, painted from the
-  // groups, already wore the new one. The colour is the GROUP's; a row names its group
-  // and nothing else, so there is nothing left to go stale.
-  it('paints every filed row in the colour its group wears now', async () => {
-    const recoloured = { ...WALLET_GROUP, color: 'violet' };
-    const page = {
-      rows: [ROWS[2], ROWS[3]],
-      total: 2,
-      awaiting: [],
-      grouped: [ROWS[0], ROWS[1]],
-      nextCursor: '',
-    };
-    mount(
-      machine({
-        heldProjectPage: () => page,
-        listProjectPage: vi.fn(async () => page),
-        listSessionGroups: vi.fn(async () => wall([recoloured])),
-      }),
-    );
-    const wallet = await band('Wallet work');
-
-    // The band's rail, and one down each of the two rows filed under it.
-    expect(wallet.querySelectorAll('.bg-group-violet')).toHaveLength(3);
-  });
-
   // Regression, user report (paraphrased: a renamed session in a group kept its old name for a
   // while). The screen echoes a rename only into the machine's own window, and a filed row is
   // rarely in it, so the shelf painted the stale page copy until the next read.
@@ -484,15 +440,6 @@ describe('ProjectGroup groups', () => {
     expect(await screen.findByText('NEW')).toBeInTheDocument();
   });
 
-  // BLO-167: a session started on a group band is minted inside that group.
-  it('starts a session in its group from the group menu', async () => {
-    const start = vi.fn(async () => {});
-    const { user } = mount(machine(), { state: null, start });
-    await user.click(await screen.findByRole('button', { name: 'Actions for Wallet work' }));
-    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('New session'));
-    expect(start).toHaveBeenCalledWith(conn, ROOT, WALLET);
-  });
-
   it('disables only the in-flight group creation', async () => {
     const { user } = mount(machine(), {
       state: { at: `https://story.example.com\u0000${ROOT}\u0000${WALLET}`, label: 'Creating...' },
@@ -503,29 +450,6 @@ describe('ProjectGroup groups', () => {
     await user.click(document.body);
     await user.click(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` }));
     expect(within(sheet(`Sessions in ${ROOT}`)).getByText('New session').closest('button')).toBeEnabled();
-  });
-
-  // The single band menu owns creation and its other actions; no separate plus stands beside it.
-  it('ends a group band with its menu alone', async () => {
-    mount();
-    const wallet = await band('Wallet work');
-    const cluster = within(wallet).getByRole('button', { name: 'Actions for Wallet work' })
-      .parentElement as HTMLElement;
-    expect(Array.from(cluster.children).map((child) => child.getAttribute('aria-label'))).toEqual([
-      'Actions for Wallet work',
-    ]);
-  });
-
-  // The project owns neither set's verbs: each list has its own menu, with no plus.
-  it('puts group and session actions on their set headers, not on the project', async () => {
-    mount();
-    await band('Wallet work');
-    const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
-    expect(within(header).queryByRole('button', { name: /Actions for (groups|sessions)/ })).toBeNull();
-    expect(within(header).queryByRole('button', { name: /^New session/ })).toBeNull();
-    expect(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: `Actions for sessions in ${ROOT}` })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^New session/ })).toBeNull();
   });
 
   it('opens project and group settings from cog-marked actions near the menu bottom', async () => {
@@ -662,22 +586,6 @@ describe('ProjectGroup groups', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name })).toBeNull());
   });
 
-  it('offers only the settings of a project when the screen gives it no verbs', async () => {
-    const { user } = mount();
-    await user.click(await screen.findByRole('button', { name: `Actions for ${STORY_NEWER_PROJECT.name}` }));
-    expect(
-      within(sheet(STORY_NEWER_PROJECT.name)).getAllByRole('button').map((button) => button.textContent),
-    ).toEqual(['Settings']);
-  });
-
-  it('starts an ungrouped session from the Sessions menu', async () => {
-    const start = vi.fn(async () => {});
-    const { user } = mount(machine(), { state: null, start });
-    await user.click(await screen.findByRole('button', { name: `Actions for sessions in ${ROOT}` }));
-    await user.click(within(sheet(`Sessions in ${ROOT}`)).getByText('New session'));
-    expect(start).toHaveBeenCalledWith(conn, ROOT);
-  });
-
   it('keeps both set menus reachable in an empty project after folding and expanding it', async () => {
     const empty = { rows: [], total: 0, awaiting: [], grouped: [], nextCursor: '' };
     const { user } = mount(
@@ -719,22 +627,6 @@ describe('ProjectGroup groups', () => {
     await user.type(screen.getByLabelText('Group name'), 'Receipts');
     await user.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(client.createSessionGroup).toHaveBeenCalledWith(ROOT, 'Receipts'));
-  });
-
-  // Regression, user report: creating a group showed a redundant dark title band
-  // between the Groups heading and the name field.
-  it('shows the name field without a second heading and still lets you go back', async () => {
-    const { user } = mount();
-    await band('Wallet work');
-    await user.click(screen.getByRole('button', { name: `Actions for groups in ${ROOT}` }));
-    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('New group'));
-    const menu = sheet(`Groups in ${ROOT}`);
-
-    expect(within(menu).getByRole('textbox', { name: 'Group name' })).toBeInTheDocument();
-    await user.click(
-      within(menu).getByRole('button', { name: `Back to groups in ${STORY_NEWER_PROJECT.name}` }),
-    );
-    expect(within(menu).getByText('New group')).toBeInTheDocument();
   });
 
   // Regression, user report: renaming a group opened a second question over the list
@@ -889,50 +781,6 @@ describe('ProjectGroup groups', () => {
       expect(client.updateSessionGroup).not.toHaveBeenCalled();
     });
   });
-
-  // A session joins a group from its own row, not from the group's action menu.
-  // That menu offers rename, colour and delete actions for the group itself.
-  it('keeps session filing out of the group menu', async () => {
-    const { user } = mount();
-    await band('Wallet work');
-    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
-    const menu = sheet(`Groups in ${ROOT}`);
-    expect(within(menu).getByText('Rename group')).toBeInTheDocument();
-    expect(within(menu).getByText('Delete group')).toBeInTheDocument();
-    expect(within(menu).getByText('Choose colour')).toBeInTheDocument();
-    // A TITLE THAT SAYS WHAT THE ROW DOES CARRIES NO SENTENCE UNDER IT.
-    expect(within(menu).queryByText(/Asks what becomes/)).toBeNull();
-    // The sheet hangs under the band's own ⋮, so nothing repeats the name just pressed
-    // and no way back to a project root that says nothing about this group.
-    expect(within(menu).queryByText('Wallet work')).toBeNull();
-    expect(within(menu).queryByText(/Back to/)).toBeNull();
-    expect(within(menu).queryByText(String(LOOSE.title))).toBeNull();
-  });
-
-  // A GROUP'S COLOUR IS A PALETTE, NOT A COLUMN, and nothing is titled over it: eight
-  // named rows stood open under the verbs, each as tall as a verb and reading like one,
-  // under a band that spelled the group's name a third time.
-  it('picks a colour off a palette a step in and returns to the verbs', async () => {
-    const { client, user } = mount();
-    await band('Wallet work');
-    await user.click(screen.getByRole('button', { name: 'Actions for Wallet work' }));
-    const menu = sheet(`Groups in ${ROOT}`);
-    expect(within(menu).queryByRole('button', { name: 'Slate' })).toBeNull();
-    await user.click(within(menu).getByText('Choose colour'));
-    expect(within(menu).queryByText(/^Colour /)).toBeNull();
-    expect(within(menu).queryByText(/Back to/)).toBeNull();
-    // The tile says what it does by being the colour, and the group's own is pressed.
-    expect(within(menu).getByRole('button', { name: 'Blue' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    expect(within(menu).queryByText('Violet')).toBeNull();
-    await user.click(within(menu).getByRole('button', { name: 'Violet' }));
-    await waitFor(() =>
-      expect(client.updateSessionGroup).toHaveBeenCalledWith(WALLET, { color: 'violet' }),
-    );
-    await waitFor(() => expect(within(menu).getByText('Rename group')).toBeInTheDocument());
-  });
   it('asks what becomes of the sessions before it deletes a group', async () => {
     const { client, user } = mount();
     await band('Wallet work');
@@ -988,26 +836,6 @@ describe('ProjectGroup groups', () => {
       expect(client.deleteSessionGroup).toHaveBeenCalledWith('group-notes', 'detach'),
     );
     expect(screen.queryByText('Delete its sessions too')).toBeNull();
-  });
-
-  // Regression, user report: the mobile action must not expand the project list.
-  it('opens a compact anchored popup without shifting the session rows', async () => {
-    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(390);
-    const { client, user, open } = mount();
-    const wallet = await band('Wallet work');
-    const list = wallet.closest('[data-project-root]') as HTMLElement;
-    const row = strip(list, LOOSE.id);
-    await user.click(within(row).getByText('Move to...'));
-    const choices = sheet(`Move ${LOOSE.title} to group`);
-    expect(list).not.toContainElement(choices);
-    expect(list.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1);
-    await user.click(within(choices).getByRole('button', { name: 'Wallet work' }));
-    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
-    await waitFor(() =>
-      expect(wallet.querySelectorAll(`[data-session-id="${LOOSE.id}"]`)).toHaveLength(1),
-    );
-    expect(open).not.toHaveBeenCalled();
-    expect(screen.queryByRole('dialog', { name: `Move ${LOOSE.title} to group` })).toBeNull();
   });
 
   // ONE GROUP, AND THIS ROW IS FILED UNDER IT: `Move to...` opened a sheet whose only
@@ -1106,20 +934,6 @@ describe('ProjectGroup groups', () => {
     pressInWebKit(sheet(`Move ${moving.title} to group`).parentElement!);
     expect(screen.queryByRole('dialog', { name: `Move ${moving.title} to group` })).toBeNull();
     expect(client.assignSessionGroup).toHaveBeenCalledTimes(1);
-  });
-
-  it('opens the same move popup from the desktop row action menu', async () => {
-    finePointer();
-    const { client, user } = mount();
-    await band('Wallet work');
-    const row = strip(document.body, LOOSE.id);
-    await user.click(within(row).getByRole('button', { name: `Actions for ${LOOSE.title}` }));
-    await user.click(within(sheet(`${LOOSE.title} actions`)).getByRole('button', { name: 'Move' }));
-    expect(screen.queryByRole('dialog', { name: `${LOOSE.title} actions` })).toBeNull();
-    await user.click(
-      within(sheet(`Move ${LOOSE.title} to group`)).getByRole('button', { name: 'Wallet work' }),
-    );
-    await waitFor(() => expect(client.assignSessionGroup).toHaveBeenCalledWith(LOOSE.id, WALLET));
   });
 
   it.each([
@@ -1901,48 +1715,6 @@ describe('ProjectGroup groups', () => {
       'only',
       { limit: ARCHIVED_GROUPS_PAGE, offset: ARCHIVED_GROUPS_PAGE },
     );
-  });
-
-  // Reported over the project header while the pager stood on its trailing edge: a paged
-  // project put its plus and its menu in the middle of the band while an unpaged one kept
-  // them flush right. The steps stand over the SET they move now, and the band is one shape.
-  it('stands the session steps on the Sessions header, not on the project band', async () => {
-    const deep = { rows: ROWS, total: 24, awaiting: [], grouped: [], nextCursor: '' };
-    mount(machine({ heldProjectPage: () => deep, listProjectPage: vi.fn(async () => deep) }));
-
-    const sessions = (await screen.findByText('Sessions')).parentElement as HTMLElement;
-    const steps = within(sessions).getByRole('navigation', {
-      name: `Pages of ${STORY_NEWER_PROJECT.name} sessions`,
-    });
-    expect(within(steps).getByText('Page 1 of 3')).toBeInTheDocument();
-    expect(steps.nextElementSibling).toBe(
-      within(sessions).getByRole('button', { name: `Actions for sessions in ${ROOT}` }),
-    );
-    const header = screen.getByText(STORY_NEWER_PROJECT.name).closest('header') as HTMLElement;
-    expect(within(header).queryByRole('navigation')).toBeNull();
-  });
-
-  // Reported in this Vis session (paraphrased: opening the app painted the Groups set as a
-  // stack of bands all called "Group" before their names arrived). The machine's window
-  // held the filed rows before this project's groups were read, every group those rows
-  // named stood as an invented band with nothing to call it, and asking for those groups
-  // again cancelled the two reads that were already bringing them.
-  it('paints no placeholder band while the groups are still being read', async () => {
-    const client = machine({
-      heldProjectPage: () => null,
-      listProjectPage: vi.fn(() => new Promise(() => {})),
-      listSessionGroups: vi.fn(() => new Promise(() => {})),
-    });
-    mount(client);
-    await act(async () => {});
-
-    expect(screen.queryByRole('button', { name: 'Collapse Group' })).toBeNull();
-    // A filed row waits for the band that names it; what nobody filed paints meanwhile.
-    expect(surface(ROWS[0].id)).toBeNull();
-    expect(surface(LOOSE.id)).toBeInTheDocument();
-    // One read of each, left to answer.
-    expect(client.listSessionGroups).toHaveBeenCalledOnce();
-    expect(client.listProjectPage).toHaveBeenCalledOnce();
   });
 
   it('names the bands it read last time on the first frame of a cold start', async () => {

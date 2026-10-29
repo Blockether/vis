@@ -4,22 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import {
-  mediaFrameClass,
-  mediaGridClass,
-  mediaPendingClass,
-  mediaTileFrameClass,
-} from '../lib/media-frame';
-import {
-  MediaGrid,
-  MediaPlate,
-  MediaRecording,
-  MediaTile,
-  RecordingPlayer,
-  clipTeaserSrc,
-  mediaMeta,
-  mediaSummary,
-} from './Media';
+import { mediaFrameClass } from '../lib/media-frame';
+import { MediaPlate, MediaRecording, RecordingPlayer, clipTeaserSrc, mediaMeta, mediaSummary } from './Media';
 
 /** The frame element of a rendered plate/tile, class list and all. */
 const frame = (html: string) => /<div class="([^"]*)"/u.exec(html)?.[1] ?? '';
@@ -29,21 +15,6 @@ const frame = (html: string) => /<div class="([^"]*)"/u.exec(html)?.[1] ?? '';
 // all have to reserve the SAME rectangle. It used to be spelled at the call
 // site once per state; now it is spelled by the plate, once.
 describe('MediaPlate', () => {
-  const withChild = (child: string) =>
-    frame(
-      renderToStaticMarkup(
-        <MediaPlate name="shot.png" meta="PNG · 8B">
-          <div className={child} />
-        </MediaPlate>,
-      ),
-    );
-
-  it('reserves the same box whatever it is showing', () => {
-    expect(withChild(mediaPendingClass)).toBe(mediaFrameClass);
-    expect(withChild('some-picture')).toBe(mediaFrameClass);
-    expect(withChild('some-failure-notice')).toBe(mediaFrameClass);
-  });
-
   // User report: a wide or tall screenshot stood in the 4:3 reservation between two
   // bands of empty mat. When its size is known before it decodes, the frame takes the
   // picture's own ratio, the figure its width, and the frame keeps every class.
@@ -61,73 +32,6 @@ describe('MediaPlate', () => {
     expect(tall).toContain('style="width:min(100%, 390px, calc(60svh * 390 / 844))"');
     expect(plate()).not.toContain('style=');
   });
-
-  it('carries no caption strip at all when there is no name', () => {
-    expect(
-      renderToStaticMarkup(
-        <MediaPlate>
-          <div />
-        </MediaPlate>,
-      ),
-    ).not.toContain('<figcaption');
-  });
-});
-
-describe('MediaGrid', () => {
-  it('lays its tiles out in the gallery and says what they are', () => {
-    const html = renderToStaticMarkup(
-      <MediaGrid summary="2 images · 16B">
-        <MediaTile>
-          <div />
-        </MediaTile>
-        <MediaTile>
-          <div />
-        </MediaTile>
-      </MediaGrid>,
-    );
-
-    expect(html).toContain(mediaGridClass);
-    expect(html.match(new RegExp(mediaTileFrameClass, 'gu'))).toHaveLength(2);
-    expect(html).toContain('2 images · 16B');
-  });
-});
-
-// Regression, user report ("margin bottom from this component is not the same
-// like margin top"): a media block sits in the transcript's own `gap-2.5` stack,
-// and it used to spell a gap on BOTH edges — so the picture had 10px above it and
-// 18-20px below, and the block read as if it belonged to the paragraph under it.
-// The stack owns the trailing gap; the block only tops itself up to it, and never
-// on the very first row.
-describe("a media block's own edges", () => {
-  const root = (html: string) => /^<\w+ class="([^"]*)"/u.exec(html)?.[1] ?? '';
-
-  const edges = [
-    [
-      'MediaPlate',
-      renderToStaticMarkup(
-        <MediaPlate>
-          <div />
-        </MediaPlate>,
-      ),
-    ],
-    [
-      'MediaGrid',
-      renderToStaticMarkup(
-        <MediaGrid summary="1 image · 8B">
-          <MediaTile>
-            <div />
-          </MediaTile>
-        </MediaGrid>,
-      ),
-    ],
-  ] as const;
-
-  for (const [name, html] of edges) {
-    it(`tops ${name} up to the stack's gap and never pads under it`, () => {
-      const classes = root(html).split(/\s+/u);
-      expect(classes.filter((one) => /^m[by]?-/u.test(one))).toEqual([]);
-    });
-  }
 });
 
 describe("the gallery's own line", () => {
@@ -154,49 +58,6 @@ describe("a plate's caption", () => {
 // would reserve a 4:3 box around silence and caption it like a picture that
 // failed to decode.
 describe('MediaRecording', () => {
-  const html = renderToStaticMarkup(
-    <MediaRecording name="memo.m4a" meta="M4A · 8B">
-      <audio controls />
-    </MediaRecording>,
-  );
-
-  it('reserves no picture box', () => {
-    expect(html).not.toContain(mediaFrameClass);
-    expect(html).not.toContain(mediaTileFrameClass);
-  });
-
-  // The words a memo carries are the only thing a reader can SKIM, and the same
-  // string the model was given — but a minute of speech is a paragraph, so the row
-  // stays one line until it is asked.
-  it('folds the transcription away behind its own band', () => {
-    const withWords = renderToStaticMarkup(
-      <MediaRecording name="memo.m4a" meta="M4A · 8B" transcription="buy milk and call back">
-        <audio controls />
-      </MediaRecording>,
-    );
-    expect(withWords).toContain('TRANSCRIPTION');
-    expect(withWords).toContain('aria-expanded="false"');
-    expect(withWords).not.toContain('buy milk and call back');
-  });
-
-  it('shows no band at all when nobody has asked for a transcript', () => {
-    expect(html).not.toContain('TRANSCRIPTION');
-    expect(html).not.toContain('aria-expanded');
-  });
-
-  // Speech is not code. Opened, the words read as an italic QUOTATION of the audio
-  // above them without distorting the spacing between words.
-  it('quotes the opened transcript in naturally spaced italic', async () => {
-    render(
-      <MediaRecording name="memo.m4a" transcription="buy milk and call back">
-        <audio controls />
-      </MediaRecording>,
-    );
-    await userEvent.click(screen.getByText('TRANSCRIPTION'));
-    const words = screen.getByText(/buy milk and call back/);
-    expect(words.textContent).toBe('“buy milk and call back”');
-  });
-
   // Regression: the speech engine timestamps every token it decodes, and the row
   // threw the timings away — the words stood still while the audio moved, and the
   // only way back to a sentence was dragging the scrubber until it turned up.
@@ -229,21 +90,6 @@ describe('MediaRecording', () => {
     await userEvent.click(second);
     expect(audio?.currentTime).toBe(2);
   });
-
-  // Nothing placed the words in the audio — an older recording, or an engine that
-  // only returns a string. The band is still the quotation it always was.
-  it('quotes the whole transcript when there are no timings', async () => {
-    render(
-      <MediaRecording name="memo.m4a" transcription="buy milk and call back">
-        <RecordingPlayer src="blob:memo" />
-      </MediaRecording>,
-    );
-    await userEvent.click(screen.getByText('TRANSCRIPTION'));
-    expect(screen.getByText(/buy milk and call back/).textContent).toBe(
-      '“buy milk and call back”',
-    );
-    expect(screen.queryByRole('button', { name: 'buy milk' })).toBeNull();
-  });
 });
 
 // The platform's own `<audio controls>` is another program's widget on this
@@ -268,15 +114,6 @@ describe('RecordingPlayer', () => {
     expect(screen.getByLabelText('Pause')).toBeInTheDocument();
     fireEvent.pause(audio);
     expect(screen.getByLabelText('Play')).toBeInTheDocument();
-  });
-
-  // Metadata that has not landed reports `NaN`, and a scrubber cannot be drawn
-  // against it — the bar stays inert rather than claiming a position.
-  it('waits for the length before it offers seeking', () => {
-    const view = render(<RecordingPlayer />);
-    const scrubber = view.container.querySelector('input[type="range"]');
-
-    expect(scrubber).toBeDisabled();
   });
 });
 

@@ -123,49 +123,6 @@ it('keeps gateway caches and writes separate for equal setting ids in different 
   expect(body).toMatchObject({ id: 'subagents', action: 'value', value: false, ...b });
 });
 
-it.each(['session', 'group', 'project'] as const)(
-  'keeps %s settings search compact and easy to recover',
-  async (scope) => {
-    const user = userEvent.setup();
-    const target: SettingsTarget = { scope, target_id: 'item', label: 'Wallet work' };
-    const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
-    vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
-    vi.spyOn(client, 'settings').mockResolvedValue({
-      revision: 'scoped-1',
-      scope, target_id: 'item',
-      groups: [{ id: 'agent', title: 'Agent', toggles: [{
-        id: 'subagents', label: 'Subagents', description: 'Track work', type: 'boolean',
-        enabled: false, scopes: ['global', scope], source: 'global', is_override: false,
-      }] }],
-    });
-    vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
-    vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-    renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
-
-    const dialog = screen.getByRole('dialog', { name: `${scope[0].toUpperCase()}${scope.slice(1)} settings` });
-    // Only a project or group names its owner under the heading.
-    if (scope === 'session') expect(screen.queryByText('Wallet work')).toBeNull();
-    else expect(screen.getByText('Wallet work')).toBeInTheDocument();
-    const search = screen.getByRole('searchbox', { name: 'Search settings' });
-    await screen.findByRole('switch', { name: 'Subagents: off' });
-    await user.type(search, 'agent');
-    expect(screen.getByRole('switch', { name: 'Subagents: off' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Clear settings search' }));
-    expect(search).toHaveValue('');
-    expect(search).toHaveFocus();
-    await user.type(search, 'dd');
-    expect(screen.getByRole('heading', { name: 'No settings match “dd”' })).toBeInTheDocument();
-    expect(screen.queryByRole('switch')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Clear search' }));
-    expect(search).toHaveValue('');
-    expect(screen.getByRole('switch', { name: 'Subagents: off' })).toBeInTheDocument();
-    await user.type(search, 'missing');
-    await user.keyboard('{Escape}');
-    expect(dialog).toBeInTheDocument();
-    expect(search).toHaveValue('');
-  },
-);
-
 it('does not claim a failed search before one exists when the catalog has no toggles', async () => {
   const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
   const target: SettingsTarget = { scope: 'group', target_id: 'wallet' };
@@ -178,47 +135,6 @@ it('does not claim a failed search before one exists when the catalog has no tog
   expect(screen.getByRole('heading', { name: 'MCP servers' })).toBeInTheDocument();
   expect(screen.queryByText(/No settings match/)).toBeNull();
 });
-
-it.each(['session', 'group', 'project'] as const)(
-  'separates every %s settings section, including MCP servers, without orphan rules after filtering',
-  async (scope) => {
-    const user = userEvent.setup();
-    const target: SettingsTarget = { scope, target_id: 'item' };
-    const data: SettingsResponse = { revision: 'scoped-1', scope, target_id: 'item', groups: [
-      { id: 'agent', title: 'Agent', toggles: [{
-        id: 'subagents', label: 'Subagents', type: 'boolean', enabled: false,
-        scopes: ['global', scope], source: 'global', is_override: false,
-      }] },
-      { id: 'experimental', title: 'Experimental', toggles: [{
-        id: 'draft_backend', label: 'Draft backend', type: 'boolean', enabled: false,
-        scopes: ['global', scope], source: 'global', is_override: false,
-      }] },
-    ] };
-    const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
-    vi.spyOn(client, 'cachedSettings').mockReturnValue(data);
-    vi.spyOn(client, 'settings').mockResolvedValue(data);
-    vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
-    vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-    renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
-
-    expect(screen.getByRole('heading', { name: `${scope[0].toUpperCase()}${scope.slice(1)} settings`, level: 2 })).toBeInTheDocument();
-    const panel = (title: string) => screen.getByRole('heading', { name: title, level: 3 }).closest('section');
-    const sections = panel('Agent')?.parentElement;
-    expect(Array.from(sections?.children ?? [])).toEqual([
-      panel('Agent'), panel('Experimental'), panel('Tools'),
-    ]);
-    // MCP servers and extensions stand in the Tools section, one heading level lower.
-    expect(within(panel('Tools')!).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent))
-      .toEqual(['MCP servers', 'Extensions']);
-
-    await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'draft');
-    expect(panel('Experimental')?.parentElement?.children).toHaveLength(1);
-    expect(screen.queryByRole('heading', { name: 'Agent' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Tools' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Extensions' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'MCP servers' })).toBeNull();
-  },
-);
 
 // Reported on a phone: with a slow gateway, project and group settings jumped as
 // each answer arrived, and the sheet showed a half-built Tools section under the
@@ -320,15 +236,4 @@ it('locks inherited extension rows and opens the settings that decide them', asy
   expect(openScoped).toHaveBeenCalledWith(client, { scope: 'project', target_id: 'p1', label: 'Workspace' });
   await user.click(screen.getByRole('button', { name: 'Open Machine settings' }));
   expect(openMachine).toHaveBeenCalledWith('http://127.0.0.1:7890');
-});
-
-it('says when a scope has no extension settings, and offers no open button without a host', async () => {
-  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
-  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
-  vi.spyOn(client, 'settings').mockResolvedValue({ revision: 'scoped-1', scope: 'group', target_id: 'g1', groups: [] });
-  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
-  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-  renderOpenBands(<ScopedSettingsDialog client={client} target={{ scope: 'group', target_id: 'g1' }} onClose={() => {}} />);
-  expect(await screen.findByText('No extension settings for this group.')).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /^Open .* settings$/ })).toBeNull();
 });

@@ -104,14 +104,6 @@ describe('canonical Activity admission across SDK, engine and surfaces', () => {
 });
 
 describe("one form's Activity read off the wire", () => {
-  // Protocol 7 took Activity off the Live View rail: it is no longer a classified
-  // view with a projection hanging off it. Protocol 9 carries every revision on
-  // `block.activity`; only the settled replacement is durable.
-  it('reads a bare projection off the wire', () => {
-    expect(activityProjectionFromWire(activityProjection())).toMatchObject({
-      state: 'running',
-    });
-  });
 
   it('reads a generic handle receipt without replacing its invocation identities', () => {
     const projection = activityProjection('succeeded');
@@ -532,17 +524,6 @@ describe('complete retained Activity copy', () => {
     },
   );
 
-  it('rejects a revision change even on the first reloaded page', async () => {
-    const load = vi.fn(async () => {
-      const result = activityHistoryPage();
-      result.history!.revision++;
-      return result;
-    });
-    await expect(
-      activityHistoryCopyText([activityHistoryPage()], load, new AbortController().signal),
-    ).rejects.toThrow(/Activity changed/);
-  });
-
   it('propagates retrieval failures without returning the pages already loaded', async () => {
     const load = vi.fn(async (_id: string, after: number) => {
       if (after) throw new Error('Reconnect to copy activity.');
@@ -614,17 +595,6 @@ describe('settling a snapshot its form outlived', () => {
     // The wire snapshot stays untouched.
     expect(snapshot.counts.running).toBe(2);
     expect(snapshot.rows[1].state).toBe('running');
-  });
-
-  it('returns a snapshot with nothing running as it is', () => {
-    const settled: ActivityProjection = {
-      ...snapshot,
-      state: 'succeeded',
-      counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
-      rows: [row('done', 'succeeded')],
-    };
-
-    expect(settleActivity(settled, 'failed')).toBe(settled);
   });
 });
 

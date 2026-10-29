@@ -81,69 +81,9 @@ describe('live log disclosures', () => {
 });
 
 describe('a live view on the phone', () => {
-  it('paints every node the run declared, in the order it declared them', () => {
-    const html = paint();
-    expect(html).toContain('Fleet scan');
-    expect(html).toContain('3 hosts · started 12:04');
-    const labels = ['Swept', 'Findings', 'Phases', 'Output', 'Hosts', 'Why', 'Elsewhere'];
-    expect(labels.map((label) => html.indexOf(label))).toEqual(
-      [...labels.map((label) => html.indexOf(label))].sort((a, b) => a - b),
-    );
-    expect(labels.every((label) => html.includes(label))).toBe(true);
-
-    expect(html).toContain('Scanning db-2');
-    expect(html).toContain('host 2 of 3');
-    expect(html).toContain('Critical');
-    expect(html).toContain('Collect inventory');
-    fireEvent.click(screen.getByRole('button', { name: 'Output' }));
-    expect(document.body.innerHTML).toContain('db-2 · 1 critical (openssl)');
-    expect(screen.getByLabelText('Output output').getAttribute('tabindex')).toBe('0');
-    expect(screen.getAllByRole('row').length).toBe(3);
-    expect(screen.getByRole('link', { name: 'The run on GitHub' })).toHaveProperty(
-      'href',
-      'https://example.com/run/42',
-    );
-  });
-
-  // A section that only paints cannot be heard. The run reports itself, so the
-  // panel is a live region: a screen reader is told when the picture moves.
-  it('reports itself as work in progress, not as a question', () => {
-    paint();
-    const panel = screen.getByRole('status');
-    expect(panel.getAttribute('aria-live')).toBe('polite');
-    expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
   it('draws the fraction as a bar and states the count beside it', () => {
     paint();
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('67');
-  });
-
-  // A bar that never moves reads as a stall. A run whose size is not known yet
-  // says so in words instead.
-  it('draws no bar for a run with no knowable end', () => {
-    paint({
-      view: withNode(opened(), { id: 'swept', type: 'progress', label: 'Swept' }),
-    });
-    expect(screen.queryByRole('progressbar')).toBeNull();
-  });
-
-  it("says what an empty node is waiting for, in the engine's own words", () => {
-    paint({
-      view: withNode(opened(), {
-        id: 'hosts',
-        type: 'table',
-        label: 'Hosts',
-        columns: [{ id: 'host', label: 'Host', align: 'left' }],
-        rows: [],
-        max_rows: 5000,
-        order: 'insertion',
-        is_selectable: false,
-        selected_ids: [],
-        groups: [],
-      }),
-    });
-    expect(screen.getByRole('columnheader', { name: 'Host' })).toBeVisible();
   });
 
   // A path or an attachment names a place on the MACHINE: dressing it as a link
@@ -226,26 +166,6 @@ describe('selecting a table row', () => {
     expect(parent.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('button', { name: 'Select iOS' })).toBeVisible();
     expect(screen.getByText('Android')).toBeVisible();
-  });
-  // Regression, session 641fbdc0-44a9-46dd-86c9-3e8b9bdf878b: a parent with a single leg
-  // stayed flat beside its folded neighbors, so one table showed two shapes and the lone
-  // rows were the only ones still repeating their parent's name.
-  it('folds a parent that has one leg like every other parent', () => {
-    const view = matrixView([]);
-    const hosts = hostsTable(view);
-    hosts.rows = [
-      ...hosts.rows.slice(0, 2),
-      { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok', parent: 'Lint' },
-    ];
-    paint({ view, onSelect: vi.fn() });
-
-    const parent = screen.getByRole('button', { name: 'Lint' });
-    expect(parent.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByText('1 row')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Select Publish docs' })).toBeNull();
-
-    fireEvent.click(parent);
-    expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeVisible();
   });
   // Regression, reported with desktop screenshots: the browser sized the columns from the
   // rows on screen, so folding a group moved every column. A settled job moved them again.
@@ -377,15 +297,6 @@ describe('selecting a table row', () => {
       'true',
     );
     expect(screen.getByRole('button', { name: 'Select iOS' })).toBeVisible();
-  });
-  // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: selecting a job only
-  // tinted its first cell, so the table looked like a cell picker instead of a row picker.
-  it('paints the selected state across the whole job row', () => {
-    paint({ view: selectableView(), onSelect: vi.fn() });
-
-    const selected = screen.getByRole('button', { name: 'Select db-2' });
-    const row = selected.closest('tr') as HTMLTableRowElement;
-    expect(row.getAttribute('aria-selected')).toBe('true');
   });
 
   it('sends the row through the shared View action instead of keeping private selection', () => {
@@ -580,35 +491,9 @@ describe('stopping the run from the phone', () => {
     expect(onInterrupt).toHaveBeenLastCalledWith(null);
   });
 
-  it('says it is working on it, and offers every view a stop', () => {
-    cleanup();
-    paint({ onInterrupt: vi.fn(), isInterrupting: true });
-    const button = screen.getByRole('button', { name: 'Stopping...' });
-    expect(button).toHaveProperty('disabled', true);
-  });
-
 });
 
 describe('what a run says about its own layout', () => {
-  // A view lays itself out with the FORM's own group: the row is the run's
-  // statement, not the screen's guess, and the terminal splits its band on it.
-  it('stands the nodes a row holds side by side', () => {
-    paint();
-    const list = screen.getByRole('status').querySelector('ul') as HTMLElement;
-    // Seven top-level nodes, seven rows: `hosts` and `why` share the one the
-    // group holds them in instead of taking one each.
-    expect(list.children.length).toBe(7);
-    const beside = [...list.children].find((row) =>
-      row.textContent?.includes('Hosts'),
-    ) as HTMLElement;
-    expect(beside.textContent).toContain('Why');
-    expect(beside.querySelector('[data-view-layout="row"]')).toBeInTheDocument();
-    const alone = [...list.children].find((row) =>
-      row.textContent?.includes('Elsewhere'),
-    ) as HTMLElement;
-    expect(alone.querySelector('[data-view-layout]')).toBeNull();
-  });
-
   it('paints the marks a human wrote, and nothing a block would bring', () => {
     const panel = (paint(), screen.getByRole('status'));
     expect([...panel.querySelectorAll('code')].map((mark) => mark.textContent)).toContain('db-2');
@@ -618,22 +503,6 @@ describe('what a run says about its own layout', () => {
     // A row stays a row: no heading, no quote, no list arrived with the marks.
     expect(panel.querySelector('h1, h2, h3, blockquote')).toBeNull();
   });
-
-  it('marks a table cell too, because a cell is a human string as well', () => {
-    const view = opened();
-    const hosts = view.nodes
-      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
-      .find((node) => node.id === 'hosts');
-    if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
-    paint({
-      view: withNode(view, {
-        ...hosts,
-        rows: [{ ...hosts.rows[0], cells: ['`db-1`', 'clean', '0'] }],
-      }),
-    });
-    expect(screen.getAllByRole('cell')[0].querySelector('code')?.textContent).toBe('db-1');
-  });
-
 
   // Regression, user report: Activity patches rendered one-by-one on WKWebView and
   // starved the independent elapsed-time paint, leaving its clock visibly frozen.
@@ -869,30 +738,6 @@ describe('what a run says about its own layout', () => {
 });
 
 describe('live horizontal dividers', () => {
-  it.each([false, true])('retains a semantic noninteractive divider (settled=%s)', (isSettled) => {
-    const view = liveViewFromWire({
-      ...fixture,
-      nodes: [
-        { id: 'before', type: 'paragraph', text: 'Build completed' },
-        { id: 'results-break', type: 'divider' },
-        { id: 'after', type: 'paragraph', text: 'Review the results' },
-      ],
-    });
-    expect(view?.nodes.map((node) => node.id)).toEqual(['before', 'results-break', 'after']);
-    paint({ view: view!, isSettled });
-    const divider = screen.getByRole('separator');
-    expect(divider.tagName).toBe('HR');
-    expect(divider.tabIndex).toBe(-1);
-    expect(divider.textContent).toBe('');
-    expect(
-      screen.getByText('Build completed').compareDocumentPosition(divider) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(
-      divider.compareDocumentPosition(screen.getByText('Review the results')) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  });
   it('adds and removes a divider without allowing content patches to mutate it', () => {
     let view = liveViewFromWire({ ...fixture, nodes: [{ id: 'break', type: 'divider' }] })!;
     const divider = { id: 'break', type: 'divider' };

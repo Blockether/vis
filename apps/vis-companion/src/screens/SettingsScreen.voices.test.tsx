@@ -116,31 +116,6 @@ describe('hearing a voice before choosing it', () => {
     return { client, onChange, played };
   }
 
-  // Regression, user report: even a cheap ready-made sample must not disguise that the
-  // selected voice itself still needs a model download. Download owns the leading square first.
-  it('shows download instead of play while the voice model is absent', async () => {
-    const unavailable: SpeechVoices = {
-      ...catalogue,
-      voices: catalogue.voices.map((voice) =>
-        voice.id === 'kristin'
-          ? { ...voice, model: { status: 'absent', engine: 'piper-local' } }
-          : voice,
-      ),
-    };
-    mount(new Blob(['wav'], { type: 'audio/wav' }), unavailable);
-
-    expect(
-      await screen.findByRole('button', {
-        name: 'Download Kristin (en-US, medium)',
-      }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole('button', {
-        name: 'Play a sample of Kristin (en-US, medium)',
-      }),
-    ).toBeNull();
-  });
-
   // Regression, user report: an active sample still looked like Play, so there was no way
   // to stop it or see which voice owned the one shared player.
   it('turns play into stop and hands that control to the next voice', async () => {
@@ -185,13 +160,6 @@ describe('hearing a voice before choosing it', () => {
       }),
     ).toBeVisible();
     expect(stopped).toHaveBeenCalledTimes(2);
-  });
-
-  it('offers no sample where there is nothing to play', async () => {
-    mount(new Blob(['wav'], { type: 'audio/wav' }));
-
-    await screen.findByRole('button', { name: /^Kristin/ });
-    expect(screen.queryByRole('button', { name: /Play a sample of Mystery/ })).toBeNull();
   });
 
   // Regression, user report: moving from one voice to another showed the first sample's

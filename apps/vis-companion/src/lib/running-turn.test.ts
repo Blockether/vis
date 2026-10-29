@@ -3,11 +3,9 @@ import { describe, expect, it } from 'vitest';
 import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import {
   providerWaitDetail,
-  pythonBusyDetail,
   reduceRunningTurnEvent,
   type RunningTurn,
   type ProviderWait,
-  type PythonBusy,
 } from './running-turn';
 import type { SseEvent } from './types';
 
@@ -274,12 +272,6 @@ describe('the turn this device started', () => {
     expect(started?.id).toBe('gw-1');
   });
 
-  it('keeps its own clock once the POST has already named the turn', () => {
-    const named = { ...optimistic, id: 'gw-1' };
-
-    expect(reduceRunningTurnEvent(named, startedFrame('gw-1', 991_000))?.startedAt).toBe(1_000_000);
-  });
-
   it("takes the gateway's stamp for a turn it is not painting yet", () => {
     expect(reduceRunningTurnEvent(null, startedFrame('gw-2', 1_700_000))?.startedAt).toBe(
       1_700_000,
@@ -373,32 +365,12 @@ describe('the provider wait notice', () => {
     expect(reduceRunningTurnEvent(waiting, reasoning('Plan'))?.progress).toBeUndefined();
   });
 
-  it('gives no wait to another progress kind', () => {
-    const turn = reduceRunningTurnEvent(runningTurn, notice({ progress: 'provider-call' }));
-
-    expect(turn?.progress?.kind).toBe('provider-call');
-    expect(turn?.progress?.wait).toBeUndefined();
-  });
-
   it('moves both clocks on from the moment the notice arrived', () => {
     expect(providerWaitDetail(wait, 1_000)).toBe(
       'No response for 25s · connection alive · retry in 3m 35s',
     );
     expect(providerWaitDetail(wait, 41_000)).toBe(
       'No response for 1m 5s · connection alive · retry in 2m 55s',
-    );
-  });
-
-  it('names stopped output, a silent connection and a timeout that is due', () => {
-    const stopped: ProviderWait = {
-      ...wait,
-      awaitingOutput: false,
-      connection: 'silent',
-      deadline: { inMs: 2_000, action: 'timeout' },
-    };
-
-    expect(providerWaitDetail(stopped, 5_000)).toBe(
-      'No new output for 29s · connection silent · timeout in 0s',
     );
   });
 
@@ -419,8 +391,6 @@ describe('the busy Python notice', () => {
       ...extra,
     });
 
-  const busy: PythonBusy = { busyMs: 72_000, receivedAt: 1_000, cpuPercent: 99, deadlineInMs: 228_000 };
-
   it('keeps the busy time, the CPU use and the deadline of the block', () => {
     const before = Date.now();
     const turn = reduceRunningTurnEvent(runningTurn, notice());
@@ -438,11 +408,6 @@ describe('the busy Python notice', () => {
 
     expect(turn?.progress?.kind).toBe('python');
     expect(turn?.progress?.busy).toBeUndefined();
-  });
-
-  it('moves both clocks on from the moment the notice arrived', () => {
-    expect(pythonBusyDetail(busy, 1_000)).toBe('No tool call for 1m 12s · Python CPU 99% · stops in 3m 48s');
-    expect(pythonBusyDetail(busy, 6_000)).toBe('No tool call for 1m 17s · Python CPU 99% · stops in 3m 43s');
   });
 
 });

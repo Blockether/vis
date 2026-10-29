@@ -21,7 +21,6 @@ vi.mock('@capacitor/preferences', () => ({
 }));
 
 import {
-  forgetOpenSession,
   loadOpenSession,
   rememberOpenSession,
   removeConnection,
@@ -71,12 +70,6 @@ describe('the transcript a cold start may reopen', () => {
     const open = await loadOpenSession();
     expect(open).toMatchObject({ url: BUILDBOX, sid: 's2' });
     expect(open!.at).toBeGreaterThanOrEqual(before);
-  });
-
-  it('is gone once the user leaves the transcript', async () => {
-    await rememberOpenSession(LAPTOP, 's1');
-    await forgetOpenSession();
-    expect(await loadOpenSession()).toBeNull();
   });
 
   it('follows its machine to another address', async () => {

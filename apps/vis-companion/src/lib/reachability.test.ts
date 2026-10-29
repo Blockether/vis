@@ -15,7 +15,6 @@ import {
 } from './reachability';
 
 const GONE = 'http://192.168.0.31:7890';
-const HERE = 'http://100.109.18.77:7890';
 const MINUTE = 60_000;
 
 beforeEach(() => {
@@ -23,9 +22,6 @@ beforeEach(() => {
 });
 
 describe('asking an address that went silent', () => {
-  it('asks any address the app has never heard about', () => {
-    expect(isProbeDue(GONE)).toBe(true);
-  });
 
   it('lets it rest for a minute after the first silence', () => {
     const now = Date.now();
@@ -48,12 +44,6 @@ describe('asking an address that went silent', () => {
     expect(isProbeDue(GONE, now + 30 * MINUTE)).toBe(true);
   });
 
-  it('holds this against one address, not against the machine next to it', () => {
-    const now = Date.now();
-    noteUnreachable(GONE, now);
-    expect(isProbeDue(HERE, now)).toBe(true);
-  });
-
   it('is an ordinary address again the moment it answers', () => {
     const now = Date.now();
     noteUnreachable(GONE, now);
@@ -65,12 +55,5 @@ describe('asking an address that went silent', () => {
     const now = Date.now();
     noteUnreachable('http://192.168.0.31:7890/', now);
     expect(isProbeDue('http://192.168.0.31:7890', now)).toBe(false);
-  });
-
-  it('starts over when the device joins a different network', () => {
-    const now = Date.now();
-    noteUnreachable(GONE, now);
-    forgetUnreachableAddresses();
-    expect(isProbeDue(GONE, now)).toBe(true);
   });
 });

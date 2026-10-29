@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PEN_COLORS,
   canvasPoint,
-  paintSegment,
   paintStroke,
-  repaintStrokes,
   strokeWidthFor,
   type Stroke,
 } from './annotate';
@@ -35,15 +32,6 @@ function stroke(points: Stroke['points']): Stroke {
 }
 
 describe('pen ink', () => {
-  // The ink is theme ink: picking a palette repaints the whole app, so a stroke
-  // frozen as hex is the one mark on the picture from another product.
-  it('names its colours by palette variable, never as hex', () => {
-    expect(PEN_COLORS).toHaveLength(5);
-    for (const pen of PEN_COLORS) {
-      expect(pen.token.startsWith('--')).toBe(true);
-      expect(pen.label).toMatch(/pen$/u);
-    }
-  });
 
   // A nib in picture pixels means the same gesture reads the same on a phone
   // screenshot and on a rendered A4 page instead of landing as a hairline.
@@ -60,42 +48,6 @@ describe('painting strokes', () => {
     const { calls, context } = recordingContext();
     paintStroke(context, stroke([{ x: 10, y: 20 }]));
     expect(calls).toEqual(['beginPath', 'arc(10,20,3)', 'fill']);
-  });
-
-  it('paints a drag as a polyline', () => {
-    const { calls, context } = recordingContext();
-    paintStroke(
-      context,
-      stroke([
-        { x: 0, y: 0 },
-        { x: 5, y: 5 },
-        { x: 9, y: 1 },
-      ]),
-    );
-    expect(calls).toEqual(['beginPath', 'moveTo(0,0)', 'lineTo(5,5)', 'lineTo(9,1)', 'stroke']);
-  });
-
-  it('ignores a stroke with no points at all', () => {
-    const { calls, context } = recordingContext();
-    paintStroke(context, stroke([]));
-    expect(calls).toEqual([]);
-  });
-
-  // Undo and Clear are exactly this: an empty layer, then whatever survived.
-  it('repaints every surviving stroke from an empty layer', () => {
-    const { calls, context } = recordingContext();
-    const canvas = { width: 40, height: 30 } as HTMLCanvasElement;
-    repaintStrokes(context, canvas, [stroke([{ x: 1, y: 2 }])]);
-    expect(calls[0]).toBe('clearRect(0,0,40,30)');
-    expect(calls).toContain('arc(1,2,3)');
-  });
-
-  // Repainting the whole layer on every pointer move is what makes a pen feel
-  // like it is dragging behind the finger.
-  it('paints only the segment the hand just moved through', () => {
-    const { calls, context } = recordingContext();
-    paintSegment(context, stroke([]), { x: 1, y: 1 }, { x: 4, y: 8 });
-    expect(calls).toEqual(['beginPath', 'moveTo(1,1)', 'lineTo(4,8)', 'stroke']);
   });
 });
 

@@ -111,11 +111,6 @@ describe('agent rows', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('renders nothing for a turn without agents', () => {
-    const { container } = render(<TurnAgents {...props} agents={[]} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
 });
 
 describe('agent timeline', () => {

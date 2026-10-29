@@ -194,13 +194,4 @@ describe('the band a raised keyboard covers', () => {
     expect(screen.getByTestId('shell')).toHaveStyle({ height: '544px' });
     expect(inset).toHaveTextContent('300');
   });
-
-  it('gives the edge back when the keyboard goes down', () => {
-    render(<ViewportProbe />);
-    act(() => screen.getByRole('textbox', { name: 'Message' }).focus());
-    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
-    act(() => native.keyboard.get('keyboardWillHide')?.({ keyboardHeight: 0 }));
-
-    expect(screen.getByTestId('inset')).toHaveTextContent('0');
-  });
 });

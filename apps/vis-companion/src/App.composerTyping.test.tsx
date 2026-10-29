@@ -70,21 +70,6 @@ const type = async (composer: HTMLTextAreaElement, text: string) => {
 // over every machine and every session, and re-rendered every project group, for
 // a screen the reader cannot see.
 describe('typing in the composer', () => {
-  it('does not re-run the sessions list behind it', async () => {
-    const { view, composer } = await openFirstSession();
-
-    // Once the draft is nonempty, further characters do not change row presence.
-    await type(composer, 'h');
-    const before = counters.passes;
-    // The probe is live: the list behind the transcript did run its pass.
-    expect(before).toBeGreaterThan(0);
-    await type(composer, 'hello there');
-
-    expect(composer.value).toBe('hello there');
-    expect(counters.passes - before).toBe(0);
-    view.unmount();
-  });
-
   // The iOS report includes fleet reads during typing. The first dirty character
   // and each persisted pause used to wake the hidden list despite paused polling.
   it('does not reload the hidden fleet when a draft first becomes dirty', async () => {

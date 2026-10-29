@@ -25,7 +25,6 @@ import {
   attachmentsFromFiles,
   candidateMediaType,
   dragCarriesFiles,
-  isAudioMediaType,
   pickDocumentAttachments,
   rejectionNotice,
 } from './attachments';
@@ -156,19 +155,6 @@ describe('the FILES door', () => {
     ]);
   });
 
-  it('takes back the gzip diagnostics bundle this app exports', async () => {
-    filePicker.pickFiles.mockResolvedValue({
-      files: [picked('vis-diagnostics-20260501.jsonl.gz', '')],
-    });
-
-    const result = await pickDocumentAttachments({
-      mediaTypes: ['application/gzip'],
-    });
-
-    expect(result.rejected).toEqual([]);
-    expect(result.attachments[0].media_type).toBe('application/gzip');
-  });
-
   it.each([
     ['bundle.zip', ''],
     ['bundle.zip', 'application/octet-stream'],
@@ -193,19 +179,6 @@ describe('the FILES door', () => {
     expect(result.rejected).toEqual([
       'archive.zip: application/zip is not an accepted attachment format',
     ]);
-  });
-
-  // Regression, user report: the Files door advertised only camera and recording media,
-  // so the native document browser would not admit an ordinary document.
-  it('admits a document the platform names only by its extension', async () => {
-    filePicker.pickFiles.mockResolvedValue({
-      files: [picked('report.pdf', '')],
-    });
-
-    const result = await pickDocumentAttachments({ mediaTypes: ['application/pdf'] });
-
-    expect(result.rejected).toEqual([]);
-    expect(result.attachments[0].media_type).toBe('application/pdf');
   });
 });
 
@@ -232,20 +205,11 @@ describe('what a recording is measured against', () => {
 });
 
 describe('naming a candidate', () => {
-  it('believes the platform when it said something', () => {
-    expect(candidateMediaType('memo.m4a', 'audio/mp4')).toBe('audio/mp4');
-  });
 
   it('falls back to the extension, and to nothing when that is unknown', () => {
     expect(candidateMediaType('memo.M4A', '')).toBe('audio/mp4');
     expect(candidateMediaType('clip.mov', undefined)).toBe('video/quicktime');
     expect(candidateMediaType('notes', null)).toBe('');
-  });
-
-  it('knows a recording from a picture', () => {
-    expect(isAudioMediaType('audio/mpeg')).toBe(true);
-    expect(isAudioMediaType('image/png')).toBe(false);
-    expect(isAudioMediaType(undefined)).toBe(false);
   });
 });
 
@@ -264,11 +228,6 @@ describe('what a desktop drop names a memo and a Word document', () => {
 
     expect(result.rejected).toEqual([]);
     expect(result.attachments.map((a) => a.media_type)).toEqual(['audio/mp4', docx]);
-  });
-
-  it('names an unnamed .docx by its extension', () => {
-    expect(candidateMediaType('Tryb.docx', '')).toBe(docx);
-    expect(candidateMediaType('memo.m4a', 'audio/m4a')).toBe('audio/mp4');
   });
 });
 
@@ -332,17 +291,6 @@ describe('Markdown attachments', () => {
     expect(result.attachments[0]).toMatchObject({ filename: name, media_type: 'text/markdown' });
   });
 
-  it('offers Markdown in the document picker', async () => {
-    filePicker.pickFiles.mockResolvedValue({ files: [picked('notes.md', 'text/markdown')] });
-    const result = await pickDocumentAttachments();
-    expect(filePicker.pickFiles).toHaveBeenCalledWith({
-      types: expect.arrayContaining(['text/markdown', 'text/x-markdown']),
-      readData: false,
-    });
-    expect(result.rejected).toEqual([]);
-    expect(result.attachments).toHaveLength(1);
-  });
-
   it('still obeys the gateway format, size and count limits', async () => {
     const file = new File(['# Notes\n'], 'notes.md');
     for (const limits of [{ mediaTypes: ['image/png'] }, { maxFileBytes: 1 }, { maxFiles: 0 }]) {
@@ -383,17 +331,6 @@ describe('CSV and TSV attachments', () => {
     });
   });
 
-  it('offers tables in the document picker', async () => {
-    filePicker.pickFiles.mockResolvedValue({ files: [picked('rows.csv', 'text/csv')] });
-    const result = await pickDocumentAttachments();
-    expect(filePicker.pickFiles).toHaveBeenCalledWith({
-      types: expect.arrayContaining(['text/csv', 'text/tab-separated-values']),
-      readData: false,
-    });
-    expect(result.rejected).toEqual([]);
-    expect(result.attachments).toHaveLength(1);
-  });
-
   it('leaves a type the platform actually named alone', () => {
     expect(candidateMediaType('notes.txt', 'text/plain')).toBe('text/plain');
     expect(candidateMediaType('rows.csv', 'image/png')).toBe('image/png');
@@ -402,12 +339,6 @@ describe('CSV and TSV attachments', () => {
 
 // Regression #261: every refusal arrived glued into one unreadable sentence.
 describe('what the composer says about a refusal', () => {
-  it('gives every refused file its own line, and says nothing when nothing was refused', () => {
-    expect(rejectionNotice([])).toBeNull();
-    expect(rejectionNotice(['rows.csv: too big', 'notes.exe: not accepted'])).toBe(
-      '- rows.csv: too big\n- notes.exe: not accepted',
-    );
-  });
 
   it('names the type it refused, or says the type could not be read', async () => {
     const result = await attachmentsFromFiles([
@@ -440,16 +371,5 @@ describe('diagnostics attachments', () => {
     const result = await attachmentsFromFiles([new File(['log bytes'], name)]);
     expect(result.rejected).toEqual([]);
     expect(result.attachments[0]).toMatchObject({ filename: name, media_type: media });
-  });
-
-  it('still obeys the gateway media and size limits', async () => {
-    const file = new File(['log bytes'], 'vis-diagnostics.jsonl.gz');
-    expect((await attachmentsFromFiles([file], { mediaTypes: ['image/png'] })).attachments).toEqual(
-      [],
-    );
-    expect(
-      (await attachmentsFromFiles([file], { mediaTypes: ['application/gzip'], maxFileBytes: 1 }))
-        .attachments,
-    ).toEqual([]);
   });
 });

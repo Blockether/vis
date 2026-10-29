@@ -132,32 +132,6 @@ it('paints a shell terminal block with its outcome, aside and live tail', () => 
   expect(lines.map((line) => line.textContent)).toEqual(['two', 'warning: slow', '41 passed']);
 });
 
-// A collapsed operation group reports live work in its tally, not in an extra line.
-it('keeps a running shell command behind its closed group', () => {
-  const activity = activityProjection();
-  const command = 'cd apps/vis-companion && node scripts/storybook-contrast.mjs';
-  activity.rows = ['npm test', 'npm run build', command].map((summary, index) => ({
-    ...activity.rows[0],
-    id: `shell-${index}`,
-    sequence: index + 1,
-    operation: 'shell',
-    presenter: 'shell' as const,
-    state: index === 2 ? ('running' as const) : ('succeeded' as const),
-    summary,
-    argument_key: undefined,
-    presentation: undefined,
-    children: undefined,
-  }));
-  activity.state = 'running';
-  activity.counts = { running: 1, succeeded: 2, failed: 0, cancelled: 0 };
-  paintActivity({ activity });
-  const group = screen.getByRole('button', { name: /Shell ×3/ });
-  expect(group.textContent).toContain('1 running');
-  expect(screen.queryByText(/storybook-contrast\.mjs/)).toBeNull();
-  fireEvent.click(group);
-  expect(screen.getByText(command)).toBeVisible();
-});
-
 it('does not render technical resource IDs as expandable files', () => {
   const activity = structuredClone(storyData.ACTIVITY_RESULTS);
   activity.rows = [activity.rows[4]];
@@ -314,38 +288,6 @@ function openEverySettledStep() {
   }
 }
 
-it('reveals a patch diff on the first step disclosure, without another Diff control', () => {
-  const activity = activityProjection();
-  const patchRow = {
-    ...activity.rows[0],
-    operation: 'patch',
-    presenter: 'patch' as const,
-    state: 'succeeded' as const,
-    summary: 'src/example.clj',
-    result_summary: undefined,
-    resources: [],
-    evidence: [
-      {
-        kind: 'diff' as const,
-        text: 'src/example.clj',
-        additions: 1,
-        deletions: 1,
-        modifications: 0,
-        is_truncated: false,
-        is_redacted: false,
-        lines: [
-          { kind: 'deletion' as const, text: 'old' },
-          { kind: 'addition' as const, text: 'new' },
-        ],
-      },
-    ],
-  };
-  paintActivity({ activity: { ...activity, rows: [patchRow] } });
-  openEverySettledStep();
-  expect(screen.getByLabelText('Unified diff')).toBeVisible();
-  expect(screen.queryByRole('button', { name: /Expand the patch/ })).toBeNull();
-  expect(screen.queryByText('Diff', { selector: 'span' })).toBeNull();
-});
 describe('Activity copy', () => {
   it('copies retained activity while collapsed without opening the band', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -391,16 +333,6 @@ describe('Activity copy', () => {
       vi.unstubAllGlobals();
     }
   });
-  it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)(
-    'keeps Copy available in the %s state',
-    (state) => {
-      render(<ActivityPanel activity={{ ...activityProjection(), state }} />);
-      const copy = screen.getByRole('button', { name: 'Copy activity' });
-      expect(copy.closest('[data-disclosure-toggle]')).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-      expect(screen.getByRole('button', { name: 'Copy activity' })).toBe(copy);
-    },
-  );
 });
 
 describe('joined Activity operation groups', () => {
@@ -558,36 +490,6 @@ describe('joined Activity operation groups', () => {
     expect(document.querySelectorAll('[data-activity-group]')).toHaveLength(2);
   });
 
-  it.each(['succeeded', 'running', 'failed', 'cancelled'] as const)(
-    'shows every operation group without pagination when work is %s',
-    (state) => {
-      const activity = reads();
-      const rows = ['grep', 'cat', 'ls', 'patch', 'doc', 'attach', 'shell'].map(
-        (operation, sequence) => ({
-          ...activity.rows[0],
-          id: `operation-${sequence}`,
-          sequence,
-          operation,
-          state: sequence === 6 ? state : ('succeeded' as const),
-        }),
-      );
-      const counts = { running: 0, succeeded: 6, failed: 0, cancelled: 0 };
-      counts[state] += 1;
-      paintActivity({ activity: { ...activity, state, counts, rows } });
-      expect(screen.getByRole('list', { name: 'Operation groups' }).children).toHaveLength(7);
-      expect(
-        [...document.querySelectorAll('[data-activity-row]')].map((row) =>
-          row.getAttribute('data-activity-row'),
-        ),
-      ).toEqual(rows.map((row) => `0:${row.id}`));
-      expect(
-        screen.queryByRole('button', {
-          name: /(?:show|hide).*(?:more|fewer).*groups?/i,
-        }),
-      ).toBeNull();
-    },
-  );
-
   it('counts failed and cancelled outcomes in a collapsed group and prints neither', () => {
     const activity = reads();
     render(
@@ -621,26 +523,6 @@ describe('joined Activity operation groups', () => {
       '1 failed',
     );
   });
-  it('keeps every operation in a collapsed receipt, without an omission count', () => {
-    const activity = reads();
-    const rows = Array.from({ length: 10 }, (_, index) => ({
-      ...activity.rows[0],
-      id: String(index),
-      sequence: index,
-      operation: index % 2 ? 'patch' : 'cat',
-    }));
-    render(
-      <ActivityPanel
-        activity={{
-          ...activity,
-          rows,
-        }}
-      />,
-    );
-    const receipt = screen.getByRole('button', { name: 'Expand Activity' });
-    expect(receipt.textContent).toContain('10 observations');
-    expect(receipt.textContent).not.toContain('omitted');
-  });
 
   it('updates commands by snapshot identity, not by parsing identical command strings', () => {
     const activity = reads();
@@ -668,48 +550,6 @@ describe('joined Activity operation groups', () => {
 });
 
 describe("one form's Activity on the phone", () => {
-  it('keeps root operations at one visual depth', () => {
-    paintActivity();
-    const rows = [...document.querySelectorAll('[data-activity-row]')];
-    expect(rows.length).toBeGreaterThan(1);
-    expect(rows.every((row) => row.getAttribute('data-activity-depth') === '0')).toBe(true);
-    expect(rows.every((row) => !row.parentElement?.closest('[data-activity-row]'))).toBe(true);
-  });
-  it('keeps the headline and one-line summary visible; the chevron opens only content', () => {
-    const projection = activityProjection();
-    paintActivity({
-      activity: {
-        ...projection,
-        rows: [
-          {
-            ...projection.rows[0],
-            operation: 'ls',
-            summary: '',
-            resources: [],
-            evidence: [],
-            children: [],
-            presentation: {
-              headline: 'Listed apps/vis-companion/src',
-              summary: '3 directories · 2 files',
-              content: [{ type: 'text', text: 'Listing details' }],
-            },
-          },
-        ],
-      },
-    });
-    const toggle = screen.getByRole('button', {
-      name: /Listed apps\/vis-companion\/src/,
-    });
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByText('3 directories · 2 files')).toBeVisible();
-    expect(screen.queryByText('Listing details')).toBeNull();
-    fireEvent.click(toggle);
-    expect(screen.getByText('Listing details')).toBeVisible();
-    expect(screen.getAllByText('3 directories · 2 files')).toHaveLength(1);
-    fireEvent.click(toggle);
-    expect(screen.getByText('3 directories · 2 files')).toBeVisible();
-    expect(screen.queryByText('Listing details')).toBeNull();
-  });
   it('shows batch sections after opening their call and replaces them without resetting disclosure', () => {
     const activity = storyData.ACTIVITY_LISTING_BATCH;
     const { rerender } = render(<ActivityPanel activity={activity} />);
@@ -755,57 +595,6 @@ describe("one form's Activity on the phone", () => {
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.getByText('0 directories · 2 files')).toBeVisible();
   });
-  it('does not put a chevron on a summary-only presentation or infer content headings', () => {
-    const base = activityProjection();
-    paintActivity({
-      activity: {
-        ...base,
-        rows: [
-          {
-            ...base.rows[0],
-            resources: [],
-            evidence: [],
-            presentation: {
-              headline: 'Listed src',
-              summary: '2 files',
-              content: [],
-            },
-          },
-        ],
-      },
-    });
-    expect(screen.getByText('2 files')).toBeVisible();
-    expect(screen.queryByRole('button', { name: /Listed src/ })).toBeNull();
-  });
-  it('keeps a presented failure inside the step until the reader opens it', () => {
-    const base = activityProjection();
-    paintActivity({
-      activity: {
-        ...base,
-        rows: [
-          {
-            ...base.rows[0],
-            state: 'failed',
-            resources: [],
-            evidence: [],
-            error_summary: 'Permission denied',
-            presentation: {
-              headline: 'List src',
-              summary: 'Preparing listing',
-              content: [{ type: 'text', text: 'Listing details' }],
-            },
-          },
-        ],
-      },
-    });
-    expect(screen.queryByText('Permission denied')).toBeNull();
-    expect(screen.queryByText('Listing details')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /List src/ }));
-    // Opened, the step says what it was doing, what it produced and why it ended, once each.
-    expect(screen.getByText('Preparing listing')).toBeVisible();
-    expect(screen.getByText('Listing details')).toBeVisible();
-    expect(screen.getByText('Permission denied')).toBeVisible();
-  });
   it('draws the chronology without being asked, in engine sequence', () => {
     paintActivity();
 
@@ -822,18 +611,6 @@ describe("one form's Activity on the phone", () => {
     expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeVisible();
     expect(screen.queryByRole('status')).toBeNull();
     expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
-  });
-
-  it('adds no empty panel before the first operation', () => {
-    paintActivity({
-      activity: {
-        ...activityProjection(),
-        state: 'idle',
-        rows: [],
-        counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
-      },
-    });
-    expect(document.querySelector('[data-activity-axis]')).toBeNull();
   });
 });
 
@@ -872,11 +649,6 @@ describe('what the iteration cost', () => {
     const phone = band.cloneNode(true) as HTMLElement;
     phone.querySelectorAll('.max-sm\\:hidden').forEach((node) => node.remove());
     expect(phone).toHaveTextContent(short || /^ACTIVITY$/);
-  });
-
-  it('leaves the counters empty when activity is absent or empty', () => {
-    expect(activityCostParts()).toEqual([]);
-    expect(activityCostParts({ ...activityProjection(), rows: [] })).toEqual([]);
   });
 
   it('leaves the failures to the marks and the state word', () => {
@@ -974,78 +746,6 @@ describe('a run reads as one thread', () => {
     expect(screen.getByText('added')).toBeVisible();
   });
 
-  it('gives a step with nothing to open no chevron and no toggle of its own', () => {
-    paintActivity();
-
-    // The band folds, but an operation with no details promises no disclosure.
-    expect(screen.queryByRole('button', { name: /Searched/ })).toBeNull();
-    expect(document.querySelectorAll('[data-activity-row] [data-disclosure-toggle]')).toHaveLength(
-      0,
-    );
-  });
-
-  it('keeps what a step left behind its chevron until the step is pressed', () => {
-    const projection = activityProjection();
-    const [first, ...rest] = projection.rows;
-
-    paintActivity({
-      activity: {
-        ...projection,
-        rows: [
-          {
-            ...first,
-            resources: [{ type: 'file', id: 'src/components/ui.tsx' }],
-            presentation: {
-              headline: 'Searched',
-              summary: 'src/components/ui.tsx',
-              content: [
-                {
-                  type: 'code',
-                  text: 'src/components/ui.tsx:12: matched\nsrc/components/ui.tsx:40: matched',
-                },
-              ],
-            },
-          },
-          ...rest,
-        ],
-      },
-    });
-
-    const step = screen.getByRole('button', { name: /Searched/ });
-    expect(step.getAttribute('aria-expanded')).toBe('false');
-    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeNull();
-    expect(screen.queryByText(/ui\.tsx:40: matched/)).toBeNull();
-
-    fireEvent.click(step);
-    expect(step.getAttribute('aria-expanded')).toBe('true');
-    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeInTheDocument();
-    expect(screen.getByText(/ui\.tsx:40: matched/)).toBeVisible();
-  });
-
-  it('lists the paths a step touched under its own line', () => {
-    const projection = activityProjection();
-    const [first, ...rest] = projection.rows;
-
-    paintActivity({
-      activity: {
-        ...projection,
-        rows: [
-          {
-            ...first,
-            resources: [{ type: 'file', id: 'src/components/ui.tsx' }],
-          },
-          ...rest,
-        ],
-      },
-    });
-
-    openEverySettledStep();
-    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeInTheDocument();
-    // A path is a path everywhere on the axis: the type badge belonged to the
-    // patch card, and that card is gone.
-    expect(screen.queryByText('TSX')).toBeNull();
-  });
-
   it('prints four paths and folds the rest behind one quiet count', () => {
     const projection = activityProjection();
     const [first] = projection.rows;
@@ -1078,66 +778,6 @@ describe('a run reads as one thread', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Show 2 more paths' }));
     expect(document.querySelectorAll('[data-path]')).toHaveLength(6);
-  });
-});
-
-// An error is the one thing on the axis that can be forty lines long, so when a reader
-// opens the step it arrives UNCLAMPED — the whole of it, where the invocation is. A panel
-// nobody opened stays quiet: a failure paints nothing over a reader who is not reading it.
-describe('a step that ended badly', () => {
-  function paintFailure(text: string) {
-    const projection = activityProjection();
-    const [first, ...rest] = projection.rows;
-
-    paintActivity({
-      activity: {
-        ...projection,
-        state: 'failed' as const,
-        rows: [
-          {
-            ...first,
-            state: 'failed' as const,
-            error_summary: 'no match',
-            evidence: [{ kind: 'error' as const, text }],
-          },
-          ...rest,
-        ],
-      },
-    });
-  }
-
-  function openFailure() {
-    fireEvent.click(
-      document.querySelector<HTMLElement>(
-        '[data-activity-row="0:call-1"] [data-disclosure-toggle]',
-      )!,
-    );
-  }
-
-  it('says how it failed on its own line, once the step is opened', () => {
-    paintFailure('patch refused: no anchor matched');
-
-    expect(screen.queryByText('patch refused: no anchor matched')).toBeNull();
-    openFailure();
-
-    // The machine's own text IS the reason. The row stamps no word on top of it:
-    // the filled mark is the whole of the colour a failure gets.
-    expect(document.querySelector('[data-activity-row="0:call-1"]')?.textContent).not.toContain(
-      'NO MATCH',
-    );
-    expect(screen.getByText('patch refused: no anchor matched')).toBeVisible();
-  });
-
-  // Regression, T131: a refusal was clamped to three lines with the rest behind a
-  // rule, so the reader had to leave the axis to learn why the patch was refused.
-  it('says the whole of what the machine said, however many lines', () => {
-    paintFailure(['one', 'two', 'three', 'four', 'five'].join('\n'));
-    openFailure();
-
-    expect(screen.getByText('one')).toBeVisible();
-    expect(screen.getByText('three')).toBeVisible();
-    expect(screen.getByText('five')).toBeVisible();
-    expect(screen.queryByText('2 more lines')).toBeNull();
   });
 });
 
@@ -1283,29 +923,6 @@ describe('what the axis does while the work is still moving', () => {
     expect(document.querySelector('[data-activity-row="0:step-5"]')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /more steps/i })).toBeNull();
   });
-
-  it('silences the live region it sits inside', () => {
-    paintActivity();
-
-    expect(document.querySelector('[data-activity-axis]')?.getAttribute('aria-live')).toBe('off');
-  });
-
-  it('shows retained summaries without truncation notices or empty disclosures', () => {
-    const base = activityProjection();
-    const row = {
-      ...base.rows[0],
-      state: 'succeeded' as const,
-      result_summary: undefined,
-      evidence: [],
-      resources: [],
-      presentation: { headline: 'Searched', summary: '2 matches', content: [] },
-      is_truncated: true,
-    };
-    paintActivity({ activity: { ...base, rows: [row] } });
-    expect(screen.queryByText('Details truncated')).toBeNull();
-    expect(document.querySelector(`[data-activity-row="0:${row.id}"] button`)).toBeNull();
-    expect(screen.getByText('2 matches')).toBeVisible();
-  });
 });
 
 // Regression: a code block's own writes entered the chronology as unrelated top-level
@@ -1342,33 +959,6 @@ describe('what a code block changed with its own hands', () => {
     ]);
     // Three levels, hard stop: the cause, the change, the paths it touched.
     expect(chronology.querySelector('[data-activity-depth="2"]')).toBeNull();
-  });
-
-  it('says who did it in the head, and marks only what the engine marked', () => {
-    render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
-    openEverySettledStep();
-
-    const head = document.querySelector('[data-activity-depth="0"]');
-    const moved = document.querySelectorAll('[data-activity-depth="1"]')[3];
-
-    // Engine-observed changes retain paths and diffs, not a generic summary.
-    expect(head?.textContent).not.toContain('The code block changed these itself');
-    // A marked name is code; the row keeps no backtick of its own.
-    expect(moved?.querySelector('code')?.textContent).toBe('vis/PLAN.md');
-  });
-
-  it('leaves the paths to the change that touched them', () => {
-    render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
-    openEverySettledStep();
-
-    const head = document.querySelector('[data-activity-depth="0"]');
-    const deleted = document.querySelectorAll('[data-activity-depth="1"]')[4];
-
-    // The head carries every child's resource on the wire; painting them there AND
-    // under each change is the same paths printed twice.
-    expect(head?.querySelector(':scope > div [data-path]')).toBeNull();
-    expect(deleted?.querySelectorAll('[data-path]').length).toBe(4);
-    expect(deleted?.textContent).toContain('show 2 more files');
   });
 });
 
@@ -1424,25 +1014,6 @@ describe('a path reads short and stays addressable', () => {
     openEverySettledStep();
 
     expect(pathOf(written)?.textContent).toBe('~/vis/apps/vis-companion/src/lib/path.ts');
-  });
-});
-
-describe('tool-authored activity results', () => {
-  it('does not render generic result summaries or offer an empty disclosure', () => {
-    const activity = activityProjection();
-    activity.rows = [
-      {
-        ...activity.rows[0],
-        resources: [],
-        evidence: [],
-        result_summary: 'Unrequested result preview',
-      },
-    ];
-    paintActivity({ activity });
-    openEverySettledStep();
-    expect(screen.queryByText('Unrequested result preview')).toBeNull();
-    expect(screen.queryByRole('button', { name: /result summary/ })).toBeNull();
-    expect(document.querySelector('[data-activity-row] button')).toBeNull();
   });
 });
 

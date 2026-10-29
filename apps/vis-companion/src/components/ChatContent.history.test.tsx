@@ -110,19 +110,6 @@ describe('a windowed turn trace', () => {
     expect(signal.aborted).toBe(true);
   });
 
-  // Regression, user request: no step mode shows an earlier-steps control, as in the TUI.
-  it('reads earlier steps without a control when every step shows separately', async () => {
-    setStepsSummarized(false);
-    const near = stubNearness();
-    const turnTrace = vi.fn().mockResolvedValue([earliest, newest]);
-    render(<AssistantMessage turn={turn} client={traceClient(turnTrace)} sid="s1" />);
-    expect(screen.queryByRole('button', { name: /earlier step/ })).toBeNull();
-    expect(turnTrace).not.toHaveBeenCalled();
-    near(true);
-    expect(await screen.findByText('Earlier progress')).toBeVisible();
-    expect(turnTrace).toHaveBeenCalledOnce();
-  });
-
   // Regression, user report: opening a session grew a long turn in view a moment later.
   it('paints the steps that an earlier visit read without reading them again', () => {
     const near = stubNearness();

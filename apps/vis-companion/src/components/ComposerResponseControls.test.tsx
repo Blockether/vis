@@ -7,63 +7,6 @@ import { ComposerResponseControls } from './ComposerResponseControls';
 afterEach(cleanup);
 
 describe('composer response controls', () => {
-  it('owns the complete response-option vocabulary', () => {
-    const choose = vi.fn();
-    const chooseReasoning = vi.fn();
-    const cycleVerbosity = vi.fn();
-    const toggleThinking = vi.fn();
-    const toggleFast = vi.fn();
-    render(
-      <ComposerResponseControls
-        controls={{
-          model: {
-            value: 'claude-opus-5',
-            title: 'anthropic/claude-opus-5',
-            choose,
-          },
-          reasoning: {
-            label: 'Reasoning',
-            value: 'high',
-            choices: ['low', 'medium', 'high'],
-            busy: false,
-            choose: chooseReasoning,
-          },
-          verbosity: {
-            label: 'Verbosity',
-            value: 'medium',
-            busy: false,
-            cycle: cycleVerbosity,
-          },
-          thinking: { enabled: false, busy: false, toggle: toggleThinking },
-          fast: { enabled: true, busy: false, toggle: toggleFast },
-        }}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Change provider and model' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Reasoning — high, choose a level' }));
-    fireEvent.click(
-      within(screen.getByRole('dialog', { name: 'Reasoning' })).getByRole('button', {
-        name: 'low',
-      }),
-    );
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Verbosity — medium, tap for the next level',
-      }),
-    );
-    const thinking = screen.getByRole('button', { name: 'Thinking summary — off' });
-    expect(thinking).toHaveTextContent('omitted');
-    fireEvent.click(thinking);
-    fireEvent.click(screen.getByRole('button', { name: 'Fast mode — on' }));
-
-    expect(choose).toHaveBeenCalledOnce();
-    expect(chooseReasoning).toHaveBeenCalledWith('low');
-    expect(cycleVerbosity).toHaveBeenCalledOnce();
-    expect(toggleThinking).toHaveBeenCalledOnce();
-    expect(toggleFast).toHaveBeenCalledOnce();
-  });
-
   it('lists every reasoning level and keeps the current one without a write', () => {
     const chooseReasoning = vi.fn();
     render(

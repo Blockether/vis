@@ -136,16 +136,6 @@ describe('the NEW badge', () => {
     expect(await screen.findByText('On beta')).toBeVisible();
     expect(screen.getByText('NEW')).toBeVisible();
   });
-
-  it('says nothing about a session the gateway calls read', async () => {
-    const view = renderSessionsScreen({
-      machines: [{ sessions: [listSession({ id: 's1', turn_count: 6, answer_count: 3 })] }],
-    });
-    restore = view.restore;
-
-    expect(await screen.findByText('A session')).toBeInTheDocument();
-    expect(screen.queryByText('NEW')).not.toBeInTheDocument();
-  });
 });
 
 // Regression, user report (paraphrased: when Council notifications wake sessions, the

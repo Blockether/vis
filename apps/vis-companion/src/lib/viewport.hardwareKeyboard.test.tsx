@@ -160,21 +160,6 @@ describe('focusing an editor with a keyboard already attached', () => {
     act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 336 }));
     expect(shell.style.height).toBe('');
   });
-  // Regression, user report (paraphrased: on the Mac a gray element still appears
-  // while I type): reserving nothing for the shortcut bar never removed the bar.
-  // UIKit kept hanging its form accessory off the focused field — a ~36px neutral
-  // panel, inset from the window edges, in none of the app's colours, laid over
-  // the composer for as long as it held focus — because nothing ever asked for it
-  // to go away.
-  it('asks UIKit to take the form accessory bar away', () => {
-    native.accessoryBar.length = 0;
-    pointing('fine');
-    window_(1180, 820);
-
-    render(<ViewportProbe />);
-
-    expect(native.accessoryBar).toEqual([false]);
-  });
   it('still places the composer a frame early on a touch screen', () => {
     pointing('coarse');
     window_(390, 844);

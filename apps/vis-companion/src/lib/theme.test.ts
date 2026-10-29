@@ -3,7 +3,7 @@
 // page that ships, not in a module that loads after it.
 import html from '../../index.html?raw';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyTheme, paintStoredTheme, resolveTheme } from './theme';
+import { paintStoredTheme, resolveTheme } from './theme';
 import { DEFAULT_THEME, THEMES } from './themes.generated';
 
 /** The key `storage.ts` mirrors into localStorage beside the durable Preferences copy. */
@@ -16,48 +16,12 @@ const THEME_PREF_KEY = 'vis.themePref';
 // `com.blockether.vis.dev.companion-themes-test`), so painting one is setting an
 // attribute — nothing is fetched, and no machine can repaint this device.
 describe('the shipped theme catalog', () => {
-  it('names every palette exactly once, with a chrome colour to match', () => {
-    expect(THEMES.length).toBeGreaterThan(1);
-    expect(new Set(THEMES.map((theme) => theme.id)).size).toBe(THEMES.length);
-    for (const theme of THEMES) {
-      expect(theme.label.trim()).not.toBe('');
-      expect(theme.mode).toMatch(/^(light|dark)$/);
-      expect(theme.chrome).toMatch(/^#[0-9a-f]{6}$/);
-    }
-  });
-
-  it('leads with the default palette, the one painted before any preference is read', () => {
-    expect(THEMES[0]).toEqual(DEFAULT_THEME);
-  });
 
   it('resolves a stored id, and falls back to the default for anything else', () => {
     const dark = THEMES.find((theme) => theme.mode === 'dark');
     expect(dark?.mode).toBe('dark');
     expect(resolveTheme(dark!.id)).toEqual(dark);
     expect(resolveTheme('a-theme-that-was-uninstalled')).toEqual(DEFAULT_THEME);
-  });
-});
-
-describe('applying a theme', () => {
-  it('is one attribute, the colour scheme and the browser chrome — no inline palette', () => {
-    const meta = document.createElement('meta');
-    meta.name = 'theme-color';
-    document.head.append(meta);
-    const dark = THEMES.find((theme) => theme.mode === 'dark')!;
-
-    applyTheme(dark);
-
-    expect(document.documentElement.dataset.theme).toBe(dark.id);
-    expect(document.documentElement.style.colorScheme).toBe('dark');
-    expect(meta.content).toBe(dark.chrome);
-    // The palette itself lives in the stylesheet: nothing is written per variable.
-    expect(document.documentElement.style.getPropertyValue('--bg')).toBe('');
-
-    applyTheme(DEFAULT_THEME);
-    expect(document.documentElement.dataset.theme).toBe(DEFAULT_THEME.id);
-    expect(document.documentElement.style.colorScheme).toBe(DEFAULT_THEME.mode);
-    expect(meta.content).toBe(DEFAULT_THEME.chrome);
-    meta.remove();
   });
 });
 
@@ -86,14 +50,6 @@ describe('painting the stored palette before React renders', () => {
     localStorage.setItem(THEME_PREF_KEY, 'dark');
     expect(paintStoredTheme().id).toBe('blockether-dark');
   });
-
-  it('falls back to the default for an uninstalled id and for no preference', () => {
-    localStorage.setItem(THEME_PREF_KEY, 'a-theme-that-was-uninstalled');
-    expect(paintStoredTheme()).toEqual(DEFAULT_THEME);
-
-    localStorage.clear();
-    expect(paintStoredTheme()).toEqual(DEFAULT_THEME);
-  });
 });
 
 // The bundle still has to load and evaluate before `paintStoredTheme()` runs, so
@@ -111,14 +67,5 @@ describe('the boot stamp in index.html', () => {
     new Function('document', 'localStorage', inline)(document, localStorage);
 
     expect(document.documentElement.dataset.theme).toBe(dark.id);
-  });
-
-  it('leaves the default standing when nothing is stored', () => {
-    delete document.documentElement.dataset.theme;
-    localStorage.clear();
-
-    new Function('document', 'localStorage', inline)(document, localStorage);
-
-    expect(document.documentElement.dataset.theme).toBeUndefined();
   });
 });

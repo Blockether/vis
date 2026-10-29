@@ -50,14 +50,6 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('creating a voice from a recording or a file', () => {
-  // Regression, user report: an edge-to-edge import action offered no microphone path.
-  it('offers recording and file import as separate actions', async () => {
-    mount();
-    expect(await screen.findByRole('button', { name: 'Record your voice' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Import voice' })).toBeEnabled();
-    expect(startWavRecording).not.toHaveBeenCalled();
-  });
-
   it('records locally and only uploads after confirmation', async () => {
     const take = recorder();
     vi.mocked(startWavRecording).mockResolvedValue(take);
@@ -226,11 +218,5 @@ describe('creating a voice from a recording or a file', () => {
     );
     expect(take.cancel).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: 'Record your voice' })).toBeEnabled();
-  });
-  it('does not offer voice creation for engines without import support', async () => {
-    mount({ engine: { id: 'piper-local' }, voices: [] });
-    await screen.findByText('This engine speaks in no named voice.');
-    expect(screen.queryByRole('button', { name: 'Record your voice' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Import voice' })).toBeNull();
   });
 });

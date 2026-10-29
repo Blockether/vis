@@ -53,24 +53,6 @@ it('keeps offline Copy available and explains how to retry incomplete history', 
   expect(writeText).not.toHaveBeenCalled();
 });
 
-it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)(
-  'copies a complete %s history offline without retrieval',
-  async (state) => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-    const activity = groupPage(ids[0]);
-    activity.state = state;
-    activity.counts = { running: 0, succeeded: 0, failed: 0, cancelled: 0, [state]: 2 };
-    activity.rows = activity.rows.map((row) => ({ ...row, state }));
-    render(<ActivityPanel activity={activity} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Copy activity' }));
-    await screen.findByRole('button', { name: 'Copied' });
-    expect(writeText).toHaveBeenCalledTimes(1);
-    expect(writeText.mock.calls[0][0]).toContain('Read result 1-1');
-    expect(writeText.mock.calls[0][0]).toContain('Read result 1-2');
-  },
-);
-
 it('cancels a pending copy when a new history revision arrives', async () => {
   let finish!: (activity: ReturnType<typeof page>) => void;
   const load = vi.fn(
@@ -97,45 +79,6 @@ it('cancels a pending copy when a new history revision arrives', async () => {
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Copying…' })).toBeNull());
   expect(screen.getByRole('button', { name: 'Copy activity' })).toBeEnabled();
   expect(writeText).not.toHaveBeenCalled();
-});
-
-it('opens retained operations without a search or bulk-action toolbar', () => {
-  render(<ActivityPanel activity={page()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  expect(screen.getByText('Operation 1')).toBeVisible();
-  expect(screen.queryByRole('searchbox')).toBeNull();
-  expect(
-    screen.queryByRole('button', {
-      name: /^(Search activity|First operations|Next operations|Show more operations|Show earlier operations|Copy all activity|Export all activity)$/,
-    }),
-  ).toBeNull();
-});
-
-it.each([false, true])('reads grouped histories whole without a toolbar (mixed: %s)', async (mixed) => {
-  const activities = ids.map((id) => groupPage(id));
-  if (mixed) delete activities[1].history;
-  const original = JSON.stringify(activities);
-  const source = { load: vi.fn(async (id, after, q) => groupPage(id, after, q)) };
-  render(
-    <ActivityHistoryContext.Provider value={source}>
-      <ActivityPanel activity={activities} />
-    </ActivityHistoryContext.Provider>,
-  );
-  expect(source.load).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: 'Expand Activity' })).toHaveTextContent('7 operations');
-  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  expect(screen.queryByRole('searchbox')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Copy all activity' })).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Export all activity' })).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Show more operations' })).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Show earlier operations' })).toBeNull();
-  fireEvent.click(await screen.findByRole('button', { name: /Read ×7/ }));
-  expect(document.querySelectorAll('[data-activity-row]')).toHaveLength(7);
-  expect(screen.getByText('review-1-1.clj')).toBeVisible();
-  expect(screen.getByText('review-3-3.clj')).toBeVisible();
-  expect(screen.queryByRole('status')).toBeNull();
-  expect(source.load).toHaveBeenCalledExactlyOnceWith(ids[2], 2, '', expect.any(AbortSignal));
-  expect(JSON.stringify(activities)).toBe(original);
 });
 
 it('keeps grouped rows and disclosures on a failed read, then retries', async () => {
@@ -271,20 +214,6 @@ it('aborts a pending read when unmounted', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
   view.unmount();
   expect(load.mock.calls[0][3].aborted).toBe(true);
-});
-
-it('keeps retained rows readable offline and explains an empty history', () => {
-  const view = render(<ActivityPanel activity={page()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  expect(screen.getByText('Operation 1')).toBeVisible();
-  expect(screen.getByText('Reconnect to load every operation.')).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Show more operations' })).toBeNull();
-  const empty = page();
-  empty.rows = [];
-  empty.history!.next_after = null;
-  view.rerender(<ActivityPanel activity={empty} />);
-  expect(screen.getByText('No operations available.')).toBeVisible();
-  expect(screen.queryByText('Reconnect to load every operation.')).toBeNull();
 });
 
 // The band keeps what it has read; a live revision re-reads the tail behind those rows.

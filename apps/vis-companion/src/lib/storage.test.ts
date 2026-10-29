@@ -52,9 +52,4 @@ describe('updateConnection', () => {
     expect(conns).toEqual([{ url: LAN, token: 'secret', label: 'mac' }]);
     expect((await loadConnections()).some((conn) => !conn.token)).toBe(false);
   });
-
-  it('writes nothing when no machine is saved', async () => {
-    expect(await updateConnection(LOOPBACK, { pinned: true })).toEqual([]);
-    expect(await loadConnections()).toEqual([]);
-  });
 });

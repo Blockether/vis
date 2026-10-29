@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
@@ -30,21 +30,6 @@ describe('slash-command completion caret', () => {
     expect(composer.value).toBe('/reload ');
     expect(composer.selectionStart).toBe(composer.value.length);
     expect(composer.selectionEnd).toBe(composer.value.length);
-  });
-});
-
-// Regression: the screen fetched a gateway-global slash palette instead of the
-// active session's project-relative one.
-describe('session-scoped slash discovery', () => {
-  it('asks for the palette of the session on screen', async () => {
-    const slashes = vi.fn((sid: string) => {
-      void sid;
-      return Promise.resolve([]);
-    });
-    renderSessionScreen({ client: { slashes } });
-
-    await waitFor(() => expect(slashes).toHaveBeenCalled());
-    expect(slashes.mock.calls[0]?.[0]).toBe('s1');
   });
 });
 

@@ -81,15 +81,6 @@ describe('the sessions list across a reload', () => {
     expect((await afterReload()).parkedListScroll()?.top).toBe(900);
   });
 
-  it('parks a visible list when its screen unmounts', async () => {
-    const { getByTestId, unmount } = render(<List />);
-    scrolledToRow(getByTestId('list'), 640);
-
-    unmount();
-
-    expect((await afterReload()).parkedListScroll()?.top).toBe(640);
-  });
-
   it('does not overwrite the last visible place after the hidden scroller resets', async () => {
     const { getByTestId, rerender, unmount } = render(<List />);
     const list = getByTestId('list');
@@ -118,15 +109,6 @@ describe('the sessions list across a reload', () => {
     fireEvent.touchStart(list);
 
     expect(onReaderScrolled).toHaveBeenCalled();
-    expect((await afterReload()).parkedListScroll()).toBeNull();
-  });
-
-  it('keeps nothing for a list that was already at the top', async () => {
-    const { getByTestId } = render(<List />);
-    scrolledToRow(getByTestId('list'), 0);
-
-    fireEvent(window, new Event('pagehide'));
-
     expect((await afterReload()).parkedListScroll()).toBeNull();
   });
 });

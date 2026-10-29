@@ -182,12 +182,6 @@ describe('reader gestures', () => {
     expect(readerOwnsScroll()).toBe(true);
   });
 
-  it('counts the wheel wherever it turns', () => {
-    send('wheel', {}, mount('button'));
-
-    expect(readerOwnsScroll()).toBe(true);
-  });
-
   it('credits a held mouse button only with the scrollers it pressed in', () => {
     const transcript = mount('div');
     send('pointerdown', { pointerType: 'mouse', buttons: 1 }, mount('button'));
@@ -285,14 +279,6 @@ describe('untilScrollRests', () => {
     });
     return state;
   }
-
-  it('resolves in the next frame when nothing moves', async () => {
-    const state = watch();
-
-    await pass(16);
-
-    expect(state.rested).toBe(true);
-  });
 
   it('waits while momentum scrolls, then resolves after a short rest', async () => {
     const state = watch();

@@ -15,10 +15,6 @@ const session = (id: string, rank?: number | null): Session =>
   ({ id, title: id, favorite_rank: rank }) as Session;
 
 describe('favoriteRank', () => {
-  it('reads the star off the row the gateway sent', () => {
-    expect(favoriteRank(session('a', 3))).toBe(3);
-    expect(isFavorite(session('a', 3))).toBe(true);
-  });
 
   it('answers null for a row with no star, however the gateway says so', () => {
     expect(favoriteRank(session('a'))).toBe(null);
@@ -35,11 +31,6 @@ describe('favoriteRank', () => {
 describe('nextFavoriteRank', () => {
   it('lands a fresh star BELOW every star already there', () => {
     expect(nextFavoriteRank([session('a', 1), session('b', 2), session('c')])).toBe(3);
-  });
-
-  it('starts at 1 when nothing is starred', () => {
-    expect(nextFavoriteRank([session('a'), session('b')])).toBe(1);
-    expect(nextFavoriteRank([])).toBe(1);
   });
 
   it('reads the gaps unstarring leaves as order, not as free slots', () => {

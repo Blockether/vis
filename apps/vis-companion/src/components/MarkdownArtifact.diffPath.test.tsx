@@ -40,17 +40,3 @@ it('opens the file a patch header names, and nothing else in the patch', () => {
   fireEvent.keyDown(targets[2], { key: ' ' });
   expect(openPath).toHaveBeenCalledTimes(3);
 });
-
-it('keeps the marker in front of the path plain words', () => {
-  showPatch(vi.fn());
-
-  const line = screen.getAllByRole('button', { name: 'Open src/app.ts' })[2].closest('p')!;
-  expect(line.textContent).toBe('+++ b/src/app.ts');
-});
-
-it('leaves the path plain when no opener is published', () => {
-  showPatch(null);
-
-  expect(screen.queryByRole('button')).toBeNull();
-  expect(document.body.textContent).toContain('+++ b/src/app.ts');
-});

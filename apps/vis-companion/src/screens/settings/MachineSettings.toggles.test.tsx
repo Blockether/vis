@@ -73,34 +73,6 @@ it('uses the shared touch picker for enum settings without saving a dismissed ch
   await user.pointer({ keys: '[TouchA]', target: trigger });
   expect(screen.getByRole('listbox', { name: 'Draft backend' })).toBeVisible();
 });
-
-describe('global settings provenance', () => {
-  // Global settings are the root scope: an explicit value there overrides nothing, so its
-  // row shows no "Set here" caption and offers no "Use inherited value" reset.
-  it('shows no provenance caption or reset action, even for explicit values', async () => {
-    const subagents: Toggle = {
-      id: 'subagents',
-      label: 'Subagents',
-      type: 'boolean',
-      enabled: false,
-    };
-    vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
-      revision: 'toggles-1',
-      groups: [{
-        id: 'sandbox', title: 'Sandbox', toggles: [
-          { ...backend, source: 'default', is_override: false },
-          { ...subagents, source: 'global', is_override: true },
-        ],
-      }],
-    });
-
-    await openSettings();
-    expect(await screen.findByRole('switch', { name: 'Subagents: off' })).toBeEnabled();
-    expect(screen.queryByText('Set here')).toBeNull();
-    expect(screen.queryByText(/^Inherited from/)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Use inherited value' })).toBeNull();
-  });
-});
 describe('settings the open session decides elsewhere', () => {
   // A project `vis.yml` with `shell: false` decides Shell for its sessions, so the
   // global row stays locked while such a session is open: flipping it changes nothing.

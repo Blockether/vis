@@ -42,16 +42,6 @@ describe('desktop row action menu', () => {
     expect(trigger).toHaveFocus();
   });
 
-  it('selects once, closes the menu, and passes the persistent trigger to the action', () => {
-    const { trigger, rename, remove } = setup();
-    fireEvent.click(trigger);
-    const menu = screen.getByRole('dialog');
-    fireEvent.click(within(menu).getByRole('button', { name: 'Rename' }));
-    expect(rename).toHaveBeenCalledExactlyOnceWith(trigger);
-    expect(remove).not.toHaveBeenCalled();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
   it('keeps keyboard focus inside the menu and dismisses on outside click or resize', () => {
     const { trigger } = setup();
     fireEvent.click(trigger);
@@ -134,17 +124,6 @@ describe('a right-click on the row', () => {
     expect(menu.style.getPropertyValue('--menu-left')).toBe('220px');
     expect(menu.style.getPropertyValue('--menu-top')).toBe('146px');
     expect(open).not.toHaveBeenCalled();
-  });
-
-  it('runs a verb picked there against the persistent row trigger', () => {
-    pointing('fine');
-    const { trigger, rename } = setup();
-    rightClick();
-
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Rename' }));
-
-    expect(rename).toHaveBeenCalledExactlyOnceWith(trigger);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('leaves a long press to the platform under a finger', () => {

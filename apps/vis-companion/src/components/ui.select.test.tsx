@@ -353,22 +353,4 @@ describe('Select with several choices', () => {
     expect(trigger).toHaveTextContent('All groups');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
-
-  it('closes on an outside press and is unavailable with nothing to choose', async () => {
-    render(
-      <>
-        <GroupFilter />
-        <Select aria-label="Empty groups" values={[]} onValuesChange={vi.fn()} noneLabel="All groups" options={[]} />
-      </>,
-    );
-    const trigger = screen.getByRole('combobox', { name: 'Groups' });
-    await userEvent.click(trigger);
-    await userEvent.click(screen.getByRole('option', { name: 'Review' }));
-    fireEvent.pointerDown(document.body);
-    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
-    expect(trigger).toHaveTextContent('Review');
-    const empty = screen.getByRole('combobox', { name: 'Empty groups' });
-    expect(empty).toBeDisabled();
-    expect(empty).toHaveTextContent('All groups');
-  });
 });

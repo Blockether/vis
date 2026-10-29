@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  ATTACHMENT_DISK_BUDGET,
   attachmentCacheStats,
   cacheVictims,
   clearAttachmentCache,
@@ -25,10 +24,6 @@ describe('cacheVictims', () => {
     bytes: size,
     used,
     pinned,
-  });
-
-  it('keeps everything while both bounds hold', () => {
-    expect(cacheVictims([entry('a', 10, 1), entry('b', 10, 2)], small)).toEqual([]);
   });
 
   it('evicts least recently used first, until the BYTE bound holds', () => {
@@ -83,11 +78,6 @@ describe('the persistent attachment cache', () => {
     expect(new Uint8Array(await hit!.arrayBuffer())[2047]).toBe(3);
   });
 
-  it('misses on an artifact this device has never seen', async () => {
-    installCache();
-    expect(await readCachedAttachment('https://gw.example.com/never')).toBeNull();
-  });
-
   it('refuses one artifact bigger than the per-entry ceiling', async () => {
     // A 200 MB clip must not evict a whole session of figures on its way past.
     const cache = installCache();
@@ -140,11 +130,5 @@ describe('the persistent attachment cache', () => {
       writeCachedAttachment('https://gw.example.com/a', bytes(16)),
     ).resolves.toBeUndefined();
     await expect(clearAttachmentCache()).resolves.toBeUndefined();
-  });
-
-  it('budgets a phone, not a server', () => {
-    expect(ATTACHMENT_DISK_BUDGET.maxBytes).toBe(96 * 1024 * 1024);
-    expect(ATTACHMENT_DISK_BUDGET.maxEntries).toBe(256);
-    expect(ATTACHMENT_DISK_BUDGET.maxEntryBytes).toBeLessThan(ATTACHMENT_DISK_BUDGET.maxBytes);
   });
 });

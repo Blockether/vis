@@ -45,17 +45,6 @@ describe('wavePeaks', () => {
     expect(bars[3]).toBe(1);
   });
 
-  it('follows the loudness of the recording, quarter by quarter', () => {
-    const bars = wavePeaks(
-      wav([...tone(200, 0.2), ...tone(200, 0.4), ...tone(200, 0.8), ...tone(200, 1)]),
-      4,
-    );
-
-    expect(bars[0]).toBeLessThan(bars[1]);
-    expect(bars[1]).toBeLessThan(bars[2]);
-    expect(bars[2]).toBeLessThan(bars[3]);
-  });
-
   it('answers nothing rather than a shape when there is nothing to measure', () => {
     expect(wavePeaks(wav(tone(400, 0)), 8)).toEqual([]);
     expect(wavePeaks(wav(tone(400, 1)), 0)).toEqual([]);

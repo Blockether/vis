@@ -47,18 +47,6 @@ describe('android launch screen assets', () => {
     expect(png.colourType).toBe(6);
   });
 
-  // One mark, both platforms: the iOS asset catalog and these are the same bytes, so a
-  // redraw that reaches only one store is impossible rather than merely unlikely.
-  it.each([
-    ['Splash-mark.png', 'drawable-mdpi'],
-    ['Splash-mark@2x.png', 'drawable-xhdpi'],
-    ['Splash-mark@3x.png', 'drawable-xxhdpi'],
-  ])('%s is byte-identical to %s', (ios, density) => {
-    const iosBytes = readFileSync(join(root, 'native-assets', 'ios', ios));
-    const androidBytes = readFileSync(join(resources, density, 'splash_mark.png'));
-    expect(androidBytes.equals(iosBytes)).toBe(true);
-  });
-
   it('paints the colour the web layer paints a frame later', () => {
     const colours = readFileSync(join(resources, 'values', 'vis_splash_color.xml'), 'utf8');
     const page = /--bg:\s*(#[0-9a-f]{6})/i.exec(

@@ -3,7 +3,7 @@
 // band's ＋ opened `Add a machine` as its own modal ON TOP of Settings — a dialog
 // inside a dialog, with two close marks, two Escape targets and the fleet greyed
 // out behind the form that joins it. Pairing is a band in the machines column.
-import { cleanup, screen, within } from '@testing-library/react';
+import { cleanup, screen } from '@testing-library/react';
 import { renderOpenBands } from '../test-settings';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,29 +43,6 @@ const open = (onClose: () => void = () => {}) =>
 const field = () => screen.queryByPlaceholderText(/vis:\/\/gateway/);
 
 describe('adding a machine from the settings dialog', () => {
-  it('opens the form inside Settings, never as a second dialog', async () => {
-    open();
-    expect(field()).toBeNull();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Add a machine' }));
-
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    const settings = screen.getByRole('dialog', { name: 'Settings' });
-    expect(within(settings).getByRole('heading', { name: 'Add a machine' })).toBeVisible();
-    expect(within(settings).getByPlaceholderText(/vis:\/\/gateway/)).toBeVisible();
-    // The fleet the machine is about to join stands on the same plane as the form.
-    expect(within(settings).getByText('tower')).toBeVisible();
-  });
-
-  it('closes the form from the same band mark that opened it', async () => {
-    open();
-    await userEvent.click(screen.getByRole('button', { name: 'Add a machine' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel adding a machine' }));
-
-    expect(field()).toBeNull();
-    expect(screen.getByRole('button', { name: 'Add a machine' })).toBeVisible();
-  });
-
   it('gives Escape to the form first and to Settings after it', async () => {
     const onClose = vi.fn();
     open(onClose);

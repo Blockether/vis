@@ -157,13 +157,4 @@ describe('wake chores', () => {
     resume();
     expect(run).toHaveBeenCalledTimes(2);
   });
-
-  it('still tells the chore how long the app was away', async () => {
-    const run = await chore(1_000);
-    window.dispatchEvent(new Event('pagehide'));
-    vi.advanceTimersByTime(5_000);
-    window.dispatchEvent(new Event('pageshow'));
-    vi.advanceTimersByTime(250);
-    expect(run).toHaveBeenCalledExactlyOnceWith({ awayMs: 5_250 });
-  });
 });

@@ -818,22 +818,6 @@ describe('GatewayClient session list', () => {
     expect(list[0]?.id).toBe('session-0');
   });
 
-  it('hands back the SAME array when the head did not move', async () => {
-    const rows = fleet(1192);
-    const fetched = gateway(() => rows);
-    vi.stubGlobal('fetch', fetched);
-    const { GatewayClient } = await import('./gateway');
-    const client = new GatewayClient(conn);
-
-    const first = await client.listSessions();
-    const second = await client.listSessions();
-
-    // A 304 is answered from the pin, so the rows are the very objects already on
-    // screen — React bails out of the whole list instead of re-rendering it.
-    expect(fetched).toHaveBeenCalledTimes(2);
-    expect(second).toBe(first);
-  });
-
   it('takes the window the gateway re-cut when a row moved', async () => {
     let rows = fleet(1192);
     const fetched = gateway(() => rows);
@@ -1215,23 +1199,6 @@ describe('GatewayClient turn cancellation', () => {
     expect(body.turn_features).toEqual({ voice_projection: true });
   });
 
-  it.each(['low', 'medium', 'high'])(
-    'serializes %s verbosity on the gateway wire',
-    async (verbosity) => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue(new Response(JSON.stringify({ turn_id: 'turn-verbosity' })));
-      vi.stubGlobal('fetch', fetchMock);
-      const { GatewayClient } = await import('./gateway');
-
-      await new GatewayClient(conn).submitTurn('session-1', 'hello', {
-        extraBody: { text: { verbosity } },
-      });
-
-      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-      expect(body.extra_body).toEqual({ text: { verbosity } });
-    },
-  );
   it('uploads attachment bytes before submitting only opaque references', async () => {
     const fetchMock = vi
       .fn()

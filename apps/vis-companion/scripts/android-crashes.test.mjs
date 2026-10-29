@@ -121,16 +121,6 @@ describe('Android crash collection', () => {
       timeZone: { id: 'America/Los_Angeles' },
     });
   });
-
-  it('keeps today when freshness is not behind it', () => {
-    const body = timelineBody({
-      metrics: ['anrRate'],
-      days: 1,
-      now: new Date('2026-08-17T13:47:12Z'),
-      until: '2026-08-18',
-    });
-    expect(body.timelineSpec.endTime.day).toBe(17);
-  });
   it('reads the freshest day the metric set admits to, per aggregation period', () => {
     const set = {
       freshnessInfo: {

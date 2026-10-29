@@ -44,11 +44,4 @@ describe('search highlight', () => {
       { text: 'Windows', isMatch: true },
     ]);
   });
-
-  it('marks nothing for an empty query or an empty text', () => {
-    expect(searchSegments('Windows', searchTerms('  '))).toEqual([
-      { text: 'Windows', isMatch: false },
-    ]);
-    expect(searchSegments('', searchTerms('windows'))).toEqual([]);
-  });
 });

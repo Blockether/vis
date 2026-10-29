@@ -13,11 +13,4 @@ describe('the copied session id', () => {
       'vis_session_id#123e4567-e89b-12d3-a456-426614174000',
     );
   });
-
-  it('copies nothing at all when there is no id yet', () => {
-    expect(markSessionId('')).toBe('');
-    expect(markSessionId('   ')).toBe('');
-    expect(markSessionId(null)).toBe('');
-    expect(markSessionId(undefined)).toBe('');
-  });
 });

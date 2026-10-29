@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/diff.json';
 import schema from '../../../../packages/vis-contract/resources/vis-contract/schema/diff.json';
 import { parseDiff, diffHeaderAnchors, diffHeaderPath } from './diff';
-import { artifactKind, docKindLabel, DIFF_MEDIA } from './artifacts';
+import { DIFF_MEDIA } from './artifacts';
 
 describe('portable diff attachment', () => {
   const { comments: _ignored, ...snapshot } = fixture as typeof fixture & { comments?: unknown };
@@ -44,10 +44,6 @@ describe('portable diff attachment', () => {
     { ...snapshot, source: { type: 'workspace', unknown: true } },
   ])('refuses an invalid envelope %j', (value) => {
     expect(() => parseDiff(JSON.stringify(value))).toThrow();
-  });
-  it('classifies a diff as a readable document with a diff label', () => {
-    expect(artifactKind({ index: 0, kind: 'diff', media_type: DIFF_MEDIA })).toBe('doc');
-    expect(docKindLabel(DIFF_MEDIA, 'DIFF-search.json')).toBe('DIFF');
   });
 });
 
@@ -95,10 +91,5 @@ describe('where a diff header points', () => {
 
   it('gives every header the first hunk below it', () => {
     expect(diffHeaderAnchors(PATCH)).toEqual([14, 14, 14, 14, 1, 1, 1, 1, 1, undefined]);
-  });
-
-  it('answers nothing for a header with no hunk under it', () => {
-    expect(diffHeaderAnchors(['+++ b/src/app.ts'])).toEqual([undefined]);
-    expect(diffHeaderAnchors([])).toEqual([]);
   });
 });

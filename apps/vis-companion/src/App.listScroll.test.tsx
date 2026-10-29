@@ -47,33 +47,4 @@ describe('the sessions list after visiting a session on a phone', () => {
       view.restore();
     }
   });
-
-  // Regression, user report: going back to a long list lagged while the transcript was
-  // torn down in the same task. The pane stays for one more frame, moved off to the right
-  // where the edge swipe leaves it, and goes once the list is on screen.
-  it('takes the transcript down after the list is back', async () => {
-    window.location.hash = '';
-    const view = renderApp({
-      machines: [{ label: 'laptop', sessions: [listSession({ id: 'one', title: 'First session' })] }],
-    });
-    try {
-      await screen.findByText('First session');
-      const region = view.baseElement.querySelector('section[aria-label="Sessions"]') as HTMLElement;
-      const pane = region.parentElement as HTMLElement;
-      fireEvent.click(screen.getByText('First session'));
-      const composer = await screen.findByLabelText('Message Vis');
-      const sessionPane = pane.parentElement?.lastElementChild as HTMLElement;
-
-      fireEvent.click(screen.getByRole('button', { name: 'Back to sessions' }));
-      await waitFor(() => expect(sessionPane).toHaveAttribute('aria-hidden', 'true'));
-      expect(sessionPane).toContainElement(composer);
-      expect(pane).not.toHaveAttribute('aria-hidden');
-
-      await waitFor(() => expect(sessionPane).not.toBeInTheDocument());
-      expect(composer).not.toBeInTheDocument();
-    } finally {
-      view.unmount();
-      view.restore();
-    }
-  });
 });

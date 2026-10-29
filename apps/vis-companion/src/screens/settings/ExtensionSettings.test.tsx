@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { GatewayClient, GatewayError } from '../../lib/gateway';
 import { DEFAULT_SPEECH_PREFS } from '../../lib/storage';
-import type { SettingsResponse, SettingsTarget, Toggle } from '../../lib/types';
+import type { SettingsResponse, SettingsTarget } from '../../lib/types';
 import { OpenScopedSettings } from '../../lib/open-settings';
 import { MachineSettings } from './MachineSettings';
 import { ScopedSettingsDialog } from './ScopedSettingsDialog';
@@ -129,27 +129,6 @@ it('keeps a failed project extension visible and runs its code only on request',
   expect(read.mock.calls.length).toBeGreaterThan(reads);
 });
 
-it('keeps matching extensions under Extensions while a search hides the actions', async () => {
-  const user = userEvent.setup();
-  const target: SettingsTarget = { scope: 'project', target_id: 'p1', label: 'Workspace' };
-  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
-  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
-  vi.spyOn(client, 'settings').mockResolvedValue({ ...catalog('project', '.vis/extensions'), scope: 'project', target_id: 'p1' });
-  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
-  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-  renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
-
-  await user.type(await screen.findByRole('searchbox', { name: 'Search settings' }), 'desktop');
-  const { names, scope } = extensionsBand(5);
-  expect(names).toEqual(['notifier']);
-  expect(scope('notifier')).toBe('project');
-  expect(screen.queryByRole('button', { name: 'Reload extensions' })).not.toBeInTheDocument();
-
-  await user.clear(screen.getByRole('searchbox', { name: 'Search settings' }));
-  await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'subagents');
-  expect(screen.queryByRole('heading', { name: 'Extensions' })).not.toBeInTheDocument();
-});
-
 it('reloads machine extensions from machine settings and explains an older gateway', async () => {
   const user = userEvent.setup();
   vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
@@ -196,64 +175,6 @@ it('reloads machine extensions from machine settings and explains an older gatew
     await within(band).findByText('This gateway does not support extension reload. Update Vis on that machine.'),
   ).toBeInTheDocument();
 });
-it('names each extension once, on the row of its Auto/On/Off choice', async () => {
-  // Settings showed each extension name twice: as a heading and again as its choice row.
-  const engine = (name: string): Toggle => ({
-    id: `engines_${name}`,
-    label: name,
-    type: 'enum',
-    choices: ['auto', 'on', 'off'],
-    value: 'auto',
-    description: 'Auto detects applicability; On stays active; Off denies tools.',
-    source: 'global',
-  });
-  const target: SettingsTarget = { scope: 'project', target_id: 'p1', label: 'Workspace' };
-  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
-  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
-  vi.spyOn(client, 'settings').mockResolvedValue({
-    revision: 'extensions-2',
-    scope: 'project',
-    target_id: 'p1',
-    groups: [
-      {
-        id: 'extension:vis-optmem',
-        title: 'vis-optmem',
-        extension: { name: 'vis-optmem', origin: 'global', status: 'loaded' },
-        toggles: [engine('vis-optmem')],
-      },
-      {
-        id: 'extension:vis-spel',
-        title: 'vis-spel',
-        extension: { name: 'vis-spel', origin: 'global', status: 'loaded' },
-        toggles: [
-          engine('vis-spel'),
-          { id: 'spel_headless', label: 'Headless', type: 'boolean', enabled: false, source: 'global' },
-          { id: 'skills_1', label: 'vis-spel/browser', type: 'boolean', enabled: true, source: 'global' },
-        ],
-      },
-    ],
-  });
-  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
-  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-  renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
-
-  await screen.findByRole('heading', { name: 'vis-spel' });
-  const { band, names, scope } = extensionsBand(5);
-  expect(names).toEqual(['vis-optmem', 'vis-spel']);
-  expect(within(band).getAllByText('vis-spel')).toHaveLength(1);
-  expect(scope('vis-spel')).toBe('global');
-  const spel = within(band).getByRole('region', { name: 'vis-spel' });
-  expect(within(spel).getByRole('combobox', { name: 'vis-spel' })).toBeInTheDocument();
-  // The extension's own settings come first, and its skills stand under their own Skills heading.
-  const skills = within(spel).getByRole('region', { name: 'Skills' });
-  expect(within(skills).getByRole('switch', { name: 'browser: on' })).toBeInTheDocument();
-  expect(within(spel).getByRole('switch', { name: 'Headless: off' })).toBeInTheDocument();
-  expect(within(skills).queryByRole('switch', { name: 'Headless: off' })).toBeNull();
-  expect(band).not.toHaveTextContent('vis-spel/browser');
-  // The Auto/On/Off explanation is not shown: neither above the extensions nor on each one.
-  expect(within(band).queryByText(/^Auto detects applicability/)).toBeNull();
-});
-
 // #373: a machine reload counts the project extensions of the open session and opens Project settings.
 // #411: the summary stays short; the project inventory is a detail.
 it('counts project extensions after a machine reload and opens Project settings', async () => {

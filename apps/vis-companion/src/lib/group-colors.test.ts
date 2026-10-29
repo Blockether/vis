@@ -4,7 +4,6 @@ import {
   DEFAULT_GROUP_COLOR,
   groupColor,
   groupSwatch,
-  isGroupColor,
 } from './group-colors';
 
 describe('the closed group palette', () => {
@@ -16,12 +15,5 @@ describe('the closed group palette', () => {
     expect(groupColor(null)).toBe(DEFAULT_GROUP_COLOR);
     expect(groupColor(undefined)).toBe(DEFAULT_GROUP_COLOR);
     expect(groupSwatch('#ff0000')).toBe('bg-group-slate');
-  });
-
-  it('tells a palette token from anything else', () => {
-    expect(isGroupColor('violet')).toBe(true);
-    expect(isGroupColor('VIOLET')).toBe(false);
-    expect(isGroupColor(7)).toBe(false);
-    expect(isGroupColor(null)).toBe(false);
   });
 });

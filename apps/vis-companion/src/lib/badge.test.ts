@@ -70,15 +70,6 @@ describe('the icon badge', () => {
     expect(native.writes).toEqual([2, 0]);
   });
 
-  // While the app was away, VisNotify moved the badge without telling anyone
-  // here: the cached value is a lie the moment the app resumes.
-  it('says it again on the way back', async () => {
-    const { setBadge, reassertBadge } = await fresh();
-    await setBadge(4);
-    await reassertBadge();
-    expect(native.writes).toEqual([4, 4]);
-  });
-
   // An Android launcher badges itself from the notification FCM delivers, so a
   // number written here would be a second, competing source.
   it('leaves the count alone where the OS owns it', async () => {

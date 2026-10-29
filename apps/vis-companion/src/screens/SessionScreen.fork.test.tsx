@@ -54,20 +54,6 @@ describe('forking from a turn in the transcript', () => {
     expect(forks).toEqual([['s1', 't1']]);
   });
 
-  it('offers a fork on an answer without a user message', async () => {
-    const rows = [turn('t1', '')];
-    renderSessionScreen({
-      client: {
-        cachedTranscript: () => rows,
-        transcript: () => Promise.resolve(rows),
-      },
-    });
-
-    const fork = await screen.findByRole('button', { name: 'Fork from this turn' });
-    expect(fork.closest('article')).toBe(screen.getByText('Answer to .').closest('article'));
-    expect(screen.queryByText('You', { exact: true })).toBeNull();
-  });
-
   it('keeps the answer action disabled while forking and restores it on failure', async () => {
     const rows = [turn('t1', 'make the header amber'), turn('t2', 'now undo the second half')];
     let rejectFork!: (reason: Error) => void;

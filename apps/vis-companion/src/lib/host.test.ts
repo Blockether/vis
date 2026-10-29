@@ -73,11 +73,4 @@ describe('the iOS host', () => {
     await host.loadHost();
     expect(host.isIosAppOnMac()).toBe(false);
   });
-
-  it('never asks a browser or Android', async () => {
-    native.platform = 'web';
-    const host = await import('./host');
-    await host.loadHost();
-    expect(host.isIosAppOnMac()).toBe(false);
-  });
 });

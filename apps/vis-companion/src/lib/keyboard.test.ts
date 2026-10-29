@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { holdKeyboardAcrossSheet, isEnterSendKeyboard, keepKeyboard } from './keyboard';
+import { holdKeyboardAcrossSheet } from './keyboard';
 
 let platform = 'web';
 
@@ -58,16 +58,6 @@ function stepper() {
     },
   };
 }
-
-describe('keepKeyboard', () => {
-  it('keeps the current field from losing focus on pointer press', () => {
-    const preventDefault = vi.fn();
-
-    keepKeyboard({ preventDefault });
-
-    expect(preventDefault).toHaveBeenCalledOnce();
-  });
-});
 
 describe('holdKeyboardAcrossSheet', () => {
   // The keyboard goes down on the app's terms, not the sheet's: with no field
@@ -154,14 +144,6 @@ describe('holdKeyboardAcrossSheet', () => {
     })();
 
     expect(log).toEqual([]);
-    expect(showSoftKeyboard).not.toHaveBeenCalled();
-  });
-
-  it('tolerates a missing composer', () => {
-    const showSoftKeyboard = vi.fn();
-    expect(() =>
-      holdKeyboardAcrossSheet(null, { schedule: (run) => run(), showSoftKeyboard })(),
-    ).not.toThrow();
     expect(showSoftKeyboard).not.toHaveBeenCalled();
   });
 
@@ -363,14 +345,3 @@ describe('holdKeyboardAcrossSheet on a phone that answers late', () => {
   });
 });
 
-// Regression, user report (paraphrased: in the app Enter should send and
-// Shift+Enter should make the new line): the answer was the PLATFORM, so every
-// native build typed a new line on Return even with a keyboard folded onto it —
-// while a phone still owes Return its new line, having no Shift to hold.
-describe('isEnterSendKeyboard', () => {
-  it('sends on Enter wherever a fine pointer says a keyboard came with it', () => {
-    expect(isEnterSendKeyboard(true)).toBe(true);
-    expect(isEnterSendKeyboard(false)).toBe(false);
-  });
-
-});

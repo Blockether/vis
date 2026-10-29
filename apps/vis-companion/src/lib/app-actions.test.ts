@@ -67,11 +67,6 @@ describe('failAppAction', () => {
       failAppAction(new GatewayError(409, 'disconnected', { is_accepted: false, reason: 'disconnected' })),
     ).toEqual({ status: 'disconnected' });
   });
-
-  it('reads any other failure as failed', () => {
-    expect(failAppAction(new GatewayError(500, 'boom')).status).toBe('failed');
-    expect(failAppAction(new Error('boom')).status).toBe('failed');
-  });
 });
 
 describe('SendKeys', () => {

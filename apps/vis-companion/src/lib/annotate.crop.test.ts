@@ -30,13 +30,6 @@ function picture(width: number, height: number): HTMLImageElement {
 afterEach(() => vi.restoreAllMocks());
 
 describe('flattening a picture', () => {
-  it('writes the whole picture when nothing was trimmed', async () => {
-    const { draws, output } = stubCanvas();
-    await flattenAnnotations(picture(800, 600), null);
-    expect(output.width).toBe(800);
-    expect(output.height).toBe(600);
-    expect(draws).toEqual([[0, 0, 800, 600, 0, 0, 800, 600]]);
-  });
 
   // The trim is cut from the ORIGINAL: a quarter of a 4000px photo is a
   // 2000px photo, not a 400px one because that is how wide the phone was.

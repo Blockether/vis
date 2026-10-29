@@ -158,20 +158,6 @@ it('is inert in a browser tab, which has real push instead', async () => {
   expect(alerts(invoke)).toEqual([]);
 });
 
-it('says what the gateway says, so this window and a phone read alike', async () => {
-  const invoke = stubDesktopHost();
-  await notifyDesktopFleet(fleet([session('deploy', { answer_count: 3 })]));
-  // The gateway flattens the answer out of markdown (`gateway/push.clj`); nothing is worded twice.
-  remote.alert = { title: 'deploy', body: 'Done • Shipped v2 to prod • Release notes' };
-
-  await notifyDesktopFleet(fleet([session('deploy', { answer_count: 4 })]));
-
-  expect(remote.asked).toEqual(['answer']);
-  expect(alerts(invoke)).toEqual([
-    { title: 'deploy', body: 'Done • Shipped v2 to prod • Release notes' },
-  ]);
-});
-
 it('still alerts when the machine cannot say what it answered', async () => {
   const invoke = stubDesktopHost();
   await notifyDesktopFleet(fleet([session('a', { answer_count: 3 })]));

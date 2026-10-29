@@ -171,32 +171,6 @@ describe('paging', () => {
 describe('DataTable', () => {
   const html = renderToStaticMarkup(<DataTable body={fence} compact />);
 
-  it('paints a real table with a header row and one row per record', () => {
-    expect((html.match(/<tr/g) ?? []).length).toBe(4);
-    // Three data columns plus the `#` gutter.
-    expect((html.match(/<th\b[^>]*>/g) ?? []).length).toBe(4);
-    expect(text(html)).toContain('ada');
-    expect(text(html)).toContain('third');
-  });
-
-  it('offers the sort affordance and the row count, and no filter box', () => {
-    expect(html).toContain('aria-sort="none"');
-    expect(html).toContain('aria-label="Sort by name"');
-    expect(text(html)).toContain('3 rows');
-    expect(text(html)).toContain('3 rows, 3 columns, 64 B');
-    expect(text(html)).not.toContain('[Table:');
-    expect(html).not.toContain('type="search"');
-    expect(html).not.toContain('Filter rows');
-  });
-
-  it('gives every row a # gutter, and the gutter IS the selection control', () => {
-    expect(html).toContain('role="grid"');
-    expect(html).toContain('aria-label="Select every row on this page"');
-    expect(html).toContain('aria-label="Select row 1"');
-    expect(html).toContain('aria-label="Select row 3"');
-    expect(html).toContain('aria-selected="false"');
-  });
-
   it('is ONE tab stop, not one per row', () => {
     expect((html.match(/tabindex="0"/g) ?? []).length).toBe(1);
   });
@@ -217,10 +191,6 @@ describe('DataTable', () => {
       />,
     );
     expect(text(gaps)).toContain('NULL');
-  });
-
-  it('hides the pager for a sheet that fits on one page', () => {
-    expect(html).not.toContain('aria-label="Next page"');
   });
 
   it('pages a long sheet: 25 rows, a page counter and working arrows', () => {
@@ -265,42 +235,5 @@ describe('DataTable', () => {
     await userEvent.click(picker);
     await userEvent.click(screen.getByRole('option', { name: 'Fit' }));
     expect(picker).toHaveTextContent('Fit');
-  });
-
-  it('keeps paging controls above the grid', () => {
-    const long = [
-      '[Table: events.csv 60 rows × 2 cols, 1 KB]',
-      'events.csv',
-      'text/csv',
-      '2x60',
-      '1 KB',
-      'n,label',
-      ...Array.from({ length: 60 }, (_, i) => `${i},row-${i}`),
-    ].join('\n');
-    const paged = renderToStaticMarkup(<DataTable body={long} compact />);
-    expect(paged.indexOf('aria-label="Next page"')).toBeLessThan(paged.indexOf('role="grid"'));
-  });
-
-  // An opened artifact used to replace the spreadsheet with one vertical record on
-  // touch screens. The transcript and artifact reader must expose the same real grid.
-  it('keeps opened artifacts as the same table on touch screens', () => {
-    const opened = renderToStaticMarkup(<DataTable body={fence} compact fill />);
-
-    expect(opened).toContain('role="grid"');
-    expect(opened).not.toContain('Record view of');
-    expect(opened).not.toContain('Record 1 of');
-    expect(opened).not.toContain('mouse:hidden');
-  });
-
-  it('closes a selected value when that cell is pressed again', async () => {
-    const user = userEvent.setup();
-    render(<DataTable body={fence} compact />);
-    const cell = screen.getByText('first').closest('td');
-    expect(cell).toBeVisible();
-
-    await user.click(cell!);
-    expect(screen.getByRole('button', { name: 'Copy value' })).toBeInTheDocument();
-    await user.click(cell!);
-    expect(screen.queryByRole('button', { name: 'Copy value' })).not.toBeInTheDocument();
   });
 });

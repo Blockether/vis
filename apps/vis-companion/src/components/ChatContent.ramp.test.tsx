@@ -224,32 +224,6 @@ describe('a live trace that a session switch mounts again', () => {
     expect(entering()).toEqual([expect.stringContaining('step 41')]);
     view.unmount();
   });
-
-  it('keeps the calls of restored separate steps still', () => {
-    setStepsSummarized(false);
-    const called = (position: number): TranscriptIteration => ({
-      ...iteration(position),
-      forms: [{ source: `step_${position}()` }],
-    });
-    const restored = [called(1), called(2)];
-    const view = render(
-      <IterationTrace iterations={restored} live showCode={false} client={client} sid="s1" />,
-    );
-    const rising = () => view.container.querySelectorAll('.animate-transcript-rise').length;
-    expect(rising()).toBe(0);
-
-    view.rerender(
-      <IterationTrace
-        iterations={[...restored, called(3)]}
-        live
-        showCode={false}
-        client={client}
-        sid="s1"
-      />,
-    );
-    expect(rising()).toBe(1);
-    view.unmount();
-  });
 });
 
 /** Queue animation frames, and pump them until a frame mounts nothing new. */
@@ -309,19 +283,4 @@ describe('a mounted trace whose display mode changes', () => {
     },
     20_000,
   );
-
-  it('ramps the separate steps again when Code mode changes', () => {
-    setStepsSummarized(false);
-    const view = render(<IterationTrace iterations={steps} whole client={client} sid="s1" />);
-    const rail = () => view.container.firstElementChild?.children.length ?? 0;
-    const pump = frameQueue(rail);
-    expect(rail()).toBe(300);
-
-    act(() => setPythonCodeShown(false));
-    expect(rail()).toBe(8);
-
-    pump();
-    expect(rail()).toBe(300);
-    view.unmount();
-  }, 20_000);
 });

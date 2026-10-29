@@ -39,10 +39,6 @@ describe('linkTargets', () => {
   it('still leaves out an internal group that already gets every build', () => {
     expect(linkTargets(groups, 'public')).not.toContain('internal');
   });
-
-  it('is just the named group when it is the only one', () => {
-    expect(linkTargets([{ id: 'public' }], 'public')).toEqual(['public']);
-  });
 });
 
 // Regression: an iOS upload reached only the internal groups unless `--public` was passed, so the

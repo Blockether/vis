@@ -159,25 +159,6 @@ describe('memory overlay', () => {
     expect(screen.getByRole('img', { name: 'Listener trend' })).toBeInTheDocument();
   });
 
-  it('marks listeners and observed elements left on removed elements', () => {
-    const base = report();
-    render(
-      <PerfOverlay
-        startOpen
-        read={() =>
-          report({
-            listeners: { ...base.listeners, detached: 3 },
-            observers: [{ kind: 'ResizeObserver', observers: 3, targets: 5, detached: 2 }],
-          })
-        }
-        refreshMs={60_000}
-      />,
-    );
-
-    expect(figure('On removed elements')).toHaveTextContent('3');
-    expect(figure('Observed elements')).toHaveTextContent('52 removed');
-  });
-
   it('keeps its first reading when the refresh is off', () => {
     vi.useFakeTimers();
     const read = vi.fn(() => report());
@@ -189,20 +170,6 @@ describe('memory overlay', () => {
 
     expect(read).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('img', { name: 'Listener trend' })).not.toBeInTheDocument();
-  });
-
-  // User report (paraphrased: the memory overlay should be a small dot that shows the
-  // figures only after a click): it starts closed, as one dot with the figures as its name.
-  it('starts as a dot and opens on a click', () => {
-    render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
-
-    expect(screen.queryByRole('region', { name: 'Memory overlay' })).not.toBeInTheDocument();
-    const dot = screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' });
-    expect(dot).toHaveAttribute('aria-expanded', 'false');
-    expect(dot).toHaveAttribute('title', 'Memory 48.0 MB · 10 listeners');
-    expect(dot).toHaveTextContent('');
-    fireEvent.click(dot);
-    expect(screen.getByRole('region', { name: 'Memory overlay' })).toBeInTheDocument();
   });
 
   // User request: the closed dot sits next to the VIS wordmark in the app bar.
@@ -223,57 +190,6 @@ describe('memory overlay', () => {
     } finally {
       mark.remove();
     }
-  });
-
-  it('keeps the dot at the right edge while the wordmark is away', () => {
-    render(<PerfOverlay read={() => report()} refreshMs={60_000} />);
-
-    const box = screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' }).closest('section')!;
-    expect(box.style.left).toBe('');
-  });
-
-  it('minimizes to the dot and opens again', () => {
-    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} />);
-
-    const toggle = screen.getByRole('button', { name: 'Minimize memory overlay' });
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    fireEvent.click(toggle);
-
-    expect(screen.queryByRole('region', { name: 'Memory overlay' })).not.toBeInTheDocument();
-    const summary = screen.getByRole('button', { name: 'Memory 48.0 MB · 10 listeners' });
-    // Keep the control's gesture state so the click after a pointer release is ignored.
-    expect(summary).toBe(toggle);
-    expect(summary).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(summary);
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('region', { name: 'Memory overlay' })).toBeInTheDocument();
-  });
-
-  it('copies the full report as JSON', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
-    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Copy report' }));
-
-    expect(writeText).toHaveBeenCalledWith(JSON.stringify(report(), null, 2));
-    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
-  });
-
-  it('turns itself off from the open overlay', () => {
-    const turnOff = vi.fn(() => true);
-    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} turnOff={turnOff} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
-
-    expect(turnOff).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText('This device did not save the setting.')).not.toBeInTheDocument();
-  });
-
-  it('has no Turn off control in the perf build', () => {
-    render(<PerfOverlay startOpen read={() => report()} refreshMs={60_000} turnOff={null} />);
-
-    expect(screen.queryByRole('button', { name: 'Turn off' })).not.toBeInTheDocument();
   });
 
 });

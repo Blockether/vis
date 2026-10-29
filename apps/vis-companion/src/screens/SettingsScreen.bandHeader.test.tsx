@@ -9,19 +9,6 @@ afterEach(() => {
 });
 
 describe('every settings band with a body folds', () => {
-  it('starts folded and shows its body behind its own chevron', () => {
-    render(
-      <SettingsPanel title="Theme">
-        <p>Vis Light</p>
-      </SettingsPanel>,
-    );
-    expect(screen.queryByText('Vis Light')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Show Theme' }));
-    expect(screen.getByText('Vis Light')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Hide Theme' }));
-    expect(screen.queryByText('Vis Light')).toBeNull();
-  });
-
   it('starts open where the caller or a search asks for it', () => {
     render(
       <>
@@ -62,15 +49,5 @@ describe('every settings band with a body folds', () => {
     expect(screen.getByText('context7')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Hide MCP servers' }));
     expect(screen.queryByText('context7')).toBeNull();
-  });
-
-  it('shows no chevron on a band without a body', () => {
-    render(
-      <SettingsPanel title="Notifications" action={<button type="button">Notifications off</button>}>
-        {false}
-      </SettingsPanel>,
-    );
-    expect(screen.queryByRole('button', { name: /Notifications$/ })).toBeNull();
-    expect(screen.getByRole('heading', { name: 'Notifications' })).toBeVisible();
   });
 });

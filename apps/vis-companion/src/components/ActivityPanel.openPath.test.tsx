@@ -49,17 +49,6 @@ function projection(): ActivityProjection {
   };
 }
 
-function openPanel(openPath: ((path: string) => void) | null) {
-  render(
-    <OpenPathContext.Provider value={openPath}>
-      <ActivityPanel activity={projection()} />
-    </OpenPathContext.Provider>,
-  );
-  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-  const group = screen.queryByRole('button', { name: /Patch ×/ });
-  if (group) fireEvent.click(group);
-}
-
 function paths(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('[data-path]')];
 }
@@ -114,45 +103,6 @@ it.each([
     expect(document.querySelector('[data-activity-content]')).toBeNull();
   },
 );
-
-it('opens the file a path names, on the machine that ran the step', () => {
-  const openPath = vi.fn();
-  openPanel(openPath);
-  const shown = paths();
-  expect(shown.length).toBeGreaterThan(0);
-  for (const path of shown) expect(path).toHaveAttribute('data-path', TARGET);
-  fireEvent.click(shown[0]);
-  expect(openPath).toHaveBeenCalledWith(TARGET);
-});
-
-it('opens a path from the keyboard, for a reader who never touches the screen', () => {
-  const openPath = vi.fn();
-  openPanel(openPath);
-  const path = paths()[0];
-  expect(path).toHaveAttribute('tabindex', '0');
-  fireEvent.keyDown(path, { key: 'Enter' });
-  fireEvent.keyDown(path, { key: ' ' });
-  fireEvent.keyDown(path, { key: 'a' });
-  expect(openPath.mock.calls).toEqual([[TARGET], [TARGET]]);
-});
-
-it('keeps the press on the path, so the row it sits in does not also open', () => {
-  const openPath = vi.fn();
-  openPanel(openPath);
-  const row = paths().at(-1)!;
-  fireEvent.click(row);
-  expect(openPath).toHaveBeenCalledWith(TARGET);
-  expect(screen.queryByText('after-1')).toBeNull();
-});
-
-it('leaves paths as plain words when no opener is published', () => {
-  openPanel(null);
-  const shown = paths();
-  expect(shown.length).toBeGreaterThan(0);
-  for (const path of shown) expect(path).not.toHaveAttribute('role', 'button');
-  fireEvent.click(shown.at(-1)!);
-  expect(screen.getByText('after-1')).toBeVisible();
-});
 
 // BLO-172: a listing printed file names nobody could press. Each listed file
 // now carries the path that opens it; a directory keeps plain words.

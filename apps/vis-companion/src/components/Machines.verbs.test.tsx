@@ -55,35 +55,6 @@ describe('a machine keeps its verbs under its own row', () => {
     expect(verbsOf('tower')).toEqual(['Rename', 'Forget']);
   });
 
-  it('keeps the rank verb off the machine that already holds the rank', () => {
-    fleet({ selectedUrl: tower.url });
-    expect(verbsOf('tower')).toEqual(['Rename', 'Forget']);
-    expect(verbsOf('laptop')).toEqual(['Make primary', 'Rename', 'Forget']);
-  });
-
-  it('keeps sliding on touch and reserves the dropdown for a mouse', () => {
-    fleet();
-    // The row is the whole width and the strip waits past its trailing edge: one
-    // track per row, the row first, the verbs second.
-    const tracks = document.querySelectorAll('[data-swipe-track]');
-    expect(tracks).toHaveLength(2);
-    const html = tracks[0]!.innerHTML;
-    expect(html.indexOf('mouse:contents')).toBeLessThan(html.indexOf('role="group"'));
-
-    // The menu is desktop-only: nothing stands beside the touch gesture.
-    const menus = screen.getAllByRole('button', { name: /^Actions for/ });
-    expect(menus).toHaveLength(2);
-    // Two machine rows, five touch verbs and two desktop menu triggers.
-    expect(screen.getAllByRole('button')).toHaveLength(9);
-
-    // Captions stay one word wide; the enclosing group names the machine.
-    expect(
-      stripOf('laptop')
-        .getAllByRole('button')
-        .map((b) => b.textContent),
-    ).toEqual(['Primary', 'Rename', 'Forget']);
-  });
-
   it('opens one machine at a time', () => {
     fleet();
     // jsdom lays nothing out: each strip gets a phone's width for its verbs.

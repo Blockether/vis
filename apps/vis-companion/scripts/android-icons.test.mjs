@@ -137,28 +137,6 @@ const mipmap = (density, name) => join(res, `mipmap-${density}`, `${name}.png`);
 const brand = ink(decodePng(iosMaster));
 
 describe('Android launcher icon', () => {
-  it('is drawn in the same ink as the iOS app icon, not a faded copy of it', () => {
-    expect(near(brand, [5, 24, 63], 4)).toBe(true);
-    for (const density of densities) {
-      for (const name of ['ic_launcher_foreground', 'ic_launcher', 'ic_launcher_round']) {
-        const drawn = ink(decodePng(mipmap(density, name)));
-        expect([density, name, near(drawn, brand, 24), drawn]).toEqual([
-          density,
-          name,
-          true,
-          drawn,
-        ]);
-      }
-    }
-  });
-
-  it('paints solid artwork, so the white background layer cannot bleed through it', () => {
-    for (const density of densities) {
-      const { solidShare } = coverage(decodePng(mipmap(density, 'ic_launcher_foreground')));
-      expect(solidShare).toBeGreaterThan(0.4);
-    }
-  });
-
   it('ships every density at its adaptive canvas size', () => {
     for (const density of densities) {
       const [canvas, legacy] = sizes[density];

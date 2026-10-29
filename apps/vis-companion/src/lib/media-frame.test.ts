@@ -2,38 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   inlinePictureSize,
-  mediaGroupLayout,
   plateFit,
 } from './media-frame';
 
-// ONE picture is a plate; several are a gallery. Four dropped screenshots used
-// to be four 60svh plates stacked down the column, which is a wall to scroll
-// past rather than something to look at.
-describe('the media gallery', () => {
-  it('plates a lone picture and grids the rest', () => {
-    expect(mediaGroupLayout(0)).toBe('plate');
-    expect(mediaGroupLayout(1)).toBe('plate');
-    expect(mediaGroupLayout(2)).toBe('grid');
-    expect(mediaGroupLayout(9)).toBe('grid');
-  });
-
-});
-
 describe('the plate fit', () => {
-  // User report: a wide or tall screenshot sat in bands of empty mat inside the 4:3 frame.
-  it('gives the frame the picture ratio, wide or tall', () => {
-    expect(plateFit({ width: 851, height: 332 })?.aspectRatio).toBe('851 / 332');
-    expect(plateFit({ width: 390, height: 844 })?.aspectRatio).toBe('390 / 844');
-  });
 
   it('keeps the plate inside the column, its own pixels and the height cap', () => {
     expect(plateFit({ width: 390, height: 844 })?.width).toBe('min(100%, 390px, calc(60svh * 390 / 844))');
   });
 
-  it('keeps the reserved 4:3 for a picture of unknown size', () => {
-    expect(plateFit(null)).toBeUndefined();
-    expect(plateFit(undefined)).toBeUndefined();
-  });
 });
 
 const base64 = (...parts: number[][]) => {

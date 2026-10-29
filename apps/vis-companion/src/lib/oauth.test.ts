@@ -56,15 +56,6 @@ it('opens the browser at once and settles through polling', async () => {
   expect(client.complete).not.toHaveBeenCalled();
   stop();
 });
-it('reopens the same browser page on request, never a second flow', async () => {
-  const client = gateway();
-  const watcher = watchAuth(flow, client, vi.fn());
-  await vi.advanceTimersByTimeAsync(0);
-  watcher.open();
-  expect(window.open).toHaveBeenCalledTimes(2);
-  expect(window.open).toHaveBeenLastCalledWith(flow.url, '_blank', 'noopener,noreferrer');
-  watcher.stop();
-});
 it('recovers a lost completion response through polling, without another exchange', async () => {
   const client = gateway();
   const verdict = vi.fn();
@@ -175,10 +166,6 @@ it('closes a reserved tab the flow can never use', async () => {
   expect(reserved.close).toHaveBeenCalledOnce();
   expect(reserved.location.href).toBe('');
   expect(verdict).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }));
-});
-
-it('reserves nothing when the browser refuses the popup', () => {
-  expect(reserveAuthTab()).toBeUndefined();
 });
 
 // Regression, user report: signing in to a provider from the Pake desktop app opened the

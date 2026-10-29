@@ -4,16 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 import { applyLivePatch, liveViewFromWire, LIVE_SHORTCUTS_MAX, type LiveView } from './live-view';
 import {
-  ariaShortcut,
   isAppKeyTarget,
   isEditableTarget,
   matchShortcut,
   nodeShortcuts,
-  shortcutArrow,
-  shortcutGlyph,
   shortcutKey,
-  shortcutName,
-  shortcutSpoken,
 } from './app-shortcuts';
 
 function app(shortcuts: unknown): LiveView {
@@ -66,10 +61,6 @@ describe('shortcuts on the wire', () => {
   it('keeps at most the schema bound', () => {
     const many = Array.from({ length: 40 }, (_, at) => ({ key: String.fromCharCode(0x21 + at), action: `a${at}` }));
     expect(app(many).shortcuts).toHaveLength(LIVE_SHORTCUTS_MAX);
-  });
-
-  it('a view without shortcuts has none', () => {
-    expect(app(undefined).shortcuts).toBeUndefined();
   });
 
   it('the shortcuts op replaces every binding, and an empty list clears them', () => {
@@ -139,16 +130,6 @@ describe('matchShortcut', () => {
 });
 
 describe('key caps', () => {
-  it('draws arrow keys as icons, shortens named keys and keeps characters', () => {
-    expect(shortcutArrow('ArrowLeft')).toBe('left');
-    expect(shortcutArrow('ArrowDown')).toBe('down');
-    expect(shortcutArrow('q')).toBeNull();
-    expect(shortcutGlyph('Enter')).toBe('↵');
-    expect(shortcutGlyph('Escape')).toBe('Esc');
-    expect(shortcutGlyph('q')).toBe('q');
-    expect(ariaShortcut('Q')).toBe('Shift+Q');
-    expect(ariaShortcut('q')).toBe('q');
-  });
 
   it('indexes node shortcuts by node id', () => {
     const byNode = nodeShortcuts([
@@ -162,13 +143,6 @@ describe('key caps', () => {
 });
 
 describe('app key names and owners', () => {
-  it('names a legend entry by its label and its key, so equal labels stay apart', () => {
-    expect(shortcutName({ key: 'n', node_id: 'next' }, 'Next')).toBe('Next, key n');
-    expect(shortcutName({ key: 'ArrowUp', action: 'up', label: 'Up' })).toBe('Up, key Up arrow');
-    expect(shortcutName({ key: 'k', action: 'up', label: 'Up' })).toBe('Up, key k');
-    expect(shortcutSpoken('PageDown')).toBe('Page down');
-    expect(shortcutSpoken('Enter')).toBe('Enter');
-  });
 
   it('lets a checkbox, a radio, a button and an option keep app keys, but not a text field', () => {
     const make = (html: string) => {

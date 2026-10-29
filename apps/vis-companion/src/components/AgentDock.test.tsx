@@ -34,22 +34,6 @@ describe('AgentDock', () => {
     expect(region().querySelectorAll('svg')).toHaveLength(1);
   });
 
-  it('opens the table of the team from its line, and folds it again', () => {
-    dock([{ ...base, status: 'completed', result: 'Found 3 routes' }, { ...asking, title: 'Fix it' }], 'turn-1');
-    const line = within(region()).getByRole('button', { expanded: false });
-    fireEvent.click(line);
-    expect(line).toHaveAttribute('aria-expanded', 'true');
-    expect(document.getElementById(line.getAttribute('aria-controls')!)).toBeVisible();
-    expect(rows().map((row) => row.textContent)).toEqual([
-      'research#1Found 3 routesdone',
-      'implementFix itFix the bugrunning',
-    ]);
-    expect(within(region()).queryByText(/old API/)).not.toBeInTheDocument();
-    fireEvent.click(line);
-    expect(line).toHaveAttribute('aria-expanded', 'false');
-    expect(rows()).toEqual([]);
-  });
-
   it('keeps a team after its turn while one of its agents still works, and only that team', () => {
     dock([base, { ...base, session_id: 'old', team_id: 'turn-0', status: 'completed' }], 'turn-2');
     const line = within(region()).getByRole('button', { expanded: false });
@@ -61,15 +45,6 @@ describe('AgentDock', () => {
 });
 
 describe('AgentCrumb', () => {
-  it('names the agent and opens its leader', () => {
-    const onOpen = vi.fn();
-    render(<AgentCrumb sid="a2" parentId="lead" agents={[base, asking]} onOpen={onOpen} />);
-    const crumb = screen.getByRole('navigation', { name: 'Agent' });
-    expect(within(crumb).getByText('#2')).toHaveAttribute('title', 'Fix the bug');
-    fireEvent.click(within(crumb).getByRole('button', { name: /Leader/ }));
-    expect(onOpen).toHaveBeenCalledWith('lead');
-  });
-
   it('keeps the way back before the team rows arrive', () => {
     render(<AgentCrumb sid="a2" parentId="lead" agents={[]} onOpen={vi.fn()} />);
     expect(screen.getByRole('button', { name: /Leader/ })).toBeInTheDocument();

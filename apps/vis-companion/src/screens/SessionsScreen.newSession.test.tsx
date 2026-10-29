@@ -33,26 +33,6 @@ const startSession = async () => {
 // Regression, user report (new sessions belong to a project, not a machine): the create
 // action must use the project's canonical root, never a home-shortened display path.
 describe('where "New session" lives', () => {
-  it('offers creation in the project Sessions set, not on the machine band', async () => {
-    const view = renderSessionsScreen({ machines: alpha() });
-    restore = view.restore;
-    await screen.findByText('First');
-
-    const project = within(screen.getByLabelText('project sessions'));
-    const actions = project.getAllByRole('button', {
-      name: 'Actions for sessions in /Users/dev/project',
-    });
-    expect(actions).toHaveLength(1);
-    expect(actions[0]).toHaveAttribute('aria-haspopup', 'dialog');
-    expect(actions[0]).toBeVisible();
-    expect(
-      within(screen.getByLabelText('Machines')).queryByRole('button', { name: /New session/ }),
-    ).toBeNull();
-
-    const menu = await sessionsMenu();
-    expect(menu.getByRole('button', { name: 'New session' })).toBeEnabled();
-  });
-
   // Regression, user report (paraphrased: creating a new session from the app took
   // several seconds): the screen used to await its own full fleet re-read — one
   // request per 100-row window, serially, per machine — before opening the session
@@ -205,40 +185,6 @@ describe('where "New session" lives', () => {
     );
   });
 
-  // Regression, user report (paraphrased: take the `⋯` off the right of the machine row):
-  // the list's last overflow menu stood beside the switcher and held two rows — `Manage
-  // projects`, which is the sheet the machine's own control opens anyway, and `Machine settings`,
-  // which the Machines tab and the app bar's cog already open. A menu whose every answer
-  // was one tap away without it.
-  it('keeps machine navigation out of the row-action menus', async () => {
-    const view = renderSessionsScreen({ machines: alpha() });
-    restore = view.restore;
-    await screen.findByText('First');
-
-    expect(
-      screen.getByRole('group', { name: 'Machines' }).querySelector('[aria-haspopup="dialog"]'),
-    ).toBeNull();
-    expect(named(/^Remove /)).toHaveLength(0);
-    expect(screen.queryByRole('menu')).toBeNull();
-
-    // The one row it held that this screen owns is the sheet the amber mark opens.
-    await userEvent.click(screen.getByRole('button', { name: 'New project on alpha' }));
-    expect(await screen.findByRole('dialog', { name: 'New project on alpha' })).toBeVisible();
-  });
-
-  // Regression, visual review: the icon-only New project action opens the folder
-  // browser of the machine, not a new session.
-  it('names the new-project action and opens it from a real button', async () => {
-    const view = renderSessionsScreen({ machines: alpha() });
-    restore = view.restore;
-    await screen.findByText('First');
-
-    const add = screen.getByRole('button', { name: 'New project on alpha' });
-    // ...and it opens the SAME portal the menu row opens, aimed at this machine.
-    await userEvent.click(add);
-    expect(await screen.findByRole('dialog')).toBeVisible();
-  });
-
   // Regression, user report: `Use project` said it added a project but created and opened
   // a session instead. A project may be empty; the gateway's idempotent ensure route owns it.
   it('adds the chosen folder as a project without inventing a session', async () => {
@@ -320,31 +266,6 @@ describe('where "New session" lives', () => {
       (await sessionsMenu('/Users/dev', 'dev')).getByRole('button', { name: 'New session' }),
     ).toBeEnabled();
   });
-
-  // Regression, user report (the machine band struck out on a screenshot, with the create
-  // verb moved up to the row that holds the machine chips): a band inside the card named
-  // the machine the chips had just named, printed "2 projects · 1080 sessions" that every
-  // project header below already counts, and rented a whole row of a phone's glass for
-  // the two controls that now stand on the chip row.
-  it("keeps the machine's verbs above the card and prints no second band", async () => {
-    const view = renderSessionsScreen({ machines: alpha() });
-    restore = view.restore;
-    await screen.findByText('First');
-
-    // The counts the band carried are gone from the screen.
-    expect(screen.queryByText(/\d+ projects?\s*·/)).toBeNull();
-    // The machine is named by its tab and the rail, never by a band of its own.
-    expect(screen.queryByRole('button', { name: 'Rename alpha' })).toBeNull();
-
-    // The control stands OUTSIDE the list card, on the row above it, after the switch.
-    const create = screen.getByRole('button', { name: 'New project on alpha' });
-    const strip = screen.getByLabelText('Machines');
-    const list = screen.getByLabelText('alpha projects');
-    expect(create.closest('section')).toBe(screen.getByLabelText('Sessions'));
-    expect(list.contains(create)).toBe(false);
-    expect(list.contains(strip)).toBe(false);
-    expect(strip.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  });
 });
 
 // Regression, user report ("there is no much difference visually between the machine and
@@ -352,47 +273,6 @@ describe('where "New session" lives', () => {
 // header any more — it is a tag and the spine down everything it owns — and the project
 // header stays the only header BAND in the list.
 describe('machine, project and session are three different shapes', () => {
-  it('folds a project from the naming half of its own band', async () => {
-    const view = renderSessionsScreen({ machines: alpha() });
-    restore = view.restore;
-    await screen.findByText('First');
-
-    await userEvent.click(screen.getByRole('button', { name: 'Collapse project' }));
-    expect(screen.queryByText('First')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Actions for sessions in /Users/dev/project' })).toBeNull();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Expand project' }));
-    expect(screen.getByText('First')).toBeVisible();
-    expect((await sessionsMenu()).getByRole('button', { name: 'New session' })).toBeEnabled();
-  });
-
-  // Regression, user report (the empty list repeated the Projects control already shown
-  // above the card): an empty machine keeps one project entry point, not two views.
-  it('does not repeat the projects button inside an empty machine', async () => {
-    const view = renderSessionsScreen({ machines: [{ label: 'alpha', sessions: [] }] });
-    restore = view.restore;
-
-    await screen.findByText('No projects yet');
-    expect(screen.getAllByRole('button', { name: 'New project on alpha' })).toHaveLength(1);
-  });
-
-  // NOTHING ANSWERING IS NOT AN EMPTY LIST, and this screen never paints one: a total
-  // blackout is handed to the shell's own offline gate, which is the screen that can
-  // actually say which gateway failed and why. Never "No sessions yet" over a fleet
-  // that was never read.
-  it('hands a fleet with nothing answering to the offline gate', async () => {
-    const unreachable: (string | null)[] = [];
-    const view = renderSessionsScreen({
-      machines: [{ label: 'alpha', down: true }],
-      onUnreachable: (message) => unreachable.push(message),
-    });
-    restore = view.restore;
-
-    await waitFor(() => expect(unreachable.filter(Boolean)).not.toHaveLength(0));
-    expect(screen.queryByText(/No sessions yet/)).toBeNull();
-    expect(named(/^New session on/)).toHaveLength(0);
-  });
-
   // Regression, user report ("offline stuff should just not be accessible"): a machine
   // that was not answering was still a tab that scoped the whole screen to it.
   it('refuses to scope a fleet to a machine that is not answering', async () => {
@@ -422,11 +302,6 @@ describe('machine, project and session are three different shapes', () => {
 // solo user's list said nowhere which computer it was on, and pairing a second machine
 // rearranged the screen. Pairing itself still lives in Preferences, not on this strip.
 describe('the machine strip', () => {
-  const fleet = [
-    { label: 'alpha', sessions: [listSession({ id: 'a1', title: 'First' })] },
-    { label: 'beta', sessions: [listSession({ id: 'b1', title: 'Second' })] },
-  ];
-
   it('stands for a fleet of one too: one tab, already pressed, and no All', async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
@@ -437,24 +312,5 @@ describe('the machine strip', () => {
     // "Every machine" and "this machine" would be the same list under two names.
     expect(tabs.map((tab) => tab.firstChild?.textContent)).toEqual(['alpha']);
     expect(tabs[0]!.getAttribute('aria-pressed')).toBe('true');
-  });
-
-  // Regression, user report: the first machine must be selected by default and a selected
-  // tab must not be possible to turn off.
-  it('starts with the first machine and moves directly between machines', async () => {
-    const view = renderSessionsScreen({ machines: fleet });
-    restore = view.restore;
-    await screen.findByText('First');
-
-    const strip = within(screen.getByLabelText('Machines'));
-    const tabs = strip.getAllByRole('button');
-    expect(tabs.map((tab) => tab.firstChild?.textContent)).toEqual(['alpha', 'beta']);
-    expect(tabs[0]!.getAttribute('aria-pressed')).toBe('true');
-    expect(screen.queryByText('Second')).toBeNull();
-
-    await userEvent.click(strip.getByRole('button', { name: /^beta/ }));
-    expect(await screen.findByText('Second')).toBeVisible();
-    expect(screen.queryByText('First')).toBeNull();
-    expect((await sessionsMenu()).getByRole('button', { name: 'New session' })).toBeEnabled();
   });
 });

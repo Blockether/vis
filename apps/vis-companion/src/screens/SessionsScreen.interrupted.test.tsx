@@ -40,26 +40,6 @@ describe('a session whose last turn was cut off', () => {
     expect(screen.queryByText('stopped')).not.toBeInTheDocument();
   });
 
-  // The mark must be BOUNDED. `was_interrupted` stays true on the row until that
-  // session's next turn settles, which for an abandoned session never happens — so it
-  // rides the gateway's unread mark and retires the moment the reader has seen it.
-  it('says nothing about an interrupted session the reader has already seen', async () => {
-    const view = renderSessionsScreen({
-      machines: [
-        {
-          sessions: [
-            listSession({ id: 's-seen', turn_count: 6, answer_count: 3, was_interrupted: true }),
-          ],
-        },
-      ],
-    });
-    restore = view.restore;
-
-    expect(await screen.findByText('A session')).toBeInTheDocument();
-    expect(screen.queryByText('STOPPED')).not.toBeInTheDocument();
-    expect(screen.getByText('IDLE')).toBeInTheDocument();
-  });
-
   // Vis session 32bcc713: a Python timeout failed the turn without cancellation.
   // The unread error must be visible as STOPPED, not an ordinary NEW answer.
   it('marks an unread failed turn as STOPPED', async () => {

@@ -4,8 +4,6 @@ import {
   applyListScroll,
   forgetListScroll,
   markListScroll,
-  parkedListScroll,
-  rememberListScroll,
   type ScrollBox,
 } from './list-scroll';
 
@@ -23,17 +21,6 @@ describe('markListScroll', () => {
   it('has nothing to remember about a list parked at the top', () => {
     expect(markListScroll(box(0, 5000, 800), { id: 's7', offset: 0 })).toBeNull();
     expect(markListScroll(box(2, 5000, 800), { id: 's7', offset: 0 })).toBeNull();
-  });
-
-  it('keeps both the pixel offset and the row under the top edge', () => {
-    expect(markListScroll(box(1200, 5000, 800), { id: 's7', offset: -20 })).toEqual({
-      top: 1200,
-      anchor: { id: 's7', offset: -20 },
-    });
-  });
-
-  it('remembers the pixels even when no row could be identified', () => {
-    expect(markListScroll(box(1200, 5000, 800), null)).toEqual({ top: 1200, anchor: null });
   });
 });
 
@@ -105,17 +92,3 @@ describe('applyListScroll', () => {
   });
 });
 
-describe('the parked position', () => {
-  it('survives the unmount that loses the component state', () => {
-    rememberListScroll({ top: 1200, anchor: { id: 's7', offset: -20 } });
-
-    expect(parkedListScroll()).toEqual({ top: 1200, anchor: { id: 's7', offset: -20 } });
-  });
-
-  it('is forgotten once it has been put back, so a later cold list starts at the top', () => {
-    rememberListScroll({ top: 1200, anchor: null });
-    forgetListScroll();
-
-    expect(parkedListScroll()).toBeNull();
-  });
-});

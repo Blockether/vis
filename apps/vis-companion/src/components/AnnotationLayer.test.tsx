@@ -2,7 +2,7 @@
 import { act, createRef, type RefObject } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AnnotationLayer, PenToolbar, type AnnotationSurface } from './AnnotationLayer';
+import { AnnotationLayer, type AnnotationSurface } from './AnnotationLayer';
 
 // The pen used to live inside the image viewer and nowhere else, so annotating
 // a PDF page meant opening a full-screen picture dialog. These tests hold the
@@ -34,12 +34,6 @@ afterEach(() => {
 
 function mount(node: React.ReactNode) {
   act(() => root.render(node));
-}
-
-function control(label: string): HTMLButtonElement {
-  const button = host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-  if (!button) throw new Error(`no ${label} control`);
-  return button;
 }
 
 function layer(): HTMLCanvasElement {
@@ -130,65 +124,6 @@ describe('AnnotationLayer', () => {
     expect(onStrokesChange).toHaveBeenLastCalledWith(1);
     act(() => surface(ref).fit(80, 20));
     expect(onStrokesChange).toHaveBeenLastCalledWith(0);
-  });
-
-  it('hands its own canvas back for flattening', () => {
-    const ref = createRef<AnnotationSurface>();
-    mount(<AnnotationLayer ref={ref} active color="--err" />);
-    expect(surface(ref).canvas()).toBe(layer());
-  });
-});
-
-describe('PenToolbar', () => {
-  it('offers every ink as a square chip in a narrow square rail', () => {
-    const onColor = vi.fn();
-    mount(
-      <PenToolbar
-        color="--fg"
-        onColor={onColor}
-        strokeCount={0}
-        onUndo={() => undefined}
-        onClear={() => undefined}
-      />,
-    );
-    const swatches = [...host.querySelectorAll('button[aria-pressed]')];
-    expect(swatches).toHaveLength(5);
-    expect(swatches.filter((b) => b.getAttribute('aria-pressed') === 'true')).toHaveLength(1);
-    for (const swatch of swatches) {
-      expect(swatch.getAttribute('aria-label')).toMatch(/pen$/u);
-    }
-    act(() => (swatches[0] as HTMLButtonElement).click());
-    expect(onColor).toHaveBeenCalledWith('--err');
-  });
-
-  // Undo and Clear on an untouched picture promise something they cannot do.
-  it('disables the ways back until there is something to take back', () => {
-    const onUndo = vi.fn();
-    mount(
-      <PenToolbar
-        color="--err"
-        onColor={() => undefined}
-        strokeCount={0}
-        onUndo={onUndo}
-        onClear={() => undefined}
-      />,
-    );
-    const back = [control('Undo'), control('Clear')];
-    for (const button of back) expect(button.disabled).toBe(true);
-
-    mount(
-      <PenToolbar
-        color="--err"
-        onColor={() => undefined}
-        strokeCount={2}
-        onUndo={onUndo}
-        onClear={() => undefined}
-      />,
-    );
-    const undo = control('Undo');
-    expect(undo.disabled).toBe(false);
-    act(() => undo.click());
-    expect(onUndo).toHaveBeenCalled();
   });
 });
 

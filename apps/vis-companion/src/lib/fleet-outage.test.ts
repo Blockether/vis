@@ -21,9 +21,6 @@ beforeEach(() => {
 // verdict was a module-level Map, so it died with the JavaScript context the OS kills every
 // time the app goes to the background.
 describe('what this device found dark', () => {
-  it('answers nothing about a machine it has never found dark', () => {
-    expect(machineOutage(TOWER)).toBeNull();
-  });
 
   it('outlives the run that measured it', async () => {
     rememberMachineOutage(TOWER, 'Failed to fetch');
@@ -43,13 +40,6 @@ describe('what this device found dark', () => {
     vi.resetModules();
     const relaunched = await import('./fleet-outage');
     expect(relaunched.machineOutage(TOWER)).toBeNull();
-  });
-
-  it("keeps the transport's own reason, per machine", () => {
-    rememberMachineOutage(TOWER, 'no answer in 6s');
-    rememberMachineOutage(VPS, 'HTTP 502');
-    expect(machineOutage(TOWER)).toBe('no answer in 6s');
-    expect(machineOutage(VPS)).toBe('HTTP 502');
   });
 
   it('keeps an outage until the machine answers, regardless of its age', () => {

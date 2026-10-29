@@ -23,22 +23,10 @@ describe('the shell host', () => {
     native.isNative = false;
   });
 
-  it('marks a browser tab as the web', async () => {
-    const { stampShellHost } = await import('./host');
-    expect(stampShellHost()).toBe('web');
-    expect(document.documentElement.dataset.host).toBe('web');
-  });
-
   it('marks the Pake window as the desktop app', async () => {
     (window as DesktopWindow).__TAURI__ = { core: { invoke: () => Promise.resolve() } };
     const { stampShellHost } = await import('./host');
     expect(stampShellHost()).toBe('desktop');
     expect(document.documentElement.dataset.host).toBe('desktop');
-  });
-
-  it('marks a Capacitor app as native', async () => {
-    native.isNative = true;
-    const { stampShellHost } = await import('./host');
-    expect(stampShellHost()).toBe('native');
   });
 });

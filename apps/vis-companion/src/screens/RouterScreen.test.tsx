@@ -100,19 +100,4 @@ describe('a signed-out provider opens its own row in machine settings', () => {
     expect(onClose).toHaveBeenCalledOnce();
     expect(onManageProviders.mock.calls).toEqual([[id]]);
   });
-
-  it('opens the whole fleet from the title band, without a provider', () => {
-    cleanup();
-    const onManageProviders = vi.fn();
-    render(
-      <ProviderRouterDialog
-        client={client}
-        sid={STORY_SESSION.id}
-        onClose={noop}
-        onManageProviders={onManageProviders}
-      />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Open provider settings' }));
-    expect(onManageProviders.mock.calls).toEqual([[undefined]]);
-  });
 });

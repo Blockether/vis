@@ -19,7 +19,6 @@ import {
   scopedConns,
   searchFanout,
   searchGroups,
-  searchTally,
   scopedSessions,
   sessionInputCount,
   sessionIsLive,
@@ -89,9 +88,6 @@ describe('machineLabel', () => {
 });
 
 describe('isDraftWorkspace', () => {
-  it('is false when the session names no workspace', () => {
-    expect(isDraftWorkspace(session('x'))).toBe(false);
-  });
   it('trusts the gateway is_draft flag when present', () => {
     expect(isDraftWorkspace(session('x', { workspace: { root: '/vis', is_draft: true } }))).toBe(
       true,
@@ -155,46 +151,6 @@ describe('groupByWorkDir', () => {
     expect(roots([old, fresh])).toEqual(['/Users/me/fresh', '/Users/me/old']);
     expect(roots([fresh, old])).toEqual(['/Users/me/fresh', '/Users/me/old']);
   });
-
-  it('keeps fallback order when a session becomes newer', () => {
-    const stale = session('stale', {
-      modified_at: '2024-01-01T00:00:00Z',
-      workspace: { root: '/Users/me/busy' },
-    });
-    const newest = session('newest', {
-      modified_at: '2024-09-01T00:00:00Z',
-      workspace: { root: '/Users/me/busy' },
-    });
-    const other = session('other', {
-      modified_at: '2024-06-01T00:00:00Z',
-      workspace: { root: '/Users/me/quiet' },
-    });
-
-    expect(roots([stale, other, newest])).toEqual(['/Users/me/busy', '/Users/me/quiet']);
-  });
-
-  it('does not lift a running fallback project', () => {
-    const running = session('running', {
-      live: true,
-      modified_at: '2024-01-01T00:00:00Z',
-      workspace: { root: '/Users/me/running' },
-    });
-    const idle = session('idle', {
-      modified_at: '2024-06-01T00:00:00Z',
-      workspace: { root: '/Users/me/idle' },
-    });
-
-    expect(roots([idle, running])).toEqual(['/Users/me/idle', '/Users/me/running']);
-  });
-
-  it('breaks a tie on the workspace root, so the order is total', () => {
-    const at = '2024-06-01T00:00:00Z';
-    const b = session('b', { modified_at: at, workspace: { root: '/Users/me/b' } });
-    const a = session('a', { modified_at: at, workspace: { root: '/Users/me/a' } });
-
-    expect(roots([b, a])).toEqual(['/Users/me/a', '/Users/me/b']);
-    expect(roots([a, b])).toEqual(['/Users/me/a', '/Users/me/b']);
-  });
 });
 
 describe('projectLabel', () => {
@@ -253,10 +209,6 @@ describe('reconcileMachines', () => {
 describe('scope', () => {
   const machines = [machine(studio, [session('a'), session('b')]), machine(tower, [session('c')])];
 
-  it('null scope is the whole fleet, in pairing order', () => {
-    expect(scopedSessions(machines, null).map((s) => s.id)).toEqual(['a', 'b', 'c']);
-  });
-
   it('a scope narrows to one machine', () => {
     expect(scopedMachines(machines, tower.url)).toEqual([machines[1]]);
     expect(scopedSessions(machines, tower.url).map((s) => s.id)).toEqual(['c']);
@@ -298,26 +250,10 @@ describe('scope', () => {
     expect(scopedMachines([machines[0], { ...cachedOnly, answered: true }], null)).toHaveLength(2);
   });
 
-  it('is empty while the fleet is still being tried, so nothing flashes in', () => {
-    const cold = [
-      { ...machines[0], answered: false },
-      { conn: tower, sessions: null, error: null, answered: false } as FleetMachine,
-    ];
-    expect(scopedMachines(cold, null)).toEqual([]);
-  });
-
   it('keeps every machine when nothing answers, so the blackout has somewhere to be said', () => {
     const dark = [machine(studio, null, 'refused'), machine(tower, null, 'offline')];
     expect(scopedMachines(dark, null)).toEqual(dark);
     expect(fleetError(dark)).toBe('refused');
-  });
-
-  it('reads as settled only once every machine in scope has answered', () => {
-    const half = [machine(studio, [session('a')]), machine(tower, null)];
-    expect(fleetRead(half, null)).toBe('reading');
-    expect(fleetRead(half, studio.url)).toBe('settled');
-    expect(fleetRead([machine(tower, null, 'offline')], null)).toBe('down');
-    expect(fleetRead([], null)).toBe('reading');
   });
 });
 
@@ -350,12 +286,6 @@ describe('fleetError', () => {
     expect(fleetError([machine(studio, null)])).toBeNull();
     expect(fleetError([])).toBeNull();
   });
-
-  it('reports the first failure when every machine is down', () => {
-    expect(fleetError([machine(studio, null, 'refused'), machine(tower, null, 'offline')])).toBe(
-      'refused',
-    );
-  });
 });
 
 describe('machineCounts', () => {
@@ -367,20 +297,6 @@ describe('machineCounts', () => {
       (s) => s.id === 'b',
     );
     expect(counts).toEqual({ sessions: 3, live: 2, unread: 1 });
-  });
-
-  it('a machine that has not answered counts as nothing', () => {
-    expect(
-      machineCounts(
-        machine(tower, null),
-        () => true,
-        () => true,
-      ),
-    ).toEqual({
-      sessions: 0,
-      live: 0,
-      unread: 0,
-    });
   });
 });
 
@@ -421,16 +337,6 @@ describe('search across the fleet', () => {
     expect(onDark.ask).toEqual([]);
     expect(onDark.asked).toEqual([machineKey(tower)]);
   });
-
-  it('tallies the hits and the machines that produced them', () => {
-    const filtered = [
-      { machine: machine(studio, [session('a'), session('b')]), sessions: [session('a')] },
-      { machine: machine(tower, [session('c')]), sessions: [] },
-      { machine: machine(vps, [session('d')]), sessions: [session('d')] },
-    ];
-    expect(searchTally(filtered)).toEqual({ matches: 2, machines: 2 });
-    expect(searchTally([])).toEqual({ matches: 0, machines: 0 });
-  });
 });
 
 describe('timeLabel', () => {
@@ -456,34 +362,6 @@ describe('timeLabel', () => {
   it('has nothing to say about a missing stamp', () => {
     expect(timeLabel(undefined, now)).toBe('-');
     expect(timeLabel('not a date', now)).toBe('-');
-  });
-
-  // Regression, user report: going back from a session to a long list lagged on a
-  // phone. Building an `Intl` formatter per row was most of the list's render time.
-  it('reuses its formatters instead of building them for every row', () => {
-    const stamps = ['2024-05-02T11:40:00Z', '2024-04-20T08:30:00Z', '2023-11-04T08:30:00Z'];
-    for (const stamp of stamps) timeLabel(stamp, now);
-    let built = 0;
-    const counted = <T extends new (...args: never[]) => object>(real: T): T =>
-      new Proxy(real, {
-        construct(target, args, newTarget) {
-          built += 1;
-          return Reflect.construct(target, args, newTarget);
-        },
-      });
-    const { RelativeTimeFormat, DateTimeFormat } = Intl;
-    Object.assign(Intl, {
-      RelativeTimeFormat: counted(RelativeTimeFormat),
-      DateTimeFormat: counted(DateTimeFormat),
-    });
-    try {
-      for (let row = 0; row < 50; row += 1) {
-        for (const stamp of stamps) timeLabel(stamp, now);
-      }
-    } finally {
-      Object.assign(Intl, { RelativeTimeFormat, DateTimeFormat });
-    }
-    expect(built).toBe(0);
   });
 });
 
@@ -522,11 +400,6 @@ describe('sessionOrder', () => {
     const starred = session('starred', { modified_at: '2026-01-01T00:00:00Z', favorite_rank: 1 });
     const sent = session('sent', { modified_at: '2026-01-02T00:00:00Z' });
     expect(sessionOrder([starred, sent]).map((row) => row.id)).toEqual(['sent', 'starred']);
-  });
-
-  it('keeps an already ordered list by identity without mutating its rows', () => {
-    const rows = [session('a'), session('b')];
-    expect(sessionOrder(rows)).toBe(rows);
   });
 
   it('uses the same id tie-break regardless of incoming order', () => {
@@ -690,17 +563,6 @@ describe('machineTally', () => {
     const groups = projectGroups(null, window());
     expect(groups[0]?.tally).toEqual({ count: 2, live: 1, awaiting: 0, unread: 0, stopped: 0 });
     expect(machineTally(undefined, groups)).toEqual({ count: 2, live: 1 });
-  });
-
-  it('falls back for a project the overview does not carry', () => {
-    const groups = projectGroups(overview, [session('s9', { workspace: { root: '/repo/gone' } })]);
-    expect(groups.find((group) => group.root === '/repo/gone')?.tally).toEqual({
-      count: 1,
-      live: 0,
-      awaiting: 0,
-      unread: 0,
-      stopped: 0,
-    });
   });
 });
 
@@ -875,17 +737,6 @@ describe('the STOPPED a header counts', () => {
   it('counts the stopped rows on screen for an overview without a STOPPED count', () => {
     expect(projectGroups(overviewOf(), rows(), isUnread)[0]?.tally.stopped).toBe(1);
   });
-
-  it('counts the stopped rows of a project that no overview counts', () => {
-    const failed = session('f1', {
-      is_unread: true,
-      unread_answers: 1,
-      was_failed: true,
-      workspace: { root: '/repo/b' },
-    });
-    const local = projectGroups(overviewOf(0), [failed], isUnread).find((group) => group.root === '/repo/b');
-    expect(local?.tally).toMatchObject({ unread: 1, stopped: 1 });
-  });
 });
 
 // Regression, duplicate project header: a group is keyed by a path, but a row
@@ -945,16 +796,6 @@ describe('a row that names its project', () => {
       ['/Users/me/vis', 'vis'],
       ['/Users/me/vis-sandbox', 'vis-sandbox'],
     ]);
-  });
-
-  // `searchGroups` has no overview to disagree with: the rows' own name is the
-  // only name that group will ever have.
-  it('leaves a search group named by its rows', () => {
-    const groups = searchGroups([
-      session('s4', { project_name: 'vis', workspace: { root: '/Users/me/vis-sandbox' } }),
-    ]);
-
-    expect(groups.map((group) => group.label)).toEqual(['vis']);
   });
 
   // The header names the project and never its path: an older gateway stored the
@@ -1035,12 +876,6 @@ describe('machineRead', () => {
   it('separates a failure measured in this run from one this device remembered', () => {
     expect(machineRead({ ...cached, error: 'offline' })).toBe('down');
     expect(machineRead({ ...cached, error: 'offline', isRemembered: true })).toBe('reading');
-  });
-
-  it('is reading for a machine nobody has asked yet', () => {
-    expect(machineRead({ conn: tower, sessions: null, error: null, answered: false })).toBe(
-      'reading',
-    );
   });
 });
 

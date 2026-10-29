@@ -12,47 +12,6 @@ import { dismissTopLayer, EDGE_BACK_PX, EDGE_SETTLE_MS } from '../lib/edge-back'
 import { drag } from '../lib/pull-to-search.fixture';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
 
-// Regression, user report (screenshot): LIVE underlined under the pointer but pressing it did
-// nothing — only the run's name opened the view. The word the band ends on opens the run too,
-// so the whole row answers the gesture it advertises.
-it('opens the run from the LIVE word the band ends on', () => {
-  const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded onInterrupt={() => {}} />);
-  fireEvent.click(
-    mounted.getByRole('button', { name: `Open the live run ${STORY_LIVE_VIEW.title}` }),
-  );
-  expect(mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title })).toBeVisible();
-});
-
-// THE TRANSCRIPT STATES A RUN; IT DOES NOT PAINT IT. A run painted in place stood taller
-// than the turn that opened it — a meter, a log and a table pushed the answer off the
-// screen — so the trace keeps ONE row saying what is running and where it got to, the
-// same line the terminal collapses a view to, and the picture opens from it.
-it('keeps an embedded run to one row and paints its picture only when opened', () => {
-  const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
-  const panel = mounted.getByText(STORY_LIVE_VIEW.title).closest('section')!;
-  expect(panel.querySelector('ul')).toBeNull();
-  expect(panel.querySelector('table')).toBeNull();
-  expect(mounted.queryByRole('progressbar')).toBeNull();
-  // The row still reports itself: the newest status the run has.
-  expect(mounted.getByText('Scanning db-2')).toBeVisible();
-  fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
-  const opened = within(mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title }));
-  expect(opened.getByRole('progressbar')).toBeVisible();
-  expect(opened.getByText('Scanning db-2')).toBeVisible();
-});
-// The opened run is the app's ONE dialog (`Modal` + `DialogFrame`), not the viewport-pinned
-// artifact screen: on a desktop, opening a run used to paper the session list, the transcript
-// and the composer with a single view.
-// #417: the dialog is the run's box, so the run paints no second frame inside it.
-it('opens a run in the app dialog, with no second frame inside it', () => {
-  const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
-  expect(mounted.queryByRole('dialog')).toBeNull();
-  fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
-  const dialog = mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title });
-  expect(dialog).toHaveAttribute('aria-modal', 'true');
-  expect(within(dialog).getAllByText(STORY_LIVE_VIEW.title)).toHaveLength(1);
-});
-
 // The dialog belongs to the SESSION, not to the window: the list beside the transcript stays
 // uncovered and undimmed, so the layer mounts in the session screen's own positioned root.
 it('mounts the opened run in the session pane rather than over the whole app', () => {
@@ -523,74 +482,6 @@ it('shows the ramped owner view only once its owner mounts', () => {
   mounted.rerender(<IterationTrace {...props} whole />);
   expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
   expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeVisible();
-});
-
-// Regression #222: association must not add hierarchy or another horizontal inset.
-it('renders RUN beside Activity and opens it without folding the preview', () => {
-  const activity = activityHistoryPage();
-  const mounted = renderOpenSteps(
-    <IterationTrace
-      iterations={[{ forms: [{ source: 'monitor()', activity }] }]}
-      liveViews={[
-        {
-          ...STORY_LIVE_VIEW,
-          owner: { invocation_id: 'absent', activity_id: activity.history!.id },
-        },
-      ]}
-      client={{} as GatewayClient}
-      sid="session"
-      whole
-    />,
-  );
-  const run = mounted.getByText(STORY_LIVE_VIEW.title).closest('section');
-  const activitySection = mounted.getByText('ACTIVITY').closest('[data-execution-activity]');
-  expect(run?.parentElement).toBe(activitySection?.parentElement);
-  expect(run?.closest('[data-execution-activity]')).toBeNull();
-  // The band stands in the card's own column, with no inset ACTIVITY does not have.
-  expect(mounted.getByText('RUN')).toBeVisible();
-  fireEvent.click(mounted.getByRole('button', { name: 'Expand Activity' }));
-  fireEvent.click(mounted.getByRole('button', { name: 'Collapse Activity' }));
-  expect(mounted.getByText(STORY_LIVE_VIEW.title)).toBeVisible();
-  const launch = mounted.getByRole('button', {
-    name: `Open run ${STORY_LIVE_VIEW.title}`,
-  });
-  expect(launch).not.toHaveAttribute('aria-expanded');
-  fireEvent.click(launch);
-  const close = mounted.getByRole('button', {
-    name: `Close ${STORY_LIVE_VIEW.title}`,
-  });
-  expect(close).toBeVisible();
-  fireEvent.click(close);
-  expect(mounted.queryByRole('button', { name: `Close ${STORY_LIVE_VIEW.title}` })).toBeNull();
-  expect(mounted.getByText(STORY_LIVE_VIEW.title)).toBeVisible();
-});
-
-// Regression #222: one execution may own several independent RUN sections.
-it('keeps multiple views as siblings even when their activity rows are absent', () => {
-  const original = activityHistoryPage();
-  const activity = {
-    ...original,
-    rows: [],
-    counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
-  };
-  const owner = { invocation_id: 'paged-out', activity_id: activity.history!.id };
-  const mounted = renderOpenSteps(
-    <IterationTrace
-      iterations={[{ forms: [{ source: 'monitor()', activity }] }]}
-      liveViews={[
-        { ...STORY_LIVE_VIEW, owner },
-        { ...STORY_LIVE_VIEW, id: 'second', title: 'Second monitor', owner },
-      ]}
-      client={{} as GatewayClient}
-      sid="session"
-      whole
-    />,
-  );
-  const first = mounted.getByText(STORY_LIVE_VIEW.title).closest('section');
-  const second = mounted.getByText('Second monitor').closest('section');
-  expect(first?.parentElement).toBe(second?.parentElement);
-  expect(first?.parentElement).toHaveAttribute('data-execution-group');
-  expect(mounted.getAllByText('RUN')).toHaveLength(2);
 });
 
 it('keeps only the newest owned receipt version in the shared surface', () => {

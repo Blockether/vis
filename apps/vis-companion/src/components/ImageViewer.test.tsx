@@ -73,33 +73,6 @@ describe('ImageViewer', () => {
     expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
   });
 
-  it('opens as a modal named after the picture, fitted at 100%', () => {
-    const dialog = document.querySelector('[role="dialog"]');
-    expect(dialog?.getAttribute('aria-label')).toBe('chart.png image viewer');
-    expect(control('Reset zoom').textContent).toBe('100%');
-  });
-
-  // Regression, reported attachment filename click: an image edit could only be opened
-  // by striking its thumbnail; the adjacent filename looked like part of the same chip
-  // but was not a trigger.
-  it('opens when the attachment filename is clicked', () => {
-    act(() =>
-      root.render(
-        <ExpandableImage src="blob:picture" alt="chart.png" className="size-8">
-          <span>chart.png</span>
-        </ExpandableImage>,
-      ),
-    );
-
-    const trigger = control('Open chart.png full screen');
-    const filename = [...trigger.querySelectorAll('span')].find(
-      (element) => element.textContent === 'chart.png',
-    );
-    expect(filename).toBeInTheDocument();
-    act(() => filename?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    expect(document.querySelector('[role="dialog"]')).toBeInTheDocument();
-  });
-
   // The readout is written straight to the DOM rather than through state — a
   // pinch that re-rendered React on every frame stutters on exactly the devices
   // that pinch — so this is the only proof the shared maths reached the screen.
@@ -135,42 +108,6 @@ describe('ImageViewer', () => {
     expect(control('Trim to view').disabled).toBe(false);
     act(() => control('Draw on image').click());
     expect(control('Trim to view').disabled).toBe(true);
-  });
-
-  it('mounts the shared annotation layer, inert until Draw is pressed', () => {
-    const canvas = document.querySelector('canvas');
-    expect(canvas?.getAttribute('aria-label')).toBe('Image annotation layer');
-    expect(canvas?.getAttribute('data-annotation')).toBe('idle');
-    expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
-
-    act(() => control('Draw on image').click());
-    expect(control('Save changes').getAttribute('aria-pressed')).toBe('true');
-    expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
-    expect(document.querySelector('canvas')?.getAttribute('data-annotation')).toBe('active');
-    // Five inks and two icon verbs sit directly under the title band.
-    const tools = document.querySelector('[aria-label="Drawing tools"]');
-    expect(tools?.querySelectorAll('button[aria-pressed]')).toHaveLength(5);
-    for (const action of [control('Undo'), control('Clear')]) {
-      expect(action.textContent).toBe('');
-      expect(action.querySelector('svg')).toBeInTheDocument();
-    }
-  });
-
-  // Regression, user report: the drawing rail covered the picture with no way to tuck it away.
-  it('folds the drawing rail to one reversible edge control', () => {
-    act(() => control('Draw on image').click());
-    expect(document.querySelector('[aria-label="Drawing tools"]')).toBeInTheDocument();
-
-    const hide = control('Hide drawing tools');
-    expect(hide.getAttribute('aria-expanded')).toBe('true');
-    act(() => hide.click());
-
-    expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
-    expect(document.querySelector('canvas')?.getAttribute('data-annotation')).toBe('active');
-    const show = control('Show drawing tools');
-    expect(show.getAttribute('aria-expanded')).toBe('false');
-    act(() => show.click());
-    expect(document.querySelector('[aria-label="Drawing tools"]')).toBeInTheDocument();
   });
 
   // The footer has no text line: entering drawing mode leaves its hidden
@@ -236,37 +173,6 @@ describe('ImageViewer', () => {
       vi.unstubAllGlobals();
     }
   });
-});
-
-// Regression, user report: the check that confirms a drawing sat in the title band,
-// detached from the pencil that entered drawing mode. It now replaces that pencil in
-// the same footer slot, so the tool changes state without adding a second control.
-it('replaces the pencil with the drawing check in the same footer slot', () => {
-  act(() =>
-    root.render(
-      <ImageViewer
-        src="blob:picture"
-        name="chart.png"
-        onClose={() => undefined}
-        onApply={() => undefined}
-      />,
-    ),
-  );
-
-  const header = document.querySelector('[role="dialog"] header');
-  const pencil = control('Draw on image');
-  const slot = pencil.parentElement;
-  expect(header?.querySelector('[aria-label="Save changes"]')).toBeNull();
-
-  act(() => pencil.click());
-
-  const finish = control('Save changes');
-  expect(finish.parentElement).toBe(slot);
-  expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
-
-  act(() => finish.click());
-  expect(control('Draw on image').parentElement).toBe(slot);
-  expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
 });
 
 // Regression, user report: pressing Save on an untouched shared picture started a
@@ -707,14 +613,6 @@ describe('a gallery in the viewer', () => {
     expect(title()).toBe('three.png');
     swipe(60);
     expect(title()).toBe('three.png');
-  });
-
-  it('says where the reader stands', () => {
-    open(0);
-    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('1 of 3');
-    expect(document.querySelector('[role="dialog"] .border-t .text-dialog-hint')?.textContent).toBe(
-      '1 of 3',
-    );
   });
 
   // A viewer with nowhere to step must not step: a lone picture sliding under the

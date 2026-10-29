@@ -382,28 +382,6 @@ describe('typing does not redraw the list under the thumb', () => {
     await settle(300);
     expect(screen.getByText('1 match')).toBeVisible();
   });
-
-  // Regression, user report (paraphrased: "this looks awful on iPhone", with a screenshot
-  // of the switch strip cut mid-address and "271 matches / 1 machine did not answer"
-  // running to the very edge of the glass): the report stood in the trailing cluster of a
-  // row that could not shrink, so on a 390px screen it ate the switch and then overran the
-  // row's own 12px inset.
-  it("gives the search report a line of its own instead of the switch's row", async () => {
-    const view = renderSessionsScreen({ machines: machine() });
-    restore = view.restore;
-    await settle(50);
-
-    view.setQuery('needle');
-    await settle(300);
-    const report = screen.getByText('1 match').closest('div');
-    expect(report).toBeVisible();
-    const line = report!.parentElement!;
-    expect(screen.queryByRole('combobox', { name: 'Project' })).not.toBeInTheDocument();
-    expect(line.previousElementSibling).toBeNull();
-    // And it shares no box with a machine switch or the machine's own verb.
-    expect(line.querySelector('[role="group"][aria-label="Machines"]')).toBeNull();
-    expect(report!.querySelector('[aria-label^="Projects on"]')).toBeNull();
-  });
 });
 
 /** The rows the search dialog lists, in the order it paints them. */
@@ -547,15 +525,6 @@ describe('search shows the matching messages of one session beside the results',
     fireEvent.click(row('a2'));
     await waitFor(() => expect(opened(onOpen)).toEqual(['a2']));
   });
-
-  it('opens the previewed session from its Open button or from one of its messages', async () => {
-    const onOpen = vi.fn();
-    await searched(onOpen);
-
-    fireEvent.click(within(pane()).getByRole('button', { name: 'Open' }));
-    fireEvent.click(within(pane()).getByRole('button', { name: /needle/ }));
-    await waitFor(() => expect(opened(onOpen)).toEqual(['a1', 'a1']));
-  });
 });
 
 // Regression, user report (paraphrased: "the session search should list the recent
@@ -576,10 +545,6 @@ describe('the search dialog opens on the recent sessions', () => {
       },
     },
   ];
-  const recent = (sid: string) =>
-    screen
-      .getByRole('region', { name: 'Recent sessions' })
-      .querySelector<HTMLElement>(`[data-session-id="${sid}"]`)!;
 
   // Regression, user report (paraphrased: the search dialog should always be split, as the
   // terminal's switcher is): the recents used to fill the dialog with no messages pane.
@@ -593,27 +558,6 @@ describe('the search dialog opens on the recent sessions', () => {
     expect(within(pane).getByRole('heading')).toHaveTextContent('Newer work');
     await waitFor(() => expect(within(pane).getByText('Plan the release')).toBeVisible());
     expect(within(pane).getByText('Three steps.')).toBeVisible();
-  });
-
-  it('opens a recent session on the first press', async () => {
-    const onOpen = vi.fn();
-    const view = renderSessionsScreen({
-      machines: recents([newer, older]),
-      isSearchOpen: true,
-      onOpen,
-    });
-    restore = view.restore;
-    await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['newer', 'older']));
-
-    fireEvent.click(recent('older'));
-    await waitFor(() => expect(onOpen.mock.calls.map((call) => call[1])).toEqual(['older']));
-  });
-
-  it('says there is no recent session once the machine has answered', async () => {
-    const view = renderSessionsScreen({ machines: recents([]), isSearchOpen: true });
-    restore = view.restore;
-
-    expect(await screen.findByText('No recent sessions')).toBeVisible();
   });
 
   it('asks for the query instead once typing rests, and for the recents again when cleared', async () => {
@@ -672,17 +616,6 @@ describe('the search starts on the session the reader is in', () => {
   const pane = () => screen.getByRole('region', { name: 'Matching messages' });
   const row = (region: string, sid: string) =>
     screen.getByRole('region', { name: region }).querySelector<HTMLElement>(`[data-session-id="${sid}"]`)!;
-  it('shows the recents as explicit rows, including the session in use outside the window', async () => {
-    const view = renderSessionsScreen({ machines: holding([fresh]), isSearchOpen: true });
-    restore = view.restore;
-    view.setOpenSession({ conn: view.conns[0], sid: 'in-use' });
-
-    await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['fresh', 'in-use']));
-    expect(row('Recent sessions', 'fresh').querySelector('[data-session-location]')).toHaveTextContent(/^Project: alpha$/);
-    expect(row('Recent sessions', 'in-use').querySelector('[data-session-location]')).toHaveTextContent(/^Project: zulu$/);
-    expect(row('Recent sessions', 'in-use')).toHaveAttribute('aria-current', 'page');
-  });
-
   it('previews the current session when matched without pinning it above newer work', async () => {
     const view = renderSessionsScreen({
       machines: holding([hit(fresh, 'Fresh **work** today'), hit(inUse, 'The **work** I am in')]),

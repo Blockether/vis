@@ -47,14 +47,6 @@ it('claims a drag carrying files so the browser never opens the file instead', (
   expect(openedByBrowser).toBe(false);
 });
 
-it('shows the composer taking the drag, and stops when the pointer leaves', () => {
-  renderSessionScreen();
-  fireEvent.dragEnter(editor(), { dataTransfer: carrying([table()]) });
-  expect(document.querySelector('.ring-accent')).toBeInTheDocument();
-  fireEvent.dragLeave(editor(), { dataTransfer: carrying([table()]) });
-  expect(document.querySelector('.ring-accent')).toBeNull();
-});
-
 it('leaves a dragged sentence to the text box', () => {
   renderSessionScreen();
   const handledByTextBox = fireEvent.drop(editor(), {

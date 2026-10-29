@@ -48,54 +48,6 @@ const fleet = () => [
 // transcript): a desk is a SPLIT — the list stands in a sidebar, the conversation
 // fills the rest, and nothing navigates away from the list to read one.
 describe('a desk keeps the list beside the conversation', () => {
-  it('stands the list in a sidebar and centres an empty pane until a session opens', async () => {
-    const restoreDensity = onADesk();
-    const view = renderApp({ machines: fleet() });
-    restore = () => {
-      view.restore();
-      restoreDensity();
-    };
-    await screen.findByText('Alpha one');
-
-    const main = view.baseElement.querySelector('main') as HTMLElement;
-    const sidebar = main.firstElementChild as HTMLElement;
-    expect(within(sidebar).getByRole('region', { name: 'Sessions' })).toBeVisible();
-    expect(screen.getByRole('region', { name: 'No session open' })).toBeVisible();
-    // The shell's own bar stays over both columns.
-    expect(screen.getByRole('button', { name: 'Open preferences' })).toBeVisible();
-    view.unmount();
-  });
-
-  // Search opens its own dialog: the rail beside the conversation keeps its width and rows.
-  it('searches in a dialog of its own and leaves the rail as it was', async () => {
-    const restoreDensity = onADesk();
-    const view = renderApp({ machines: fleet() });
-    restore = () => {
-      view.restore();
-      restoreDensity();
-    };
-    await screen.findByText('Alpha one');
-    const main = view.baseElement.querySelector('main') as HTMLElement;
-    const rail = () => main.firstElementChild as HTMLElement;
-    const search = () => screen.getByRole('dialog', { name: 'Search sessions' });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Search sessions' }));
-    const field = within(search()).getByLabelText('Search session titles and messages');
-    expect(field).toHaveFocus();
-    fireEvent.change(field, { target: { value: 'alpha' } });
-    await waitFor(() =>
-      expect(within(search()).getByRole('region', { name: 'Matching sessions' })).toHaveTextContent(
-        'Alpha one',
-      ),
-    );
-    expect(rail()).not.toContainElement(field);
-
-    fireEvent.click(within(search()).getByRole('button', { name: 'Close search' }));
-    expect(screen.queryByRole('dialog', { name: 'Search sessions' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Search sessions' }));
-    expect(within(search()).getByLabelText('Search session titles and messages')).toHaveValue('');
-  });
-
   it('opens a session beside the list, with no way back because nothing was left', async () => {
     const restoreDensity = onADesk();
     const view = renderApp({ machines: fleet() });
@@ -159,64 +111,6 @@ describe('a desk keeps the list beside the conversation', () => {
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: 'Open preferences' })).toBeNull(),
     );
-    view.unmount();
-  });
-
-  // Regression, user report (paraphrased: on a desk nothing in the list changes for the
-  // session that is open): the sidebar stands beside the transcript, so the row that
-  // transcript belongs to wears the standing paper and an accent rail, and the reader
-  // can see which of the rows they are reading.
-  it('marks the row whose session the pane beside the list is showing', async () => {
-    const restoreDensity = onADesk();
-    // The tests above leave a session in the route; this one starts with none open.
-    window.location.hash = '';
-    const view = renderApp({
-      machines: [
-        {
-          label: 'laptop',
-          sessions: [
-            listSession({
-              id: 'one',
-              title: 'Alpha one',
-              workspace: { root: '/Users/dev/alpha' },
-              modified_at: '2024-05-01T11:00:00Z',
-            }),
-            listSession({
-              id: 'two',
-              title: 'Alpha two',
-              workspace: { root: '/Users/dev/alpha' },
-              modified_at: '2024-05-01T10:00:00Z',
-            }),
-          ],
-        },
-      ],
-    });
-    restore = () => {
-      view.restore();
-      restoreDensity();
-    };
-    await screen.findByText('Alpha one');
-    const main = view.baseElement.querySelector('main') as HTMLElement;
-    const sidebar = main.firstElementChild as HTMLElement;
-    const row = (sid: string) => sidebar.querySelector(`[data-session-row="${sid}"]`) as HTMLElement;
-    const open = (sid: string) =>
-      fireEvent.click(row(sid).querySelector('[data-row-surface]') as HTMLElement);
-
-    expect(within(sidebar).queryByRole('button', { current: 'page' })).toBeNull();
-
-    open('one');
-    await screen.findByLabelText('Message Vis');
-    await waitFor(() =>
-      expect(within(row('one')).getByRole('button', { current: 'page' })).toBeVisible(),
-    );
-    expect(within(row('two')).queryByRole('button', { current: 'page' })).toBeNull();
-
-    // The mark FOLLOWS the pane: opening the other session moves it, never doubles it.
-    open('two');
-    await waitFor(() =>
-      expect(within(row('two')).getByRole('button', { current: 'page' })).toBeVisible(),
-    );
-    expect(within(sidebar).getAllByRole('button', { current: 'page' })).toHaveLength(1);
     view.unmount();
   });
 

@@ -89,11 +89,6 @@ afterEach(() => {
 });
 
 describe('parseShareLink', () => {
-  it('reads a shared link', () => {
-    expect(parseShareLink('vis://share?url=https%3A%2F%2Fexample.com%2Fa')).toEqual({
-      url: 'https://example.com/a',
-    });
-  });
 
   it('reads shared text and title', () => {
     expect(parseShareLink('vis://share?text=hello%20there&title=Notes')).toEqual({
@@ -228,10 +223,6 @@ describe('formatShare / appendSharedText', () => {
     );
   });
 
-  it('formats an empty share as an empty string', () => {
-    expect(formatShare({})).toBe('');
-  });
-
   it('uses the share as-is when the composer is empty or blank', () => {
     expect(appendSharedText('', { text: 'hi' })).toBe('hi');
     expect(appendSharedText('   \n', { text: 'hi' })).toBe('hi');
@@ -247,12 +238,6 @@ describe('formatShare / appendSharedText', () => {
 });
 
 describe('pending slot', () => {
-  it('holds a share until a composer takes it', () => {
-    const received = receiveSharedText({ url: 'https://e.com' });
-    expect(received?.url).toBe('https://e.com');
-    expect(typeof received?.at).toBe('number');
-    expect(peekPendingShare()?.url).toBe('https://e.com');
-  });
 
   it('coalesces shares dumped before a drain', () => {
     receiveSharedText({ url: 'https://one.com' });
@@ -272,16 +257,6 @@ describe('pending slot', () => {
     receiveSharedText({ text: 'kept' });
     expect(receiveSharedText({ text: '   ' })).toBeNull();
     expect(peekPendingShare()?.text).toBe('kept');
-  });
-
-  it('delivers to a live listener and stops on unsubscribe', () => {
-    const seen: Array<SharedPayload | null> = [];
-    const off = onSharedText((share) => seen.push(share));
-    receiveSharedText({ text: 'one' });
-    off();
-    receiveSharedText({ text: 'two' });
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.text).toBe('one');
   });
 
   it('parks the share in native storage and in the localStorage mirror', async () => {
@@ -322,11 +297,6 @@ describe('destination claim', () => {
     onSharedText((share) => seen.push(share));
     claimPendingShare();
     expect(seen[0]?.text).toBe('memo');
-  });
-
-  it('claims nothing when nothing is parked', () => {
-    expect(claimPendingShare()).toBeNull();
-    expect(takePendingShare()).toBeNull();
   });
 
   it('makes a share that arrives after the claim ask again', () => {

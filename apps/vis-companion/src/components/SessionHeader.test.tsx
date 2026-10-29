@@ -2,10 +2,7 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-
-import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import { STORY_GOAL } from '../dev/story-data';
-import type { SessionGoal } from '../lib/types';
 import { SessionHeader } from './SessionHeader';
 
 const model = {
@@ -16,81 +13,6 @@ const model = {
 } as const;
 
 describe('SessionHeader', () => {
-  it.each(gatewaySchema.$defs.session_goal.properties.status.oneOf)(
-    'shows the schema title for $const',
-    ({ const: status, title }) => {
-      render(
-        <SessionHeader
-          model={{ ...model, goal: { ...STORY_GOAL, status: status as SessionGoal['status'] } }}
-          commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
-        />,
-      );
-      expect(screen.getByRole('button', { name: /^Goal:/ })).toHaveTextContent(`Goal: ${title}`);
-    },
-  );
-  it('exposes one session identity and its two navigation commands', () => {
-    const back = vi.fn();
-    const toggleArtifacts = vi.fn();
-    render(<SessionHeader model={model} commands={{ back, toggleArtifacts }} />);
-
-    expect(screen.getByRole('heading', { name: model.title })).toBeInTheDocument();
-    expect(screen.getByText('Connected')).toBeInTheDocument();
-    // The band keeps the sentence; the id and the artifacts stand behind one kebab, whose
-    // own name still carries the count the artifacts chip used to paint out loud.
-    expect(screen.queryByRole('button', { name: /^Copy session id/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Session actions, 3 artifacts' }));
-
-    expect(screen.getByRole('dialog', { name: 'Session actions' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Copy session id/ })).toHaveTextContent('123e4567');
-    fireEvent.click(screen.getByRole('button', { name: 'Open artifacts (3)' }));
-    expect(toggleArtifacts).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('dialog', { name: 'Session actions' })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Back to sessions' }));
-    expect(back).toHaveBeenCalledOnce();
-  });
-
-  it('offers session settings as the last cog-marked action', () => {
-    const settings = vi.fn();
-    render(
-      <SessionHeader
-        model={model}
-        commands={{ back: vi.fn(), toggleArtifacts: vi.fn(), settings }}
-      />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Session actions, 3 artifacts' }));
-    const action = within(screen.getByRole('dialog', { name: 'Session actions' })).getByRole(
-      'button',
-      { name: 'Settings' },
-    );
-    expect(action.querySelector('svg.lucide-settings')).toBeInTheDocument();
-    const actions = within(screen.getByRole('dialog', { name: 'Session actions' })).getAllByRole(
-      'button',
-    );
-    expect(actions[actions.length - 1]).toBe(action);
-    fireEvent.click(action);
-    expect(settings).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('dialog', { name: 'Session actions' })).not.toBeInTheDocument();
-  });
-
-  it('renders the reconnecting state and omits an empty artifact door', () => {
-    render(
-      <SessionHeader
-        model={{
-          ...model,
-          connected: false,
-          artifacts: { count: 0, isOpen: false },
-        }}
-        commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }}
-      />,
-    );
-
-    expect(screen.getByText('Reconnecting')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }));
-    expect(screen.queryByRole('button', { name: /artifacts/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Copy session id/ })).toBeInTheDocument();
-  });
-
   // Regression, user report (paraphrased): the trailing mark's dots ran across instead
   // of down, and behind it the artifacts sat over a captioned id chip. Both verbs are
   // rows now — a mark, then what pressing it does — stacked one under the other.

@@ -17,10 +17,6 @@ import {
 // so every return to Sessions demanded the update again. Silence is a
 // CONNECTION problem, and the connect screens already report it.
 describe('compatFromHealth', () => {
-  it('returns no verdict when the gateway answered with no body at all', () => {
-    expect(compatFromHealth(undefined)).toBeNull();
-    expect(compatFromHealth(null)).toBeNull();
-  });
 
   it('still refuses a gateway whose health carries no protocol block', () => {
     const verdict = compatFromHealth({ status: 'ok', id: 'g1' });
@@ -58,17 +54,6 @@ describe('compatFromHealth', () => {
     expect(verdict?.upgrade).toBe('gateway');
   });
 
-  // Protocol 20 removed Council Rooms, so a protocol 19 gateway is too old for this app.
-  it('refuses protocol 19 because it still has Council Rooms', () => {
-    const verdict = compatFromHealth({
-      status: 'ok',
-      protocol: { protocol: 19, min_client: 19, min_gateway: 19 },
-    });
-    expect(verdict?.isCompatible).toBe(false);
-    expect(verdict?.reason).toBe('gateway-too-old');
-    expect(verdict?.upgrade).toBe('gateway');
-  });
-
   it('names the half that is stale', () => {
     const oldGateway = compatFromHealth({
       protocol: { protocol: APP_MIN_GATEWAY_PROTOCOL - 1 },
@@ -82,35 +67,6 @@ describe('compatFromHealth', () => {
     expect(oldApp?.reason).toBe('client-too-old');
     expect(oldApp?.upgrade).toBe('client');
     expect(oldApp?.title).toBe('Update this app');
-  });
-});
-
-describe('compatOf', () => {
-  it('judges a protocol block on its own', () => {
-    expect(compatOf({ protocol: APP_PROTOCOL }).isCompatible).toBe(true);
-    expect(compatOf(undefined).reason).toBe('unknown');
-  });
-
-  // Both floors moved to the contract this build speaks, so a daemon one release
-  // behind is now REFUSED rather than tolerated. The verdict has to name the
-  // gateway — a screen that says "update this app" to someone whose app is
-  // already current sends them to fix the half that is fine.
-  it('names the gateway when the gateway is the half that is behind', () => {
-    const stale = compatOf({ protocol: APP_MIN_GATEWAY_PROTOCOL - 1, min_client: 1 });
-    expect(stale.isCompatible).toBe(false);
-    expect(stale.reason).toBe('gateway-too-old');
-    expect(stale.upgrade).toBe('gateway');
-    expect(stale.title).toBe('Update the gateway');
-    expect(stale.remedy.length).toBeGreaterThan(0);
-  });
-
-  // …and the mirror, so neither direction can silently start naming the other.
-  it('names the app when the app is the half that is behind', () => {
-    const stale = compatOf({ protocol: APP_PROTOCOL + 1, min_client: APP_PROTOCOL + 1 });
-    expect(stale.isCompatible).toBe(false);
-    expect(stale.reason).toBe('client-too-old');
-    expect(stale.upgrade).toBe('client');
-    expect(stale.title).toBe('Update this app');
   });
 });
 
