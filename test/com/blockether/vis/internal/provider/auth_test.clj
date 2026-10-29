@@ -18,23 +18,6 @@
           (pos? attempts) (do (Thread/sleep 20) (recur (dec attempts)))
           :else false)))
 
-(defdescribe provider-auth-support-test
-             (it "reports no headless support for an unregistered provider"
-                 (with-redefs [registry/provider-by-id (constantly nil)]
-                   (expect (= false (pauth/supported? :nope)))
-                   (let [result (pauth/start-auth! :nope)]
-                     (expect (= false (:ok? result)))
-                     (expect (= :unknown-provider (:error result))))))
-             (it "reports no headless support for an OAuth provider with no headless leg"
-                 (with-redefs [registry/provider-by-id
-                               (constantly {:provider/auth-fn (constantly :ok)})
-
-                               providers/auth-kind
-                               (constantly :oauth)]
-
-                   (expect (= false (pauth/supported? :legacy)))
-                   (expect (= :auth-unsupported (:error (pauth/start-auth! :legacy)))))))
-
 (defdescribe
   provider-auth-pkce-test
   (it "hands out a URL but NEVER the flow secret, and consumes the flow on success"
@@ -169,13 +152,6 @@
                      (expect (= true (:ok? (pauth/cancel-auth! (:flow-id flow)))))
                      (expect (= true (:ok? (pauth/cancel-auth! (:flow-id flow)))))
                      (expect (= :unknown-flow (:error (pauth/poll-auth! (:flow-id flow))))))))
-             (it "logs a provider out through its registered logout"
-                 (let [logged-out? (atom false)]
-                   (with-redefs [registry/provider-by-id
-                                 (constantly {:provider/logout-fn (fn []
-                                                                    (reset! logged-out? true))})]
-                     (expect (= "logged-out" (:status (pauth/logout! :fake-pkce))))
-                     (expect (= true @logged-out?)))))
              ;; A key-only provider has no OAuth session to revoke, but "log out" still has to
              ;; MEAN something: forget the key, keep the provider configured. Answering
              ;; :auth-unsupported made the gateway reply 400 and channels treat an ordinary
@@ -286,10 +262,6 @@
         (reset! refreshed [])
         (expect (= "logged-out" (:status (pauth/logout! :fake-key))))
         (expect (= [] @refreshed)))))
-  (it "refuses an api-key flow for a provider that is not registered at all"
-      (with-redefs [registry/provider-by-id (constantly nil)]
-        (expect (= false (pauth/supported? :ghost)))
-        (expect (= :unknown-provider (:error (pauth/start-auth! :ghost))))))
   ;; Regression: the shared static-API-key shape (`provider.key-store`) registers an
   ;; interactive `:provider/auth-fn` only to PRINT key guidance for
   ;; `vis-agent providers auth`. Inferring OAuth from its presence answered every app

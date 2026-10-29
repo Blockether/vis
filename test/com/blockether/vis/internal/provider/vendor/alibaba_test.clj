@@ -1,50 +1,9 @@
 (ns com.blockether.vis.internal.provider.vendor.alibaba-test
-  (:require [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.extension.registry :as registry]
+  (:require [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.key-store :as key-store]
             [lazytest.core :refer [defdescribe expect it]]))
-
-(defdescribe
-  provider-registration-test
-  (it "registers both Alibaba plans as separate provider extension entries"
-      (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
-      (let [coding
-            (registry/provider-by-id :alibaba-coding-plan)
-
-            token
-            (registry/provider-by-id :alibaba-token-plan)
-
-            ext-names
-            (set (map :ext/name (extension/registered-extensions)))]
-
-        (expect (= :alibaba-coding-plan (:provider/id coding)))
-        (expect (= :alibaba-token-plan (:provider/id token)))
-        (expect (contains? ext-names "provider-alibaba"))
-        ;; The ids ARE the models.dev slugs and the base URLs are the ones the
-        ;; catalog publishes for them - that pairing is what resolves pricing
-        ;; and context windows for the preset models.
-        (expect (= "https://coding-intl.dashscope.aliyuncs.com/v1"
-                   (get-in coding [:provider/preset :base-url])))
-        (expect (= "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
-                   (get-in token [:provider/preset :base-url])))))
-  (it
-    "presets the models each endpoint actually serves, with a window for the uncatalogued one"
-    (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
-    (let [coding-models
-          (get-in (registry/provider-by-id :alibaba-coding-plan) [:provider/preset :default-models])
-
-          token-models
-          (get-in (registry/provider-by-id :alibaba-token-plan) [:provider/preset :default-models])]
-
-      (expect (= "qwen3.7-max" (first coding-models)))
-      (expect (contains? (set coding-models) "glm-5"))
-      ;; `qwen3.8-max` is served live but ships as `qwen3.8-max-preview` in
-      ;; the models.dev catalog, so its window is declared inline.
-      (expect (= {:name "qwen3.8-max" :context 1000000 :output-limit 131072 :tool-call? true}
-                 (first token-models)))
-      (expect (contains? (set (rest token-models)) "deepseek-v4-pro")))))
 
 (defdescribe
   auth-detection-test

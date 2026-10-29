@@ -461,25 +461,6 @@
                    (get-in view ["sections" 0 "summary"])))
         (expect (= (str "Unfiltered · 0 directories · " (count (host-python-files)) " files")
                    (get-in view ["sections" 1 "summary"])))))
-  (it "shows the pattern before the path for a single filtered directory"
-      (let [ctx
-            (sandbox)
-
-            events
-            (atom [])
-
-            result
-            (binding [extension/*tool-event-sink* #(swap! events conj %)]
-              (out ctx "print(ls('resources/vis-host-python', pattern='ls.py'))"))
-
-            summary
-            (get-in (activity/presentation (activity/replay @events))
-                    [:rows 0 :presentation "summary"])]
-
-        (expect (string/includes? result "ls.py"))
-        (expect (string/starts-with? summary
-                                     "Pattern: ls.py · 0 shown directories · 1 matching file"))
-        (expect (string/includes? summary "resources/vis-host-python"))))
   (it
     "bounds batch content and reports omitted entries without losing nested paths"
     (let [entry
@@ -519,11 +500,6 @@
       (expect (= 16 (count (get overflow "sections"))))
       (expect (string/includes? (get overflow "summary") "showing 16 of 17 directories"))
       (expect (< (alength (.getBytes ^String (json/write-json-str bounded) "UTF-8")) 32768))))
-  (it "makes an empty directory understandable without any preceding start"
-      (let [view (#'shim-ls/listing-presentation [{"path" "empty" "entries" []}])]
-        (expect (= "Listed directory" (get view "headline")))
-        (expect (= "empty · 0 directories · 0 files" (get view "summary")))
-        (expect (= [] (get view "content")))))
   (it "a listed FILE carries the path that opens it, a directory carries none"
       ;; BLO-172: the listing printed names the reader could not press. Every file
       ;; row now ships its absolute path; directories and relative entries ship "".

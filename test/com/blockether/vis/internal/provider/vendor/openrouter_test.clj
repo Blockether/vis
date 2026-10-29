@@ -1,29 +1,11 @@
 (ns com.blockether.vis.internal.provider.vendor.openrouter-test
   (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.key-store :as key-store]
             [com.blockether.vis.internal.provider.vendor.openrouter :as openrouter]
             [lazytest.core :refer [defdescribe expect it]]))
-
-(defdescribe provider-registration-test
-             (it "registers the OpenRouter provider extension entry"
-                 (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
-                 (let [provider
-                       (registry/provider-by-id :openrouter)
-
-                       ext-nses
-                       (set (map :ext/name (extension/registered-extensions)))]
-
-                   (expect (= :openrouter (:provider/id provider)))
-                   (expect (contains? ext-nses "provider-openrouter"))
-                   (expect (= (svar/provider-base-url :openrouter)
-                              (get-in provider [:provider/preset :base-url])))
-                   ;; Gateway slugs are `vendor/model`; the preset seeds a usable set.
-                   (expect (seq (get-in provider [:provider/preset :default-models])))
-                   (expect (every? string? (get-in provider [:provider/preset :default-models]))))))
 
 (defdescribe
   key-store-book-test

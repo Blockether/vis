@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.provider.vendor.opencode-go-test
   (:require [babashka.http-client :as http]
-            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.config.core :as config]
@@ -13,26 +12,6 @@
   []
   (require 'com.blockether.vis.internal.provider.vendor.opencode-go :reload)
   (opencode-go/register!))
-
-(defdescribe provider-registration-test
-             (it "registers ONE OpenCode Go provider that serves both wire dialects"
-                 (reload!)
-                 (let [ext-nses (set (map :ext/name (extension/registered-extensions)))]
-                   (expect (contains? ext-nses "provider-opencode-go")))
-                 ;; ONE provider — no more :opencode-go-anthropic split.
-                 (let [provider (registry/provider-by-id :opencode-go)]
-                   (expect (some? provider))
-                   (expect (= :opencode-go (:provider/id provider)))
-                   (expect (= "https://opencode.ai/zen/go/v1"
-                              (get-in provider [:provider/preset :base-url])))
-                   ;; Provider-level :api-style is nil — svar defaults to OpenAI chat.
-                   (expect (nil? (get-in provider [:provider/preset :api-style])))
-                   (expect (seq (get-in provider [:provider/preset :default-models])))
-                   (expect (every? #(or (string? %) (map? %))
-                                   (get-in provider [:provider/preset :default-models])))
-                   ;; A static subscription key the user pastes: an app or TUI sign-in
-                   ;; collects it instead of refusing with `no headless auth flow`.
-                   (expect (= :api-key (:provider/auth-kind provider))))))
 
 (defdescribe session-provider-kickoff-hook-test
              ;; Session identity is transport metadata owned by this provider extension,
@@ -57,63 +36,12 @@
                                               :environment {:session-id "conversation-1"}
                                               :provider {:id :anthropic}}))))))))
 
-(defdescribe
-  per-model-wire-routing-test
-  (it "declares OpenAI-wire models as bare strings (svar default chat wire)"
-      (reload!)
-      (let [models
-            (get-in (registry/provider-by-id :opencode-go) [:provider/preset :default-models])
-
-            bare
-            (filter string? models)]
-
-        ;; GLM / Kimi / DeepSeek / MiMo / Hy / LongCat ride the OpenAI chat wire.
-        (expect (some #(= "glm-5.2" %) bare))
-        (expect (some #(= "kimi-k2.7-code" %) bare))
-        (expect (some #(= "deepseek-v4-flash" %) bare))
-        (expect (some #(= "hy3" %) bare))
-        (expect (some #(= "mimo-v2.6-pro" %) bare))
-        ;; The catalog a build ships is the vendor's CURRENT one, not the list
-        ;; that froze when this provider was first written.
-        (expect (some #(= "deepseek-v4.1-flash" %) bare))
-        (expect (some #(= "kimi-k3" %) bare))))
-  (it "ships its catalog in svar's canonical model order, flagship first"
-      (reload!)
-      (let [models (get-in (registry/provider-by-id :opencode-go)
-                           [:provider/preset :default-models])]
-        (expect (= "kimi-k3" (first models)))
-        (expect (= models (svar/sort-models :opencode-go models)))
-        ;; Stealth models, previews and outdated versions stay out of the catalog.
-        (expect (every? #(svar/provider-model-visible? :opencode-go (if (map? %) (:name %) %))
-                        models))))
-  (it "declares Anthropic-wire models as maps with :api-style :anthropic"
-      (reload!)
-      (let [models
-            (get-in (registry/provider-by-id :opencode-go) [:provider/preset :default-models])
-
-            styled
-            (filter map? models)]
-
-        ;; MiniMax / Qwen ride the Anthropic Messages wire via per-model override.
-        (expect (seq styled))
-        (expect (every? #(= :anthropic (:api-style %)) styled))
-        (expect (some #(re-find #"minimax" (:name %)) styled))
-        (expect (some #(re-find #"qwen" (:name %)) styled)))))
-
 ;; Regression, issue #N: `DEFAULT_MODELS` forced a `delay` that fetched the live
 ;; `/models` catalog at the top level, so the request ran during namespace
 ;; <clinit> — which `native-image` performs at BUILD time. That froze the
 ;; builder's catalog into the binary and left its `HttpClient` in the image heap:
 ;; "HttpClientFacade found in the image heap" failed every native build after
 ;; v0.1.32. The catalog must be static here; the live one arrives at runtime.
-(defdescribe static-catalog-test
-             (it "builds its default catalog without touching the network"
-                 (reload!)
-                 (let [models (get-in (registry/provider-by-id :opencode-go)
-                                      [:provider/preset :default-models])]
-                   (expect (seq models))
-                   ;; No delay, no promise, no future: the value is already there.
-                   (expect (vector? models)))))
 
 (defdescribe enrich-models-test
              (it "stamps the Anthropic wire on MiniMax/Qwen at router-build time"

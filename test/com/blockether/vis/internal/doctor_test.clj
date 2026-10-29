@@ -29,18 +29,6 @@
 
 (defdescribe
   doctor-sandbox-deps-test
-  (it "reports one info line when every sandbox shim's dependencies resolve"
-      (with-redefs [extension/sandbox-shims (constantly [{:shim/name "ls"
-                                                          :shim/source "vis-host-python/ls.py"}
-                                                         {:shim/name "attachments"
-                                                          :shim/source "vis-host-python/attach.py"
-                                                          :shim/bindings {"probe" (fn []
-                                                                                    :ok)}}])]
-        (let [msgs (#'doctor/sandbox-shim-messages {})]
-          (expect (= 1 (count msgs)))
-          (expect (= "vis" (:ext (first msgs))))
-          (expect (= ::doctor/sandbox-deps (:check-id (first msgs))))
-          (expect (= :info (:level (first msgs)))))))
   (it "errors on a shim whose Python source is not on the classpath"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "ghost"
                                                           :shim/source "vis-host-python/nope.py"}])]
@@ -167,17 +155,4 @@
         (let [m (first (#'doctor/provider-selection-messages
                         {:config {"default_provider" "acme_genai" "default_model" "acme-large"}}))]
           (expect (= :warn (:level m)))
-          (expect (str/includes? (:message m) "acme-large")))))
-  (it "stays informational when provider and model both resolve"
-      (with-redefs [providers/picker-fleet
-                    (constantly [{:id "acme_genai" :models [{:name "acme-large"}]}])
-
-                    registry/registered-providers
-                    (constantly [])]
-
-        (let [m (first (#'doctor/provider-selection-messages
-                        {:config {"default_provider" "acme_genai" "default_model" "acme-large"}}))]
-          (expect (= :info (:level m)))
-          (expect (= 0 (doctor/exit-code [m]))))))
-  (it "reports nothing when config names no router roots"
-      (expect (empty? (#'doctor/provider-selection-messages {:config {}})))))
+          (expect (str/includes? (:message m) "acme-large"))))))

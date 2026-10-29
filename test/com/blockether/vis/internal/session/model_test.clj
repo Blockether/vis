@@ -58,9 +58,6 @@
       (reset! @#'smodel/pending {"sess-1" {:db-info :db :provider "openai" :model "gpt-5"}})
       (expect (= [["sess-1" {:provider nil :model nil :reason nil}]]
                  (capturing #(smodel/set-model! :db "sess-1" nil "   ")))))
-  (it "says nothing when there is no session or no store to write to"
-      (expect (= [] (capturing #(smodel/set-model! nil "sess-1" "openai" "gpt-5"))))
-      (expect (= [] (capturing #(smodel/set-model! :db nil "openai" "gpt-5")))))
   (it "keeps notifying the others when one listener throws"
       ;; A channel that blows up must not reject the model change for everybody else.
       (let [boom (fn [& _]

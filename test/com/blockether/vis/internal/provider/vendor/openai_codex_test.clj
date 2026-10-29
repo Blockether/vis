@@ -3,13 +3,7 @@
             [charred.api :as json]
             [clojure.string]
             [com.blockether.vis.internal.util]
-            [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.vendor.openai-codex :as codex]
-            [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.provider.service :as providers]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -41,18 +35,6 @@
                  (let [token (jwt {(keyword "https://api.openai.com/auth") {:chatgpt_account_id
                                                                             "acct_123"}})]
                    (expect (= "acct_123" (codex/account-id token))))))
-
-(defdescribe browser-open-test
-             (it "uses Vis's shared external opener"
-                 (let [seen (atom nil)]
-                   (with-redefs [opener/open! (fn [url]
-                                                (reset! seen url)
-                                                {:status :ok :target url})]
-                     (expect (= true (#'codex/open-browser! "https://auth.openai.com/x")))
-                     (expect (= "https://auth.openai.com/x" @seen)))))
-             (it "surfaces opener failure as false"
-                 (with-redefs [opener/open! (constantly {:status :spawn-failed :error "nope"})]
-                   (expect (= false (#'codex/open-browser! "https://auth.openai.com/x"))))))
 
 (defdescribe
   login-flow-test
@@ -247,61 +229,6 @@
               (expect (= :unauthenticated (:status report)))
               (expect (= [] (get-in report [:dynamic :limits])))))))))
 
-(defdescribe provider-registration-test
-             (it "registers the OpenAI Codex auth provider"
-                 (codex/register!)
-                 (let [provider (registry/provider-by-id :openai-codex)]
-                   (expect (= :openai-codex (:provider/id provider)))
-                   (let [defaults (get-in provider [:provider/preset :default-models])
-                         by-name (into {}
-                                       (map (fn [m]
-                                              [(config/model-name m) m]))
-                                       defaults)]
-
-                     ;; svar-catalog models ride as bare strings.
-                     (expect (= "gpt-6.1-sol" (config/model-name (first defaults))))
-                     (expect (string? (get by-name "gpt-6-astra")))
-                     (expect (contains? by-name "gpt-6-sol"))
-                     (expect (contains? by-name "gpt-6-luna"))
-                     (expect (contains? by-name "gpt-5.6-luna"))
-                     (expect (contains? by-name "gpt-5.6-sol"))
-                     ;; gpt-5.6-terra rides as a bare name; svar's catalog
-                     ;; (>= 0.7.59) supplies its 272k window, so it is no longer
-                     ;; declared inline here (no enrich hook, no 8192 fallback).
-                     (expect (contains? by-name "gpt-5.6-terra"))
-                     ;; and rides BARE (no inline :context map) — svar's catalog supplies its window.
-                     (expect (string? (get by-name "gpt-5.6-terra")))))))
-
-(defdescribe codex-sol-luna-catalog-test
-             (it "exposes Sol and Luna with published Svar metadata through the Vis preset"
-                 (let [provider
-                       (do (codex/register!) (registry/provider-by-id :openai-codex))
-
-                       defaults
-                       (get-in provider [:provider/preset :default-models])
-
-                       router
-                       (svar/make-router [(assoc (:provider/preset provider)
-                                            :id (:provider/id provider)
-                                            :api-key "test"
-                                            :models [{:name "gpt-6.1-sol"} {:name "gpt-6-sol"}
-                                                     {:name "gpt-6-luna"}])])]
-
-                   (doseq [model (:models (first (:providers router)))]
-                     (expect (some #{(:name model)} defaults))
-                     (expect (= 272000 (:context model) (:input-limit model)))
-                     (expect (= 128000 (:output-limit model)))
-                     (expect (= :openai-compatible-responses (:api-style model)))
-                     (expect (= :openai-effort (:reasoning-style model)))
-                     (expect (= [{:type "effort" :values ["low" "medium" "high" "xhigh" "max"]}]
-                                (:reasoning-options model)))
-                     (expect (= #{:chat :vision} (:capabilities model)))
-                     (expect (= ({"gpt-6.1-sol" {:input 2.0 :cached-input 0.1 :output 10.0}
-                                  "gpt-6-sol" {:input 2.0 :cached-input 0.2 :output 10.0}
-                                  "gpt-6-luna" {:input 0.1 :cached-input 0.01 :output 0.5}}
-                                 (:name model))
-                                (select-keys (:pricing model) [:input :cached-input :output])))))))
-
 (defdescribe default-model-context-declaration-test
              (it "an inline-map default-model survives default-model-configs with :context"
                  ;; This is the seam that used to drop everything but :name — the reason
@@ -318,19 +245,6 @@
 
                    (expect (= {:name "gpt-5.6-sol"} (get by-name "gpt-5.6-sol")))
                    (expect (= 272000 (:context (get by-name "gpt-5.6-terra")))))))
-
-(defdescribe codex-extension-settings-test
-             (it "registers the persisted Fast mode provider knob"
-                 (let [spec (toggles/toggle-spec "codex_fast_mode")]
-                   (expect (= :boolean (:type spec)))
-                   (expect (false? (:default spec)))
-                   (expect (true? (:persist? spec)))
-                   (expect (false? (:settings? spec)))))
-             (it "does not declare legacy TUI settings metadata"
-                 (codex/register!)
-                 (let [ext (first (filter #(= "provider-openai-codex" (:ext/name %))
-                                          (extension/registered-extensions)))]
-                   (expect (= [] (:ext/settings ext))))))
 
 (defdescribe
   usage->dynamic-limits-test

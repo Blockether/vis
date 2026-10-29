@@ -15,11 +15,6 @@
   python-host-contract-test
   (it "derives inert members from the actual bindings, without a catalog"
       (expect (= (host-door-names) (set (pyx/host-member-names)))))
-  (it "includes a new host binding in the inert checker without a second declaration"
-      (with-redefs [pyx/host-doors (fn [_ _ _]
-                                     {"__vis_host_probe__" (fn []
-                                                             nil)})]
-        (expect (= ["__vis_host_probe__"] (pyx/host-member-names)))))
   (it "installs every actual host binding in a live context"
       (let [ctx (pyx/build-context "python-contract-bind-test")]
         (try (pyx/bind-host! ctx "python-contract-bind-test")

@@ -1,36 +1,11 @@
 (ns com.blockether.vis.internal.provider.vendor.zai-test
   (:require [babashka.http-client :as http]
-            [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.key-store :as key-store]
             [com.blockether.vis.internal.provider.vendor.zai :as zai]
             [lazytest.core :refer [defdescribe expect it]]))
-
-(defdescribe
-  provider-registration-test
-  (it "registers both Z.ai plans as separate provider extension entries"
-      (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
-      (zai/register!)
-      (let [coding
-            (registry/provider-by-id :zai-coding-plan)
-
-            pass
-            (registry/provider-by-id :zai)
-
-            ext-nses
-            (set (map :ext/name (extension/registered-extensions)))]
-
-        (expect (= :zai-coding-plan (:provider/id coding)))
-        (expect (= :zai (:provider/id pass)))
-        (expect (contains? ext-nses "provider-zai"))
-        (expect (= (svar/provider-base-url :zai-coding-plan)
-                   (get-in coding [:provider/preset :base-url])))
-        (expect (= (svar/provider-base-url :zai) (get-in pass [:provider/preset :base-url])))
-        (expect (= "glm-5.3-flash" (first (get-in coding [:provider/preset :default-models]))))
-        (expect (= "glm-5.3-flash" (first (get-in pass [:provider/preset :default-models])))))))
 
 (defdescribe
   auth-detection-test

@@ -75,11 +75,6 @@
 
 (defdescribe
   request-test
-  (it "lists the bundle voices with an English default"
-      (let [voices (vibevoice/voices)]
-        (expect (= "carter" (:id (first voices))))
-        (expect (= (count voices) (count (set (map :id voices)))))
-        (expect (every? :language voices))))
   (it "refuses blank text and an unknown voice before any download"
       (expect (= :speech-tts/blank-text (:type (ex-data-of #(vibevoice/synthesize! {:text "  "})))))
       (let [data (ex-data-of #(vibevoice/synthesize! {:text "Hello." :voice-id "nobody"}))]

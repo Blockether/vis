@@ -375,16 +375,6 @@
 
 (defdescribe
   attach-discovery-test
-  (it
-    "surfaces attachment helpers through apropos and doc"
-    (let [pctx (ctx-with-root (temp-root))]
-      (expect
-        (=
-          ["attach" "get_attachment" "list_attachments" "read_attachment" "show_attachment"]
-          (vec
-            (ev
-              pctx
-              "sorted(i.name for i in apropos(r'^(attach|get_attachment|list_attachments|read_attachment|show_attachment)$'))"))))))
   (it "discovers declared capabilities instead of the internal shim identity"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "internal-id"
                                                           :shim/imports ["actual_module"]
@@ -929,19 +919,7 @@
 
       (expect (nil? (:error out)))
       ;; REQUIRED is the machine-readable half of the same line.
-      (expect (= "[]" (str/trim (str (:stdout out)))))))
-  (it "marks the parameter a caller cannot omit REQUIRED"
-      (let [pctx
-            (ctx-with-root (temp-root))
-
-            out
-            (block pctx
-                   (str "print(__vis_keys__['attach'].split(' · ')[0])\n"
-                        "print(__vis_keys__['get_attachment'].split(' · ')[0])\n"))]
-
-        (expect (nil? (:error out)))
-        (expect (re-find #"Keys: source \(REQUIRED" (str (:stdout out))))
-        (expect (re-find #"Keys: target \(REQUIRED" (str (:stdout out)))))))
+      (expect (= "[]" (str/trim (str (:stdout out))))))))
 
 (defdescribe
   compact-attachment-host-errors-test

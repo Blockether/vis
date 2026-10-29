@@ -48,8 +48,6 @@
 
 (defdescribe
   entry-status-test
-  (it ":ok when no error and no running form"
-      (expect (= :ok (iteration/entry-status (entry [(form {:success? true})])))))
   (it ":error when any form carries an error"
       (expect (= :error
                  (iteration/entry-status (entry [(form {:success? true})

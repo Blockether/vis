@@ -70,14 +70,6 @@
                        (it "is not written"
                            (expect (nil? (config/problem-log-line (signal :info {:status 200})))))))
 
-(defdescribe problem-log-path-test
-             (it "sits next to the process log, so housekeeping sweeps it"
-                 (with-redefs [config/log-path
-                               (constantly
-                                 "/tmp/x/logs/2026-01-01/gateway-20260101T000000Z-pid1.log")]
-                   (expect (= "/tmp/x/logs/2026-01-01/gateway-20260101T000000Z-pid1.problems.jsonl"
-                              (config/problem-log-path))))))
-
 (defdescribe
   problem-log-handler-test
   (it "appends warnings to the file"

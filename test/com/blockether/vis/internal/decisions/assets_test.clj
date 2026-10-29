@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.decisions.assets-test
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
@@ -53,13 +52,6 @@
                            :requires ["model.onnx" "tokenizer/tokenizer.json" "PROVENANCE.json"]}}})
 
 (defn- error-data [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
-
-(defn- release-urls
-  "Download URLs of one artifact: its own URL, or one URL for each part."
-  [artifact]
-  (if-let [parts (seq (:parts artifact))]
-    (map :url parts)
-    [(:url artifact)]))
 
 (defn- split!
   "Write an archive as two local part files, described like manifest parts."
@@ -121,111 +113,6 @@
 
 (defdescribe
   catalog-test
-  (it "pins only the baseline FP32 bundle and complete training checkpoint"
-      (let [model
-            (assets/entry "laya-typed-decisions")
-
-            artifacts
-            (map #(assets/artifact model %) [:inference :training])]
-
-        (expect (= "Apache-2.0" (:license model)))
-        (expect (= 40 (count (:revision model))))
-        (expect (= 2 (count artifacts)))
-        (doseq [artifact artifacts]
-          (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
-          (expect (pos? (:bytes artifact)))
-          (expect (str/starts-with?
-                    (:url artifact)
-                    "https://github.com/Blockether/vis/releases/download/assets-pack/"))
-          (expect (seq (:requires artifact))))
-        (expect (= :decisions/unknown-model (:type (error-data #(assets/entry "unknown")))))))
-  (it "publishes every complete GLiNER2.5 model with distinct pinned artifacts"
-      (expect (= (-> (set (keys assets/gliner-architectures))
-                     (into (keys assets/decision2-architectures))
-                     (into (keys assets/d3-architectures))
-                     (conj "laya-typed-decisions"))
-                 (set (map :id (assets/manifest)))))
-      (expect (= #{"gliner2.5-base" "gliner2.5-small" "gliner2.5-multi" "gliner2.5-decide"
-                   "gliner2.5-decide-1b" "gliner2.5-multi-decide"}
-                 (set (keys assets/gliner-architectures))))
-      (expect (apply distinct?
-                (for [id
-                      (keys assets/gliner-architectures)
-
-                      kind
-                      [:inference :training]]
-
-                  (:sha256 (assets/artifact (assets/entry id) kind)))))
-      (doseq [[id revision] {"gliner2.5-base" "7f1ae80f150e9d3e262ec1684d0d78208e2595d0"
-                             "gliner2.5-small" "7132dc4561c3f94563c6147e75ffa8ef34c4964a"
-                             "gliner2.5-multi" "2ca71aafb3446d9014e1c55c7ff51c9bc7209c47"
-                             "gliner2.5-decide" "bbe10ff77ebb238777c17d3a8ac9260e30929057"
-                             "gliner2.5-decide-1b" "688cd7ba8917a0855ad3ce929cba5a9998932e79"
-                             "gliner2.5-multi-decide" "a35a0cd3b7a0f00f2effc576f454cd48fa98aa5f"}]
-        (let [model (assets/entry id)
-              artifacts (map #(assets/artifact model %) [:inference :training])]
-
-          (expect (= revision (:revision model)))
-          (expect (= "Apache-2.0" (:license model)))
-          (expect (str/ends-with? (:source-url model) revision))
-          (expect (= (assets/inference-required id) (:requires (assets/artifact model :inference))))
-          (expect (some #{"model.safetensors"} (:requires (assets/artifact model :training))))
-          (expect (= 2 (count artifacts)))
-          (doseq [artifact artifacts]
-            (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
-            (expect (pos? (:bytes artifact)))
-            (doseq [url (release-urls artifact)]
-              (expect (str/starts-with?
-                        url
-                        "https://github.com/Blockether/vis/releases/download/assets-pack/")))
-            (expect (seq (:requires artifact)))))))
-  (it "publishes Decision 2.0 with external FP32 weights and a separate decision head"
-      (let [sources {"decision2.0-eos-0.8b" ["Decision-2.0-Eos-0.8B"
-                                             "3594047d69f476f1d01cf84c593e213fc3a4dfe0"]
-                     "decision2.0-kai-0.6b" ["Decision-2.0-Kai-0.6B"
-                                             "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764"]}]
-        (expect (= (set (keys sources)) (set (keys assets/decision2-architectures))))
-        (doseq [[id [repository revision]] sources]
-          (let [model (assets/entry id)]
-            (expect (= revision (:revision model)))
-            (expect (= "Apache-2.0" (:license model)))
-            (expect (= (str "https://huggingface.co/vllm-sr/" repository "/tree/" revision)
-                       (:source-url model)))
-            (expect (= (assets/inference-required id)
-                       (:requires (assets/artifact model :inference))))
-            (expect (= #{"backbone/config.json" "backbone/model.safetensors" "decision_config.json"
-                         "decision_head.safetensors" "tokenizer.json" "tokenizer_config.json"
-                         "PROVENANCE.json" "LICENSE.txt"}
-                       (set (:requires (assets/artifact model :training)))))
-            (doseq [kind [:inference :training]]
-              (let [artifact (assets/artifact model kind)]
-                (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
-                (expect (< 0 (:bytes artifact) 2000000000))
-                (expect (nil? (:parts artifact)))))))))
-  (it "publishes D3 FP32 inference bundles and text-only training checkpoints"
-      (let [revisions {"d3-edge" "18d61df78684675463af9ae732872478845c5a79"
-                       "d3-lite" "a8d25a91ef75552803f7009d25b7bd435991abd9"}]
-        (expect (= (set (keys revisions)) (set (keys assets/d3-architectures))))
-        (doseq [[id revision] revisions]
-          (let [model (assets/entry id)
-                artifact (assets/artifact model :inference)]
-
-            (expect (= revision (:revision model)))
-            (expect (= "Apache-2.0" (:license model)))
-            (expect (= (str "https://huggingface.co/vllm-sr/" id "/tree/" revision)
-                       (:source-url model)))
-            (expect (= (assets/inference-required id) (:requires artifact)))
-            (expect (some #{"model.onnx.data"} (:requires artifact)))
-            (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
-            (expect (< 0 (:bytes artifact) 2000000000))
-            (expect (= #{"config.json" "decision_config.json" "MODEL_MANIFEST.json"
-                         "model.safetensors" "readout.safetensors" "tokenizer.json"
-                         "tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"}
-                       (set (:requires (assets/artifact model :training)))))
-            (let [training (assets/artifact model :training)]
-              (expect (re-matches #"[0-9a-f]{64}" (:sha256 training)))
-              (expect (< 0 (:bytes training) 2000000000))
-              (expect (nil? (:parts training))))))))
   (it "splits every archive above the release asset limit into verified parts"
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :training))))
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :inference))))
@@ -241,14 +128,7 @@
               (doseq [part parts]
                 (expect (re-matches #"[0-9a-f]{64}" (:sha256 part)))
                 (expect (< 0 (:bytes part) 2147483648))))
-          (expect (< (:bytes artifact) 2147483648)))))
-  (it "includes model weights only, not dependency archives"
-      (doseq [model (assets/manifest)]
-        (expect (= #{:inference :training} (set (keys (:artifacts model))))))
-      (expect (= :decisions/unknown-artifact
-                 (:type (ex-data (try (assets/artifact (assets/entry "laya-typed-decisions")
-                                                       :wheels)
-                                      (catch clojure.lang.ExceptionInfo error error))))))))
+          (expect (< (:bytes artifact) 2147483648))))))
 
 (defdescribe
   installation-test

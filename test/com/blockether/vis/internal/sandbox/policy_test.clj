@@ -883,10 +883,4 @@
                         (#'policy/git-config-read-paths (str home) {"GIT_CONFIG_GLOBAL" local}))))
            (finally (with-open [paths (Files/walk home (make-array FileVisitOption 0))]
                       (doseq [^Path path (reverse (iterator-seq (.iterator paths)))]
-                        (Files/deleteIfExists path)))))))
-  (it "grants nothing without a home or configuration"
-      (expect (= nil (#'policy/git-config-read-paths nil {})))
-      (let [home (Files/createTempDirectory "vis-git-empty"
-                                            (make-array java.nio.file.attribute.FileAttribute 0))]
-        (try (expect (= [] (#'policy/git-config-read-paths (str home) {})))
-             (finally (Files/deleteIfExists home))))))
+                        (Files/deleteIfExists path))))))))

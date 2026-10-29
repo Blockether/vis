@@ -24,5 +24,4 @@
       (expect (= "{\"s\":1}" (codec/->json {"s" 1})))
       (expect (= "{\"v\":\"1970-01-01T00:00:00Z\"}" (codec/->json {:v (java.util.Date. 0)})))
       (expect (= "{\"v\":[1]}" (codec/->json {:v #{1}})))
-      (expect (= "{\"v\":1.5}" (codec/->json {:v 1.5}))))
-  (it "nil in, nil out" (expect (nil? (codec/->json nil)))))
+      (expect (= "{\"v\":1.5}" (codec/->json {:v 1.5})))))

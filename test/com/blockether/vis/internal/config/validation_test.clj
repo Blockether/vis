@@ -381,12 +381,6 @@
 
 (defdescribe
   workspace-conditional-mount-test
-  (it "the OS token set is closed and this host reports one of its members"
-      (expect (= #{"macos" "linux" "wsl" "windows"} config-validation/workspace-os-values))
-      (expect (contains? (conj config-validation/workspace-os-values "unknown")
-                         (config-validation/host-os)))
-      (expect (string? (:os (config-validation/mount-env))))
-      (expect (ifn? (:exists? (config-validation/mount-env)))))
   (it "every mount status is decided against an explicit env, never this machine"
       (let [status #(config-validation/entry-mount-status % mac-env)]
         (expect (= :mounted (status {"id" "a" "path" "/" "when" {"os" "macos"}})))

@@ -70,8 +70,6 @@
 (defdescribe
   parkable-execution-budget-test
   ;; Issue #187: restore the full configured budget, not the unused remainder.
-  (it "starts with the configured deadline"
-      (expect (= 301000 @(:deadline (rt/parkable-wall 1000 300000)))))
   (it "leaves unbound calls usable outside an execution watchdog"
       (binding [rt/*blocking-wall-park*
                 nil

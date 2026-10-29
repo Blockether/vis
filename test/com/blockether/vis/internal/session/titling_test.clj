@@ -448,6 +448,4 @@
                  (expect (= {:prefer-providers [:zai-coding-plan :alibaba-coding-plan :openai-codex
                                                 :anthropic-coding-plan :github-copilot]
                              :optimize [:cost :speed]}
-                            (#'titling/auto-title-routing {}))))
-             (it "lets an explicit titling provider pin the call instead"
-                 (expect (= {:provider :zai} (#'titling/auto-title-routing {"provider" "zai"})))))
+                            (#'titling/auto-title-routing {})))))

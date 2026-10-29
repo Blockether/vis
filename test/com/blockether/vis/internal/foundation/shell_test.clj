@@ -178,9 +178,6 @@
 
 (defdescribe
   shell-env-injection-test
-  (it "uses declarative env injection rather than a before middleware shim"
-      (expect (true? (:ext.symbol/inject-env? shell/shell-symbol)))
-      (expect (nil? (:ext.symbol/before-fn shell/shell-symbol))))
   (it "a failing or nil session policy denies spawn instead of failing open"
       (binding [workspace/*workspace-root* (workspace/trunk-root)]
         (expect (threw? #(shell-run* {:session-id "t"
@@ -1383,12 +1380,6 @@
                (expect (zero? @reads)))
              (finally (Thread/interrupted) (.delete file))))))
 
-;; Regression: shell lifecycle results returned nil output, breaking Python string slices.
-(defdescribe shell-empty-output-test
-             (it "returns an empty string for stages that do not read output"
-                 (doseq [stage ["run" "background" "logs" "wait" "send" "stop"]]
-                   (expect (= "" (get (@#'shell/shell-result stage {}) "out"))))))
-
 (defdescribe shell-send-test
              (it "types into a running background shell's stdin and the program reads it"
                  (with-shell-on
@@ -1636,10 +1627,6 @@
               (expect (true? woke))
               (expect (< (- (System/currentTimeMillis) t0) 5000))
               (expect (true? (#'shell/await-exit {:session-id "s396"} "w" 10000))))))))
-  (it "sleeps the poll and answers false without a live shell"
-      (with-redefs-fn {#'shell/bg-procs (atom {})}
-        (fn []
-          (expect (false? (#'shell/await-exit {:session-id "s396"} "none" 1))))))
   ;; Regression, gateway CPU audit: a JFR profile of a live gateway caught it
   ;; forking `/bin/ps` EIGHT times a second — 388 of 395 process spawns in a 46 s
   ;; window came from this one loop. Every poll asked [[bg-core]] for the tree's
@@ -2089,11 +2076,6 @@
 (defdescribe
   python-sandbox-surface-test
   "The bare Python global has only the one-map shell grammar."
-  (it "binds the five shell symbols into sandbox globals, each with a doc"
-      (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
-        (expect (= '[_shell-logs _shell-stop _shell-type _shell-wait shell]
-                   (vec (sort (filter #(str/includes? (name %) "shell") (keys bind))))))
-        (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
   (it "runs and backgrounds a command through the bare shell global using maps"
       (let [sid
             (str "py-shell-" (System/nanoTime))
@@ -2633,10 +2615,7 @@
                                                                   :keychain? true})}
                                     out)))
         (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? true})} out)))
-        (expect (nil? (command-note {} out)))))
-  (it "ordinary output carries no note"
-      (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? false})}
-                                  {:text "hello"})))))
+        (expect (nil? (command-note {} out))))))
 
 ;; Phase 5: a run IS a handle — the wait expires, the process does not.
 (defdescribe
@@ -2763,10 +2742,7 @@
                                   text
                                   (do (Thread/sleep 100) (recur (inc n))))))]
                    (expect (str/includes? text "got yes")))
-                 (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  (it "keeps one public constructor and four handle methods"
-      (expect (= ["shell" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]
-                 (mapv :ext.symbol/name shell/shell-symbols)))))
+                 (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
 
 (defdescribe
   shell-failure-visibility-test

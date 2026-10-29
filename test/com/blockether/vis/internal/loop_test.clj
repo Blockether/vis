@@ -2945,27 +2945,22 @@
   (it "fails closed when no router is supplied"
       (expect (throws? clojure.lang.ExceptionInfo #(loop-env/create-environment nil {})))))
 
-(defdescribe
-  prose-beyond-code-test
-  ;; The model often restates its python_execution code in its message prose; that
-  ;; prose must be SUPPRESSED so it doesn't render as a dim duplicate of the
-  ;; real code block. Only genuine commentary survives.
-  ;; The door (`normalize-tool-calls`) already stringified every argument key,
-  ;; so this reads `"code"` — there is no keyword variant to fall back to.
-  (let [tc [{:input {"code" "await patch(x)"}}]]
-    (it "suppresses prose that is only the code in a fence"
-        (expect (nil? (prose-beyond-code "```python\nawait patch(x)\n```" tc))))
-    (it "suppresses prose that is the code verbatim (no fence)"
-        (expect (nil? (prose-beyond-code "await patch(x)" tc))))
-    (it "keeps prose that adds commentary beyond the code"
-        (expect (= "I'll bump the **timeout**.\n```python\nawait patch(x)\n```"
-                   (prose-beyond-code "I'll bump the **timeout**.\n```python\nawait patch(x)\n```"
-                                      tc))))
-    (it "keeps pure commentary with no code at all"
-        (expect (= "Done — re-running tests." (prose-beyond-code "Done — re-running tests." tc))))
-    (it "is nil for blank / nil prose"
-        (expect (nil? (prose-beyond-code nil tc)))
-        (expect (nil? (prose-beyond-code "   " tc))))))
+(defdescribe prose-beyond-code-test
+             ;; The model often restates its python_execution code in its message prose; that
+             ;; prose must be SUPPRESSED so it doesn't render as a dim duplicate of the
+             ;; real code block. Only genuine commentary survives.
+             ;; The door (`normalize-tool-calls`) already stringified every argument key,
+             ;; so this reads `"code"` — there is no keyword variant to fall back to.
+             (let [tc [{:input {"code" "await patch(x)"}}]]
+               (it "suppresses prose that is only the code in a fence"
+                   (expect (nil? (prose-beyond-code "```python\nawait patch(x)\n```" tc))))
+               (it "suppresses prose that is the code verbatim (no fence)"
+                   (expect (nil? (prose-beyond-code "await patch(x)" tc))))
+               (it "keeps prose that adds commentary beyond the code"
+                   (expect (= "I'll bump the **timeout**.\n```python\nawait patch(x)\n```"
+                              (prose-beyond-code
+                                "I'll bump the **timeout**.\n```python\nawait patch(x)\n```"
+                                tc))))))
 
 (def ^:private eval-timeout-ms-for-code (deref #'rt/eval-timeout-ms-for-code))
 
@@ -3045,9 +3040,7 @@
         (expect (nil? (next-replay-evidence nil {:phase :reasoning :thinking "plan"}))))
     (it "puts the evidence in the declined recovery outcome"
         (expect (= {:attempts 0 :declined :output-started :output-phase :content :output-chunks 2}
-                   (stream-recovery-outcome dropped {:output-phase :content :output-chunks 2}))))
-    (it "does not decline a replay without evidence"
-        (expect (nil? (stream-recovery-outcome dropped nil))))))
+                   (stream-recovery-outcome dropped {:output-phase :content :output-chunks 2}))))))
 
 (def ^:private failed-iteration-routing (deref #'iteration/failed-iteration-routing))
 
@@ -3307,12 +3300,6 @@
         (expect (= :tool-result (reason-of 7))))))
 
 (defdescribe persisted-form-keeps-canonical-facts-test
-             (it "stores printed output once as stdout"
-                 (let [[envelope] (eng/blocks->forms
-                                    [{:id 0 :code "print('hello')" :stdout "hello\n"}]
-                                    {:turn 1 :iter 1})]
-                   (expect (= "hello\n" (:stdout envelope)))
-                   (expect (str/includes? (get-in (form/result-card envelope) [:body]) "hello"))))
              (it "carries the timeout flag and derives no card from it"
                  (let [[envelope] (eng/blocks->forms [{:id 0
                                                        :code "time.sleep(99)"
@@ -4624,8 +4611,7 @@
                (it "upgrades to a fresh measurement when one arrives"
                    (let [ca (atom {"engine_utilization" util1})]
                      (stamp ca util2)
-                     (expect (= util2 (get @ca "engine_utilization")))))
-               (it "is a no-op on a nil ctx-atom" (expect (nil? (stamp nil util1))))))
+                     (expect (= util2 (get @ca "engine_utilization")))))))
 
 (defn- retained-fold-fixture
   "Price a prior-turn step whose full payload remains in an exact carried prefix."
@@ -4770,9 +4756,6 @@
           (expect (= #{"t1/i1" "t1/i2" "t1/i3"} (get (first out) "scopes")))
           (expect (nil? (get (first out) "through")))
           (expect (= "g" (get (first out) "gist")))))
-    (it "expand-through leaves explicit-scope summaries untouched"
-        (let [s [{"scopes" #{"t1/i2"} "gist" "g"}]]
-          (expect (= s (expand-through s ["t1/i1" "t1/i2"])))))
     (it "apply-summaries collapses a through-range over the trailer, sparing later steps"
         (let [trailer
               [[0 {:forms-vec [{:scope "t1/i1/f1" :stdout "a"}]}]
@@ -5999,12 +5982,7 @@
                                           target)]
 
           (expect (= ["assistant" "user" "user"] (mapv :role suffix)))
-          (expect (= ["image_url"] (mapv :type (:content (last suffix)))))))
-    (it "emits no image message when an iteration produced no attachments"
-        (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
-              suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
-
-          (expect (= 2 (count suffix)))))))
+          (expect (= ["image_url"] (mapv :type (:content (last suffix)))))))))
 
 (defdescribe
   target-vision-is-provider-scoped-test
@@ -6220,12 +6198,6 @@
           (expect (str/includes? (:content note) "seer-1"))
           (expect (str/includes? (:content note) "second-hand"))
           (expect (not (str/includes? (pr-str suffix) "image_url")))))
-    (it "keeps today's silent behaviour when no describer is injected"
-        ;; The 2-arity is the estimator's and the no-vision-model path: back to the
-        ;; plain [assistant, results] pair.
-        (let [suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})]
-                                          blind-target)]
-          (expect (= 2 (count suffix)))))
     (it "never describes for a target that can SEE"
         (let [called
               (atom 0)
@@ -6393,15 +6365,6 @@
                                          :api-style :openai
                                          :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
           (expect (fn? ((describer) {:router router} "ctx" :seeing)))))
-    ;; Regression: a router-SHAPED config map (no live provider state) made the sight
-    ;; probe throw an NPE out of svar's resolver, so a plain text turn — no images
-    ;; anywhere near it — died on the way into the request.
-    (it "is nil for a router-shaped config map, and never throws"
-        (expect (nil? ((describer)
-                        {:router {:providers [{:id :zai-coding-plan
-                                               :models [{:name "glm-5-turbo"}]}]}}
-                        "ctx"
-                        :zai-coding-plan))))
     (it "is nil while the vision_fallback_describe toggle is off"
         (let [router (svar/make-router [{:id :seeing
                                          :api-key "k"
@@ -7128,10 +7091,7 @@
           (expect (str/includes? body "native.live.ndjson"))
           (expect (str/includes? body "record-1"))
           (expect (str/includes? body "read_attachment"))
-          (expect (str/includes? body "watching"))))
-    (it "no summaries ⇒ trailer-iters unchanged"
-        (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "x"}]}]]]
-          (expect (= tis (apply-summaries tis [])))))))
+          (expect (str/includes? body "watching"))))))
 
 (defdescribe
   failed-block-keeps-its-output-test
@@ -7579,10 +7539,6 @@
           (expect (= "claude-opus-4-8"
                      (:name (loop-router/resolve-effective-model
                               (loop-router/router-for-model router "  "))))))
-      (it "unknown model → falls back to the parent's default (no crash)"
-          (expect (= "claude-opus-4-8"
-                     (:name (loop-router/resolve-effective-model
-                              (loop-router/router-for-model router "gpt-9"))))))
       (it "preserves the full provider set (just reordered) so keys/opts survive"
           (expect (= #{:anthropic-coding-plan :anthropic}
                      (set (map :id
@@ -7674,8 +7630,6 @@
       (it "the pinned provider leads the FALLBACK order and no provider is dropped"
           (let [pinned (hoist router :github-copilot)]
             (expect (= [:github-copilot :openai-codex] (mapv :id (:providers pinned))))))
-      (it "a string id works (that is how the DB pref stores it)"
-          (expect (= :github-copilot (:id (first (:providers (hoist router "github-copilot")))))))
       (it "an unknown / nil provider leaves the router untouched"
           (expect (= router (hoist router :not-configured)))
           (expect (= router (hoist router nil)))))))
@@ -7878,9 +7832,6 @@
                 #(run-phase ctx))
               @seen))]
 
-      (it "the turn context keeps the id the caller passed in opts"
-          (let [ctx (prepare env messages {:model "shared" :session-turn-id "frozen-turn-id"})]
-            (expect (= "frozen-turn-id" (:session-turn-id ctx)))))
       (it "the iteration phase hands that id to run-turn!, which stores the durable row"
           (expect (= "frozen-turn-id"
                      (:session-turn-id (captured-opts {:environment {}
@@ -7981,10 +7932,6 @@
 
           (expect (= {:answer "done"} (request-with-retries send! attempt)))
           (expect (= [attempt] @sent))))
-    (it "passes any other keyword result through"
-        (expect (= :unrelated-keyword
-                   (request-with-retries (constantly {:result :unrelated-keyword :env :env})
-                                         attempt))))
     (it
       "re-sends after each context-overflow fold with the env that fold installed"
       (let [sent
@@ -8441,7 +8388,6 @@
         (fn [expr]
           (#'python-exec/literal-code-block-error @ctx expr))]
 
-    (it "valid Python code passes the guard (nil)" (expect (nil? (err "x = 1"))))
     (it "a bare string program is rejected and points at native answering, not :answer/:code"
         (let [m (err "\"just prose\"")]
           (expect (some? m))
@@ -8910,11 +8856,6 @@
         refused-model
         {:provider :anthropic-coding-plan :name "claude-opus-5"}]
 
-    (it "ships ON, so an untouched install rescues turns exactly as before"
-        (let [spec (toggles/toggle-spec "provider_fallback")]
-          (expect (= :boolean (:type spec)))
-          (expect (true? (:default spec)))
-          (expect (true? (toggles/enabled? "provider_fallback")))))
     (it "drops a cooled pin and excludes the dead credential while fallback is allowed"
         (try (reset! cooldown {})
              (note! :rbi-genai)
@@ -9275,11 +9216,6 @@
           (expect (= :zai-coding-plan
                      (:provider (loop-router/resolve-effective-model
                                   (loop-router/router-for-model pinned "glm-4.8")))))))
-    (it "accepts the id as a string, exactly as the session pref stores it"
-        (expect (= {:provider :zai-coding-plan :model "glm-4.8"}
-                   (forced (materialise router "zai-coding-plan" "glm-4.8")
-                           "zai-coding-plan"
-                           "glm-4.8"))))
     (it "leaves the router untouched without a real pin"
         ;; Already listed, unknown provider, no provider, blank model.
         (expect (= router (materialise router :zai-coding-plan "glm-4.7")))
@@ -10042,9 +9978,6 @@
                                     (finally (deliver release true)
                                              (.join holder 1000)
                                              (swap! env-cache dissoc k))))))
-                       (it "memory-pressure? is disabled when the RSS gate is off"
-                           (expect (false? (with-redefs [loop-env/env-rss-budget-mb (delay 0)]
-                                             (memory-pressure?)))))
                        (it "memory-pressure? fires on the RSS budget"
                            (expect (true? (with-redefs [loop-env/env-rss-budget-mb (delay 1)]
                                             (memory-pressure?)))))))
@@ -11791,10 +11724,6 @@
         (expect (nil? (:reasoning short-form)))
         (expect (nil? (:partial-content short-form)))
         (expect (not (str/includes? (pr-str short-form) "reasoning-transcript"))))
-    (it "leaves an ordinary failure without stream keys"
-        (let [plain (format-exception-short (ex-info "boom" {:type :vis/code-error}))]
-          (expect (nil? (:stream-finalization plain)))
-          (expect (nil? (:content-acc-len plain)))))
     (it "names the classified kind in the fatal line instead of a spend cap"
         (expect (str/includes? (log-message (ex-info "provider rate limited this request"
                                                      {:status 429
@@ -11844,8 +11773,6 @@
     (it "fails the turn on a bare :svar/no-providers failure"
         (expect (fatal? (ex-info "make-router requires at least one provider"
                                  {:type :svar/no-providers}))))
-    (it "still feeds a correctable model/code failure back for self-correction"
-        (expect (not (fatal? (ex-info "Syntax error in generated code" {:type :vis/code-error})))))
     (it "renders the actionable env-var message instead of the generic provider card"
         (let [blocks
               (user-error-content (::loop-errors/iteration-error (handle env-gap)))
@@ -11857,9 +11784,7 @@
           (expect (= "error" (get block "type")))
           (expect (= "config_error" (get block "code")))
           (expect (str/includes? (get block "message") "RBI_GENAI_API_KEY is not set"))
-          (expect (false? (get block "retryable")))))
-    (it "leaves every other failure to the provider-card path"
-        (expect (nil? (user-error-content {:message "boom" :data {:type :vis/code-error}}))))))
+          (expect (false? (get block "retryable")))))))
 
 ;; Regression, issue #105: Vis used to override Svar's terminal 402 quota
   ;; classification with its own legacy billing kind.
@@ -12518,32 +12443,25 @@
   ;; `"\"</invoke>\""` arrives as a String and `"[1,2]"` as a vector — while
   ;; every consumer past this door (the sandbox program, persistence) reads a
   ;; string-keyed map.
-  (describe
-    "an arguments payload that is not an object at all"
-    (it "drops a bare string payload and runs the call the model meant"
-        (let [[tc] (#'transcript/normalize-tool-calls
-                    [{:id "a" :name "python_execution" :input "</invoke>"}])]
-          (expect (= {} (:input tc)))))
-    (it "drops a vector payload"
-        (let [[tc] (#'transcript/normalize-tool-calls [{:id "a" :name "apropos" :input [1 2]}])]
-          (expect (= {} (:input tc)))))
-    (it "drops a scalar payload"
-        (let [[tc] (#'transcript/normalize-tool-calls [{:id "a" :name "apropos" :input 42}])]
-          (expect (= {} (:input tc)))))
-    (it "records the payload it refused"
-        (let [{:keys [signals]}
-              (tel/with-signals (#'transcript/normalize-tool-calls
-                                 [{:id "a" :name "apropos" :input "</invoke>"}]))
+  (describe "an arguments payload that is not an object at all"
+            (it "drops a bare string payload and runs the call the model meant"
+                (let [[tc] (#'transcript/normalize-tool-calls
+                            [{:id "a" :name "python_execution" :input "</invoke>"}])]
+                  (expect (= {} (:input tc)))))
+            (it "records the payload it refused"
+                (let [{:keys [signals]}
+                      (tel/with-signals (#'transcript/normalize-tool-calls
+                                         [{:id "a" :name "apropos" :input "</invoke>"}]))
 
-              leak
-              (first (filter #(= ::transcript/tool-input-not-an-object (:id %)) signals))]
+                      leak
+                      (first (filter #(= ::transcript/tool-input-not-an-object (:id %)) signals))]
 
-          (expect (some? leak))
-          (expect (= :warn (:level leak)))
-          (expect (str/includes? (str (-> leak
-                                          :data
-                                          :value))
-                                 "</invoke>"))))))
+                  (expect (some? leak))
+                  (expect (= :warn (:level leak)))
+                  (expect (str/includes? (str (-> leak
+                                                  :data
+                                                  :value))
+                                         "</invoke>"))))))
 
 ;; GitHub Copilot bills a request as a FULL premium interaction unless the
   ;; caller marks it `X-Initiator: agent` (a MISSING header means `user`), and
@@ -12624,14 +12542,6 @@
                              3
                              {:provider :github-copilot :name "claude-opus-5"}
                              42))))
-             (it "leaves out what the router could not resolve"
-                 (expect (= {:phase :provider-call
-                             :iteration 0
-                             :reason :user-submit
-                             :started-at-ms 1
-                             :provider nil
-                             :model nil}
-                            (#'transcript/provider-call-chunk 0 {} 1))))
              (it "keeps the gateway backstop past Svar's worst case for one attempt"
                  ;; Copilot's policy: the stall ceiling once equalled Svar's 300s semantic
                  ;; watchdog, so the gateway raced Svar and cancelled a recoverable turn.

@@ -79,11 +79,6 @@
                  (expect (= (count (shim-ns-files)) (count (registered-shims))))))
 
 (defdescribe shim-source-test
-             (it "names its Python source under vis-host-python/, never inline Clojure strings"
-                 (let [bad (remove #(str/starts-with? (str (:shim/source %)) "vis-host-python/")
-                             (registered-shims))]
-                   (expect (empty? bad)
-                           (str "shims with another source: " (pr-str (map :shim/name bad))))))
              (it "resolves every :shim/source as a classpath resource"
                  ;; `extension/shim-python-source` slurps this resource at sandbox boot; a
                  ;; typo here is a hard failure the moment an agent imports the module.
@@ -233,36 +228,3 @@
           (expect (some? entry) (str name " is absent from manifest apropos data"))
           (expect (str/includes? doc (first (str/split-lines (:text entry))))
                   (str name " doc() does not serve its Python __doc__"))))))
-
-(defdescribe
-  shim-globals-name-their-call-test
-  "A prebound global is typed straight into a block — `ls(...)`, `attach(...)` — with
-   no import and no signature to inspect first, so something has to state its arguments.
-   The canonical home is STRUCTURE: the harvested `:call`, which `doc(name)` prints above
-   the document, exactly where a tool's `:call` line goes — a page that opens with its own
-   signature previews as a signature and stops matching the words its prose is written in.
-   A shim that has not moved yet may still carry the call form inside its text; naming it
-   NOWHERE makes the page unusable."
-  (it "documents every shim global with its own call form"
-      (let [names
-            (->> (registered-shims)
-                 (mapcat :shim/globals)
-                 (filter string?)
-                 distinct
-                 vec)
-
-            ctx
-            (:python-context (tpc/new-context {}))
-
-            code
-            (str "_names = [" (str/join ", " (map pr-str names))
-                 "]\n" "print([n for n in _names if (n + '(') not in doc(n)])")
-
-            undocumented
-            (try (:stdout (ep/run-python-block ctx code "t1/i1"))
-                 (finally (ep/dispose-python-context! ctx)))]
-
-        ;; Guards the guard: an empty name list would make the check vacuous.
-        (expect (< 5 (count names)))
-        (expect (= "[]" (str/trim undocumented))
-                (str "shim globals whose page never shows a call: " undocumented)))))

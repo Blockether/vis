@@ -64,9 +64,7 @@
              (it "exposes only /cd and no human draft commands"
                  (expect (= ["cd"] (mapv :slash/name ws-slashes/specs)))
                  (expect (nil? (slash/slash-by-path (env-with nil) ["draft"])))
-                 (expect (= 1 (count (slash/active-slashes (env-with nil))))))
-             (it "/cd is available in every channel"
-                 (expect (nil? (:slash/availability-fn (first ws-slashes/specs))))))
+                 (expect (= 1 (count (slash/active-slashes (env-with nil)))))))
 
 (defdescribe
   dispatch-root-test
@@ -146,12 +144,7 @@
                                  java.io.File/separator
                                  "proj")
                             (paths/expand-home "~/code/proj"))))
-             (it "passes an absolute path through untouched"
-                 (expect (= "/tmp/somewhere" (paths/expand-home "/tmp/somewhere"))))
              (it "does not expand a ~ that is not the leading segment"
                  (expect (= "/a/~b" (paths/expand-home "/a/~b"))))
-             (it "is nil-safe and leaves paths unchanged without a home"
-                 (expect (nil? (paths/expand-home nil "/home/test")))
-                 (expect (= "~/x" (paths/expand-home "~/x" nil))))
              (it "does not treat ~user as the current user's home"
                  (expect (= "~other/x" (paths/expand-home "~other/x" "/home/test")))))

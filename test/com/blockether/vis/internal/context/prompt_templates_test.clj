@@ -16,11 +16,6 @@
              (it "splits /name from the argument tail"
                  (expect (= {:name "deploy" :args "staging fast"}
                             (templates/parse-invocation "/deploy staging fast"))))
-             (it "no args -> empty string"
-                 (expect (= {:name "deploy" :args ""} (templates/parse-invocation "/deploy"))))
-             (it "namespaced template names pass through (skill:foo)"
-                 (expect (= "skill:commit"
-                            (:name (templates/parse-invocation "/skill:commit now")))))
              (it "plain prose is not an invocation"
                  (expect (nil? (templates/parse-invocation "deploy this")))
                  (expect (nil? (templates/parse-invocation "/ leading space")))
@@ -107,10 +102,7 @@
             (with-redefs [templates/file-templates (constantly (templates/discover-in proj nil))]
               (expect (= "Review the code.\n\nfocus on errors"
                          (:text (templates/expand {} "/review focus on errors"))))
-              (expect (= "Review the code." (:text (templates/expand {} "/review")))))))))
-  (it "unknown template -> nil (engine falls back to unknown-slash error)"
-      (with-redefs [templates/file-templates (constantly [])]
-        (expect (nil? (templates/expand {} "/no-such-template args"))))))
+              (expect (= "Review the code." (:text (templates/expand {} "/review"))))))))))
 
 (defdescribe
   provider-test

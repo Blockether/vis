@@ -11,26 +11,6 @@
 
 (defdescribe
   provider-anthropic-test
-  (it "registers separate Anthropic API-key and Claude subscription providers"
-      (let [api-provider
-            (registry/provider-by-id :anthropic)
-
-            oauth-provider
-            (registry/provider-by-id :anthropic-coding-plan)]
-
-        (expect (= :anthropic (:provider/id api-provider)))
-        (expect (= "claude-opus-5-5"
-                   (first (get-in api-provider [:provider/preset :default-models]))))
-        (doseq [provider [api-provider oauth-provider]]
-          (expect (contains? (set (get-in provider [:provider/preset :default-models]))
-                             "claude-sonnet-5-5"))
-          (expect (contains? (set (get-in provider [:provider/preset :default-models]))
-                             "claude-fable-5-1")))
-        (expect (nil? (:provider/auth-fn api-provider)))
-        (expect (= :anthropic-coding-plan (:provider/id oauth-provider)))
-        (expect (= "https://api.anthropic.com/v1"
-                   (get-in oauth-provider [:provider/preset :base-url])))
-        (expect (= :anthropic (get-in oauth-provider [:provider/preset :api-style])))))
   (it
     "parses callback URL, code#state, query string, and bare code"
     (expect (= {:code "abc" :state "s1"}

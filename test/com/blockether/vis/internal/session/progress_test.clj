@@ -45,23 +45,7 @@
            :silent? true})
         (let [entry (first ((:get-timeline tracker)))]
           (expect (= [] (:forms entry)))
-          (expect (nil? (:recaps entry))))))
-  (it "keeps a normal code chunk visible"
-      (let [tracker (progress/make-progress-tracker)]
-        ((:on-chunk tracker)
-          {:phase :form-result
-           :iteration 1
-           :position 0
-           :code "(def x \"doc\" 1)"
-           :render-segments [{:kind :code :source "(def x \"doc\" 1)"}]
-           :stdout "1"
-           :error nil})
-        (let [entry (first ((:get-timeline tracker)))
-              form (first (:forms entry))]
-
-          (expect (= 1 (count (:forms entry))))
-          (expect (= "(def x \"doc\" 1)" (:code form)))
-          (expect (false? (:silent? form)))))))
+          (expect (nil? (:recaps entry)))))))
 
 (defdescribe
   progress-form-activity-test

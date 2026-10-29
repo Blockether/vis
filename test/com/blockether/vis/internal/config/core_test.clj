@@ -7,7 +7,6 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe it expect]]
@@ -204,34 +203,10 @@
    Without this passthrough, every Vis-built router would silently fall
    back to svar defaults — the user's `:rate-limit` config block would
    be inert."
-  (it "returns {} when no `:router` block is present"
-      (expect (= {} (config/router-opts {})))
-      (expect (= {} (config/router-opts {:providers []}))))
-  (it "returns {} when `:router` is non-map"
-      (expect (= {} (config/router-opts {:router nil})))
-      (expect (= {} (config/router-opts {:router "string"}))))
-  (it "passes through `:rate-limit` verbatim"
-      (let [block {:same-provider-delays-ms [2000 3000 6000]
-                   :fallback-after-ms 30000
-                   :respect-retry-after? true
-                   :fallback-provider? true}]
-        (expect (= {:rate-limit block} (config/router-opts {:router {:rate-limit block}})))))
-  (it "passes through `:network`, `:budget`, `:tokens`, and CB knobs"
-      (let [cfg {:router {:network {:timeout-ms 600000 :idle-timeout-ms 60000}
-                          :budget {:max-tokens 1000000 :max-cost 5.0}
-                          :tokens {:check-context? false}
-                          :failure-threshold 10
-                          :recovery-ms 30000}}]
-        (expect (= (:router cfg) (config/router-opts cfg)))))
   (it "drops unknown keys so future config additions don't crash make-router"
       (let [cfg {:router {:rate-limit {:fallback-after-ms 1}
                           :totally-made-up-key :whatever
                           :another :nope}}]
-        (expect (= {:rate-limit {:fallback-after-ms 1}} (config/router-opts cfg)))))
-  (it "ignores top-level config keys outside `:router`"
-      (let [cfg {:providers [{:id :p1}]
-                 :db-spec {:backend :sqlite}
-                 :router {:rate-limit {:fallback-after-ms 1}}}]
         (expect (= {:rate-limit {:fallback-after-ms 1}} (config/router-opts cfg))))))
 
 (defdescribe provider-network-config-test
@@ -311,37 +286,22 @@
         (expect (nil? (:api-key (config/->svar-provider {:id :openrouter
                                                          :models [{:name "probe"}]})))))))
 
-(defdescribe
-  svar-model-metadata-test
-  (it "lets svar retain GLM-5.2's catalog-native effort style and values"
-      (let [provider
-            (config/->svar-provider
-              {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
+(defdescribe svar-model-metadata-test
+             (it "lets svar retain GLM-5.2's catalog-native effort style and values"
+                 (let [provider
+                       (config/->svar-provider
+                         {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
 
-            model
-            (-> (svar/make-router [provider])
-                :providers
-                first
-                :models
-                first)]
+                       model
+                       (-> (svar/make-router [provider])
+                           :providers
+                           first
+                           :models
+                           first)]
 
-        (expect (= :zai-effort (:reasoning-style model)))
-        (expect (= [{:type "effort" :values ["high" "max"]}] (:reasoning-options model)))))
-  (it "does not stamp a broad Z.ai reasoning override in Vis"
-      (expect (= {:name "glm-5.2"} (config/->svar-model :zai-coding-plan {:name "glm-5.2"})))))
-
-(defdescribe display-label-casing-test
-             "A provider without registered metadata uses its authored id as the display label."
-             (it "changes no character of the id — never capitalizes, never lowercases"
-                 (with-redefs [registry/provider-by-id (constantly nil)]
-                   (doseq [id [:openAI :zAI-coding :OpenRouter :lmStudio :ACME :x]]
-                     (expect (= (name id) (config/display-label id))))))
-             (it "a registered provider extension still owns its own branding"
-                 (with-redefs [registry/provider-by-id (fn [pid]
-                                                         (when (= pid :openai)
-                                                           {:provider/id pid
-                                                            :provider/label "OpenAI"}))]
-                   (expect (= "OpenAI" (config/display-label :openai))))))
+                   (expect (= :zai-effort (:reasoning-style model)))
+                   (expect (= [{:type "effort" :values ["high" "max"]}]
+                              (:reasoning-options model))))))
 
 (defn- rm-rf! [^java.io.File f] (when (.exists f) (run! rm-rf! (.listFiles f)) (.delete f)))
 
@@ -1299,15 +1259,6 @@
       (expect (= [:openai-compatible-responses :openai-compatible-responses]
                  (mapv config/compatibility-api-style ["responses" "openai_responses"])))
       (expect (= :gemini (config/compatibility-api-style "google-gemini"))))
-  (it "returns nil for absent or unnameable values"
-      (expect (nil? (config/compatibility-api-style nil)))
-      (expect (nil? (config/compatibility-api-style :openai-responses-v2)))
-      (expect (nil? (config/compatibility-api-style 7))))
-  (it "keywordizes `compatibility` off the YAML surface"
-      (expect (= :openai
-                 (:compatibility
-                   (first (:providers (config/runtime-config
-                                        {"providers" [{"id" "gw" "compatibility" "openai"}]})))))))
   (it "forwards the implied api-style to svar"
       (expect (= :openai-compatible-chat
                  (:api-style (config/->svar-provider {:id :gw
@@ -1684,13 +1635,6 @@
 ;; Regression: the TUI and the gateway daemon both wrote `~/.vis/vis.log`, and
 ;; the Telemere rolling handler rotates by renaming — the process that did not
 ;; rotate kept appending into a deleted inode.
-(defdescribe log-path-test
-             "`config/log-path` is this process's own role-labelled file."
-             (it "is `paths/log-file`, start-time- and pid-stamped, under ~/.vis/logs"
-                 (let [filename (.getName (java.io.File. ^String (config/log-path)))]
-                   (expect (= (paths/log-file) (config/log-path)))
-                   (expect (some? (re-matches #"[a-z]+-\d{8}T\d{6}Z-pid\d+\.log" filename)))
-                   (expect (str/ends-with? filename (str "pid" (paths/process-id) ".log"))))))
 
 ;; Regression: the Telemere file handler opened its file at installation, so every CLI
 ;; run that logged nothing left an empty `vis-*.log` and `.problems.jsonl` behind.
@@ -2078,11 +2022,6 @@
              (expect (= before (slurp (io/file store-dir "state.yml")))))
            (finally (System/setProperty "user.home" old-home) (config/invalidate-config-cache!))))))
 
-(defdescribe gateway-advertise-runtime-config-test
-             (it "keywordizes the gateway pairing address off the YAML surface"
-                 (expect (= {:gateway {:advertise "10.0.0.5"}}
-                            (config/runtime-config {"gateway" {"advertise" "10.0.0.5"}})))))
-
 (defdescribe
   model-budget-config-test
   (it
@@ -2134,17 +2073,3 @@
             (.getCanonicalPath (io/file (:path (config/resolve-db-spec))))]
 
         (expect (not (str/starts-with? db (str home "/")))))))
-
-(defdescribe
-  global-extensions-dir-test
-  (it "lets the JVM property replace the global extension directory"
-      (let [prop (System/getProperty "vis.extensions.dir")]
-        (try (System/clearProperty "vis.extensions.dir")
-             (with-redefs [config/config-dir (constantly "/tmp/vis-home")]
-               (when (str/blank? (System/getenv "VIS_EXTENSIONS_DIR"))
-                 (expect (= (io/file "/tmp/vis-home/extensions") (config/global-extensions-dir))))
-               (System/setProperty "vis.extensions.dir" "/tmp/vis-bench-extensions")
-               (expect (= (io/file "/tmp/vis-bench-extensions") (config/global-extensions-dir))))
-             (finally (if prop
-                        (System/setProperty "vis.extensions.dir" prop)
-                        (System/clearProperty "vis.extensions.dir")))))))

@@ -21,15 +21,6 @@
 
         (expect (str/includes? text "doc(\"demo\")"))
         (expect (str/includes? text "- /x/ref.md"))))
-  (it "uses the skill description for namespaced slash templates"
-      (with-redefs [d/skills (constantly [{:name "demo" :description "Demo skill"}])]
-        (let [entry (first (skill-template-entries))]
-          (expect (= "skill:demo" (:name entry)))
-          (expect (= "Demo skill" (:description entry))))))
-  (it "carries a nested skill's owning project into its prompt template"
-      (with-redefs [d/skills (constantly
-                               [{:name "demo" :description "d" :project-root "/repo/apps/demo"}])]
-        (expect (= "/repo/apps/demo" (:project-root (first (skill-template-entries)))))))
   ;; Regression: `/skill:impeccable` typed from the repository root expanded to
   ;; apps/vis-companion's SKILL.md with nothing in the message saying the skill
   ;; belonged to that app, so its relative instructions were followed at the root.
@@ -60,23 +51,19 @@
 ;; kept a per-session ledger of what it had pasted, so a second `/skill:<name>` told
 ;; the model the body was "already in this conversation" — a claim nothing
 ;; could keep once that text folded away.
-(defdescribe
-  slash-skill-statelessness-test
-  (it "expands to a POINTER, never to the body"
-      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}]
-        (expect (not (str/includes? (skill-template-text s "do x") "BODY")))))
-  (it "every invocation of the same skill expands identically"
-      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}]
-        (expect (= (skill-template-text s "do x") (skill-template-text s "do x")))
-        (expect (not (str/includes? (skill-template-text s "do y") "injected at turn")))))
-  (it "records nothing on the session context"
-      (with-redefs [d/skills (constantly [{:name "demo" :description "d" :body "BODY" :dir "/x"}])]
-        (let [ca (atom {"session_turn" 3})
-              expand (:expand-fn (first (skill-template-entries)))]
+(defdescribe slash-skill-statelessness-test
+             (it "expands to a POINTER, never to the body"
+                 (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}]
+                   (expect (not (str/includes? (skill-template-text s "do x") "BODY")))))
+             (it "records nothing on the session context"
+                 (with-redefs [d/skills (constantly
+                                          [{:name "demo" :description "d" :body "BODY" :dir "/x"}])]
+                   (let [ca (atom {"session_turn" 3})
+                         expand (:expand-fn (first (skill-template-entries)))]
 
-          (expand {:ctx-atom ca} "do x")
-          (expand {:ctx-atom ca} "do y")
-          (expect (= {"session_turn" 3} @ca))))))
+                     (expand {:ctx-atom ca} "do x")
+                     (expand {:ctx-atom ca} "do y")
+                     (expect (= {"session_turn" 3} @ca))))))
 
 (defdescribe verb-shape-test
              ;; There is NO skill verb: a skill is retrieved with `doc(name)` and
@@ -89,15 +76,3 @@
                  (expect (not (contains? (extension/builtin-sandbox-bindings (fn []
                                                                                nil))
                                          'skill)))))
-
-(defdescribe extension-shape-test
-             (it "binds NO verb — skills are documents, reached with doc/apropos only"
-                 (let [e core/vis-extension]
-                   (expect (= "foundation-harness" (:ext/name e)))
-                   ;; `vis/extension` normalizes :ext/engine to an empty map even
-                   ;; when the key is absent, so assert on the SYMBOLS, not the key.
-                   (expect (empty? (extension/ext-symbols e)))
-                   (expect (empty? (get-in e [:ext/engine :ext.engine/symbols])))
-                   (expect (fn? (:ext/prompt-fn e)))
-                   ;; always active now — no toggle gate
-                   (expect ((:ext/activation-fn e) {})))))

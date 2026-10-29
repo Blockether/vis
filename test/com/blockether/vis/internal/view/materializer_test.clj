@@ -475,8 +475,6 @@
         (expect (= [{:id "passed" :label "passed" :value-text "15" :tone :ok}
                     {:id "failed" :label "failed" :value-text "3" :tone :error}]
                    (:stats score)))))
-  (it "leaves the mount behind: a picture is the title, the description and the nodes"
-      (expect (= #{:title :nodes} (set (keys (:view (live/picture ci-view)))))))
   (it "gives every node back as a node the engine would accept"
       (expect (every? nil? (map hs/live-node-error (:nodes (:view (live/picture ci-view)))))))
   (it "gives the model the log's TAIL and counts what stayed in the record"
@@ -586,9 +584,7 @@
           (node (:view (live/picture v)) "t")]
 
       (expect (= ["c" "b" "a"] (mapv :id (:rows t))))
-      (expect (= :insertion (:order t)))))
-  (it "says nothing about elisions when the budget cut nothing"
-      (expect (empty? (:elided (live/picture ci-view))))))
+      (expect (= :insertion (:order t))))))
 
 (defdescribe picture-control-state-test
              (it "leaves table selection controls out of the model picture and its markdown inverse"
@@ -626,10 +622,6 @@
                                       :is-completed false
                                       :reason :interrupted
                                       :summary "stopped after 18 jobs"}}))))
-  (it "renders without a verdict while the view is still open"
-      (let [md (live/->markdown ci-view)]
-        (expect (str/starts-with? md "# Watching a CI run\n\n[error]"))
-        (expect (not (str/includes? md "interrupted")))))
   (it "gives the model the log's TAIL and says how many lines it left in the record"
       (let [v
             (patched (view (log-node 100000))

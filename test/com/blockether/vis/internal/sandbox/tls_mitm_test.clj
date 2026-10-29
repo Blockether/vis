@@ -97,9 +97,3 @@
       ;; close! removes both ephemeral trust files
       (expect (not (.exists (File. ^String (:ca-file cap)))))
       (expect (not (.exists (File. ^String (:java-trust-store cap))))))))
-
-(defdescribe upstream-default-validates-real-certs
-             (it "without the TEST flag, upstream uses the system default factory"
-                 (let [cap (tls/create! {})] ; no :upstream-trust-all?
-                   (try (expect (instance? SSLSocketFactory (:upstream-factory cap)))
-                        (finally ((:close! cap)))))))

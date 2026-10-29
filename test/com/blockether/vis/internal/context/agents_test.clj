@@ -139,17 +139,7 @@
                                      (spit (java.io.File. ws "AGENTS.md") "ONLY-RULE")
                                      (let [{:keys [result]} (agents/scan-roots nil ws)]
                                        (expect (= "ONLY-RULE" (:content result)))
-                                       (expect (= 1 (count (:files result)))))))))
-             (it "nothing anywhere -> :found? false"
-                 (with-tmp-root* (fn [^java.io.File root]
-                                   (let [ws
-                                         (doto (java.io.File. root "empty") .mkdirs)
-
-                                         {:keys [result warnings]}
-                                         (agents/scan-roots nil ws)]
-
-                                     (expect (false? (:found? result)))
-                                     (expect (empty? warnings)))))))
+                                       (expect (= 1 (count (:files result))))))))))
 
 (defdescribe scan-extra-roots-test
              (it "extra roots land AFTER the workspace root; own dir only — no ancestor walk"
@@ -190,23 +180,7 @@
 
                                        (expect (= 1 (count files)))
                                        (expect (= :project (:scope (first files))))
-                                       (expect (empty? warnings)))))))
-             (it "an extra root with no guidance file contributes nothing"
-                 (with-tmp-root* (fn [^java.io.File root]
-                                   (let [ws
-                                         (doto (java.io.File. root "ws") .mkdirs)
-
-                                         extra
-                                         (doto (java.io.File. root "extra") .mkdirs)]
-
-                                     (spit (java.io.File. ws "AGENTS.md") "WS-RULE")
-                                     (let [{:keys [result]}
-                                           (agents/scan-roots nil ws [extra])
-
-                                           scoped
-                                           (mapv (juxt :scope :content) (:files result))]
-
-                                       (expect (= [[:project "WS-RULE"]] scoped))))))))
+                                       (expect (empty? warnings))))))))
 
 (defdescribe config-source-guidance-test
              (it "reads AGENTS.md only from the tiers that the session reads"

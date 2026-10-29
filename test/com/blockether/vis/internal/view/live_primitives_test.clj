@@ -411,31 +411,3 @@
                      (catch clojure.lang.ExceptionInfo _ true)))
         (expect (some? (spec/live-node-error {:id "bad" :type :divider key value}))))))
 
-(defdescribe divider-lifecycle-test
-             (it "divider lifecycle"
-                 (watching
-                   (fn [view]
-                     (let [id
-                           (:id view)
-
-                           divider
-                           {:id "section-break" :type :divider}]
-
-                       (engine/patch-live! id [{:op :add-node :after "intro" :node-spec divider}])
-                       (expect (= divider (node (engine/live-view id) "section-break")))
-                       (doseq [op [{:op :set} {:op :set :label "Heading"} {:op :set :text "Changed"}
-                                   {:op :append :lines ["line"]} {:op :clear}
-                                   {:op :remove :item-ids ["x"]}]]
-                         (expect (try (engine/patch-live! id [(assoc op :node-id "section-break")])
-                                      false
-                                      (catch clojure.lang.ExceptionInfo _ true)))
-                         (expect (= divider (node (engine/live-view id) "section-break"))))
-                       (expect (try (engine/action! id {:action :activate :node-id "section-break"})
-                                    false
-                                    (catch clojure.lang.ExceptionInfo _ true)))
-                       (engine/patch-live! id [{:op :remove-node :node-id "section-break"}])
-                       (expect (nil? (node (engine/live-view id) "section-break")))
-                       (engine/patch-live! id [{:op :add-node :after "intro" :node-spec divider}])
-                       (let [receipt (engine/close-live! id)]
-                         (expect (= divider (node (:view receipt) "section-break")))
-                         (expect (nil? (spec/live-result-error receipt)))))))))

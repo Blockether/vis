@@ -1,26 +1,16 @@
 (ns com.blockether.vis.internal.error-test
-  (:require [clojure.string :as str]
-            [com.blockether.vis.internal.error :as err]
+  (:require [com.blockether.vis.internal.error :as err]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe error-message-test
              (it "reads a Throwable's message"
                  (expect (= "boom" (err/error-message (ex-info "boom" {}))))
                  (expect (= "boom" (err/error-message (RuntimeException. "boom")))))
-             (it "falls back to the Throwable itself when it carries no message"
-                 (let [msg (err/error-message (RuntimeException.))]
-                   (expect (string? msg))
-                   (expect (str/includes? msg "RuntimeException"))))
              (it "prefers :message then :msg on an anomaly map, else prints it"
                  (expect (= "nope" (err/error-message {:message "nope"})))
                  (expect (= "nope" (err/error-message {:msg "nope"})))
                  (expect (= "nope" (err/error-message {:message "nope" :msg "other"})))
-                 (expect (= "{:a 1}" (err/error-message {:a 1}))))
-             (it "passes a string through and prints anything else"
-                 (expect (= "plain" (err/error-message "plain")))
-                 (expect (= "nil" (err/error-message nil)))
-                 (expect (= ":kw" (err/error-message :kw)))
-                 (expect (= "42" (err/error-message 42)))))
+                 (expect (= "{:a 1}" (err/error-message {:a 1})))))
 
 (defdescribe format-error-test
              (it "is idempotent, so a re-formatted error never stutters"

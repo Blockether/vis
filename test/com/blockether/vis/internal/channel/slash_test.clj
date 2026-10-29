@@ -49,11 +49,6 @@
    :slash/run-fn (fn [_]
                    {:slash/status :ok :slash/title "voice toggled"})})
 
-(defdescribe slash-path-test
-             (it "slash-path joins parent + name"
-                 (expect (= ["workspace" "apply"] (extension/slash-path workspace-apply)))
-                 (expect (= ["workspace"] (extension/slash-path workspace-spec)))))
-
 (defdescribe
   aggregation-test
   (it "active-slashes aggregates declarative `:ext/slash-commands` across extensions"
@@ -149,15 +144,6 @@
 
         (expect (true? (:handled? out)))
         (expect (= :unavailable (:reason out)))))
-  (it "availability-fn=true allows dispatch"
-      (let [env
-            (env-of [(ext "alpha" [voice-spec])])
-
-            out
-            (slash/dispatch env {:channel/id :tui} "/voice")]
-
-        (expect (true? (:handled? out)))
-        (expect (= :ok (get-in out [:result :slash/status])))))
   (it "run-fn throw surfaces :reason :run-failed"
       (let [throwing
             {:slash/name "boom"

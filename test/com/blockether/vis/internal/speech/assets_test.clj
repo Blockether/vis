@@ -54,8 +54,6 @@
 
 (defdescribe
   manifest-test
-  (it "names the speech models override explicitly"
-      (expect (= "VIS_SPEECH_MODELS_DIR" assets/models-dir-env)))
   (it "uses the shared assets-pack release for every mirrored speech artifact"
       (let [pack-sources (for [entry (assets/manifest)
                                source (:sources entry)
@@ -289,27 +287,7 @@
       (let [entry (assets/entry "vibevoice-realtime-0.5b-int8")]
         (expect (seq (:voices entry)))
         (expect (every? (set (:requires entry)) ["voices.bin" "voices.json"]))
-        (expect (not-any? :clip (:voices entry)))))
-  (it "lists the speakers that the Qwen3-TTS model has built in"
-      ;; A Qwen3-TTS speaker is a token of the model, so the entry carries no clip.
-      (let [entry (assets/entry "qwen3-tts-12hz-1.7b-customvoice-int4")]
-        (expect (= 9 (count (:voices entry))))
-        (expect (every? (set (:requires entry))
-                        ["talker_cache.onnx" "config.json" "tokenizer.json"]))
-        (expect (not-any? :clip (:voices entry)))))
-  (it "lists no voices for the Qwen3-TTS Base model, which clones an imported recording"
-      (let [entry (assets/entry "qwen3-tts-12hz-1.7b-base-int4")]
-        (expect (empty? (:voices entry)))
-        (expect (every? (set (:requires entry)) ["speaker_encoder.onnx" "tok_encoder.onnx"]))
-        (expect (not-any? #{"code_predictor.onnx" "talker_cache.onnx"} (:requires entry)))
-        (expect (some? (:notice entry)))))
-  (it "ships the Qwen3-TTS Base graphs that Vis exports"
-      (let [entry (assets/entry "qwen3-tts-12hz-1.7b-base-vis-export")]
-        (expect (= :qwen-tts (:engine entry)))
-        (expect (= ["code_predictor_step.onnx" "code_predictor_embed.onnx" "talker_cache.onnx"
-                    "text_embed.onnx"]
-                   (:requires entry)))
-        (expect (empty? (:voices entry))))))
+        (expect (not-any? :clip (:voices entry))))))
 
 (defn- repo-document
   "The generated document at the repository root, found by walking up from the

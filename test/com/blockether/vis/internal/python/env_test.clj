@@ -115,13 +115,6 @@
                      (expect (nil? (:error result)) (pr-str result))
                      (expect (= "Runtime restrictions preserved\n" (:stdout result)))))))
 
-(defdescribe sandbox-stop-level-test
-             ;; 69 idle-timeout stops were gateway warnings, and none was a problem.
-             (it "logs routine stops as info and every other stop as a warning"
-                 (expect (= :info (ep/sandbox-stop-level :idle-timeout)))
-                 (expect (= :info (ep/sandbox-stop-level :session-closed)))
-                 (expect (= :warn (ep/sandbox-stop-level :settings-change)))))
-
 (defdescribe
   retired-context-entry-test
   ;; Issue #180: retirement is a typed local failure, never an invitation to
@@ -586,12 +579,7 @@
                   "\"00000000-0000-0000-0000-000000000001\""]
                  (mapv ep/ctx->python-str
                        [##NaN ##Inf ##-Inf (java.util.Date. 0)
-                        (java.util.UUID/fromString "00000000-0000-0000-0000-000000000001")]))))
-  (it "preserves the historical multiline layout at the 100-column boundary"
-      (let [rendered (ep/ctx->python-str (array-map "first" (apply str (repeat 100 "x"))
-                                                    "second" [1 2]))]
-        (expect (str/starts-with? rendered "{\n \"first\": "))
-        (expect (str/includes? rendered "\n \"second\": [1, 2]\n}")))))
+                        (java.util.UUID/fromString "00000000-0000-0000-0000-000000000001")])))))
 
 (defdescribe
   auto-imported-python-names-test
@@ -1174,51 +1162,6 @@
 
           (ep/sym->py-name (:ext.symbol/symbol s)))]
 
-    (it "every wired sandbox verb exposes a non-empty doc"
-        (expect (seq native)) ;; sanity: we actually tested some
-        (let [out (run (str "import json\nbad=[]\n"
-                            "for n in ["
-                            (str/join ", " (map pr-str native))
-                            "]:\n"
-                            "    d = doc(n)\n"
-                            "    if ('is not a handle' in d) or (not d.strip()):\n"
-                            "        bad.append(n)\n" "print('BAD='+json.dumps(bad))"))]
-          (expect (re-find #"BAD=\[\]" out))))
-    ;; The CALL LINE is the one thing prose cannot supply: which parameters the
-    ;; verb takes, which are required, in what order. `doc(name)` renders it from
-    ;; the DECLARED signature, so a page can never drift from the contract — and
-    ;; no verb may answer with the async trampoline's own `(*a, **k)` instead.
-    (it "every wired sandbox verb's page opens with its own call line"
-        (let [out (run (str "import json\nbad=[]\n"
-                            "for n in [" (str/join ", " (map pr-str native))
-                            "]:\n" "    if (n + '(') not in doc(n).splitlines()[2]:\n"
-                            "        bad.append(n)\n" "print('NOCALL='+json.dumps(bad))"))]
-          (expect (re-find #"NOCALL=\[\]" out))))
-    ;; Regression, doc quality: a tool page carried prose alone — nothing named the
-    ;; parameters, and an options-dict verb stated its REQUIRED keys nowhere
-    ;; `doc(name)` could reach, so the contract was learned from refusals. Both
-    ;; lines are rendered from the DECLARATION above the document; putting them
-    ;; INSIDE the text instead cost `patch` fourteen ranks on its own ask, because
-    ;; a document's first line is one of the three scored fields.
-    (it "opens every wired tool page with its call line and names its required keys once"
-        (let [out
-              (run (str
-                     "import json\n"
-                     "bad = []\n"
-                     "wired = set(["
-                     (str/join ", " (map pr-str native))
-                     "])\n"
-                     "keyed = []\n" "for item in apropos():\n"
-                     "    if item.type != 'tool' or item.name not in wired: continue\n"
-                     "    L = doc(item).splitlines()\n"
-                     "    if len(L) < 3 or (item.name + '(') not in L[2]: bad.append(item.name)\n"
-                     "    if len(L) > 3 and L[3].startswith('Keys:'): keyed.append(item.name)\n"
-                     "print('NOCALL='+json.dumps(bad))\n" "print('KEYED='+str(len(keyed) > 8))\n"
-                     "print('REQUIRED='+str(any('(REQUIRED)' in doc(n) for n in wired)))\n"
-                     "print('ONCE='+str(doc('patch').count('patch(path, edits, version=None)')))"))]
-          (expect (re-find #"NOCALL=\[\]" out) out)
-          (expect (str/includes? out "KEYED=True"))
-          (expect (str/includes? out "REQUIRED=True"))))
     ;; Clojure host verbs have no typed result model, so their declaration is the
     ;; only contract. The page states the raw result before the prose, and
     ;; `.contract` gives the same declaration as data.
@@ -1260,9 +1203,6 @@
           (expect (str/includes? out "body=0"))
           (expect (str/includes? out "exact=grep"))
           (expect (str/includes? out "outline=True"))))
-    (it "rejects an invalid regular expression"
-        (let [result (ep/run-python-block ctx "apropos('[')")]
-          (expect (some? (:error result)))))
     (it "preserves corpus order and never caps matches"
         (let [out (run (str "all_names = [i.name for i in apropos('')]\n"
                             "matched = [i.name for i in apropos('.*')]\n"

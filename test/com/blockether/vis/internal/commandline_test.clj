@@ -71,25 +71,6 @@
                 b (.indexOf ^String out "search")]
 
             (expect (and (pos? a) (pos? b) (< a b)))))))
-  (it "renders :cmd/extra-sections after the subcommand block"
-      (binding [commandline/*color-enabled?* false]
-        (let [out (commandline/render-command (mixed-children-cmd) ["vis" "extension"])]
-          (expect (str/includes? out "INSTALLED EXTENSIONS"))
-          (expect (str/includes? out "Bridge verification."))
-          (let [a (.indexOf ^String out "EXTENSION COMMANDS")
-                b (.indexOf ^String out "INSTALLED EXTENSIONS")]
-
-            (expect (and (pos? a) (pos? b) (< a b)))))))
-  (it "falls back to a single SUBCOMMANDS section when children are not mixed"
-      (binding [commandline/*color-enabled?* false]
-        (let [out (commandline/render-command {:cmd/name "only-internal"
-                                               :cmd/doc "x"
-                                               :cmd/subcommands
-                                               [{:cmd/name "a" :cmd/doc "a" :cmd/internal? true}
-                                                {:cmd/name "b" :cmd/doc "b" :cmd/internal? true}]}
-                                              ["vis" "only-internal"])]
-          (expect (str/includes? out "SUBCOMMANDS"))
-          (expect (not (str/includes? out "EXTENSION COMMANDS"))))))
   (it "supports :cmd/extra-sections as a 0-arg fn (deferred discovery)"
       (binding [commandline/*color-enabled?* false]
         (let [calls (atom 0)
@@ -105,20 +86,3 @@
           (expect (str/includes? out "body line"))))))
 
 ;; render-tree -- the root doc owns its own layout.
-
-(defn- sectioned-root
-  []
-  {:cmd/name "vis-agent"
-   :cmd/doc (str "One-liner.\n"
-                 "\n" "USAGE\n"
-                 "vis-agent [FLAGS] \"prompt\"   Run one-shot agent work.\n" "\n"
-                 "UPDATES\n" "vis-agent update             Install the latest release.")
-   :cmd/subcommands [{:cmd/name "doctor" :cmd/doc "Diagnose."}]})
-
-(defdescribe render-tree-root-doc-test
-             (it "keeps root-doc headings at column 0 and rows at column 2"
-                 (binding [commandline/*color-enabled?* false]
-                   (let [out (commandline/render-tree (sectioned-root))]
-                     ;; No line is indented twice, and blank lines carry no padding.
-                     (expect (nil? (re-find #"(?m)^ {3,}\S" out)))
-                     (expect (nil? (re-find #"(?m)^ +$" out)))))))

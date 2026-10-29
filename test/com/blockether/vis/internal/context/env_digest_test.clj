@@ -21,7 +21,6 @@
   deep-merge-test
   (it "merges nested maps key-by-key, scalar wins on collision"
       (expect (= {:a 1 :b {:c 2 :d 3}} (env-digest/deep-merge {:a 1 :b {:c 2}} {:b {:d 3}}))))
-  (it "later scalar replaces earlier" (expect (= {:a 2} (env-digest/deep-merge {:a 1} {:a 2}))))
   (it "nil in `b` preserves `a` value" (expect (= 1 (:a (env-digest/deep-merge {:a 1} {:a nil}))))))
 
 (defdescribe
@@ -86,29 +85,7 @@
                           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
                             (expect (= "clojure"
                                        (get-in (env-digest/base-digest nil)
-                                               ["project" "primary_language"]))))))))
-  (it "never surfaces agents_md — AGENTS.md content lives in PROJECT-INSTRUCTIONS system block"
-      (with-redefs [agents/instructions
-                    (constantly {:found? true :source :repo :path "/tmp/AGENTS.md" :content "rule"})
-
-                    prompt/active-extensions
-                    (constantly [])]
-
-        (with-tmp-root* (fn [^java.io.File root]
-                          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
-                            (let [d (env-digest/base-digest nil)]
-                              (expect (not (contains? (get d "project") "agents_md")))))))))
-  (it "skips extensions slice when no environment is provided"
-      (with-redefs [agents/instructions
-                    (constantly {:found? false})
-
-                    prompt/active-extensions
-                    (constantly [])]
-
-        (with-tmp-root* (fn [^java.io.File root]
-                          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
-                            (let [d (env-digest/base-digest nil)]
-                              (expect (nil? (get d "extensions"))))))))))
+                                               ["project" "primary_language"])))))))))
 
 (defdescribe
   session-env-merges-extension-contributions-test

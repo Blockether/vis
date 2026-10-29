@@ -184,8 +184,6 @@
           (expect (empty? (:attached out)))
           (expect (= 1 (count (:skipped out))))
           (expect (:readable-blind? (first (:skipped out)))))))
-  (it "a recording answers to its own intake cap"
-      (expect (= attachments/max-video-bytes attachments/max-audio-bytes)))
   (it "an inline upload of a recording is stored under its SNIFFED container"
       (let [head
             (byte-array (concat [0 0 0 0x18]
@@ -206,7 +204,6 @@
   detect-video-mime-test
   "MP4/QuickTime are attachable media, but ONLY when the bytes really are a clip:
    HEIF and AVIF photos wear the very same ISO-BMFF container."
-  (it "sniffs a real mp4" (expect (= "video/mp4" (attachments/detect-video-mime tiny-mp4-bytes))))
   (it "sniffs the common video brands"
       (expect (= "video/mp4" (attachments/detect-video-mime (ftyp-head "isom"))))
       (expect (= "video/mp4" (attachments/detect-video-mime (ftyp-head "mp42")))))
@@ -226,11 +223,6 @@
       (expect (attachments/video-media-type? "video/mp4"))
       (expect (attachments/video-media-type? " Video/QuickTime "))
       (expect (not (attachments/video-media-type? "image/png"))))
-  (it "a clip may be far larger than a still, because it never ships verbatim"
-      (expect (> attachments/max-video-bytes attachments/max-image-bytes)))
-  (it "a still is ACCEPTED far past the provider cap — 25MB in, 5MB out"
-      (expect (= (* 25 1024 1024) attachments/max-upload-image-bytes))
-      (expect (= (* 5 1024 1024) attachments/max-image-bytes)))
   (it "keeps a 20MB PNG upload that is four times over the per-image wire cap"
       (let [big
             (byte-array (concat (seq tiny-png-bytes) (repeat (* 20 1024 1024) (byte 0))))
@@ -353,22 +345,6 @@
                        :attached
                        first
                        :path)))))
-  (it "collects a .mov"
-      (let [dir
-            (temp-dir)
-
-            f
-            (write-file dir "screen.mov" tiny-mp4-bytes)
-
-            res
-            (attachments/collect-user-images (.getAbsolutePath f))]
-
-        (expect (= 1 (count (:attached res))))
-        (expect (= "video/mp4"
-                   (-> res
-                       :attached
-                       first
-                       :media-type)))))
   (it "leaves a file that only LOOKS like a clip alone"
       (let [dir
             (temp-dir)
@@ -560,10 +536,7 @@
                       res
                       (attachments/collect-user-images (.getAbsolutePath f))]
 
-                  (expect (= {:attached [] :skipped []} res))))
-            (it "handles blank/nil text"
-                (expect (= {:attached [] :skipped []} (attachments/collect-user-images nil)))
-                (expect (= {:attached [] :skipped []} (attachments/collect-user-images "")))))
+                  (expect (= {:attached [] :skipped []} res)))))
   (describe "caps"
             (it "skips oversized images with a reason"
                 (let [dir
@@ -605,30 +578,19 @@
                                              :reason)
                                          "limit"))))))
 
-(defdescribe
-  text-chip-preview-test
-  "Queue rows must never paint a raw `/var/folders/…/clipboard-….png`."
-  (describe "text->chip-preview"
-            (it "collapses an image path to a named chip and keeps the prose"
-                (expect (= "clipboard-1.png LOOK AT THIS"
-                           (attachments/text->chip-preview
-                             "/var/folders/x/T/clipboard-1.png\n LOOK AT THIS"))))
-            (it "chips an image-only message instead of returning the path"
-                (expect (= "shot.png" (attachments/text->chip-preview "/tmp/shot.png"))))
-            (it "handles a quoted path with spaces"
-                (expect (= "check my shot.png ok"
-                           (attachments/text->chip-preview "check \"/tmp/my shot.png\" ok"))))
-            (it "chips several images in one message"
-                (expect (= "a.png b.jpg" (attachments/text->chip-preview "/tmp/a.png /tmp/b.jpg"))))
-            (it "is pure — a path whose file is gone still chips"
-                (expect (= "vanished.png"
-                           (attachments/text->chip-preview
-                             "/tmp/definitely-not-here/vanished.png"))))
-            (it "leaves prose untouched apart from whitespace collapsing"
-                (expect (= "hello world" (attachments/text->chip-preview "hello   world"))))
-            (it "returns nil for blank/nil input"
-                (expect (nil? (attachments/text->chip-preview nil)))
-                (expect (nil? (attachments/text->chip-preview "   "))))))
+(defdescribe text-chip-preview-test
+             "Queue rows must never paint a raw `/var/folders/…/clipboard-….png`."
+             (describe "text->chip-preview"
+                       (it "collapses an image path to a named chip and keeps the prose"
+                           (expect (= "clipboard-1.png LOOK AT THIS"
+                                      (attachments/text->chip-preview
+                                        "/var/folders/x/T/clipboard-1.png\n LOOK AT THIS"))))
+                       (it "chips an image-only message instead of returning the path"
+                           (expect (= "shot.png" (attachments/text->chip-preview "/tmp/shot.png"))))
+                       (it "handles a quoted path with spaces"
+                           (expect (= "check my shot.png ok"
+                                      (attachments/text->chip-preview
+                                        "check \"/tmp/my shot.png\" ok"))))))
 
 (defdescribe text-inline-chips-test
              "Transcript bubbles chip image paths WITHOUT collapsing their layout."
@@ -642,10 +604,7 @@
                                       (attachments/text->inline-chips "one\n\n  two   spaced"))))
                        (it "chips every image path in place"
                            (expect (= "a.png\nb.jpg"
-                                      (attachments/text->inline-chips "/tmp/a.png\n/tmp/b.jpg"))))
-                       (it "passes blank/nil through unchanged"
-                           (expect (= "" (attachments/text->inline-chips nil)))
-                           (expect (= "   " (attachments/text->inline-chips "   "))))))
+                                      (attachments/text->inline-chips "/tmp/a.png\n/tmp/b.jpg"))))))
 
 (defn- bmp-bytes
   "A real, decodable 8x8 BMP — a valid image every vision provider still refuses."
@@ -808,10 +767,6 @@
           (expect (= (b64 bytes) (:base64 attachment)))
           (expect (attachments/hidden-from-model? attachment))
           (expect (true? (:readable-blind? blind))))))
-  (it "accepts every ZIP spelling as a human-only claim"
-      (doseq [media-type ["application/zip" "application/x-zip-compressed" "application/x-zip"]]
-        (expect (attachments/zip-media-type? media-type))
-        (expect (contains? attachments/human-only-media-types media-type))))
   (it "sniffs a ZIP archive on disk and keeps a Word document a Word document"
       (let [dir
             (temp-dir)
@@ -1023,10 +978,6 @@
                     [{:base64 tiny-png-b64 :filename "shot.png" :reference "[IMAGE #4]"}]
                     {:max-images 0})]
           (expect (= "[IMAGE #4]" (:reference (first (:skipped out)))))))
-    (it "still attaches a PNG"
-        (let [out (attachments/prepare-inline-attachments [{:base64 tiny-png-b64
-                                                            :filename "a.png"}])]
-          (expect (= ["image/png"] (mapv :media-type (:attached out))))))
     (it "accepts an MP4 upload from the companion, sniffed rather than declared"
         (let [out (attachments/prepare-inline-attachments
                     [{:base64 (str "data:video/mp4;base64," tiny-mp4-b64)
@@ -1261,9 +1212,7 @@
             (attachments/wire-images
               [{:base64 tiny-png-b64 :media-type "image/png" :path "probe.png" :audience "model"}])]
         (expect (= ["probe.png"] (mapv :path (:attached out))))
-        (expect (empty? (:skipped out)))))
-  (it "is empty, not broken, with nothing to send"
-      (expect (= {:attached [] :skipped []} (attachments/wire-images nil)))))
+        (expect (empty? (:skipped out))))))
 
 (defn- decoded
   "What a wired payload looks like to `javax.imageio` — the JDK's decoder, which

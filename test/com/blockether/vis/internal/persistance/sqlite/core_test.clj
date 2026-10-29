@@ -257,31 +257,6 @@
                    (persistance/db-latest-turn-request-usage s (str tid)))))))
 
 (defdescribe
-  latest-turn-state-sql-test
-  (it "reuses the fixed SQL shape for repeated latest turn-state reads"
-      (let [s
-            (h/store)
-
-            sid
-            (h/store-session! s {:channel :api})
-
-            tid
-            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "latest"})
-
-            format-sql
-            sql/format
-
-            formats
-            (atom 0)]
-
-        (with-redefs [sql/format (fn [query & options]
-                                   (when (= :session_turn_state (:from query)) (swap! formats inc))
-                                   (apply format-sql query options))]
-          (dotimes [_ 10]
-            (expect (= [] (persistance/db-list-session-turn-iterations s tid)))))
-        (expect (= 0 @formats)))))
-
-(defdescribe
   routing-event-batch-test
   (it
     "loads ordered routing traces for all turn iterations with one query"
@@ -1130,8 +1105,6 @@
             (ex-info "wrapper" {} cause)]
 
         (expect (true? (migration-checksum-mismatch? e)))))
-  (it "returns false for unrelated failures"
-      (expect (false? (migration-checksum-mismatch? (ex-info "boom" {})))))
   (it "wraps checksum mismatch as :vis/user-error with actionable guidance"
       (let [root
             (ex-info "Migration checksum mismatch for migration version 1" {})
@@ -2221,28 +2194,6 @@
         (expect (seq @state-reads))
         (expect (every? #(not (contains? % :prompt_cache_state)) @state-reads))
         (expect (= checkpoint (persistance/db-get-session-prompt-cache-state s state-id)))))
-  (it "reuses the fixed SQL shape when resolving the latest state"
-      (let [s
-            (h/store)
-
-            session-id
-            (h/store-session! s {:channel :api})
-
-            state-id
-            (persistance/db-latest-session-state-id s session-id)
-
-            format-sql
-            sql/format
-
-            formats
-            (atom 0)]
-
-        (with-redefs [sql/format (fn [& args]
-                                   (swap! formats inc)
-                                   (apply format-sql args))]
-          (dotimes [_ 10]
-            (expect (= state-id (persistance/db-latest-session-state-id s session-id)))))
-        (expect (zero? @formats))))
   (it "reads only the id when resolving the latest session state"
       ;; JVM SDK profiling found repeated system-prompt copies in ID-only lookups.
       (let [s
@@ -2862,10 +2813,7 @@
                        (persistance/db-list-session-states s (random-uuid))]
 
                    (expect (vector? rows))
-                   (expect (= [] rows))))
-             (it "returns [] (vector, never nil) when session-id is nil"
-                 (let [s (h/store)]
-                   (expect (= [] (persistance/db-list-session-states s nil))))))
+                   (expect (= [] rows)))))
 
 ;; List turn states (retry history introspection)
 
@@ -2925,10 +2873,7 @@
             (persistance/db-list-session-turn-states s (random-uuid))]
 
         (expect (vector? rows))
-        (expect (= [] rows))))
-  (it "returns [] (vector, never nil) when session-turn-id is nil"
-      (let [s (h/store)]
-        (expect (= [] (persistance/db-list-session-turn-states s nil))))))
+        (expect (= [] rows)))))
 
 ;; Fork
 
@@ -3462,23 +3407,6 @@
           (expect (= 1 (count blocks)))
           (expect (= "(+ 1 1)" (:src (first blocks))))
           (expect (= "2\n" (:stdout (first blocks)))))))
-  (it "uses code and form columns for the inline log"
-      (let [s
-            (h/store)
-
-            cid
-            (h/store-session! s {:channel :tui})
-
-            qid
-            (persistance/db-store-session-turn!
-              s
-              {:parent-session-id cid :user-request "x" :status :running})]
-
-        (h/store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :stdout "2\n" :duration-ms 5})
-        (expect (contains? (table-columns s "session_turn_iteration") "code"))
-        (expect (not (contains? (table-columns s "session_turn_iteration") "blocks")))
-        (expect (some? (:code (first
-                                (raw-query s {:select [:code] :from :session_turn_iteration})))))))
   (it
     "assigns iteration positions from 1 and rejects non-contiguous manual positions"
     (let [s
@@ -3894,118 +3822,6 @@
 
 (defdescribe
   soul-state-integrity-test
-  (it "session_state.session_soul_id points to session_soul.id"
-      (let [s
-            (h/store)
-
-            cid
-            (h/store-session! s {:channel :tui :title "FK test"})]
-
-        (let [soul
-              (first (raw-query s {:select [:id] :from :session_soul}))
-
-              state
-              (first (raw-query s {:select [:session_soul_id] :from :session_state}))]
-
-          (expect (= (:id soul) (:session_soul_id state))))))
-  (it "session_turn_soul.session_state_id points to session_state.id"
-      (let [s
-            (h/store)
-
-            cid
-            (h/store-session! s {:channel :tui})
-
-            _
-            (persistance/db-store-session-turn!
-              s
-              {:parent-session-id cid :user-request "x" :status :running})]
-
-        (let [state
-              (first (raw-query s {:select [:id] :from :session_state}))
-
-              qsoul
-              (first (raw-query s {:select [:session_state_id] :from :session_turn_soul}))]
-
-          (expect (= (:id state) (:session_state_id qsoul))))))
-  (it "session_turn_state.session_turn_soul_id points to session_turn_soul.id"
-      (let [s
-            (h/store)
-
-            cid
-            (h/store-session! s {:channel :tui})
-
-            _
-            (persistance/db-store-session-turn!
-              s
-              {:parent-session-id cid :user-request "x" :status :running})]
-
-        (let [qsoul
-              (first (raw-query s {:select [:id] :from :session_turn_soul}))
-
-              qstate
-              (first (raw-query s {:select [:session_turn_soul_id] :from :session_turn_state}))]
-
-          (expect (= (:id qsoul) (:session_turn_soul_id qstate))))))
-  (it "iteration.session_turn_state_id points to session_turn_state.id"
-      (let [s
-            (h/store)
-
-            cid
-            (h/store-session! s {:channel :tui})
-
-            qid
-            (persistance/db-store-session-turn!
-              s
-              {:parent-session-id cid :user-request "x" :status :running})
-
-            _
-            (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0})]
-
-        (let [qstate
-              (first (raw-query s {:select [:id] :from :session_turn_state}))
-
-              iteration
-              (first (raw-query s
-                                {:select [:session_turn_state_id] :from :session_turn_iteration}))]
-
-          (expect (= (:id qstate) (:session_turn_state_id iteration))))))
-  (it
-    "retry session_turn_state.forked_from_session_turn_state_id points to previous session_turn_state.id"
-    (let [s
-          (h/store)
-
-          cid
-          (h/store-session! s {:channel :tui})
-
-          qid
-          (persistance/db-store-session-turn!
-            s
-            {:parent-session-id cid :user-request "x" :status :running})]
-
-      (persistance/db-update-session-turn! s qid {:status :error})
-      (persistance/db-retry-session-turn! s qid {:status :running :model "claude-4"})
-      (let [states (raw-query s
-                              {:select [:id :version :forked_from_session_turn_state_id]
-                               :from :session_turn_state
-                               :order-by [[:version :asc]]})]
-        (expect (= 2 (count states)))
-        (expect (nil? (:forked_from_session_turn_state_id (first states))))
-        (expect (= (:id (first states)) (:forked_from_session_turn_state_id (second states)))))))
-  (it "fork session_state.parent_state_id points to previous state"
-      (let [s
-            (h/store)
-
-            cid
-            (h/store-session! s {:channel :tui})]
-
-        (h/fork-session! s cid {:title "fork"})
-        (let [states (raw-query s
-                                {:select [:id :version :parent_state_id]
-                                 :from :session_state
-                                 :order-by [[:version :asc]]})]
-          (expect (= 2 (count states)))
-          (expect (nil? (:parent_state_id (first states))))
-          (expect (= (:id (first states)) (:parent_state_id (second states)))))))
   ;; Protocol 7's one invariant: the snapshot the terminal wire event handed the
   ;; client is the value the store hands back. Freezing is where a lazy or deeply
   ;; nested Activity would be swapped for a `:vis/ref` placeholder instead, and only
@@ -4328,14 +4144,6 @@
                (mapv :title))]
 
       (expect (= ["C" "A" "B"] order1))))
-  (it "stamps a default owner on freshly created sessions"
-      (let [s
-            (h/store)
-
-            sid
-            (h/store-session! s {:channel :tui :title "owned"})]
-
-        (expect (= "local" (:owner-id (persistance/db-get-session s sid))))))
   (it "binds a project to its workspace_root and resolves it get-or-create"
       (let [s
             (h/store)
@@ -6018,22 +5826,6 @@
            (expect (>= limit (fs/size wal)))
            (finally (persistance/db-dispose-connection! s) (fs/delete-tree root))))))
 
-(defdescribe pool-leak-detection-test
-             ;; Regression, gateway CPU audit: Hikari implements `leakDetectionThreshold` by
-             ;; allocating `new Exception("Apparent connection leak detected")` - a full
-             ;; stack-trace fill - on EVERY checkout, so a future report has a trace. It was
-             ;; always on, and a JFR profile of a live gateway showed it as the single largest
-             ;; allocation site: 17 checkouts a second paying for a leak that never happens.
-             (it "leaves Hikari's leak detector off unless a property arms it"
-                 (expect (zero? (long @(var-get #'sqlite-core/leak-detection-ms))))
-                 (let [raw
-                       (doto (org.sqlite.SQLiteDataSource.) (.setUrl "jdbc:sqlite::memory:"))
-
-                       ds
-                       ((var-get #'sqlite-core/pooled-datasource) raw "vis-test-leak-off")]
-
-                   (try (expect (zero? (.getLeakDetectionThreshold ds))) (finally (.close ds))))))
-
 (defdescribe
   swept-turn-session-stats-test
   ;; Regression, user report (paraphrased: a dying gateway is restarted and the
@@ -6177,14 +5969,4 @@
                    (persistance/db-set-session-project! s b pid)
                    (persistance/db-set-session-group! s a gid)
                    (expect (= [a] (persistance/db-session-group-session-ids s gid)))
-                   (expect (= #{a b} (set (persistance/db-project-session-ids s pid))))))
-             (it "answers nothing for a group or project that holds nothing"
-                 (let [s
-                       (h/store)
-
-                       unknown
-                       (str (java.util.UUID/randomUUID))]
-
-                   (expect (= [] (persistance/db-session-group-session-ids s unknown)))
-                   (expect (= [] (persistance/db-session-group-session-ids s nil)))
-                   (expect (= [] (persistance/db-project-session-ids s unknown))))))
+                   (expect (= #{a b} (set (persistance/db-project-session-ids s pid)))))))

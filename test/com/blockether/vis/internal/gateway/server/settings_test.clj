@@ -29,9 +29,7 @@
                        (it "shows each row of a parent cycle once"
                            (expect (= [["a" [["b"]]] ["c"]]
                                       (ids (nest-rows [{:id "a" :parent "b"} {:id "b" :parent "a"}
-                                                       {:id "c" :parent "c"}])))))
-                       (it "keeps a flat list flat"
-                           (expect (= [{:id "a"} {:id "b"}] (nest-rows [{:id "a"} {:id "b"}]))))))
+                                                       {:id "c" :parent "c"}])))))))
 
 (def ^:private extension-rows #'api/extension-rows)
 

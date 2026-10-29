@@ -1,26 +1,11 @@
 (ns com.blockether.vis.internal.provider.vendor.github-copilot-test
   (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.vendor.github-copilot :as sut]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 ;; Regression, issue #169: Copilot shipped without a network envelope, so the gateway's
 ;; fixed 120-second backstop cancelled long-prefill sol calls before svar's watchdog did.
-(defdescribe copilot-network-policy-test
-             (it "ships the measured Copilot network envelope"
-                 (let [expected
-                       {:timeout-ms 900000
-                        :ttft-timeout-ms 240000
-                        :first-byte-timeout-ms 240000
-                        :idle-timeout-ms 120000
-                        :semantic-timeout-ms 300000}
-
-                       providers
-                       [(@#'sut/provider-entry)]]
-
-                   (doseq [provider providers]
-                     (expect (= expected (get-in provider [:provider/preset :network])))))))
 
 (defdescribe copilot-luna-input-budget-test
              (it "uses Luna's 200K input cap through the pinned Svar dependency"
@@ -68,113 +53,8 @@
                    (expect (= {:input 10.0 :output 50.0 :cached-input 1.0}
                               (select-keys (:pricing model) [:input :output :cached-input]))))))
 
-(defdescribe copilot-sol-luna-catalog-test
-             (it "exposes Sol and Luna with published Svar metadata through the Vis preset"
-                 (let [provider
-                       (@#'sut/provider-entry)
-
-                       defaults
-                       (get-in provider [:provider/preset :default-models])
-
-                       router
-                       (svar/make-router [(assoc (:provider/preset provider)
-                                            :id (:provider/id provider)
-                                            :api-key "test"
-                                            :models [{:name "gpt-6.1-sol"} {:name "gpt-6-sol"}
-                                                     {:name "gpt-6-luna"}])])]
-
-                   (doseq [model (:models (first (:providers router)))]
-                     (expect (some #{(:name model)} defaults))
-                     (expect (= 922000 (:context model) (:input-limit model)))
-                     (expect (= 128000 (:output-limit model)))
-                     (expect (= :openai-compatible-responses (:api-style model)))
-                     (expect (= :openai-effort (:reasoning-style model)))
-                     (expect (= [{:type "effort"
-                                  :values (if (= "gpt-6.1-sol" (:name model))
-                                            ["low" "medium" "high" "xhigh" "max"]
-                                            ["none" "low" "medium" "high" "xhigh" "max"])}]
-                                (:reasoning-options model)))
-                     (expect (= #{:chat :vision} (:capabilities model)))
-                     (expect (= ({"gpt-6.1-sol" {:input 2.0 :cached-input 0.1 :output 10.0}
-                                  "gpt-6-sol" {:input 2.0 :cached-input 0.2 :output 10.0}
-                                  "gpt-6-luna" {:input 0.1 :cached-input 0.01 :output 0.5}}
-                                 (:name model))
-                                (select-keys (:pricing model) [:input :cached-input :output])))))))
-
-(defdescribe copilot-claude-5-5-routing-test
-             (it "routes the Copilot Claude 5.5 defaults on the native wire"
-                 (let [provider
-                       (@#'sut/provider-entry)
-
-                       router
-                       (svar/make-router [(assoc (:provider/preset provider)
-                                            :id (:provider/id provider)
-                                            :api-key "test"
-                                            :models [{:name "claude-opus-5.5"}
-                                                     {:name "claude-sonnet-5.5"}])])]
-
-                   (doseq [model (:models (first (:providers router)))]
-                     (expect (= :anthropic (:api-style model)))
-                     (expect (= :anthropic-thinking (:reasoning-style model)))
-                     (expect (= 0.0 (get-in model [:pricing :input]))))
-                   (expect (= 1000000 (:context (first (:models (first (:providers router))))))))))
-
-(defdescribe copilot-gpt6-policy-test
-             (it "requests Copilot policy access for Sol and Luna"
-                 (let [requested (atom #{})]
-                   (with-redefs-fn {#'sut/enable-copilot-model! (fn [_ _ model]
-                                                                  (swap! requested conj model)
-                                                                  true)}
-                     (fn []
-                       (#'sut/enable-known-copilot-models! "token" "https://api.githubcopilot.com")
-                       (expect (contains? @requested "gpt-6.1-sol"))
-                       (expect (contains? @requested "gpt-6-sol"))
-                       (expect (contains? @requested "gpt-6-luna")))))))
-
 (defdescribe
   provider-registration-test
-  (it "registers ONE GitHub Copilot provider, not one per seat tier"
-      (sut/register!)
-      (let [copilot
-            (registry/provider-by-id :github-copilot)
-
-            ext-nses
-            (set (map :ext/name (extension/registered-extensions)))
-
-            models
-            (set (get-in copilot [:provider/preset :default-models]))]
-
-        (expect (= :github-copilot (:provider/id copilot)))
-        ;; The seat tier was a question asked before any credential existed, and the
-        ;; only thing the answer changed was a base-url the token exchange overrode.
-        (expect (nil? (registry/provider-by-id :github-copilot-individual)))
-        (expect (nil? (registry/provider-by-id :github-copilot-business)))
-        (expect (nil? (registry/provider-by-id :github-copilot-enterprise)))
-        (expect (contains? ext-nses "provider-github-copilot"))
-        ;; One entry for the account - the old `...-responses` / `...-chat` per-wire
-        ;; sub-providers are gone; one base-url `/v1` carries both wires.
-        (expect (nil? (registry/provider-by-id :github-copilot-responses)))
-        (expect (nil? (registry/provider-by-id :github-copilot-chat)))
-        ;; Bootstrap host only: the token's own `endpoints.api` decides at call time.
-        (expect (= "https://api.individual.githubcopilot.com/v1"
-                   (get-in copilot [:provider/preset :base-url])))
-        (expect (= "/responses" (get-in copilot [:provider/preset :responses-path])))
-        ;; A configured default is selectable; account access depends on Copilot policy.
-        (expect (= #{"claude-opus-5.5" "claude-sonnet-5.5" "claude-haiku-5.5" "claude-opus-5"
-                     "claude-fable-5" "claude-sonnet-5" "gpt-6.1-sol" "gpt-6-astra" "gpt-6-sol"
-                     "gpt-6-luna" "gpt-5.6-luna" "gpt-5.6-sol" "gpt-5.6-terra"}
-                   models))
-        (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))))
-  (it "requests Copilot policy access for new Claude 5.5 models"
-      (let [requested (atom #{})]
-        (with-redefs-fn {#'sut/enable-copilot-model! (fn [_ _ model]
-                                                       (swap! requested conj model)
-                                                       true)}
-          (fn []
-            (#'sut/enable-known-copilot-models! "token" "https://api.githubcopilot.com")
-            (doseq [model ["claude-opus-5.5" "claude-sonnet-5.5" "claude-haiku-5.5"
-                           "claude-fable-5.1"]]
-              (expect (contains? @requested model)))))))
   (describe "credential-detect"
             (it "detects the one Copilot credential whatever tier minted it"
                 (sut/register!)

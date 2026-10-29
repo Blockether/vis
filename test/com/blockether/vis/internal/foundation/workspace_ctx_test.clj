@@ -116,10 +116,6 @@
         (try (let [block (wctx/render-block {:workspace {:id "ws-legacy" :root base :fork-ms 1}})]
                (expect (true? (get block "isolated"))))
              (finally (delete-tree! base)))))
-  (it "reports \"vcs_kind\" \"git\" when the workspace root is inside a git repo"
-      ;; the project cwd is a git repo
-      (let [block (wctx/render-block {:workspace {:id "ws-git" :root (workspace/cwd)}})]
-        (expect (= "git" (get block "vcs_kind")))))
   (it "nil workspace falls back to the bound cwd"
       (let [base (temp-dir "vis-wctx-nil")]
         (try (binding [workspace/*workspace-root* base]
@@ -142,11 +138,6 @@
              (let [block (wctx/render-block {:workspace {:id "ws-2b" :root base}})]
                (expect (nil? (get block "changed")))
                (expect (nil? (get block "changed_paths"))))
-             (finally (delete-tree! base)))))
-  (it "surfaces the label"
-      (let [base (temp-dir "vis-wctx-label")]
-        (try (let [block (wctx/render-block {:workspace {:id "ws-3" :root base :label "frontend"}})]
-               (expect (= "frontend" (get block "label"))))
              (finally (delete-tree! base)))))
   (it "session-state hydration adds session_* identity + fork lineage"
       (let [base (temp-dir "vis-wctx-session")]

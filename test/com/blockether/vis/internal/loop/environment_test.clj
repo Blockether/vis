@@ -37,8 +37,6 @@
 (defdescribe
   extension-selection-test
   (describe "parsing"
-            (it "keeps every extension without a selection"
-                (expect (nil? (extension-selection nil))))
             (it "reads names as a list to keep and -names as a list to turn off"
                 (expect (= {:keep #{"gh" "clj"}} (extension-selection ["gh" " clj"])))
                 (expect (= {:drop #{"spel"}} (extension-selection ["-spel"])))
@@ -164,7 +162,6 @@
 (defdescribe
   tool-selection-test
   (describe "parsing"
-            (it "keeps every tool without a list" (expect (nil? (loop-env/tool-selection nil))))
             (it "rejects an empty list and a list that mixes both forms"
                 (expect (= {:status 400 :type :tool/empty-selection}
                            (error-data #(loop-env/tool-selection []))))

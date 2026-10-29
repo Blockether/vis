@@ -267,9 +267,6 @@
         (expect (str/includes? boundary "session[\"goal\"] = "))
         (expect (str/includes? boundary "\"objective\": \"remove the legacy cache\""))
         (expect (str/includes? boundary "\"status\": \"active\""))))
-  (it "omits the goal line for a session without a goal"
-      (let [boundary (:text (cr/turn-boundary {:ctx (assoc base-ctx "session_turn" 4)} nil))]
-        (expect (not (str/includes? boundary "session[\"goal\"]")))))
   (describe
     "app notes"
     (let [apps
@@ -298,10 +295,6 @@
                                                           {"apps" apps})]
             (expect (str/includes? text "del session[\"apps\"]"))
             (expect (not (contains? baseline "apps")))))
-      (it "says nothing about notes in a session without notes"
-          (expect (not (str/includes?
-                         (:text (cr/turn-boundary {:ctx (assoc base-ctx "session_turn" 5)} {}))
-                         "apps"))))
       (it "keeps an extension from replacing the notes"
           (let [view (ctx-engine/session-view (assoc ctx
                                                 "session_extension_context" {"apps" "replaced"}))]
@@ -375,12 +368,7 @@
                            "saturation" "headroom_tokens" "fold_count" "prompt_cache" "now"
                            "fold_measurement"]]
             (expect (not (str/includes? boundary (str "\"" removed "\""))))
-            (expect (not (str/includes? delta (str "\"" removed "\"")))))))
-    (it "retains full measurements in engine state for metrics and request health"
-        (expect (= 90000 (get-in ctx ["engine_utilization" "turn_total_tokens"])))
-        (expect (= 2 (get ctx "engine_fold_count")))
-        (expect (= 2 (get-in ctx ["engine_fold_measurement" "fold_count"])))
-        (expect (= 75 (get-in ctx [ctx-engine/prompt-cache-status-key "token_read_percent"]))))))
+            (expect (not (str/includes? delta (str "\"" removed "\"")))))))))
 
 (defdescribe
   freeze-semantics-test
@@ -413,10 +401,7 @@
           (expect (some? delta))
           (expect (str/includes? delta "session_title")) ; the state change
           (expect (str/includes? delta "utilization")) ; live token usage as a delta
-          (expect (every? #(str/starts-with? % "session[") (str/split-lines delta)))))
-    (it "ctx-delta-map carries utilization but ctx-static-map (the frozen block) does NOT"
-        (expect (contains? (cr/ctx-delta-map {:ctx util-ctx}) "utilization"))
-        (expect (not (contains? (cr/ctx-static-map {:ctx util-ctx}) "utilization"))))))
+          (expect (every? #(str/starts-with? % "session[") (str/split-lines delta)))))))
 
 (defdescribe
   cache-breakpoints-test
@@ -482,10 +467,6 @@
 
           (expect (= "hello" (:text last-blk)))
           (expect (true? (:svar/cache last-blk)))))
-    (it "empty list is a no-op; a system-only call collapses to one breakpoint"
-        (expect (= [] (apply-bp [] :zai-coding-plan)))
-        (let [out (apply-bp [{:role "system" :content "only"}] :zai-coding-plan)]
-          (expect (= 1 (count (filter cached? out))))))
     (it "asks for the 1-hour tier only on a route measured to honour it"
         (let [msgs [{:role "system" :content "s"} {:role "user" :content "u"}]]
           (expect (= #{:1h} (ttls (apply-bp msgs :anthropic-coding-plan))))

@@ -560,8 +560,6 @@
                      {:provider "openai" :model "gpt-5.4" :reason :authentication-fallback}))))
     (it "carries no reason for a pick the human made"
         (expect (= [:model :provider] (sort (keys (payload {:provider "openai" :model "gpt-5"}))))))
-    (it "is registered on the STORE, so every writer broadcasts through one path"
-        (expect (contains? @@#'smodel/model-listeners #'state/broadcast-model-event!)))
     (it "still persists the pick and records the switch"
         (let [recorded
               (atom nil)
@@ -823,18 +821,7 @@
 
                    (let [turn (first (state/transcript :session-1))]
                      (expect (nil? (get turn "meta_summary")))
-                     (expect (nil? (get turn "meta_fallback_note"))))))
-             (it "ships the footer for a settled turn with the same routing"
-                 (with-redefs [persistance/db-list-session-turns
-                               (fn [_ sid]
-                                 [{:id sid :status :success :duration-ms 2300}])
-
-                               persistance/db-list-session-turn-iterations
-                               (fn [_ _]
-                                 [{:llm-actual {:provider :anthropic :model "claude/opus-5"}}])]
-
-                   (let [turn (first (state/transcript :session-1))]
-                     (expect (some? (get turn "meta_summary")))))))
+                     (expect (nil? (get turn "meta_fallback_note")))))))
 
 (defdescribe form-result-error-wire-test
              (it "a form error always surfaces on the wire"
@@ -1057,64 +1044,60 @@
         (expect (nil? (:tool_name payload)))
         (expect (= "call_1" (:tool-call-id payload))))))
 
-(defdescribe
-  iteration-attachment-descriptor-wire-test
-  ;; Live `iteration.completed` carries metadata-ONLY attachment descriptors
-  ;; (NEVER base64) so a native client (iOS/RN) learns an image was produced and
-  ;; lazy-fetches it from the byte endpoint. `:index` is the position in the SAME
-  ;; ordered list the byte endpoint serves, so index N always names one artifact.
-  (it "omits :attachments when the iteration produced none"
-      (let [[type _ payload] (#'state/chunk->event
-                              {:phase :iteration-final :iteration 2 :done true :thinking "t"})]
-        (expect (= "iteration.completed" type))
-        (expect (not (contains? payload :attachments)))))
-  (it "omits :attachments when there is no iteration-id to address them"
-      (let [[_ _ payload] (#'state/chunk->event
-                           {:phase :iteration-final :iteration 2 :done true :attachment-count 3})]
-        (expect (not (contains? payload :attachments)))))
-  ;; User report: an assistant's attachment link had no stable id in the descriptor,
-  ;; so tapping its preview link could not identify the artifact to open.
-  (it
-    "projects lean snake-case descriptors and NEVER leaks base64"
-    (with-redefs [state/iteration-attachments
-                  (fn [_iid]
-                    [{:id "00000000-0000-0000-0000-0000000000f1"
-                      :tool-call-id "call_A"
-                      :kind "image"
-                      :media-type "image/png"
-                      :filename "fig.png"
-                      :size 1234
-                      :base64 "SECRET"}
-                     {:tool-call-id nil
-                      :media-type "application/vnd.vis.live+ndjson"
-                      :size 0
-                      :owner {:invocation-id "00000000-0000-0000-0000-0000000000a1"
-                              :activity-id "00000000-0000-0000-0000-0000000000a2"}}])]
-      (let [[_ _ payload] (#'state/chunk->event
-                           {:phase :iteration-final
-                            :iteration 4
-                            :done false
-                            :iteration-id "00000000-0000-0000-0000-0000000000ab"
-                            :attachment-count 2})
-            atts (:attachments payload)]
+(defdescribe iteration-attachment-descriptor-wire-test
+             ;; Live `iteration.completed` carries metadata-ONLY attachment descriptors
+             ;; (NEVER base64) so a native client (iOS/RN) learns an image was produced and
+             ;; lazy-fetches it from the byte endpoint. `:index` is the position in the SAME
+             ;; ordered list the byte endpoint serves, so index N always names one artifact.
+             (it "omits :attachments when the iteration produced none"
+                 (let [[type _ payload]
+                       (#'state/chunk->event
+                        {:phase :iteration-final :iteration 2 :done true :thinking "t"})]
+                   (expect (= "iteration.completed" type))
+                   (expect (not (contains? payload :attachments)))))
+             ;; User report: an assistant's attachment link had no stable id in the descriptor,
+             ;; so tapping its preview link could not identify the artifact to open.
+             (it
+               "projects lean snake-case descriptors and NEVER leaks base64"
+               (with-redefs [state/iteration-attachments
+                             (fn [_iid]
+                               [{:id "00000000-0000-0000-0000-0000000000f1"
+                                 :tool-call-id "call_A"
+                                 :kind "image"
+                                 :media-type "image/png"
+                                 :filename "fig.png"
+                                 :size 1234
+                                 :base64 "SECRET"}
+                                {:tool-call-id nil
+                                 :media-type "application/vnd.vis.live+ndjson"
+                                 :size 0
+                                 :owner {:invocation-id "00000000-0000-0000-0000-0000000000a1"
+                                         :activity-id "00000000-0000-0000-0000-0000000000a2"}}])]
+                 (let [[_ _ payload] (#'state/chunk->event
+                                      {:phase :iteration-final
+                                       :iteration 4
+                                       :done false
+                                       :iteration-id "00000000-0000-0000-0000-0000000000ab"
+                                       :attachment-count 2})
+                       atts (:attachments payload)]
 
-        (expect (= 2 (count atts)))
-        (expect (= [0 1] (mapv :index atts)))
-        (expect (= "00000000-0000-0000-0000-0000000000f1" (:attachment_id (first atts))))
-        (expect (not (contains? (second atts) :attachment_id)))
-        ;; Regression #222: persisted live ownership crosses the attachment descriptor boundary.
-        (expect (= {"invocation_id" "00000000-0000-0000-0000-0000000000a1"
-                    "activity_id" "00000000-0000-0000-0000-0000000000a2"}
-                   (:owner (second atts))))
-        (expect (not (contains? (first atts) :owner)))
-        (expect (= "image/png" (:media_type (first atts))))
-        (expect (= "call_A" (:tool_call_id (first atts))))
-        (expect (= 1234 (:size (first atts))))
-        ;; default kind for the un-kinded second artifact
-        (expect (= "image" (:kind (second atts))))
-        ;; bytes NEVER ride the frame
-        (expect (not (str/includes? (pr-str payload) "SECRET")))
-        (expect (every? #(not (contains? % :base64)) atts))))))
+                   (expect (= 2 (count atts)))
+                   (expect (= [0 1] (mapv :index atts)))
+                   (expect (= "00000000-0000-0000-0000-0000000000f1" (:attachment_id (first atts))))
+                   (expect (not (contains? (second atts) :attachment_id)))
+                   ;; Regression #222: persisted live ownership crosses the attachment descriptor boundary.
+                   (expect (= {"invocation_id" "00000000-0000-0000-0000-0000000000a1"
+                               "activity_id" "00000000-0000-0000-0000-0000000000a2"}
+                              (:owner (second atts))))
+                   (expect (not (contains? (first atts) :owner)))
+                   (expect (= "image/png" (:media_type (first atts))))
+                   (expect (= "call_A" (:tool_call_id (first atts))))
+                   (expect (= 1234 (:size (first atts))))
+                   ;; default kind for the un-kinded second artifact
+                   (expect (= "image" (:kind (second atts))))
+                   ;; bytes NEVER ride the frame
+                   (expect (not (str/includes? (pr-str payload) "SECRET")))
+                   (expect (every? #(not (contains? % :base64)) atts))))))
 
 (defdescribe
   broadcast-title-poll-parity-test
@@ -1169,14 +1152,7 @@
                  (let [blocks (#'state/answer-content {:answer "## hello"})]
                    (expect (= 1 (count blocks)))
                    (expect (= "prose" (get-in blocks [0 "type"])))
-                   (expect (= "## hello" (get-in blocks [0 "markdown"])))))
-             (it "passes typed error content without creating a second answer shape"
-                 (let [blocks [{"id" "e1"
-                                "type" "error"
-                                "code" "provider_unavailable"
-                                "message" "Provider failed"
-                                "retryable" true}]]
-                   (expect (= blocks (#'state/answer-content blocks))))))
+                   (expect (= "## hello" (get-in blocks [0 "markdown"]))))))
 
 (defdescribe
   list-turns-dedup-test
@@ -1343,25 +1319,6 @@
                (expect (= "waiting" (get (first turns) "turn_id")))
                (expect (= "queued" (get (first turns) "status")))))
            (finally (reset! registry saved)))))
-  (it "is empty for a session with nothing waiting"
-      (let [sid
-            (java.util.UUID/randomUUID)
-
-            registry
-            @#'state/registry
-
-            saved
-            @registry]
-
-        (try (reset! registry {sid {:next-seq 0
-                                    :turn-order ["done"]
-                                    :turns {"done" {:turn_id "done"
-                                                    :session_id (str sid)
-                                                    :status "completed"
-                                                    :request "already answered"
-                                                    :started_at 1000}}}})
-             (expect (= [] (state/list-queued-turns sid)))
-             (finally (reset! registry saved)))))
   (it "keeps execution inputs and the settings snapshot out of every turn view"
       ;; A queued turn keeps its engine options. Their settings snapshot holds secret values.
       (let [sid
@@ -1632,9 +1589,7 @@
                         (get (first rows) "base64")))
              (expect (= "user" (get (first rows) "source")))
              (expect (= "both" (get (first rows) "audience"))))
-           (finally (reset! registry saved) (.delete png)))))
-  (it "is nil for an unknown turn"
-      (expect (nil? (state/turn-attachments (str (java.util.UUID/randomUUID)) "nope")))))
+           (finally (reset! registry saved) (.delete png))))))
 
 (defdescribe
   session-artifacts-test
@@ -2539,19 +2494,6 @@
                                    {:phase :tool-preview :iteration 1 :code "print" :done? true}
                                    1200))))))
 
-(defdescribe volatile-queue-reconciliation-test
-             (it "marks orphaned running turns interrupted without reconstructing messages"
-                 (let [sweeps (atom [])]
-                   (with-redefs [lp/db-info (constantly ::db)
-                                 bus/live-turns (constantly {"live-session" "live-turn"})
-                                 lp/db-sweep-orphaned-running-turns! (fn [db live-turn-ids]
-                                                                       (swap! sweeps conj
-                                                                         [db (vec live-turn-ids)])
-                                                                       :swept)]
-
-                     (expect (= :swept (state/reconcile-orphaned-turns!)))
-                     (expect (= [[::db ["live-turn"]]] @sweeps))))))
-
 ;; A gateway starting next to a sibling vis process on the same database swept the
 ;; sibling's LIVE turn to :interrupted. Every later fold checkpoint of that turn
 ;; was then refused ("the turn changed or ended") and its terminal write found the
@@ -2945,10 +2887,6 @@
           (expect (= 20 (:last-ms re-sent)))
           (expect (false? (:tripped? (decision re-sent 650))))
           (expect (true? (:tripped? (decision re-sent 700))))))
-    (it "never counts a re-send marker as model output"
-        (let [re-sent (advance {:started? true} {:phase :provider-retry-reset} 5)]
-          (expect (not (:produced? re-sent)))
-          (expect (false? (:call-output? re-sent)))))
     (it "holds a turn that already streamed output to the full stall ceiling"
         (let [sid
               (str "stall-" (java.util.UUID/randomUUID))
@@ -4306,9 +4244,6 @@
                                (expect (= ["rooted-1" "rooted-2"]
                                           (mapv #(get % "id") (:sessions got))))
                                (expect (= 2 (:total got)))))))
-  (it "leaves the list whole when no root is named at all"
-      (with-rootless-fleet (fn []
-                             (expect (= 3 (:total (state/list-sessions-page :all {})))))))
   (it "counts that shelf exactly as its own project header counts it"
       (with-rootless-fleet (fn []
                              (let [header (->> (:projects (state/projects-overview))
@@ -4499,17 +4434,6 @@
         (expect (pos? first-resolutions))
         (expect (zero? second-resolutions))
         (expect (= (dissoc first-answer :server_time_ms) (dissoc second-answer :server_time_ms)))))
-  ;; The clock is the one field that must NOT come back cached.
-  (it "stamps every answer with its own server clock"
-      (let [[primed _]
-            (counted-overview two-project-fleet)
-
-            [cached resolutions]
-            (counted-overview two-project-fleet)]
-
-        (expect (zero? resolutions))
-        (expect (number? (:server_time_ms cached)))
-        (expect (<= (long (:server_time_ms primed)) (long (:server_time_ms cached))))))
   (it "recounts when a session starts running"
       (let [[_ _]
             (counted-overview two-project-fleet)

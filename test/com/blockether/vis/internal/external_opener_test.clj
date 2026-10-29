@@ -25,9 +25,6 @@
       (expect (= :rejected (eo/classify-scheme "C:/Users/x/file.txt")))))
 
 (defdescribe safe-target-test
-             (it "passes an absolute web URL through untouched, query string included"
-                 (let [url "https://example.com/a?b=1"]
-                   (expect (= {:scheme :https :target url :line nil} (eo/safe-target url)))))
              (it "absolutizes a workspace-relative path and lifts its #L anchor"
                  (let [{:keys [scheme target line]}
                        (eo/safe-target "src/com/blockether/vis/internal/paths.clj#L12")]

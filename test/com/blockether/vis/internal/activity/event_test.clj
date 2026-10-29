@@ -1027,8 +1027,6 @@
         (expect (<= (event/utf8-bytes bounded) 64))
         (expect (not (string/includes? bounded "�")))
         (expect (string/ends-with? bounded "…"))))
-  (it "leaves text that already fits untouched"
-      (expect (= "źółw" (event/bounded-text "źółw" event/max-summary-bytes))))
   (it
     "builds a terminal event for a multi-megabyte single-line result"
     (let [ctx

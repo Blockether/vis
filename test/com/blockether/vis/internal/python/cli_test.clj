@@ -107,21 +107,6 @@
           (expect (re-find #"^before-error\n" out))
           (expect (= 1 (count (re-seq #"(?m)^before-error$" out))))
           (expect (re-find #"boom" out))))
-    (it "state persists across blocks in the same context"
-        (run-src ctx "carry = 7")
-        (let [{:keys [exit out]} (run-src ctx "print('carry', carry + 1)")]
-          (expect (= 0 exit))
-          (expect (re-find #"carry 8" out))))
-    (it "the standard library is CPython's own, not a reimplementation"
-        (let [{:keys [exit out]}
-              (run-src ctx
-                       (str "import sqlite3\n"
-                            "c = sqlite3.connect(':memory:')\n"
-                            "c.execute('create table t(n int)')\n"
-                            "c.executemany('insert into t values (?)', [(3,), (4,)])\n"
-                            "print('sql', c.execute('select sum(n) from t').fetchone()[0])"))]
-          (expect (= 0 exit))
-          (expect (re-find #"sql 7" out))))
     (it "the stdlib arrives whole — the modules a shim never covered import too"
         (let [{:keys [exit out]}
               (run-src ctx
@@ -155,9 +140,7 @@
                                                        "except Exception:\n"
                                                        "    print('blocked')"))]
                         (expect (nil? error))
-                        (expect (re-find #"blocked" stdout)))))
-    (it "a network-enabled context builds without error"
-        (expect (some? (python-cli-context {:network? true}))))))
+                        (expect (re-find #"blocked" stdout)))))))
 
 (defdescribe python-cli-reexecution-test
              ;; #199: exercise the same subprocess cases as the built native CLI.

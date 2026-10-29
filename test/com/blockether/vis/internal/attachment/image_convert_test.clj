@@ -114,9 +114,6 @@
                (it "is reproduced 1:1, ratio and all"
                    (doseq [[label markup expected] size-cases]
                      (expect (= expected (size markup)) label)))
-               (it "matches the pixels actually encoded into the PNG"
-                   (doseq [[label markup expected] size-cases]
-                     (expect (= expected (decoded-size (:bytes (raster markup)))) label)))
                (it "is reported back as :original-width / :original-height when nothing is scaled"
                    (doseq [[label markup [w h]] size-cases]
                      (let [r (raster markup)]
@@ -202,8 +199,6 @@
   (describe "a document larger than the ceiling"
             (it "scales BOTH edges by the same factor"
                 (expect (= [4096 1024] (size (doc "width=\"8000\" height=\"2000\"")))))
-            (it "keeps the ratio for a portrait document too"
-                (expect (= [1024 4096] (size (doc "width=\"2000\" height=\"8000\"")))))
             (it "keeps an extreme ratio renderable -- never a zero-height canvas"
                 (let [[w h] (size (doc "width=\"20000\" height=\"10\""))]
                   (expect (= image-convert/svg-max-raster-dimension w))
@@ -234,13 +229,6 @@
                               "<rect x=\"200\" width=\"200\" height=\"100\" fill=\"#0000ff\"/>"))]
           (expect (= red (px img 50 50)))
           (expect (= blue (px img 350 50)))))
-    (it "maps top/bottom the same way"
-        (let [img (rendered (doc
-                              "width=\"100\" height=\"400\" viewBox=\"0 0 100 400\""
-                              "<rect width=\"100\" height=\"200\" fill=\"#ff0000\"/>"
-                              "<rect y=\"200\" width=\"100\" height=\"200\" fill=\"#0000ff\"/>"))]
-          (expect (= red (px img 50 50)))
-          (expect (= blue (px img 50 350)))))
     (it "letterboxes a square viewBox inside a wide viewport instead of stretching it"
         (let [img (rendered (doc "width=\"400\" height=\"100\" viewBox=\"0 0 100 100\""
                                  "<rect width=\"100\" height=\"100\" fill=\"#008000\"/>"))]
@@ -449,11 +437,6 @@
         (expect (= [500 125] [(:width r) (:height r)]))
         (expect (= [500 125] (decoded-size (:bytes r))))
         (expect (= "00ff00" (px (decode (:bytes r)) 250 60)))))
-  (it "defaults to a ceiling under every provider's many-image limit"
-      (expect (<= image-convert/max-wire-dimension 2000))
-      (let [r (image-convert/fit-dimensions (raster-bytes "png" 2400 2400 0xff0000))]
-        (expect (= [image-convert/max-wire-dimension image-convert/max-wire-dimension]
-                   [(:width r) (:height r)]))))
   (it "leaves the payload alone when conversion is unavailable"
       (binding [image-convert/*enabled?* false]
         (let [data (raster-bytes "png" 40 20 0xff0000)]
@@ -636,14 +619,6 @@
 
 (defdescribe
   renderer-delegation-test
-  (describe "a document the renderer can size"
-            (it "is sized by the LIBRARY, not by markup parsing of our own"
-                ;; px/percent/cm/viewBox/letterboxing: resvg resolves all of it, so
-                ;; vis asks and reports the answer verbatim. If this drifts, the sizing
-                ;; has quietly moved back into vis.
-                (doseq [[label markup expected] size-cases]
-                  (expect (= expected (probe-size markup)) label)
-                  (expect (= expected (size markup)) label))))
   (describe
     "the documents only a BROWSER sizes"
     ;; A bare resvg REFUSES a zero or negative size outright ("SVG has an

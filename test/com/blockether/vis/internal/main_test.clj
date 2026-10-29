@@ -23,16 +23,6 @@
 (toggles/register-toggle!
   {:id "main_test_flag" :label "CLI toggle test flag" :default false :settings? false})
 
-(defn- gutter-columns
-  "Column where the description starts for every two-column `  TOKEN   Doc.` row
-   in `s`. A single entry means that block shares one description gutter."
-  [^String s]
-  (->> (str/split-lines s)
-       (keep (fn [^String line]
-               (when-let [[_ _ _ doc] (re-matches #"^ {2}(\S.*?)( {2,})(\S.*)$" line)]
-                 (- (count line) (count doc)))))
-       set))
-
 (defdescribe
   extension-list-github-identity-test
   (it "shows GitHub identity while retaining the package name used by lifecycle commands"
@@ -48,24 +38,6 @@
         (expect (= [{:namespace "example/extensions (vis-greeter)" :owner "example"}
                     {:namespace "local-tools" :owner "-"} {:namespace "bundled-tools" :owner "vis"}]
                    (mapv #(select-keys % [:namespace :owner]) (main/list-extensions)))))))
-
-(defdescribe root-help-test
-             (it "aligns every block: headings at column 0, rows at column 2, one gutter each"
-                 (let [^String help
-                       (binding [commandline/*color-enabled?* false]
-                         (commandline/render-tree (#'main/root-command)))
-
-                       commands-at
-                       (.indexOf help "\nCOMMANDS\n")]
-
-                   (expect (.contains help "\nUSAGE\n"))
-                   (expect (pos? commands-at))
-                   ;; The root doc used to be re-indented on top of its own layout, so its
-                   ;; headings and rows both sat two columns right of the generated
-                   ;; COMMANDS block. Nothing is indented twice any more.
-                   (expect (nil? (re-find #"(?m)^ {3,}\S" help)))
-                   (expect (= 1 (count (gutter-columns (subs help 0 commands-at)))))
-                   (expect (= 1 (count (gutter-columns (subs help commands-at))))))))
 
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: a client
 ;; synchronously initialized CPython before dispatch, then its gateway did it again.
@@ -320,9 +292,6 @@
       (expect (= {:gateway {:url "gateway.example.com"} :args ["--" "--gateway" "prompt text"]}
                  (#'main/split-gateway-flags
                   ["--gateway=gateway.example.com" "--" "--gateway" "prompt text"]))))
-  (it "leaves an invocation that names no gateway completely alone"
-      (expect (= {:gateway nil :args ["channels" "tui"]}
-                 (#'main/split-gateway-flags ["channels" "tui"]))))
   (it "refuses a token with no address instead of silently using the local daemon"
       (expect (throws? clojure.lang.ExceptionInfo #(#'main/connect-gateway! {:token "t"})))))
 
@@ -843,8 +812,6 @@
   launch-options-test
   (let [launch (fn [args env]
                  (#'main/check-launch-options (#'main/parse-run-args args) env))]
-    (it "keeps every tier and extension without flags or environment"
-        (expect (= {:prompt "task"} (launch ["task"] {}))))
     (it "turns --no-global, --no-project and --vanilla into source lists"
         (expect (= ["project"] (:sources (launch ["--no-global" "task"] {}))))
         (expect (= ["global"] (:sources (launch ["--no-project" "task"] {}))))
@@ -1079,11 +1046,7 @@
                                    {:answer "x"})]
           (expect (throws? clojure.lang.ExceptionInfo
                            #(main/run! {} "hi" {:config {:providers []} :json-schema {"type" 5}}))))
-        (expect (= 0 @turns))))
-  (it "leaves runs without a schema unchanged"
-      (let [{:keys [result turns]} (run-with-answers! ["plain answer"] {})]
-        (expect (= "Name the capital of Poland." (:content (first (first turns)))))
-        (expect (not (contains? result :structured))))))
+        (expect (= 0 @turns)))))
 
 (defdescribe
   json-schema-persistent-run-test

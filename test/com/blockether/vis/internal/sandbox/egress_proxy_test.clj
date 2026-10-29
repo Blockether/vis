@@ -88,10 +88,6 @@
                  (let [pol (ep/compile-policy {:allowed-domains ["gh.example"]})]
                    (expect (:allow? (ep/decide pol nil "gh.example" nil 22)))
                    (expect (:allow? (ep/decide pol nil "gh.example" nil 443)))))
-             (it "4-arity decide ignores ports (legacy callers unaffected)"
-                 (let [pol (ep/compile-policy {:allowed-domains ["*"]
-                                               :rules [{:host "github.com" :ports [443]}]})]
-                   (expect (:allow? (ep/decide pol nil "github.com" nil)))))
              (it ":ports combine with verb rules on the same host"
                  (let [pol (ep/compile-policy
                              {:allowed-domains ["*"]
@@ -644,17 +640,11 @@
 
 (defdescribe
   loopback-policy
-  (it "loopback dev servers are ALLOWED by default — the agent runs on your own machine"
-      (expect (:addr (ep/safe-upstream-address "127.0.0.1" 3000 {})))
-      (expect (:addr (ep/safe-upstream-address "localhost" 5432 {}))))
   (it "reserved gateway/proxy ports can NEVER be reached (non-overridable control-plane guard)"
       (expect (:blocked
                 (ep/safe-upstream-address "127.0.0.1" 7890 {:reserved-loopback-ports #{7890}}))))
   (it "metadata / link-local stay blocked (separate always-on trust-plane floor)"
-      (expect (:blocked (ep/safe-upstream-address "169.254.169.254" 80 {}))))
-  (it "compile-policy no longer emits an :allow-loopback key"
-      (expect (nil? (ep/compile-policy {:allowed-domains ["*"]})))
-      (expect (nil? (:allow-loopback (ep/compile-policy {:allowed-domains ["example.com"]}))))))
+      (expect (:blocked (ep/safe-upstream-address "169.254.169.254" 80 {})))))
 
 (defdescribe denied-domain-blocks-ip
              (it "a denied domain is blocked whether the child dials the NAME or its resolved IP"

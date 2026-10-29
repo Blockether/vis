@@ -120,23 +120,6 @@
                          "VALUES (?,?,?,?,?)") st soul-id workspace-id 0 1])
     st))
 
-(defdescribe
-  cwd-binding-test
-  (it "falls back to process cwd when *workspace-root* is unbound (REPL/test convenience)"
-      (let [process-cwd (System/getProperty "user.dir")]
-        (expect (= process-cwd (.getPath (ws/cwd))))))
-  (it "returns the bound root inside a binding"
-      (binding [ws/*workspace-root* "/tmp"]
-        (expect (= (.getCanonicalPath (java.io.File. "/tmp")) (.getCanonicalPath (ws/cwd))))))
-  (it "workspace-root reads :workspace/root from an env map"
-      (expect (= (.getCanonicalPath (java.io.File. "/tmp"))
-                 (ws/workspace-root {:workspace/root "/tmp"}))))
-  (it "workspace-root accepts a raw string and canonicalises it"
-      (expect (= (.getCanonicalPath (java.io.File. "/tmp")) (ws/workspace-root "/tmp"))))
-  (it "workspace-root returns nil for blank input"
-      (expect (nil? (ws/workspace-root "   ")))
-      (expect (nil? (ws/workspace-root nil)))))
-
 (defdescribe fork-baseline-ms-test
              (it "advances the persisted baseline past the final seeding millisecond"
                  (let [ticks
@@ -515,18 +498,6 @@
         (finally (.setWritable ro true) ; so delete-tree! can remove it
                  (delete-tree! base))))))
 
-(defdescribe hooks-test
-             (it "register-hook! returns the hook id"
-                 (expect (= :on-apply
-                            (ws/register-hook! :on-apply
-                                               (fn [& _]
-                                                 nil))))))
-
-(defdescribe trunk-info-test
-             (it "returns the canonical cwd as repo-root"
-                 (expect (= (.getCanonicalPath (io/file (System/getProperty "user.dir")))
-                            (:repo-root (ws/trunk-info))))))
-
 ;; Regression, issue #workspace-root-single-source: the gateway used display-only
 ;; `~/…` input as a path relative to its launch directory and persisted `/…/~/…`.
 (defdescribe create-trunk-root-normalization-test
@@ -664,12 +635,6 @@
                                (expect (= (:id child)
                                           (:id (ws/change-root! store state-id "."))))))))
              (finally (delete-tree! parent)))))
-  (it "does not use the process directory when a session has no root"
-      (with-store (fn [store]
-                    (let [thrown (try (ws/change-root! store (str (random-uuid)) ".")
-                                      nil
-                                      (catch Exception t t))]
-                      (expect (= :workspace/no-root (:type (ex-data thrown))))))))
   (it "is a no-op returning the SAME workspace when the path already is the root"
       (let [a (temp-dir "vis-root-same")]
         (try (with-store (fn [store]

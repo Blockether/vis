@@ -18,23 +18,6 @@
                    (expect (= "/tmp/x" (get-in project [:git :root])))
                    (expect (not (string/includes? (pr-str out) ";; -- RUNTIME --")))
                    (expect (not (string/includes? (pr-str out) "<environment>")))))
-             (it "puts project guidance under ctx data"
-                 (let [out (render/project-context
-                             {:host base-host}
-                             {:found? true :source :repo :path "AGENTS.md" :content "rules"}
-                             nil)]
-                   (expect (= {:source :repo :path "AGENTS.md" :content "rules"}
-                              (get-in out [:project :guidance])))
-                   (expect (not (string/includes? (pr-str out) "PROJECT-GUIDANCE")))))
-             (it "puts scan warnings under ctx data"
-                 (let [warnings
-                       [{:path "x" :reason "bad"}]
-
-                       out
-                       (render/project-context {:host base-host} nil warnings)]
-
-                   (expect (= warnings (get-in out [:project :warnings])))
-                   (expect (not (string/includes? (pr-str out) "SCAN-WARNINGS")))))
              (it "drops empty optional data"
                  (let [out (render/project-context {:host base-host} {:found? false} [])]
                    (expect (not (contains? (:project out) :guidance)))

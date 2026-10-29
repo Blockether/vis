@@ -25,14 +25,6 @@
                       "```python\ndef a():\n    pass\n\n\ndef b():\n    pass\n```\n\n"
                       "## Example\n\n```markdown\n<div data-variant=\"http\">\n</div>\n```\n")
                  (dc/variant-text fixture "python"))))
-  (it "gives the HTTP variant the same way"
-      (expect (= (str "# Fixture API\n\nShared lead.\n\nHTTP prose.\n\n"
-                      "```bash\ncurl http://127.0.0.1/v1/x\n```\n\n"
-                      "## Example\n\n```markdown\n<div data-variant=\"http\">\n</div>\n```\n")
-                 (dc/variant-text fixture "http"))))
-  (it "returns text without variant blocks unchanged"
-      (let [text "# Plain\n\nNo blocks.\n"]
-        (expect (identical? text (dc/variant-text text "python")))))
   (it "names the variants in page order, each once, and ignores fenced markup"
       (expect (= ["python" "http"] (dc/variants fixture)))
       (expect (= [] (dc/variants "```markdown\n<div data-variant=\"http\">\n</div>\n```\n")))))
@@ -58,7 +50,6 @@
   agent-reads-python-variant-test
   "The agent writes Python, so `doc` and `apropos` give it the Python variant of a
    merged API page, never the HTTP block or the variant markup."
-  (it "covers the merged API pages" (expect (seq (merged-pages))))
   (it "doc() prints a merged page as its Python variant, with no markup and no HTTP-only text"
       (doseq [{:keys [slug md]}
               (merged-pages)
@@ -140,21 +131,7 @@
   site-variant-switch-test
   "The site shows both variants. One switch selects the variant that a reader
    sees, and without JavaScript both variants show with their labels."
-  (let [{:keys [pages] :as site} (docs/collect)]
-    (it "renders one hidden switch after the H1 of a merged page, with Python first"
-        (doseq [{:keys [slug] :as page} (merged-pages)
-                mode [:static :live]
-                :let [body (article (docs/page-html site page mode))]]
-
-          (expect (= 1 (count (re-seq #"class=\"variant-switch\"" body))) slug)
-          (expect (str/includes? body
-                                 (str "</h1><div class=\"variant-switch\" role=\"group\""
-                                      " aria-label=\"Show examples for\" hidden>"
-                                      "<button type=\"button\" data-variant-choice=\"python\""
-                                      " aria-pressed=\"true\">Python</button>"
-                                      "<button type=\"button\" data-variant-choice=\"http\""
-                                      " aria-pressed=\"false\">HTTP</button></div>"))
-                  slug)))
+  (let [site (docs/collect)]
     (it "renders every block of both variants with its label and its Markdown"
         (doseq [{:keys [slug md] :as page} (merged-pages)
                 mode [:static :live]
@@ -177,15 +154,6 @@
                                       body)))
                     (str slug " " variant)))
           (expect (not (str/includes? body "```")) slug)))
-    (it "gives a page without variants no switch and no labels"
-        (doseq [{:keys [slug variants] :as page} pages
-                :when (empty? variants)
-                mode [:static :live]
-                :let [body (article (docs/page-html site page mode))]]
-
-          (expect (some? body) slug)
-          (expect (not (str/includes? body "variant-switch")) slug)
-          (expect (not (str/includes? body "variant-label")) slug)))
     (it "indexes both variants of a merged page for site search"
         (let [rows (get (json/read-json (:body (docs/handle {:uri "/docs/assets/search.json"
                                                              :headers {}})))

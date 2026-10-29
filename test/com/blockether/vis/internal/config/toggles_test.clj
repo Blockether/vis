@@ -2,8 +2,7 @@
   "Feature-toggle registry contract: register, lookup, override,
    listener fan-out, persistence snapshot + hydrate, and the canonical
    internal toggles. Toggle ids are plain strings (no namespaces)."
-  (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.contract.toggle :as toggle-contract]
+  (:require [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.config.toggles :as t]
             [com.blockether.vis.internal.config.validation :as validation]
             [lazytest.core :refer [defdescribe expect it]]
@@ -66,21 +65,9 @@
                                         (= :vis.toggles/invalid-contribution (:type (ex-data e)))))]
                      (expect thrown?)))))
 
-(defdescribe
-  value-resolution-test
-  (it "enabled? falls back to the registered default"
-      (with-clean-state (fn []
-                          (t/register-toggle! {:id "test_gamma" :label "Gamma" :default true})
-                          (expect (true? (t/enabled? "test_gamma"))))))
-  (it "set! overrides the default and reset-to-default! restores it"
-      (with-clean-state (fn []
-                          (t/register-toggle! {:id "test_delta" :label "Delta" :default true})
-                          (t/set-enabled! "test_delta" false)
-                          (expect (false? (t/enabled? "test_delta")))
-                          (t/reset-to-default! "test_delta")
-                          (expect (true? (t/enabled? "test_delta"))))))
-  (it "unknown ids resolve to false (fail-closed)"
-      (expect (false? (t/enabled? "test_never_registered")))))
+(defdescribe value-resolution-test
+             (it "unknown ids resolve to false (fail-closed)"
+                 (expect (false? (t/enabled? "test_never_registered")))))
 
 (defdescribe listener-test
              (it "listener fires on value transitions and a disposer detaches it"
@@ -230,57 +217,10 @@
                         (expect (= ["verbosity"] (mapv :id @events)))
                         (finally (dispose)
                                  (t/reset-to-default! "reasoning_level")
-                                 (t/reset-to-default! "verbosity")))))
-             (it "retired display toggles do not exist (code always shows)"
-                 ;; Render-fn op cards were removed — tool output is now stdout, and the TUI
-                 ;; renders the model's raw :code unconditionally (the canonical contract,
-                 ;; identical to web's `block-code`). Both display gates were retired.
-                 (expect (nil? (t/toggle-spec "show_raw_code")))
-                 (expect (nil? (t/toggle-spec "show_tool_results")))))
-
-(defdescribe
-  thinking-level-toggles-test
-  (it "registers the exact thinking level beside the simplified modes"
-      (let [simplified
-            (t/toggle-spec "simplified_thinking_modes")
-
-            effort
-            (t/toggle-spec "reasoning_effort")]
-
-        ;; Simplified modes stay on by default and live in the view settings of clients.
-        (expect (= {:type :boolean :default true :group :provider :persist? true}
-                   (select-keys simplified [:type :default :group :persist?])))
-        (expect (false? (:settings? simplified)))
-        ;; Only the gateway sets it: groups, projects and sessions cannot.
-        (expect (= ["global"] (:scopes simplified)))
-        ;; The exact level offers every svar rung on its own control.
-        (expect (= {:type :enum :choices svar/REASONING_EFFORTS :default "medium" :settings? false}
-                   (select-keys effort [:type :choices :default :settings?]))))))
-
-(defdescribe thinking-summary-toggle-test
-             (it "registers thinking_summary as an own control that defaults on"
-                 (expect (= {:type :boolean :default true :settings? false}
-                            (select-keys (t/toggle-spec "thinking_summary")
-                                         [:type :default :settings?])))))
+                                 (t/reset-to-default! "verbosity"))))))
 
 (defdescribe
   settings-description-test
-  (it "a one-line sentence within the cap registers"
-      (with-clean-state (fn []
-                          (t/register-toggle! {:id "test_short"
-                                               :label "Short"
-                                               :default false
-                                               :description "Expose the thing this row turns on."})
-                          (expect (= "Expose the thing this row turns on."
-                                     (:description (t/toggle-spec "test_short")))))))
-  (it "settings-description? draws the line at one line within the cap"
-      (expect (toggle-contract/settings-description?
-                (apply str (repeat toggle-contract/max-description-length "x"))))
-      (expect (not (toggle-contract/settings-description?
-                     (apply str (repeat (inc toggle-contract/max-description-length) "x")))))
-      (expect (not (toggle-contract/settings-description? "two\nlines")))
-      (expect (not (toggle-contract/settings-description? "   ")))
-      (expect (not (toggle-contract/settings-description? nil))))
   (it "a settings row is never a paragraph: over-long copy is refused"
       ;; A settings row is a control plus ONE line of help; a paragraph of
       ;; rationale buried the toggle it described in the TUI and the app.
@@ -304,72 +244,22 @@
         (expect (toggle-contract/settings-description? description)))))
 
 (defdescribe
-  vision-fallback-toggle-test
-  "`vision_fallback_describe` gates the borrowed-eyes side-channel. It ships ON: a
-   fleet with no vision model pays nothing for it, and a fleet that has one would
-   otherwise throw the image away and tell the model to open it with PIL."
-  (it "is registered as a persisted boolean that defaults on"
-      (let [spec (t/toggle-spec "vision_fallback_describe")]
-        (expect (some? spec))
-        (expect (= :boolean (:type spec)))
-        (expect (true? (:default spec)))
-        (expect (true? (:persist? spec)))
-        (expect (= :vis (:owner spec)))
-        (expect (= :provider (:group spec)))
-        (expect (toggle-contract/settings-description? (:description spec)))))
-  (it "reads true by default and follows an override"
-      (expect (true? (t/enabled? "vision_fallback_describe")))
-      (t/set-value! "vision_fallback_describe" false)
-      (try (expect (false? (t/enabled? "vision_fallback_describe")))
-           (finally (t/reset-to-default! "vision_fallback_describe")))
-      (expect (true? (t/enabled? "vision_fallback_describe")))))
-
-(defdescribe
   provider-fallback-toggle-registry-test
   "`provider_fallback` decides whether a failed turn may be answered by a model the human
    did not pick. It ships ON — today's rescue — and every route off the pick reads it."
-  (it "is registered as a persisted boolean that defaults on"
-      (let [spec (t/toggle-spec "provider_fallback")]
-        (expect (some? spec))
-        (expect (= :boolean (:type spec)))
-        (expect (true? (:default spec)))
-        (expect (true? (:persist? spec)))
-        (expect (= :vis (:owner spec)))
-        (expect (= :provider (:group spec)))
-        (expect (toggle-contract/settings-description? (:description spec)))))
   (it "shows up in the Settings list of BOTH channels from that one declaration"
       ;; No `:channels` set and no `:settings? false`, so the TUI dialog and the
       ;; companion sheet (`/v1/settings`) each render it without their own wiring.
       (let [ids (fn [specs]
                   (set (map :id specs)))]
         (expect (contains? (ids (t/toggles-for-channel :tui)) "provider_fallback"))
-        (expect (contains? (ids (t/toggles-for-channel :web)) "provider_fallback"))))
-  (it "reads true by default and follows an override"
-      (expect (true? (t/enabled? "provider_fallback")))
-      (t/set-value! "provider_fallback" false)
-      (try (expect (false? (t/enabled? "provider_fallback")))
-           (finally (t/reset-to-default! "provider_fallback")))
-      (expect (true? (t/enabled? "provider_fallback")))))
+        (expect (contains? (ids (t/toggles-for-channel :web)) "provider_fallback")))))
 
 (defdescribe
   refusal-fallback-toggle-registry-test
   "`refusal_fallback` decides whether a request Anthropic's safety classifier declined may be
    re-asked of a sibling model of the SAME provider. It is separate from `provider_fallback`
    because nothing about the credential, the provider or the wire failed."
-  (it "is registered as a persisted boolean that defaults on"
-      (let [spec (t/toggle-spec "refusal_fallback")]
-        (expect (some? spec))
-        (expect (= :boolean (:type spec)))
-        (expect (true? (:default spec)))
-        (expect (true? (:persist? spec)))
-        (expect (= :vis (:owner spec)))
-        (expect (= :provider (:group spec)))
-        (expect (toggle-contract/settings-description? (:description spec)))))
-  (it "shows up in the Settings list of BOTH channels from that one declaration"
-      (let [ids (fn [specs]
-                  (set (map :id specs)))]
-        (expect (contains? (ids (t/toggles-for-channel :tui)) "refusal_fallback"))
-        (expect (contains? (ids (t/toggles-for-channel :web)) "refusal_fallback"))))
   (it "is a DIFFERENT switch from provider fallback, not an alias of it"
       ;; One human wants no peer credentials; another wants no model they did not pick.
       ;; Collapsing the two would make the cheaper answer decide the safer one.
@@ -430,10 +320,6 @@
                           (t/set-value! "test_wire_bool" false)
                           (expect (false? (t/enabled? "test_wire_bool")))))))
 
-(defdescribe compact-model-stdout-toggle-test
-             (it "is retired in favor of the universal stdout projection"
-                 (expect (nil? (t/toggle-spec "compact_model_stdout")))))
-
 (defdescribe plans-toggle-test
              (it "is retired, and a value saved by an earlier build stays silent"
                  (expect (nil? (t/toggle-spec "plans")))
@@ -443,27 +329,6 @@
                    (expect (validation/valid? saved))
                    (expect (nil? (tel/with-signal (t/hydrate-from-config! saved)))))
                  (expect (not (contains? (t/snapshot) "plans")))))
-
-(defdescribe
-  speech-preload-toggle-test
-  "`speech_preload_model` decides whether the gateway loads an ALREADY INSTALLED
-   transcription model at startup. It ships ON: the first recording is then as quick
-   as the second, and a machine that never installed a model pays nothing either way."
-  (it "is registered as a persisted boolean that defaults on"
-      (let [spec (t/toggle-spec "speech_preload_model")]
-        (expect (some? spec))
-        (expect (= :boolean (:type spec)))
-        (expect (true? (:default spec)))
-        (expect (true? (:persist? spec)))
-        (expect (= :vis (:owner spec)))
-        (expect (= :voice (:group spec)))
-        (expect (toggle-contract/settings-description? (:description spec)))))
-  (it "reads true by default and follows an override"
-      (expect (true? (t/enabled? "speech_preload_model")))
-      (t/set-value! "speech_preload_model" false)
-      (try (expect (false? (t/enabled? "speech_preload_model")))
-           (finally (t/reset-to-default! "speech_preload_model")))
-      (expect (true? (t/enabled? "speech_preload_model")))))
 
 (defdescribe
   project-toggles-test

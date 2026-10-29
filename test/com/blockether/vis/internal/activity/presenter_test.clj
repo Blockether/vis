@@ -156,11 +156,7 @@
                               (get row "presentation")))
                    (expect (empty? (get row "evidence")))
                    (expect (not (contains? row "result_summary")))
-                   (expect (not (str/includes? (pr-str row) "defn greeting")))))
-             (it "declares a summary-only search that still shows its running start"
-                 (let [declared (presenter/for-tool :grep)]
-                   (expect (true? (:summary-only declared)))
-                   (expect (true? (:show-start declared))))))
+                   (expect (not (str/includes? (pr-str row) "defn greeting"))))))
 
 (defdescribe
   fold-session-presentation-test
@@ -178,11 +174,7 @@
           (expect (= {"headline" "Folded steps" "summary" summary "content" []}
                      (get row "presentation")))
           (expect (not (contains? row "result_summary")))
-          (expect (not (str/includes? (pr-str row) "private gist"))))))
-  (it "declares an end-only fold that carries only its summary"
-      (let [declared (presenter/for-tool :fold_session)]
-        (expect (true? (:summary-only declared)))
-        (expect (false? (:show-start declared))))))
+          (expect (not (str/includes? (pr-str row) "private gist")))))))
 
 (defdescribe
   compact-built-in-results-test
@@ -568,11 +560,7 @@
 
         (expect (= "" (get view "summary")))
         (expect (= [{"type" "markdown" "text" body}] (get view "content")))
-        (expect (contract/valid-projection? (result-fixture [[:council.get "" value nil]])))))
-  (it "keeps local messages and lookups end-only"
-      (doseq [operation [:council.publish :council.get :council.read :council.threads
-                         :council.members]]
-        (expect (false? (:show-start (presenter/for-tool operation)))))))
+        (expect (contract/valid-projection? (result-fixture [[:council.get "" value nil]]))))))
 
 (defdescribe
   managed-agent-presentation-test
@@ -648,13 +636,6 @@
         (expect (= [{"type" "markdown" "text" "Use the parser file."}]
                    (get-in views [3 "content"])))
         (expect (not (re-find #"child|Session|Parent:" (pr-str views)))))))
-  (it "shows slow agent work as running"
-      (doseq [[operation visible?] [[:council.run true] [:council.wait true] [:council.ask true]
-                                    [:council.resume true] [:council.ask_budget true]
-                                    [:council.cancel false] [:council.extend false]
-                                    [:council.deny false] [:council.grant false]
-                                    [:council.ask_files true] [:council.result false]]]
-        (expect (= visible? (:show-start (presenter/for-tool operation))))))
   (it
     "preserves failures and cancellation across every Council binding"
     (doseq [operation

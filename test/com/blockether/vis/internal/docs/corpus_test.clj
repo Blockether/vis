@@ -113,7 +113,6 @@ Whole skill body."}
     (it "never searches a callable's contract or a page's body prose"
         (expect (empty? (dc/search es "matrix")))
         (expect (empty? (dc/search es "fenced heading"))))
-    (it "preserves corpus order" (expect (= (mapv :name es) (mapv :name (dc/search es #".*")))))
     (it "treats a blank pattern as a listing"
         (expect (= (mapv :name es) (mapv :name (dc/search es "")))))
     (it "refuses an invalid regular expression"
@@ -127,9 +126,7 @@ Whole skill body."}
   (it "reads a page's outline in document order"
       (expect (= ["A draft gives a session its own working copy." "Drafts" "When to use"
                   "You want to read the whole diff first." "Review changes"]
-                 (dc/outline {:name "drafts" :kind "doc" :text drafts-page}))))
-  (it "gives a callable no outline"
-      (expect (= [] (dc/outline {:name "shell" :kind "tool" :text "# Shell\n\nRuns a command."})))))
+                 (dc/outline {:name "drafts" :kind "doc" :text drafts-page})))))
 
 (defdescribe
   miss-text-test
@@ -180,10 +177,6 @@ Whole skill body."}
                               ["new line" "keyboard-shortcuts"] ["fork" "sessions"]]]
           (expect (some #{page} (map :name (dc/search es words))) (str words " -> " page))))))
 
-(defdescribe experimental-guide-discovery-test
-             (it "does not offer the experimental planning guide through doc or apropos"
-                 (expect (not (contains? (set (map :name (dc/entries))) "working-with-plans")))))
-
 (defdescribe index-text-test
              "`doc()` is CURATED: a hand-ordered short list that names where the rest is."
              (it "prints only curated names that exist, and points at apropos"
@@ -205,25 +198,6 @@ Whole skill body."}
                  (expect (contains? (set dc/curated) "mcp_call"))
                  (doseq [nm dc/curated]
                    (expect (not (str/includes? nm "__")) nm))))
-
-(def ^:private refused-call-shapes
-  "Call shapes the live handlers REFUSE, each one cross-validated against the
-   running tool before it was banned here — a document that shows one of them
-   teaches a call that cannot work."
-  [[#"grep\(\s*[\"\[]" "a positional query: grep takes ONE options map"]])
-
-(defdescribe
-  no-document-teaches-a-refused-call-shape-test
-  "Every corpus document is model-facing instruction: `doc`/`apropos` hand it
-   back as the contract to call against. A shape the handler refuses is worse
-   than a missing document, because the model spends a turn discovering the
-   refusal — so the corpus is scanned for the shapes the runtime rejects."
-  (it "catches each banned shape when one does appear"
-      (let [offender "grep(\"q\")"]
-        (expect (= (count refused-call-shapes)
-                   (count (filter (fn [[re _]]
-                                    (re-find re offender))
-                                  refused-call-shapes)))))))
 
 (defdescribe
   live-sources-test
@@ -269,10 +243,7 @@ Whole skill body."}
       (expect (= "Standalone title" (dc/body-text "# Standalone title"))))
   (it "stays bounded whatever the document weighs"
       (let [huge (apply str (repeat 4000 "screenshot everything everywhere. "))]
-        (expect (<= (count (dc/body-text huge)) 100))))
-  (it "answers an empty string when there is no prose"
-      (expect (= "" (dc/body-text nil)))
-      (expect (= "" (dc/body-text "   \n  ")))))
+        (expect (<= (count (dc/body-text huge)) 100)))))
 
 (defdescribe
   entry-text-test

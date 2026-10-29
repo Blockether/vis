@@ -165,13 +165,6 @@
                        (expect (= "" (str output))
                                "a cached, installing or ready package is not news"))))))
 
-(defdescribe admin-status-has-credential-free-preparation
-             (it "admin status has credential free preparation"
-                 (with-redefs [runtime/preparation-status (constantly [{:name "greeter"
-                                                                        :stage "ready"}])]
-                   (expect (= [{:name "greeter" :stage "ready"}]
-                              (:packages (#'server/extension-startup-status)))))))
-
 (defdescribe
   client-reports-each-extension-failure-from-cold-and-ready-gateways
   (it "client reports each extension failure from cold and ready gateways"

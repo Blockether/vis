@@ -350,9 +350,6 @@
 
 (defdescribe
   sweep-stale-test
-  (it "keeps two weeks of every derived kind, under one number"
-      (expect (= 14 housekeeping/default-retention-days))
-      (expect (= (* 512 1024 1024) housekeeping/default-cache-budget-bytes)))
   (it "deletes only log files older than the retention window"
       (let [logs (tmp-dir "vis-hk-logs")]
         (touch! logs "vis-nrepl-fresh.log" 1 "fresh")

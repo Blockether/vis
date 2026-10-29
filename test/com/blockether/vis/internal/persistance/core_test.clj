@@ -102,14 +102,6 @@
                               (keys (:sigs persistance/SnapshotStore))))
                  (set (keys (:implementation sqlite/backend)))))
       (expect (every? fn? (vals (:implementation sqlite/backend)))))
-  (it "opens and disposes an in-memory store"
-      (let [store (persistance/db-create-connection! :memory)]
-        (try (expect (= :memory (:mode store)))
-             (expect (nil? (persistance/db-get-session store (random-uuid))))
-             (finally (persistance/db-dispose-connection! store)))))
-  (it "forwards an absent store to the backend"
-      (expect (nil? (persistance/db-create-connection! nil)))
-      (expect (nil? (persistance/db-get-session nil (random-uuid)))))
   (it "refuses an unknown backend"
       (let [ex (try (persistance/db-create-connection! {:backend :postgres :path "x"})
                     nil

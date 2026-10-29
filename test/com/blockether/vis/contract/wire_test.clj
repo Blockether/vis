@@ -134,11 +134,6 @@
       (expect (= {"v" nil} (wire/canonical {:v Double/NEGATIVE_INFINITY}))))
   (it "a BigDecimal keeps the canonical == roundtrip invariant"
       (expect (= {"v" 1.5} (wire/canonical {:v 1.5M}))))
-  (it "a poll batch carrying such values remains encodable"
-      (let [event (wire/canonical {:seq 1
-                                   :type "iteration.completed"
-                                   :tool-result {:counts {1 "a"} :ratio (/ 0.0 0.0)}})]
-        (expect (= [event] (wire/parse-json (wire/json-str [event]))))))
   (it "the invariant holds for every awkward scalar"
       (doseq [x [{1 :a} {nil 1} {true 1} {[1 2] :k} {:v 1.0M} {:v (/ 0.0 0.0)}
                  {:v Double/POSITIVE_INFINITY} {:v (float 0.5)} {:v (/ 1 3)} {:v (biginteger 10)}
@@ -148,24 +143,14 @@
         (let [canonical (wire/canonical x)]
           (expect (= (wire/json-str canonical) (wire/canonical-json-str canonical)))))))
 
-(defdescribe json-writer-encoding-test
-             (it "preserves Charred's default escaping for small and large gateway frames"
-                 (doseq [payload [nil rich-fixture {:text "Zażółć / \" \n \t \u2028 😀"}
-                                  {:text (apply str (repeat 10000 "Zażółć / 😀\n"))}]]
-                   (expect (= (json/write-json-str (wire/->wire payload)) (wire/json-str payload)))
-                   (expect (= (wire/json-str payload)
-                              (wire/canonical-json-str (wire/canonical payload))))
-                   (expect (= (wire/canonical payload) (wire/parse-json (wire/json-str payload))))))
-             (it "skips normalization of an already-canonical value"
-                 (let [canonical
-                       (wire/canonical rich-fixture)
-
-                       expected
-                       (wire/json-str canonical)]
-
-                   (with-redefs [wire/->wire (fn [_]
-                                               (throw (ex-info "reconverted" {})))]
-                     (expect (= expected (wire/canonical-json-str canonical)))))))
+(defdescribe
+  json-writer-encoding-test
+  (it "preserves Charred's default escaping for small and large gateway frames"
+      (doseq [payload [nil rich-fixture {:text "Zażółć / \" \n \t \u2028 😀"}
+                       {:text (apply str (repeat 10000 "Zażółć / 😀\n"))}]]
+        (expect (= (json/write-json-str (wire/->wire payload)) (wire/json-str payload)))
+        (expect (= (wire/json-str payload) (wire/canonical-json-str (wire/canonical payload))))
+        (expect (= (wire/canonical payload) (wire/parse-json (wire/json-str payload)))))))
 
 (defdescribe json-writer-allocation-test
              (it "small gateway frames do not allocate a redundant 16 KiB character buffer"

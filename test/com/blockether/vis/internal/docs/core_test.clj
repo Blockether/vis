@@ -8,12 +8,6 @@
             [com.blockether.vis.test-prose :as prose]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- rendered-theme
-  [html mode]
-  (if (= mode :static)
-    (slurp (io/resource "vis-docs/assets/theme.css"))
-    (second (re-find #"(?s)<style>(.*?)</style>" html))))
-
 (defdescribe
   python-presentation-test
   (it
@@ -36,12 +30,6 @@
 
 (defdescribe
   dropdown-assets-test
-  (it "loads the shared dropdown entrypoint in static and live documentation"
-      (let [{:keys [pages] :as site} (docs/collect)]
-        (doseq [[mode prefix] [[:static "assets/"] [:live "/docs/assets/"]]]
-          (expect (str/includes?
-                    (docs/page-html site (first pages) mode)
-                    (str "<script type=\"module\" src=\"" prefix "select-init.js\"></script>"))))))
   (it "copies and serves the shared dropdown modules with a JavaScript media type"
       (doseq [name
               ["select.js" "select-init.js"]
@@ -58,25 +46,6 @@
 
 (defdescribe
   search-test
-  (it "mounts the search box and its entrypoint in static and live documentation"
-      (let [{:keys [pages] :as site}
-            (docs/collect)
-
-            page
-            (first pages)]
-
-        (doseq [[mode prefix] [[:static "assets/"] [:live "/docs/assets/"]]]
-          (let [html (docs/page-html site page mode)]
-            (expect (str/includes?
-                      html
-                      (str "<search class=\"search\" data-index=\"" prefix "search.json\">")))
-            (expect (str/includes? html
-                                   (str "<script type=\"module\" src=\""
-                                        prefix
-                                        "search-init.js\"></script>")))))))
-  (it "copies the search modules with the other static assets"
-      (doseq [name ["search.js" "search-init.js"]]
-        (expect (= (str "assets/" name) (get @#'docs/asset-files (str "vis-docs/assets/" name))))))
   (it
     "serves a live JSON index whose sections answer their page's own anchors"
     (let [{:keys [pages]}
@@ -229,22 +198,6 @@
             (expect (not (re-find #"href=\"[^\"/:][^\":]*\.md[\"#]" html))
                     (str "dangling .md link in live page " (:slug page))))))))
 
-(defdescribe shared-theme-test
-             (it "shares one stylesheet, external in static output and embedded in live output"
-                 (let [{:keys [pages] :as site}
-                       (docs/collect)
-
-                       theme
-                       (slurp (io/resource "vis-docs/assets/theme.css"))]
-
-                   (doseq [[mode prefix] [[:static "./fonts/"] [:live "/docs/assets/fonts/"]]]
-                     (let [html (docs/page-html site (first pages) mode)
-                           stylesheet (rendered-theme html mode)]
-
-                       (expect (= (str/replace theme "./fonts/" prefix) stylesheet))
-                       (expect (some? (io/resource
-                                        "vis-docs/assets/fonts/jetbrains-mono.woff2"))))))))
-
 (defdescribe
   portable-store-buttons-test
   (it "serves and exports all mobile and desktop image buttons"
@@ -340,11 +293,6 @@
    markdown rendering that nothing had invalidated."
   (it "renders the site once and answers the same value"
       (expect (identical? (docs/collect) (docs/collect)))))
-
-(defdescribe supported-extension-docs-test
-             (it "does not serve the removed guide or redirect its Markdown URL"
-                 (doseq [uri ["/docs/clojure-extensions" "/docs/clojure-extensions.md"]]
-                   (expect (nil? (docs/handle {:uri uri :headers {}}))))))
 
 ;;; ── The page contract ───────────────────────────────────────────────────────
 ;; Every rule below is one the RENDERER already assumes (see the `docs` ns

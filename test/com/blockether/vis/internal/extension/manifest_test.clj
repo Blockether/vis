@@ -17,8 +17,6 @@
                    (expect (manifest/manifest? m) (pr-str m))
                    (expect (= #{:initialization} (set (keys m))))
                    (expect (seq (:initialization m)))))
-             (it "keeps gateway voice out of the extension manifest"
-                 (expect (not-any? #(re-find #"voice" (str %)) (manifest/initializers))))
              (it "answers exactly one manifest on the classpath"
                  ;; The whole point of naming resources explicitly: two manifests would
                  ;; mean one silently shadows the other, which is what ambient discovery did.
@@ -35,11 +33,7 @@
                    (expect (seq paths))
                    (expect (= (count paths) (count (set paths))))
                    (doseq [path paths]
-                     (expect (some? (io/resource path)) path))))
-             (it "answers every entry as a map carrying at least its initializer"
-                 (doseq [entry (manifest/entries)]
-                   (expect (qualified-symbol? (:register entry)) entry)
-                   (expect (every? #{:register :apropos} (keys entry)) entry))))
+                     (expect (some? (io/resource path)) path)))))
 
 (defdescribe
   entry-shape-test

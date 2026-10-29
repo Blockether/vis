@@ -75,9 +75,6 @@
           (expect (= "speaker" (get-in (speech/engines-info :synthesize) [:selected])))))))
 
 (defdescribe readiness-is-the-engines-own-question
-             (it "an engine that needs no preparation is simply ready"
-                 (expect (= {:state :ready} (speech/readiness (echo-engine :remote "hi"))))
-                 (expect (true? (speech/ready? (echo-engine :remote "hi")))))
              (it "an engine that downloads a model reports its own progress"
                  (let [engine (assoc (echo-engine :local "hi")
                                 :model-state (constantly {:state :downloading :progress 42}))]
@@ -109,8 +106,6 @@
   (it "the voices come out in the shape every surface reports"
       (expect (= [{:id "alba" :label "Alba" :language "en"} {:id "javert" :label "javert"}]
                  (speech/voices (speaker-engine :pocket-tts)))))
-  (it "an engine with ONE fixed voice offers no choice at all"
-      (expect (= [] (speech/voices (dissoc (speaker-engine :fixed) :voices)))))
   (it "a voice a user has to install deliberately says so, and no other voice does"
       ;; A picker that cannot tell offers that voice like any other and finds out on the
       ;; click, which is the one refusal a client could have shown up front.

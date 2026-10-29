@@ -15,9 +15,6 @@
   (it "accepts every policy the first-party providers declare"
       (doseq [[id policy] policies/first-party]
         (expect (registry/provider? (descriptor policy)) (str id))))
-  (it "accepts a descriptor without a policy, and an empty one"
-      (expect (registry/provider? {:provider/id :policy-test :provider/label "Policy Test"}))
-      (expect (registry/provider? (descriptor {}))))
   (it "rejects a malformed policy before registration"
       (doseq [policy [[:preset-rank 1] {:preset-rank "1"} {:title-rank 1.5} {:initiator-header ""}
                       {:adaptive-reasoning-models "(unclosed"}

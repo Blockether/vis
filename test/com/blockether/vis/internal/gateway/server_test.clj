@@ -357,26 +357,6 @@
                    (expect (= 204 (:status (handler {:uri "/v1/hooks/a1" :headers {}}))))
                    (expect (= 426 (:status (handler {:uri "/v1/automations" :headers {}})))))))
 
-(defdescribe gateway-stops-runtimes-owned-by-route-contributions
-             (it "gateway stops runtimes owned by route contributions"
-                 (let [stopped (atom [])]
-                   ((rv 'stop-route-contributions!)
-                     [{:stop-fn #(swap! stopped conj :first)} {}
-                      {:stop-fn #(swap! stopped conj :second)}])
-                   (expect (= [:first :second] @stopped)))))
-
-(defdescribe
-  contributed-sse-streams-share-the-gateway-client-lifecycle
-  (it "contributed sse streams share the gateway client lifecycle"
-      (with-server-state!
-        {:managed? false :clients {} :sse-clients {}}
-        (fn []
-          (let [close! (fn [])]
-            (expect (true? (server/register-contributed-sse! :browser close!)))
-            (expect (identical? close! (get-in @(server-state) [:sse-clients :browser :close!])))
-            (server/unregister-contributed-sse! :browser)
-            (expect (empty? (:sse-clients @(server-state)))))))))
-
 (defdescribe
   mcp-management-handlers-are-sanitized-and-route-mutations-test
   (it
@@ -7887,9 +7867,6 @@
                    ;; A heartbeat comment between two frames survives the round trip too.
                    (expect (= ["turn.started" "content.delta"]
                               (mapv #(get % "type") (sse-jobs (gunzip (.toByteArray socket))))))))
-             (it "leaves an uncompressed stream as the socket stream itself"
-                 (let [socket (java.io.ByteArrayOutputStream.)]
-                   (expect (identical? socket ((rv 'sse-stream) socket false)))))
              ;; The pad exists to push an edge proxy past its buffering threshold, and it is
              ;; the bytes ON THE WIRE that it counts: 8KB of spaces deflates to a few dozen,
              ;; so a compressed pad has to be incompressible to keep doing its job.

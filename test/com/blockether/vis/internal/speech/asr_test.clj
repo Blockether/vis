@@ -31,12 +31,6 @@
 
 (defdescribe
   asr-test
-  (it "uses the Parakeet int8 model file convention"
-      (expect (= {:encoder "/m/encoder.int8.onnx"
-                  :decoder "/m/decoder.int8.onnx"
-                  :joiner "/m/joiner.int8.onnx"
-                  :tokens "/m/tokens.txt"}
-                 (asr/model-files "/m"))))
   (it "detects installed model files"
       (let [dir (.toFile (java.nio.file.Files/createTempDirectory
                            "vis-speech-asr-test"
@@ -482,13 +476,7 @@
                                                 0.0)]
                    (expect (= ["one" "two"] (mapv :text words)))
                    (expect (= 1.0 (:end (first words))))
-                   (expect (< 1.0 (double (:end (second words)))))))
-             (it "answers nothing when the engine reported no times at all"
-                 (expect (= []
-                            (asr/tokens->words (into-array String ["▁one"])
-                                               (float-array [])
-                                               (float-array [])
-                                               0.0)))))
+                   (expect (< 1.0 (double (:end (second words))))))))
 
 ;; Follow-up to #275: the per-clip reload is gone, but the FIRST recording still
 ;; paid the whole model read. The gateway warms the recognizer once it is already

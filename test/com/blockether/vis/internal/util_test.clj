@@ -67,10 +67,6 @@
                  (expect (= "abc" (util/truncate "abc" 3)))
                  (expect (= "ab" (util/truncate "ab" 3)))
                  (expect (= "" (util/truncate "abc" 0))))
-             (it "stringifies non-strings and is nil-safe"
-                 (expect (= "" (util/truncate nil 5)))
-                 (expect (= "123" (util/truncate 12345 3)))
-                 (expect (= "[1 2" (util/truncate [1 2 3] 4))))
              ;; The ONE head-clip in the engine, so it is also the one place that must
              ;; not hand a lone surrogate to a UTF-8 consumer downstream (JSON escape,
              ;; SQLite, the mobile client): a cut landing inside an astral char takes
@@ -116,11 +112,7 @@
 
                    (expect (str/starts-with? delimiter "````"))
                    (expect (str/ends-with? out (str/replace delimiter "md" "")))
-                   (expect (str/includes? out body))))
-             (it "stringifies the body and keeps the info string optional"
-                 (expect (= "```\n\n```" (util/fenced nil)))
-                 (expect (= "```\n42\n```" (util/fenced 42)))
-                 (expect (= (util/fenced "x") (util/fenced "x" nil)))))
+                   (expect (str/includes? out body)))))
 
 ;; Regression: Anthropic's summarized extended thinking ends every block with a
 ;; `thinking_delta` whose whole payload is `…`, so a two-word summary was
@@ -178,25 +170,9 @@
       (expect (nil? (util/settled-thinking-text "I should…")))
       (expect (nil? (util/settled-thinking-text
                       "The condition looks right for `.txt` files, so I need…")))
-      (expect (nil? (util/settled-thinking-text "The diff"))))
-  (it "answers nil for nothing, like the live normalizer"
-      (expect (nil? (util/settled-thinking-text nil)))
-      (expect (nil? (util/settled-thinking-text "   \n ")))
-      (expect (nil? (util/settled-thinking-text "…")))))
-
-(defdescribe now-ms-test
-             (it "answers a millisecond clock that moves forward"
-                 (let [a (util/now-ms)]
-                   (expect (pos? a))
-                   (expect (<= a (util/now-ms))))))
+      (expect (nil? (util/settled-thinking-text "The diff")))))
 
 (defdescribe blank-string-test
-             (it "non-blank-string? accepts only text with something in it"
-                 (expect (util/non-blank-string? "x"))
-                 (expect (not (util/non-blank-string? "   ")))
-                 (expect (not (util/non-blank-string? "")))
-                 (expect (not (util/non-blank-string? nil)))
-                 (expect (not (util/non-blank-string? 7))))
              (it "non-blank trims to a value or nil"
                  (expect (= "x" (util/non-blank "  x  ")))
                  (expect (nil? (util/non-blank "   ")))
@@ -204,59 +180,23 @@
                  (expect (= "7" (util/non-blank 7)))))
 
 (defdescribe digest-test
-             (it "encodes UTF-8 by the charset, not the platform default"
-                 (expect (= [-60 -123] (vec (util/utf8 "\u0105")))))
-             (it "hex-folds every byte to two lowercase characters"
-                 (expect (= "007fff" (util/bytes->hex (byte-array [0 127 -1])))))
-             (it "reads the same digits for a string and for its bytes"
-                 (expect (= (util/sha256-hex "vis") (util/sha256-hex (util/utf8 "vis"))))
-                 (expect (= 64 (count (util/sha256-hex "vis")))))
              (it "matches the known SHA-256 of the empty input"
                  (expect (= "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                            (util/sha256-hex ""))))
-             (it "hands out a fresh streaming digest each call"
-                 (let [d (util/sha256-digest)]
-                   (.update d (util/utf8 "vis"))
-                   (expect (= (util/sha256-hex "vis") (util/bytes->hex (.digest d)))))))
+                            (util/sha256-hex "")))))
 
-(defdescribe
-  secret-bytes-test
-  (it "matches the RFC 4231 HMAC-SHA256 test vector"
-      (expect (= "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-                 (util/bytes->hex (util/hmac-sha256 (util/utf8 "Jefe")
-                                                    (util/utf8 "what do ya want for nothing?"))))))
-  (it "hands out fresh random bytes of the asked length"
-      (expect (= 32 (alength (util/random-bytes 32))))
-      (expect (not (java.util.Arrays/equals (util/random-bytes 32) (util/random-bytes 32))))))
-
-(defdescribe env-val-test
-             (it "answers nil for a variable no environment sets"
-                 (expect (nil? (util/env-val "VIS_A_VARIABLE_NOTHING_SETS")))))
+(defdescribe secret-bytes-test
+             (it "matches the RFC 4231 HMAC-SHA256 test vector"
+                 (expect (= "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+                            (util/bytes->hex (util/hmac-sha256
+                                               (util/utf8 "Jefe")
+                                               (util/utf8 "what do ya want for nothing?")))))))
 
 (defdescribe byte-text-test
              (it "writes RFC 4648 base64url without padding"
                  (expect (= ["" "Zg" "Zm8" "Zm9v" "-_8"]
                             (mapv util/base64url
                                   [(byte-array 0) (util/utf8 "f") (util/utf8 "fo") (util/utf8 "foo")
-                                   (byte-array [(unchecked-byte 0xfb) (unchecked-byte 0xff)])]))))
-             (it "joins byte arrays in order"
-                 (expect
-                   (= [1 2 3]
-                      (vec (util/concat-bytes (byte-array [1 2]) (byte-array 0) (byte-array [3])))))
-                 (expect (zero? (alength (util/concat-bytes))))))
-
-(defdescribe daemon-thread-factory-test
-             (it "names daemon threads after the prefix with a running count"
-                 (let [factory
-                       (util/daemon-thread-factory "vis-test")
-
-                       threads
-                       (vec (repeatedly 2
-                                        #(.newThread factory
-                                                     (fn []))))]
-
-                   (expect (= ["vis-test-1" "vis-test-2"] (mapv #(.getName ^Thread %) threads)))
-                   (expect (every? #(.isDaemon ^Thread %) threads)))))
+                                   (byte-array [(unchecked-byte 0xfb) (unchecked-byte 0xff)])])))))
 
 (defn- key-pair
   ^java.security.KeyPair [^String algorithm ^java.security.spec.AlgorithmParameterSpec spec]

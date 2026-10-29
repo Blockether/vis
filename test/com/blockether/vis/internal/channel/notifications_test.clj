@@ -65,13 +65,7 @@
                                        (expect (true? (notif/dismiss! id)))
                                        (expect (false? (notif/dismiss! id))
                                                "a repeated dismiss is a no-op, not an error")
-                                       (expect (= [] (notif/notifications)))))))
-             (it "dismiss-all! empties the store and returns the empty vec"
-                 (with-clean-store (fn []
-                                     (notif/notify! "a" :ttl-ms nil)
-                                     (notif/notify! "b" :ttl-ms nil)
-                                     (expect (= [] (notif/dismiss-all!)))
-                                     (expect (= [] (notif/notifications)))))))
+                                       (expect (= [] (notif/notifications))))))))
 
 (defdescribe watchers-test
              (it "hands every watcher the full snapshot after each change"

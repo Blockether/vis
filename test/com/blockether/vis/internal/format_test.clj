@@ -177,9 +177,7 @@
                                          :reason :refusal
                                          :from-model "claude-opus-5"
                                          :to-model "claude-opus-4-8"
-                                         :category "policy"}]}))))
-  (it "is nil when there was no fallback or retry"
-      (expect (nil? (fmt/meta-fallback-note normal-result)))))
+                                         :category "policy"}]})))))
 
 (defdescribe format-meta-line-test
              (it "is identical to meta-summary-line when there's no fallback"

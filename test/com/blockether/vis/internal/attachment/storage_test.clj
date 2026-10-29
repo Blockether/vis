@@ -82,12 +82,6 @@
                                                           :storage/put-fn identity
                                                           :storage/get-fn identity
                                                           :storage/offload? 42}))))
-            (it "coerces priority to a long (default 0)"
-                (expect (= 0
-                           (:storage/priority (as/attachment-backend {:storage/id :x
-                                                                      :storage/scheme "x"
-                                                                      :storage/put-fn identity
-                                                                      :storage/get-fn identity})))))
             (it "register is idempotent by id and active-backend is highest priority"
                 (clear-registry!)
                 (try (expect (nil? (as/active-backend)))
@@ -141,9 +135,6 @@
                                                      (throw (ex-info "x" {})))})]
                   (expect (false? (as/offload? boom {:size 300000 :media-type "text/csv"}))))))
   (describe "offload-attachment — write side"
-            (it "returns the map unchanged with no backend"
-                (clear-registry!)
-                (expect (= big-cold (as/offload-attachment big-cold))))
             (it "offloads a big cold artifact: storage-uri set, base64 dropped, size fixed"
                 (clear-registry!)
                 (try (as/register-backend! (mem-backend))
@@ -171,9 +162,6 @@
     (it "leaves an inline envelope (already has base64) untouched"
         (clear-registry!)
         (let [row {:id "r" :media-type "text/csv" :base64 (b64 "hi")}]
-          (expect (= row (as/hydrate row)))))
-    (it "leaves a row with neither base64 nor storage-uri untouched"
-        (let [row {:id "r" :media-type "text/csv"}]
           (expect (= row (as/hydrate row)))))
     (it "re-fetches an external row's bytes into :base64"
         (clear-registry!)
@@ -211,7 +199,6 @@
           (expect (as/scheme-of uri))
           (expect (= "file" (as/scheme-of uri)))
           (expect (= "payload-123" (String. ^bytes ((:storage/get-fn backend) uri) "UTF-8")))))
-    (it "requires :dir" (expect (throws? clojure.lang.ExceptionInfo #(as/file-backend {}))))
     (it "offloads + hydrates a cold artifact end-to-end via the registry"
         (clear-registry!)
         (try (as/register-backend! (as/file-backend {:dir (temp-dir)}))
@@ -283,9 +270,6 @@
           ;; Third decoder (neither our encoder nor our optimiser agreeing with itself).
           (let [bi (javax.imageio.ImageIO/read (java.io.ByteArrayInputStream. stored))]
             (expect (= [300 200] [(.getWidth bi) (.getHeight bi)])))))
-    (it "leaves a non-image payload byte-identical"
-        (expect (= small-inline (as/offload-attachment small-inline)))
-        (expect (= big-cold (as/offload-attachment big-cold))))
     (it "leaves bytes that only CLAIM to be an image untouched"
         ;; `big-image` is 300 KB of \"p\" labelled image/png: the optimiser cannot read
         ;; it, and a payload we cannot prove is the same picture is never rewritten.

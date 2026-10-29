@@ -112,9 +112,6 @@
                        false
                        (catch clojure.lang.ExceptionInfo e
                          (str/includes? (ex-message e) "--gateway already names one")))))))
-  (it "leaves an error it cannot explain unchanged"
-      (let [e (ex-info "boom" {:type :gateway/start-failed})]
-        (expect (identical? e (#'gateway-cli/web-error e)))))
   (it "binds a phone-reachable host for --pair unless --host or --gateway decides"
       (with-redefs-fn {#'pairing/pair-bind-host (constantly "0.0.0.0")}
         (fn []

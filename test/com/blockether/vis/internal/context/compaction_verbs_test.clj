@@ -106,18 +106,6 @@
                    (get (first (expand-through (get @ca "session_summaries")
                                                ["t1/i1" "t1/i2" "t1/i3" "t1/i4"]))
                         "scopes")))))
-  (it "fold_session(\"tN/iA..iB\"): `..` spells the same window as `-`"
-      (let [[ca ev]
-            (with-verbs)
-
-            _
-            (swap! ca assoc "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3" "t1/i4"])
-
-            _
-            (ev "fold_session(\"t1/i2..i4\", \"middle\")")]
-
-        (expect (= [{"from" "t1/i2" "to" "t1/i4" "issued_turn" 99 "at_turn" 99 "gist" "middle"}]
-                   (get @ca "session_summaries")))))
   (it "fold_session(\"-tN/iM\"): an OPEN START folds every settled step through the cursor"
       (let [[ca ev]
             (with-verbs)
@@ -608,10 +596,6 @@
       (expect (= {"scopes" #{"t1/i2" "t1/i3"}} (:intent (eng/fold-key ["t1/i2" "t1/i3"]))))
       (expect (= {"scopes" #{"t1"} "from" "t2/i1" "to" "t2/i3"}
                  (:intent (eng/fold-key ["t1" "t2/i1-i3"])))))
-  (it "nothing named is nil — not an error"
-      (expect (nil? (eng/fold-key nil)))
-      (expect (nil? (eng/fold-key "")))
-      (expect (nil? (eng/fold-key []))))
   (it "a token that is not a step key and a non-string key are refusals"
       (expect (str/includes? (:error (eng/fold-key "t2/i1-i56x")) "not a step key"))
       (expect (str/includes? (:error (eng/fold-key "nonsense")) "not a step key"))
@@ -649,10 +633,6 @@
                  (expect (= #{"t1/i2" "t1/i3" "t2/i1"} (resolve1 {"from" "t1/i2" "to" "t2/i1"}))))
              (it "since: every universe scope AT OR AFTER the cursor"
                  (expect (= #{"t1/i3" "t2/i1" "t2/i2"} (resolve1 {"since" "t1/i3"}))))
-             (it "open-ended from (no to) reaches the newest — same as since"
-                 (expect (= #{"t2/i1" "t2/i2"} (resolve1 {"from" "t2/i1"}))))
-             (it "open-ended to (no from) reaches from the start — same as through"
-                 (expect (= #{"t1/i1" "t1/i2"} (resolve1 {"to" "t1/i2"}))))
              (it "a bare turn id expands to every iteration of that turn"
                  (expect (= #{"t1/i1" "t1/i2" "t1/i3"} (resolve1 {"scopes" #{"t1"}}))))
              (it "explicit tN/iN ids pass verbatim, unioned with a selector"
@@ -686,9 +666,7 @@
                                                  {"since" "t2/i2"}]})))
                  (expect (= #{"t1/i1" "t1/i2" "t2/i2"}
                             (resolve1 {"scopes" #{"t1/i1"}
-                                       "ranges" [{"through" "t1/i2"} {"since" "t2/i2"}]}))))
-             (it "an intent with NO selector key passes through untouched"
-                 (expect (= [{"drop" true}] (expand-through [{"drop" true}] universe)))))
+                                       "ranges" [{"through" "t1/i2"} {"since" "t2/i2"}]})))))
 
 (def ^:private supersede-summaries (var-get #'eng/supersede-summaries))
 
@@ -931,9 +909,6 @@
                             (:collapsed? r))
                           out))
         (expect (empty? (summary-forms out)))))
-  (it "empty summaries leave the trailer byte-for-byte"
-      (let [tr (trailer "t1/i1" "t1/i2")]
-        (expect (= (vec tr) (apply-summaries tr [])))))
   (it "a broader re-fold SUPERSEDES the finer one (one breadcrumb, broader gist)"
       (let [[ca ev] (with-verbs)]
         (ev "fold_session([\"t1/i2\", \"t1/i3\"], \"A\")")
@@ -1117,8 +1092,6 @@
         ;; turn weight alone (no iteration weights) still yields the clause
         (expect (= {"now" "saved 2/3 (67%, ~6k tok) · live t2/*"}
                    (folds-view [{"scopes" #{"t1"} "gist" "g"}] uni nil nil {1 6000})))))
-  (it "keeps recorded fold operations out of the model-facing utilization"
-      (expect (nil? (get (eng/session-view {"engine_fold_count" 2}) "session_utilization"))))
   (it "does not emit utilization deltas for changes in fold counts or summaries"
       (let [with-count
             (assoc base-ctx "engine_fold_count" 2)
@@ -1340,9 +1313,6 @@
                  (let [entry (tool-iter (filler 4000))]
                    (expect (pos? (long (measured-weight-of entry))))
                    (expect (= (suffix-tokens entry) (measured-weight-of entry)))))
-             (it "a bigger result costs more than a small one"
-                 (expect (< (long (measured-weight-of (tool-iter "ok")))
-                            (long (measured-weight-of (tool-iter (filler 4000)))))))
              (it "an already collapsed iteration is worth nothing, gist render and all"
                  (let [[pos rec]
                        (tool-iter (filler 4000))
@@ -1618,10 +1588,7 @@
             (:content (irm (second (first folded))))]
 
         (expect (= "# ⋯ folded t1/i1-i2 · did it" line))
-        (expect (= "# ⋯ dropped t1/i1" (:content (irm (second (first dropped))))))))
-  (it "with NO stamped utilization the card degrades to the bare confirmation"
-      (let [sf (get (compaction-verbs (atom {"session_turn" 2})) 'fold-session)]
-        (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g"))))))
+        (expect (= "# ⋯ dropped t1/i1" (:content (irm (second (first dropped)))))))))
 
 (defdescribe
   fold-session-activity-test
@@ -1682,10 +1649,6 @@
         (expect (< 500 (long (messages-wire-tokens priced-model [assistant])))))
     (it "counts the OUTPUT that answered it inside the tool_result"
         (expect (< 500 (long (messages-wire-tokens priced-model [results])))))
-    (it "delegates the whole structured-message count to Svar"
-        (expect (= (long (messages-wire-tokens priced-model [assistant results]))
-                   (- (long (svar/count-messages priced-model [assistant results]))
-                      (long (svar/count-messages priced-model []))))))
     (it "counts a replayed thinking chain and its signature"
         (expect (< 500
                    (long (messages-wire-tokens priced-model

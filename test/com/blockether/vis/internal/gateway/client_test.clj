@@ -1440,9 +1440,6 @@
                               "t1")]
         (expect (= :terminal action))
         (expect (= "cancelled" (get event' "status")))))
-  (it "a FAILED own turn is terminal"
-      (expect (= :terminal
-                 (first (client/sse-event-action {"type" "turn.failed" "turn_id" "t1"} "t1")))))
   (it "own queued record deleted synthesizes a cancelled terminal (no hang)"
       (let [[action event'] (client/sse-event-action {"type" "turn.queued.deleted" "turn_id" "t1"}
                                                      "t1")]

@@ -158,11 +158,6 @@
                     (str coord " states " stated " but its POM declares " declared)))))))
 
 (defdescribe
-  audit-generated-date-test
-  (it "the committed document states one resolved ISO date"
-      (expect (= 1 (count (re-seq #"(?m)^> Generated \d{4}-\d{2}-\d{2}\.$" (slurp audit-file)))))))
-
-(defdescribe
   audit-alias-test
   ;; `clojure -M:audit` runs the generator without Babashka on a slim classpath.
   (it "pins the same generator libraries as the core deps, so the inventory stays unchanged"

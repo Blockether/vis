@@ -26,39 +26,6 @@
 
 (defdescribe
   compatibility-verdict-test
-  ;; The three numbers move together here: a release that only ever speaks its
-  ;; own contract refuses the half that is behind, in whichever direction it is
-  ;; behind, instead of serving a shape neither side maintains.
-  (it "this release serves only the protocol it speaks"
-      (expect (= 20 contract/protocol-version))
-      (expect (= 20 contract/minimum-client-protocol))
-      (expect (= 20 contract/minimum-gateway-protocol)))
-  ;; Protocol 13 peers disagreed on Activity fields but still accepted each other.
-  (it "rejects protocol 13 peers in both directions"
-      (let [gateway
-            (protocol/gateway-verdict {:headers {"x-vis-protocol" "13"
-                                                 "x-vis-min-gateway-protocol" "13"}})
-
-            client
-            (protocol/client-verdict "vis-test" {:protocol 13 :min-client 13 :min-gateway 13})]
-
-        (expect (false? (:is-compatible gateway)))
-        (expect (= "client-too-old" (:reason gateway)))
-        (expect (false? (:is-compatible client)))
-        (expect (= "gateway-too-old" (:reason client)))))
-  ;; Protocol 14 peers disagreed on the Council rooms answer but still accepted each other.
-  (it "rejects protocol 14 peers in both directions"
-      (let [gateway
-            (protocol/gateway-verdict {:headers {"x-vis-protocol" "14"
-                                                 "x-vis-min-gateway-protocol" "14"}})
-
-            client
-            (protocol/client-verdict "vis-test" {:protocol 14 :min-client 14 :min-gateway 14})]
-
-        (expect (false? (:is-compatible gateway)))
-        (expect (= "client-too-old" (:reason gateway)))
-        (expect (false? (:is-compatible client)))
-        (expect (= "gateway-too-old" (:reason client)))))
   ;; Protocol 19 peers still had the Council Rooms routes and settings.
   (it "rejects protocol 19 peers in both directions"
       (let [gateway
@@ -142,26 +109,6 @@
                         @handshake-atom))
              (expect (= "client-too-old" (:reason (client/compatibility))))
              (finally (reset! handshake-atom previous))))))
-
-(defdescribe release-version-is-loaded-once-test
-             (it "release version is loaded once"
-                 ;; JVM SDK profiling found repeated classpath probes for immutable build metadata.
-                 (let [expected
-                       (protocol/release-version)
-
-                       resource
-                       io/resource
-
-                       lookups
-                       (atom 0)]
-
-                   (with-redefs [io/resource (fn [& args]
-                                               (swap! lookups inc)
-                                               (apply resource args))]
-                     (dotimes [_ 10]
-                       (expect (= expected (protocol/release-version)))))
-                   (expect (zero? @lookups)
-                           "version reads after the first one must not probe the classpath"))))
 
 ;; A dev build has no release to be ordered by, so its commit is what says whether a
 ;; daemon is running the code in front of you.

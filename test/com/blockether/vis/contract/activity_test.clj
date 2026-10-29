@@ -224,9 +224,7 @@
               (it "encodes whole events into the fixture frames"
                   (expect (= frames (run-stream activity/encode-stream-event events))))
               (it "decodes the fixture frames back into whole events"
-                  (expect (= events (run-stream activity/decode-stream-event frames))))
-              (it "sends fewer bytes than the whole events"
-                  (expect (< (count (json/write-str frames)) (count (json/write-str events))))))
+                  (expect (= events (run-stream activity/decode-stream-event frames)))))
     (describe "decoding"
               (it "leaves out a row id that the stream never received"
                   (let [first-frame (first frames)

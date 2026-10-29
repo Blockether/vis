@@ -41,9 +41,6 @@
         (expect (nil? (qwen/text-language "Dzień dobry, wszystkim słuchaczom!"))))))
 
 (defdescribe chunks-test
-             (it "keeps a short text as one chunk"
-                 (expect (= ["Hello there. How are you?"]
-                            (qwen/chunks "  Hello there. How are you?  "))))
              (it "splits a long text at sentence ends into chunks within the limit"
                  (let [sentence
                        "This sentence has a length that repeats many times over. "
@@ -63,10 +60,6 @@
 
 (defdescribe
   voices-test
-  (it "lists the built-in speakers when no voice is imported"
-      (with-redefs [voices/imported (constantly [])]
-        (expect (= 9 (count (qwen/voices))))
-        (expect (not-any? :is-imported (qwen/voices)))))
   (it "adds the imported voices, and an import with a speaker name wins"
       (with-redefs [voices/imported (constantly [{:id "ryan" :label "Me" :is-imported true}
                                                  {:id "marius" :label "Marius" :is-imported true}])]

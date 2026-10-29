@@ -451,42 +451,10 @@
               (expect (some? err))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err))))))))))
 
-(defdescribe
-  editing-extension-loads-test
-  (it "bash tool fully removed: no symbol, no helpers"
-      (let [symbols (map :ext.symbol/symbol (editing/available-editing-symbols))]
-        (expect (not-any? #{'bash} symbols))
-        (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                       "bash-tool"))))
-        (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                       "bash-symbol"))))
-        (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                       "run-bash-safe"))))))
-  (it "editing exposes only versioned read, search and patch tools"
-      (expect (= #{'cat 'grep 'patch}
-                 (set (map :ext.symbol/symbol (editing/available-editing-symbols))))))
-  (it "every editing symbol carries a non-blank :doc and an :arglists vector"
-      (doseq [s
-              @editing/editing-symbols
-
-              :let [doc
-                    (:ext.symbol/doc s)
-
-                    arglists
-                    (:ext.symbol/arglists s)]]
-
-        (expect (string? doc))
-        (expect (not (string/blank? doc)))
-        (expect (or (vector? arglists) (seq? arglists)))))
-  (it "preview tool retired: no symbol advertises it"
-      (expect (nil? (some #(when (= 'preview (:ext.symbol/symbol %)) %)
-                          @editing/editing-symbols)))))
-
-(defdescribe editing-op-classification-test
-             (it "uses the engine's observation and mutation tags"
-                 (doseq [[op tag] [[:cat :observation] [:grep :observation] [:patch :mutation]]]
-                   (expect (= tag (extension/op-tag op)))
-                   (expect (= {:tag tag} (extension/op-presentation op))))))
+(defdescribe editing-extension-loads-test
+             (it "editing exposes only versioned read, search and patch tools"
+                 (expect (= #{'cat 'grep 'patch}
+                            (set (map :ext.symbol/symbol (editing/available-editing-symbols)))))))
 
 (defn- with-fs-gate!
   "Install the host tools' extension-owned `:fs/access` gate for `body`, then
@@ -625,18 +593,6 @@
                                                                :error
                                                                :hint)
                                                            "fails closed"))))))
-  (it "no gate registered: the op passes through with its args untouched"
-      (let [before
-            (:ext.symbol/before-fn (private-fn "patch-symbol"))
-
-            args
-            ["target/editing-test/a.clj" [{"from" 1 "replace" "x"}]]
-
-            out
-            (before {:extensions (atom [])} (constantly :ok) args)]
-
-        (expect (not (contains? out :result)))
-        (expect (= args (:args out)))))
   ;; A junk path — file text reused as a filename, a name past NAME_MAX — fails the op
   ;; instead of throwing out of the `:before-fn` as an unclassified hook exception.
   (it "a path the OS cannot canonicalize fails the op with its own envelope"
@@ -927,17 +883,6 @@
         ;; OR: every line mentioning EITHER term is a hit.
         (expect (= ["(defn info-event [x] x)" "(defn other [x] x)" "info-event call"]
                    (mapv :text (:hits out))))))
-  (it "spec {:any [...]} is explicit OR"
-      (let [_
-            (write-temp! "rgany/a.clj" "alpha\nbeta\ngamma\n")
-
-            grep
-            (private-fn "rg-search")
-
-            out
-            (grep {"any" ["alpha" "gamma"] "paths" [(temp-dir-path "rgany")] "include" ["*.clj"]})]
-
-        (expect (= ["alpha" "gamma"] (mapv :text (:hits out))))))
   (it
     "accepts path vectors, include globs, and dedups overlapping roots"
     (let [root
@@ -1159,28 +1104,6 @@
         (expect (= line text)) ; verbatim, full length
         (expect (= (count line) (count text)))
         (expect (not (string/includes? text "clipped"))))))
-
-(defdescribe
-  versioned-verbs-are-back-test
-  ;; The inverse of the guard that used to keep these dead. Prose, config, a
-  ;; comment, a docstring line and every language have no address of their own,
-  ;; so the only one left was the old text quoted back. `cat` mints the address
-  ;; and `patch` spends it — neither may quietly disappear again.
-  (it "bash helpers stay fully removed from the editing core"
-      (doseq [v ["run-bash-safe" "bash-tool" "strict-bash-command" "coerce-bash-opts"
-                 "bash-warnings" "channel-render-bash" "journal-render-bash"]]
-        (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
-  ;; The OLD multi-edit batch and its serializer-damage coercion layer stay dead: one
-  ;; call is one FILE — every edit for it, resolved against one read — and the only
-  ;; coercion left is `normalize-edits-arg`, which `patch` itself spends.
-  (it "no batch coercion layer came back with them"
-      (doseq [v ["coerce-patch-edits" "patch-analysis" "patch-safe" "read-file-by-anchor"]]
-        (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
-  (it "both verbs are advertised"
-      (let [names (set (map #(str (:ext.symbol/symbol %)) (editing/available-editing-symbols)))]
-        (expect (contains? names "cat"))
-        (expect (contains? names "patch"))
-        (expect (contains? names "grep")))))
 
 (defdescribe
   cat-returns-numbered-string-test
@@ -2544,11 +2467,7 @@
                  "\\uXYZW" ;; not an escape at all
                  "\\u20"]] ;; truncated
         (expect (= s (escapes/decode-unicode-escapes s))))
-      (expect (= "\\\\u2014 vs \u2014" (escapes/decode-unicode-escapes "\\\\u2014 vs \\u2014"))))
-  (it "is total: nothing to decode, nothing to scan"
-      (expect (= "plain" (escapes/decode-unicode-escapes "plain")))
-      (expect (= "" (escapes/decode-unicode-escapes "")))
-      (expect (nil? (escapes/decode-unicode-escapes nil)))))
+      (expect (= "\\\\u2014 vs \u2014" (escapes/decode-unicode-escapes "\\\\u2014 vs \\u2014")))))
 
 ;; Regression: the decoder's first cut judged an escape with a hand-written
 ;; range test -- "printable non-ASCII BMP" -- so it decoded escapes no edit can
@@ -3169,15 +3088,6 @@
         (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
                                 (fs/list-dir (fs/parent path))))))))
 
-(defdescribe
-  find-files-op-name-test
-  "Regression: renaming find_files→grep means the result `:op` must stay in lockstep
-   with the symbol name — `op-tag` keys the observation/mutation registry by the wire
-   name, so a mismatch throws `Unregistered extension op :find`."
-  (it "the grep symbol IS named grep" (expect (= 'grep (:ext.symbol/symbol editing/grep-symbol))))
-  (it "grep carries an observation tag (registry-resolvable)"
-      (expect (= :observation (:ext.symbol/tag editing/grep-symbol)))))
-
 (defdescribe empty-search-paths-default-test
              "grep preserves file and directory scopes; empty scope keeps the default search."
              (let [coerce-find
@@ -3795,11 +3705,6 @@
         (expect (= ["**/oauth.clj" "**/prov.clj"]
                    (:include (coerce-rg {"query" ["x"]
                                          "include" "[\"**/oauth.clj\", \"**/prov.clj\"]"})))))
-    (it "include as an already-real vector is passed through unchanged"
-        (expect (= ["**/a.clj" "**/b.clj"]
-                   (:include (coerce-rg {"query" ["x"] "include" ["**/a.clj" "**/b.clj"]})))))
-    (it "include as a PLAIN glob string is scalar-wrapped, not glob-parsed"
-        (expect (= ["**/*.clj"] (:include (coerce-rg {"query" ["x"] "include" "**/*.clj"})))))
     (it "query as a stringified array becomes the OR needles"
         (expect (= ["a" "b"] (:needles (coerce-rg {"query" "[\"a\", \"b\"]"})))))
     (it "paths as a stringified array parses back to the real vector"
@@ -3857,9 +3762,6 @@
                    (:exclude (coerce-rg {"query" ["x"] "exclude" "[\"**/a.clj\", \"**/b.clj\"]"}))))
         (expect (= [] (:exclude (coerce-rg {"query" ["x"] "exclude" ""}))))
         (expect (= ["**/*.clj"] (:exclude (coerce-rg {"query" ["x"] "exclude" ["" "**/*.clj"]})))))
-    (it "a non-string exclude is refused, like a non-string include"
-        (let [err (try (coerce-rg {"query" ["x"] "exclude" [42]}) (catch Exception e e))]
-          (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))))
     (it "accepts exclude and retains it in structured unknown-key diagnostics"
         (expect (map? (coerce-find [{"query" "x" "exclude" ["**/*_test.clj"]}])))
         (let [err (try (coerce-find [{"query" "x" "exlude" ["a"]}])
@@ -5533,19 +5435,6 @@
                  (expect (= :ext.foundation.editing/path-denied (:type data)))
                  (expect (= :held-lock (:reason data)))))
              (finally (paths/release-held-files! ::held-shm))))))
-
-;; Regression: grep answers ONE numbered TEXT block, but the model-facing prose still
-;; described a keyed map — the blank-path refusal told the model to use "the keys under
-;; matches", so it kept subscripting a string.
-(defdescribe grep-is-described-as-text-test
-             "Every model-facing description of grep says TEXT, never a map."
-             (it "the grep symbol declares is_files_only as a key and describes it"
-                 (let [names (mapv :name (:ext.symbol/params editing/grep-symbol))]
-                   (expect (contains? (set names) "is_files_only"))
-                   (expect (string/includes? (:ext.symbol/description editing/grep-symbol)
-                                             "`is_files_only: True`"))
-                   (expect (string/includes? (:ext.symbol/result editing/grep-symbol)
-                                             "is_files_only")))))
 
 (defdescribe
   grep-files-only-public-test

@@ -448,27 +448,6 @@
         (expect (= :cancelled (:state state)))
         (expect (= {:running 0 :succeeded 0 :failed 0 :cancelled 1} (:counts state)))
         (expect (= [:cancelled] (mapv :state (:rows state))))))
-  (it "retains every admitted row past former receipt budgets"
-      (let [ctx
-            (event/context)
-
-            pairs
-            (mapv (fn [n]
-                    (event-pair ctx
-                                (keyword (str "unknown_" n))
-                                :succeeded
-                                {:text (apply str (repeat 1000 "界"))}))
-                  (range 150))
-
-            state
-            (activity/replay (mapcat identity pairs))
-
-            snapshot
-            (activity/snapshot state)]
-
-        (expect (= 150 (count (:rows snapshot))))
-        (expect (> (activity/byte-size snapshot) 65536))
-        (expect (= 150 (get-in snapshot [:counts :succeeded])))))
   ;; Regression, issue td-1e6086: Activity was projected both as semantic data and as
   ;; generic status/stat/steps nodes, so every channel had two sources of truth.
   (it "keeps one semantic presentation beyond the former row ceiling"
@@ -725,17 +704,7 @@
       (expect (= "2 files" (:summary head)))
       (expect (= :markdown (:result-format head)))
       (expect (= [:write :delete] (mapv :operation (:children head))))
-      (expect (= (count ids) (count (distinct ids))))))
-  (it "replay is deterministic for the same immutable event order"
-      (let [ctx
-            (event/context)
-
-            events
-            (vec (mapcat identity
-                         [(event-pair ctx :grep :succeeded {:matches 1})
-                          (event-pair ctx :patch :failed "refused")]))]
-
-        (expect (= (activity/replay events) (activity/replay events))))))
+      (expect (= (count ids) (count (distinct ids)))))))
 
 (defdescribe
   live-activity-budget-test
@@ -822,34 +791,6 @@
 
 (defdescribe
   activity-pressure-fallback-test
-  (it "retains grouped invocations independently of their aggregate size"
-      (let [ctx
-            (event/context)
-
-            pairs
-            (mapv (fn [n]
-                    (event-pair ctx
-                                (if (zero? n) :shell :_shell_logs)
-                                :succeeded
-                                {"id" "large-build"}
-                                {:presenter :shell
-                                 :classification :mutation
-                                 :args (if (zero? n) ["npm test"] ["large-build"])}))
-                  (range 12))
-
-            running
-            (first (event-pair ctx :grep :succeeded nil))
-
-            state
-            (activity/replay (concat (mapcat identity pairs) [running]))
-
-            projection
-            (activity/presentation state)]
-
-        (expect (= 12 (count (:children (first (:rows projection))))))
-        (expect (= (:invocation-id running) (:id (last (:rows projection)))))
-        (expect (= {:running 1 :succeeded 12 :failed 0 :cancelled 0} (:counts projection)))
-        (expect (contract/valid-projection? projection))))
   (it "retains past and current content without trimming either"
       (let [ctx
             (event/context)

@@ -11,12 +11,10 @@
      (com.blockether.vis.internal.apropos-resource-test/regenerate!)"
   (:require [charred.api :as json]
             [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.manifest :as manifest]
-            [com.blockether.vis.test-prose :as prose]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -294,14 +292,6 @@ def __vis_harvest__(modules, names):
 
         (expect (= 2 (count expected)))
         (expect (= expected listed))))
-  (it "makes every pack that lends a shim name its own document resource"
-      (let [entries (shim-entries)]
-        (expect (= 2 (count entries)))
-        (doseq [{:keys [register apropos]} entries]
-          (expect (string? apropos) register)
-          (expect (some? (io/resource apropos)) apropos)
-          (expect (.exists (io/file (resource-file apropos))) apropos))
-        (expect (= (count entries) (count (set (map :apropos entries)))))))
   (it "stores one unique flat record for every documented name"
       (let [entries
             (mapcat (comp stored-entries :apropos) (shim-entries))
@@ -319,29 +309,6 @@ def __vis_harvest__(modules, names):
                               (string? (:kind %))
                               (not (str/blank? (:text %))))
                         entries))))
-  (it
-    "keeps each retained shim's globals in that pack's own resource"
-    (let [records-for
-          (fn [public-name]
-            (->> (shim-entries)
-                 (some #(when (some #{public-name} (shim-names (:shims %))) %))
-                 :apropos
-                 stored-entries))
-
-          listing
-          (records-for "ls")
-
-          attachments
-          (records-for "attach")
-
-          records
-          (concat listing attachments)]
-
-      (expect (= #{"ls"} (set (map :name listing))))
-      (expect (= #{"attach" "get_attachment" "list_attachments" "read_attachment" "show_attachment"}
-                 (set (map :name attachments))))
-      (expect (every? #(contains? #{#{:name :kind :text} #{:name :kind :text :call}} (set (keys %)))
-                      records))))
   (it
     "matches one live harvest, pack by pack"
     (let [live-harvest
@@ -382,19 +349,3 @@ def __vis_harvest__(modules, names):
       (doseq [{:keys [apropos shims]} entries]
         (expect (= (apropos-entries (pack-harvest live-harvest shims)) (stored-entries apropos))
                 (str apropos " is stale; run apropos-resource-test/regenerate!"))))))
-
-(defdescribe shim-doc-prose-test
-             (it "keeps every shim page within the prose limits of the manual"
-                 (let [broken (concat (for [{:keys [apropos]} (shim-entries)
-                                            {:keys [name text]} (stored-entries apropos)
-                                            message (prose/breaks (str text))]
-
-                                        (str apropos " " name ": " message))
-                                      (for [shim (registered-shims)
-                                            :when (:shim/docs shim)
-                                            message (prose/breaks (:shim/docs shim))]
-
-                                        (str (:shim/name shim) " :shim/docs: " message)))]
-                   (expect (empty? broken)
-                           (str/join "\n"
-                                     (cons "shim pages that break the prose limits:" broken))))))

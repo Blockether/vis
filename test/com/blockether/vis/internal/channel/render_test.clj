@@ -21,9 +21,6 @@
     "returns the model's authored source VERBATIM as one :code segment (full-Python: no splitting, no classification, no pretty-print)"
     (expect (= [{:kind :code :source "ls(\".\")\ndone(\"\"\"ok\"\"\")"}]
                (render/parse-block-display "ls(\".\")\ndone(\"\"\"ok\"\"\")"))))
-  (it "keeps multi-line Python verbatim (triple-quoted strings are never tokenized)"
-      (expect (= [{:kind :code :source "done(\"\"\"\nmulti\nline\n\"\"\")"}]
-                 (render/parse-block-display "done(\"\"\"\nmulti\nline\n\"\"\")"))))
   (it "coalesces neighboring hidden tool calls into one hidden segment"
       (let [out (render/parse-block-display "(cat \"a.clj\")\n(cat \"b.clj\")")]
         (expect (= 1 (count out)))

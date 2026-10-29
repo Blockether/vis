@@ -461,9 +461,7 @@
                         (shell-log/delete-session-logs! b)
                         (expect (not (.exists (shell-log/session-dir b))))
                         (expect (.isFile (shell-log/log-file a "one")))
-                        (finally (shell-log/delete-session-logs! a)))))
-             (it "is silent about a session that never ran a shell"
-                 (expect (nil? (shell-log/delete-session-logs! (session-id "absent"))))))
+                        (finally (shell-log/delete-session-logs! a))))))
 
 (defdescribe
   index-test

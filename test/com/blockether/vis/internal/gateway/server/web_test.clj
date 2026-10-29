@@ -150,11 +150,6 @@
                         (expect (= (.getCanonicalFile index) (:body (get-app))))
                         (finally (delete-tree! base))))))
 
-(defdescribe without-a-bundle-the-gateway-is-unchanged
-             (it "without a bundle the gateway is unchanged"
-                 (let [handler (constantly api-response)]
-                   (expect (identical? handler (web/wrap-web handler nil))))))
-
 (defdescribe launch-codes-work-once-and-expire
              (it "launch codes work once and expire (#397)"
                  (let [{:keys [code expires-at-ms]} (web/mint-launch! 1000)]

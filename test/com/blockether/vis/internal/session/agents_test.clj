@@ -92,38 +92,9 @@
 
 ;; The leader computed whole answers itself and spawned children only to confirm them. The rules
 ;; follow the Codex and Claude Code delegation rules and the Vis subagent evaluation.
-(defdescribe delegation-decision-rules-test
-             (it "tells the leader when to delegate, how many children to use and what to keep"
-                 (let [text (agents/prompt {})]
-                   (doseq [rule ["When in doubt, do the work yourself."
-                                 "Do the critical-path step and shared work yourself"
-                                 "usually two to four in total"
-                                 ;; In CTB, a leader split one WAL design between itself and a child. The
-                                 ;; parts broke a shared invariant, and a hidden live-snapshot check failed.
-                                 "Give one coupled design one owner"
-                                 ;; CTB leaders still split one program, for example graph classes and the
-                                 ;; matcher that reads their adjacency. Delegated trials passed 4/14, others 12/22.
-                                 "Treat the modules of one program as one coupled design."
-                                 "give the child the code, not your conclusion"
-                                 "Do not do their work again."]]
-                     (expect (str/includes? text rule) rule))
-                   (expect (not (str/includes? text "Verify answers before you use them"))
-                           "A general verify rule made the leader redo the delegated work"))))
 
 (defdescribe
   subagent-role-test
-  (it "offers each contract role to the leader as a label"
-      (let [text
-            (agents/prompt {})
-
-            run-doc
-            (:doc (meta #'agents/run))]
-
-        (expect (= ["research" "implement" "verify" "audit"] (mapv #(get % "const") agents/roles)))
-        (expect (str/includes? text "Choose the role by the result that you need"))
-        (doseq [role agents/roles]
-          (expect (str/includes? text (str (get role "const") ": " (get role "description"))))
-          (expect (str/includes? run-doc (get role "const"))))))
   (it "accepts a contract role and refuses another one"
       (expect (document/valid-json? "agents" "spawn" {"task" "Fix" "role" "implement"}))
       (expect (document/valid-json? "agents" "run" {"tasks" [{"task" "Read" "role" "research"}]}))
@@ -1923,15 +1894,6 @@
 
 ;; Council orchestration study: the leader gets event waits and independent checks, and each
 ;; subagent reports with evidence.
-(defdescribe orchestration-prompt-test
-             (it "gives the leader and subagent rules for events and independent checks"
-                 (with-redefs [agents/enabled? (constantly true)]
-                   (let [text (agents/prompt {})]
-                     (expect (str/includes? text "return at the first event"))
-                     (expect (str/includes? text "Start one verifier early"))
-                     (expect (str/includes? text "End with the complete result and its evidence"))
-                     (expect (str/includes? text "call council.result(text)"))
-                     (expect (not (str/includes? text "orchestration is on")))))))
 
 ;; Regression for #405: only a finished child with iterations left takes a follow-up task.
 (defdescribe

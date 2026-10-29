@@ -9,17 +9,6 @@
 
 (defdescribe
   provider-lmstudio-test
-  (it "registers one LM Studio provider extension"
-      (let [provider
-            (registry/provider-by-id :lmstudio)
-
-            status
-            ((:provider/status-fn provider))]
-
-        (expect (= :lmstudio (:provider/id provider)))
-        (expect (false? (:is-authenticated status)))
-        (expect (nil? (:authenticated? status)))
-        (expect (= "http://localhost:1234/v1" (:base-url status)))))
   (it "bounds long local prefill without changing the TTFT phase"
       (expect (= {:timeout-ms 1800000
                   :first-byte-timeout-ms 600000

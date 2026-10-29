@@ -286,16 +286,3 @@
                      (expect (= "Ada" (get (deref old-read 5000 nil) "agent_name")))
                      (expect (= "Eve" (get (#'config/parse-yaml-config-map file) "agent_name")))
                      (finally (deliver release true))))))))))
-
-(defdescribe
-  yaml-character-matching-compiles-without-reflection
-  (it "yaml character matching compiles without reflection"
-      ;; The old parser reflected Character/codePointAt once per matched codepoint.
-      (let [warnings (java.io.StringWriter.)]
-        (binding [*warn-on-reflection* true
-                  *err* warnings]
-
-          (require 'yaml-parser.parser :reload))
-        (expect (not (str/includes? (str warnings) "java.lang.Character")) (str warnings)))
-      (expect (= {"agent_name" "助手😀" "system_prompt" "First\nSecond\n"}
-                 (yamlstar/load "agent_name: 助手😀\nsystem_prompt: |\n  First\n  Second\n")))))

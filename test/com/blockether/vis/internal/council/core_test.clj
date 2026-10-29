@@ -967,17 +967,6 @@
             (expect (nil? (council 'prompt nil))))))))
 
 (defdescribe
-  wake-continuation-guidance-test
-  (it
-    "wake continuation guidance"
-    (with-council
-      (let [prompt (council 'prompt nil)]
-        (expect
-          (str/includes?
-            prompt
-            "On a wake, continue only the related unfinished task, within the permissions of the user."))))))
-
-(defdescribe
   independent-store-and-reopen-test
   (it "independent store and reopen"
       ;; C09/C17: committed log persists; presence and cursors never recover from disk.

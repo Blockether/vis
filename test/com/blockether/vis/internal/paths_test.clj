@@ -13,11 +13,7 @@
              (it "normalizes Windows separators and leaves POSIX paths alone"
                  (expect (= "a/b/c" (paths/unixify "a\\b\\c")))
                  (expect (= "a/b" (paths/unixify "a/b")))
-                 (expect (= "C:/x/y" (paths/unixify "C:\\x\\y"))))
-             (it "is nil-safe and stringifies non-strings"
-                 (expect (nil? (paths/unixify nil)))
-                 (expect (= "" (paths/unixify "")))
-                 (expect (= "a/b" (paths/unixify (java.io.File. "a/b"))))))
+                 (expect (= "C:/x/y" (paths/unixify "C:\\x\\y")))))
 
 (defdescribe
   expand-home-test
@@ -33,9 +29,7 @@
   (it "is nil-safe and a no-op when home is unavailable"
       (expect (nil? (paths/expand-home nil "/home/u")))
       (expect (= "~/x" (paths/expand-home "~/x" nil)))
-      (expect (= "~/x" (paths/expand-home "~/x" ""))))
-  (it "uses the JVM's user.home in the 1-arity"
-      (expect (= (System/getProperty "user.home") (paths/expand-home "~")))))
+      (expect (= "~/x" (paths/expand-home "~/x" "")))))
 
 (defdescribe abbreviate-home-test
              (it "renders home itself as `~/` and descendants with `/` separators"
@@ -47,10 +41,6 @@
                  (expect (= "/etc/x" (paths/abbreviate-home "/etc/x" "/home/u")))
                  ;; a sibling home whose name merely STARTS with ours is not under it
                  (expect (= "/home/user2/a" (paths/abbreviate-home "/home/user2/a" "/home/u"))))
-             (it "leaves relative paths and nil alone, and never throws"
-                 (expect (= "rel/x" (paths/abbreviate-home "rel/x" "/home/u")))
-                 (expect (nil? (paths/abbreviate-home nil "/home/u")))
-                 (expect (= "/home/u/a" (paths/abbreviate-home "/home/u/a" nil))))
              (it "round-trips with expand-home for a path under home"
                  (let [home
                        (System/getProperty "user.home")

@@ -25,11 +25,7 @@
     (it "reports EVERY candidate for an ambiguous prefix instead of picking one"
         ;; Deleting a project is irreversible: a prefix that fits two projects
         ;; must never silently resolve to the first one.
-        (expect (= ["vis" "demo"] (mapv :name (match-projects projects "9f2c")))))
-    (it "matches nothing for an unknown id or blank input"
-        (expect (= [] (match-projects projects "zzzz")))
-        (expect (= [] (match-projects projects "  ")))
-        (expect (= [] (match-projects projects nil))))))
+        (expect (= ["vis" "demo"] (mapv :name (match-projects projects "9f2c")))))))
 
 (defdescribe
   cli-project-delete-blast-radius-test

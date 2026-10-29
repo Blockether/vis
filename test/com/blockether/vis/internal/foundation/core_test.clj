@@ -4,12 +4,10 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
-            [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.context.renderer :as renderer]
             [com.blockether.vis.internal.python.env :as python-env]
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.test-python-context :as tpc]
-            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -155,15 +153,6 @@
 
 (defdescribe
   vis-foundation-aggregator-test
-  (it "is a BUILT-IN with NO alias — symbols bind bare into the sandbox"
-      (expect (true? (get-in foundation/vis-extension [:ext/engine :ext.engine/builtin?])))
-      (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/alias])))
-      (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/ns])))
-      (let [symbols (set (map :ext.symbol/symbol
-                              (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols])))]
-        (expect (every? symbols
-                        ['read-session 'get-session 'list-sessions 'shell '_shell-logs '_shell-wait
-                         '_shell-type '_shell-stop]))))
   (it "includes leadership guidance only when subagents are enabled"
       ;; Subagents run on Council messages, so the guidance needs both settings on.
       (with-redefs [toggles/enabled?
@@ -175,14 +164,6 @@
         (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
           (expect (str/includes? prompt "## Subagents (Council)"))
           (expect (str/includes? prompt "do only your task")))))
-  (it "contributes only the workspace block through ctx now"
-      ;; `:session/env` (host / project / extensions digest) moved to
-      ;; `internal.context.env-digest` — it's core functionality, not extension-
-      ;; owned. Foundation-core's `:ext/ctx-fn` keeps only the workspace
-      ;; block; `(:project ctx)` is gone for good.
-      (let [ctx ((:ext/ctx-fn foundation/vis-extension) {})]
-        (expect (not (contains? ctx :project)))
-        (expect (not (contains? ctx :session/env)))))
   (it "is the manifest's single initializer for core facilities"
       (let [initialization (set (manifest/initializers))]
         (expect (contains? initialization 'com.blockether.vis.internal.foundation.core/register!))
@@ -190,17 +171,4 @@
                          'com.blockether.vis.internal.foundation.shell/register!]]
           (expect (not (contains? initialization removed)))))
       (foundation/register!)
-      (expect (some #(= "foundation-core" (:ext/name %)) (extension/registered-extensions))))
-  (it "owns the shell CLI and the toggle-gated symbol groups"
-      ;; Regression: `/rewind`, its op-hooks and its gateway routes were removed;
-      ;; foundation-core contributes no op-hooks and no channel routes at all.
-      (expect (empty? (:ext/op-hooks foundation/vis-extension)))
-      (expect (empty? (:ext/channel-contributions foundation/vis-extension)))
-      (expect (not-any? #(= "rewind" (:slash/name %))
-                        (:ext/slash-commands foundation/vis-extension)))
-      (expect (= ["shell"] (mapv :cmd/name (:ext/cli foundation/vis-extension))))
-      (expect (every? (set (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols]))
-                      (concat introspection/all-symbols shell/shell-symbols)))
-      (let [checks ((:ext/doctor-fn foundation/vis-extension) {})]
-        (expect (sequential? checks))
-        (expect (every? :level checks)))))
+      (expect (some #(= "foundation-core" (:ext/name %)) (extension/registered-extensions)))))

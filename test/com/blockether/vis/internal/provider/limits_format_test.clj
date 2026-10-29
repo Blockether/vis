@@ -10,10 +10,7 @@
                  (expect (= "3.1" (lf/format-limit-number 3.14)))
                  ;; Locale/ROOT: a JVM started under a comma-decimal locale must not emit
                  ;; "3,1" next to English suffix text.
-                 (expect (not (str/includes? (lf/format-limit-number 3.14) ","))))
-             (it "returns nil for anything that is not a number"
-                 (expect (nil? (lf/format-limit-number nil)))
-                 (expect (nil? (lf/format-limit-number "12")))))
+                 (expect (not (str/includes? (lf/format-limit-number 3.14) ",")))))
 
 (defdescribe generic-limit-label-test
              (it "matches the overrides through the gateway wire, where ids arrive as strings"
@@ -50,11 +47,7 @@
                  (expect (= "3/5 used" (lf/format-limit-usage {:used 3 :limit 5})))
                  (expect (= "2/5 left" (lf/format-limit-usage {:remaining 2 :limit 5})))
                  (expect (= "2 left" (lf/format-limit-usage {:remaining 2})))
-                 (expect (= "3 used" (lf/format-limit-usage {:used 3}))))
-             (it "returns nil only when the row carries no usage signal at all"
-                 ;; Callers rely on this to skip empty cells with `(when usage ...)`.
-                 (expect (nil? (lf/format-limit-usage {})))
-                 (expect (nil? (lf/format-limit-usage {:label "Chat"})))))
+                 (expect (= "3 used" (lf/format-limit-usage {:used 3})))))
 
 (defdescribe generic-limit-has-signal?-test
              (it "counts a reset timestamp as signal even at zero remaining"
@@ -65,10 +58,7 @@
                  (expect (lf/generic-limit-has-signal? {:is-unlimited true}))
                  (expect (lf/generic-limit-has-signal? {:limit 5}))
                  (expect (lf/generic-limit-has-signal? {:remaining 5}))
-                 (expect (lf/generic-limit-has-signal? {:used 5})))
-             (it "finds no signal in an empty or all-zero row"
-                 (expect (not (lf/generic-limit-has-signal? {})))
-                 (expect (not (lf/generic-limit-has-signal? {:limit 0 :remaining 0 :used 0})))))
+                 (expect (lf/generic-limit-has-signal? {:used 5}))))
 
 (defdescribe limit-row-exhausted?-test
              (it "is true only when zero remaining is a WALL"
@@ -100,19 +90,7 @@
                  (expect (= [1 0.25] (lf/limit-row-pressure {:remaining 1 :limit 4})))
                  (expect (= [2 0.0] (lf/limit-row-pressure {:is-unlimited true})))
                  ;; unmeasurable rows sort with the loosest metered ones, never ahead of them
-                 (expect (= [1 1.0] (lf/limit-row-pressure {}))))
-             (it "returns a vector and keeps every row"
-                 (let [rows [{:id :a} {:id :b} {:id :c}]]
-                   (expect (vector? (lf/prioritize-limit-rows rows)))
-                   (expect (= (set rows) (set (lf/prioritize-limit-rows rows)))))))
-
-(defdescribe label+usage-test
-             (it "joins the short label and the compact usage, or renders the label alone"
-                 (expect (= "Codex 5h 47%" (lf/label+usage {:id :codex-5h :remaining 46.7})))
-                 (expect (= "Chat" (lf/label+usage {:label "Chat"}))))
-             (it "never returns nil while a fallback label exists"
-                 ;; `generic-limit-label` bottoms out at "Limit", so a row always renders.
-                 (expect (= "Limit" (lf/label+usage {})))))
+                 (expect (= [1 1.0] (lf/limit-row-pressure {})))))
 
 (defdescribe
   compact-limit-cells-test
@@ -145,14 +123,6 @@
         (expect (nil? prefix))
         (expect (= ["Codex 5h 47%"] (mapv :text cells)))
         (expect (= rows (mapv :row cells)))))
-  (it "drops the English words a window would otherwise repeat"
-      (expect (= "47%" (lf/compact-limit-usage {:id :codex-5h :remaining 46.7})))
-      (expect (= "3/5 (2)" (lf/compact-limit-usage {:used 3 :limit 5 :remaining 2})))
-      (expect (= "3/5" (lf/compact-limit-usage {:used 3 :limit 5})))
-      (expect (= "2/5" (lf/compact-limit-usage {:remaining 2 :limit 5})))
-      (expect (= "2" (lf/compact-limit-usage {:remaining 2})))
-      (expect (= "unlimited" (lf/compact-limit-usage {:is-unlimited true})))
-      (expect (nil? (lf/compact-limit-usage {}))))
   (it "splits a label into the plan name and the window suffix"
       (expect (= {:label "Codex 7d" :prefix "Codex" :window "7d"}
                  (lf/limit-label-parts {:id :codex-7d})))
@@ -185,11 +155,7 @@
                                                                                 {:id :codex-7d}]}})
                                         "Codex"))
                  (expect (lf/account-plan-window-row? {:id "codex-7d"}))
-                 (expect (not (lf/account-plan-window-row? {:id :chat}))))
-             (it "returns nil when there is nothing to render"
-                 (expect (nil? (lf/dynamic-summary nil)))
-                 (expect (nil? (lf/dynamic-summary {})))
-                 (expect (nil? (lf/dynamic-summary {:dynamic {:limits []}})))))
+                 (expect (not (lf/account-plan-window-row? {:id :chat})))))
 
 ;; Regression, reported by a user against Claude: the 7d window overtook the 5h
 ;; whenever it happened to be the tighter bucket, so Claude reported

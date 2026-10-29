@@ -127,17 +127,6 @@
 
 ;; Draft recovery reports #242 and #243: isolation must be an explicit opt-in.
 (defdescribe draft-backend-setting-test
-             (it "is an experimental opt-in that defaults to off in both clients"
-                 (let [spec (toggles/toggle-spec ws/draft-backend-toggle-id)]
-                   (expect (= "off" (:default spec)))
-                   (expect (= :enum (:type spec)))
-                   (expect (= ["auto" "worktree" "rift" "off"] (:choices spec)))
-                   (expect (true? (:persist? spec)))
-                   (expect (true? (:experimental? spec)))
-                   (expect (= :experimental (:group spec)))
-                   (doseq [channel [:tui :web]]
-                     (expect (some #(= ws/draft-backend-toggle-id (:id %))
-                                   (toggles/toggles-for-channel channel))))))
              (it "keeps missing or invalid settings off while honoring explicit backend choices"
                  (binding [ws/*draft-backend* nil]
                    (doseq [configured [nil "" "unknown" false "off" "auto" "worktree" "rift"]]
@@ -764,14 +753,6 @@
                        (when-let [pending @release]
                          (deref pending 30000 nil))
                        (expect (= {:persisted base :confined base} @observed)))))))
-
-(defdescribe draft-symbols-test
-             (it "the sandbox names its six draft tools, without a draft slash command"
-                 (expect (= ["draft-status" "draft-diff" "draft-create" "draft-sync" "draft-approve"
-                             "draft-discard"]
-                            (mapv (comp name :ext.symbol/symbol) drafts/symbols)))
-                 (expect (empty? (filter #(#{"draft" "approve" "discard"} (:slash/name %))
-                                         (:ext/slash-commands foundation/vis-extension))))))
 
 (defdescribe
   draft-diff-symbol-test

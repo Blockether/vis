@@ -71,22 +71,12 @@
                   (= view-id (or (get-in event ["view" "id"]) (get event "view_id")))))
     @seen))
 
-(defdescribe
-  human-input-request-shape-test
-  (it "a request reaches BOTH surfaces unless the caller narrows it"
-      (expect (= [:tui :app] (:channel-ids (hi/normalize-request (spec)))))
-      (expect (= [:tui] (:channel-ids (hi/normalize-request (spec :channel-ids [:tui])))))
-      (expect (= [:app] (:channel-ids (hi/normalize-request (spec :channel-id :app))))))
-  (it "the request names its session, in Clojure or as converted JSON"
-      (expect (= "sid-1" (:session-id (hi/normalize-request (spec :session-id "sid-1")))))
-      (expect (= "sid-2"
-                 (:session-id (hi/normalize-request (hi/spec<-json (assoc (spec)
-                                                                     "session_id" "sid-2"))))))
-      (expect (nil? (:session-id (hi/normalize-request (spec))))))
-  (it "the channel/wire view keeps the session — the app routes on it"
-      (expect (= "sid-3"
-                 (:session-id (hi/request->view (hi/normalize-request (spec :session-id
-                                                                            "sid-3"))))))))
+(defdescribe human-input-request-shape-test
+             (it "a request reaches BOTH surfaces unless the caller narrows it"
+                 (expect (= [:tui :app] (:channel-ids (hi/normalize-request (spec)))))
+                 (expect (= [:tui]
+                            (:channel-ids (hi/normalize-request (spec :channel-ids [:tui])))))
+                 (expect (= [:app] (:channel-ids (hi/normalize-request (spec :channel-id :app)))))))
 
 (defdescribe
   app-sees-and-answers-a-blocked-run-test

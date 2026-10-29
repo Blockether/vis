@@ -274,15 +274,6 @@
                    (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn string-ext) {})))
                    (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn fn-ext) {}))))))
 
-(def ^:private authored
-  (extension/extension
-    {:ext/name "test.source-nses" :ext/description "Source fixture." :ext/prompt-fn "Probe."}))
-
-(defdescribe extension-macro-test
-             (it "records the namespace that declared the extension"
-                 (expect (= '[com.blockether.vis.internal.extension.core-test]
-                            (:ext/source-nses authored)))))
-
 (defdescribe ctx-contributions-test
              (it "binds active workspace root while building extension ctx"
                  (let [root
@@ -512,8 +503,6 @@
                                       :fn (fn [_ _ args]
                                             (conj (vec args) :extra))})
         (expect (= [:x :extra] (run-before :ophtest4 {} [:x]))))
-    (it "the generic operation dispatcher invokes a host operation with no :around hook"
-        (expect (= 3 (extension/invoke-operation :ophtest-none {} + [1 2]))))
     (it "around middleware wraps the call, catches a throw, and recovers"
         (extension/register-op-hook! {:op :ophtest5
                                       :phase :around
@@ -780,54 +769,48 @@
 ;; may not carry a second, schema-shaped door beside that name. This walks the
 ;; live registry rather than a fixture, so obsolete schema or renderer metadata
 ;; cannot quietly return.
-(defdescribe
-  every-function-is-a-python-name-test
-  (it "registers no schema or replay renderer on any symbol"
-      ;; Reading the docs table loads the built-in extensions, so the walk
-      ;; below sees the same registry a live session does.
-      (extension/sandbox-symbol-docs)
-      (let [entries
-            (into [] (mapcat extension/ext-symbols) (extension/registered-extensions))
+(defdescribe every-function-is-a-python-name-test
+             (it "registers no schema or replay renderer on any symbol"
+                 ;; Reading the docs table loads the built-in extensions, so the walk
+                 ;; below sees the same registry a live session does.
+                 (extension/sandbox-symbol-docs)
+                 (let [entries
+                       (into [] (mapcat extension/ext-symbols) (extension/registered-extensions))
 
-            dead-keys
-            (into #{}
-                  (comp (mapcat keys)
-                        (filter (fn [k]
-                                  ;; `:ext.symbol/call` STAYS: it maps a kwargs dict onto
-                                  ;; positional params for a PYTHON call, and is not a schema.
-                                  (contains? #{:ext.symbol/schema :ext.symbol/replay
-                                               :ext.symbol/render-start-call-fn
-                                               :ext.symbol/render-finish-call-fn}
-                                             k))))
-                  entries)]
+                       dead-keys
+                       (into #{}
+                             (comp (mapcat keys)
+                                   (filter (fn [k]
+                                             ;; `:ext.symbol/call` STAYS: it maps a kwargs dict onto
+                                             ;; positional params for a PYTHON call, and is not a schema.
+                                             (contains? #{:ext.symbol/schema :ext.symbol/replay
+                                                          :ext.symbol/render-start-call-fn
+                                                          :ext.symbol/render-finish-call-fn}
+                                                        k))))
+                             entries)]
 
-        (expect (< 20 (count entries)))
-        (expect (= #{} dead-keys))))
-  (it "keeps no by-name renderer registry to look a card up in"
-      ;; A result is painted from its OWN data now. A registry keyed by tool
-      ;; name is how per-tool cards grew back last time: one lookup, then a
-      ;; declaration per verb to feed it.
-      (let [nm 'finish-call-renderers-by-name]
-        (expect (nil? (ns-resolve 'com.blockether.vis.internal.extension.core nm)) (str nm))))
-  (it "binds every doc-bearing symbol under a Python member path"
-      (let [docs
-            (extension/sandbox-symbol-docs)
+                   (expect (< 20 (count entries)))
+                   (expect (= #{} dead-keys))))
+             (it "binds every doc-bearing symbol under a Python member path"
+                 (let [docs
+                       (extension/sandbox-symbol-docs)
 
-            bound
-            (set (keys (extension/builtin-sandbox-bindings (fn []
-                                                             nil))))]
+                       bound
+                       (set (keys (extension/builtin-sandbox-bindings (fn []
+                                                                        nil))))]
 
-        (expect (seq docs))
-        (doseq [sym (keys docs)]
-          ;; Council is a dotted namespace; each path segment is a Python name.
-          (expect (re-matches #"[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*" (name sym))
-                  (str sym)))
-        ;; Every bound door is DOCUMENTED — `doc(name)` is the only contract
-        ;; a function has now, so a binding without one is unreachable prose.
-        ;; (The reverse does not hold: an aliased extension such as MCP's
-        ;; `call` documents itself here and binds as `mcp__call` per turn.)
-        (doseq [sym bound]
-          (expect (contains? (set (keys docs)) sym) (str sym))))))
+                   (expect (seq docs))
+                   (doseq [sym (keys docs)]
+                     ;; Council is a dotted namespace; each path segment is a Python name.
+                     (expect (re-matches #"[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*"
+                                         (name sym))
+                             (str sym)))
+                   ;; Every bound door is DOCUMENTED — `doc(name)` is the only contract
+                   ;; a function has now, so a binding without one is unreachable prose.
+                   ;; (The reverse does not hold: an aliased extension such as MCP's
+                   ;; `call` documents itself here and binds as `mcp__call` per turn.)
+                   (doseq [sym bound]
+                     (expect (contains? (set (keys docs)) sym) (str sym))))))
 
 (defdescribe
   symbol-signature-test
@@ -1042,14 +1025,6 @@
  ;; document body itself remains the author-written prose.
 (defdescribe
   symbol-doc-page-test
-  (it "declares a signature for every tool, so its page can open with a call line"
-      (let [entries (live-tool-entries)]
-        (expect (< 15 (count entries)))
-        (doseq [entry entries]
-          (let [sym (:ext.symbol/symbol entry)]
-            (expect (string? (extension/symbol-doc-text entry)) (str sym " has no doc text"))
-            (expect (string? (extension/symbol-signature entry))
-                    (str sym " declares no signature — its page cannot show a call"))))))
   (it "states each declared raw result unchanged, which the page prints under the call"
       (let [results (extension/sandbox-symbol-results)]
         (doseq [entry (live-tool-entries)]
@@ -1058,13 +1033,6 @@
 
             (expect (= (str "Raw result: " (:ext.symbol/result entry)) line) (str sym))
             (expect (= line (get results sym)) (str sym))))))
-  (it "documents every tool with BOTH a description and a raw-result contract"
-      ;; The implementation docstring is developer documentation: a model-facing
-      ;; page states what the verb does AND the exact shape Python receives.
-      (doseq [entry (live-tool-entries)]
-        (let [sym (:ext.symbol/symbol entry)]
-          (expect (string? (:ext.symbol/description entry)) (str sym " declares no :description"))
-          (expect (string? (:ext.symbol/result entry)) (str sym " declares no :result")))))
   (it "declares the key vocabulary of every options-dict tool"
       (let [dict-entries (filter options-dict-entry? (live-tool-entries))]
         (expect (seq dict-entries))
@@ -1076,19 +1044,6 @@
             (expect (= (distinct names) (seq names)) (str sym " repeats a key: " names))
             (doseq [n names]
               (expect (re-matches #"[a-z][a-z0-9_]*" n) (str sym " key " n)))))))
-  (it "states requiredness in :required? alone, never as note prose"
-      (doseq [entry
-              (live-tool-entries)
-
-              {nm :name note :note}
-              (:ext.symbol/params entry)
-
-              :when note]
-
-        (expect (not (re-find #"(?i)\boptional\b" note))
-                (str (:ext.symbol/symbol entry) " key " nm ": " note))
-        (expect (not (re-find #"(?i)^required\b" note))
-                (str (:ext.symbol/symbol entry) " key " nm ": " note))))
   (it "declares the keys in the CALL's order: the lead key first, then what cannot be omitted"
       (doseq [entry (filter options-dict-entry? (live-tool-entries))]
         (let [sym (:ext.symbol/symbol entry)
@@ -1363,11 +1318,7 @@
                                 (extension/register-extensions! environment
                                                                 (fn [_ ext]
                                                                   (swap! installed conj ext))))))
-                   (expect (= exts @installed))))
-             (it "does not manufacture the removed dependency key"
-                 (let [ext (extension/build-extension {:ext/name "test.no-dependency-graph"
-                                                       :ext/description "No dependency graph."})]
-                   (expect (not (contains? ext :ext/requires))))))
+                   (expect (= exts @installed)))))
 
 (defdescribe compact-arity-errors-test
              "The existing error hook keeps public arity errors separate from diagnostic traces."

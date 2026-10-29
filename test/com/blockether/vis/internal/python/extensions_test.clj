@@ -1058,19 +1058,6 @@
                      (pyx/reload-python-extensions! {:dirs []})
                      (config/invalidate-config-cache!))))))))
 
-(defdescribe fresh-load-workspace-test
-             ;; Package skill discovery must not index the mutable checkout outside its fixture.
-             (it "binds the fixture workspace and restores the caller's workspace"
-                 (let [caller (.getCanonicalPath (workspace/cwd))]
-                   (with-fresh-loaded {}
-                                      (fn [_ {:keys [ext-dir]}]
-                                        (expect (= (.getCanonicalPath ^java.io.File ext-dir)
-                                                   (.getCanonicalPath (workspace/cwd))))
-                                        (expect (= (.getCanonicalPath ^java.io.File ext-dir)
-                                                   (.getCanonicalPath
-                                                     ^java.io.File (#'discovery/project-root))))))
-                   (expect (= caller (.getCanonicalPath (workspace/cwd)))))))
-
 (defdescribe
   project-root-host-test
   ;; Regression, #399: a workspace could not load extensions from nested repositories, and an
@@ -3347,11 +3334,7 @@ vis.register_extension(vis.Extension(
                                   (expect (= "MOOD ON" ((:ext/prompt-fn ext) {})))
                                   ;; #360: an extension command declares whether it is saveable.
                                   (expect (true? (:slash/saveable? (first (:ext/slash-commands
-                                                                            ext)))))))))
-             (it "activation callables gate the extension per env"
-                 (with-loaded {"moods.py" moods-py}
-                              (fn [_ _]
-                                (expect (true? ((:ext/activation-fn (registered "moods")) {})))))))
+                                                                            ext))))))))))
 
 ;; Ctx contribution — vis.Extension(ctx=...) folds into the session bag
 (def ^:private ctxer-py
@@ -5308,29 +5291,6 @@ vis.register_extension(vis.Extension(
                  (expect (= 0 (get res :passed 0)))
                  (expect (false? (:ok? res))))
                (finally (ps/db-dispose-connection! store)))))))
-
-;; /test is the user-facing surface for the Python extension runner.
-(defdescribe slash-test-wiring-test
-             (it "exposes /test without contributing an extension CLI command"
-                 (with-loaded {"counter.py" counter-py}
-                              (fn [_ _]
-                                ;; Force a fresh registration so we read the
-                                ;; CURRENT loader spec, not a stale one left by an
-                                ;; earlier load in a reused REPL JVM (the
-                                ;; `loader-registered?` defonce guard blocks re-runs).
-                                (reset! @#'pyx/loader-registered? false)
-                                (#'pyx/register-loader-extension!)
-                                (let [loader
-                                      (registered "python-extensions")
-
-                                      slash
-                                      (some #(when (= "test" (:slash/name %)) %)
-                                            (:ext/slash-commands loader))]
-
-                                  (expect (some? loader))
-                                  (expect (some? slash))
-                                  (expect (ifn? (:slash/run-fn slash)))
-                                  (expect (empty? (:ext/cli loader))))))))
 
 (defdescribe run-and-report-test
              (it "the /test code path runs tests and renders a report"

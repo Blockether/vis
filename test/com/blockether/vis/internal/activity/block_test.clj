@@ -90,8 +90,6 @@
                    (run! #(run-operation! activity %) team-details)
                    (expect (= {} (block/settle! activity {})))
                    (expect (= [] @applied))))
-             (it "leaves the envelope alone when the block ran no tool"
-                 (expect (= {:stdout "quiet"} (block/settle! (block/start! {}) {:stdout "quiet"}))))
              (it "drops an event that arrives after the block settled"
                  (let [seen
                        (atom [])

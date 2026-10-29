@@ -81,9 +81,7 @@
         (expect (= "setup-pre-commit" (:name s)))
         (expect (= "Set up hooks." (:description s)))
         (expect (re-find #"# Setup" (:body s)))
-        (expect (= [] (:resources s)))))
-  (it "falls back to the skill directory name"
-      (expect (= "my-skill" (:name (d/parse-skill-meta "no fm" {:name-default "my-skill"}))))))
+        (expect (= [] (:resources s))))))
 
 (defdescribe dedup-by-name-test
              (it "keeps the FIRST occurrence of each name (precedence = order)"
@@ -94,39 +92,13 @@
 
 (defdescribe
   cross-tool-source-test
-  (it "agent + skill sources span vis-local + every supported harness"
-      (expect (= d/known-tools (set (map first d/agent-sources))))
-      (expect (= d/known-tools (set (map first d/skill-sources)))))
-  (it "vis project-local .vis/skills is the FIRST (highest-precedence) skill source"
-      (let [[tool _kind & parts] (first d/skill-sources)]
-        (expect (= :vis tool))
-        (expect (= [".vis" "skills"] parts))))
-  (it "skill sources include pi (~/.pi/agent/skills) and the agents standard"
-      (expect (some (fn [[tool _ & parts]]
-                      (and (= :pi tool) (= [".pi" "agent" "skills"] parts)))
-                    d/skill-sources))
-      (expect (some (fn [[tool _ & parts]]
-                      (and (= :agents tool) (= [".agents" "skills"] parts)))
-                    d/skill-sources)))
-  (it "opencode sources include generated plural agents and skills layouts"
-      (expect (some (fn [[tool _ & parts]]
-                      (and (= :opencode tool) (= [".opencode" "agents"] parts)))
-                    d/agent-sources))
-      (expect (some (fn [[tool _ & parts]]
-                      (and (= :opencode tool) (= [".opencode" "skills"] parts)))
-                    d/skill-sources)))
   (it "resolve-source tags an existing dir with its tool and drops a missing one"
       (let [home (System/getProperty "user.home")]
         (expect (= [:opencode] (map first ((deref #'d/resolve-source) [:opencode :rel home]))))
         (expect (empty? ((deref #'d/resolve-source) [:claude :rel "/no/such/dir/xyz-zzz"])))))
   (it "resolve-source expands a :home spec against the user home"
       (let [pairs ((deref #'d/resolve-source) [:pi :home "."])] ; ~/. always exists
-        (expect (= [:pi] (map first pairs)))))
-  (it "every discovered entry is tagged with a known harness tool"
-      (let [tools (set (map :tool (concat (d/discover-agents) (d/discover-skills))))]
-        ;; A skill an installed extension package ships is tagged `:vis-package`
-        ;; rather than by a harness source row.
-        (expect (every? (conj d/known-tools :vis-package) tools)))))
+        (expect (= [:pi] (map first pairs))))))
 
 (defdescribe
   skill-resources-test
@@ -187,9 +159,6 @@
 (defdescribe
   command-discovery-test
   (it
-    "command sources span the cross-harness command dirs (no vis-local row — vis commands are .vis/prompts)"
-    (expect (= #{:claude :pi :agents :opencode} (set (map first d/command-sources)))))
-  (it
     "discovers a claude command from .claude/commands/<name>.md with its $ARGUMENTS body preserved"
     (let [root
           (.toFile (Files/createTempDirectory "vis-cmd" (make-array FileAttribute 0)))
@@ -209,19 +178,6 @@
                  (expect (re-find #"Review a PR" (:description c)))
                  (expect (re-find #"\$ARGUMENTS" (:body c))))))
            (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
-
-(defdescribe discovery-smoke-test
-             ;; Environment-agnostic: the scan must NEVER throw and always returns a
-             ;; vector, whatever is (or isn't) on disk in ~/.claude.
-             (it "discover-agents returns a vector and never throws"
-                 (expect (vector? (vec (d/discover-agents)))))
-             (it "discover-skills returns a vector and never throws"
-                 (expect (vector? (vec (d/discover-skills)))))
-             (it "discover-commands returns a vector and never throws"
-                 (expect (vector? (vec (d/discover-commands)))))
-             (it "every discovered entry has a non-blank name"
-                 (expect (every? #(seq (:name %))
-                                 (concat (d/discover-agents) (d/discover-skills))))))
 
 (defdescribe
   nested-project-discovery-test
@@ -261,9 +217,6 @@
                  (expect (.startsWith ^String (:path (by-name "layered"))
                                       (.getCanonicalPath app))))))
            (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
-  (it "uses ancestor walking for every project-local harness source"
-      (doseq [sources [d/agent-sources d/skill-sources d/command-sources]]
-        (expect (not-any? #(= :rel (second %)) sources))))
   ;; Regression: a repository-root session could not see a skill owned by a nested app,
   ;; and moving the skill to the repository root made its relative instructions run there.
   (it

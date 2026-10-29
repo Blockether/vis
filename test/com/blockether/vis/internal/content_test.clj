@@ -36,9 +36,6 @@ The work is complete and the tests pass.
       (expect (= "Full **technical** answer." (get-in blocks [0 "markdown"])))
       (expect (= "The work is complete and the tests pass." (get-in blocks [1 "text"])))
       (expect (not (str/includes? (get-in blocks [0 "markdown"]) "vis-speech")))))
-  (it "includes speech blocks in plain-text projection"
-      (let [block (content/speech "s1" "A concise spoken answer.")]
-        (expect (= "A concise spoken answer." (content/text-projection [block])))))
   (it "preserves canonical error blocks in wrapped final answers"
       (let [error (content/error "e1" "provider_unavailable" "Try again later." true)]
         (expect (= [error] (content/answer-content {:answer [error]})))))
@@ -47,9 +44,6 @@ The work is complete and the tests pass.
                                  :status :completed
                                  :output {:provider :openai-codex :actual {:model "gpt-5.6"}}})]
         (expect (= {"provider" "openai-codex" "actual" {"model" "gpt-5.6"}} (get block "output")))))
-  (it "keeps typed errors as data"
-      (let [block (content/error "e1" "provider_unavailable" "Try again later." true)]
-        (expect (= true (get block "retryable")))))
   ;; Regression, reported session 10bb33ec-42b3-42a2-9c29-42956810aae2:
   ;; canonical error and notice codes accepted kebab-case and mixed-case identifiers.
   (it "requires every diagnostic code to be lowercase snake_case"

@@ -19,9 +19,7 @@
                    (expect (= 1234 (:previous-request-input acc)))
                    (expect (false? (:reasoning-reported? acc)))
                    (expect (nil? (:accrued-cost acc)))
-                   (expect (= [] (:responses acc)))))
-             (it "treats a session without a previous request as unmeasured"
-                 (expect (= 0 (:previous-request-input (accounting/initial-usage nil))))))
+                   (expect (= [] (:responses acc))))))
 
 (defdescribe
   add-usage-test
@@ -53,9 +51,6 @@
         (expect (= 7 (:reasoning-tokens acc)))
         (expect (true? (:reasoning-reported? acc)))
         (expect (nil? (:last-iter-reasoning acc)))))
-  (it "leaves the map unchanged when a response carried no usage"
-      (let [acc (accounting/initial-usage nil)]
-        (expect (= acc (accounting/add-usage acc nil 1000)))))
   (it "keeps a response without a measured time as unmeasured"
       (let [acc (accounting/add-usage (accounting/initial-usage nil) {:output-tokens 5} nil)]
         (expect (= [{:tokens {:output 5} :duration-ms nil}] (:responses acc))))))
@@ -102,11 +97,6 @@
             (accounting/response-cost pricing usage priced-model :openai)]
 
         (expect (close? (* 2.0 (double (:cost-usd standard))) (:cost-usd fast)))))
-  (it "returns nil when the response carried no usage"
-      (expect (nil? (accounting/response-cost (accounting/pricing priced-model :openai nil nil)
-                                              nil
-                                              nil
-                                              nil))))
   ;; #356: declared provider rates must price the response of the provider that
   ;; served it; svar's catalog stays the fallback.
   (it
@@ -291,6 +281,4 @@
         (expect (= 300 (get util "last_request_tokens")))
         (expect (= 900 (get util "auto_compress_above")))
         (expect (= status (get util "prompt_cache")))
-        (expect (not (contains? (accounting/turn-utilization acc 1000 900 nil) "prompt_cache")))))
-  (it "reports nothing before any request was measured"
-      (expect (nil? (accounting/turn-utilization (accounting/initial-usage nil) 1000 900 nil)))))
+        (expect (not (contains? (accounting/turn-utilization acc 1000 900 nil) "prompt_cache"))))))

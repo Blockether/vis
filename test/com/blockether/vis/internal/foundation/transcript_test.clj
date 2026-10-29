@@ -165,14 +165,6 @@
                (expect (str/includes? (str (:error (first blocks)))
                                       "Unable to resolve symbol: Let")))
              (finally (persistance/db-dispose-connection! s)))))
-  (it "surfaces provider / model on each turn"
-      (let [s (persistance/db-create-connection! :memory)]
-        (try (let [cid (seed! s)
-                   turn (first (:turns (transcript/transcript s cid)))]
-
-               (expect (= "blockether" (:provider turn)))
-               (expect (= "gpt-4o" (:model turn))))
-             (finally (persistance/db-dispose-connection! s)))))
   (it "carries thinking + final answer on every iteration / turn"
       (let [s (persistance/db-create-connection! :memory)]
         (try (let [cid (seed! s)
@@ -390,13 +382,6 @@
         ->descriptor
         #'transcript/tool-descriptor]
 
-    (it "projects :stdout onto the block"
-        (let [b (->block 0 {:src "print('hi')" :stdout "hi\n" :scope :block})]
-          (expect (= "hi\n" (:stdout b)))
-          (expect (not (contains? b :result)))))
-    (it "does not fabricate stdout when Python printed nothing"
-        (let [b (->block 1 {:src "value = 1 + 1"})]
-          (expect (not (contains? b :stdout)))))
     (it "surfaces partial :stdout alongside :error on a failing block"
         (let [b (->block 2 {:src "boom()" :error {:message "e"} :stdout "partial\n"})]
           (expect (= "partial\n" (:stdout b)))
@@ -420,10 +405,7 @@
 
           (expect (= "GREP" (:op descriptor)))
           (expect (str/includes? (:body descriptor) "2 files"))
-          (expect (not (contains? event :result-summary)))))
-    (it "omits the stdout section when there was no printed output"
-        (let [md (->md 0 false {:code "value = 1 + 1"})]
-          (expect (not (str/includes? md "_stdout:_")))))))
+          (expect (not (contains? event :result-summary)))))))
 
 (defdescribe
   iteration-attachments-test

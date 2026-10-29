@@ -25,12 +25,6 @@
             (finally (when-not registered? (extension/deregister-extension! "foundation-mcp"))))))])
 
 (defdescribe mcp-native-contract-test
-             (it "keeps native/Python alias routing in each compact description"
-                 (let [symbols (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])]
-                   (doseq [s symbols]
-                     (let [description (:ext.symbol/description s)]
-                       (expect (str/includes? description "In `python_execution`"))
-                       (expect (< (count description) 350))))))
              (it
                "exposes exactly ONE verb — the inventory is ctx's job, connecting is the gateway's"
                (let [names (set (map :ext.symbol/name

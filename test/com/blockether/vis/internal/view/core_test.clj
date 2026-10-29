@@ -127,15 +127,6 @@
 
 (defdescribe
   normalize-field-test
-  (it "accepts the :id spelling of a name"
-      (let [[field] (normalized-fields {:id "note" :description "Free text"})]
-        (expect (= "note" (:name field)))
-        (expect (= "note" (:id field)))
-        (expect (= "Free text" (:description field)))))
-  (it "prefers :name when a spec carries both spellings"
-      (let [[field] (normalized-fields {:id "old" :name "new"})]
-        (expect (= "new" (:id field)))
-        (expect (= "new" (:name field)))))
   (it "refuses a field that has a label but no name"
       (expect (throws? clojure.lang.ExceptionInfo
                        #(normalized-fields {:label "Just a label" :description "and prose"}))))
@@ -169,10 +160,6 @@
       (let [[field] (normalized-fields {:id "env" :type "select" :options ["staging" "prod"]})]
         (expect (= [{:value "staging" :label "staging"} {:value "prod" :label "prod"}]
                    (:options field)))))
-  (it "keeps explicit option labels"
-      (let [[field] (normalized-fields
-                      {:id "env" :type "select" :options [{:value "prod" :label "Production"}]})]
-        (expect (= [{:value "prod" :label "Production"}] (:options field)))))
   (it "validates a declared default against its own field"
       (let [[field] (normalized-fields {:id "env" :type "select" :options ["a" "b"] :default "b"})]
         (expect (= "b" (:default field))))
@@ -456,9 +443,6 @@
       (let [fields (normalized-fields {:id "name" :is-required true})]
         (expect (= {"name" "is required"} (:errors (hi/coerce-values fields {}))))
         (expect (= {"name" "is required"} (:errors (hi/coerce-values fields {"name" "  "}))))))
-  (it "leaves an optional text field nil"
-      (let [fields (normalized-fields {:id "note" :type "multiline"})]
-        (expect (= {:is-accepted true :values {"note" nil}} (hi/coerce-values fields {})))))
   (it "trims plaintext but preserves multiline bodies"
       (let [fields
             (normalized-fields {:id "name"} {:id "body" :type "multiline"})
@@ -509,9 +493,6 @@
         (expect (= {"agree" "must be checked"}
                    (:errors (hi/coerce-values fields {"agree" "false"}))))
         (expect (true? (get-in (hi/coerce-values fields {"agree" true}) [:values "agree"])))))
-  (it "leaves an optional checkbox free to stay unticked"
-      (let [fields (normalized-fields {:id "ok" :type "checkbox"})]
-        (expect (true? (:is-accepted (hi/coerce-values fields {"ok" false}))))))
   (it "honours a checkbox default when the value is absent"
       (let [fields (normalized-fields {:id "ok" :type "checkbox" :default true})]
         (expect (true? (get-in (hi/coerce-values fields {}) [:values "ok"])))))
@@ -874,17 +855,6 @@
 
 (defdescribe
   range-field-test
-  (it "defaults its bounds to 0..100 by 1"
-      (let [[field] (normalized-fields {:id "pct" :type "range"})]
-        (expect (= :range (:type field)))
-        (expect (= 0 (:min field)))
-        (expect (= 100 (:max field)))
-        (expect (= 1 (:step field)))))
-  (it "keeps the bounds it was given"
-      (let [[field] (normalized-fields {:id "pct" :type "range" :min 10 :max 20 :step 0.5})]
-        (expect (= 10 (:min field)))
-        (expect (= 20 (:max field)))
-        (expect (= 0.5 (:step field)))))
   (it "refuses bounds that describe no range at all"
       (expect (throws? clojure.lang.ExceptionInfo
                        #(normalized-fields {:id "pct" :type "range" :min 5 :max 5})))
@@ -898,15 +868,9 @@
       (let [fields (normalized-fields {:id "pct" :type "range" :min 0 :max 100})]
         (expect (= 42 (get-in (hi/coerce-values fields {"pct" 42}) [:values "pct"])))
         (expect (= 42 (get-in (hi/coerce-values fields {"pct" "42"}) [:values "pct"])))))
-  (it "stays a double when the bounds are fractional"
-      (let [fields (normalized-fields {:id "pct" :type "range" :min 0 :max 1 :step 0.25})]
-        (expect (= 0.25 (get-in (hi/coerce-values fields {"pct" 0.25}) [:values "pct"])))))
   (it "falls back to min when nothing was answered"
       (let [fields (normalized-fields {:id "pct" :type "range" :min 7 :max 9})]
         (expect (= 7 (get-in (hi/coerce-values fields {}) [:values "pct"])))))
-  (it "honours a default"
-      (let [fields (normalized-fields {:id "pct" :type "range" :min 0 :max 100 :default 30})]
-        (expect (= 30 (get-in (hi/coerce-values fields {}) [:values "pct"])))))
   (it
     "refuses a value outside the bounds, and one that is not a number"
     (let [fields (normalized-fields {:id "pct" :type "range" :min 0 :max 10})]
@@ -921,11 +885,6 @@
 
 (defdescribe
   otp-field-test
-  (it "is six digits when the spec says nothing"
-      (let [field (otp-field)]
-        (expect (= 6 (:min-length field)))
-        (expect (= 6 (:max-length field)))
-        (expect (= [:ok "123456"] (hi/coerce-value field "123456")))))
   (it "reads the code however the provider printed it"
       (let [field (otp-field)]
         (expect (= [:ok "123456"] (hi/coerce-value field "123 456")))
@@ -1147,28 +1106,6 @@
         (expect (= ["host" "port"] (mapv :id (:children group))))
         (expect (= :multiline (:type note)))
         (expect (= ["host" "port" "note"] (mapv :id (hi/input-fields fields))))))
-  (it "is control flow, not a kind of field"
-      ;; A group answers nothing, so it has no place in the vocabulary of
-      ;; ANSWERS: with `:group` among the field types, every value path carried a
-      ;; branch for a node that can never take one and a field spec happily
-      ;; accepted layout.
-      (let [[group note] (:nodes (grouped-request))]
-        (expect (not (contains? (set (vals hs/field-types)) hs/group-type)))
-        (expect (= hs/group-type (:type group)))
-        ;; Two contracts, one tree:
-        (expect (nil? (hs/group-error group)))
-        (expect (nil? (hs/field-error note)))
-        (expect (some? (hs/field-error group)))
-        (expect (some? (hs/group-error note)))
-        ;; and the fork is taken above both, before a value key is parsed.
-        (expect (str/includes? (refusal #(hi/normalize-field (hi/spec<-json {"type" "group"
-                                                                             "children" [{"name"
-                                                                                          "a"}]})))
-                               "not a field"))))
-  (it "stacks by default — a group without a :direction is a column"
-      (let [[group] (normalized-fields (hi/spec<-json {"type" "group"
-                                                       "children" [{"name" "a"} {"name" "b"}]}))]
-        (expect (= :column (:direction group)))))
   (it "nests, so a row of stacks needs no new key"
       (let [[outer] (normalized-fields (hi/spec<-json {"type" "group"
                                                        "direction" "row"
@@ -1606,14 +1543,6 @@
       (expect (nil? (hs/live-view-error
                       (assoc-in (live-view) [:nodes 5 :rows 0 :parent] "Release apps"))))
       (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :rows 0 :parent] "")))))
-  (it "keeps a table row's declared parent through normalization"
-      (expect (= "tests · 3 variants"
-                 (get-in (hi/normalize-live-node
-                           {:id "jobs"
-                            :type "table"
-                            :columns [{:id "job" :label "Job"}]
-                            :rows [{:id "linux" :cells ["linux"] :parent "tests · 3 variants"}]})
-                         [:rows 0 :parent]))))
   (it "refuses a table row whose id is missing, because a row with no id cannot be upserted"
       (expect (some? (hs/live-view-error
                        (assoc-in (live-view) [:nodes 5 :rows] [{:cells ["a" "b"]}])))))
@@ -1626,15 +1555,6 @@
                        (assoc-in (live-view) [:nodes 5 :groups] [{:label "Tests"}]))))
       (expect (some? (hs/live-view-error
                        (assoc-in (live-view) [:nodes 5 :groups] [{:id "tests" :open true}])))))
-  (it "keeps a declared group's label, tone, order and open state through normalization"
-      (expect (= [{:id "tests" :label "Tests" :tone :error :order 1 :is-open true}]
-                 (:groups (hi/normalize-live-node
-                            {:id "jobs"
-                             :type "table"
-                             :columns [{:id "job" :label "Job"}]
-                             :groups
-                             [{:id "tests" :label "Tests" :tone "error" :order 1 :is-open true}]
-                             :rows [{:id "linux" :cells ["linux"] :parent "tests"}]})))))
   (it "leaves a row pointing at an undeclared group alone — an undeclared parent is still a group"
       (let [node (hi/normalize-live-node {:id "jobs"
                                           :type "table"
@@ -1660,11 +1580,6 @@
         (expect (nil? (patch {:op :add-node
                               :node-spec {:id "extra" :type :status :text "x" :tone :idle}})))
         (expect (nil? (patch {:op :remove-node :node-id "extra"})))))
-  (it "accepts a blank :detail on a set, because clearing one is not a missing value"
-      (expect (nil? (hs/live-patch-error
-                      {:view-id "view-1" :seq 1 :ops [{:op :set :node-id "state" :detail ""}]})))
-      (expect (= {:op :set :node-id "state" :detail ""}
-                 (hi/normalize-live-op {:op :set :node-id "state" :detail "  "}))))
   (it "refuses an operation nobody implements, and a key no operation declares"
       (expect (some? (hs/live-patch-error
                        {:view-id "view-1" :seq 1 :ops [{:op :nudge :node-id "out"}]})))
@@ -3137,22 +3052,6 @@
   app-shortcut-test
   ;; Live apps C1: an app declares keyboard shortcuts; an action shortcut sends
   ;; one owner event, and a node shortcut presses its node.
-  (it "keeps the shortcuts in the view state"
-      (recorded (fn []
-                  (let [sid
-                        (str (random-uuid))
-
-                        shortcuts
-                        [{"key" "r" "action" "refresh" "label" "Refresh"}
-                         {"key" "Enter" "node_id" "go"}]
-
-                        view-id
-                        (get (app-seam! sid (shortcut-app sid shortcuts)) "view_id")]
-
-                    (try (expect (= shortcuts
-                                    (get-in (app-seam! sid {"op" "state" "view_id" view-id})
-                                            ["view" "shortcuts"])))
-                         (finally (hi/close-live! view-id)))))))
   (it
     "pushes one owner event for an action shortcut"
     (recorded

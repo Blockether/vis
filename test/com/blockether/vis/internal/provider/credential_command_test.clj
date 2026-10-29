@@ -57,48 +57,46 @@
                  (expect (nil? (cred/argv ["ok" 7])))
                  (expect (nil? (cred/argv {:cmd "helper"})))))
 
-(defdescribe
-  resolve-test
-  (it "returns the helper's trimmed stdout as the token"
-      (fresh!)
-      (expect (= {:token secret} (cred/resolve! :p (ok-script))))
-      (expect (= 1 (exec-count))))
-  (it "returns nil when no command is configured" (fresh!) (expect (nil? (cred/resolve! :p nil))))
-  (it "reports a malformed value instead of running anything"
-      (fresh!)
-      (expect (:error (cred/resolve! :p [])))
-      (expect (zero? (exec-count))))
-  (it "caches: a second resolve does not fork the helper again"
-      (fresh!)
-      (let [av (ok-script)]
-        (expect (= {:token secret} (cred/resolve! :p av)))
-        (expect (= {:token secret} (cred/resolve! :p av)))
-        (expect (= 1 (exec-count)))))
-  (it "is single-flight: 12 concurrent cold callers fork the helper ONCE"
-      (fresh!)
-      (let [av
-            (ok-script)
+(defdescribe resolve-test
+             (it "returns the helper's trimmed stdout as the token"
+                 (fresh!)
+                 (expect (= {:token secret} (cred/resolve! :p (ok-script))))
+                 (expect (= 1 (exec-count))))
+             (it "reports a malformed value instead of running anything"
+                 (fresh!)
+                 (expect (:error (cred/resolve! :p [])))
+                 (expect (zero? (exec-count))))
+             (it "caches: a second resolve does not fork the helper again"
+                 (fresh!)
+                 (let [av (ok-script)]
+                   (expect (= {:token secret} (cred/resolve! :p av)))
+                   (expect (= {:token secret} (cred/resolve! :p av)))
+                   (expect (= 1 (exec-count)))))
+             (it "is single-flight: 12 concurrent cold callers fork the helper ONCE"
+                 (fresh!)
+                 (let [av
+                       (ok-script)
 
-            results
-            (doall (pmap (fn [_]
-                           (cred/resolve! :race av))
-                         (range 12)))]
+                       results
+                       (doall (pmap (fn [_]
+                                      (cred/resolve! :race av))
+                                    (range 12)))]
 
-        (expect (every? #(= {:token secret} %) results))
-        (expect (= 1 (exec-count)))))
-  (it "invalidate! forces the next resolve to re-run the helper (401 refresh)"
-      (fresh!)
-      (let [av (ok-script)]
-        (cred/resolve! :p av)
-        (cred/invalidate! :p)
-        (expect (= {:token secret} (cred/resolve! :p av)))
-        (expect (= 2 (exec-count)))))
-  (it "a changed argv invalidates by identity"
-      (fresh!)
-      (let [av (ok-script)]
-        (cred/resolve! :p [av])
-        (cred/resolve! :p [av "--env" "other"])
-        (expect (= 2 (exec-count))))))
+                   (expect (every? #(= {:token secret} %) results))
+                   (expect (= 1 (exec-count)))))
+             (it "invalidate! forces the next resolve to re-run the helper (401 refresh)"
+                 (fresh!)
+                 (let [av (ok-script)]
+                   (cred/resolve! :p av)
+                   (cred/invalidate! :p)
+                   (expect (= {:token secret} (cred/resolve! :p av)))
+                   (expect (= 2 (exec-count)))))
+             (it "a changed argv invalidates by identity"
+                 (fresh!)
+                 (let [av (ok-script)]
+                   (cred/resolve! :p [av])
+                   (cred/resolve! :p [av "--env" "other"])
+                   (expect (= 2 (exec-count))))))
 
 (defdescribe
   resolve-failure-test

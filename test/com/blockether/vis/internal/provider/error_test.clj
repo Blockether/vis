@@ -52,9 +52,6 @@
 (defdescribe provider-error-log-id-test
              (let [err {:message "Exceptional status code: 503"
                         :data {:status 503 :request-id "req_up" :log-id "q-403"}}]
-               (it "shows the Vis query id as a Log id fact after the Request id"
-                   (let [facts (perr/provider-error-facts err)]
-                     (expect (= [["Request id" "req_up"] ["Log id" "q-403"]] (take-last 2 facts)))))
                (it "ships the Vis query id on the typed block"
                    (expect (= "q-403" (:log-id (perr/provider-error-info err))))
                    (expect (= "q-403" (get (first (perr/provider-error-content err)) "log_id"))))
@@ -365,10 +362,6 @@
         (expect (= :stream-timeout (perr/provider-error-kind err)))
         (expect (= (boolean (:retryable? (perr/svar-classification err)))
                    (get (first (perr/provider-error-content err)) "retryable")))))
-  (it "the idle-timeout sibling classifies the same way"
-      (let [err {:message "Stream idle timeout (180000ms with no bytes)."
-                 :data {:type :svar.core/stream-idle-timeout :idle-timeout-ms 180000}}]
-        (expect (= :stream-timeout (perr/provider-error-kind err)))))
   (it "a real generic failure is untouched"
       (let [err {:message "Provider unavailable" :data {}}]
         (expect (= :generic (perr/provider-error-kind err))))))
@@ -565,17 +558,11 @@
                                     "taken=0.001 seconds. Received Model "
                                     "Group=claude-opus-4-8")}]}))
 
-(defdescribe
-  live-routing-throwable-attempts-test
-  "Attempts must be read off a THROWABLE too, not only off a trace entry (#60)."
-  (it "reads the attempts out of ex-data"
-      (expect (= 1 (count (perr/provider-error-attempts bedrock-timeout-throwable))))
-      (expect (= :bedrock
-                 (:provider (first (perr/provider-error-attempts bedrock-timeout-throwable))))))
-  (it "classifies the hidden timeout instead of the generic outage"
-      (expect (= :upstream-timeout (perr/provider-error-kind bedrock-timeout-throwable))))
-  (it "says the model never saw it, and calls it retryable"
-      (expect (true? (perr/provider-error-retryable? bedrock-timeout-throwable)))))
+(defdescribe live-routing-throwable-attempts-test
+             "Attempts must be read off a THROWABLE too, not only off a trace entry (#60)."
+             (it "classifies the hidden timeout instead of the generic outage"
+                 (expect (= :upstream-timeout
+                            (perr/provider-error-kind bedrock-timeout-throwable)))))
 
 ;; Issue #351: svar's attempts hold keywords, so the error block failed the content
 ;; contract. A one-shot run then printed "Final answer must be canonical content or

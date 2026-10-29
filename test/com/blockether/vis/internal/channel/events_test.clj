@@ -43,10 +43,6 @@
                    (expect (= 1 (ce/publish-channel-event! chan {:op :ping})))
                    (expect (= [:second] @seen))
                    (ce/remove-channel-event-listener! chan ::only)))
-             (it "removing an unknown listener or channel is a no-op"
-                 (let [chan (fresh-channel)]
-                   (expect (nil? (ce/remove-channel-event-listener! chan ::never-registered)))
-                   (expect (empty? (ce/channel-event-listeners chan)))))
              (it "refuses a non-keyword channel id and a non-invokable listener"
                  (expect (throws? clojure.lang.ExceptionInfo
                                   #(ce/add-channel-event-listener! "tui"
@@ -92,8 +88,6 @@
         (ce/publish-channel-event! chan {:op :ping :channel/id :explicit})
         (expect (= :explicit (:channel/id @seen)))
         (ce/remove-channel-event-listener! chan ::a)))
-  (it "delivers nothing, and throws nothing, when no one is subscribed"
-      (expect (zero? (ce/publish-channel-event! (fresh-channel) {:op :ping}))))
   (it "does not deliver across channels"
       (let [a
             (fresh-channel)

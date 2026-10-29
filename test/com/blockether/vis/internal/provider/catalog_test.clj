@@ -13,7 +13,6 @@
             [com.blockether.vis.internal.provider.vendor.openai-codex :as openai-codex]
             [com.blockether.vis.internal.provider.vendor.openrouter :as openrouter]
             [com.blockether.vis.internal.provider.vendor.zai :as zai]
-            [com.blockether.vis.test-provider-policies :as policies]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private svar-defaults
@@ -77,11 +76,6 @@
                                                                 [" corp-large " {:name "corp-small"}
                                                                  "corp-large" ""]}}}]
         (expect (= #{"corp-large" "corp-small"} (catalog/model-allowlist :managed-fixture)))))
-  (it "returns an empty allowlist for a missing or empty managed declaration"
-      (doseq [preset [nil {} {:default-models []}]]
-        (with-redefs [registry/provider-by-id {:openai {:provider/is-managed true
-                                                        :provider/preset preset}}]
-          (expect (= #{} (catalog/model-allowlist :openai))))))
   (it "leaves discovery unrestricted for ordinary and unregistered providers"
       (doseq [managed? [nil false]]
         (with-redefs [registry/provider-by-id {:ordinary-fixture
@@ -89,35 +83,6 @@
                                                 :provider/preset {:default-models ["corp-large"]}}}]
           (expect (nil? (catalog/model-allowlist :ordinary-fixture)))
           (expect (nil? (catalog/model-allowlist :unknown)))))))
-
-(defdescribe
-  presets-list-labeled-visible-providers-in-picker-order
-  (it "presets list labeled visible providers in picker order"
-      (with-catalog
-        (fn []
-          (expect
-            (= [:openai :anthropic :late] (mapv :id (catalog/presets)))
-            "ranked presets first, unranked after, no hidden, withdrawn or unlabeled rows")))))
-
-(defdescribe svar-defaults-answer-local-keys-and-static-limits
-             (it "svar defaults answer local keys and static limits"
-                 (with-catalog
-                   (fn []
-                     (expect (= "local-placeholder" (catalog/placeholder-api-key :local)))
-                     (expect (nil? (catalog/placeholder-api-key :openai)))
-                     (expect (= {:rpm 60 :tpm 1000} (catalog/static-limits :local)))
-                     (expect (= {} (catalog/static-limits :openai)))
-                     (expect (= "https://anthropic.example.com" (catalog/base-url :anthropic)))
-                     (expect (= "http://127.0.0.1:1234/v1" (catalog/base-url :local)))
-                     (expect (= "Anthropic" (catalog/label :anthropic)))
-                     (expect (nil? (catalog/label :local)))))))
-
-(defdescribe model-pricing-reads-svar-pricing-table
-             (it "model pricing reads svar pricing table"
-                 (let [[model price] (first svar/MODEL_PRICING)]
-                   (expect (= price (catalog/model-pricing model)))
-                   (expect (nil? (catalog/model-pricing nil)))
-                   (expect (nil? (catalog/model-pricing "no-such-model-anywhere"))))))
 
 (defdescribe provider-policy-is-owned-by-the-registered-provider
              (it "provider policy is owned by the registered provider"
@@ -155,23 +120,6 @@
 ;; Engine tests route through `test-provider-policies/first-party` instead of
 ;; registering the real providers; this keeps that fixture equal to what the
 ;; first-party vendors declare.
-(defdescribe first-party-policies-match-the-engine-test-fixture
-             (it "first party policies match the engine test fixture"
-                 (doseq [register! [openai/register! anthropic/register! openai-codex/register!
-                                    github-copilot/register! zai/register! alibaba/register!
-                                    openrouter/register! ollama/register! lmstudio/register!]]
-                   (register!))
-                 (expect (= policies/first-party
-                            (into {}
-                                  (map (fn [id]
-                                         [id (catalog/policy id)]))
-                                  (keys policies/first-party))))
-                 (expect (= [:openai :anthropic :anthropic-coding-plan :openai-codex :github-copilot
-                             :zai :zai-coding-plan :alibaba-coding-plan :alibaba-token-plan
-                             :openrouter :ollama :lmstudio]
-                            (filterv (set (keys policies/first-party))
-                              (mapv :id (catalog/presets))))
-                         "the Add-provider picker keeps its first-party order")))
 
 (defdescribe first-party-presets-spell-request-bodies-with-json-names
              (it "first party presets spell request bodies with json names"

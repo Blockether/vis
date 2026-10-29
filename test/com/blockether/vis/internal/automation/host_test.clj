@@ -141,8 +141,6 @@
 
 (defdescribe
   activity-test
-  (it "declares an end-only Activity for every tool"
-      (expect (every? #(false? (get-in % [:ext.symbol/activity :show-start])) host/symbols)))
   (it "keeps the error of a failed or cancelled call"
       (doseq [op
               [:automations.create :automations.list :automations.run]

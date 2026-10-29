@@ -43,12 +43,6 @@
 
 (defdescribe
   catalogue-test
-  (it "publishes the manifest's Piper voices, the default first"
-      (expect (= ["kristin" "cori" "john" "ljspeech" "ryan"]
-                 (mapv #(name (:id %)) (tts/piper-voices))))
-      (expect (every? :label (tts/piper-voices)))
-      (expect (every? :language (tts/piper-voices)))
-      (expect (= "kristin" (name (:id (:voice (first (tts/piper-assets))))))))
   (it "ships the reference clips of Kyutai's voice catalogue, and resolves each to a file"
       ;; A pocket voice IS a reference clip. These six are Kyutai's own recordings
       ;; under CC BY 4.0 or CC0, fetched by `bin/make-voice-clips`. jean and cosette

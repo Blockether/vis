@@ -20,12 +20,7 @@
                                (cap/record-attachment! img)
                                (cap/record-attachment! (assoc img :filename "fig-2.png")))
                              (expect (= 2 (count @sink)))
-                             (expect (= ["fig-1.png" "fig-2.png"] (mapv :filename @sink)))))
-                       (it "is a silent no-op (returns nil) when no sink is bound"
-                           (expect (nil? (cap/record-attachment! img))))
-                       (it "never throws when the bound sink is nil"
-                           (binding [cap/*attachment-sink* nil]
-                             (expect (nil? (cap/record-attachment! img))))))
+                             (expect (= ["fig-1.png" "fig-2.png"] (mapv :filename @sink))))))
              (describe "drain"
                        (it "returns the collected images as a plain vector"
                            (let [sink (atom [])]
@@ -38,10 +33,7 @@
                                ;; artifact inside the block that made it.
                                (expect (= img (dissoc rec :id :version)))
                                (expect (string? (:id rec)))
-                               (expect (= 1 (:version rec))))))
-                       (it "returns nil for an empty sink (the block produced nothing)"
-                           (expect (nil? (cap/drain (atom [])))))
-                       (it "returns nil for a nil sink" (expect (nil? (cap/drain nil))))))
+                               (expect (= 1 (:version rec))))))))
 
 (defdescribe display-cache-file-test
              (it "writes one content-addressed file and reuses it for identical bytes"

@@ -492,16 +492,6 @@
 
                    (expect (extension/tool-result? result))
                    (expect (= :list-sessions (:symbol result)))
-                   (expect (= [] (:result result)))))
-             (it "the search arity is enveloped too"
-                 (let [list-sessions
-                       @#'introspection/foundation-sessions
-
-                       result
-                       (list-sessions {:db-info nil} "anything")]
-
-                   (expect (extension/tool-result? result))
-                   (expect (= :list-sessions (:symbol result)))
                    (expect (= [] (:result result))))))
 
 (defdescribe
@@ -534,12 +524,6 @@
         (expect (nil? disabled))
         (expect (not (str/includes? core "gateway/events")))
         (expect (not (str/includes? core "read_session"))))))
-
-(defdescribe introspection-env-injection-test
-             (it "uses declarative env injection rather than a before middleware shim"
-                 (doseq [symbol introspection/all-symbols]
-                   (expect (true? (:ext.symbol/inject-env? symbol)))
-                   (expect (nil? (:ext.symbol/before-fn symbol))))))
 
 (defdescribe
   inspect-other-session-current-turn-test

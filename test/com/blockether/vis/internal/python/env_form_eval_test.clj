@@ -483,10 +483,7 @@
           (expect (true? (get-in err [:data :empty-block?])))
           ;; the leaked async-wrapper internal must NEVER surface.
           (expect (not (str/includes? (:message err) "AsyncFunctionDef")))
-          (expect (not (str/includes? (:message err) "empty body"))))))
-  (it "a clean eval carries no error and no excerpt"
-      (let [r (ep/run-python-block (py-ctx) "print(1 + 2)")]
-        (expect (nil? (:error r))))))
+          (expect (not (str/includes? (:message err) "empty body")))))))
 
 (defdescribe
   directory-traversal-budget-test

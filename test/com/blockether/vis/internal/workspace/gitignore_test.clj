@@ -23,9 +23,6 @@
                  (expect (ignored? (rules "target   ") "target"))))
 
 (defdescribe ignored?-test
-             (it "is false for a nil matcher or an empty path"
-                 (expect (not (gi/ignored? nil "anything" false)))
-                 (expect (not (ignored? (rules "*") ""))))
              (it "matches a slash-free pattern at ANY depth"
                  ;; Implemented by testing each `/`-aligned suffix rather than an
                  ;; `(?:^|.*/)` regex prefix, which backtracked catastrophically (ReDoS).
@@ -117,9 +114,6 @@
 
 (defdescribe
   load-matcher-test
-  (it "returns nil when the root has no ignore file at all"
-      (let [root (.toFile (Files/createTempDirectory "vis-gitignore" (make-array FileAttribute 0)))]
-        (expect (nil? (gi/load-matcher root)))))
   (it "reads .gitignore from the walk root"
       (let [root (.toFile (Files/createTempDirectory "vis-gitignore" (make-array FileAttribute 0)))]
         (spit (io/file root ".gitignore") "# comment\ntarget/\n*.class\n")

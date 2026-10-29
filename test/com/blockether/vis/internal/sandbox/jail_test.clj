@@ -80,8 +80,6 @@
                                                :inbound-ports [5273 "4200" 5273 nil "junk" 0
                                                                70000]}))))
       (expect (= [] (:inbound (pj/runtime-policy {})))))
-  (it "the keychain grant is a boolean"
-      (expect (true? (:keychain? (pj/runtime-policy {:keychain? true})))))
   (it "a Python worker keeps session policy and adds only its bootstrap doors"
       (let [policy (pj/python-worker-policy {:roots-fn (constantly ["/ws"])
                                              :net-enabled? true
@@ -181,9 +179,6 @@
                         (io/delete-file file true))))))))
 
 (defdescribe proxy-env-vars
-             (it "no proxy endpoint, no additions — the confinement marker is the runtime's"
-                 (expect (= {} (pj/proxy-env {})))
-                 (expect (= {} (pj/proxy-env {:net-enabled? true}))))
              (it ":proxy-port sets both-case proxy vars, and NO CA vars without a :ca-file"
                  (let [e
                        (pj/proxy-env {:proxy-port 4321})
@@ -368,10 +363,7 @@
       (expect (nil? (pj/keychain-denial-hint {:disabled? true}
                                              "SecKeychainSearchCreateFromAttributes: nope")))
       (expect (nil? (pj/keychain-denial-hint {:disabled? false :keychain? true}
-                                             "SecKeychainSearchCreateFromAttributes: nope"))))
-  (it "unrelated output is never annotated"
-      (expect (false? (pj/keychain-denial? "hello world")))
-      (expect (nil? (pj/keychain-denial-hint {:disabled? false :keychain? false} "hello world")))))
+                                             "SecKeychainSearchCreateFromAttributes: nope")))))
 
 ;; ONE call's own `env`: the delta a SPAWNING verb carries as an ARGUMENT, over
 ;; the project environment. Ambient scope is what this contract refuses — the

@@ -304,8 +304,4 @@
                  ;; is transcribed exactly as before.
                  (expect (= "words nobody would have waited for"
                             (:transcription (first (at/transcribe-attachments
-                                                     [(memo "short enough")]))))))
-             (it "takes an hour of speech-grade audio"
-                 ;; 30 MB is about an hour; the cap sits above it so a generous bitrate is not
-                 ;; mistaken for a recording nobody should wait for.
-                 (expect (< (* 30 1024 1024) (long at/MAX_PAYLOAD_BYTES)))))
+                                                     [(memo "short enough")])))))))

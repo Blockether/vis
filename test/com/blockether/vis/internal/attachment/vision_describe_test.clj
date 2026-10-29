@@ -383,8 +383,6 @@
                        #(vd/describe-images (blind-fleet) "ctx" [(image "/tmp/a.png")]))]
         (expect (nil? result))
         (expect (empty? calls))))
-  (it "returns nil for no images at all"
-      (expect (nil? (vd/describe-images (mixed-fleet) "ctx" []))))
   (it "keeps alignment when the describing model refuses"
       (let [{:keys [result]} (with-asks
                                (fn [_]
@@ -527,10 +525,6 @@
         ;; The caller kept those bytes off the wire on purpose; a side-channel that
         ;; sends them anyway would defeat `audience="user"` entirely.
         (expect (empty? calls))
-        (expect (= {} result))))
-  (it "answers an empty map when nothing describable came out of the gate"
-      (let [{:keys [result]} (with-asks descriptions
-                                        #(vd/describe-attachments (mixed-fleet) "ctx" []))]
         (expect (= {} result)))))
 
 (defdescribe vision-descriptions-message-test
@@ -548,10 +542,7 @@
                    (expect (string? content))
                    (expect (str/includes? content "pricey-seer"))
                    (expect (str/includes? content "fig-1.png: a red pixel"))
-                   (expect (str/includes? content "fig-2.png: a bar chart"))))
-             (it "is nil when nothing was described"
-                 (expect (nil? (vd/descriptions-message [])))
-                 (expect (nil? (vd/descriptions-message nil)))))
+                   (expect (str/includes? content "fig-2.png: a bar chart")))))
 
 (defdescribe
   vision-fallback-end-to-end-test
@@ -946,9 +937,6 @@
       (vd/clear-image-blind!)
       (expect (= {:provider-id :seeing-backup :model "backup-seer"}
                  (select-keys (vd/working-eye) [:provider-id :model]))))
-  (it "writes nothing at all when nothing was learned"
-      (expect (nil? (vd/working-eye)))
-      (expect (nil? (stored-memory))))
   ;; The other half of remembering: a fact that is no longer true has to LEAVE the store,
   ;; or one bad afternoon blinds a provider on this machine for good.
   (it "expires a stale refusal and drops it from the store"

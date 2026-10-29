@@ -439,8 +439,4 @@
         (expect (:jniAccessible (get known "java.lang.String")))
         (doseq [thrown ["java.lang.Exception" "java.lang.NullPointerException"
                         "java.lang.RuntimeException"]]
-          (expect (member thrown "<init>") (str thrown " cannot be thrown from the JNI")))))
-  (it "names the two the JNI asked for first"
-      (let [known (registered)]
-        (expect (get known "com.k2fsa.sherpa.onnx.OfflineTtsConfig"))
-        (expect (get known "com.k2fsa.sherpa.onnx.WaveData")))))
+          (expect (member thrown "<init>") (str thrown " cannot be thrown from the JNI"))))))

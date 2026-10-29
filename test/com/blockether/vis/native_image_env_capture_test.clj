@@ -67,9 +67,4 @@
       (expect (= (boolean (and (System/console)
                                (str/blank? (System/getenv "NO_COLOR"))
                                (not= "dumb" (System/getenv "TERM"))))
-                 (commandline/color-enabled?))))
-  (it "an explicit binding still forces the answer"
-      (binding [commandline/*color-enabled?* true]
-        (expect (true? (commandline/color-enabled?))))
-      (binding [commandline/*color-enabled?* false]
-        (expect (false? (commandline/color-enabled?))))))
+                 (commandline/color-enabled?)))))

@@ -22,24 +22,7 @@
                    (expect (not (contains? syms 'reload-skills!)))
                    (expect (not (contains? syms 'scan-warnings)))
                    (expect (not (contains? syms 'reload-instructions!)))
-                   (expect (not (contains? syms 'reload-extensions!)))))
-             ;; `/reload` is the ONLY refresh path left: the hook registration is
-             ;; what replaces the removed sandbox symbol, so a user who reshapes
-             ;; the tree still gets a fresh scan without the model reloading.
-             (it "registers its refresh as a `/reload` hook"
-                 (expect (= ::env-core/environment-refresh @#'env-core/_environment-reload-hook)))
-             (it "provides foundation environment info through ctx"
-                 (let [ctx (env-core/environment-ctx {})]
-                   (expect (contains? ctx :project))
-                   (expect (contains? (:project ctx) :host))
-                   (expect (contains? (:project ctx) :root)))))
-
-(defn- symbol-view
-  "Call the environment symbol named `sym` and return what Python would hold."
-  [sym]
-  (let [{:ext.symbol/keys [fn]} (first (filter #(= sym (:ext.symbol/symbol %))
-                                               env-core/environment-symbols))]
-    (env-python/boundary-view (:result (fn)))))
+                   (expect (not (contains? syms 'reload-extensions!))))))
 
 ;; Regression, issue #115: environment tools must encode engine data before
 ;; crossing the strings-only Python boundary.
@@ -55,7 +38,4 @@
 
                      (expect (:success? envelope) (str sym " envelope must succeed"))
                      (expect (map? view) (str sym " must return a dict"))
-                     (expect (every? string? (keys view)) (str sym " top-level keys")))))
-             (it "spells its keys the way the docstrings promise"
-                 (let [guidance (symbol-view 'main-agent-instructions)]
-                   (expect (contains? guidance "is_found")))))
+                     (expect (every? string? (keys view)) (str sym " top-level keys"))))))

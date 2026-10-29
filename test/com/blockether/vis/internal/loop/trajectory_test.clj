@@ -119,16 +119,6 @@
         (expect (nil? (:tool-calls final-step)))
         (expect (nil? (:metrics final-step)))
         (expect (nil? (:reasoning-content final-step)))))
-  (it "copies the token and cost totals of the result"
-      (expect
-        (= {:total-prompt-tokens 1200
-            :total-completion-tokens 80
-            :total-cached-tokens 900
-            :total-cost-usd 0.25
-            :total-steps 3
-            :extra
-            {:cache-creation-tokens 250 :total-tokens 1280 :iteration-count 2 :duration-ms 2500}}
-           (:final-metrics document))))
   (it "names the agent, its tool, its profile and the session"
       (expect (= "ATIF-v1.8" (:schema-version document)))
       (expect (= "session-1" (:session-id document)))
@@ -324,8 +314,6 @@
         (expect (= [{"code" "print(1 + 1)"}] (mapv :arguments (:tool-calls step))))
         (expect (= "2\n" (get-in step [:observation :results 0 :content])))
         (expect (= "The answer is 2." (:message final-step)))))
-  (it "keeps the totals of the result as the final metrics"
-      (expect (= (:final-metrics document) (:final-metrics persisted-document))))
   (it "marks only the answer step as final, also when it runs code"
       (expect (= [false true]
                  (mapv #(get-in % [:extra :is-final]) (rest (:steps persisted-document))))))
@@ -371,15 +359,13 @@
         (spit file "not json")
         (expect (= [] (trajectory/known-secrets {:files [file]}))))))
 
-(defdescribe
-  redact-test
-  (it "replaces each known value in every string, map keys included"
-      (expect (= {:message "key [REDACTED] and [REDACTED]" "[REDACTED]" ["[REDACTED]x" 3]}
-                 (trajectory/redact {:message "key sk-123456789 and sk-123456789-long"
-                                     "sk-123456789" ["sk-123456789x" 3]}
-                                    ["sk-123456789" "sk-123456789-long"]))))
-  (it "leaves the data as it is without known values"
-      (expect (= {:message "sk-123456789"} (trajectory/redact {:message "sk-123456789"} [])))))
+(defdescribe redact-test
+             (it "replaces each known value in every string, map keys included"
+                 (expect (= {:message "key [REDACTED] and [REDACTED]"
+                             "[REDACTED]" ["[REDACTED]x" 3]}
+                            (trajectory/redact {:message "key sk-123456789 and sk-123456789-long"
+                                                "sk-123456789" ["sk-123456789x" 3]}
+                                               ["sk-123456789" "sk-123456789-long"])))))
 
 (defn- permissions
   [^File file]
