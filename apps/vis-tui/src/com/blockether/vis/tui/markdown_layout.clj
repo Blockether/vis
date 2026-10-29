@@ -38,6 +38,7 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.presentation :as ir])
   (:import [com.blockether.vis.python PythonHighlighter]
+           [com.googlecode.lanterna.terminal.image TerminalImage]
            [com.googlecode.lanterna ParagraphLayout ParagraphLayout$Prepared ParagraphLayout$Line
             ParagraphLayout$Options]))
 
@@ -597,16 +598,20 @@
 
 (defn- mermaid-drawing
   "`{:rows rows}` for a `mermaid` fence, or `{:reason text}` when the renderer
-   does not own it and the source should be painted verbatim."
+   does not own it and the source should be painted verbatim. The live cell
+   shape is part of the key, because a pie disc is round only in its own cell."
   [^String content ^long budget]
-  (let [key
-        [content budget]
+  (let [aspect
+        (/ (double (TerminalImage/cellHeight)) (double (max 1 (TerminalImage/cellWidth))))
+
+        key
+        [content budget aspect]
 
         hit
         (.get ^java.util.Map mermaid-cache key)]
 
     (or hit
-        (let [drawing (update (mermaid/draw content budget)
+        (let [drawing (update (mermaid/draw content budget {:cell-aspect aspect})
                               :rows
                               #(some-> %
                                        vec))]

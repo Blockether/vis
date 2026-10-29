@@ -274,6 +274,22 @@
         (expect (= ["" "■ Alpha 75.0% (3)" "■ Beta  25.0% (1)"]
                    (mapv #(str/replace % "," ".") (take-last 3 drawn))))
         (expect (every? #(<= (c/row-width %) 18) drawn) drawn)))
+  (it "keeps the disc round in a taller cell: fewer pixel rows, same width"
+      (let [disc (fn [aspect]
+                   (->> (:rows
+                          (mermaid/draw "pie\n  \"A\" : 1\n  \"B\" : 1\n" 40 {:cell-aspect aspect}))
+                        (mapv c/plain)
+                        (mapv #(subs % 0 (min 20 (count %))))))]
+        (expect (= 20 (charts/disc-height 20 2.0)))
+        (expect (= 19 (charts/disc-height 20 2.125)))
+        (expect (= 18 (charts/disc-height 20 2.2)))
+        (expect (= (rows "pie\n  \"A\" : 1\n  \"B\" : 1\n" 40)
+                   (mapv c/plain
+                         (:rows
+                           (mermaid/draw "pie\n  \"A\" : 1\n  \"B\" : 1\n" 40 {:cell-aspect 2.0}))))
+                "2.0 is the default cell")
+        (expect (= "       ▀▀▀▀▀▀" (peek (disc 2.125))) (pr-str (disc 2.125)))
+        (expect (= "    ▀▀▀██████▀▀▀" (peek (disc 2.2))) (pr-str (disc 2.2)))))
   (it "draws only the legend when no slice has a positive share"
       (expect (= ["■ A 0.0%" "■ B 0.0%"]
                  (mapv #(str/replace % "," ".") (rows "pie\n  \"A\" : 0\n  \"B\" : 0\n" 40))))))

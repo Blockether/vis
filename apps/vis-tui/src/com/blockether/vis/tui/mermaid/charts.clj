@@ -62,22 +62,20 @@
            first))))
 
 (defn- disc-slice
-  "Index of the slice that owns pixel `x`,`y` of a disc `diameter` pixels wide,
-   or nil outside the disc. Slices run clockwise from twelve o'clock, as in
-   Mermaid."
-  [ends ^long diameter ^long x ^long y]
-  (let [r
-        (/ diameter 2.0)
+  "Index of the slice that owns pixel `x`,`y` of a disc `w` pixels wide and `h`
+   pixels high, or nil outside the disc. Pixels are scaled to the disc, so the
+   angles stay true when a pixel is not square. Slices run clockwise from
+   twelve o'clock, as in Mermaid."
+  [ends [w h] ^long x ^long y]
+  (let [nx
+        (- (/ (+ x 0.5) (/ (double w) 2.0)) 1.0)
 
-        dx
-        (- (+ x 0.5) r)
+        ny
+        (- (/ (+ y 0.5) (/ (double h) 2.0)) 1.0)]
 
-        dy
-        (- (+ y 0.5) r)]
-
-    (when (and (seq ends) (<= (+ (* dx dx) (* dy dy)) (* r r)))
+    (when (and (seq ends) (<= (+ (* nx nx) (* ny ny)) 1.0))
       (let [angle
-            (Math/atan2 dx (- dy))
+            (Math/atan2 nx (- ny))
 
             turn
             (/ (if (neg? angle) (+ angle (* 2.0 Math/PI)) angle) (* 2.0 Math/PI))]
@@ -87,24 +85,33 @@
                   ends)
             (first (peek ends)))))))
 
-(defn- disc-rows
-  "Segment rows of a pie disc `diameter` pixels wide. A cell holds two pixels
-   above each other, so a pixel is about square. A cell takes one foreground
-   tone; where its two pixels differ, the upper pixel wins."
-  [ends ^long diameter]
-  (vec (for [row (range (if (seq ends) (quot diameter 2) 0))]
-         (->> (range diameter)
-              (map (fn [x]
-                     (let [top (disc-slice ends diameter x (* 2 (long row)))
-                           bottom (disc-slice ends diameter x (inc (* 2 (long row))))]
+(defn disc-height
+  "Pixel rows of a round disc `diameter` columns wide. A cell holds two pixels
+   above each other, so a pixel is `aspect` / 2 cell widths high, where
+   `aspect` is the cell height over the cell width."
+  ^long [^long diameter aspect]
+  (max 2 (Math/round (/ (* 2.0 diameter) (max 1.0 (double aspect))))))
 
-                       (cond (and top bottom) ["█" (c/series-tone top)]
-                             top ["▀" (c/series-tone top)]
-                             bottom ["▄" (c/series-tone bottom)]
-                             :else [" " :none]))))
-              (partition-by second)
-              (mapv (fn [cells]
-                      [(apply str (map first cells)) (second (first cells))]))))))
+(defn- disc-rows
+  "Segment rows of a pie disc `diameter` columns wide, round in a cell of
+   [[c/*cell-aspect*]]. A cell takes one foreground tone; where its two pixels
+   differ, the upper pixel wins."
+  [ends ^long diameter]
+  (let [h (disc-height diameter c/*cell-aspect*)]
+    (vec (for [row (range (if (seq ends) (quot (inc h) 2) 0))]
+           (->> (range diameter)
+                (map (fn [x]
+                       (let [y (* 2 (long row))
+                             top (disc-slice ends [diameter h] x y)
+                             bottom (when (< (inc y) h) (disc-slice ends [diameter h] x (inc y)))]
+
+                         (cond (and top bottom) ["█" (c/series-tone top)]
+                               top ["▀" (c/series-tone top)]
+                               bottom ["▄" (c/series-tone bottom)]
+                               :else [" " :none]))))
+                (partition-by second)
+                (mapv (fn [cells]
+                        [(apply str (map first cells)) (second (first cells))])))))))
 
 (defn- legend-rows
   "Segment rows of a pie legend: a swatch in the slice tone, the label and its

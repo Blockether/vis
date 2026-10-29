@@ -125,9 +125,7 @@
         (dissoc :title))
     drawing))
 
-(defn draw
-  "`{:rows rows}` of `source` painted inside `width` columns, else `{:reason
-   text}` that says why this renderer does not draw it."
+(defn- draw-in
   [source width]
   (let [width
         (long (or width 0))
@@ -158,6 +156,15 @@
               {:reason
                (str "too wide: " (apply max (map c/row-width (:rows drawing))) " > " width " cols")}
               :else {:rows (vec (:rows drawing))})))))
+
+(defn draw
+  "`{:rows rows}` of `source` painted inside `width` columns, else `{:reason
+   text}` that says why this renderer does not draw it. `:cell-aspect` in
+   `opts` is the cell height over the cell width of the terminal."
+  ([source width] (draw source width nil))
+  ([source width {:keys [cell-aspect]}]
+   (binding [c/*cell-aspect* (or cell-aspect c/*cell-aspect*)]
+     (draw-in source width))))
 
 (defn diagram
   "Rows of `source` painted inside `width` columns, or nil when this renderer

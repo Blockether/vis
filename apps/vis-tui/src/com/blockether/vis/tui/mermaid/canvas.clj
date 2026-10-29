@@ -24,6 +24,11 @@
    :purple 35
    :text 37})
 
+(def ^:dynamic *cell-aspect*
+  "Height over width of one terminal cell. A shape that must look round, such
+   as a pie disc, scales its rows by this value. Most terminal fonts are near 2."
+  2.0)
+
 (def palette
   "Series colours in the order that a chart gives them to its series."
   [:cyan :orange :green :purple :blue :yellow :red])
