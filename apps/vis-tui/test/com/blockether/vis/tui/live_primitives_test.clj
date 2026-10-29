@@ -795,6 +795,40 @@
         (expect (= (mapv #(dissoc % :id) (:nodes app-view))
                    (mapv #(dissoc % :id) (:nodes parsed)))))))
 
+(defdescribe
+  scene-patch-test
+  (it "merges a scene object change onto the object, so a tick keeps what it leaves out"
+      (let [view
+            (fixture)
+
+            moved
+            (materializer/apply-patch view
+                                      {:view-id (:id view)
+                                       :seq 1
+                                       :ops [{:op :append
+                                              :node-id "scene"
+                                              :objects [{:id "ship" :x 3}
+                                                        {:id "new" :mesh "box"}]}]})
+
+            objects
+            (->> (:nodes moved)
+                 (filter #(= "scene" (:id %)))
+                 first
+                 :objects
+                 (into {} (map (juxt :id identity))))]
+
+        (expect (= [3 "cone" "#7fd4ff"] ((juxt :x :mesh :color) (get objects "ship"))))
+        (expect (= ["box" "#cccccc" 1] ((juxt :mesh :color :scale) (get objects "new"))))))
+  (it "refuses a scene object that names an unknown mesh"
+      (let [view (fixture)]
+        (expect (try (materializer/apply-patch
+                       view
+                       {:view-id (:id view)
+                        :seq 1
+                        :ops [{:op :append :node-id "scene" :objects [{:id "x" :mesh "nope"}]}]})
+                     false
+                     (catch clojure.lang.ExceptionInfo _ true))))))
+
 (defdescribe scrollbar-belongs-to-the-open-log-test
              (it "scrollbar belongs to the open log"
                  ;; The band's scrollbar starts on the log's own row — the one carrying Search —

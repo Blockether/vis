@@ -123,6 +123,28 @@ def log(node_id: str, lines: list[str], **spec: Any) -> dict:
     return {"type": "log", "id": node_id, "lines": list(lines), **spec}
 
 
+def scene(
+    node_id: str, width: float, height: float, objects: list[dict], **spec: Any
+) -> dict:
+    """A 3D world: each surface draws `objects` and eases them between ticks."""
+    node = {
+        "type": "scene",
+        "id": node_id,
+        "width": width,
+        "height": height,
+        "objects": objects,
+    }
+    node.update({k: v for k, v in spec.items() if v is not None})
+    return node
+
+
+def scene_object(object_id: str, mesh: str, **spec: Any) -> dict:
+    """One object of a scene: a mesh with a place, a turn, a scale and a colour."""
+    item = {"id": object_id, "mesh": mesh}
+    item.update({k: v for k, v in spec.items() if v is not None})
+    return item
+
+
 def option(value: str, label: str | None = None) -> dict:
     return {"value": value, "label": label or value}
 

@@ -1,8 +1,10 @@
 """Asteroids: turn and thrust the ship, shoot the rocks and dodge the saucer.
 
-The field is one code node of plain ASCII, so the terminal and the Companion
-paint the same monospace picture. It has 14 lines, the rows that a Companion
-code box shows without a scroll bar.
+The field is one `scene` node: the model sends only the world, a list of
+objects with a mesh, a place, a turn and a colour. The Companion draws it with
+WebGL and eases each object between two ticks; the terminal draws the same
+objects as truecolor half blocks. Every object keeps one id while it lives, so
+a tick sends only the keys that changed. Keys are the only controls.
 
 The runner gives a `tick` event every `TICK_SECONDS`. A key press only queues a
 control, and the next tick applies it. So the view gets at most one patch for
@@ -46,11 +48,7 @@ MAX_BULLETS = 4
 ROCK_RADIUS = {3: 2.6, 2: 1.8, 1: 0.9}
 ROCK_SPEED = {3: (0.15, 0.3), 2: (0.25, 0.45), 1: (0.35, 0.6)}
 ROCK_POINTS = {3: 20, 2: 50, 1: 100}
-ROCK_SPRITES = {
-    3: (" .--. ", "(    )", " '--' "),
-    2: (".--.", "'--'"),
-    1: ("()",),
-}
+ROCK_COLORS = {3: "#9a8f80", 2: "#b5a58f", 1: "#d2c2a8"}
 
 SAUCER_EVERY = 250
 SAUCER_SPEED = 0.35
@@ -59,24 +57,12 @@ SAUCER_POINTS = 200
 SAUCER_FIRE_EVERY = 15
 SAUCER_BULLET_SPEED = 1.0
 SAUCER_BULLET_LIFE = 16
-SAUCER_SPRITE = "<=>"
 
 RESPAWN_TICKS = 15
 SAFE_TICKS = 25
 WAVE_TICKS = 20
 HYPER_COOLDOWN = 20
 
-# The nose of the ship for each of 8 sectors, clockwise from up: (dx, dy, glyph).
-NOSES = (
-    (0, -1, "|"),
-    (1, -1, "/"),
-    (1, 0, "-"),
-    (1, 1, "\\"),
-    (0, 1, "|"),
-    (-1, 1, "/"),
-    (-1, 0, "-"),
-    (-1, -1, "\\"),
-)
 CONTROLS = ("left", "right", "thrust", "fire", "hyper")
 
 
@@ -103,6 +89,13 @@ def _velocity(angle, speed):
     return speed * math.sin(angle), -speed * math.cos(angle) / ASPECT
 
 
+def _next_id(state, prefix):
+    """A fresh object id. An object keeps its id while it lives, so the scene
+    eases it from tick to tick and never into the place of another one."""
+    state["serial"] = state.get("serial", 0) + 1
+    return f"{prefix}{state['serial']}"
+
+
 def _wrap(thing):
     thing["x"] = round(thing["x"] % WIDTH, 4)
     thing["y"] = round(thing["y"] % HEIGHT, 4)
@@ -124,8 +117,9 @@ def distance(a, b):
 # -- the game ---------------------------------------------------------------
 
 
-def _ship():
+def _ship(state):
     return {
+        "id": _next_id(state, "ship"),
         "x": WIDTH / 2,
         "y": HEIGHT / 2,
         "vx": 0.0,
@@ -140,7 +134,14 @@ def _rock(state, x, y, size):
     low, high = ROCK_SPEED[size]
     speed = _uniform(state, low, high) * min(1.5, 1 + 0.05 * (state["wave"] - 1))
     vx, vy = _velocity(_uniform(state, 0, 2 * math.pi), speed)
-    return {"x": x, "y": y, "vx": vx, "vy": vy, "size": size}
+    return {
+        "id": _next_id(state, "rock"),
+        "x": x,
+        "y": y,
+        "vx": vx,
+        "vy": vy,
+        "size": size,
+    }
 
 
 def _spawn_wave(state):
@@ -169,7 +170,8 @@ def new_game(seed=1979, best=0, status="playing"):
         "wave": 1,
         "tick": 0,
         "idle": 0,
-        "ship": _ship(),
+        "serial": 0,
+        "ship": None,
         "respawn": 0,
         "hyper": 0,
         "wave_timer": 0,
@@ -181,6 +183,7 @@ def new_game(seed=1979, best=0, status="playing"):
         "particles": [],
         "input": {"turn": 0, "thrust": 0, "fire": 0, "hyper": False},
     }
+    state["ship"] = _ship(state)
     _spawn_wave(state)
     return state
 
@@ -194,6 +197,7 @@ def _burst(state, at, count):
         vx, vy = _velocity(_uniform(state, 0, 2 * math.pi), _uniform(state, 0.2, 0.7))
         state["particles"].append(
             {
+                "id": _next_id(state, "spark"),
                 "x": at["x"],
                 "y": at["y"],
                 "vx": vx,
@@ -265,6 +269,7 @@ def _steer(state):
             break
         state["bullets"].append(
             {
+                "id": _next_id(state, "shot"),
                 "x": ship["x"] + dx,
                 "y": ship["y"] + dy,
                 "vx": ship["vx"] + dx * BULLET_SPEED,
@@ -276,6 +281,8 @@ def _steer(state):
         ship["x"] = _uniform(state, 0, WIDTH)
         ship["y"] = _uniform(state, 0, HEIGHT)
         ship["vx"] = ship["vy"] = 0.0
+        # A jump is not a flight: a new id makes the ship appear, not glide.
+        ship["id"] = _next_id(state, "ship")
         state["hyper"] = HYPER_COOLDOWN
         _burst(state, ship, 4)
 
@@ -311,6 +318,7 @@ def _saucer(state):
             state["saucer_in"] = SAUCER_EVERY
             side = _random(state) % 2
             state["saucer"] = {
+                "id": _next_id(state, "saucer"),
                 "x": 0.0 if side == 0 else WIDTH - 0.01,
                 "y": _uniform(state, 1, HEIGHT - 1),
                 "vx": SAUCER_SPEED if side == 0 else -SAUCER_SPEED,
@@ -331,6 +339,7 @@ def _saucer(state):
         vx, vy = _velocity(angle, SAUCER_BULLET_SPEED)
         state["saucer_bullets"].append(
             {
+                "id": _next_id(state, "bolt"),
                 "x": saucer["x"],
                 "y": saucer["y"],
                 "vx": vx,
@@ -405,7 +414,7 @@ def _timers(state):
     if state["ship"] is None and state["lives"] > 0:
         state["respawn"] -= 1
         if state["respawn"] <= 0:
-            state["ship"] = _ship()
+            state["ship"] = _ship(state)
     if state["ship"] is None and state["lives"] <= 0 and not state["particles"]:
         state["status"] = "over"
     if not state["rocks"]:
@@ -460,70 +469,135 @@ def reduce(state, event):
 # -- the picture ------------------------------------------------------------
 
 
-def _put(grid, x, y, glyph):
-    grid[round(y) % HEIGHT][round(x) % WIDTH] = glyph
+# Scene units are cell widths and y points up, so the field is WIDTH wide and
+# HEIGHT * ASPECT high, and a rock looks as round as it collides.
+SCENE_HEIGHT = HEIGHT * ASPECT
 
 
-def _sprite(grid, thing, rows):
-    left = round(thing["x"]) - len(rows[0]) // 2
-    top = round(thing["y"]) - len(rows) // 2
-    for dy, line in enumerate(rows):
-        for dx, glyph in enumerate(line):
-            if glyph != " ":
-                _put(grid, left + dx, top + dy, glyph)
+def _at(thing, prefix, index):
+    """The id, x and y of one thing in scene units."""
+    return {
+        "id": thing.get("id") or f"{prefix}{index}",
+        "x": round(thing["x"], 2),
+        "y": round((HEIGHT - thing["y"]) * ASPECT, 2),
+    }
 
 
-def _overlay(grid, lines):
-    """Write centred text lines with one blank cell around them."""
-    top = HEIGHT // 2 - len(lines) // 2
-    for index, text in enumerate(lines):
-        padded = f" {text} "
-        left = (WIDTH - len(padded)) // 2
-        for dx, glyph in enumerate(padded):
-            _put(grid, left + dx, top + index, glyph)
+def _spin(object_id, tick):
+    """A steady tumble for each id, so a rock turns without any state."""
+    rate = 4 + sum(map(ord, object_id)) % 7
+    return {"rx": tick * rate % 360, "ry": tick * rate * 2 % 360}
 
 
-def field(state):
-    """The field as text: a frame of `WIDTH` + 2 columns and `HEIGHT` + 2 lines."""
-    grid = [[" "] * WIDTH for _ in range(HEIGHT)]
-    for particle in state["particles"]:
-        glyph = "x" if particle["life"] >= 4 else "+" if particle["life"] >= 2 else "."
-        _put(grid, particle["x"], particle["y"], glyph)
-    for rock in state["rocks"]:
-        _sprite(grid, rock, ROCK_SPRITES[rock["size"]])
-    if state["saucer"] is not None:
-        _sprite(grid, state["saucer"], (SAUCER_SPRITE,))
-    for bullet in state["saucer_bullets"]:
-        _put(grid, bullet["x"], bullet["y"], "o")
-    for bullet in state["bullets"]:
-        _put(grid, bullet["x"], bullet["y"], "*")
+def _ship_objects(state):
     ship = state["ship"]
-    if ship is not None and (ship["safe"] == 0 or state["tick"] % 2 == 0):
-        x, y = round(ship["x"]), round(ship["y"])
-        # Two headings share each nose; an odd heading takes the nose before it.
-        dx, dy, nose = NOSES[(ship["heading"] // (HEADINGS // 8)) % 8]
-        if ship["is_thrusting"]:
-            _put(grid, x - dx, y - dy, "~")
-        _put(grid, x + dx, y + dy, nose)
-        _put(grid, x, y, "@")
-    message = _message(state)
-    if message:
-        _overlay(grid, message)
-    edge = "+" + "-" * WIDTH + "+"
-    return "\n".join([edge, *("|" + "".join(row) + "|" for row in grid), edge])
+    if ship is None:
+        return []
+    blink = ship["safe"] > 0 and state["tick"] % 2 == 1
+    turn = -ship["heading"] * 360 / HEADINGS
+    body = _at(ship, "ship", 0)
+    objects = [
+        ui.scene_object(
+            body["id"],
+            "cone",
+            x=body["x"],
+            y=body["y"],
+            rx=30,
+            rz=turn,
+            scale=0.9,
+            color="#35505e" if blink else "#7fd4ff",
+        )
+    ]
+    if ship["is_thrusting"]:
+        dx, dy = _direction(ship["heading"])
+        flame = _at({"x": ship["x"] - dx * 1.4, "y": ship["y"] - dy * 1.4}, "", 0)
+        objects.append(
+            ui.scene_object(
+                f"{body['id']}-flame",
+                "cone",
+                x=flame["x"],
+                y=flame["y"],
+                rz=turn + 180,
+                scale=0.45,
+                color="#ff9f1c",
+                is_emissive=True,
+            )
+        )
+    return objects
 
 
-def _message(state):
-    status = state["status"]
-    if status == "ready":
-        return ["A S T E R O I D S", "", "Press Space to start"]
-    if status == "paused":
-        return ["PAUSED", "Press p to play"]
-    if status == "over":
-        return ["GAME OVER", f"{state['score']} points", "Press Space to play again"]
-    if state["wave_timer"] > 0:
-        return [f"WAVE {state['wave'] + 1}"]
-    return None
+def scene(state):
+    """The field as a scene: the world only, never pixels."""
+    tick = state["tick"]
+    objects = []
+    for index, particle in enumerate(state["particles"]):
+        life = particle["life"]
+        color = "#ffd166" if life >= 4 else "#ff8c42" if life >= 2 else "#c0392b"
+        spark = _at(particle, "spark", index)
+        objects.append(
+            ui.scene_object(
+                spark.pop("id"),
+                "tetrahedron",
+                **spark,
+                scale=0.3,
+                color=color,
+                is_emissive=True,
+            )
+        )
+    for index, rock in enumerate(state["rocks"]):
+        at = _at(rock, "rock", index)
+        rock_id = at.pop("id")
+        objects.append(
+            ui.scene_object(
+                rock_id,
+                "icosahedron",
+                **at,
+                **_spin(rock_id, tick),
+                scale=ROCK_RADIUS[rock["size"]],
+                color=ROCK_COLORS[rock["size"]],
+            )
+        )
+    if state["saucer"] is not None:
+        at = _at(state["saucer"], "saucer", 0)
+        saucer_id = at.pop("id")
+        objects.append(
+            ui.scene_object(
+                saucer_id,
+                "octahedron",
+                **at,
+                rx=70,
+                ry=tick * 12 % 360,
+                scale=SAUCER_RADIUS,
+                color="#c792ea",
+            )
+        )
+    for key, prefix, color in (
+        ("saucer_bullets", "bolt", "#ff6b6b"),
+        ("bullets", "shot", "#ffe066"),
+    ):
+        for index, bullet in enumerate(state[key]):
+            at = _at(bullet, prefix, index)
+            objects.append(
+                ui.scene_object(
+                    at.pop("id"),
+                    "sphere",
+                    **at,
+                    scale=0.3,
+                    color=color,
+                    is_emissive=True,
+                )
+            )
+    objects.extend(_ship_objects(state))
+    return ui.scene(
+        "field",
+        WIDTH,
+        SCENE_HEIGHT,
+        objects,
+        label="Field",
+        fov=30,
+        is_wrapping=True,
+        tick_ms=round(TICK_SECONDS * 1000),
+    )
 
 
 def _status(state):
@@ -541,13 +615,13 @@ def _status(state):
         )
     if state["ship"] is None:
         return "Your ship is lost. The next one comes in the centre.", "warn"
+    if state["wave_timer"] > 0:
+        return f"Wave {state['wave'] + 1} is coming.", "running"
     return f"Wave {state['wave']}: {len(state['rocks'])} rocks left.", "running"
 
 
 def render(state):
-    playing = state["status"] == "playing"
     text, tone = _status(state)
-    pause_label = {"ready": "Start", "playing": "Pause", "paused": "Resume"}
     return [
         ui.heading("title", "Asteroids"),
         ui.stat(
@@ -565,21 +639,7 @@ def render(state):
                 ui.one_stat("rocks", "Rocks", len(state["rocks"])),
             ],
         ),
-        {"type": "code", "id": "field", "label": "Field", "text": field(state)},
-        ui.wrap(
-            "controls",
-            ui.button("left", "\u2190 Turn", is_disabled=not playing),
-            ui.button("thrust", "Thrust", is_disabled=not playing),
-            ui.button("right", "Turn \u2192", is_disabled=not playing),
-            ui.button("fire", "Fire", is_disabled=not playing),
-            ui.button("hyper", "Hyperspace", is_disabled=not playing),
-            ui.button(
-                "pause",
-                pause_label.get(state["status"], "Pause"),
-                is_disabled=state["status"] == "over",
-            ),
-            ui.button("new", "New game"),
-        ),
+        scene(state),
         ui.status("state", text, tone),
         ui.paragraph("help", ui.key_help(shortcuts(state))),
     ]
@@ -597,5 +657,5 @@ def shortcuts(state):
         keys.append(ui.shortcut(named, label, action=action))
         keys.append(ui.shortcut(letter, label, action=action))
     keys.append(ui.shortcut("p", "Pause", action="pause"))
-    keys.append(ui.shortcut("n", "New game", node_id="new"))
+    keys.append(ui.shortcut("n", "New game", action="new"))
     return keys

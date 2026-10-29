@@ -878,3 +878,64 @@
       (expect (str/starts-with? (str (refusal #(live/parse-markdown
                                                  "# T\n\n> **exploded**\n\n### X\n[ok] **hi**")))
                                 "no view ends \"exploded\""))))
+
+(defn- scene-node
+  []
+  {:id "s"
+   :type :scene
+   :width 10.0
+   :height 5.0
+   :background "#000000"
+   :fov 40.0
+   :is-wrapping true
+   :tick-ms 100
+   :meshes []
+   :objects [{:id "rock"
+              :mesh "icosahedron"
+              :x 1.0
+              :y 2.0
+              :z 0.0
+              :rx 0.0
+              :ry 0.0
+              :rz 0.0
+              :scale 2.0
+              :color "#c8a26b"
+              :is-emissive false}]})
+
+(defdescribe
+  scene-test
+  (it "keeps every key that a change leaves out, so a moved rock keeps its mesh, size and colour"
+      (let [v (patched (view (scene-node)) {:op :append :node-id "s" :objects [{:id "rock" :x 3.5 :rz 45.0}]})]
+        (expect (= {:id "rock"
+                    :mesh "icosahedron"
+                    :x 3.5
+                    :y 2.0
+                    :z 0.0
+                    :rx 0.0
+                    :ry 0.0
+                    :rz 45.0
+                    :scale 2.0
+                    :color "#c8a26b"
+                    :is-emissive false}
+                   (first (:objects (node v "s")))))))
+  (it "starts a new object from the defaults of the contract"
+      (let [v (patched (view (scene-node)) {:op :append :node-id "s" :objects [{:id "shot" :mesh "sphere" :x 4.0}]})]
+        (expect (= (merge (:object hs/scene-defaults) {:id "shot" :mesh "sphere" :x 4.0})
+                   (second (:objects (node v "s")))))))
+  (it "refuses an object that names no mesh or an unknown one, because no surface can draw it"
+      (expect (some? (refusal #(patched (view (scene-node)) {:op :append :node-id "s" :objects [{:id "shot" :x 1.0}]}))))
+      (expect (str/includes? (str (refusal #(patched (view (scene-node))
+                                                     {:op :append :node-id "s" :objects [{:id "ufo" :mesh "saucer"}]})))
+                             "unknown mesh")))
+  (it "lets a mesh and the objects that use it arrive in one patch"
+      (let [shard {:id "shard" :vertices [[0.0 1.0 0.0] [-1.0 -1.0 0.0] [1.0 -1.0 0.0]] :faces [[0 1 2]]}
+            v (patched (view (scene-node))
+                       {:op :append :node-id "s" :meshes [shard] :objects [{:id "bit" :mesh "shard"}]})]
+        (expect (= ["rock" "bit"] (mapv :id (:objects (node v "s")))))))
+  (it "refuses a face that names a missing vertex, which a renderer would read past the end"
+      (expect (str/includes? (str (refusal #(patched (view (scene-node))
+                                                     {:op :append
+                                                      :node-id "s"
+                                                      :meshes [{:id "bad" :vertices [[0.0 0.0 0.0] [1.0 0.0 0.0] [0.0 1.0 0.0]]
+                                                                :faces [[0 1 3]]}]})))
+                             "missing vertex"))))

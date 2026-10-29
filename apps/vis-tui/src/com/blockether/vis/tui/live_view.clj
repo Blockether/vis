@@ -55,9 +55,10 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.transient :as tr]
+            [com.blockether.vis.tui.scene-raster :as scene-raster]
             [com.blockether.vis.tui.view-materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec])
-  (:import [com.googlecode.lanterna TerminalPosition]
+  (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
            [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -820,6 +821,43 @@
                        (p/fold-cols line text-w))))
         (str/split text #"\n" -1)))
 
+(def ^:private scene-max-rows
+  "Cell rows a scene may take: 40 pixels high, so the nodes under it stay on screen."
+  20)
+
+;; The band paints many times between two ticks; a scene rasters once per state.
+(def ^:private scene-frame (atom nil))
+
+(defn- scene-raster
+  [node pw ph]
+  (let [k
+        [node pw ph]
+
+        [held frame]
+        @scene-frame]
+
+    (if (= k held)
+      frame
+      (let [frame (scene-raster/raster node pw ph)]
+        (reset! scene-frame [k frame])
+        frame))))
+
+;; A scene paints as half blocks: one cell row holds two pixel rows.
+(defmethod node-rows :scene
+  [{:keys [id] :as node} {:keys [text-w]}]
+  (let [[pw ph]
+        (scene-raster/size node text-w scene-max-rows)
+
+        frame
+        (scene-raster node pw ph)
+
+        pad
+        (quot (- (long text-w) (long pw)) 2)]
+
+    (mapv (fn [r]
+            {:kind :scene :node-id id :scene-row r :pad pad :frame frame})
+          (range (quot (long ph) 2)))))
+
 (defn- app-entries
   [rows text-w]
   (mapv (fn [row]
@@ -1446,7 +1484,8 @@
              :stats
              (reduce + 0 (map #(+ 4 (runs-width (:label %)) (runs-width (:value %))) (:items row)))
 
-             (cond (:segments row) (runs-width (:segments row))
+             (cond (= :scene (:kind row)) (long (:width (:frame row)))
+                   (:segments row) (runs-width (:segments row))
                    (:runs row) (runs-width (:runs row))
                    :else (p/display-width (str (:text row))))))
      ;; A log's Search control stands beside its title: ` Search `, its four
@@ -2127,6 +2166,36 @@
           0
           segments))
 
+(defn- rgb-ink
+  ^TextColor$RGB [^long rgb]
+  (TextColor$RGB. (int (bit-and 0xff (bit-shift-right rgb 16)))
+                  (int (bit-and 0xff (bit-shift-right rgb 8)))
+                  (int (bit-and 0xff rgb))))
+
+(defn- paint-scene!
+  "One cell row of a scene: `▀` in the ink of the upper pixel on the paper of
+   the lower one, so each cell shows two pixels in truecolor."
+  [g left row inner-w {:keys [frame scene-row pad]}]
+  (fill! g left row inner-w t/dialog-fg)
+  (let [{:keys [width pixels]}
+        frame
+
+        ^ints pixels
+        pixels
+
+        w
+        (long width)
+
+        pad
+        (long pad)
+
+        top
+        (* 2 w (long scene-row))]
+
+    (dotimes [c (min w (max 0 (- (long inner-w) 3 pad)))]
+      (p/set-colors! g (rgb-ink (aget pixels (+ top c))) (rgb-ink (aget pixels (+ top w c))))
+      (p/put-str! g (+ (long left) 2 pad c) row "▀"))))
+
 (defn- paint-runs!
   "One row of styled markdown runs over a base ink. [[run-segments]] decides which
    run leaves that ink — a code span and a link take the accent the transcript
@@ -2366,6 +2435,9 @@
 
     :thead
     (paint-segments! g left row inner-w (:segments entry))
+
+    :scene
+    (paint-scene! g left row inner-w entry)
 
     :trule
     (paint-plain! g left row inner-w t/dialog-hint (:text entry))

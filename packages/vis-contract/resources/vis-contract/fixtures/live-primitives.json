@@ -392,6 +392,120 @@
       ]
     },
     {
+      "id": "scene",
+      "type": "scene",
+      "label": "Scene",
+      "width": 16,
+      "height": 9,
+      "background": "#0b0e14",
+      "fov": 40,
+      "is_wrapping": true,
+      "tick_ms": 100,
+      "meshes": [
+        {
+          "id": "shard",
+          "vertices": [
+            [
+              0,
+              1,
+              0
+            ],
+            [
+              -0.8,
+              -0.6,
+              0.3
+            ],
+            [
+              0.8,
+              -0.6,
+              0.3
+            ],
+            [
+              0,
+              -0.4,
+              -0.9
+            ]
+          ],
+          "faces": [
+            [
+              0,
+              1,
+              2
+            ],
+            [
+              0,
+              3,
+              1
+            ],
+            [
+              0,
+              2,
+              3
+            ],
+            [
+              1,
+              3,
+              2
+            ]
+          ]
+        }
+      ],
+      "objects": [
+        {
+          "id": "rock",
+          "mesh": "icosahedron",
+          "x": 4,
+          "y": 5,
+          "z": 0,
+          "rx": 20,
+          "ry": 30,
+          "rz": 0,
+          "scale": 1.5,
+          "color": "#c8a26b",
+          "is_emissive": false
+        },
+        {
+          "id": "ship",
+          "mesh": "cone",
+          "x": 9,
+          "y": 4,
+          "z": 0,
+          "rx": 0,
+          "ry": 0,
+          "rz": -90,
+          "scale": 0.8,
+          "color": "#7fd4ff",
+          "is_emissive": false
+        },
+        {
+          "id": "shot",
+          "mesh": "sphere",
+          "x": 12,
+          "y": 4,
+          "z": 0,
+          "rx": 0,
+          "ry": 0,
+          "rz": 0,
+          "scale": 0.2,
+          "color": "#ffe66b",
+          "is_emissive": true
+        },
+        {
+          "id": "shard-1",
+          "mesh": "shard",
+          "x": 13,
+          "y": 7,
+          "z": 0,
+          "rx": 45,
+          "ry": 10,
+          "rz": 0,
+          "scale": 1,
+          "color": "#b48ead",
+          "is_emissive": false
+        }
+      ]
+    },
+    {
       "id": "general",
       "type": "thread",
       "label": "General discussion",

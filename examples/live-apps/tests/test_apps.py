@@ -379,23 +379,53 @@ def test_asteroids_a_crash_costs_a_life_and_the_last_one_ends_the_game():
     assert (state["status"], state["lives"], state["best"]) == ("playing", 3, 500)
 
 
-def test_asteroids_field_fits_the_companion_code_box_in_every_state():
-    # The Companion shows 14 code lines without a scroll bar. Only ASCII keeps
-    # the columns of the terminal and of every web font in line.
-    state = _playing()
-    controls = ["left", "right", "thrust", "fire", "hyper", "thrust", "fire"]
+def _held_objects(recorder):
+    return {item["id"]: item for item in recorder.node("field")["objects"]}
+
+
+def test_asteroids_the_host_holds_the_rendered_scene_in_every_state(recorder):
+    # A tick sends only changed keys, so the host merges. After any play the
+    # merged objects must be the ones the model draws, or the screens drift.
+    runner = start(recorder, asteroids)
+    recorder.press("Space")
+    keys = [
+        "ArrowLeft",
+        "ArrowUp",
+        "Space",
+        "ArrowRight",
+        "ArrowDown",
+        "ArrowUp",
+        "Space",
+    ]
     for step in range(600):
-        action = controls[step % len(controls)]
-        state = asteroids.reduce(
-            state, {"type": "shortcut", "action": action, "key": "x"}
-        )
-        state = _tick(state)
-        if state["status"] == "over":
-            state = _playing()
-        lines = asteroids.field(state).split("\n")
-        assert len(lines) == asteroids.HEIGHT + 2 == 14
-        assert {len(line) for line in lines} == {asteroids.WIDTH + 2}
-        assert all(line.isascii() for line in lines)
+        recorder.press(keys[step % len(keys)])
+        runner.dispatch({"type": "tick"})
+        if runner.state["status"] == "over":
+            recorder.press("n")
+        if step % 50 == 0 or step == 599:
+            drawn = asteroids.scene(runner.state)["objects"]
+            held = _held_objects(recorder)
+            assert list(held) == [item["id"] for item in drawn]
+            assert all({k: held[item["id"]][k] for k in item} == item for item in drawn)
+    assert runner.errors == []
+
+
+def test_asteroids_a_tick_sends_only_what_moved(recorder):
+    # A patch is one durable line per tick: a rock that moves must not send
+    # its mesh, scale and colour again.
+    runner = start(recorder, asteroids)
+    recorder.press("Space")
+    runner.dispatch({"type": "tick"})
+    patch = [e for e in recorder.ops() if e.get("op") == "patch"][-1]
+    sent = [
+        item
+        for op in patch["patch"]["ops"]
+        if op.get("node_id") == "field"
+        for item in op.get("objects") or []
+    ]
+    rocks = [item for item in sent if item["id"].startswith("rock")]
+    assert rocks
+    assert all(set(item) <= {"id", "x", "y", "rx", "ry"} for item in rocks)
 
 
 # -- incident ------------------------------------------------------------------

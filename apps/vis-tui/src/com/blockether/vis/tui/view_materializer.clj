@@ -62,13 +62,14 @@
    :log #{:window-lines}
    :table #{:order :max-rows :selected-ids}
    :link #{:links}
-   :diff #{:patch :old-revision :new-revision}})
+   :diff #{:patch :old-revision :new-revision}
+   :scene #{:background :fov :is-wrapping :tick-ms}})
 
 (def ^:private appendable-key
   "The key an `append` carries, per node type — the one axis a `log` and a
    `table` differ on, and the reason appending rows to a log is a refusal
    rather than a silent no-op."
-  {:stat :stats :steps :steps :log :lines :table :rows :link :links})
+  {:stat :stats :steps :steps :log :lines :table :rows :link :links :scene :objects})
 
 (def ^:private patch-item-caps
   "How many items ONE patch may carry into a node. Not a cap on the node: it
@@ -250,7 +251,15 @@
         (disj (set (keys op)) :op :node-id)
 
         wrong
-        (sort (map name (if (= :log (:type node)) (disj given k :tone) (disj given k))))]
+        (sort (map name
+                   (case (:type node)
+                     :log
+                     (disj given k :tone)
+
+                     :scene
+                     (disj given k :meshes)
+
+                     (disj given k))))]
 
     (when (nil? k)
       (invalid-patch! (:id node) (str "a " (name (:type node)) " node has nothing to append to")))
@@ -269,19 +278,29 @@
                                " and this one carries "
                                (count items)
                                "; split it"))))
-      (if (= :log (:type node))
-        (let [all (into (:lines node) items)
-              styled? (or (contains? node :line-tones) (contains? op :tone))
-              tones (when styled?
-                      (into (or (:line-tones node) (vec (repeat (count (:lines node)) nil)))
-                            (repeat (count items) (:tone op))))]
+      (cond
+        ;; Meshes land first, so one append can carry a mesh and its objects. An
+        ;; object change merges onto the object: a tick sends only what moved.
+        (= :scene (:type node))
+        (checked-node (cond-> node
+                        (contains? given :meshes)
+                        (update :meshes upsert (:meshes op))
 
-          (cond-> (assoc node
-                    :lines all
-                    :total-lines (+ (long (:total-lines node)) (count items)))
-            styled?
-            (assoc :line-tones tones)))
-        (update node k #(checked-count! node (upsert % items)))))))
+                        (contains? given :objects)
+                        (update :objects #(checked-count! node (spec/scene-merge % items)))))
+        (= :log (:type node)) (let [all (into (:lines node) items)
+                                    styled? (or (contains? node :line-tones) (contains? op :tone))
+                                    tones (when styled?
+                                            (into (or (:line-tones node)
+                                                      (vec (repeat (count (:lines node)) nil)))
+                                                  (repeat (count items) (:tone op))))]
+
+                                (cond-> (assoc node
+                                          :lines all
+                                          :total-lines (+ (long (:total-lines node)) (count items)))
+                                  styled?
+                                  (assoc :line-tones tones)))
+        :else (update node k #(checked-count! node (upsert % items)))))))
 
 (defn- prune-selected
   "Drop selected ids whose rows no longer exist, without adding selection metadata to a
@@ -744,6 +763,26 @@
                                                       messages)))
                                 threads))))
 
+(defn- plain-number
+  "`n` without a trailing `.0` when it is whole."
+  [n]
+  (let [d (double n)]
+    (if (== d (Math/rint d)) (str (long d)) (str d))))
+
+(defmethod node->markdown :scene
+  [{:keys [width height objects] :as node} _]
+  (marked-lines :scene
+                [(str "Scene "
+                      (plain-number width)
+                      " x "
+                      (plain-number height)
+                      " · "
+                      (count objects)
+                      " objects")
+                 (data-line (select-keys node
+                                         [:width :height :background :fov :is-wrapping :tick-ms
+                                          :meshes :objects]))]))
+
 (defmethod node->markdown :thread
   [{:keys [anchor messages draft is-resolved]} _]
   (marked-lines :thread
@@ -986,6 +1025,19 @@
                                 (dissoc :is-selectable :selected-ids))
                    {:elided (- (count rows) (count shown))}))
 
+               :scene
+               (let [objects
+                     (:objects node)
+
+                     limit
+                     (long table-rows)
+
+                     shown
+                     (if (> (count objects) limit) (subvec objects 0 limit) objects)]
+
+                 (with-meta (assoc node :objects shown)
+                   {:elided (- (count objects) (count shown))}))
+
                node))
            (leaf-nodes (:nodes view)))]
 
@@ -1139,7 +1191,7 @@
 
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
-  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread}
+  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1300,6 +1352,10 @@
 
       (seq (:threads data))
       (assoc :threads (vec (:threads data))))))
+
+(defmethod markdown->node :scene
+  [_ {:keys [at lines]}]
+  (merge {:type :scene} (read-data at (nth lines 2 nil))))
 
 (defmethod markdown->node :thread
   [_ {:keys [at lines]}]

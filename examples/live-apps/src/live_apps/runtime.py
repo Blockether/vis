@@ -68,6 +68,7 @@ ITEMS = {
     "table": "rows",
     "link": "links",
     "log": "lines",
+    "scene": "objects",
 }
 
 
@@ -142,6 +143,8 @@ def _diff_items(old, new):
                 else []
             )
         return [{"do": "lines", "id": ident, "lines": after, "clear": True}]
+    if kind == "scene":
+        return _diff_objects(ident, before, after)
     steps = []
     old_ids = [item["id"] for item in before]
     new_ids = [item["id"] for item in after]
@@ -194,6 +197,52 @@ def _diff_items(old, new):
             return None
         steps.append({"do": "groups", "id": ident, "groups": changed})
     return steps
+
+
+def _diff_objects(ident, before, after):
+    """A scene merges each change onto its object, so a tick sends only the
+    keys that changed. A change cannot drop a key or move an object, so either
+    of those rebuilds the objects."""
+    held = {item["id"]: item for item in before}
+    new_ids = [item["id"] for item in after]
+    fresh = [i for i in new_ids if i not in held]
+    kept = [item["id"] for item in before if item["id"] in set(new_ids)]
+    moved = kept != [i for i in new_ids if i in held] or (
+        fresh and new_ids[-len(fresh) :] != fresh
+    )
+    dropped_key = any(
+        set(held[item["id"]]) - set(item) for item in after if item["id"] in held
+    )
+    if moved or dropped_key:
+        return [
+            {
+                "do": "items",
+                "id": ident,
+                "type": "scene",
+                "upsert": after,
+                "remove": [],
+                "clear": True,
+            }
+        ]
+    upsert = []
+    for item in after:
+        old = held.get(item["id"])
+        changed = {k: v for k, v in item.items() if old is None or old.get(k) != v}
+        if old is None or len(changed) > 0:
+            upsert.append({"id": item["id"], **changed})
+    remove = [i for i in held if i not in set(new_ids)]
+    if not upsert and not remove:
+        return []
+    return [
+        {
+            "do": "items",
+            "id": ident,
+            "type": "scene",
+            "upsert": upsert,
+            "remove": remove,
+            "clear": False,
+        }
+    ]
 
 
 def _diff_node(old, new):
@@ -374,6 +423,8 @@ def _apply_items(handle, step):
                 detail=item.get("detail"),
                 value=item.get("value"),
             )
+        elif kind == "scene":
+            handle.put(item["id"], **{k: v for k, v in item.items() if k != "id"})
         elif kind == "link":
             handle.add(
                 item["id"],

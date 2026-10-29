@@ -186,6 +186,34 @@
   "Live link collection bound."
   {:max-links (get-in live-nodes ["link" "properties" "links" "maxItems"])})
 
+(def scene-defaults
+  "Defaults and bounds of a scene node and of one scene object."
+  (let [scene (get-in live-nodes ["scene" "properties"])
+        object (get (definition "scene_object") "properties")]
+    {:background (get-in scene ["background" "default"])
+     :fov (get-in scene ["fov" "default"])
+     :is-wrapping (get-in scene ["is_wrapping" "default"])
+     :tick-ms (get-in scene ["tick_ms" "default"])
+     :max-objects (get-in scene ["objects" "maxItems"])
+     :max-meshes (get-in scene ["meshes" "maxItems"])
+     :object (into {}
+                   (keep (fn [[k v]]
+                           (when (contains? v "default") [(keyword (str/replace k "_" "-")) (get v "default")])))
+                   object)}))
+
+(def scene-meshes
+  "Built-in mesh name to `{:vertices :faces}`. Every surface draws these arrays, so
+   one shape looks the same on each screen."
+  (into {}
+        (map (fn [mesh]
+               [(get mesh "const") {:vertices (get mesh "x-vis-vertices") :faces (get mesh "x-vis-faces")}]))
+        (get (definition "scene_builtin_mesh") "oneOf")))
+
+(def scene-light
+  "The fixed light of every scene, in camera space: `:ambient`, `:diffuse` and the unit `:direction`."
+  (let [light (get-in live-nodes ["scene" "x-vis-light"])]
+    {:ambient (get light "ambient") :diffuse (get light "diffuse") :direction (get light "direction")}))
+
 (def view-defaults
   "Live node collection bound."
   {:max-nodes (get (definition "live_view") "x-vis-max-nodes")})
@@ -238,7 +266,8 @@
   {:stat {:key :stats :max (:max-stats stat-defaults)}
    :steps {:key :steps :max (:max-steps step-defaults)}
    :table {:key :rows :max (:max-rows table-defaults)}
-   :link {:key :links :max (:max-links link-defaults)}})
+   :link {:key :links :max (:max-links link-defaults)}
+   :scene {:key :objects :max (:max-objects scene-defaults)}})
 
 ;; The live keys — closed in both directions, exactly like the form's
 
@@ -262,6 +291,10 @@
 (def live-step-keys "Every key one step may carry." (schema-keys "step"))
 
 (def live-link-keys "Every key one link may carry." (schema-keys "link"))
+
+(def live-scene-object-keys "Every key one scene object may carry." (schema-keys "scene_object"))
+
+(def live-scene-mesh-keys "Every key one scene mesh may carry." (schema-keys "scene_mesh"))
 
 (def live-sorted-keys
   "Every key a `{:by …}` table order may carry."
@@ -600,10 +633,53 @@
     (and (or (= :card type) (not (contains? node :is-selectable)))
          (not (contains? node :selected-ids)))))
 
+(defn- repeated-id
+  [items]
+  (some (fn [[id n]]
+          (when (> (long n) 1) id))
+        (frequencies (map :id items))))
+
+(defn scene-merge
+  "Scene `objects` with `changes` merged in by id. A change keeps every key it
+   leaves out, so a moved object sends only its new place. A new id starts from
+   the defaults and keeps its slot after the objects before it."
+  [objects changes]
+  (let [fresh (:object scene-defaults)
+        start (into {} (map-indexed (fn [i one] [(:id one) i])) objects)]
+    (first (reduce (fn [[acc idx] change]
+                     (if-let [at (get idx (:id change))]
+                       [(update acc at merge change) idx]
+                       [(conj acc (merge fresh change)) (assoc idx (:id change) (count acc))]))
+                   [(vec objects) start]
+                   changes))))
+
+(defn- scene-error
+  "nil unless a scene repeats an id, shadows a built-in mesh, lets a face name a
+   missing vertex or lets an object name an unknown mesh."
+  [{:keys [type meshes objects]}]
+  (when (= :scene type)
+    (let [known (into (set (keys scene-meshes)) (map :id) meshes)]
+      (or (some->> (repeated-id meshes)
+                   (str "scene mesh id repeats: "))
+          (some->> (repeated-id objects)
+                   (str "scene object id repeats: "))
+          (some (fn [{:keys [id]}]
+                  (when (contains? scene-meshes id) (str "scene mesh " id " shadows a built-in mesh")))
+                meshes)
+          (some (fn [{:keys [id vertices faces]}]
+                  (when-not (every? #(< (long %) (count vertices)) (flatten faces))
+                    (str "scene mesh " id " has a face that names a missing vertex")))
+                meshes)
+          (some (fn [{:keys [id mesh]}]
+                  (when-not (contains? known mesh)
+                    (str "scene object " id " names an unknown mesh " (pr-str mesh))))
+                objects)))))
+
 (defn live-node-error
   "nil when `node` is a valid normalized live node, otherwise a reason."
   [node]
   (or (schema-error "component" node)
+      (scene-error node)
       (when-not (ordered-by-declared-column? node) "table order must name a declared column")
       (when-not (selection-belongs-to-table? node) "selection must belong to a selectable table")))
 

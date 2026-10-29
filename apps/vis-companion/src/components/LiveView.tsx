@@ -33,6 +33,7 @@ import {
 import { InlineMarkdown } from './ChatContent';
 import { HumanInputFieldRow } from './HumanInputPrompt';
 import { DiffNodeView, ThreadNodeView, type AppNodeActions } from './AppNodes';
+import { LiveScene } from './LiveScene';
 import { humanInputDefaultValue, type HumanInputValue } from '../lib/human-input';
 import { ariaShortcut, nodeShortcuts } from '../lib/app-shortcuts';
 import {
@@ -1700,6 +1701,7 @@ function NodeCell({
           {node.type === 'link' && <LinkRows node={node} />}
           {node.type === 'diff' && <DiffNodeView node={node} actions={presentation.app} />}
           {node.type === 'thread' && <ThreadNodeView node={node} actions={presentation.app} />}
+          {node.type === 'scene' && <LiveScene node={node} />}
         </div>
       )}
     </div>

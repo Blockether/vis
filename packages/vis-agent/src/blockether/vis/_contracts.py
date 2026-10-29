@@ -61,6 +61,98 @@ def live_items(key: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _defaults(key: str) -> dict[str, Any]:
+    properties = definition("view", key)["properties"]
+    return {
+        name: one["default"] for name, one in properties.items() if "default" in one
+    }
+
+
+def scene_meshes() -> dict[str, dict[str, Any]]:
+    """Return the builtin scene meshes by name, as the schema ships them."""
+    return {
+        branch["const"]: {
+            "vertices": branch["x-vis-vertices"],
+            "faces": branch["x-vis-faces"],
+        }
+        for branch in definition("view", "scene_builtin_mesh")["oneOf"]
+    }
+
+
+def _scene_branch() -> dict[str, Any]:
+    return next(
+        branch
+        for branch in definition("view", "component")["oneOf"]
+        if branch["properties"]["type"].get("const") == "scene"
+    )
+
+
+def scene_objects(
+    held: list[dict[str, Any]], changes: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge scene object changes by id, as the host does.
+
+    A known object keeps every key that the change leaves out. A new object
+    starts from the schema defaults and needs its mesh.
+    """
+    defaults = _defaults("scene_object")
+    merged = [dict(one) for one in held or []]
+    at = {one.get("id"): index for index, one in enumerate(merged)}
+    for change in changes or []:
+        object_id = change.get("id")
+        if object_id in at:
+            merged[at[object_id]] = {**merged[at[object_id]], **change}
+        elif "mesh" not in change:
+            raise ValueError(f"scene object {object_id}: mesh is missing (required)")
+        else:
+            at[object_id] = len(merged)
+            merged.append({**defaults, **change})
+    return merged
+
+
+def scene_node(node: dict[str, Any]) -> str | None:
+    """Fill a scene node's defaults in place; answer what makes it invalid."""
+    properties = _scene_branch()["properties"]
+    for name in ("background", "fov", "is_wrapping", "tick_ms"):
+        node.setdefault(name, properties[name]["default"])
+    for name in ("width", "height"):
+        size = node.get(name)
+        if isinstance(size, bool) or not isinstance(size, (int, float)) or size <= 0:
+            return f"a scene needs a positive {name}"
+    node["meshes"] = list(node.get("meshes") or [])
+    try:
+        node["objects"] = scene_objects([], list(node.get("objects") or []))
+    except ValueError as error:
+        return str(error)
+    return scene_error(node)
+
+
+def scene_error(node: dict[str, Any]) -> str | None:
+    """Answer what makes a scene's meshes or objects invalid, or None."""
+    builtin = scene_meshes()
+    meshes = node.get("meshes") or []
+    objects = node.get("objects") or []
+    for key, items in (("meshes", meshes), ("objects", objects)):
+        ids = [item.get("id") for item in items]
+        if repeated := sorted({i for i in ids if ids.count(i) > 1}, key=str):
+            return f"scene {key} repeat the id {repeated[0]!r}"
+        if len(items) > _scene_branch()["properties"][key]["maxItems"]:
+            return f"a scene holds at most {_scene_branch()['properties'][key]['maxItems']} {key}"
+    for mesh in meshes:
+        if mesh.get("id") in builtin:
+            return f"scene mesh {mesh.get('id')!r} shadows a builtin mesh"
+        count = len(mesh.get("vertices") or [])
+        if any(
+            not 0 <= index < count for face in mesh.get("faces") or [] for index in face
+        ):
+            return f"scene mesh {mesh.get('id')!r} has a face with a missing vertex"
+    known = set(builtin) | {mesh.get("id") for mesh in meshes}
+    for one in objects:
+        if one.get("mesh") not in known:
+            return f"scene object {one.get('id')!r} has an unknown mesh {one.get('mesh')!r}"
+    return None
+
+
 @lru_cache(maxsize=64)
 def _validator(name: str, definition: str):
     from jsonschema import Draft202012Validator, FormatChecker

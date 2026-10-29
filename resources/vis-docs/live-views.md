@@ -21,6 +21,7 @@ The view appears in the terminal or Companion app and can be stopped at any time
 - **People must review a change or answer you after your code returns.** Attach an
   [app](#apps). They save drafts and send them when they are ready.
 - **People must act in an app with single keys.** Add [shortcuts](#add-shortcuts-to-an-app).
+- **Your program must show a moving 3D world, such as a game.** Draw a [scene](#draw-a-3d-scene).
 - **The model must know what people do in an app or an HTML page.** Give it a
   [note](#tell-the-model-what-people-see).
 - **Your own program, not an extension, must own an app.** [Run it from your
@@ -336,6 +337,7 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.ui.spinner(id, text="Working", variant="braille")` | an explicit activity indicator | `.set(text=, variant=, is_active=)` |
 | `vis.ui.button(id, label, is_disabled=False)` | an operator action | `.set(label=, is_disabled=)` |
 | `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | a collapsible column | children update by their own ids |
+| `vis.ui.scene(id, width, height, objects=[vis.ui.scene_object(…)])` | a 3D world, [drawn on every surface](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
 
 `vis.ui.output(...)` builds a `log` node. It is named `output` so it never shadows
 `vis.log`, the engine log line.
@@ -503,6 +505,51 @@ When a view has exactly one node of a type, its verb is available on the view
 itself: `view.status(...)`, `view.progress(...)`, `view.write(...)`,
 `view.row(...)`. To change the layout while a view runs, see
 [Layout and text](#layout-and-text).
+
+### Draw a 3D scene
+
+A `scene` node shows a small 3D world, for example a game board or a model of a machine. Your
+Python code keeps all logic. It sends only shapes, places, turns and colors, and the surfaces draw
+them. No code of yours runs in the Companion app or the terminal.
+
+```python
+field = vis.ui.scene(
+    "field", 48, 24,
+    label="Field",
+    fov=30,
+    is_wrapping=True,
+    tick_ms=100,
+    objects=[vis.ui.scene_object("ship", "cone", x=24, y=12, scale=1.2, color="#7dd3fc")],
+)
+app = vis.attach(vis.ui.app("Asteroids", field, key="asteroids"))
+
+app["field"].put("rock-1", mesh="icosahedron", x=10, y=6, scale=2, color="#a8a29e")
+app["field"].put("ship", x=25, rz=-45)  # Sends only the changed keys.
+app["field"].remove("rock-1")
+```
+
+- The axes are x to the right, y up and z toward the viewer. The camera shows the rectangle from
+  `(0, 0)` to `(width, height)` at `z=0`.
+- `fov` is the vertical field of view in degrees, from 0 to 120. The default is 40. Use 0 for a
+  flat, orthographic view.
+- `rx`, `ry` and `rz` turn an object in degrees, first about x, then about y, then about z.
+- The builtin meshes are `box`, `tetrahedron`, `octahedron`, `icosahedron`, `sphere` and `cone`. The
+  tip of a cone points to +y. Add your own shape with `vis.ui.scene_mesh(mesh_id, vertices, faces)` or
+  `.mesh(...)`. List the corners of each face counterclockwise, as seen from outside.
+- One light shades each face. An object with `is_emissive=True` shows its own color without shade.
+- A scene holds at most 32 custom meshes and 512 objects.
+
+`.put(object_id, **changes)` adds an object or changes only the keys that you give. A new object
+needs `mesh`. `.objects` returns the objects as Vis holds them, by id. `.set(...)` changes
+`background`, `fov`, `is_wrapping` or `tick_ms`.
+
+Send one update for each tick of your loop. The Companion app draws the scene with WebGL. It moves
+each object smoothly from its last place to its new place in `tick_ms`, at the frame rate of the
+screen. With `is_wrapping=True`, an object that leaves one edge moves smoothly in at the other
+edge. To move an object without the smooth motion, give it a new id.
+
+The terminal draws the same scene with its own renderer. Each character shows two pixels with the
+`▀` half block in true color.
 
 ## Layout and text
 

@@ -740,12 +740,23 @@
    :stats view-spec/live-stat-keys
    :steps view-spec/live-step-keys
    :links view-spec/live-link-keys
-   :groups view-spec/live-table-group-keys})
+   :groups view-spec/live-table-group-keys
+   :objects view-spec/live-scene-object-keys
+   :object-changes view-spec/live-scene-object-keys
+   :meshes view-spec/live-scene-mesh-keys})
 
 (def ^:private live-item-name
   "What one item of each keyed collection is CALLED, so a refusal names the thing
    the author wrote rather than the key it arrived under."
-  {:columns "column" :rows "row" :stats "stat" :steps "step" :links "link" :groups "table group"})
+  {:columns "column"
+   :rows "row"
+   :stats "stat"
+   :steps "step"
+   :links "link"
+   :groups "table group"
+   :objects "scene object"
+   :object-changes "scene object"
+   :meshes "scene mesh"})
 
 (defn- live-term
   "The entry `value` names in a CLOSED wire table, in either spelling. A term
@@ -806,6 +817,58 @@
         :else (fail! (str ":target-kind must be one of "
                           (str/join ", " (sort (keys view-spec/link-targets)))
                           " — only a target carrying a scheme names its own kind"))))
+
+(defn- scene-number
+  "A finite number as a double. A scene places, turns and sizes in plain numbers."
+  [fail! what value]
+  (if (and (number? value) (Double/isFinite (double value)))
+    (double value)
+    (fail! (str what " must be a finite number"))))
+
+(defn- scene-color
+  [fail! what value]
+  (let [color (trimmed value)]
+    (if (and color (re-matches #"#[0-9A-Fa-f]{6}" color))
+      (str/lower-case color)
+      (fail! (str what " must be a colour like #33ccff")))))
+
+(def ^:private scene-object-keys
+  "The keys of one scene object besides its id, in the order a refusal checks them."
+  [:mesh :x :y :z :rx :ry :rz :scale :color :is-emissive])
+
+(defn- scene-object
+  "One scene object. A declaration (`full?`) fills every default and needs a mesh. A
+   change keeps only the keys it names, so a moved object costs its new place only."
+  [fail! item full?]
+  (let [given (reduce (fn [acc k]
+                        (if-some [value (get item k)]
+                          (assoc acc
+                            k
+                            (case k
+                              :mesh (live-text fail! ":mesh" value)
+                              :color (scene-color fail! ":color" value)
+                              :is-emissive (bool-value fail! ":is-emissive" value false)
+                              (scene-number fail! (str k) value)))
+                          acc))
+                      {}
+                      scene-object-keys)]
+    (if full?
+      (do (when-not (:mesh given) (fail! "a scene object needs a :mesh"))
+          (merge (:object view-spec/scene-defaults) given))
+      given)))
+
+(defn- scene-mesh
+  [fail! {:keys [vertices faces]}]
+  (letfn [(triples [what value]
+            (when-not (and (sequential? value) (every? #(and (sequential? %) (= 3 (count %))) value))
+              (fail! (str what " must be a list of three-number lists")))
+            value)]
+    {:vertices (mapv (fn [vertex]
+                       (mapv #(scene-number fail! "a vertex coordinate" %) vertex))
+                     (triples ":vertices" vertices))
+     :faces (mapv (fn [face]
+                    (mapv #(live-long fail! "a face index" %) face))
+                  (triples ":faces" faces))}))
 
 (defn- normalize-live-item
   "One item of a keyed collection — a column, row, stat, step or link. All five
@@ -879,7 +942,16 @@
                    :target target
                    :target-kind (live-target-kind item-fail! (:target-kind item) target)}
             tone
-            (assoc :tone tone)))))))
+            (assoc :tone tone)))
+
+        :objects
+        (assoc (scene-object item-fail! item true) :id id)
+
+        :object-changes
+        (assoc (scene-object item-fail! item false) :id id)
+
+        :meshes
+        (assoc (scene-mesh item-fail! item) :id id)))))
 
 (defn- normalize-live-items
   [fail! kind values]
@@ -1240,6 +1312,18 @@
                :link
                (assoc base :links (items :links))
 
+               :scene
+               (let [{:keys [background fov is-wrapping tick-ms]} view-spec/scene-defaults]
+                 (assoc base
+                   :width (scene-number node-fail! ":width" (:width node))
+                   :height (scene-number node-fail! ":height" (:height node))
+                   :background (scene-color node-fail! ":background" (or (:background node) background))
+                   :fov (scene-number node-fail! ":fov" (or (:fov node) fov))
+                   :is-wrapping (bool-value node-fail! ":is-wrapping" (:is-wrapping node) is-wrapping)
+                   :tick-ms (live-long node-fail! ":tick-ms" (or (:tick-ms node) tick-ms))
+                   :meshes (items :meshes)
+                   :objects (items :objects)))
+
                :diff
                (cond-> (assoc base :patch (diff-patch node-fail! (:patch node)))
                  (some? (:old-revision node))
@@ -1552,6 +1636,18 @@
             (normalize-live-items fail! :steps value))
    :links (fn [fail! value]
             (normalize-live-items fail! :links value))
+   :objects (fn [fail! value]
+              (normalize-live-items fail! :object-changes value))
+   :meshes (fn [fail! value]
+             (normalize-live-items fail! :meshes value))
+   :background (fn [fail! value]
+                 (scene-color fail! ":background" value))
+   :fov (fn [fail! value]
+          (scene-number fail! ":fov" value))
+   :is-wrapping (fn [fail! value]
+                  (bool-value fail! ":is-wrapping" value false))
+   :tick-ms (fn [fail! value]
+              (live-long fail! ":tick-ms" value))
    :patch (fn [fail! value]
             (diff-patch fail! value))
    :old-revision (fn [fail! value]

@@ -1564,6 +1564,92 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "A 3D picture that the owner describes and every surface draws. x points right, y up and z to the viewer; the camera fits the rectangle from (0, 0) to (width, height) at z = 0.",
+          "x-vis-light": {
+            "ambient": 0.35,
+            "diffuse": 0.65,
+            "direction": [
+              -0.398,
+              0.597,
+              0.6965
+            ]
+          },
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "scene"
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1000000
+            },
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1000000
+            },
+            "background": {
+              "$ref": "#/$defs/scene_color",
+              "default": "#0b0e14"
+            },
+            "fov": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 120,
+              "default": 40,
+              "description": "The vertical field of view in degrees. 0 is an orthographic camera."
+            },
+            "is_wrapping": {
+              "type": "boolean",
+              "default": false,
+              "description": "True when an object that leaves one edge comes back at the other. A surface then eases it the short way."
+            },
+            "tick_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2000,
+              "default": 100,
+              "description": "How long a surface eases an object to its new place. 0 jumps."
+            },
+            "meshes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/scene_mesh"
+              },
+              "minItems": 0,
+              "maxItems": 32
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/scene_object"
+              },
+              "minItems": 0,
+              "maxItems": 512
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "width",
+            "height",
+            "background",
+            "fov",
+            "is_wrapping",
+            "tick_ms",
+            "meshes",
+            "objects"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
             "id": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -2340,6 +2426,22 @@
             },
             "new_revision": {
               "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "background": {
+              "$ref": "#/$defs/scene_color"
+            },
+            "fov": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 120
+            },
+            "is_wrapping": {
+              "type": "boolean"
+            },
+            "tick_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2000
             }
           },
           "required": [
@@ -2408,6 +2510,22 @@
               "items": {
                 "$ref": "#/$defs/link"
               }
+            },
+            "objects": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/scene_object_change"
+              },
+              "minItems": 0,
+              "maxItems": 512
+            },
+            "meshes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/scene_mesh"
+              },
+              "minItems": 0,
+              "maxItems": 32
             }
           },
           "required": [
@@ -2920,31 +3038,31 @@
         {
           "const": "braille",
           "x-vis-frames": [
-            "⠋",
-            "⠙",
-            "⠹",
-            "⠸",
-            "⠼",
-            "⠴",
-            "⠦",
-            "⠧",
-            "⠇",
-            "⠏"
+            "\u280b",
+            "\u2819",
+            "\u2839",
+            "\u2838",
+            "\u283c",
+            "\u2834",
+            "\u2826",
+            "\u2827",
+            "\u2807",
+            "\u280f"
           ]
         },
         {
           "const": "dots",
           "x-vis-frames": [
-            "·",
-            "··",
-            "···",
-            "····",
-            "·····",
-            "·····",
-            "····",
-            "···",
-            "··",
-            "·"
+            "\u00b7",
+            "\u00b7\u00b7",
+            "\u00b7\u00b7\u00b7",
+            "\u00b7\u00b7\u00b7\u00b7",
+            "\u00b7\u00b7\u00b7\u00b7\u00b7",
+            "\u00b7\u00b7\u00b7\u00b7\u00b7",
+            "\u00b7\u00b7\u00b7\u00b7",
+            "\u00b7\u00b7\u00b7",
+            "\u00b7\u00b7",
+            "\u00b7"
           ]
         },
         {
@@ -2965,16 +3083,16 @@
         {
           "const": "pulse",
           "x-vis-frames": [
-            "·",
-            "•",
-            "●",
-            "●",
-            "●",
-            "●",
-            "●",
-            "●",
-            "•",
-            "·"
+            "\u00b7",
+            "\u2022",
+            "\u25cf",
+            "\u25cf",
+            "\u25cf",
+            "\u25cf",
+            "\u25cf",
+            "\u25cf",
+            "\u2022",
+            "\u00b7"
           ]
         }
       ]
@@ -2982,6 +3100,1352 @@
     "secret_handle": {
       "type": "string",
       "pattern": "^vis-secret:"
+    },
+    "scene_color": {
+      "description": "A colour as `#rrggbb`.",
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$"
+    },
+    "scene_builtin_mesh": {
+      "description": "A mesh that every scene knows without a declaration. Each vertex lies inside the unit cube; each face is a triangle in counter-clockwise order seen from outside. Both surfaces read these arrays, so a shape looks the same on every screen.",
+      "oneOf": [
+        {
+          "const": "box",
+          "x-vis-vertices": [
+            [
+              -1,
+              -1,
+              -1
+            ],
+            [
+              -1,
+              -1,
+              1
+            ],
+            [
+              -1,
+              1,
+              -1
+            ],
+            [
+              -1,
+              1,
+              1
+            ],
+            [
+              1,
+              -1,
+              -1
+            ],
+            [
+              1,
+              -1,
+              1
+            ],
+            [
+              1,
+              1,
+              -1
+            ],
+            [
+              1,
+              1,
+              1
+            ]
+          ],
+          "x-vis-faces": [
+            [
+              0,
+              1,
+              3
+            ],
+            [
+              0,
+              3,
+              2
+            ],
+            [
+              4,
+              6,
+              7
+            ],
+            [
+              4,
+              7,
+              5
+            ],
+            [
+              0,
+              4,
+              5
+            ],
+            [
+              0,
+              5,
+              1
+            ],
+            [
+              2,
+              3,
+              7
+            ],
+            [
+              2,
+              7,
+              6
+            ],
+            [
+              0,
+              2,
+              6
+            ],
+            [
+              0,
+              6,
+              4
+            ],
+            [
+              1,
+              5,
+              7
+            ],
+            [
+              1,
+              7,
+              3
+            ]
+          ]
+        },
+        {
+          "const": "tetrahedron",
+          "x-vis-vertices": [
+            [
+              0.5774,
+              0.5774,
+              0.5774
+            ],
+            [
+              0.5774,
+              -0.5774,
+              -0.5774
+            ],
+            [
+              -0.5774,
+              0.5774,
+              -0.5774
+            ],
+            [
+              -0.5774,
+              -0.5774,
+              0.5774
+            ]
+          ],
+          "x-vis-faces": [
+            [
+              0,
+              1,
+              2
+            ],
+            [
+              0,
+              3,
+              1
+            ],
+            [
+              0,
+              2,
+              3
+            ],
+            [
+              1,
+              3,
+              2
+            ]
+          ]
+        },
+        {
+          "const": "octahedron",
+          "x-vis-vertices": [
+            [
+              1,
+              0.0,
+              0.0
+            ],
+            [
+              -1,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1,
+              0.0
+            ],
+            [
+              0.0,
+              -1,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1
+            ],
+            [
+              0.0,
+              0.0,
+              -1
+            ]
+          ],
+          "x-vis-faces": [
+            [
+              0,
+              2,
+              4
+            ],
+            [
+              0,
+              5,
+              2
+            ],
+            [
+              0,
+              4,
+              3
+            ],
+            [
+              0,
+              3,
+              5
+            ],
+            [
+              1,
+              4,
+              2
+            ],
+            [
+              1,
+              2,
+              5
+            ],
+            [
+              1,
+              3,
+              4
+            ],
+            [
+              1,
+              5,
+              3
+            ]
+          ]
+        },
+        {
+          "const": "icosahedron",
+          "x-vis-vertices": [
+            [
+              -0.5257,
+              0.8507,
+              0.0
+            ],
+            [
+              0.5257,
+              0.8507,
+              0.0
+            ],
+            [
+              -0.5257,
+              -0.8507,
+              0.0
+            ],
+            [
+              0.5257,
+              -0.8507,
+              0.0
+            ],
+            [
+              0.0,
+              -0.5257,
+              0.8507
+            ],
+            [
+              0.0,
+              0.5257,
+              0.8507
+            ],
+            [
+              0.0,
+              -0.5257,
+              -0.8507
+            ],
+            [
+              0.0,
+              0.5257,
+              -0.8507
+            ],
+            [
+              0.8507,
+              0.0,
+              -0.5257
+            ],
+            [
+              0.8507,
+              0.0,
+              0.5257
+            ],
+            [
+              -0.8507,
+              0.0,
+              -0.5257
+            ],
+            [
+              -0.8507,
+              0.0,
+              0.5257
+            ]
+          ],
+          "x-vis-faces": [
+            [
+              0,
+              5,
+              1
+            ],
+            [
+              0,
+              1,
+              7
+            ],
+            [
+              0,
+              11,
+              5
+            ],
+            [
+              0,
+              7,
+              10
+            ],
+            [
+              0,
+              10,
+              11
+            ],
+            [
+              1,
+              5,
+              9
+            ],
+            [
+              1,
+              8,
+              7
+            ],
+            [
+              1,
+              9,
+              8
+            ],
+            [
+              2,
+              3,
+              4
+            ],
+            [
+              2,
+              6,
+              3
+            ],
+            [
+              2,
+              4,
+              11
+            ],
+            [
+              2,
+              10,
+              6
+            ],
+            [
+              2,
+              11,
+              10
+            ],
+            [
+              3,
+              9,
+              4
+            ],
+            [
+              3,
+              6,
+              8
+            ],
+            [
+              3,
+              8,
+              9
+            ],
+            [
+              4,
+              9,
+              5
+            ],
+            [
+              4,
+              5,
+              11
+            ],
+            [
+              6,
+              7,
+              8
+            ],
+            [
+              6,
+              10,
+              7
+            ]
+          ]
+        },
+        {
+          "const": "sphere",
+          "x-vis-vertices": [
+            [
+              -0.5257,
+              0.8507,
+              0.0
+            ],
+            [
+              0.5257,
+              0.8507,
+              0.0
+            ],
+            [
+              -0.5257,
+              -0.8507,
+              0.0
+            ],
+            [
+              0.5257,
+              -0.8507,
+              0.0
+            ],
+            [
+              0.0,
+              -0.5257,
+              0.8507
+            ],
+            [
+              0.0,
+              0.5257,
+              0.8507
+            ],
+            [
+              0.0,
+              -0.5257,
+              -0.8507
+            ],
+            [
+              0.0,
+              0.5257,
+              -0.8507
+            ],
+            [
+              0.8507,
+              0.0,
+              -0.5257
+            ],
+            [
+              0.8507,
+              0.0,
+              0.5257
+            ],
+            [
+              -0.8507,
+              0.0,
+              -0.5257
+            ],
+            [
+              -0.8507,
+              0.0,
+              0.5257
+            ],
+            [
+              -0.309,
+              0.809,
+              0.5
+            ],
+            [
+              0.309,
+              0.809,
+              0.5
+            ],
+            [
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.309,
+              0.809,
+              -0.5
+            ],
+            [
+              -0.309,
+              0.809,
+              -0.5
+            ],
+            [
+              -0.809,
+              0.5,
+              0.309
+            ],
+            [
+              -0.5,
+              0.309,
+              0.809
+            ],
+            [
+              -0.5,
+              0.309,
+              -0.809
+            ],
+            [
+              -0.809,
+              0.5,
+              -0.309
+            ],
+            [
+              -1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.5,
+              0.309,
+              0.809
+            ],
+            [
+              0.809,
+              0.5,
+              0.309
+            ],
+            [
+              0.809,
+              0.5,
+              -0.309
+            ],
+            [
+              0.5,
+              0.309,
+              -0.809
+            ],
+            [
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              -1.0,
+              0.0
+            ],
+            [
+              0.309,
+              -0.809,
+              0.5
+            ],
+            [
+              -0.309,
+              -0.809,
+              0.5
+            ],
+            [
+              -0.309,
+              -0.809,
+              -0.5
+            ],
+            [
+              0.309,
+              -0.809,
+              -0.5
+            ],
+            [
+              -0.5,
+              -0.309,
+              0.809
+            ],
+            [
+              -0.809,
+              -0.5,
+              0.309
+            ],
+            [
+              -0.809,
+              -0.5,
+              -0.309
+            ],
+            [
+              -0.5,
+              -0.309,
+              -0.809
+            ],
+            [
+              0.809,
+              -0.5,
+              0.309
+            ],
+            [
+              0.5,
+              -0.309,
+              0.809
+            ],
+            [
+              0.5,
+              -0.309,
+              -0.809
+            ],
+            [
+              0.809,
+              -0.5,
+              -0.309
+            ],
+            [
+              0.0,
+              0.0,
+              1.0
+            ],
+            [
+              0.0,
+              0.0,
+              -1.0
+            ]
+          ],
+          "x-vis-faces": [
+            [
+              0,
+              12,
+              14
+            ],
+            [
+              5,
+              13,
+              12
+            ],
+            [
+              1,
+              14,
+              13
+            ],
+            [
+              12,
+              13,
+              14
+            ],
+            [
+              0,
+              14,
+              16
+            ],
+            [
+              1,
+              15,
+              14
+            ],
+            [
+              7,
+              16,
+              15
+            ],
+            [
+              14,
+              15,
+              16
+            ],
+            [
+              0,
+              17,
+              12
+            ],
+            [
+              11,
+              18,
+              17
+            ],
+            [
+              5,
+              12,
+              18
+            ],
+            [
+              17,
+              18,
+              12
+            ],
+            [
+              0,
+              16,
+              20
+            ],
+            [
+              7,
+              19,
+              16
+            ],
+            [
+              10,
+              20,
+              19
+            ],
+            [
+              16,
+              19,
+              20
+            ],
+            [
+              0,
+              20,
+              17
+            ],
+            [
+              10,
+              21,
+              20
+            ],
+            [
+              11,
+              17,
+              21
+            ],
+            [
+              20,
+              21,
+              17
+            ],
+            [
+              1,
+              13,
+              23
+            ],
+            [
+              5,
+              22,
+              13
+            ],
+            [
+              9,
+              23,
+              22
+            ],
+            [
+              13,
+              22,
+              23
+            ],
+            [
+              1,
+              24,
+              15
+            ],
+            [
+              8,
+              25,
+              24
+            ],
+            [
+              7,
+              15,
+              25
+            ],
+            [
+              24,
+              25,
+              15
+            ],
+            [
+              1,
+              23,
+              24
+            ],
+            [
+              9,
+              26,
+              23
+            ],
+            [
+              8,
+              24,
+              26
+            ],
+            [
+              23,
+              26,
+              24
+            ],
+            [
+              2,
+              27,
+              29
+            ],
+            [
+              3,
+              28,
+              27
+            ],
+            [
+              4,
+              29,
+              28
+            ],
+            [
+              27,
+              28,
+              29
+            ],
+            [
+              2,
+              30,
+              27
+            ],
+            [
+              6,
+              31,
+              30
+            ],
+            [
+              3,
+              27,
+              31
+            ],
+            [
+              30,
+              31,
+              27
+            ],
+            [
+              2,
+              29,
+              33
+            ],
+            [
+              4,
+              32,
+              29
+            ],
+            [
+              11,
+              33,
+              32
+            ],
+            [
+              29,
+              32,
+              33
+            ],
+            [
+              2,
+              34,
+              30
+            ],
+            [
+              10,
+              35,
+              34
+            ],
+            [
+              6,
+              30,
+              35
+            ],
+            [
+              34,
+              35,
+              30
+            ],
+            [
+              2,
+              33,
+              34
+            ],
+            [
+              11,
+              21,
+              33
+            ],
+            [
+              10,
+              34,
+              21
+            ],
+            [
+              33,
+              21,
+              34
+            ],
+            [
+              3,
+              36,
+              28
+            ],
+            [
+              9,
+              37,
+              36
+            ],
+            [
+              4,
+              28,
+              37
+            ],
+            [
+              36,
+              37,
+              28
+            ],
+            [
+              3,
+              31,
+              39
+            ],
+            [
+              6,
+              38,
+              31
+            ],
+            [
+              8,
+              39,
+              38
+            ],
+            [
+              31,
+              38,
+              39
+            ],
+            [
+              3,
+              39,
+              36
+            ],
+            [
+              8,
+              26,
+              39
+            ],
+            [
+              9,
+              36,
+              26
+            ],
+            [
+              39,
+              26,
+              36
+            ],
+            [
+              4,
+              37,
+              40
+            ],
+            [
+              9,
+              22,
+              37
+            ],
+            [
+              5,
+              40,
+              22
+            ],
+            [
+              37,
+              22,
+              40
+            ],
+            [
+              4,
+              40,
+              32
+            ],
+            [
+              5,
+              18,
+              40
+            ],
+            [
+              11,
+              32,
+              18
+            ],
+            [
+              40,
+              18,
+              32
+            ],
+            [
+              6,
+              41,
+              38
+            ],
+            [
+              7,
+              25,
+              41
+            ],
+            [
+              8,
+              38,
+              25
+            ],
+            [
+              41,
+              25,
+              38
+            ],
+            [
+              6,
+              35,
+              41
+            ],
+            [
+              10,
+              19,
+              35
+            ],
+            [
+              7,
+              41,
+              19
+            ],
+            [
+              35,
+              19,
+              41
+            ]
+          ]
+        },
+        {
+          "const": "cone",
+          "x-vis-vertices": [
+            [
+              0.0,
+              1,
+              0.0
+            ],
+            [
+              1.0,
+              -1,
+              0.0
+            ],
+            [
+              0.7071,
+              -1,
+              0.7071
+            ],
+            [
+              0.0,
+              -1,
+              1.0
+            ],
+            [
+              -0.7071,
+              -1,
+              0.7071
+            ],
+            [
+              -1.0,
+              -1,
+              0.0
+            ],
+            [
+              -0.7071,
+              -1,
+              -0.7071
+            ],
+            [
+              0.0,
+              -1,
+              -1.0
+            ],
+            [
+              0.7071,
+              -1,
+              -0.7071
+            ],
+            [
+              0.0,
+              -1,
+              0.0
+            ]
+          ],
+          "x-vis-faces": [
+            [
+              0,
+              2,
+              1
+            ],
+            [
+              0,
+              3,
+              2
+            ],
+            [
+              0,
+              4,
+              3
+            ],
+            [
+              0,
+              5,
+              4
+            ],
+            [
+              0,
+              6,
+              5
+            ],
+            [
+              0,
+              7,
+              6
+            ],
+            [
+              0,
+              8,
+              7
+            ],
+            [
+              0,
+              1,
+              8
+            ],
+            [
+              9,
+              1,
+              2
+            ],
+            [
+              9,
+              2,
+              3
+            ],
+            [
+              9,
+              3,
+              4
+            ],
+            [
+              9,
+              4,
+              5
+            ],
+            [
+              9,
+              5,
+              6
+            ],
+            [
+              9,
+              6,
+              7
+            ],
+            [
+              9,
+              7,
+              8
+            ],
+            [
+              9,
+              8,
+              1
+            ]
+          ]
+        }
+      ]
+    },
+    "scene_mesh": {
+      "description": "A mesh that one scene declares: triangles in counter-clockwise order seen from outside, so a surface can drop the back faces.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "vertices": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 256,
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "number",
+              "minimum": -1000,
+              "maximum": 1000
+            }
+          }
+        },
+        "faces": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 512,
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          }
+        }
+      },
+      "required": [
+        "id",
+        "vertices",
+        "faces"
+      ]
+    },
+    "scene_object": {
+      "description": "One object of a scene: a mesh with a place, a turn, a size and a colour.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "mesh": {
+          "description": "A built-in mesh name or the id of a mesh that the scene declares.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "x": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000,
+          "default": 0
+        },
+        "y": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000,
+          "default": 0
+        },
+        "z": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000,
+          "default": 0
+        },
+        "rx": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000,
+          "default": 0,
+          "description": "Rotation about the x axis in degrees. A surface turns about x, then y, then z."
+        },
+        "ry": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000,
+          "default": 0
+        },
+        "rz": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000,
+          "default": 0
+        },
+        "scale": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "default": 1
+        },
+        "color": {
+          "$ref": "#/$defs/scene_color",
+          "default": "#cccccc"
+        },
+        "is_emissive": {
+          "type": "boolean",
+          "default": false,
+          "description": "True paints the full colour without light, as a glow."
+        }
+      },
+      "required": [
+        "id",
+        "mesh",
+        "x",
+        "y",
+        "z",
+        "rx",
+        "ry",
+        "rz",
+        "scale",
+        "color",
+        "is_emissive"
+      ]
+    },
+    "scene_object_change": {
+      "description": "A change of one scene object. Keys that it leaves out keep their value. A new id needs a `mesh`.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "mesh": {
+          "description": "A built-in mesh name or the id of a mesh that the scene declares.",
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "x": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000
+        },
+        "y": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000
+        },
+        "z": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000
+        },
+        "rx": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000,
+          "description": "Rotation about the x axis in degrees. A surface turns about x, then y, then z."
+        },
+        "ry": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000
+        },
+        "rz": {
+          "type": "number",
+          "minimum": -1000000,
+          "maximum": 1000000
+        },
+        "scale": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10000
+        },
+        "color": {
+          "$ref": "#/$defs/scene_color"
+        },
+        "is_emissive": {
+          "type": "boolean",
+          "description": "True paints the full colour without light, as a glow."
+        }
+      },
+      "required": [
+        "id"
+      ]
     }
   },
   "oneOf": [

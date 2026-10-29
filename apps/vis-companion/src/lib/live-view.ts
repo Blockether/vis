@@ -20,6 +20,14 @@ import {
 } from './view';
 import type { ViewAnchor } from './view';
 import {
+  mergeSceneObjects,
+  sceneColor,
+  sceneMeshFromWire,
+  SCENE_DEFAULTS,
+  type LiveSceneMesh,
+  type LiveSceneObject,
+} from './scene';
+import {
   HUMAN_INPUT_FIELD_TYPES,
   humanInputFieldFromWire,
   type HumanInputField,
@@ -43,6 +51,7 @@ export const LIVE_NODE_TYPES = [
   'card',
   'diff',
   'thread',
+  'scene',
 ] as const;
 
 /** The inputs a live view can hold: the form's own input types. */
@@ -356,6 +365,19 @@ export interface LiveDiffNode extends LiveNodeBase {
   threads: LiveThread[];
 }
 
+/** A 3D world that the owner describes as data (`view.json` `scene`). */
+export interface LiveSceneNode extends LiveNodeBase {
+  type: 'scene';
+  width: number;
+  height: number;
+  background: string;
+  fov: number;
+  is_wrapping: boolean;
+  tick_ms: number;
+  meshes: LiveSceneMesh[];
+  objects: LiveSceneObject[];
+}
+
 /** One thread as a node of its own. The node id is the thread id. */
 export interface LiveThreadNode extends LiveNodeBase {
   type: 'thread';
@@ -403,7 +425,8 @@ export type LiveLeafNode =
   | LiveInputNode
   | LiveDividerNode
   | LiveDiffNode
-  | LiveThreadNode;
+  | LiveThreadNode
+  | LiveSceneNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
@@ -990,7 +1013,40 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
     }
     case 'thread':
       return { ...base, type: 'thread', ...threadPartsFromWire(node) };
+    case 'scene': {
+      const width = optionalNumber(node.width);
+      const height = optionalNumber(node.height);
+      if (!width || !height || width <= 0 || height <= 0) return null;
+      return {
+        ...base,
+        type: 'scene',
+        width,
+        height,
+        ...sceneSettings(node, {
+          background: SCENE_DEFAULTS.background,
+          fov: SCENE_DEFAULTS.fov,
+          is_wrapping: SCENE_DEFAULTS.is_wrapping,
+          tick_ms: SCENE_DEFAULTS.tick_ms,
+        }),
+        meshes: keyed(node.meshes, sceneMeshFromWire),
+        objects: mergeSceneObjects([], node.objects),
+      };
+    }
   }
+}
+
+type SceneSettings = Pick<LiveSceneNode, 'background' | 'fov' | 'is_wrapping' | 'tick_ms'>;
+
+/** The settable keys of a scene that `raw` carries, the others from `held`. */
+function sceneSettings(raw: Record<string, unknown>, held: SceneSettings): SceneSettings {
+  const fov = optionalNumber(raw.fov);
+  const tick = optionalNumber(raw.tick_ms);
+  return {
+    background: sceneColor(raw.background, held.background),
+    fov: fov !== undefined && fov >= 0 && fov <= 120 ? fov : held.fov,
+    is_wrapping: typeof raw.is_wrapping === 'boolean' ? raw.is_wrapping : held.is_wrapping,
+    tick_ms: tick !== undefined && tick >= 0 ? Math.min(2000, Math.round(tick)) : held.tick_ms,
+  };
 }
 
 /** The nodes of a view or of a group, unpaintable ones dropped. */
@@ -1096,7 +1152,9 @@ function withoutIds<T extends { id: string }>(existing: T[], ids: unknown): T[] 
 }
 
 /** The key an `append` fills for this node type (`live/appendable-key`). */
-function appendKey(node: LiveNode): 'lines' | 'rows' | 'stats' | 'steps' | 'links' | null {
+function appendKey(
+  node: LiveNode,
+): 'lines' | 'rows' | 'stats' | 'steps' | 'links' | 'objects' | null {
   switch (node.type) {
     case 'log':
       return 'lines';
@@ -1108,6 +1166,8 @@ function appendKey(node: LiveNode): 'lines' | 'rows' | 'stats' | 'steps' | 'link
       return 'steps';
     case 'link':
       return 'links';
+    case 'scene':
+      return 'objects';
     default:
       return null;
   }
@@ -1178,6 +1238,12 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
       };
     case 'thread':
       return 'label' in op ? { ...node, label: optionalText(op.label) } : node;
+    case 'scene':
+      return {
+        ...node,
+        label: 'label' in op ? optionalText(op.label) : node.label,
+        ...sceneSettings(op, node),
+      };
     default:
       if ('field' in node) {
         return {
@@ -1240,6 +1306,14 @@ function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
         ...node,
         links: upsert(node.links, keyed(op.links, linkFromWire)),
       };
+    case 'scene':
+      // Meshes land first, so one append can carry a mesh and its objects. An
+      // object change merges onto the object: a tick sends only what moved.
+      return {
+        ...node,
+        meshes: upsert(node.meshes, keyed(op.meshes, sceneMeshFromWire)),
+        objects: mergeSceneObjects(node.objects, op.objects),
+      };
     default:
       return node;
   }
@@ -1263,6 +1337,8 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       return { ...node, links: withoutIds(node.links, op.item_ids) };
     case 'diff':
       return { ...node, threads: withoutIds(node.threads, op.item_ids) };
+    case 'scene':
+      return { ...node, objects: withoutIds(node.objects, op.item_ids) };
     default:
       return node;
   }
@@ -1285,6 +1361,8 @@ function applyClear(node: LiveLeafNode): LiveNode {
       return { ...node, steps: [] };
     case 'link':
       return { ...node, links: [] };
+    case 'scene':
+      return { ...node, objects: [] };
     default:
       return node;
   }

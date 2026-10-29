@@ -5081,6 +5081,35 @@ class ThreadNode(_Node):
         return self._view.reply(self.node_id, body, **where)
 
 
+class Scene(_KeyedNode):
+    """A 3D world that surfaces draw. A tick sends only what changed."""
+
+    def set(self, *, background=None, fov=None, is_wrapping=None, tick_ms=None):
+        """Change the background, the field of view, wrapping or the tick length."""
+        return self._op(
+            "set",
+            background=background,
+            fov=fov,
+            is_wrapping=is_wrapping,
+            tick_ms=tick_ms,
+        )
+
+    def put(self, object_id, **changes):
+        """Add an object, or change the given keys of one: mesh, x, y, z, rx, ry,
+        rz, scale, color, is_emissive. A new object needs `mesh`."""
+        return self._op("append", objects=[_live_item(object_id, changes)])
+
+    def mesh(self, mesh_id, vertices, faces):
+        """Add or replace a custom mesh. See `vis.ui.scene_mesh`."""
+        return self._op("append", meshes=[_ui_scene_mesh(mesh_id, vertices, faces)])
+
+    @property
+    def objects(self):
+        """The objects of this scene as the host holds them, by id."""
+        held = self._view._node_state(self.node_id).get("objects") or []
+        return {one["id"]: one for one in held}
+
+
 _LIVE_NODES = {
     "paragraph": TextNode,
     "heading": TextNode,
@@ -5098,6 +5127,7 @@ _LIVE_NODES = {
     "card": Card,
     "diff": DiffNode,
     "thread": ThreadNode,
+    "scene": Scene,
     "plaintext": Input,
     "password": Input,
     "multiline": Input,
@@ -6181,6 +6211,17 @@ def _merge_append(earlier, op):
         return False
     keys = [k for k in earlier if k not in ("op", "node_id", "tone")]
     other = [k for k in op if k not in ("op", "node_id", "tone")]
+    if set(keys) | set(other) <= {"objects", "meshes"}:
+        # A scene applies meshes before objects, so one append carries both. An
+        # object change merges onto the change before it, like the engine merge.
+        for key in ("meshes", "objects"):
+            merged = {}
+            for item in list(earlier.get(key) or []) + list(op.get(key) or []):
+                old = merged.get(item.get("id"), {}) if key == "objects" else {}
+                merged[item.get("id")] = {**old, **item}
+            if merged:
+                earlier[key] = list(merged.values())
+        return True
     if len(keys) != 1 or keys != other:
         return False
     key = keys[0]
@@ -6245,7 +6286,13 @@ class _LiveRecorder:
     same materialized view without publishing fixture data into a Vis session.
     """
 
-    _COLLECTION = {"stat": "stats", "steps": "steps", "table": "rows", "link": "links"}
+    _COLLECTION = {
+        "stat": "stats",
+        "steps": "steps",
+        "table": "rows",
+        "link": "links",
+        "scene": "objects",
+    }
 
     def __init__(self, inner, view_id="test-live-view"):
         import threading
@@ -6333,6 +6380,12 @@ class _LiveRecorder:
                 node.setdefault("rows", [])
                 node.setdefault("max_rows", 5000)
                 node.setdefault("order", "insertion")
+            elif kind == "scene":
+                from blockether.vis import _contracts
+
+                complaint = _contracts.scene_node(node)
+                if complaint:
+                    raise AssertionError(complaint)
             elif kind in self._COLLECTION:
                 items = node.setdefault(self._COLLECTION[kind], [])
                 if kind == "link":
@@ -6429,6 +6482,16 @@ class _LiveRecorder:
 
             rows = _contracts.live_items("rows", self._copy(op.get("rows") or []))
             node["rows"] = self._upsert([], rows)
+        elif action == "append" and node["type"] == "scene":
+            from blockether.vis import _contracts
+
+            node["meshes"] = self._upsert(node["meshes"], op.get("meshes") or [])
+            node["objects"] = _contracts.scene_objects(
+                node["objects"], self._copy(op.get("objects") or [])
+            )
+            complaint = _contracts.scene_error(node)
+            if complaint:
+                raise AssertionError(complaint)
         elif action == "append":
             key = self._COLLECTION[node["type"]]
             incoming = self._copy(op.get(key) or [])
@@ -7121,6 +7184,51 @@ def _ui_thread(node_id, *, messages=None, **spec):
     return _live_node("thread", node_id, dict(spec, messages=list(messages or [])))
 
 
+def _ui_scene(node_id, width, height, *, objects=None, meshes=None, **spec):
+    """A 3D world in an app. Send shapes, places and colours, never code.
+
+    Axes: x right, y up, z toward the viewer. The camera fits the rectangle from
+    (0, 0) to (width, height) at z=0. `fov` is the vertical field of view in
+    degrees; 0 draws orthographic. Surfaces ease objects between ticks of
+    `tick_ms`. With `is_wrapping`, an object that crosses an edge eases across
+    it. Build items with `ui.scene_object` and `ui.scene_mesh`. Options:
+    `background`, `fov`, `is_wrapping`, `tick_ms`, `label`.
+    """
+    return _live_node(
+        "scene",
+        node_id,
+        dict(
+            spec,
+            width=width,
+            height=height,
+            objects=list(objects or []),
+            meshes=list(meshes or []),
+        ),
+    )
+
+
+def _ui_scene_object(object_id, mesh, **spec):
+    """One object of a scene: a builtin or custom mesh, placed and coloured.
+
+    Keys: x, y, z, rx, ry, rz (degrees, applied X then Y then Z), scale, color
+    (`#rrggbb`) and is_emissive (lit by itself, not by the light). Builtin meshes:
+    box, tetrahedron, octahedron, icosahedron, sphere and cone (apex at +y).
+    """
+    return _live_item(object_id, dict(spec, mesh=str(mesh)))
+
+
+def _ui_scene_mesh(mesh_id, vertices, faces):
+    """A custom scene mesh: vertices `[x, y, z]` and triangles `[a, b, c]`.
+
+    List the vertices of each face counterclockwise, seen from outside.
+    """
+    return {
+        "id": str(mesh_id),
+        "vertices": [[float(x), float(y), float(z)] for x, y, z in vertices],
+        "faces": [[int(a), int(b), int(c)] for a, b, c in faces],
+    }
+
+
 def _ui_app(title, *nodes, description=None, key=None, shortcuts=None, **options):
     """An app declaration for `vis.attach`: a live view that stays in the session.
 
@@ -7285,6 +7393,9 @@ class _UI:
     shortcut = staticmethod(_ui_shortcut)
     diff = staticmethod(_ui_diff)
     thread = staticmethod(_ui_thread)
+    scene = staticmethod(_ui_scene)
+    scene_object = staticmethod(_ui_scene_object)
+    scene_mesh = staticmethod(_ui_scene_mesh)
 
 
 ui = _UI()

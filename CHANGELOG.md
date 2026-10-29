@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Sandbox: `VIS_RUNTIME_DIR` keeps temporary files and the control socket of each Python worker in a task directory, not in `/tmp` (#423).
 - Live views: `view[id].replace(rows)` sets every row of a table in one step. A selected row that is in the new rows stays selected (#428).
 - Examples: the live apps example adds Asteroids, a game that you play with the keyboard in the TUI and the Companion. It sends at most one patch each tick and stops when it pauses.
+- Live views: a `scene` node draws a 3D world that Python describes with meshes, places, turns and colors. The Companion draws it with WebGL and moves objects smoothly between ticks at the frame rate of the screen. The TUI draws the same scene with `▀` true-color half blocks. A tick sends only the keys that changed. Asteroids now uses a scene.
 
 ### Changed
 - Agent: the system prompt tells the model to use `$TMPDIR` or `tempfile`, never a fixed `/tmp` path (#423).

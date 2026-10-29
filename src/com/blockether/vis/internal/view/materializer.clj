@@ -100,19 +100,20 @@
    :log #{:window-lines}
    :table #{:order :max-rows :selected-ids}
    :link #{:links}
-   :diff #{:patch :old-revision :new-revision}})
+   :diff #{:patch :old-revision :new-revision}
+   :scene #{:background :fov :is-wrapping :tick-ms}})
 
 (def ^:private appendable-key
   "The key an `append` carries, per node type — the one axis a `log` and a
    `table` differ on, and the reason appending rows to a log is a refusal
    rather than a silent no-op."
-  {:stat :stats :steps :steps :log :lines :table :rows :link :links})
+  {:stat :stats :steps :steps :log :lines :table :rows :link :links :scene :objects})
 
 (def ^:private append-extra-keys
   "Keys an `append` may carry BESIDE the node's own collection. A table upserts
    its group DECLARATIONS here, so the head and the rows that hang under it
    arrive in one patch instead of racing each other."
-  {:table #{:groups}})
+  {:table #{:groups} :scene #{:meshes}})
 
 (def ^:private patch-item-caps
   "How many items ONE patch may carry into a node. Not a cap on the node: it
@@ -334,7 +335,7 @@
 
 (defn- apply-append
   "A node with items added. A `log` grows its window and its record; a keyed
-   node upserts by id and is bounded by refusal."
+   node upserts by id and is bounded by refusal. A scene merges its objects."
   [node op]
   (let [k
         (get appendable-key (:type node))
@@ -367,7 +368,16 @@
                                " and this one carries "
                                (count items)
                                "; split it"))))
-      (if (= :log (:type node))
+      (cond
+        (= :scene (:type node))
+        (checked-node (cond-> node
+                        (contains? given :meshes)
+                        (update :meshes upsert (:meshes op))
+
+                        (contains? given :objects)
+                        (update :objects #(checked-count! node (spec/scene-merge % items)))))
+
+        (= :log (:type node))
         (let [all (into (:lines node) items)
               styled? (or (contains? node :line-tones) (contains? op :tone))
               tones (when styled?
@@ -379,6 +389,8 @@
                                      :total-lines (+ (long (:total-lines node)) (count items)))
                              styled?
                              (assoc :line-tones tones))))
+
+        :else
         (cond-> node
           (contains? given k)
           (update k #(checked-count! node (upsert % items)))
@@ -786,6 +798,19 @@
                 [(tagged-json "thread"
                               (select-keys node [:anchor :messages :draft :is-resolved]))]))
 
+(defn- plain-number
+  "A number as a person writes it: 48 rather than 48.0."
+  [n]
+  (let [d (double n)]
+    (if (== d (Math/rint d)) (str (long d)) (str d))))
+
+(defmethod node->markdown :scene
+  [{:keys [width height objects] :as node} _]
+  (marked-lines :scene
+                [(str "Scene " (plain-number width) " x " (plain-number height) " · " (count objects) " objects")
+                 (tagged-json "scene"
+                              (select-keys node [:width :height :background :fov :is-wrapping :tick-ms :meshes :objects]))]))
+
 (defmethod node->markdown :spinner
   [{:keys [text is-active]} _]
   (marked-lines :spinner [(str text (when is-active " (working)"))]))
@@ -1065,6 +1090,12 @@
                                 (dissoc :is-selectable :selected-ids))
                    {:elided (- (count rows) (count shown))}))
 
+               :scene
+               (let [objects (:objects node)
+                     limit (long table-rows)
+                     shown (if (> (count objects) limit) (subvec objects 0 limit) objects)]
+                 (with-meta (assoc node :objects shown) {:elided (- (count objects) (count shown))}))
+
                node))
            (leaf-nodes (:nodes view)))]
 
@@ -1258,7 +1289,7 @@
 
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
-  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread}
+  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1402,6 +1433,10 @@
 (defmethod markdown->node :thread
   [_ {:keys [at lines]}]
   (merge {:type :thread :messages []} (tagged-value at "thread" (second lines))))
+
+(defmethod markdown->node :scene
+  [_ {:keys [at lines]}]
+  (merge {:type :scene} (tagged-value at "scene" (nth lines 2 nil))))
 
 (defmethod markdown->node :spinner
   [_ {:keys [lines]}]

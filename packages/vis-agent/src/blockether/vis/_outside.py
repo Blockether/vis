@@ -1040,6 +1040,7 @@ _LIVE_ITEMS = {
     "table": "rows",
     "link": "links",
     "log": "lines",
+    "scene": "objects",
 }
 _LIVE_VIEWS = {}
 
@@ -1119,6 +1120,10 @@ def _live_check_node(node, seen, *, is_declaration=True):
             return "a code language must be nonblank text"
     if kind == "spinner" and node.get("variant") not in _SPINNER_VARIANTS:
         return "unknown spinner variant"
+    if kind == "scene":
+        complaint = _contracts.scene_node(node)
+        if complaint:
+            return complaint
     if kind == "button":
         if not isinstance(node.get("label"), str) or not node["label"].strip():
             return "a button needs a label"
@@ -1336,6 +1341,17 @@ def _live_apply(view, op):
                 payload
             )
             node[key] = list(node.get(key) or []) + payload
+        elif key == "objects":
+            # A scene object change merges onto the object: a tick sends only
+            # what moved, and a new object starts from the schema defaults.
+            try:
+                node["meshes"] = _live_upsert(node.get("meshes"), op.get("meshes"))
+                node[key] = _contracts.scene_objects(node.get(key) or [], payload)
+            except ValueError as error:
+                raise Refused(str(error)) from None
+            complaint = _contracts.scene_error(node)
+            if complaint:
+                raise Refused(complaint)
         else:
             try:
                 payload = _contracts.live_items(key, payload)
@@ -1403,7 +1419,9 @@ def _live_line(name, op, node):
     if name == "append":
         key = _LIVE_ITEMS[kind]
         counted = [
-            f"+{len(op[held] or [])} {held}" for held in (key, "groups") if op.get(held)
+            f"+{len(op[held] or [])} {held}"
+            for held in (key, "groups", "meshes")
+            if op.get(held)
         ]
         return "{}: {}".format(label, ", ".join(counted) or f"+0 {key}")
     if kind in ("paragraph", "heading", "code", "spinner"):

@@ -198,6 +198,40 @@ def test_table_replace_keeps_selection_of_rows_that_remain(monkeypatch, host_kin
             chats.replace([("d", ["D"])])
 
 
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_scene_changes_merge_onto_their_objects(monkeypatch, host_kind):
+    # A game tick sends only what moved. Two changes to one object in one batch
+    # must not drop the keys of the first, and a new object needs its mesh.
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    scene = vis.ui.scene(
+        "world",
+        16,
+        9,
+        objects=[vis.ui.scene_object("ship", "cone", x=8, y=4, color="#88c0d0")],
+    )
+    with vis.live("Game", [scene], flush_ms=10000) as view:
+        world = view["world"]
+        with view.batch():
+            world.put("ship", x=9)
+            world.put("ship", rz=30)
+            world.mesh("shard", [(0, 1, 0), (-1, -1, 0), (1, -1, 0)], [(0, 1, 2)])
+            world.put("rock", mesh="shard", x=2)
+        ship = world.objects["ship"]
+        assert (ship["x"], ship["y"], ship["rz"], ship["color"]) == (
+            9,
+            4,
+            30,
+            "#88c0d0",
+        )
+        assert world.objects["rock"]["scale"] == 1
+        with pytest.raises(Exception, match="mesh"):
+            world.put("ghost", x=1)
+            view.flush()
+
+
 def test_table_builder_refuses_text_columns():
     # #428: text columns passed every SDK check and failed only when a real app opened.
     with pytest.raises(

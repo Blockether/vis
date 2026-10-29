@@ -523,6 +523,44 @@ describe('what a table and a progress state', () => {
   });
 });
 
+describe('a scene', () => {
+  const view = liveViewFromWire({
+    id: 'game',
+    title: 'Game',
+    nodes: [
+      {
+        id: 'world',
+        type: 'scene',
+        width: 16,
+        height: 9,
+        objects: [{ id: 'ship', mesh: 'cone', x: 8, y: 4, color: '#88C0D0' }],
+      },
+    ],
+  });
+  if (!view) throw new Error('a scene view must be paintable');
+
+  // A game tick sends only what moved: the ship must keep its mesh and colour.
+  it('merges an object change onto the object and adds a new one from defaults', () => {
+    const next = patched(view, 1, [
+      {
+        op: 'append',
+        node_id: 'world',
+        meshes: [{ id: 'shard', vertices: [[0, 1, 0], [-1, -1, 0], [1, -1, 0]], faces: [[0, 1, 2]] }],
+        objects: [
+          { id: 'ship', x: 9 },
+          { id: 'rock', mesh: 'shard' },
+          { id: 'ghost', x: 1 },
+        ],
+      },
+    ]);
+    const world = nodeOfType(next, 'world', 'scene');
+    expect(world.objects.map((one) => one.id)).toEqual(['ship', 'rock']);
+    expect(world.objects[0]).toMatchObject({ mesh: 'cone', x: 9, y: 4, color: '#88c0d0' });
+    expect(world.objects[1]).toMatchObject({ mesh: 'shard', x: 0, scale: 1, color: '#cccccc' });
+    expect(world.meshes.map((mesh) => mesh.id)).toEqual(['shard']);
+  });
+});
+
 /**
  * A record is the only thing a settled view leaves behind, so what it folds back
  * into is the whole contract of re-opening one: the picture the run ENDED on, and
