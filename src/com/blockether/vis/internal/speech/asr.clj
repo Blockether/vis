@@ -167,6 +167,11 @@
 ;; flight, so no decode ever runs on a freed model.
 (defonce ^:private model-lock (ReentrantReadWriteLock.))
 
+;; One load at a time. A clip that wants the model a load is building waits on this
+;; lock, never on the write lock: a write lock behind a decode in flight made the
+;; second of two first clips wait for the whole first decode.
+(defonce ^:private load-lock (Object.))
+
 (defn- release-native!
   "Free one recognizer's NATIVE memory. Total: a release that throws has released
    either way, and no caller could act on the difference."
@@ -187,30 +192,32 @@
 
 (defn- cached-recognizer
   "The recognizer for `files`, built ONCE and answered to every later clip. A cache
-   hit takes no lock. A load takes the write lock, so it waits for the decodes in
-   flight before it frees the old model. Decode only through [[with-recognizer]]:
-   it holds the read lock that keeps the instance alive."
+   hit takes no lock. A load holds `load-lock` while it builds, then takes the write
+   lock only for the swap, so it waits for the decodes in flight before it frees the
+   old model. Decode only through [[with-recognizer]]: it holds the read lock that
+   keeps the instance alive."
   ^OfflineRecognizer [files]
   (let [current @loaded*]
     (if (= files (:key current))
       (:recognizer current)
-      (let [^Lock write (.writeLock ^ReentrantReadWriteLock model-lock)]
-        (.lock write)
-        (try (let [current @loaded*]
-               (if (= files (:key current))
-                 (:recognizer current)
-                 (let [started (System/nanoTime)
-                       r (recognizer files)]
+      (locking load-lock
+        (let [current @loaded*]
+          (if (= files (:key current))
+            (:recognizer current)
+            (let [started (System/nanoTime)
+                  r (recognizer files)
+                  ^Lock write (.writeLock ^ReentrantReadWriteLock model-lock)]
 
-                   (release-native! (:recognizer current))
+              (.lock write)
+              (try (release-native! (:recognizer @loaded*))
                    (reset! loaded* {:key files :recognizer r})
-                   (tel/log! {:level :info
-                              :id ::recognizer-loaded
-                              :data {:elapsed-ms (/ (- (System/nanoTime) started) 1e6)
-                                     :encoder (:encoder files)}
-                              :msg "loaded the Parakeet recognizer"})
-                   r)))
-             (finally (.unlock write)))))))
+                   (finally (.unlock write)))
+              (tel/log! {:level :info
+                         :id ::recognizer-loaded
+                         :data {:elapsed-ms (/ (- (System/nanoTime) started) 1e6)
+                                :encoder (:encoder files)}
+                         :msg "loaded the Parakeet recognizer"})
+              r)))))))
 
 (defn- with-recognizer
   "Call `f` with the recognizer for `files` under the shared read lock, and return
