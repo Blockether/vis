@@ -158,6 +158,8 @@ describe('a windowed turn trace', () => {
     const turnTrace = vi.fn(() => new Promise<typeof newest[]>((done) => { resolve = done; }));
     render(<AssistantMessage turn={turn} client={traceClient(turnTrace)} sid="s1" />);
     near(true);
+    // A flick starts with the reader's gesture; momentum then scrolls in each frame.
+    window.dispatchEvent(new Event('wheel'));
     window.dispatchEvent(new Event('scroll'));
     const flick = window.setInterval(() => window.dispatchEvent(new Event('scroll')), 16);
     try {

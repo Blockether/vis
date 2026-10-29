@@ -80,6 +80,31 @@ describe('bounded reads during session switches', () => {
     expect(fetched).toHaveBeenCalledOnce();
   });
 
+  // Regression, user report: a session opened slowly. The steps of the long turn in view
+  // were read only after that turn mounted, and the loading sheet waited for them.
+  it('reads the steps of the newest long turn with the opening page', async () => {
+    const steps = [{ position: 1 }, { position: 2 }];
+    const turns = [
+      { turn_id: 'old', status: 'completed', iterations: [{ position: 2 }], iterations_offset: 1 },
+      { turn_id: 'short', status: 'completed', iterations: [{ position: 1 }] },
+      { turn_id: 'long', status: 'completed', iterations: [{ position: 2 }], iterations_offset: 1 },
+    ];
+    const fetched = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes('/trace')
+        ? new Response(JSON.stringify({ iterations: steps }))
+        : new Response(JSON.stringify({ turns, total: 3, offset: 0 })),
+    );
+    vi.stubGlobal('fetch', fetched);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient({ url: 'http://gateway.example.com' });
+    await client.openingTranscript('s1');
+    await vi.waitFor(() => expect(fetched).toHaveBeenCalledTimes(2));
+    expect(String(fetched.mock.calls[1][0])).toContain('/turns/long/trace');
+
+    expect(await client.turnTrace('s1', 'long', new AbortController().signal)).toEqual(steps);
+    expect(fetched).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps only the newest turn traces', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ iterations: [{ position: 2 }] }))));
     const { GatewayClient, SESSION_CACHE_LIMIT } = await import('./gateway');

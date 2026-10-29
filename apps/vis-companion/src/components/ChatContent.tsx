@@ -4202,8 +4202,10 @@ function scrollerOf(box: Element): Element | null {
   const wrapper = box.parentElement;
   if (!wrapper) return null;
   if (boxScrollers.has(wrapper)) return boxScrollers.get(wrapper) ?? null;
-  let scroller: Element | null = null;
-  if (typeof window !== 'undefined') {
+  // The transcript names its scroller. Each turn has its own wrapper, and the style
+  // walk below forced a style recalculation for each turn while a session opened.
+  let scroller: Element | null = wrapper.closest('[data-keeps-reading-position]');
+  if (!scroller && typeof window !== 'undefined') {
     for (let parent: Element | null = wrapper; parent; parent = parent.parentElement) {
       const overflow = window.getComputedStyle(parent).overflowY;
       if (overflow === 'auto' || overflow === 'scroll') {

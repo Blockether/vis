@@ -165,6 +165,7 @@ function pressCanScroll(event: Event): boolean {
 /** No scroll event for this long means a stop: momentum sends one in each frame. */
 const REST_MS = 150;
 
+/** The last scroll that may be the reader's motion, see `onScroll`. */
 let lastScrollAt = Number.NEGATIVE_INFINITY;
 
 /**
@@ -264,13 +265,18 @@ function onPointerUp(event: Event): void {
   letGo();
 }
 
+// Only a scroll in the reach of a gesture, or one that continues such a chain the way
+// momentum does, is motion. The screen's own pin is not: counted, it held every
+// earlier-steps page of a session that was opening for REST_MS after its last pin.
 function onScroll(event: Event): void {
-  lastScrollAt = Date.now();
-  if (touchesDown === 0 && !pointerHeld) return;
   // The document scrolls under any press; an element only under one that landed in it.
-  if (event.target instanceof Element && !pressed.has(event.target)) return;
-  dragging = true;
-  noteReaderGesture();
+  const underPress = touchesDown > 0 || pointerHeld;
+  if (underPress && !(event.target instanceof Element && !pressed.has(event.target))) {
+    dragging = true;
+    noteReaderGesture();
+  }
+  const now = Date.now();
+  if (readerMayBeScrolling() || now - lastScrollAt <= REST_MS) lastScrollAt = now;
 }
 
 // Captured on `window` so this holds wherever the gesture starts — a code block,

@@ -241,8 +241,7 @@ const INITIAL_VISIBLE_TURNS = 8;
 // Assistant turns can contain thousands of syntax-highlighted nodes. Twenty-four
 // such turns is still enough DOM to make keyboard resize and momentum scrolling
 // hitch on a phone, even when React does not re-render them. Keep the mounted
-// window deliberately small; older turns remain available through the explicit
-// pager above the transcript.
+// window deliberately small; scrolling up to the oldest turn loads older ones.
 const FIRST_PAINT_TURNS = 2;
 // Do not spend the next frame after opening a session mounting a second screenful
 // of markdown. A small ramp leaves input focus, keyboard animation, and scrolling
@@ -257,6 +256,9 @@ const HYDRATE_TURNS_PER_FRAME = 2;
 // instead, and cap the wait so a device dropping frames still gets its
 // transcript well before the last-resort watchdog below.
 const OPENING_RAMP_MAX_MS = 800;
+// How far above the screen the oldest bubble starts the next earlier load: two
+// screens, so the turns are mounted before a reader scrolling up reaches them.
+const LOAD_EARLIER_MARGIN = '200%';
 // Last-resort reveal for the loading veil. The veil is dropped by whoever
 // finishes first — the transcript read, or the scroll effect one animation
 // frame after the first paint — and BOTH can be lost on mobile: a webview that
@@ -1026,6 +1028,10 @@ export function SessionScreen({
     setLinkedAttachmentId(null);
   }, []);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
+  // A failed earlier page stops the scroll mark until the reader retries.
+  const [earlierFailed, setEarlierFailed] = useState(false);
+  // The session that a late earlier page must still belong to.
+  const earlierSidRef = useRef(sid);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -1353,6 +1359,8 @@ export function SessionScreen({
     setTurnsFresh(false);
     setEarlierRemaining(client.transcriptWindow(sid).offset);
     setLoadingEarlier(false);
+    setEarlierFailed(false);
+    earlierSidRef.current = sid;
     // Re-entering a session that is STILL streaming keeps its bubble: dropping it
     // here is what made the reader land on the previous turn's ending and wait for
     // a replay before the in-flight answer came back.
@@ -5021,32 +5029,92 @@ export function SessionScreen({
   const anchorPrepend = () => {
     followingRef.current = false;
   };
+  // The scroll mark loads a window shorter than the screen with the reader at its
+  // end. That reader still follows: a running turn keeps its latest line in view.
+  const prependEarlier = () => {
+    const scroller = scrollRef.current;
+    if (scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1) return;
+    anchorPrepend();
+  };
 
   // "Earlier" has two sources: rows already fetched but hidden by the render
   // window, and history still on the gateway. Reveal local rows first — that is
-  // free — and only page the daemon once they run out.
+  // free — and read the next gateway page while some of them are still left, so
+  // a reader scrolling up does not wait at the top for the network.
   const loadEarlierTurns = () => {
     if (visibleStart > 0) {
-      anchorPrepend();
+      prependEarlier();
       setVisibleTurnCount((count) => Math.min(turns.length, count + INITIAL_VISIBLE_TURNS));
+      if (visibleStart <= 2 * INITIAL_VISIBLE_TURNS) readEarlierPage(false);
       return;
     }
-    if (loadingEarlier || earlierRemaining <= 0) return;
+    readEarlierPage(true);
+  };
+  // `reveal` widens the window by the page for a reader already at the top. A
+  // page read ahead only joins the held rows: the window counts from the newest
+  // turn, so nothing on screen moves until the reader scrolls to it.
+  const readEarlierPage = (reveal: boolean) => {
+    if (loadingEarlier || earlierFailed || earlierRemaining <= 0) return;
     setLoadingEarlier(true);
     const held = turns.length;
+    const asked = sid;
     void client
-      .transcriptEarlier(sid)
+      .transcriptEarlier(sid, undefined, undefined, true)
       .then((older) => {
-        if (!older) return;
-        anchorPrepend();
-        // Keep every bubble that was on screen, plus the page that just landed.
-        setVisibleTurnCount((count) => count + Math.max(0, older.length - held));
+        if (earlierSidRef.current !== asked) return;
+        // No page means the window already starts at the first turn.
+        if (!older) {
+          setEarlierRemaining(client.transcriptWindow(sid).offset);
+          return;
+        }
+        if (reveal) {
+          prependEarlier();
+          // Keep every bubble that was on screen, plus the page that just landed.
+          setVisibleTurnCount((count) => count + Math.max(0, older.length - held));
+        }
         setTurns(older);
         setEarlierRemaining(client.transcriptWindow(sid).offset);
       })
-      .catch((cause: unknown) => setError((cause as Error).message))
+      .catch((cause: unknown) => {
+        if (earlierSidRef.current !== asked) return;
+        // A failed page waits for the reader's retry, not for the next scroll past it.
+        setEarlierFailed(true);
+        setError((cause as Error).message);
+      })
       .finally(() => setLoadingEarlier(false));
   };
+
+  // INFINITE SCROLL. A mark above the oldest bubble loads earlier turns when it
+  // comes within LOAD_EARLIER_MARGIN of the screen. The observer is made again
+  // after each load: its first report measures the mark where the load left it,
+  // so a page too short to push the mark away loads the next one. It waits for
+  // the opening sheet and for the ramp to mount the window, or one sight of the
+  // mark would reveal the whole held history before its rows had any height.
+  const earlierMarkRef = useRef<HTMLDivElement>(null);
+  const loadEarlierRef = useRef(loadEarlierTurns);
+  useEffect(() => {
+    loadEarlierRef.current = loadEarlierTurns;
+  });
+  const earlierArmed =
+    !loading &&
+    !earlierFailed &&
+    renderStart === visibleStart &&
+    (visibleStart > 0 || (earlierRemaining > 0 && !loadingEarlier));
+  useEffect(() => {
+    const mark = earlierMarkRef.current;
+    const scroller = scrollRef.current;
+    if (!earlierArmed || !mark || !scroller || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        loadEarlierRef.current();
+      },
+      { root: scroller, rootMargin: `${LOAD_EARLIER_MARGIN} 0px 0px 0px` },
+    );
+    observer.observe(mark);
+    return () => observer.disconnect();
+  }, [earlierArmed, visibleStart, earlierRemaining]);
 
   // THE OUTLINE'S JUMP (Blockether/vis#316). The turn can be anywhere in the session:
   // on screen, held outside the render window, or still on the gateway. The target
@@ -5522,18 +5590,26 @@ export function SessionScreen({
                     // Not anchorable: this row is pinned above the history it loads, so
                     // its own top never moves and anchoring on it would hold nothing
                     // while 40 000 px lands underneath it.
-                    <div className="mb-5" data-anchor="skip">
-                      <LoadMore
-                        label={`Load earlier turns · ${earlierTotal} remaining`}
-                        onClick={loadEarlierTurns}
-                        disabled={loadingEarlier}
-                      >
-                        {loadingEarlier
-                          ? 'Loading earlier…'
-                          : visibleStart > 0
-                            ? `Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`
-                            : `Load earlier · ${earlierTotal} remaining`}
-                      </LoadMore>
+                    <div ref={earlierMarkRef} className="mb-5" data-anchor="skip" data-earlier-turns="">
+                      {earlierFailed ? (
+                        <LoadMore
+                          label="Try loading earlier turns again"
+                          tone="error"
+                          onClick={() => {
+                            setEarlierFailed(false);
+                            setError(null);
+                          }}
+                        >
+                          Try again
+                        </LoadMore>
+                      ) : (
+                        // A rule, not a button: scrolling to it loads what it counts.
+                        <LoadMore label={`${earlierTotal} earlier turns`}>
+                          {loadingEarlier && visibleStart === 0
+                            ? 'Loading earlier…'
+                            : `${earlierTotal} earlier`}
+                        </LoadMore>
+                      )}
                     </div>
                   )}
 

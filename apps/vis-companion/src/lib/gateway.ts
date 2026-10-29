@@ -707,6 +707,9 @@ const transcriptStamps = new Map<string, string>();
 /** Turns per windowed transcript fetch — the page the UI pulls and pushes. */
 export const TRANSCRIPT_PAGE = 24;
 
+/** The newest turns whose earlier steps the opening reads with the transcript. */
+const OPENING_TRACE_TURNS = 2;
+
 /** One windowed transcript response. */
 export interface TranscriptPage {
   turns: TranscriptTurn[];
@@ -4830,9 +4833,33 @@ export class GatewayClient {
     const warming = transcriptPrefetches.get(this.snapshotKey('transcript', sid));
     if (warming && (await warming)) {
       const rows = this.cachedTranscript(sid);
-      if (rows) return rows;
+      if (rows) {
+        this.warmTurnTraces(sid, rows);
+        return rows;
+      }
     }
-    return this.transcript(sid, signal, TRANSCRIPT_PAGE, true);
+    const rows = await this.transcript(sid, signal, TRANSCRIPT_PAGE, true);
+    this.warmTurnTraces(sid, rows);
+    return rows;
+  }
+
+  /**
+   * Start reading the earlier steps of the newest long turns with the opening page.
+   * The session opens at its end, so these turns are in view. Their `TurnTrace` read
+   * started only after they mounted, and the loading sheet waited for it.
+   */
+  private warmTurnTraces(sid: string, rows: readonly TranscriptTurn[]): void {
+    for (const turn of rows.slice(-OPENING_TRACE_TURNS)) {
+      if (!(turn.iterations_offset ?? 0) || turn.status === 'running') continue;
+      const key = `${sid}\u0000${turn.turn_id}`;
+      if (this.turnTraceWarms.has(key) || this.cachedTurnTrace(sid, turn)) continue;
+      const read = this.readTurnTrace(sid, turn.turn_id, undefined, true).finally(() => {
+        if (this.turnTraceWarms.get(key) === read) this.turnTraceWarms.delete(key);
+      });
+      this.turnTraceWarms.set(key, read);
+      // A failed warm costs nothing: the turn reads its steps again when it mounts.
+      read.catch(() => undefined);
+    }
   }
 
   /**
@@ -4844,6 +4871,7 @@ export class GatewayClient {
     sid: string,
     signal?: AbortSignal,
     limit: number = TRANSCRIPT_PAGE,
+    urgent = false,
   ): Promise<TranscriptTurn[] | null> {
     const key = this.snapshotKey('transcript', sid);
     const window = this.transcriptWindow(sid);
@@ -4853,6 +4881,7 @@ export class GatewayClient {
       sid,
       { offset, limit: window.offset - offset },
       signal,
+      urgent,
     );
     const turns = this.mergeTurns(this.cachedTranscript(sid), page.turns, 'head');
     writeSnapshot(key, turns);
@@ -5450,6 +5479,9 @@ export class GatewayClient {
    */
   private readonly turnTraces = new Map<string, TranscriptIteration[]>();
 
+  /** Trace reads that `warmTurnTraces` started, by the key of `turnTraces`. */
+  private readonly turnTraceWarms = new Map<string, Promise<TranscriptIteration[]>>();
+
   /** The complete steps of `turn`, or null when this process has not read all of them. */
   cachedTurnTrace(sid: string, turn: TranscriptTurn): TranscriptIteration[] | null {
     const key = `${sid}\u0000${turn.turn_id}`;
@@ -5480,12 +5512,25 @@ export class GatewayClient {
    * with everything that happened while we were away instead of a blank one.
    * The rows also go to `cachedTurnTrace` for the next visit.
    */
-  async turnTrace(sid: string, tid: string, signal?: AbortSignal): Promise<TranscriptIteration[]> {
+  turnTrace(sid: string, tid: string, signal?: AbortSignal): Promise<TranscriptIteration[]> {
+    // Join the read that the opening started. It has no signal, so no caller aborts it.
+    const warming = this.turnTraceWarms.get(`${sid}\u0000${tid}`);
+    if (warming) return warming.catch(() => this.readTurnTrace(sid, tid, signal));
+    return this.readTurnTrace(sid, tid, signal);
+  }
+
+  private async readTurnTrace(
+    sid: string,
+    tid: string,
+    signal?: AbortSignal,
+    urgent = false,
+  ): Promise<TranscriptIteration[]> {
     const response = await this.request<{ iterations?: unknown }>(
       'GET',
       `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/trace`,
       undefined,
       signal,
+      urgent,
     );
     const rows = Array.isArray(response.iterations) ? (response.iterations as TranscriptIteration[]) : [];
     if (this.isSessionDeleted(sid)) return rows;

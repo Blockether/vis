@@ -281,6 +281,7 @@ describe('untilScrollRests', () => {
   }
 
   it('waits while momentum scrolls, then resolves after a short rest', async () => {
+    send('wheel');
     const state = watch();
 
     await pass(1_000, true);
@@ -307,7 +308,16 @@ describe('untilScrollRests', () => {
     expect(state.rested).toBe(true);
   });
 
+  // Regression, user report: a session opened slowly. Its own pin held each earlier-steps page.
+  it('does not wait for a scroll that no reader made', async () => {
+    const state = watch();
+    await pass(16, true);
+
+    expect(state.rested).toBe(true);
+  });
+
   it('resolves when the signal aborts', async () => {
+    send('wheel');
     const controller = new AbortController();
     const state = watch(controller.signal);
     await pass(200, true);
