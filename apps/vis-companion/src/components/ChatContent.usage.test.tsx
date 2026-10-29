@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { setZenMode } from '../lib/transcript-display';
 import type { TranscriptTurn } from '../lib/types';
 import { AssistantMessage } from './ChatContent';
 
@@ -77,4 +78,18 @@ describe('goal usage footer', () => {
       expect(view.container.querySelector('footer')).not.toBeInTheDocument();
     },
   );
+
+  // Zen mode keeps only the transcript: the turn summary goes, as in the TUI.
+  it('hides the summary in Zen mode and shows it again after Zen mode', () => {
+    setZenMode(true);
+    try {
+      const view = render(<AssistantMessage turn={goalTurn} />);
+      expect(view.container).toHaveTextContent('Goal verified.');
+      expect(view.container.querySelector('footer')).not.toBeInTheDocument();
+      act(() => setZenMode(false));
+      expect(view.container.querySelector('footer')).toHaveTextContent('openai/gpt-test');
+    } finally {
+      setZenMode(false);
+    }
+  });
 });

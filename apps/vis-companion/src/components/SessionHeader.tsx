@@ -15,6 +15,7 @@ import {
   DotsIcon,
   LivePanelIcon,
   SettingsIcon,
+  ZenIcon,
 } from './icons';
 import { BAND_EDGE_CLASS, Button, DialogFrame, IconButton, Modal, SidebarToggle } from './ui';
 
@@ -68,6 +69,8 @@ export type SessionHeaderCommands = Readonly<{
   back: () => void;
   toggleArtifacts: () => void;
   settings?: () => void;
+  /** Hide the chrome and keep only the transcript. */
+  zen?: () => void;
 }>;
 
 /**
@@ -244,6 +247,16 @@ export function SessionHeader({
               void copySessionId();
             }}
           />
+          {commands.zen && (
+            <MenuItem
+              title="Zen mode"
+              icon={<ZenIcon className="size-3.5" />}
+              onSelect={() => {
+                closeMenu();
+                commands.zen?.();
+              }}
+            />
+          )}
           {commands.settings && (
             <MenuItem title="Settings" icon={<SettingsIcon className="size-3.5" />} onSelect={() => { closeMenu(); commands.settings?.(); }} />
           )}

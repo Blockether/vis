@@ -53,8 +53,10 @@ import {
 import type { SessionArtifact } from '../lib/artifacts';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
-import { Banner, ComposerButton, LoadMore, Spinner } from '../components/ui';
-import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon } from '../components/icons';
+import { Banner, ComposerButton, IconButton, LoadMore, Spinner } from '../components/ui';
+import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../components/icons';
+import { ZenPictures } from '../components/ZenPictures';
+import { setZenMode, useZenMode } from '../lib/transcript-display';
 import { FilePreview } from '../components/FilePreview';
 import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { JumpToLatestButton } from '../components/JumpToLatestButton';
@@ -784,6 +786,8 @@ export function SessionScreen({
     [client, sid],
   );
   const openingTranscript = useMemo(() => client.cachedTranscript(sid), [client, sid]);
+  // Zen mode keeps only the transcript and the composer, in a golden ratio column.
+  const zen = useZenMode();
   const [session, setSession] = useState<Session | null>(() => client.cachedSession(sid));
   const [turns, setTurns] = useState<TranscriptTurn[]>(() => openingTranscript ?? []);
   // Whether the turns on screen were confirmed against the gateway during THIS
@@ -5151,7 +5155,7 @@ export function SessionScreen({
   const outlineTotal = earlierRemaining + outlineEntries.length;
   // The gutter beside the text comes from the turns that the veil already holds, so the
   // reveal keeps the width of every line. Only the rail waits for the veil to drop.
-  const outlineGutter = outlineTotal >= 2;
+  const outlineGutter = !zen && outlineTotal >= 2;
   const showsOutline = !loading && outlineGutter;
   const readOutline = (signal: AbortSignal) =>
     client
@@ -5358,6 +5362,7 @@ export function SessionScreen({
   const headerCommands: SessionHeaderCommands = {
     back: onBack,
     settings: () => setSettingsOpen(true),
+    zen: () => setZenMode(true),
     toggleArtifacts: () => {
       setLinkedAttachmentId(null);
       setArtifactsOpen((was) => !was);
@@ -5373,8 +5378,9 @@ export function SessionScreen({
           // stands in here, so it covers the pane and never the desk beside it. The pane
           // has no entry fade: every switch remounts it, and a fade from blank is a flicker.
           data-session-surface
-          className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-ink"
+          className={`relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${zen ? 'zen-surface' : 'bg-ink'}`}
         >
+          {zen && <ZenPictures />}
           {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
            is answered. Its overlay stands in THIS pane, so a waiting question
            never covers the desk beside it — the TUI shows the same form. */}
@@ -5382,16 +5388,25 @@ export function SessionScreen({
           {settingsOpen && (
             <ScopedSettingsDialog client={client} target={{ ...settingsTarget, label: headerModel.title }} onClose={() => setSettingsOpen(false)} />
           )}
-          <SessionHeader
-            model={headerModel}
-            commands={headerCommands}
-            sidebar={sidebar}
-            panel={
-              panelViews.length > 0
-                ? { isOpen: isPanelOpen, onToggle: () => setPanelChoice(!isPanelOpen) }
-                : undefined
-            }
-          />
+          {zen ? (
+            // The only chrome in Zen mode: one quiet mark at the corner, which leaves it.
+            <div className="absolute right-[max(0.5rem,env(safe-area-inset-right))] top-[max(0.5rem,env(safe-area-inset-top))] z-20 opacity-50 transition-opacity duration-300 focus-within:opacity-100 hover:opacity-100 motion-reduce:transition-none">
+              <IconButton label="Leave Zen mode" title="Leave Zen mode" variant="quiet" onClick={() => setZenMode(false)}>
+                <ZenIcon className="size-3.5" />
+              </IconButton>
+            </div>
+          ) : (
+            <SessionHeader
+              model={headerModel}
+              commands={headerCommands}
+              sidebar={sidebar}
+              panel={
+                panelViews.length > 0
+                  ? { isOpen: isPanelOpen, onToggle: () => setPanelChoice(!isPanelOpen) }
+                  : undefined
+              }
+            />
+          )}
           {isPanelOpen && !docksPanel && (
             <div className="absolute inset-0 z-30 flex flex-col bg-panel pt-[env(safe-area-inset-top)]">
               <LivePanel
@@ -5450,7 +5465,7 @@ export function SessionScreen({
             actually wants: one short phase message, not the entire log re-scanned. */}
             <div
               ref={scrollRef}
-              className="@container/transcript min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
+              className={`@container/transcript min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 [overflow-anchor:none] ${zen ? '' : 'bg-ink'}`}
               data-keeps-reading-position
               onClickCapture={handleDisclosureClick}
               onScroll={handleScroll}
@@ -5462,7 +5477,7 @@ export function SessionScreen({
             >
               <div
                 ref={transcriptRef}
-                className={`transcript-column mx-auto min-h-full w-full max-w-3xl pt-4 sm:pt-6 mouse:max-w-6xl ${outlineGutter ? 'has-outline' : ''} ${
+                className={`transcript-column mx-auto min-h-full w-full pt-4 sm:pt-6 ${zen ? 'zen-column' : 'max-w-3xl mouse:max-w-6xl'} ${outlineGutter ? 'has-outline' : ''} ${
                   !turns.length && !runningTurn
                     ? 'flex flex-col pb-4 sm:pb-6'
                     : 'flex flex-col justify-end pb-10'
@@ -5569,7 +5584,11 @@ export function SessionScreen({
             the caret and the queued turns survive a look at what the session made. */}
           <footer
             style={safeBottomStyle}
-            className={`relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2 mouse:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_var(--container-6xl))/2_+_1.5rem))] mouse:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_var(--container-6xl))/2_+_1.5rem))] ${artifactsOpen ? 'hidden' : ''}`}
+            className={`relative z-10 shrink-0 pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pt-1.5 sm:pt-2 ${
+              zen
+                ? 'zen-footer'
+                : 'border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] mouse:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_var(--container-6xl))/2_+_1.5rem))] mouse:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_var(--container-6xl))/2_+_1.5rem))]'
+            } ${artifactsOpen ? 'hidden' : ''}`}
           >
             {/* Anchored to the footer's top edge, so it always clears the queue
               tray and composer no matter how tall they grow. Hidden while a
@@ -5622,7 +5641,7 @@ export function SessionScreen({
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              className={`relative rounded-none border border-dialog-edge bg-input transition-colors focus-within:border-accent ${dropActive ? 'ring-1 ring-accent ring-inset' : ''}`}
+              className={`relative rounded-none border border-dialog-edge bg-input transition-colors focus-within:border-accent ${zen ? 'shadow-float' : ''} ${dropActive ? 'ring-1 ring-accent ring-inset' : ''}`}
             >
               <ComposerPayloadShelf
                 pastes={activePastes}

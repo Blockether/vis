@@ -114,6 +114,7 @@ import {
   unregisterFromPush,
 } from './lib/relay';
 import { isShellChromeVisible, isShellSplit, shellScreen } from './lib/shell';
+import { useZenMode } from './lib/transcript-display';
 import { useDeskRail } from './lib/fit-rows';
 import { useSidebar } from './lib/sidebar';
 import { EmptyPane } from './screens/EmptyPane';
@@ -375,6 +376,8 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   const [launchNotice, setLaunchNotice] = useState<string | null>(null);
   // Sharing must reveal the chooser even when the desktop sidebar was hidden.
   const [isSidebarShown, toggleSidebar] = useSidebar();
+  // Zen mode gives an open session the whole window.
+  const isZen = useZenMode();
   // The share still owed a session. The SHELL holds it because the list is the
   // chooser: until a composer takes it, every screen that could receive it has
   // to be able to say what is waiting.
@@ -1403,8 +1406,8 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // the width is read here because a media query is a runtime fact. The sidebar
   // can be put away, and then whichever of the two is open takes the whole shell.
   const canSplit = isShellSplit(shellView, isDesk);
-  const isSplit = isShellSplit(shellView, isDesk, isSidebarShown);
-  const isChromeVisible = isShellChromeVisible(shellView, isDesk);
+  const isSplit = isShellSplit(shellView, isDesk, isSidebarShown, isZen);
+  const isChromeVisible = isShellChromeVisible(shellView, isDesk, isZen);
   // Keep the fleet list alive while Machines is open, not only while a session is open.
   // Changing tabs should change visibility, never the list's component identity: its cached
   // rows, scope, scroll position, and expanded projects are already the user's frame.

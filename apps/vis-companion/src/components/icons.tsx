@@ -31,6 +31,7 @@ import {
   Download,
   EllipsisVertical,
   Eraser,
+  Focus,
   Folder,
   FolderPlus,
   GitFork,
@@ -399,6 +400,11 @@ export function RefreshIcon({
 }
 export function SettingsIcon({ className }: { className?: string }) {
   return <Mark icon={Settings} className={className} />;
+}
+
+/** Zen mode: the transcript alone in the middle of the window. */
+export function ZenIcon({ className }: { className?: string }) {
+  return <Mark icon={Focus} className={className} />;
 }
 
 /** The desk's sidebar, as the one glyph every desktop app uses for putting it away. */

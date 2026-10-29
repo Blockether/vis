@@ -6,12 +6,15 @@ import { applyTheme } from '../lib/theme';
 import {
   setPythonCodeShown,
   setStepsSummarized,
+  setZenMode,
   usePythonCodeShown,
   useStepsSummarized,
+  useZenMode,
 } from '../lib/transcript-display';
 import { DEFAULT_SPEECH_PREFS, getSpeechPrefs, getThemePref, setThemePref } from '../lib/storage';
 import { speechOutput } from '../lib/speech';
 import { MinusIcon, PlusIcon } from '../components/icons';
+import { ZenPictureChoice } from '../components/ZenPictures';
 import { DEFAULT_THEME, THEMES, type ThemeChoice } from '../lib/themes.generated';
 import { Banner, ChoiceCell, DialogFrame, IconButton, Modal, Switch, Text } from '../components/ui';
 import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
@@ -87,6 +90,7 @@ export function SettingsDialog({
 }) {
   const showPythonCode = usePythonCodeShown();
   const summarizeSteps = useStepsSummarized();
+  const zen = useZenMode();
   const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
   const [speechPrefs, setSpeechPrefs] = useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
   const [pending, setPending] = useState<string | null>(null);
@@ -354,6 +358,30 @@ export function SettingsDialog({
                   isOn={summarizeSteps}
                   onClick={() => setStepsSummarized(!summarizeSteps)}
                 />
+              </div>
+              <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
+                <div className="min-w-0 space-y-1">
+                  <Text as="p" variant="label">
+                    Zen mode
+                  </Text>
+                  <Text as="p" variant="description">
+                    Show only the transcript and the composer, in a centred column. Leave it with
+                    the mark at the top corner of the session.
+                  </Text>
+                </div>
+                <Switch label="Zen mode" isOn={zen} onClick={() => setZenMode(!zen)} />
+              </div>
+              <div className="space-y-3 px-3 py-3 sm:px-4">
+                <div className="min-w-0 space-y-1">
+                  <Text as="p" variant="label">
+                    Zen pictures
+                  </Text>
+                  <Text as="p" variant="description">
+                    Show a picture on each side of the transcript in Zen mode. A narrow window has
+                    no space for them.
+                  </Text>
+                </div>
+                <ZenPictureChoice />
               </div>
               {thinkingModes && (
                 <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">

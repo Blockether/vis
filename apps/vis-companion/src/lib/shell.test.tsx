@@ -90,6 +90,16 @@ describe('the desk split', () => {
     expect(isShellChromeVisible('session', false)).toBe(false);
     expect(isShellChromeVisible('sessions', true)).toBe(true);
   });
+
+  // User request: Zen mode works on the web too. An open session then takes the whole
+  // window, with no app bar and no list beside it; every other screen keeps its chrome.
+  it('gives a Zen session the whole window and leaves the other screens alone', () => {
+    expect(isShellSplit('session', true, true, true)).toBe(false);
+    expect(isShellChromeVisible('session', true, true)).toBe(false);
+    expect(isShellSplit('sessions', true, true, true)).toBe(true);
+    expect(isShellChromeVisible('sessions', true, true)).toBe(true);
+    expect(isShellChromeVisible('connect', false, true)).toBe(true);
+  });
 });
 
 // The shell's own chrome, read off the mounted app. Every claim below used to be

@@ -431,6 +431,85 @@
   }
 }
 
+/* Zen mode: the transcript alone in a golden ratio column, as in the TUI. A soft glow of the
+   theme accent lights the page. The pictures stand in the margins beside the column. */
+.zen-surface {
+  --zen-column: max(40rem, 61.8%);
+  background:
+    radial-gradient(
+      ellipse 70% 45% at 50% 0%,
+      color-mix(in oklab, var(--primary) 10%, transparent),
+      transparent 75%
+    ),
+    radial-gradient(
+      ellipse 55% 40% at 50% 100%,
+      color-mix(in oklab, var(--primary) 7%, transparent),
+      transparent 75%
+    ),
+    var(--bg);
+}
+
+.transcript-column.zen-column {
+  max-width: min(100%, var(--zen-column));
+  padding-top: max(1.5rem, calc(env(safe-area-inset-top) + 1rem));
+}
+
+.zen-footer {
+  padding-left: max(0.875rem, env(safe-area-inset-left));
+  padding-right: max(0.875rem, env(safe-area-inset-right));
+}
+
+@media (width >= 40rem) {
+  .zen-footer {
+    padding-left: max(1.5rem, env(safe-area-inset-left), calc((100% - var(--zen-column)) / 2 + 1.5rem));
+    padding-right: max(1.5rem, env(safe-area-inset-right), calc((100% - var(--zen-column)) / 2 + 1.5rem));
+  }
+}
+
+/* A picture fits its margin and keeps its shape. All four edges fade softly into the page. */
+.zen-picture {
+  display: none;
+  position: absolute;
+  top: 50%;
+  width: calc((100% - var(--zen-column)) / 2 - 3rem);
+  max-height: 78%;
+  object-fit: contain;
+  translate: 0 -50%;
+  mask-image:
+    linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent),
+    linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+  mask-composite: intersect;
+  animation: zen-picture-enter 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.zen-picture-left {
+  left: max(1.5rem, env(safe-area-inset-left));
+}
+
+.zen-picture-right {
+  right: max(1.5rem, env(safe-area-inset-right));
+}
+
+/* Only a wide window has margins worth a picture. */
+@media (width >= 64rem) {
+  .zen-picture {
+    display: block;
+  }
+}
+
+@keyframes zen-picture-enter {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zen-picture {
+    animation: none;
+  }
+}
+
 .live-view-panel {
   --live-view-inset: max(0.75rem, env(safe-area-inset-left), env(safe-area-inset-right));
 }

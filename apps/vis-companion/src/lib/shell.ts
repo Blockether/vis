@@ -50,7 +50,13 @@ export function shellScreen(state: ShellState): ShellScreen {
  * sidebar can be put away (`isSidebarShown`): then the desk hands whichever of the
  * two is open the whole shell, and the bar keeps the way to bring it back.
  */
-export function isShellSplit(screen: ShellScreen, isDesk: boolean, isSidebarShown = true): boolean {
+export function isShellSplit(
+  screen: ShellScreen,
+  isDesk: boolean,
+  isSidebarShown = true,
+  isZen = false,
+): boolean {
+  if (isZen && screen === 'session') return false;
   return isDesk && isSidebarShown && (screen === 'session' || screen === 'sessions');
 }
 
@@ -60,7 +66,10 @@ export function isShellSplit(screen: ShellScreen, isDesk: boolean, isSidebarShow
  * A desk keeps the bar over every screen — it holds the sidebar toggle, and with
  * the list beside or behind the transcript the session's own header is the
  * transcript's, not the app's.
+ *
+ * Zen mode gives an open session the whole window: no bar and no list beside it.
  */
-export function isShellChromeVisible(screen: ShellScreen, isDesk = false): boolean {
+export function isShellChromeVisible(screen: ShellScreen, isDesk = false, isZen = false): boolean {
+  if (isZen && screen === 'session') return false;
   return isDesk || screen !== 'session';
 }
