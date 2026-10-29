@@ -895,7 +895,7 @@
       (let [sigs (extension/sandbox-symbol-signatures)]
         (expect (str/includes? (get sigs 'shell) "cwd=..."))
         (expect (str/starts-with? (get sigs 'grep) "(*, query=..., paths=..."))
-        (expect (str/starts-with? (get sigs 'council.publish) "(content, *, kind, "))))
+        (expect (str/starts-with? (get sigs 'council.publish) "(content, *, group_id=..., "))))
   (it "describes closed session and agent calls without imaginary keyword options"
       (let [sigs (extension/sandbox-symbol-signatures)]
         (doseq [[sym expected] {'read-session "(target=None)"
@@ -1080,9 +1080,9 @@
 
         (expect (str/starts-with? (str (get ks 'council.publish)) "Keys: ")
                 (str (get ks 'council.publish)))
-        (expect (str/includes? (str (get ks 'council.publish)) "kind (REQUIRED)")
+        (expect (str/includes? (str (get ks 'council.publish)) "reply_required")
                 (str (get ks 'council.publish)))
-        (expect (not (str/includes? (str (get docs 'council.publish)) "kind (REQUIRED)")))
+        (expect (not (str/includes? (str (get docs 'council.publish)) (get ks 'council.publish))))
         (expect (every? #(str/starts-with? (str %) "Keys: ") (vals ks))))))
 
 (defn activity-success-probe
