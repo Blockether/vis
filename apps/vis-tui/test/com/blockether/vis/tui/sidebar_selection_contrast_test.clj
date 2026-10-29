@@ -4,6 +4,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.projects-test :as projects-test]
+            [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.theme-test :as theme-test]
@@ -171,4 +172,49 @@
                    (expect (:bold selected))
                    (expect (>= (contrast (:bg selected) (:bg unselected)) 3.0))
                    (expect (>= (contrast (:fg selected) (:bg selected)) 4.5)))))
+             (finally (theme/apply-theme! before))))))
+
+(defn- capture-queue-focus
+  "Paint a focused Queued block whose row `index` is selected, as the chat paints it."
+  [index]
+  (let [entries (#'render/queued-progress-entries
+                 [{:text "first" :turn-id "t1"} {:text "second" :turn-id "t2"}]
+                 60
+                 nil
+                 {:running? true :session-id "s1" :focus {:index index}})]
+    (cap/capture! {:cols 64
+                   :rows 12
+                   :paint! (fn [{:keys [g]}]
+                             (render/draw-chat-bubble! g
+                                                       {:role :assistant
+                                                        :text ""
+                                                        :prewrapped-lines (mapv :line entries)
+                                                        :line-meta (mapv :meta entries)}
+                                                       0 0
+                                                       60 {:viewport-h 12}))})))
+
+(defdescribe
+  queue-focus-selection-contrast-test
+  ;; User report: in vis-light the C-x e selection filled the row with the accent, so the
+  ;; accent rail and ordinal vanished and the hint-colored preview was hard to read.
+  (it "keeps the selected queue row distinct and its text readable in every theme"
+      (let [before @theme/active-theme-id]
+        (try (doseq [theme-id (shared-theme/available-theme-ids)]
+               (theme/apply-theme! theme-id)
+               (let [capture (capture-queue-focus 1)
+                     frame (first (:frames capture))
+                     row-text (fn [cells]
+                                (apply str (map :ch cells)))
+                     selected (first (filter #(str/includes? (row-text %) "┃") frame))
+                     other (first (filter #(str/includes? (row-text %) "1. first") frame))
+                     text-cells (remove #(str/blank? (:ch %)) selected)]
+
+                 (expect (nil? (:error capture)))
+                 (expect (str/includes? (row-text selected) "2. second") (str theme-id))
+                 (expect (>= (contrast (:bg (first selected)) (:bg (first other))) 3.0)
+                         (str theme-id " selected row vs other row"))
+                 (expect (= #{"┃" "2" "." "s" "e" "c" "o" "n" "d"} (set (map :ch text-cells)))
+                         (str theme-id))
+                 (doseq [{:keys [ch fg bg]} text-cells]
+                   (expect (>= (contrast fg bg) 4.5) (str theme-id " selected queue text: " ch)))))
              (finally (theme/apply-theme! before))))))

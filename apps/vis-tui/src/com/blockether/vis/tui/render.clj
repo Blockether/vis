@@ -2821,9 +2821,13 @@
                     ;; width (0 for the spacer rows, which paint the rail only).
                     (str/starts-with? line queue-item-marker)
                     (let [raw (subs line 1)
-                          ;; C-x e focus: the selected row gets a bar and the selection paper.
+                          ;; C-x e focus: the selected row takes the shared list selection, bold
+                          ;; and reversed (`p/selection-styles`): row ink as the fill, every span
+                          ;; in the row paper. The accent fill hid accent and hint text (light).
                           selected? (:queue-selected? meta)
-                          bg-color (if selected? t/header-active-tab-bg bg-color)
+                          ink (fn [color]
+                                (if selected? bg-color color))
+                          bg-color (if selected? t/dialog-fg bg-color)
                           gutter-n (long (or (:queue-gutter meta) 0))
                           cut (min gutter-n (count raw))
                           ord (subs raw 0 cut)
@@ -2839,25 +2843,25 @@
                       (p/fill-rect! g fbx y fill-iw 1)
                       ;; Rail glyph at col x, ordinal two cols in (past the
                       ;; rail + its trailing space) — both accent, bold.
-                      (p/set-colors! g t/header-active-tab-accent bg-color)
+                      (p/set-colors! g (ink t/header-active-tab-accent) bg-color)
                       (p/styled g
                                 [p/BOLD]
                                 (p/put-str! g x y (if selected? "┃" "│"))
                                 (when (pos? gutter-n) (p/put-str! g (+ (long x) 2) y ord)))
                       ;; Preview — dim italic, after the ordinal.
-                      (p/set-colors! g t/dialog-hint bg-color)
+                      (p/set-colors! g (ink t/dialog-hint) bg-color)
                       (p/styled g
-                                [p/ITALIC]
+                                (if selected? [p/ITALIC p/BOLD] [p/ITALIC])
                                 (p/paint-styled-line! g
                                                       (+ (long x) 2 gutter-n)
                                                       y
                                                       body
-                                                      t/dialog-hint
+                                                      (ink t/dialog-hint)
                                                       bg-color
-                                                      t/code-block-fg
-                                                      t/code-block-bg))
+                                                      (ink t/code-block-fg)
+                                                      (if selected? bg-color t/code-block-bg)))
                       (when (not= body msg)
-                        (p/set-colors! g t/header-active-tab-accent bg-color)
+                        (p/set-colors! g (ink t/header-active-tab-accent) bg-color)
                         (p/put-str! g
                                     (+ (long x) 2 gutter-n (long (p/display-width body)))
                                     y
