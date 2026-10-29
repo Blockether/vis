@@ -1323,41 +1323,37 @@
                                           {:key :show-thinking :type :toggle})))))
   ;; Regression, issue #106: Settings mutated only the TUI process's toggle, so
   ;; the gateway kept `shell` absent from already-open sessions until `/reload`.
-  (it
-    "registry-toggle rows change daemon state before mirroring it locally"
-    (let [apply-settings-option
-          (var-get #'dlg/apply-settings-option)
+  (it "registry-toggle rows change daemon state before mirroring it locally"
+      (let [apply-settings-option
+            (var-get #'dlg/apply-settings-option)
 
-          settings-row-mark
-          (var-get #'dlg/settings-row-mark)
+            settings-option-value
+            (var-get #'dlg/settings-option-value)
 
-          id
-          "dialogs_test_registry_row"
+            id
+            "dialogs_test_registry_row"
 
-          called
-          (atom [])
+            called
+            (atom [])
 
-          _
-          (toggles/register-toggle! {:id id :label "Test" :default false})]
+            _
+            (toggles/register-toggle! {:id id :label "Test" :default false})]
 
-      (try (expect (false? (toggles/enabled? id)))
-           (with-redefs [vis/gateway-toggle-setting!
-                         (fn [toggle-id _target]
-                           (swap! called conj toggle-id)
-                           {"id" toggle-id "type" "boolean" "enabled" true})]
-             (let [out (apply-settings-option {:something "else"}
-                                              {:type :registry-toggle :toggle-id id})]
-               (expect (= {:something "else"} out))
-               (expect (= [id] @called))
-               (expect (true? (toggles/enabled? id)))))
-           ;; Boolean state is carried by the color of the leading mark, not
-           ;; "(on)/(off)" text in the label.
-           (expect (= [p/SETTING_MARK t/status-ok]
-                      (settings-row-mark {:type :registry-toggle :toggle-id id} {})))
-           (toggles/reset-to-default! id)
-           (expect (= [p/SETTING_MARK t/dialog-hint]
-                      (settings-row-mark {:type :registry-toggle :toggle-id id} {})))
-           (finally (toggles/reset-to-default! id)))))
+        (try (expect (false? (toggles/enabled? id)))
+             (with-redefs [vis/gateway-toggle-setting!
+                           (fn [toggle-id _target]
+                             (swap! called conj toggle-id)
+                             {"id" toggle-id "type" "boolean" "enabled" true})]
+               (let [out (apply-settings-option {:something "else"}
+                                                {:type :registry-toggle :toggle-id id})]
+                 (expect (= {:something "else"} out))
+                 (expect (= [id] @called))
+                 (expect (true? (toggles/enabled? id)))))
+             ;; The value column gives the state, not "(on)/(off)" text in the label.
+             (expect (= "On" (settings-option-value {:type :registry-toggle :toggle-id id} {})))
+             (toggles/reset-to-default! id)
+             (expect (= "Off" (settings-option-value {:type :registry-toggle :toggle-id id} {})))
+             (finally (toggles/reset-to-default! id)))))
   ;; NOTE: the old "registry rows normalize fallback labels instead of
   ;; leaking raw ids" case was retired — the toggles registry now
   ;; REQUIRES a :label (register-toggle! rejects label-less specs), so the
@@ -2676,9 +2672,6 @@
           mcp-rows
           (var-get #'dlg/mcp-settings-rows)
 
-          mark
-          (var-get #'dlg/settings-row-mark)
-
           selectable?
           (var-get #'dlg/settings-selectable?)
 
@@ -2716,10 +2709,6 @@
           ;; a server's live status rides its own row, so the section reads as a
           ;; table instead of costing a wrapped description row per server
           (expect (every? :inline-description toggles))
-          ;; on = enabled AND not killed, so a killed config-file server reads off
-          (expect (= [[p/SETTING_MARK t/status-ok] [p/SETTING_MARK t/dialog-hint]
-                      [p/SETTING_MARK t/dialog-hint]]
-                     (mapv #(mark % {}) toggles)))
           (expect (every? selectable? (remove #(#{:section :subsection} (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
         (reset! inventory {:status :error :servers [] :error "connection refused"})
@@ -2868,9 +2857,6 @@
           provider-rows
           (var-get #'dlg/provider-settings-rows)
 
-          mark
-          (var-get #'dlg/settings-row-mark)
-
           selectable?
           (var-get #'dlg/settings-selectable?)
 
@@ -2910,10 +2896,6 @@
                       "live check unavailable · codex" "saved, not verified · openrouter"
                       "not signed in · gpt" "local, reachable"]
                      (mapv :description providers)))
-          (expect (= [[p/SETTING_MARK t/status-ok] [p/SETTING_MARK t/status-bad]
-                      [p/SETTING_MARK t/warning-fg] [p/SETTING_MARK t/dialog-hint]
-                      [p/SETTING_MARK t/dialog-hint] [p/SETTING_MARK t/status-ok]]
-                     (mapv #(mark % {}) providers)))
           (expect (every? selectable? (remove #(= :section (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
         (reset! inventory {:status :error :providers [] :error "connection refused"})
@@ -4042,8 +4024,8 @@
           settings-option-label
           (var-get #'dlg/settings-option-label)
 
-          settings-row-mark
-          (var-get #'dlg/settings-row-mark)
+          settings-option-value
+          (var-get #'dlg/settings-option-value)
 
           inventory
           (var-get #'dlg/settings-inventory)
@@ -4097,11 +4079,9 @@
              (expect (= 1 (:depth subagents)))
              (expect (= "Subagents" (settings-option-label subagents {})))
              (expect (nil? (:locked subagents)))
-             ;; One mark for every row keeps the mark column even in every font;
-             ;; the color gives the state.
-             (expect (= [[p/SETTING_MARK t/status-ok] [p/SETTING_MARK t/dialog-hint]
-                         [p/SETTING_MARK t/header-active-tab-accent]]
-                        (mapv #(settings-row-mark % {}) [council subagents drafts]))))
+             ;; The value column gives the state of each row.
+             (expect (= ["On" "Off" "Off"]
+                        (mapv #(settings-option-value % {}) [council subagents drafts]))))
            (finally (reset! inventory original)))))
   (it "locks the rows under a boolean parent that is off"
       (let [inventory

@@ -266,35 +266,12 @@
   [selected?]
   (if selected? [BOLD REVERSE] []))
 
-;;; ── Status glyph vocabulary (● ○ •) ────────────────────────────────────────
+;;; ── Status glyph vocabulary (● ○) ──────────────────────────────────────────
 ;; Each glyph MUST be display-width 1 (bare geometric, never a VS-16 emoji) so
 ;; `glyph + space` fills a 2-col gutter and the cell grid stays aligned.
 (def ^:const STATUS_ON "●") ;; filled  — the chosen option of an exclusive choice
 
 (def ^:const STATUS_OFF "○") ;; hollow  — an option that is not chosen
-
-;; The one mark of every settings row. Its colour gives the state; the value column
-;; gives the words. Monaco has no ● ○ ▸, and Noto Sans Mono draws ◆ narrower and higher
-;; than ● ○, so mixed marks stood at different places in the column. Monaco, Menlo,
-;; SF Mono and Noto Sans Mono all draw •.
-(def ^:const SETTING_MARK "•")
-
-(def ^:const STATUS_WIDTH 2) ;; glyph (1) + trailing gap (1)
-
-(defn status-mark!
-  "Paint a 1-col status `glyph` in colour `fg` on `bg` at (col,row) and return
-   the next col (`col + STATUS_WIDTH`) so the caller can place the label right
-   after. The reusable mark behind settings rows + resource rows."
-  [g col row glyph fg bg]
-  (let [col
-        (long col)
-
-        row
-        (long row)]
-
-    (set-colors! g fg bg)
-    (put-str! g col row glyph)
-    (+ col (long STATUS_WIDTH))))
 
 ;;; ── Composite primitives ──────────────────────────────────────────────────
 

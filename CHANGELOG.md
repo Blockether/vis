@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Agent: the system prompt tells the model to use `$TMPDIR` or `tempfile`, never a fixed `/tmp` path (#423).
 - Settings: Subagents is a stable setting under Council and is on by default. While Council is off, subagents are off and their row is locked.
-- TUI: every settings row has the same `•` mark, and its colour gives the state. Subsection names line up with the setting names under them.
+- TUI: settings rows have no leading mark, because the value column gives the state. Each header is bold and has one blank line above it. Subsection names line up with the setting names under them.
 
 ## [v0.3.4] - 2026-10-26
 

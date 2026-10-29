@@ -4437,89 +4437,6 @@
 
     (when inline-description (str description))))
 
-(defn- settings-row-mark
-  "Leading mark + its color for a settings row. Every row uses `p/SETTING_MARK`, so the
-   column stays even in every font; the color gives the state. Provider rows use the
-   daemon's four auth states: green verified, red rejected, yellow degraded, and the hint
-   color when unverified/off. Returns `[glyph fg-color]`."
-  [{:keys [key type set-key item-id toggle-id toggle-type toggle-value server auth tone]} values]
-  (let [on
-        [p/SETTING_MARK t/status-ok]
-
-        off
-        [p/SETTING_MARK t/dialog-hint]
-
-        bad
-        [p/SETTING_MARK t/status-bad]
-
-        warn
-        [p/SETTING_MARK t/warning-fg]
-
-        val
-        [p/SETTING_MARK t/header-active-tab-accent]
-
-        act
-        [p/SETTING_MARK t/header-active-tab-accent]]
-
-    ;; runs an action
-    (case type
-      :action
-      act
-
-      :env-var
-      [" " t/dialog-fg]
-
-      ;; an extension without its own choice; red when it failed to load
-      :extension
-      (if (= :bad tone) bad [" " t/dialog-fg])
-
-      :agent-name
-      val
-
-      :choice
-      val
-
-      :set-toggle
-      (if (some-> (get values set-key)
-                  (contains? item-id))
-        off
-        on)
-
-      ;; in disabled-set → off
-      :registry-toggle
-      (let [spec
-            (vis/toggle-spec toggle-id)
-
-            tv
-            (if (some? toggle-value) toggle-value (vis/toggle-value toggle-id))]
-
-        (cond (= :enum (or toggle-type (:type spec))) val
-              (boolean tv) on
-              :else off))
-
-      ;; an MCP server reads its on/off off the live gateway row
-      :mcp
-      (if (mcp-model/server-on? server) on off)
-
-      ;; a provider's dot is the GATEWAY's auth verdict, never a local guess
-      :provider
-      (case auth
-        (:verified :local)
-        on
-
-        :rejected
-        bad
-
-        :degraded
-        warn
-
-        off)
-
-      :toggle
-      (if (get values key false) on off)
-
-      [" " t/dialog-fg])))
-
 (defn- cycle-choice
   [choices current]
   (let [choices
@@ -5654,11 +5571,30 @@
 
     (if (str/blank? s) [] (vec (remove str/blank? (render/wrap-text s w))))))
 
+(defn- settings-gap-headers
+  "Put one blank line above each header. The first line, a header right under another header
+   and a nested label that belongs to the row above it get none."
+  [entries]
+  (reduce (fn [out {:keys [row-idx part nested?] :as entry}]
+            (let [prev (:part (peek out))]
+              (cond-> out
+                (and (contains? #{:section :subsection} part)
+                     (not nested?)
+                     prev
+                     (not (contains? #{:section :subsection} prev)))
+                (conj {:row-idx row-idx :part :gap})
+
+                true
+                (conj entry))))
+          []
+          entries))
+
 (defn- settings-render-entries
-  "One line per setting. Only section guidance, empty states and errors wrap."
+  "One line per setting, and one blank line above a header. Only section guidance, empty
+   states and errors wrap."
   [rows desc-w]
-  (vec
-    (mapcat (fn [idx {:keys [type label description]}]
+  (settings-gap-headers
+    (mapcat (fn [idx {:keys [type label description depth]}]
               (case type
                 :section
                 (into [{:row-idx idx :part :section}]
@@ -5670,7 +5606,9 @@
                                 desc-w))))
 
                 :subsection
-                [{:row-idx idx :part :subsection}]
+                [(cond-> {:row-idx idx :part :subsection}
+                   (pos? (long (or depth 0)))
+                   (assoc :nested? true))]
 
                 :info
                 (into (mapv (fn [line]
@@ -6036,11 +5974,7 @@
              (volatile! nil)
 
              query
-             (atom "")
-
-             ;; One status glyph and a gap precede each compact setting label.
-             check-w
-             2]
+             (atom "")]
 
          ;; A live change can repaint the chat behind this modal. Reuse the SAME
          ;; settings paint without reading input or flushing a band-less frame.
@@ -6178,7 +6112,7 @@
                     (max 1 (- base-paint-w 2 option-indent))
 
                     base-desc-w
-                    (max 1 (- base-option-w check-w))
+                    base-option-w
 
                     base-entries
                     (settings-render-entries rows base-desc-w)
@@ -6193,16 +6127,15 @@
                     (max 1 (- paint-w 2 option-indent))
 
                     desc-x
-                    (+ option-x check-w)
+                    option-x
 
                     desc-w
-                    (max 1 (- option-w check-w))
+                    option-w
 
                     ;; Keep short labels readable without dropping meaningful service status.
                     value-w
                     (min (max 0
                               (- option-w
-                                 p/STATUS_WIDTH
                                  2
                                  (min 16 (long (reduce max 0 (map p/display-width labels))))))
                          (long (reduce max 0 (map #(p/display-width (str %)) option-values))))
@@ -6218,8 +6151,9 @@
                                     (when (= row-idx @selected) entry-idx))
                                   entries)
 
+                    ;; A selected header starts at its own line, not at the gap above it.
                     selected-visual
-                    (long (or (first sel-entry-idxs) 0))
+                    (long (or (first (remove #(= :gap (:part (nth entries %))) sel-entry-idxs)) 0))
 
                     ;; Section guidance can wrap; selectable rows remain single-line.
                     ;; A selected section header also reveals its subheaders and guidance, so
@@ -6228,7 +6162,7 @@
                     (let [end (long (or (last sel-entry-idxs) selected-visual))]
                       (if (= :section (:part (nth entries selected-visual nil)))
                         (long (loop [i end]
-                                (if (contains? #{:subsection :info-line}
+                                (if (contains? #{:gap :subsection :info-line}
                                                (:part (nth entries (inc i) nil)))
                                   (recur (inc i))
                                   i)))
@@ -6243,7 +6177,7 @@
                     header-start
                     (long (loop [i (dec selected-visual)]
                             (if (and (>= i 0)
-                                     (contains? #{:section :subsection :info-line}
+                                     (contains? #{:gap :section :subsection :info-line}
                                                 (:part (nth entries i))))
                               (recur (dec i))
                               (inc i))))
@@ -6299,10 +6233,14 @@
                       (let [{:keys [row-idx part text head?]} (nth entries entry-idx)
                             {:keys [label tone tag depth]} (nth rows row-idx)
                             option-label (nth labels row-idx)
-                            selected? (= row-idx @selected)
-                            [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
+                            selected? (= row-idx @selected)]
 
                         (case part
+                          ;; The blank line above a header.
+                          :gap
+                          (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+                              (p/fill-rect! g (inc lleft) row-y paint-w 1))
+
                           :section
                           (let [{shown :label button :button} (settings-section-layout
                                                                 (nth rows row-idx)
@@ -6326,10 +6264,9 @@
                               (draw-button! g x row-y (:label button) {:is-focused selected?})))
 
                           ;; A subsection label stands in the label column, so it lines up
-                          ;; with the setting names under it and the marks hang to its left.
+                          ;; with the setting names under it.
                           :subsection
-                          (let [x
-                                (+ (long option-x) (* 2 (long (or depth 0))) (long p/STATUS_WIDTH))]
+                          (let [x (+ (long option-x) (* 2 (long (or depth 0))))]
                             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
                             (p/styled g
@@ -6365,29 +6302,28 @@
                             (p/set-colors! g t/dialog-fg t/dialog-bg)
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
                             ;; REVERSE swaps the two colors, so a selected row passes them
-                            ;; swapped: each mark keeps its own color on the selection bar.
+                            ;; swapped: the scope and the value keep their colors on the bar.
                             ;; The bar is `dialog-fg`, so each ink is made legible on it: a
                             ;; light theme's dark value ink would vanish on the dark bar (#339).
                             (let [colors (fn [fg]
                                            (if selected?
                                              [t/dialog-fg (t/legible-ink fg t/dialog-fg)]
                                              [fg t/dialog-bg]))
-                                  [mark-fg mark-bg] (colors mark-color)
                                   indent (* 2 (long (or depth 0)))
-                                  ;; The leading status glyph reports the current setting value.
-                                  label-x
-                                  (p/status-mark! g (+ option-x indent) row-y mark mark-fg mark-bg)
+                                  ;; The value column gives the state, so a row has no leading mark.
+                                  label-x (+ (long option-x) indent)
                                   value (nth option-values row-idx)
                                   value-room (if (pos? value-w) (+ value-w 2) 0)
                                   ;; An extension's install scope stands left of the value column,
                                   ;; so every scope lines up. It shows only when the whole name
                                   ;; and the value still fit.
                                   tag-w (long (p/display-width (str tag)))
-                                  tagged?
-                                  (and (pos? tag-w)
-                                       (or (nil? value) (pos? value-w))
-                                       (<= (long (p/display-width (str option-label)))
-                                           (- option-w p/STATUS_WIDTH indent value-room tag-w 2)))
+                                  tagged? (and (pos? tag-w)
+                                               (or (nil? value)
+                                                   (<= (long (p/display-width (str value)))
+                                                       (long value-w)))
+                                               (<= (long (p/display-width (str option-label)))
+                                                   (- option-w indent value-room tag-w 2)))
                                   ;; A row's label gives way only to its own value: values stand
                                   ;; right-aligned, so a short value keeps the long label whole.
                                   row-value-room
@@ -6396,7 +6332,6 @@
                                     0)
                                   label-w (max 1
                                                (- option-w
-                                                  p/STATUS_WIDTH
                                                   indent
                                                   (long (if tagged?
                                                           (+ value-room tag-w 2)

@@ -41,7 +41,7 @@
    {:keys [cols callbacks values load!]
     :or {cols 100 callbacks {} values {} load! (constantly nil)}}]
   (let [result (cap/capture! {:cols cols
-                              :rows 30
+                              :rows 34
                               :keys keys
                               :paint! (fn [{:keys [screen]}]
                                         (try (with-redefs-fn {#'dlg/settings-rows
@@ -81,6 +81,40 @@
           (expect (= 4 (count (filter #(= :option (:part %)) entries))))
           (expect (not-any? #(= :option-desc (:part %)) entries))
           (expect (not (str/includes? frame "Load this extension")))))
+    (it "starts each row at its name and puts one blank line above each header"
+        ;; The rows had a mark before each name, and a header stood right under a setting.
+        (let [rows
+              [{:type :section :label "General"} {:type :toggle :key :agent :label "Agent"}
+               {:type :subsection :label "View"} {:type :toggle :key :theme :label "Theme"}
+               {:type :section :label "Providers"} {:type :subsection :label "Configured"}
+               {:type :toggle :key :account :label "Account"}]
+
+              capture
+              (capture-settings rows [:esc] :values {:agent true})
+
+              grid
+              (last (:frames capture))
+
+              lines
+              (str/split-lines (cap/frame-text capture))
+
+              at
+              (fn [text]
+                (first (keep-indexed (fn [y line]
+                                       (when-let [x (str/index-of line (str " " text " "))]
+                                         [y (inc (long x))]))
+                                     lines)))
+
+              [view-y view-x]
+              (at "View")]
+
+          (expect (= [:section :option :gap :subsection :option :gap :section :subsection :option]
+                     (mapv :part (#'dlg/settings-render-entries rows 40))))
+          (expect (= #{view-x} (set (map (comp second at) ["Agent" "View" "Theme" "Account"]))))
+          (expect (not-any? #(str/includes? % "•") lines))
+          (expect (str/blank? (subs (nth lines (dec (long view-y))) view-x (+ (long view-x) 20))))
+          (expect (str/includes? (nth lines (dec (long (first (at "Theme"))))) " View "))
+          (expect (:bold (get-in grid [view-y view-x])))))
     (it "keeps a long label whole when its own value is short"
         ;; Live check: one long URL value cut every label in the list to 16 columns.
         (let [frame (cap/frame-text
@@ -213,38 +247,6 @@
         (expect (not (str/includes? searched "▾")))
         ;; Clearing the search shows the fold chevrons again.
         (expect (str/includes? (cap/frame-text capture) "Response ▾"))))
-  (it "keeps the status mark on the selection bar of the selected row"
-      ;; REVERSE once turned the selected mark into an accent block inside the bar.
-      (let [frame
-            (last (:frames (capture-settings settings-rows [:esc])))
-
-            cells-of
-            (fn [label]
-              (some (fn [row]
-                      (when (str/includes? (apply str (map #(str (:ch %)) row)) label) row))
-                    frame))
-
-            mark-and-label
-            (fn [label]
-              (let [row
-                    (cells-of label)
-
-                    mark-x
-                    (first (keep-indexed (fn [x cell]
-                                           (when (= "•" (str (:ch cell))) x))
-                                         row))]
-
-                [(nth row mark-x) (nth row (+ (long mark-x) 2))]))
-
-            [mark label]
-            (mark-and-label "vis-lang-python")
-
-            [plain-mark plain-label]
-            (mark-and-label "einmal")]
-
-        (expect (not= (:bg label) (:bg plain-label)) "the first engine row is selected")
-        (expect (= (:bg label) (:bg mark)) "the mark stands on the selection bar")
-        (expect (= (:fg plain-mark) (:fg mark)) "the mark keeps its own color")))
   (it "keeps every value on the selected row legible on light and dark themes"
       ;; #339: on a light theme the value column kept its dark ink on the dark bar.
       (let [before @t/active-theme-id]
@@ -1021,7 +1023,7 @@
                  (mapv :label (#'dlg/filter-settings-rows rows "vis-spel/browser"))))
       ;; A narrow pane drops the scope before it cuts a name.
       (let [narrow (str/split-lines (cap/frame-text (capture-settings rows [:esc] :cols 48)))]
-        (expect (some #(re-find #"• vis-spel\s" %) narrow))
+        (expect (some #(re-find #"\svis-spel\s" %) narrow))
         (expect (not-any? #(str/includes? % "global") narrow)))))
   (it
     "keeps the extension name row with the settings that a search finds"
