@@ -814,16 +814,18 @@
                        :owner :vis
                        :group :provider
                        :persist? true})
+    ;; Subagents run on Council messages, so the row stands under Council. With Council off,
+    ;; `agents/enabled?` is false whatever this value says.
     (register-toggle!
       {:id "subagents"
        :label "Subagents"
        :description
-       "Delegate work to managed agents. Off blocks spawning, wakes and further iterations."
-       :default false
-       :experimental? true
+       "Let an agent start managed helper agents. Off blocks new agents, wakes and further steps."
+       :default true
        :scopes toggle-contract/scopes
        :owner :vis
-       :group :experimental
+       :group :council
+       :parent "council"
        :persist? true})
     ;; A snapshot is read into memory whole, and a Java byte array holds less than 2 GiB.
     (register-toggle! {:id "session_snapshot_limit"

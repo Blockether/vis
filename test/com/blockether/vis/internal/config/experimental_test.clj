@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.config.experimental-test
   (:require [charred.api :as json]
-            [clojure.string :as str]
             [com.blockether.vis.contract.toggle :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
@@ -25,15 +24,16 @@
 (defdescribe
   experimental-settings-contract-and-hydration
   (it "experimental settings contract and hydration"
-      (doseq [id ["subagents"]]
-        (let [spec (toggles/toggle-spec id)]
-          (expect (false? (:default spec)))
-          (expect (false? (toggles/enabled? id)))
-          (expect (true? (:experimental? spec)))
-          (expect (true? (:persist? spec)))
-          (expect (= :experimental (:group spec)))
-          (expect (contract/contribution-valid? spec))
-          (expect (not (contract/contribution-valid? (assoc spec :experimental? "yes"))))))
+      ;; Subagents left the experimental group: the row stands under Council and is on by default.
+      (let [spec (toggles/toggle-spec "subagents")]
+        (expect (true? (:default spec)))
+        (expect (false? (toggles/enabled? "subagents")))
+        (expect (false? (:experimental? spec)))
+        (expect (true? (:persist? spec)))
+        (expect (= :council (:group spec)))
+        (expect (= "council" (:parent spec)))
+        (expect (contract/contribution-valid? spec))
+        (expect (not (contract/contribution-valid? (assoc spec :experimental? "yes")))))
       (let [groups
             ;; Read the defaults, not the global config of the machine that runs the test.
             (let [home
@@ -58,7 +58,10 @@
             rows
             (filter #(get % "is_experimental") general)]
 
-        (expect (= #{"subagents" "draft_backend"} (set (map #(get % "id") rows))))
+        (expect (= #{"draft_backend"} (set (map #(get % "id") rows))))
+        (expect (= ["subagents"]
+                   (mapv #(get % "id")
+                         (get (first (filter #(= "council" (get % "id")) general)) "children"))))
         ;; Experimental switches stand last in the General section.
         (expect (= rows (take-last (count rows) general)))
         (expect (every? #(true? (get % "is_experimental")) rows))
@@ -97,8 +100,25 @@
                  (expect (nil? (agents/prompt {})))
                  (expect (every? #(false? ((:ext.symbol/active-fn %) {})) agents/symbols))
                  (toggles/set-enabled! "subagents" true)
-                 (expect (str/includes? (agents/prompt {}) "council.run"))
                  (expect (every? #((:ext.symbol/active-fn %) {}) agents/symbols)))))
+
+(defdescribe council-off-turns-subagents-off
+             (it "council off turns subagents off whatever the subagents value is"
+                 (let [db
+                       (h/store)
+
+                       sid
+                       (str (h/store-session! db {:channel :api}))]
+
+                   (toggles/set-enabled! "subagents" true)
+                   (try (expect (agents/enabled? db sid))
+                        (toggles/set-enabled! "council" false)
+                        (expect (not (agents/enabled? db sid)))
+                        (expect (= :feature-disabled
+                                   (:error (failure-data
+                                             #(agents/operation! {} :spawn {:task "Work"})))))
+                        (finally (toggles/reset-to-default! "council")
+                                 (toggles/set-enabled! "subagents" false))))))
 
 (defdescribe disabling-subagents-stops-wakes-and-new-iterations-without-erasing-teams
              (it "disabling subagents stops wakes and new iterations without erasing teams"

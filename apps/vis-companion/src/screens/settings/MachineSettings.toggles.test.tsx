@@ -143,6 +143,35 @@ describe('settings the open session decides elsewhere', () => {
   });
 });
 
+describe('rows under a boolean parent', () => {
+  // A row under a boolean parent that is off cannot act, so it stays locked until the parent is on.
+  it('locks the rows under a parent that is off until the parent is on', async () => {
+    const subagents: Toggle = { id: 'subagents', label: 'Subagents', type: 'boolean', enabled: true };
+    const council: Toggle = { id: 'council', label: 'Council', type: 'boolean', enabled: false, children: [subagents] };
+    vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
+      revision: 'toggles-1',
+      groups: [{ id: 'general', title: 'General', toggles: [council] }],
+    });
+    const save = vi.spyOn(GatewayClient.prototype, 'setSetting').mockResolvedValue({ ...council, enabled: true });
+    renderOpenBands(
+      <MachineSettings
+        gateway={gateway}
+        speechPrefs={DEFAULT_SPEECH_PREFS}
+        onSpeechChange={async () => DEFAULT_SPEECH_PREFS}
+      />,
+    );
+    const child = await screen.findByRole('switch', { name: 'Subagents: on' });
+    expect(child).toBeDisabled();
+    expect(screen.getByText('Turn on Council to change this.')).toBeInTheDocument();
+    await userEvent.click(child);
+    expect(save).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('switch', { name: 'Council: off' }));
+    expect(save).toHaveBeenCalledExactlyOnceWith('council', 'toggle');
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Subagents: on' })).toBeEnabled());
+    expect(screen.queryByText('Turn on Council to change this.')).toBeNull();
+  });
+});
+
 describe('draft backend dropdown', () => {
   // #242 and #243: opening Settings must not opt the user into draft isolation.
   it('shows off without saving and lets the user enable and disable drafts', async () => {

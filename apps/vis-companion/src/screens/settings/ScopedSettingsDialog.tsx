@@ -109,8 +109,8 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     if (where.scope === 'global') openMachine?.(client.base);
     else openScoped?.(client, { scope: where.scope, target_id: where.target_id, label: where.label });
   };
-  const row = (toggle: Toggle, head?: SettingHead) => settingTree(toggle, (setting) => (
-    <SettingRow key={setting.id} toggle={setting} head={setting === toggle ? head : undefined} busy={pending !== null}
+  const row = (toggle: Toggle, head?: SettingHead) => settingTree(toggle, (setting, offParent) => (
+    <SettingRow key={setting.id} toggle={setting} offParent={offParent} head={setting === toggle ? head : undefined} busy={pending !== null}
       onToggle={() => void save(setting, 'toggle')} onPick={(value) => save(setting, 'value', value)} onInherit={() => void save(setting, 'inherit')}
       onRemove={() => save(setting, 'inherit')}
       onOpenSettings={setting.decided_in && canOpen(setting.decided_in) ? openSettings : undefined} />

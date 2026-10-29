@@ -227,6 +227,8 @@
                                (not (:bold cell)))
                              %)
                     second-cells))
-      (expect (every? #(and (str/includes? (cap/frame-text %) p/STATUS_ON)
-                            (str/includes? (cap/frame-text %) p/STATUS_OFF))
+      ;; Every settings row keeps its one mark; its colour gives the state.
+      (expect (every? #(and (str/includes? (cap/frame-text %) (str p/SETTING_MARK " First option"))
+                            (str/includes? (cap/frame-text %)
+                                           (str p/SETTING_MARK " Second option")))
                       frames)))))

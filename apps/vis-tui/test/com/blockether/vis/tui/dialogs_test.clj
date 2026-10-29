@@ -1265,16 +1265,17 @@
 (defdescribe
   settings-enum-dropdown-test
   (it "marks experimental settings in the production terminal render"
-      (doseq [id ["subagents"]]
-        (expect (false? (:default (toggles/toggle-spec id))))
-        (expect (true? (:experimental? (toggles/toggle-spec id))))
-        (expect (str/includes?
-                  (#'dlg/settings-option-label
-                   {:type :registry-toggle :toggle-id id :label (:label (toggles/toggle-spec id))}
-                   {})
-                  "[Experimental]")))
       (let [{:keys [frames]} (exercise-backend-picker [:esc] {:width 100 :experimental? true})]
         (expect (some #(str/includes? % "[Experimental]") frames))))
+  (it "registers subagents under Council as a stable setting"
+      (let [spec (toggles/toggle-spec "subagents")]
+        (expect (true? (:default spec)))
+        (expect (false? (:experimental? spec)))
+        (expect (= :council (:group spec)))
+        (expect (= "Subagents"
+                   (#'dlg/settings-option-label
+                    {:type :registry-toggle :toggle-id "subagents" :label (:label spec)}
+                    {})))))
   (it "shows every backend and the current choice without saving on open or Escape"
       (doseq [width [40 100]]
         (let [{:keys [requests frames value]} (exercise-backend-picker [:enter :esc :esc]
@@ -1349,13 +1350,13 @@
                (expect (= {:something "else"} out))
                (expect (= [id] @called))
                (expect (true? (toggles/enabled? id)))))
-           ;; Boolean state is carried by the leading status glyph (●/○), not
+           ;; Boolean state is carried by the color of the leading mark, not
            ;; "(on)/(off)" text in the label.
-           (let [[on-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
-             (expect (= "●" on-glyph)))
+           (expect (= [p/SETTING_MARK t/status-ok]
+                      (settings-row-mark {:type :registry-toggle :toggle-id id} {})))
            (toggles/reset-to-default! id)
-           (let [[off-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
-             (expect (= "○" off-glyph)))
+           (expect (= [p/SETTING_MARK t/dialog-hint]
+                      (settings-row-mark {:type :registry-toggle :toggle-id id} {})))
            (finally (toggles/reset-to-default! id)))))
   ;; NOTE: the old "registry rows normalize fallback labels instead of
   ;; leaking raw ids" case was retired — the toggles registry now
@@ -2716,7 +2717,9 @@
           ;; table instead of costing a wrapped description row per server
           (expect (every? :inline-description toggles))
           ;; on = enabled AND not killed, so a killed config-file server reads off
-          (expect (= [p/STATUS_ON p/STATUS_OFF p/STATUS_OFF] (mapv #(first (mark % {})) toggles)))
+          (expect (= [[p/SETTING_MARK t/status-ok] [p/SETTING_MARK t/dialog-hint]
+                      [p/SETTING_MARK t/dialog-hint]]
+                     (mapv #(mark % {}) toggles)))
           (expect (every? selectable? (remove #(#{:section :subsection} (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
         (reset! inventory {:status :error :servers [] :error "connection refused"})
@@ -2907,9 +2910,9 @@
                       "live check unavailable · codex" "saved, not verified · openrouter"
                       "not signed in · gpt" "local, reachable"]
                      (mapv :description providers)))
-          (expect (= [[p/STATUS_ON t/status-ok] [p/STATUS_ON t/status-bad]
-                      [p/STATUS_ON t/warning-fg] [p/STATUS_OFF t/dialog-hint]
-                      [p/STATUS_OFF t/dialog-hint] [p/STATUS_ON t/status-ok]]
+          (expect (= [[p/SETTING_MARK t/status-ok] [p/SETTING_MARK t/status-bad]
+                      [p/SETTING_MARK t/warning-fg] [p/SETTING_MARK t/dialog-hint]
+                      [p/SETTING_MARK t/dialog-hint] [p/SETTING_MARK t/status-ok]]
                      (mapv #(mark % {}) providers)))
           (expect (every? selectable? (remove #(= :section (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
@@ -4048,46 +4051,90 @@
           original
           @inventory]
 
-      (try (reset! inventory {:status :ok
-                              :error nil
-                              :groups [{"id" "agent"
-                                        "title" "Agent"
-                                        "toggles" [{"id" "agent_name"
-                                                    "label" "Agent name"
-                                                    "type" "string"
-                                                    "value" "vis"}]}
-                                       {"id" "experimental"
-                                        "title" "Experimental"
-                                        "toggles" [{"id" "draft_backend"
-                                                    "label" "Draft backend"
-                                                    "description" "Off by default."
-                                                    "type" "enum"
-                                                    "value" "off"
-                                                    "choices" ["auto" "worktree" "rift" "off"]
-                                                    "is_experimental" true}
-                                                   {"id" "subagents"
-                                                    "label" "Subagents"
-                                                    "type" "boolean"
-                                                    "enabled" false
-                                                    "is_experimental" true}]}]})
+      (try (reset! inventory
+             {:status :ok
+              :error nil
+              :groups [{"id" "agent"
+                        "title" "Agent"
+                        "toggles"
+                        [{"id" "agent_name" "label" "Agent name" "type" "string" "value" "vis"}]}
+                       {"id" "general"
+                        "title" "General"
+                        "toggles"
+                        [{"id" "council"
+                          "label" "Council"
+                          "type" "boolean"
+                          "enabled" true
+                          "children"
+                          [{"id" "subagents" "label" "Subagents" "type" "boolean" "enabled" false}]}
+                         {"id" "draft_backend"
+                          "label" "Draft backend"
+                          "description" "Off by default."
+                          "type" "enum"
+                          "value" "off"
+                          "choices" ["auto" "worktree" "rift" "off"]
+                          "is_experimental" true}]}]})
            ;; The agent group stays with the dialog's own agent-name row above,
            ;; and the section header is the gateway's title verbatim.
-           (let [rows (registry-toggle-rows)]
-             (expect (= [:section :registry-toggle :registry-toggle] (mapv :type rows)))
-             (expect (= "Experimental" (:label (first rows))))
+           (let [rows
+                 (registry-toggle-rows)
+
+                 [council subagents drafts]
+                 (rest rows)]
+
+             (expect (= [:section :registry-toggle :registry-toggle :registry-toggle]
+                        (mapv :type rows)))
+             (expect (= "General" (:label (first rows))))
              ;; `draft_backend` lives in the engine, never in this binary's
              ;; registry: the catalog is what puts it on the screen.
              (expect (nil? (toggles/toggle-spec "draft_backend")))
-             (let [drafts (second rows)]
-               (expect (= "draft_backend" (:toggle-id drafts)))
-               (expect (= ["auto" "worktree" "rift" "off"] (:choices drafts)))
-               (expect (= "Draft backend  [Experimental]" (settings-option-label drafts {})))
-               (expect (= "Off" (#'dlg/settings-option-value drafts {})))
-               (expect (= p/MARK_VALUE (first (settings-row-mark drafts {})))))
-             (let [subagents (nth rows 2)]
-               (expect (= "Subagents  [Experimental]" (settings-option-label subagents {})))
-               (expect (= p/STATUS_OFF (first (settings-row-mark subagents {}))))))
+             (expect (= "draft_backend" (:toggle-id drafts)))
+             (expect (= ["auto" "worktree" "rift" "off"] (:choices drafts)))
+             (expect (= "Draft backend  [Experimental]" (settings-option-label drafts {})))
+             (expect (= "Off" (#'dlg/settings-option-value drafts {})))
+             ;; A child stands one level under its parent and is not experimental.
+             (expect (= "subagents" (:toggle-id subagents)))
+             (expect (= 1 (:depth subagents)))
+             (expect (= "Subagents" (settings-option-label subagents {})))
+             (expect (nil? (:locked subagents)))
+             ;; One mark for every row keeps the mark column even in every font;
+             ;; the color gives the state.
+             (expect (= [[p/SETTING_MARK t/status-ok] [p/SETTING_MARK t/dialog-hint]
+                         [p/SETTING_MARK t/header-active-tab-accent]]
+                        (mapv #(settings-row-mark % {}) [council subagents drafts]))))
            (finally (reset! inventory original)))))
+  (it "locks the rows under a boolean parent that is off"
+      (let [inventory
+            (var-get #'dlg/settings-inventory)
+
+            original
+            @inventory
+
+            catalog
+            (fn [council-on?]
+              {:status :ok
+               :error nil
+               :groups [{"id" "general"
+                         "title" "General"
+                         "toggles" [{"id" "council"
+                                     "label" "Council"
+                                     "type" "boolean"
+                                     "enabled" council-on?
+                                     "children" [{"id" "subagents"
+                                                  "label" "Subagents"
+                                                  "type" "boolean"
+                                                  "enabled" true}]}]}]})
+
+            subagents
+            (fn []
+              (some #(when (= "subagents" (:toggle-id %)) %) (#'dlg/registry-toggle-rows)))]
+
+        (try (reset! inventory (catalog false))
+             (expect (= "Turn on Council to change this." (:locked (subagents))))
+             (expect (= "Subagents  [Locked]" (#'dlg/settings-option-label (subagents) {})))
+             (reset! inventory (catalog true))
+             (expect (nil? (:locked (subagents))))
+             (finally (reset! inventory original)))))
   (it
     "mirrors the daemon's answer back into the catalog a flipped row renders from"
     (let [apply-settings-option
@@ -4141,7 +4188,7 @@
              (expect (= :error (:status @inventory)))
              (let [rows (registry-toggle-rows)]
                (expect (some #(= "subagents" (:toggle-id %)) rows))
-               (expect (some #(and (= :section (:type %)) (= "Experimental" (:label %))) rows)))
+               (expect (some #(and (= :section (:type %)) (= "Council" (:label %))) rows)))
              (finally (reset! inventory original)))))
   (it "keeps the gateway's name for a group or project target"
       (let [local (atom {:status :unloaded :groups [] :error nil})]

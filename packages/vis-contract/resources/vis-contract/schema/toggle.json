@@ -84,7 +84,7 @@
         },
         "parent": {
           "$ref": "common.json#/$defs/non_blank_string",
-          "description": "Id of the setting that this setting belongs under in settings. Settings can nest at any depth."
+          "description": "Id of the setting that this setting belongs under in settings. Settings can nest at any depth. While a boolean parent is off, settings show its rows as locked."
         },
         "type": {
           "enum": [

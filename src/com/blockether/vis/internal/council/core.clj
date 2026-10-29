@@ -45,7 +45,7 @@
 (toggles/register-toggle! {:id "council"
                            :label "Council"
                            :description
-                           "Exchange project messages and wake an idle peer or a managed subagent."
+                           "Exchange messages between the sessions of one project."
                            :default true
                            :owner :vis
                            :persist? true

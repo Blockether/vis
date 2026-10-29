@@ -5,6 +5,7 @@
   "The TUI source draws only the opencode glyph set."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.tui.primitives :as p]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (def ^:private opencode-glyphs
@@ -21,6 +22,12 @@
 (def ^:private regex-literal
   "A regex literal only matches input text, so its characters are not drawn."
   #"#\"(?:[^\"\\]|\\.)*\"")
+
+(defn- font-safe?
+  "True for a glyph that Monaco, Menlo, SF Mono and Noto Sans Mono all draw themselves.
+   Box glyphs are safe too: the terminal draws them in the cell grid."
+  [ch]
+  (or ((set "·—•…→") ch) (<= 0x2500 (int ch) 0x257F)))
 
 (defn- violations
   "Return `[file line char]` for each non-ASCII character in `text` outside the
@@ -53,14 +60,13 @@
   ;; terminal then takes them from a fallback font with another size and baseline, so the agent
   ;; rows did not line up. Box glyphs are safe: the terminal draws them in the cell grid.
   (it "draws the agent surfaces only with glyphs that common monospace fonts have"
-      (let [font-safe?
-            (fn [ch]
-              (or ((set "·—…→") ch) (<= 0x2500 (int ch) 0x257F)))
-
-            text
-            (slurp (io/file "src/com/blockether/vis/tui/agent_team.clj"))]
-
+      (let [text (slurp (io/file "src/com/blockether/vis/tui/agent_team.clj"))]
         (expect (= [] (vec (distinct (filter #(and (> (int %) 127) (not (font-safe? %))) text)))))))
+  ;; Settings rows mixed ● ○ ◆ ▸: Monaco has no ● ○ ▸, and Noto Sans Mono draws ◆ narrower
+  ;; and higher than ● ○, so the mark column was uneven.
+  (it "marks every settings row with one glyph that common monospace fonts have"
+      (expect (= 1 (count p/SETTING_MARK)))
+      (expect (font-safe? (first p/SETTING_MARK))))
   (it "every TUI source file draws only opencode glyphs"
       (let [files (source-files)]
         (expect (< 50 (count files)))

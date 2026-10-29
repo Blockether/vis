@@ -231,7 +231,7 @@
 
                     mark-x
                     (first (keep-indexed (fn [x cell]
-                                           (when (= "◆" (str (:ch cell))) x))
+                                           (when (= "•" (str (:ch cell))) x))
                                          row))]
 
                 [(nth row mark-x) (nth row (+ (long mark-x) 2))]))
@@ -1010,18 +1010,18 @@
       ;; A packaged skill stands one level in from its extension, without its name again.
       (expect (= (+ 2 (long (str/index-of (line "vis-spel ") "vis-spel")))
                  (long (str/index-of (line " browser") "browser"))))
-      ;; The skills of an extension stand under their own label, in line with their marks.
+      ;; The skills of an extension stand under their own label, in line with their names.
       (let [head (count (take-while #(not (str/includes? % "vis-spel ")) lines))]
         (expect (str/includes? (nth lines (inc head)) " Skills "))
         (expect (str/includes? (nth lines (+ 2 head)) " browser ")))
-      (expect (= (long (str/index-of (line " browser") "●"))
+      (expect (= (long (str/index-of (line " browser") "browser"))
                  (long (str/index-of (line " Skills ") "Skills"))))
       ;; A search for the whole skill name still finds the shorter row.
       (expect (= ["Tools" "vis-spel" "Skills" "browser"]
                  (mapv :label (#'dlg/filter-settings-rows rows "vis-spel/browser"))))
       ;; A narrow pane drops the scope before it cuts a name.
       (let [narrow (str/split-lines (cap/frame-text (capture-settings rows [:esc] :cols 48)))]
-        (expect (some #(re-find #"◆ vis-spel\s" %) narrow))
+        (expect (some #(re-find #"• vis-spel\s" %) narrow))
         (expect (not-any? #(str/includes? % "global") narrow)))))
   (it
     "keeps the extension name row with the settings that a search finds"

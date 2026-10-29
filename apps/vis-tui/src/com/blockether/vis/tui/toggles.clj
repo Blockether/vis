@@ -625,10 +625,9 @@
       {:id "subagents"
        :label "Subagents"
        :description
-       "Delegate work to managed agents. Off blocks spawning, wakes and further iterations."
-       :default false
-       :experimental? true
+       "Let an agent start managed helper agents. Off blocks new agents, wakes and further steps."
+       :default true
        :owner :vis
-       :group :experimental
+       :group :council
        :persist? true})
     true))

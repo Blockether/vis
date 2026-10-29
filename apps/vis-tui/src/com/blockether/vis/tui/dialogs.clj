@@ -3872,18 +3872,40 @@
          (or (get row "scope") "scope")
          ".")))
 
+(defn- parent-off-notes
+  "Map each row under a boolean parent that is off, at any depth, to why it is locked. The
+   outermost parent that is off names the setting to turn on."
+  [rows]
+  (reduce (fn [notes row]
+            (merge notes
+                   (parent-off-notes (get row "children"))
+                   (when (and (= "boolean" (get row "type")) (false? (get row "enabled")))
+                     (into {}
+                           (map (fn [[kid _]]
+                                  [(get kid "id")
+                                   (str "Turn on " (get row "label") " to change this.")]))
+                           (setting-tree (get row "children"))))))
+          {}
+          rows))
+
 (defn- lock-overridden-rows
   "Lock each catalog row that another scope decides: a wider scope for an inherited
    extension row, or a more specific scope for the session Settings opened from. Its
-   description says where to change it instead."
+   description says where to change it instead. A row under a boolean parent that is off
+   is locked too."
   [groups rows]
-  (let [catalog
-        (map first (setting-tree (mapcat #(get % "toggles") groups)))
+  (let [toggles
+        (mapcat #(get % "toggles") groups)
+
+        catalog
+        (map first (setting-tree toggles))
 
         notes
-        (into {}
-              (keep #(when-let [note (or (decided-note %) (override-note %))] [(get % "id") note]))
-              catalog)
+        (merge (parent-off-notes toggles)
+               (into {}
+                     (keep #(when-let [note (or (decided-note %) (override-note %))] [(get % "id")
+                                                                                      note]))
+                     catalog))
 
         decided
         (into {}
@@ -4416,27 +4438,28 @@
     (when inline-description (str description))))
 
 (defn- settings-row-mark
-  "Leading status glyph + its color for a settings row. Provider rows use
-   the daemon's four auth states: green verified, red rejected, yellow degraded,
-   and a neutral hollow dot when unverified/off. Returns `[glyph fg-color]`."
+  "Leading mark + its color for a settings row. Every row uses `p/SETTING_MARK`, so the
+   column stays even in every font; the color gives the state. Provider rows use the
+   daemon's four auth states: green verified, red rejected, yellow degraded, and the hint
+   color when unverified/off. Returns `[glyph fg-color]`."
   [{:keys [key type set-key item-id toggle-id toggle-type toggle-value server auth tone]} values]
   (let [on
-        [p/STATUS_ON t/status-ok]
+        [p/SETTING_MARK t/status-ok]
 
         off
-        [p/STATUS_OFF t/dialog-hint]
+        [p/SETTING_MARK t/dialog-hint]
 
         bad
-        [p/STATUS_ON t/status-bad]
+        [p/SETTING_MARK t/status-bad]
 
         warn
-        [p/STATUS_ON t/warning-fg]
+        [p/SETTING_MARK t/warning-fg]
 
         val
-        [p/MARK_VALUE t/header-active-tab-accent]
+        [p/SETTING_MARK t/header-active-tab-accent]
 
         act
-        [p/MARK_ACTION t/header-active-tab-accent]]
+        [p/SETTING_MARK t/header-active-tab-accent]]
 
     ;; runs an action
     (case type
@@ -6302,8 +6325,11 @@
                               (p/put-str! g (long end) row-y " ")
                               (draw-button! g x row-y (:label button) {:is-focused selected?})))
 
+                          ;; A subsection label stands in the label column, so it lines up
+                          ;; with the setting names under it and the marks hang to its left.
                           :subsection
-                          (let [x (+ (long option-x) (* 2 (long (or depth 0))))]
+                          (let [x
+                                (+ (long option-x) (* 2 (long (or depth 0))) (long p/STATUS_WIDTH))]
                             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
                             (p/styled g

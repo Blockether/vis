@@ -333,7 +333,7 @@
         (expect
           (not
             (re-find
-              #"(?im)subagents?|publish_spawn|council\.spawn|autocomplain|complain_entry_id|working-with-plans|plan before (?:coding|doing)|`improve`|\*\*Improve\*\*|^\s+improve(?:_mode)?:"
+              #"(?im)publish_spawn|council\.spawn|autocomplain|complain_entry_id|working-with-plans|plan before (?:coding|doing)|`improve`|\*\*Improve\*\*|^\s+improve(?:_mode)?:"
               md))
           slug)))))
 

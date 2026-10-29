@@ -266,19 +266,18 @@
   [selected?]
   (if selected? [BOLD REVERSE] []))
 
-;;; ── Status glyph vocabulary (● ○ ◆ ▸) ──────────────────────────────────────
-;; ONE shared status-mark language across the TUI — the footer's resource ●, the
-;; settings toggle rows, and the managed-resource rows all speak it, matching the
-;; web's status dots. Each glyph MUST be display-width 1 (bare geometric, never a
-;; VS-16 emoji) so `glyph + space` fills a 2-col gutter and the cell grid stays
-;; aligned.
-(def ^:const STATUS_ON "●") ;; filled  — enabled / live / healthy
+;;; ── Status glyph vocabulary (● ○ •) ────────────────────────────────────────
+;; Each glyph MUST be display-width 1 (bare geometric, never a VS-16 emoji) so
+;; `glyph + space` fills a 2-col gutter and the cell grid stays aligned.
+(def ^:const STATUS_ON "●") ;; filled  — the chosen option of an exclusive choice
 
-(def ^:const STATUS_OFF "○") ;; hollow  — disabled / idle
+(def ^:const STATUS_OFF "○") ;; hollow  — an option that is not chosen
 
-(def ^:const MARK_VALUE "◆") ;; a value you can cycle (enum / choice)
-
-(def ^:const MARK_ACTION "▸") ;; an action you can run
+;; The one mark of every settings row. Its colour gives the state; the value column
+;; gives the words. Monaco has no ● ○ ▸, and Noto Sans Mono draws ◆ narrower and higher
+;; than ● ○, so mixed marks stood at different places in the column. Monaco, Menlo,
+;; SF Mono and Noto Sans Mono all draw •.
+(def ^:const SETTING_MARK "•")
 
 (def ^:const STATUS_WIDTH 2) ;; glyph (1) + trailing gap (1)
 

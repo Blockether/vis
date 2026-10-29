@@ -201,8 +201,9 @@
           (expect (not (str/includes? prompt "Inherited conversation is background evidence")))
           (expect (< (count prompt) 3000)))))
   (it "includes leadership guidance only when subagents are enabled"
+      ;; Subagents run on Council messages, so the guidance needs both settings on.
       (with-redefs [toggles/enabled?
-                    #(= % "subagents")
+                    #(contains? #{"council" "subagents"} %)
 
                     toggles/value-of
                     (constantly "off")]

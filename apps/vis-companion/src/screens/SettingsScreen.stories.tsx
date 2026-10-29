@@ -151,21 +151,19 @@ export const PairingInline: Story = {
   },
 };
 
-/** Experimental workflows require a separate, explicit opt-in on each machine. */
-export const ExperimentalFeatures: Story = {
+/** Subagents stand under Council and stay locked while Council is off. */
+export const CouncilSubagents: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    for (const label of ['Subagents']) {
-      const toggle = await page.findByRole('switch', { name: `${label}: off` });
-      await expect(toggle).not.toBeChecked();
-      const row = toggle.closest('.grid')!;
-      await expect(within(row as HTMLElement).getByText('Experimental')).toBeVisible();
-      await userEvent.click(toggle);
-      await waitFor(() => expect(toggle).toBeChecked());
-      await userEvent.click(toggle);
-      await waitFor(() => expect(toggle).not.toBeChecked());
-    }
+    const subagents = await page.findByRole('switch', { name: 'Subagents: on' });
+    await expect(subagents).toBeEnabled();
+    await expect(page.queryByText('Experimental')).toBeNull();
+    await userEvent.click(page.getByRole('switch', { name: 'Council: on' }));
+    await waitFor(() => expect(page.getByRole('switch', { name: 'Subagents: on' })).toBeDisabled());
+    await expect(page.getByText('Turn on Council to change this.')).toBeVisible();
+    await userEvent.click(page.getByRole('switch', { name: 'Council: off' }));
+    await waitFor(() => expect(page.getByRole('switch', { name: 'Subagents: on' })).toBeEnabled());
   },
 };
 

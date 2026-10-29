@@ -49,7 +49,8 @@
 (defn enabled?
   "Whether session `sid` can use managed subagents. A new session starts without the session
    settings of its source, so a managed child reads the setting of its leader. Without such a
-   session setting, or with an invocation value, the configuration decides."
+   session setting, or with an invocation value, the configuration decides. Subagents run on
+   Council messages, so they are off while Council is off."
   [db sid]
   (let [owner
         (leader-id db sid)
@@ -64,7 +65,8 @@
                      (scoped/settings db (scoped/target db "session" owner)))
                (catch clojure.lang.ExceptionInfo _ nil)))]
 
-    (if (= "session" (:source row)) (boolean (:value row)) (toggles/enabled? "subagents"))))
+    (and (toggles/enabled? "council")
+         (if (= "session" (:source row)) (boolean (:value row)) (toggles/enabled? "subagents")))))
 
 (defonce ^:private runtime (atom {}))
 

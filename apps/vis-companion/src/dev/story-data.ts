@@ -2684,25 +2684,21 @@ export function storySettingsFetch(populated = false): typeof fetch {
         },
       ]
     : [];
-  const council = [
-    {
-      id: 'council',
-      label: 'Council',
-      description: 'Exchange project messages and wake an idle peer or a managed subagent.',
-      type: 'boolean',
-      enabled: true,
-    },
-  ];
-  const features = [
-    {
-      id: 'subagents',
-      label: 'Subagents',
-      description: 'Delegate work to managed agents.',
-      type: 'boolean',
-      enabled: false,
-      is_experimental: true,
-    },
-  ];
+  const subagents = {
+    id: 'subagents',
+    label: 'Subagents',
+    description: 'Let an agent start managed helper agents. Off blocks new agents, wakes and further steps.',
+    type: 'boolean',
+    enabled: true,
+  };
+  const council = {
+    id: 'council',
+    label: 'Council',
+    description: 'Exchange messages between the sessions of one project.',
+    type: 'boolean',
+    enabled: true,
+    children: [subagents],
+  };
   const agentName = {
     id: 'agent_name',
     label: 'Agent name',
@@ -2727,7 +2723,7 @@ export function storySettingsFetch(populated = false): typeof fetch {
         text.value = String(request.value);
         body = text;
       } else {
-        const feature = [...council, ...features].find((item) => item.id === request.id);
+        const feature = [council, subagents].find((item) => item.id === request.id);
         if (feature) feature.enabled = !feature.enabled;
         body = feature;
       }
@@ -2739,7 +2735,7 @@ export function storySettingsFetch(populated = false): typeof fetch {
           {
             id: 'general',
             title: 'General',
-            toggles: [agentName, ...council, ...features],
+            toggles: [agentName, council],
           },
         ],
       };

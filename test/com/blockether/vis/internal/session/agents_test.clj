@@ -1017,7 +1017,7 @@
                 (f)))]
 
         (ps/db-set-scoped-setting! db "session" leader "subagents" true)
-        (expect (false? (get (scoped/values db child) "subagents"))
+        (expect (not (contains? (ps/db-scoped-settings db "session" child) "subagents"))
                 "A child starts without the session overrides of its leader")
         (expect (nil? (agents/require-enabled! db leader))
                 "A gateway route outside a turn reads the session setting")
