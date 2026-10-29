@@ -112,16 +112,22 @@
       (Files/deleteIfExists path))))
 
 (defn- kill-tree!
-  "Kills the process AND what it spawned. `script` lends the TUI a pty by forking
-   it, so destroying only the parent would leave a live native runtime behind."
+  "Kills the process AND what it spawned, and waits until all of them exit. `script`
+   lends the TUI a pty by forking it, so destroying only the parent would leave a
+   live native runtime behind. The parent dies first, so no child starts after the
+   snapshot and writes into a home that the caller deletes next."
   [^Process process]
-  (doseq [^java.lang.ProcessHandle child (-> process
-                                             .toHandle
-                                             .descendants
-                                             .toList)]
-    (.destroyForcibly child))
-  (.destroyForcibly process)
-  (.waitFor process 10 TimeUnit/SECONDS))
+  (let [children (-> process
+                     .toHandle
+                     .descendants
+                     .toList)]
+    (.destroyForcibly process)
+    (.waitFor process 10 TimeUnit/SECONDS)
+    (doseq [^java.lang.ProcessHandle child children]
+      (.destroyForcibly child))
+    (doseq [^java.lang.ProcessHandle child children]
+      (try (.get (.onExit child) 10 TimeUnit/SECONDS)
+           (catch java.util.concurrent.TimeoutException _ nil)))))
 
 (defn- run-binary
   "Runs `argv` with `dir` as its working directory (which is what selects the
