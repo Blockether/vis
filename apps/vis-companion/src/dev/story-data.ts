@@ -1754,24 +1754,6 @@ export const STORY_OUTLINE_CLIENT = new Proxy(outlineStoryAnswers, {
   },
 }) as unknown as GatewayClient;
 
-export const STORY_COMPACT_EXECUTIONS: TranscriptIteration[] = [
-  {
-    id: 'compact-batch',
-    position: 1,
-    forms: [
-      {
-        source: "matches = grep({'query': 'Activity', 'paths': ['src']})\nprint(matches)",
-        duration_ms: 80,
-        activity: ACTIVITY_SETTLED,
-      },
-      {
-        source: "checks = await shell('npm test')\nprint(checks)",
-        activity: ACTIVITY_RUNNING,
-      },
-    ],
-  },
-];
-
 export const ACTIVITY_RICH: ActivityProjection = {
   ...ACTIVITY_RUNNING,
   rows: [

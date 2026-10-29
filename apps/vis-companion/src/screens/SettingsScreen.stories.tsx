@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState, type ReactNode } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
-import { STORY_COMPACT_EXECUTIONS, STORY_GATEWAYS, storySettingsFetch } from '../dev/story-data';
+import { STORY_GATEWAYS, storySettingsFetch } from '../dev/story-data';
 import { getThemePref, setThemePref } from '../lib/storage';
 import { resolveTheme } from '../lib/theme';
 import { THEMES } from '../lib/themes.generated';
