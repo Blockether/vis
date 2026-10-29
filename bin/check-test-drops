@@ -1,0 +1,831 @@
+#!/usr/bin/env python3
+"""Find deleted tests that name an issue, a regression or a contract fixture.
+
+The script reads each commit from BASE to HEAD and finds the Clojure,
+JavaScript, TypeScript and Python tests that the commit deletes. A test stays
+when it moves to another file or keeps its body under a new name. It also stays
+when the commit gives its file a new test with a similar name (ratio 0.75).
+
+A deleted test is marked when one of these texts names an issue, a
+regression, a user report or a file in vis-contract/fixtures/:
+  - the test and the comment lines directly above it,
+  - the start of each enclosing describe that the commit also deletes,
+  - the whole file when the commit deletes the file.
+
+A commit in the range must explain each marked test with a trailer:
+  Drops-Test: <file> <test name> - <reason>
+  Drops-Test: <file> - <reason>   (all tests of the file)
+
+Exit status: 0 when each marked test has a trailer, 1 when a trailer is
+missing, 2 for a usage or Git error."""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import difflib
+import re
+import subprocess
+import sys
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+
+TRAILER = "Drops-Test"
+PLACEHOLDER = "<reason>"
+SIMILAR = 0.75
+
+TEST_FILE = re.compile(
+    r"[^/]+_test\.clj[cs]?|[^/]+\.(?:test|spec)\.[cm]?[jt]sx?|test_[^/]+\.py|[^/]+_test\.py"
+)
+
+MARKER = re.compile(
+    r"\bregressions?\b"
+    r"|\buser[ -]reports?\b"
+    r"|\bissues?[ \t]*[#/]?[ \t]*\d+"
+    r"|(?<![\w&'\"#/])#\d{2,5}\b"
+    r"|\bBLO-\d+"
+    r"|vis-contract/fixtures/",
+    re.IGNORECASE,
+)
+
+
+class GitError(Exception):
+    pass
+
+
+@dataclass
+class Item:
+    """One test or describe in one version of a file."""
+
+    kind: str  # "test" or "group"
+    name: str
+    start: int
+    end: int
+    print_: str = ""
+    head_end: int = 0
+    parents: list[Item] = field(default_factory=list)
+
+
+@dataclass
+class Parsed:
+    text: str
+    tests: list[Item]
+    groups: list[Item]
+
+
+def plural(count: int, word: str) -> str:
+    return f"{count} {word}" + ("" if count == 1 else "s")
+
+
+def norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+def unescape(text: str) -> str:
+    def char(m: re.Match[str]) -> str:
+        code = m.group(1) or m.group(2) or m.group(3)
+        if code:
+            return chr(int(code, 16))
+        return {"n": "\n", "t": "\t", "r": "\r"}.get(m.group(4), m.group(4))
+
+    return re.sub(
+        r"\\(?:u\{([0-9a-fA-F]+)\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|(.))",
+        char,
+        text,
+        flags=re.S,
+    )
+
+
+# ---------------------------------------------------------------- Git
+
+
+def git(*args: str) -> str:
+    proc = subprocess.run(["git", *args], capture_output=True)
+    if proc.returncode != 0:
+        message = proc.stderr.decode("utf-8", "replace").strip()
+        raise GitError(
+            f"git {' '.join(args)} failed: {message or 'exit ' + str(proc.returncode)}"
+        )
+    return proc.stdout.decode("utf-8", "replace")
+
+
+def commit_of(rev: str) -> str | None:
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", rev + "^{commit}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return proc.stdout.decode().strip() if proc.returncode == 0 else None
+
+
+class Blobs:
+    """Read blobs through one `git cat-file --batch` process."""
+
+    def __init__(self) -> None:
+        self.proc = subprocess.Popen(
+            ["git", "cat-file", "--batch"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        )
+
+    def text(self, oid: str) -> str:
+        assert self.proc.stdin is not None and self.proc.stdout is not None
+        self.proc.stdin.write(oid.encode() + b"\n")
+        self.proc.stdin.flush()
+        header = self.proc.stdout.readline().split()
+        if len(header) != 3:
+            raise GitError(f"git cat-file cannot read blob {oid}")
+        data = self.proc.stdout.read(int(header[2]))
+        self.proc.stdout.read(1)
+        return data.decode("utf-8", "replace")
+
+    def close(self) -> None:
+        if self.proc.stdin:
+            self.proc.stdin.close()
+        self.proc.wait()
+
+
+def changed_test_files(parent: str, commit: str) -> list[tuple[str, str, str]]:
+    """Return (path, old blob, new blob) for each changed test file. A missing blob is ""."""
+    out = git("diff-tree", "-r", "-z", "--no-abbrev", parent, commit)
+    fields = out.split("\0")
+    files = []
+    for i in range(0, len(fields) - 1, 2):
+        meta, path = fields[i], fields[i + 1]
+        if not meta.startswith(":"):
+            continue
+        old_mode, new_mode, old_oid, new_oid = meta[1:].split()[:4]
+        if not TEST_FILE.fullmatch(path.rsplit("/", 1)[-1]):
+            continue
+        old = old_oid if old_mode.startswith("100") and set(old_oid) != {"0"} else ""
+        new = new_oid if new_mode.startswith("100") and set(new_oid) != {"0"} else ""
+        files.append((path, old, new))
+    return files
+
+
+# ---------------------------------------------------------------- Parsers
+
+
+def line_starts(text: str) -> list[int]:
+    return [0] + [m.end() for m in re.finditer("\n", text)]
+
+
+def comment_above(text: str, start: int, prefixes: tuple[str, ...]) -> tuple[int, int]:
+    """Return the span of the comment lines directly above the line of start."""
+    line_start = text.rfind("\n", 0, start) + 1
+    top = line_start
+    while top > 0:
+        prev = text.rfind("\n", 0, top - 1) + 1
+        if not text[prev : top - 1].strip().startswith(prefixes):
+            break
+        top = prev
+    return top, line_start
+
+
+def close_map(masked: str) -> dict[int, int]:
+    """Map each opening delimiter offset to the offset after its closer."""
+    pairs: dict[int, int] = {}
+    stack: list[int] = []
+    for i, c in enumerate(masked):
+        if c in "([{":
+            stack.append(i)
+        elif c in ")]}" and stack:
+            pairs[stack.pop()] = i + 1
+    for i in stack:
+        pairs[i] = len(masked)
+    return pairs
+
+
+def blank(chars: list[str], start: int, end: int) -> None:
+    for i in range(start, end):
+        if chars[i] != "\n":
+            chars[i] = " "
+
+
+def nest(items: list[Item], groups: list[Item]) -> None:
+    for item in items:
+        item.parents = sorted(
+            (g for g in groups if g is not item and g.start < item.start < g.end),
+            key=lambda g: g.start,
+        )
+    for group in groups:
+        children = [
+            i.start
+            for i in items
+            if group.start < i.start < group.end and i is not group
+        ]
+        group.head_end = min(children, default=group.end)
+
+
+def clojure_mask(text: str) -> tuple[str, dict[int, int]]:
+    """Blank strings, comments and characters; keep string quotes. Return string spans."""
+    chars = list(text)
+    strings: dict[int, int] = {}
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"' or (c == "#" and text.startswith('#"', i)):
+            start = i
+            i += 1 if c == '"' else 2
+            while i < n and text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+            i = min(i + 1, n)
+            strings[start] = i
+            blank(chars, start + 1, i - 1)
+        elif c == ";":
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            blank(chars, i, end)
+            i = end
+        elif c == "\\":
+            end = i + 2
+            while end < n and text[end].isalnum():
+                end += 1
+            blank(chars, i, min(end, n))
+            i = end
+        else:
+            i += 1
+    return "".join(chars), strings
+
+
+CLJ_FORM = re.compile(
+    r"\((?:[\w.*+!?<>=-]+/)?(it|expect-it|describe|defdescribe)(?=[\s,\"])"
+)
+
+
+def form_name(
+    text: str,
+    masked: str,
+    strings: dict[int, int],
+    pairs: dict[int, int],
+    i: int,
+    stops: str,
+) -> tuple[str, int, int]:
+    """Read the first argument at offset i: a string value, or the raw text of the form."""
+    n = len(text)
+    while i < n and (masked[i].isspace() or masked[i] == ","):
+        i += 1
+    if i in strings:
+        end = strings[i]
+        quote = 2 if text[i] == "#" else 1
+        return norm(unescape(text[i + quote : end - 1])), i, end
+    if i < n and masked[i] in "([{":
+        end = pairs.get(i, n)
+        return norm(text[i:end]), i, end
+    end = i
+    while end < n and not masked[end].isspace() and masked[end] not in stops:
+        end += 1
+    return norm(text[i:end]), i, end
+
+
+def parse_clojure(text: str) -> Parsed:
+    masked, strings = clojure_mask(text)
+    pairs = close_map(masked)
+    tests, groups = [], []
+    for m in CLJ_FORM.finditer(masked):
+        start = m.start()
+        end = pairs.get(start, len(text))
+        name, name_start, name_end = form_name(
+            text, masked, strings, pairs, m.end(), '()[]{}"'
+        )
+        item = Item("group" if "describe" in m.group(1) else "test", name, start, end)
+        item.print_ = norm(text[start:name_start] + text[name_end:end])
+        (groups if item.kind == "group" else tests).append(item)
+    nest(tests + groups, groups)
+    return Parsed(text, tests, groups)
+
+
+JS_KEYWORDS = {
+    "return",
+    "typeof",
+    "case",
+    "do",
+    "else",
+    "in",
+    "of",
+    "new",
+    "delete",
+    "void",
+    "throw",
+    "yield",
+    "await",
+    "instanceof",
+}
+
+
+def js_quoted(text: str, i: int) -> int | None:
+    """Return the offset after a one-line string at i, or None for a lone quote."""
+    quote, j, n = text[i], i + 1, len(text)
+    while j < n:
+        c = text[j]
+        if c == "\\":
+            j += 2
+        elif c == quote:
+            return j + 1
+        elif c == "\n":
+            return None
+        else:
+            j += 1
+    return None
+
+
+def js_comment(text: str, i: int) -> int | None:
+    if text.startswith("//", i):
+        end = text.find("\n", i)
+        return len(text) if end < 0 else end
+    if text.startswith("/*", i):
+        end = text.find("*/", i + 2)
+        return len(text) if end < 0 else end + 2
+    return None
+
+
+def js_template(text: str, i: int) -> int:
+    j, n = i + 1, len(text)
+    while j < n:
+        if text[j] == "\\":
+            j += 2
+        elif text[j] == "`":
+            return j + 1
+        elif text.startswith("${", j):
+            j = js_braces(text, j + 2)
+        else:
+            j += 1
+    return n
+
+
+def js_braces(text: str, j: int) -> int:
+    """Return the offset after the brace that closes a template expression."""
+    depth, n = 1, len(text)
+    while j < n:
+        c = text[j]
+        skip = js_comment(text, j)
+        if skip is not None:
+            j = skip
+        elif c in "'\"":
+            j = js_quoted(text, j) or j + 1
+        elif c == "`":
+            j = js_template(text, j)
+        else:
+            depth += {"{": 1, "}": -1}.get(c, 0)
+            j += 1
+            if depth == 0:
+                return j
+    return n
+
+
+def js_regex(text: str, i: int) -> int | None:
+    j, n, in_class = i + 1, len(text), False
+    while j < n:
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "\n":
+            return None
+        if in_class:
+            in_class = c != "]"
+        elif c == "[":
+            in_class = True
+        elif c == "/":
+            j += 1
+            while j < n and text[j].isalpha():
+                j += 1
+            return j
+        j += 1
+    return None
+
+
+def js_mask(text: str) -> tuple[str, dict[int, int]]:
+    """Blank strings, templates, comments and regex literals; keep quotes."""
+    chars = list(text)
+    strings: dict[int, int] = {}
+    i, n = 0, len(text)
+    prev, word = "", ""
+    while i < n:
+        c = text[i]
+        end = js_comment(text, i)
+        if end is not None:
+            blank(chars, i, end)
+            i = end
+            continue
+        if c in "'\"`":
+            end = js_template(text, i) if c == "`" else js_quoted(text, i)
+            if end is not None:
+                strings[i] = end
+                blank(chars, i + 1, end - 1)
+                i, prev, word = end, '"', ""
+                continue
+        if c == "/" and (
+            prev == "" or prev in "(,=:[!&|?{};+-*%<>~^" or word in JS_KEYWORDS
+        ):
+            end = js_regex(text, i)
+            if end is not None:
+                blank(chars, i, end)
+                i, prev, word = end, "a", ""
+                continue
+        if c.isspace():
+            i += 1
+            continue
+        m = re.compile(r"[\w$]+").match(text, i)
+        if m:
+            i, prev, word = m.end(), "a", m.group()
+            continue
+        i, prev, word = i + 1, c, ""
+    return "".join(chars), strings
+
+
+JS_CALL = re.compile(
+    r"(?<![\w$.])(it|test|describe|suite)((?:\s*\.\s*[A-Za-z]+)*)\s*(?:<(?:[^<>()]|<[^<>()]*>)*>\s*)?([(`])"
+)
+JS_TABLE = {"each", "for", "runIf", "skipIf"}
+
+
+def top_args(masked: str, start: int, end: int) -> int:
+    """Count the top-level arguments of the call whose parenthesis is at start."""
+    depth, count, seen = 0, 0, False
+    for c in masked[start + 1 : end - 1]:
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            count += 1
+            seen = False
+            continue
+        if not c.isspace():
+            seen = True
+    return count + (1 if seen else 0)
+
+
+def parse_js(text: str) -> Parsed:
+    masked, strings = js_mask(text)
+    pairs = close_map(masked)
+    tests, groups = [], []
+    for m in JS_CALL.finditer(masked):
+        modifiers = set(re.findall(r"[A-Za-z]+", m.group(2)))
+        call = m.start(3)
+        if modifiers & JS_TABLE:
+            call = strings.get(call) if masked[call] == "`" else pairs.get(call)
+            if call is None:
+                continue
+            while call < len(masked) and masked[call].isspace():
+                call += 1
+            if call >= len(masked) or masked[call] != "(":
+                continue
+        elif masked[call] != "(":
+            continue
+        end = pairs.get(call, len(text))
+        name, name_start, name_end = form_name(
+            text, masked, strings, pairs, call + 1, ",()[]{}"
+        )
+        if name_start not in strings and top_args(masked, call, end) < 2:
+            continue
+        if name_start in strings and text[name_start] == "`":
+            name = norm(text[name_start + 1 : name_end - 1])
+        item = Item(
+            "group" if m.group(1) in ("describe", "suite") else "test",
+            name,
+            m.start(),
+            end,
+        )
+        item.print_ = norm(text[m.start() : name_start] + text[name_end:end])
+        (groups if item.kind == "group" else tests).append(item)
+    nest(tests + groups, groups)
+    return Parsed(text, tests, groups)
+
+
+def parse_python(text: str) -> Parsed:
+    starts = line_starts(text)
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return Parsed(text, [], [])
+
+    def item(kind: str, node: ast.AST) -> Item:
+        first = min(
+            [d.lineno for d in getattr(node, "decorator_list", [])] + [node.lineno]
+        )
+        start = starts[first - 1]
+        end = starts[node.end_lineno] if node.end_lineno < len(starts) else len(text)
+        found = Item(kind, node.name, start, end)
+        body = text[start:end]
+        found.print_ = norm(re.sub(rf"\b{re.escape(node.name)}\b", "", body, count=1))
+        return found
+
+    tests, groups = [], []
+    functions = (ast.FunctionDef, ast.AsyncFunctionDef)
+    for node in tree.body:
+        if isinstance(node, functions) and node.name.startswith("test"):
+            tests.append(item("test", node))
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            groups.append(item("group", node))
+            for child in node.body:
+                if isinstance(child, functions) and child.name.startswith("test"):
+                    tests.append(item("test", child))
+    nest(tests + groups, groups)
+    return Parsed(text, tests, groups)
+
+
+COMMENTS = {
+    "clojure": (";",),
+    "js": ("//", "/*", "*"),
+    "python": ("#",),
+}
+
+
+def language(path: str) -> str:
+    if re.search(r"\.clj[cs]?$", path):
+        return "clojure"
+    if path.endswith(".py"):
+        return "python"
+    return "js"
+
+
+def parse(path: str, text: str) -> Parsed:
+    lang = language(path)
+    if lang == "clojure":
+        return parse_clojure(text)
+    if lang == "python":
+        return parse_python(text)
+    return parse_js(text)
+
+
+# ---------------------------------------------------------------- Drops
+
+
+@dataclass
+class Finding:
+    commit: str
+    path: str
+    name: str  # "" for a deleted file
+    line: int
+    marker: str
+    marker_line: int
+    tests: int = 1
+
+    def trailer(self) -> str:
+        target = f"{self.path} {self.name}" if self.name else self.path
+        return f"{TRAILER}: {target} - {PLACEHOLDER}"
+
+
+def first_marker(text: str, spans: list[tuple[int, int]]) -> tuple[str, int] | None:
+    best = None
+    for start, end in spans:
+        m = MARKER.search(text, start, end)
+        if m and (best is None or m.start() < best.start()):
+            best = m
+    if best is None:
+        return None
+    return best.group(), text.count("\n", 0, best.start()) + 1
+
+
+def removed_tests(old: Parsed, new: Parsed | None) -> list[Item]:
+    """Return the old tests whose name count drops in the new version."""
+    news: dict[str, list[Item]] = defaultdict(list)
+    for t in new.tests if new else []:
+        news[t.name].append(t)
+    olds: dict[str, list[Item]] = defaultdict(list)
+    for t in old.tests:
+        olds[t.name].append(t)
+    gone = []
+    for name, items in olds.items():
+        extra = len(items) - len(news[name])
+        if extra <= 0:
+            continue
+        kept = Counter(t.print_ for t in news[name])
+        unmatched = []
+        for t in items:
+            if kept[t.print_] > 0:
+                kept[t.print_] -= 1
+            else:
+                unmatched.append(t)
+        gone.extend(unmatched[-extra:])
+    return gone
+
+
+def take(added: list[tuple[str, Item]], score) -> bool:
+    """Remove the added test with the best positive score. Return whether one was found."""
+    best, index = max(
+        ((score(path, test), i) for i, (path, test) in enumerate(added)),
+        default=(0.0, -1),
+    )
+    if best <= 0:
+        return False
+    added.pop(index)
+    return True
+
+
+def similar(a: str, b: str) -> float:
+    ratio = difflib.SequenceMatcher(None, a, b).ratio()
+    return ratio if ratio >= SIMILAR else 0.0
+
+
+def commit_findings(
+    commit: str, parent: str, blobs: Blobs
+) -> tuple[int, list[Finding]]:
+    """Return the count of deleted tests and the marked ones of one commit."""
+    versions = {}
+    for path, old_oid, new_oid in changed_test_files(parent, commit):
+        old = parse(path, blobs.text(old_oid)) if old_oid else None
+        new = parse(path, blobs.text(new_oid)) if new_oid else None
+        versions[path] = (old, new)
+
+    added: list[tuple[str, Item]] = []
+    removed: list[tuple[str, Item]] = []
+    for path, (old, new) in versions.items():
+        if new:
+            old_names = Counter(t.name for t in old.tests) if old else Counter()
+            seen: Counter = Counter()
+            for t in new.tests:
+                seen[t.name] += 1
+                if seen[t.name] > old_names[t.name]:
+                    added.append((path, t))
+        if old:
+            removed.extend((path, t) for t in removed_tests(old, new))
+
+    # A removed test stays when an added test has its name in another file, then
+    # its body, then a similar name in its file. Each added test explains one.
+    rules = [
+        lambda path, t: lambda p, a: 1.0 if p != path and a.name == t.name else 0.0,
+        lambda path, t: lambda p, a: 1.0 if a.print_ == t.print_ else 0.0,
+        lambda path, t: lambda p, a: similar(t.name, a.name) if p == path else 0.0,
+    ]
+    dropped = removed
+    for rule in rules:
+        dropped = [(path, t) for path, t in dropped if not take(added, rule(path, t))]
+    gone = {id(t) for _, t in dropped}
+
+    findings = []
+    for path, (old, new) in versions.items():
+        if not old:
+            continue
+        mine = [t for p, t in removed if p == path]
+        lost = [t for t in mine if id(t) in gone]
+        if not lost:
+            continue
+        text = old.text
+        if new is None:
+            spans, last = [], 0
+            for t in sorted(
+                (t for t in mine if id(t) not in gone), key=lambda t: t.start
+            ):
+                spans.append((last, t.start))
+                last = max(last, t.end)
+            spans.append((last, len(text)))
+            hit = first_marker(text, spans)
+            if hit:
+                findings.append(Finding(commit, path, "", 1, hit[0], hit[1], len(lost)))
+            continue
+        comments = COMMENTS[language(path)]
+        gone_groups = Counter(g.name for g in old.groups) - Counter(
+            g.name for g in new.groups
+        )
+        for t in lost:
+            spans = [(comment_above(text, t.start, comments)[0], t.end)]
+            for g in t.parents:
+                if gone_groups[g.name] > 0:
+                    spans.append(
+                        (comment_above(text, g.start, comments)[0], g.head_end)
+                    )
+            hit = first_marker(text, spans)
+            if hit:
+                line = text.count("\n", 0, t.start) + 1
+                findings.append(Finding(commit, path, t.name, line, hit[0], hit[1]))
+    return len(dropped), findings
+
+
+def trailer_values(revs: list[str]) -> list[str]:
+    out = git(
+        "log", "-z", f"--format=%(trailers:key={TRAILER},valueonly,unfold)", *revs
+    )
+    return [
+        norm(line)
+        for chunk in out.split("\0")
+        for line in chunk.splitlines()
+        if line.strip()
+    ]
+
+
+def explained(finding: Finding, values: list[str]) -> bool:
+    prefixes = [f"{finding.path} - "]
+    if finding.name:
+        prefixes.append(norm(f"{finding.path} {finding.name}") + " - ")
+    for value in values:
+        for prefix in prefixes:
+            if value.startswith(prefix):
+                reason = value[len(prefix) :].strip()
+                if reason and reason != PLACEHOLDER:
+                    return True
+    return False
+
+
+def default_base() -> str:
+    for rev in ("@{upstream}", "origin/main"):
+        if commit_of(rev):
+            return rev
+    raise GitError("give BASE: this branch has no upstream and there is no origin/main")
+
+
+def commits(base: str, head: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """Return (commit, parent) pairs, oldest first, and the revisions for git log."""
+    head_commit = commit_of(head)
+    if not head_commit:
+        raise GitError(f"HEAD is not a commit: {head}")
+    if not base.strip("0"):
+        lines = git("rev-list", "--parents", "-n", "1", head_commit).split()
+        pairs = [(lines[0], lines[1])] if len(lines) == 2 else []
+        return pairs, ["-1", head_commit]
+    base_commit = commit_of(base)
+    if not base_commit:
+        raise GitError(f"BASE is not a commit: {base}")
+    rng = f"{base_commit}..{head_commit}"
+    pairs = []
+    for line in git(
+        "rev-list", "--reverse", "--no-merges", "--parents", rng
+    ).splitlines():
+        ids = line.split()
+        if len(ids) == 2:
+            pairs.append((ids[0], ids[1]))
+    return pairs, [rng]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "base",
+        nargs="?",
+        help="exclusive start commit (default: @{upstream}, else origin/main; zeros: HEAD only)",
+    )
+    parser.add_argument(
+        "head", nargs="?", default="HEAD", help="last commit to check (default: HEAD)"
+    )
+    args = parser.parse_args()
+    try:
+        base = default_base() if args.base is None else args.base
+        pairs, revs = commits(base, args.head)
+        subjects = {}
+        for line in git("log", "--format=%H %s", *revs).splitlines():
+            sha, _, subject = line.partition(" ")
+            subjects[sha] = subject
+        values = trailer_values(revs)
+        blobs = Blobs()
+        try:
+            deleted, findings = 0, []
+            for commit, parent in pairs:
+                count, found = commit_findings(commit, parent, blobs)
+                deleted += count
+                findings.extend(found)
+        finally:
+            blobs.close()
+    except GitError as error:
+        print(f"check-test-drops: {error}", file=sys.stderr)
+        return 2
+
+    missing = [f for f in findings if not explained(f, values)]
+    if not missing:
+        print(
+            f"check-test-drops: OK. {plural(len(pairs), 'commit')}, {plural(deleted, 'deleted test')}, "
+            f"{len(findings)} marked with a {TRAILER} trailer."
+        )
+        return 0
+
+    count = sum(f.tests for f in missing)
+    print(
+        f"check-test-drops: {count} of {deleted} deleted tests name an issue, a regression "
+        f"or a contract fixture, and no {TRAILER} trailer gives a reason.\n"
+    )
+    by_commit: dict[str, dict[str, list[Finding]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for f in missing:
+        by_commit[f.commit][f.path].append(f)
+    for commit, files in by_commit.items():
+        print(f"{commit[:9]} {subjects.get(commit, '')}")
+        for path, found in files.items():
+            print(f"  {path}")
+            for f in found:
+                where = (
+                    f'line {f.line} "{f.name}"'
+                    if f.name
+                    else f"deleted file with {f.tests} tests"
+                )
+                print(f"    {where}: {f.marker} (line {f.marker_line})")
+            line = (
+                found[0].trailer()
+                if len(found) == 1
+                else f"{TRAILER}: {path} - {PLACEHOLDER}"
+            )
+            print(f"    {line}")
+        print()
+    print("Restore each test whose behaviour still exists.")
+    print(
+        "Else put the trailer line, with a real reason, in the commit that deletes the test."
+    )
+    print(f'One "{TRAILER}: <file> - <reason>" line explains every test of that file.')
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,31 @@
+name: Test drops
+
+# Checks each push and pull request with bin/check-test-drops. A deleted test
+# that names an issue, a regression, a user report or a vis-contract fixture
+# needs a Drops-Test trailer (AGENTS.md, Tests).
+# This workflow has no concurrency group. In ci.yml, a newer push cancels the
+# older run, and then no run checks the commits of the older push.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test-drops:
+    name: test drops / Drops-Test trailers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The check reads each commit from the base commit to the head commit.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check deleted tests
+        env:
+          DROPS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          DROPS_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bin/check-test-drops "$DROPS_BASE" "$DROPS_HEAD"

@@ -44,11 +44,63 @@ Run each project's tools from its own directory.
 
 ## Tests
 
+Write a test only for a defect that a person or another program would see.
+
+### Write a test
+
+- Name the defect before you write its test. If you cannot name a defect, do not write the test.
+- Make each test fail when its behaviour breaks. To prove this, return nil or invert a condition, then see the test fail.
+- For a bug fix, write the test first. See it fail for the reported reason.
+- For a regression test, name the issue or the user report in its comment.
+- Read the tests of a function before you add a test. Write one test for each rule or branch.
+- Add a table row only for a case that takes a different branch.
+- Put logic in a pure function, and test that function.
+- Test a component only for a decision inside it, for example focus, order, paging or a race.
+- Do not write a test only for coverage or a CRAP score. Split the function, or test a real branch.
+- For a host, bootstrap or extension boundary change, test across that boundary. Do not drop required keys or validation because one consumer ignores them.
+
+### Do not write these tests
+
+- A value that goes in and comes back unchanged.
+- A style, class, icon, DOM shape or exact column.
+- A constant, default, declaration, registry entry or literal list.
+- A control that calls its callback. Test the state change or the request instead.
+- Prose: a prompt, label, help text or document.
+- An internal call, a call count or a delegation.
+- A test helper or a story fixture.
+- A snapshot test, or a story play that only reads markup.
+
+### Keep these tests
+
+- A measured invariant, for example a contrast of 4.5 or more, or no line wider than the terminal.
+- A value that another program reads. Test it against a schema or a fixture in `packages/vis-contract/`.
+- A call count that is the requirement, for example a cache, a performance limit or idempotency. Name the report in its comment.
+- A test that names an issue or a report, while its behaviour exists.
+
+### Delete a test
+
+Delete a test only when the lists above reject it or its behaviour is gone. A test that moves to another file, or keeps its body or a similar name, stays.
+
+A deleted test is marked when it names an issue, a regression, a user report or `vis-contract/fixtures/`. Its body, the comment lines directly above it and a deleted file count. For each marked test, put a trailer with a real reason in the commit that deletes the test:
+
+```text
+Drops-Test: <file> <test name> - <reason>
+Drops-Test: <file> - <reason>
+```
+
+The second form covers all tests of the file. Put these lines in the trailer block, with `Vis-Session:`.
+
+- Before each push, run `bin/check-test-drops`. It checks the commits from the upstream branch to `HEAD`.
+- If it reports a test, restore the test or add its trailer. Copy the trailer line from the report, and replace `<reason>`.
+- If the commit is already pushed, add the trailer to an empty commit.
+
+The `Test drops` workflow runs the same check on each push and pull request. A push to `main` gets its result only after the push.
+
+### Lazytest
+
 - Use Lazytest's own API: `[lazytest.core :refer [defdescribe describe it expect]]`. The runner ignores `clojure.test` without a warning.
 - Do not use Lazytest's experimental interfaces. Use `set-ns-context!` and `around-each`, not `use-fixtures`.
 - Group cases with `describe`. An `it` inside another `it` never runs.
-- If you add a regression test for an issue, name the issue in its comment.
-- For a host, bootstrap or extension boundary change, test across that boundary. Do not drop required keys or validation because one consumer ignores them.
 - Delimiter (Parinfer) repair fixes syntax only. It does not prove that the code is correct.
 
 ## Simplified English
