@@ -430,10 +430,12 @@
           (expect (not (str/includes? cli rule)) rule)))))
 
 (defdescribe prompt-core-test
+             ;; User decision: `## Calls` gives ls, cat, grep and patch their signatures
+             ;; and one example each, so the budget grew from 4700 to 5200.
              (it "keeps the core prompt under its fixed size budget"
                  (let [text (var-get (ns-resolve 'com.blockether.vis.internal.context.prompt
                                                  'CORE_SYSTEM_PROMPT))]
-                   (expect (< (count text) 4700))))
+                   (expect (< (count text) 5200))))
              (it "bans subprocess and states the shell handle only when shell is active"
                  ;; User review: shell rules cost every request, so they ride only with an active shell.
                  (let [text
