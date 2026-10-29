@@ -1189,6 +1189,17 @@
    starting cannot hold up the exit of this process."
   10000)
 
+(defn- stop-thread!
+  "Run `f` on a new daemon thread and return the thread. The exit hook calls
+   `stop!` after a CLI's `shutdown-agents`, so `stop!` cannot use `future`."
+  ^Thread [f]
+  (doto (Thread. ^Runnable
+                 (fn []
+                   (try (f) (catch Throwable _ nil)))
+                 "vis-python-worker-stop")
+    (.setDaemon true)
+    (.start)))
+
 (defn stop!
   "Stop every worker and every spare, in parallel, and end every process that a
    worker started, also those that sleeping workers kept. Idempotent. A worker that
@@ -1206,18 +1217,19 @@
 
         stops
         (doall (concat (map (fn [k]
-                              (future (binding [*keep-children?* false]
-                                        (stop-worker! k))))
+                              (stop-thread! #(binding [*keep-children?* false] (stop-worker! k))))
                             (keys @workers))
                        (map (fn [spare]
-                              (future (when-let [state (try (deref spare STOP_ALL_MS nil)
-                                                            (catch Throwable _ nil))]
-                                        (binding [*keep-children?* false]
-                                          (stop-state! state)))))
+                              (stop-thread! #(when-let [state
+                                                        (try (deref spare STOP_ALL_MS nil)
+                                                             (catch Throwable _ nil))]
+                                               (binding [*keep-children?* false]
+                                                 (stop-state! state)))))
                             spare-futures)))]
 
-    (doseq [stop stops]
-      (try (deref stop (max 0 (- deadline (long (util/now-ms)))) nil) (catch Throwable _ nil)))
+    (doseq [^Thread stop stops]
+      (let [wait-ms (- deadline (long (util/now-ms)))]
+        (when (pos? wait-ms) (try (.join stop wait-ms) (catch InterruptedException _ nil)))))
     (let [[kept _]
           (reset-vals! kept-children #{})
 

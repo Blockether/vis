@@ -1924,6 +1924,29 @@ print(worker_value)"))))
              (expect (nil? (worker/stop!))))
            (finally (worker/keep-spares! nil nil) (worker/stop-worker! key))))))
 
+(defdescribe stop-after-shutdown-agents-test
+             ;; Regression: `vis-agent extension sync` exited 0, but its exit hook printed a
+             ;; RejectedExecutionException. CLI commands call `shutdown-agents` before exit.
+             (it "stops every worker when the future pool is already shut down"
+                 (let [key
+                       (worker/extension-worker-key (str (java.util.UUID/randomUUID)))
+
+                       solo
+                       clojure.lang.Agent/soloExecutor
+
+                       closed
+                       (doto (java.util.concurrent.Executors/newSingleThreadExecutor) (.shutdown))]
+
+                   (try
+                     (worker/exec! key com.blockether.vis-python-runtime/default-session "pass\n")
+                     (let [^Process process (:process (get @@#'worker/workers key))]
+                       (set-agent-send-off-executor! closed)
+                       (expect (nil? (worker/stop!)))
+                       (set-agent-send-off-executor! solo)
+                       (expect (.waitFor process 5 java.util.concurrent.TimeUnit/SECONDS))
+                       (expect (not (contains? @@#'worker/workers key))))
+                     (finally (set-agent-send-off-executor! solo) (worker/stop-worker! key))))))
+
 (defdescribe sleeping-worker-test
              ;; Regression: an idle sandbox stop killed the processes that its Python started.
              ;; A sleeping worker keeps them; only `stop!` ends them.
