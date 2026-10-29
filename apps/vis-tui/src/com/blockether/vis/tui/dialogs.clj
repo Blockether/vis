@@ -7,6 +7,7 @@
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.table :as table]
+            [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.client :as vis]
@@ -3591,7 +3592,17 @@
         (str
           "Hide the header and the footer, so the screen shows only the transcript and the prompt. "
           (keymap/label-for :toggle-zen-mode)
-          " turns it on and off.")}]
+          " turns it on and off.")}
+       {:key :zen-left-image
+        :type :path
+        :label "Zen left picture"
+        :description
+        "A picture in the left margin of Zen mode, on a terminal that shows images. Enter an empty path to remove it."}
+       {:key :zen-right-image
+        :type :path
+        :label "Zen right picture"
+        :description
+        "A picture in the right margin of Zen mode, on a terminal that shows images. Enter an empty path to remove it."}]
       (thinking-modes-rows))))
 
 (declare titleize-label)
@@ -4445,6 +4456,11 @@
     :toggle
     (if (get values key false) "On" "Off")
 
+    :path
+    (if-let [path (get values key)]
+      (str (.getName (java.io.File. ^String path)))
+      "None")
+
     :set-toggle
     (if (contains? (get values set-key #{}) item-id) "Off" "On")
 
@@ -4541,8 +4557,8 @@
 
 (defn- settings-selectable?
   [{:keys [type button fold]}]
-  (or (contains? #{:toggle :choice :action :agent-name :text-setting :secret-setting :number-setting
-                   :structured-setting :set-toggle :registry-toggle :mcp :provider}
+  (or (contains? #{:toggle :choice :path :action :agent-name :text-setting :secret-setting
+                   :number-setting :structured-setting :set-toggle :registry-toggle :mcp :provider}
                  type)
       ;; A section header with a button takes the selection like a setting. A folded
       ;; header takes it too, so the keyboard can open the section again.
@@ -5443,6 +5459,24 @@
     :structured-setting
     (when-let [value (settings-structured-editor! screen g region row)]
       (save-setting-value! screen g region (:toggle-id row) value))
+
+    ;; A local picture path: an empty answer removes the picture, a file that is no
+    ;; picture keeps the old value.
+    :path
+    (let [region (host-band-region screen region)]
+      (when-let [text (mini-read! screen
+                                  g
+                                  region
+                                  (:label row)
+                                  {:initial (get @values (:key row))
+                                   :placeholder "~/Pictures/zen.png"})]
+        (if-let [picture (when-not (str/blank? text) (timg/picture-file text))]
+          (->> (swap! values assoc (:key row) (:path picture))
+               (notify-settings-change! callbacks))
+          (if (str/blank? text)
+            (->> (swap! values assoc (:key row) nil)
+                 (notify-settings-change! callbacks))
+            (mini-note! screen g region "Not a picture" (str "Vis cannot show " text "."))))))
 
     :inherit
     (try (cache-setting-row! (notify-change-error! (vis/inherit-setting! (:toggle-id row)

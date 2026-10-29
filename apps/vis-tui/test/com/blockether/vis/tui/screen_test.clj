@@ -4422,23 +4422,27 @@ therapy line 2"
                                                                 (DefaultVirtualTerminal.
                                                                   (TerminalSize. (int cols) 30)))
                                                           (.startScreen))]
-              (with-redefs [state/app-db (atom db)
-                            timg/images-protocol (constantly nil)
-                            vis/notifications (constantly [{:text "Copied zen" :level :success}])]
+              (let [images (atom nil)]
+                (with-redefs [state/app-db (atom db)
+                              timg/images-protocol (constantly nil)
+                              screen/paint-terminal-images! #(reset! images %)
+                              vis/notifications (constantly [{:text "Copied zen" :level :success}])]
 
-                (let [full (#'screen/render-frame! terminal-screen cols 30 db 1000)
-                      [layout _]
-                      (if (= :full path)
-                        [full]
-                        (#'screen/paint-frame! terminal-screen path cols 30 db 1020 full))]
+                  (let [full (#'screen/render-frame! terminal-screen cols 30 db 1000)
+                        [layout _]
+                        (if (= :full path)
+                          [full]
+                          (do (reset! images nil)
+                              (#'screen/paint-frame! terminal-screen path cols 30 db 1020 full)))]
 
-                  {:layout layout
-                   :rows (mapv (fn [row]
-                                 (apply str
-                                   (for [col (range cols)]
-                                     (.getCharacterString
-                                       (.getBackCharacter terminal-screen (int col) (int row))))))
-                               (range 30))})))))
+                    {:layout layout
+                     :images @images
+                     :rows (mapv (fn [row]
+                                   (apply str
+                                     (for [col (range cols)]
+                                       (.getCharacterString
+                                         (.getBackCharacter terminal-screen (int col) (int row))))))
+                                 (range 30))}))))))
 
         row-of
         (fn [rows text]
@@ -4488,4 +4492,44 @@ therapy line 2"
                        (str/index-of (nth rows (row-of rows "hello zen")) "│ hello zen")))
             (expect (= (apply str (repeat width "─")) (subs prompt-rule left (+ left width))))
             (expect (every? #(and (str/blank? (subs % 0 left)) (str/blank? (subs % (+ left width))))
-                            rows)))))))
+                            rows)))))
+    ;; User request: a terminal that shows images can show a picture at each side of the
+    ;; Zen transcript. A repaint path that moves the transcript also keeps the pictures.
+    (let [picture
+          (doto (java.io.File/createTempFile "zen-margin" ".png") (.deleteOnExit))
+
+          not-picture
+          (doto (java.io.File/createTempFile "zen-margin" ".txt") (.deleteOnExit))]
+
+      (io/copy
+        (.decode
+          (java.util.Base64/getDecoder)
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        picture)
+      (spit not-picture "plain text")
+      ;; 120 columns: the column is cells 23 to 96, so each margin has 23 cells.
+      (it "places the Zen pictures inside the margins beside the column"
+          (doseq [path [:full :scroll]]
+            (let [{:keys [images]} (frame 120
+                                          {:zen-mode true
+                                           :zen-left-image (str picture)
+                                           :zen-right-image (str picture)}
+                                          path)
+                  [left right] (sort-by :col images)]
+
+              (expect (= 2 (count images)))
+              (expect (= (.getAbsolutePath picture) (:path (:img left)) (:path (:img right))))
+              (expect (<= 2 (:col left)))
+              (expect (<= (+ (:col left) (:cols (:img left))) 21))
+              (expect (<= 99 (:col right)))
+              (expect (<= (+ (:col right) (:cols (:img right))) 118))
+              (expect (every? #(and (<= 1 (:row %)) (<= (+ (:row %) (:rows (:img %))) 29)) images)))
+            ;; Outside Zen mode no picture shows. A file that is no picture leaves its margin empty.
+            (expect (empty? (:images (frame 120 {:zen-left-image (str picture)} :full))))
+            (let [{:keys [images]} (frame 120
+                                          {:zen-mode true
+                                           :zen-left-image (str not-picture)
+                                           :zen-right-image (str picture)}
+                                          :full)]
+              (expect (= 1 (count images)))
+              (expect (<= 99 (:col (first images))))))))))

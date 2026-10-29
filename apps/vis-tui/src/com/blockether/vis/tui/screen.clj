@@ -3408,6 +3408,69 @@
      :base-left base-left
      :base-cols base-cols}))
 
+(def ^:private zen-margin-pad
+  "Blank cells between a Zen margin picture and the sides of its margin."
+  2)
+
+(defn- zen-margin-images
+  "The Zen margin pictures of a `cols` x `rows` screen as image regions in screen columns.
+   Settings `:zen-left-image` and `:zen-right-image` name the files. Each picture keeps its
+   aspect ratio and is centred in its margin, inside a blank border. A margin that is too
+   small, or a file that is no picture, shows nothing."
+  [db cols rows]
+  (when (get-in db [:settings :zen-mode])
+    (let [{:keys [left base-left base-cols] zen-cols :cols}
+          (chat-pane db cols rows)
+
+          pad
+          (long zen-margin-pad)
+
+          right
+          (+ (long left) (long zen-cols))
+
+          box-h
+          (- (long rows) 2)]
+
+      (vec
+        (for [[k x w]
+              [[:zen-left-image base-left (- (long left) (long base-left))]
+               [:zen-right-image right (- (+ (long base-left) (long base-cols)) right)]]
+
+              :let [box-w
+                    (- (long w) (* 2 pad))
+
+                    picture
+                    (when (and (>= box-w 4) (>= box-h 2))
+                      (timg/picture-file (get-in db [:settings k])))]
+              :when picture
+              :let [fit
+                    (timg/cell-size {:w (:width picture) :h (:height picture)} box-w box-h)
+
+                    pic-cols
+                    (min box-w (long (:cols fit)))
+
+                    pic-rows
+                    (min box-h (long (:rows fit)))]]
+
+          {:row (+ 1 (quot (- box-h pic-rows) 2))
+           :col (+ (long x) pad (quot (- box-w pic-cols) 2))
+           :img (assoc picture
+                  :id (str (name k) " " (:path picture))
+                  :cols pic-cols
+                  :rows pic-rows)})))))
+
+(defn- frame-image-regions
+  "The pictures of one frame in screen columns: the transcript `placements` that show in
+   the band from `messages-top` to `messages-bottom`, then the Zen margin pictures of a
+   `screen-cols` x `rows` screen. Native image layers cannot clip behind an overlay rail,
+   so no picture starts under it."
+  [db screen-cols rows placements messages-top messages-bottom]
+  (let [rail-width (long (or (:width (projects/geometry db screen-cols rows)) 0))]
+    (->> (zen-margin-images db screen-cols rows)
+         (into (mapv #(update % :col frame/screen-column)
+                     (fitting-image-placements placements messages-top messages-bottom)))
+         (filterv #(>= (long (:col %)) rail-width)))))
+
 (defn- project-sidebar-key-allowed?
   "Keep sidebar help keys available to dismiss help while other rail actions are locked."
   [db cols key]
@@ -4034,18 +4097,15 @@
           ;; F1 help / F2 context modal cards own the screen — drop the
           ;; graphics-layer images so they don't paint over the overlay.
           (drop-terminal-images!)
-          (paint-terminal-images!
-            (let [rail-width (long (or (:width (projects/geometry db screen-cols rows)) 0))]
-              ;; A band moves the agent dock up over the transcript; no image may
-              ;; cover the dock.
-              (->> (fitting-image-placements
-                     @image-sink
-                     messages-top
-                     (if band-top (- (long band-top) dock-h) messages-bottom))
-                   (map #(update % :col frame/screen-column))
-                   ;; Native image layers cannot clip behind a narrow overlay rail.
-                   (filter #(>= (long (:col %)) rail-width))
-                   vec)))))
+          ;; A band moves the agent dock up over the transcript; no image may
+          ;; cover the dock.
+          (paint-terminal-images! (frame-image-regions
+                                    db
+                                    screen-cols
+                                    rows
+                                    @image-sink
+                                    messages-top
+                                    (if band-top (- (long band-top) dock-h) messages-bottom)))))
       {:cols cols
        :screen-cols screen-cols
        :chat-left (long frame/*column-offset*)
@@ -4786,7 +4846,12 @@
     ;; emits. The cheap live-band path deliberately does NOT paint: it repaints
     ;; no image row, so its empty sink would delete every live placement.
     (when transcript-shifted?
-      (paint-terminal-images! (fitting-image-placements @image-sink messages-top messages-bottom)))
+      (paint-terminal-images! (frame-image-regions db
+                                                   (or (:screen-cols previous-layout) cols)
+                                                   rows
+                                                   @image-sink
+                                                   messages-top
+                                                   messages-bottom)))
     (merge previous-layout
            {:cols cols
             :rows rows
@@ -4943,7 +5008,12 @@
     ;; Re-anchor inline images to the scrolled rows. Transmit-once + placement means
     ;; this is a handful of tiny `a=p` escapes, not a per-tick re-upload — so image
     ;; sessions get the cheap scroll path instead of a forced full frame.
-    (paint-terminal-images! (fitting-image-placements @image-sink messages-top messages-bottom))
+    (paint-terminal-images! (frame-image-regions db
+                                                 (or (:screen-cols previous-layout) cols)
+                                                 rows
+                                                 @image-sink
+                                                 messages-top
+                                                 messages-bottom))
     (merge previous-layout
            {:cols cols
             :rows rows

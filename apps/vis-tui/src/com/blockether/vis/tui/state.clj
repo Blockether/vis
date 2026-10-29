@@ -840,10 +840,15 @@
                 :else nil)]
     (keyword (if (str/blank? s) shared-theme/default-theme-id s))))
 
+(defn- normalize-picture-path [v] (when (string? v) (not-empty (str/trim v))))
+
 (defn- normalize-settings
-  "Coerce app-local transcript and theme preferences."
+  "Coerce app-local transcript and theme preferences. A blank Zen picture path is none."
   [settings]
-  (update settings :theme-name normalize-theme-name))
+  (-> settings
+      (update :theme-name normalize-theme-name)
+      (update :zen-left-image normalize-picture-path)
+      (update :zen-right-image normalize-picture-path)))
 
 (defn- migrated-toggle-projection
   "Pull the migrated boolean + enum toggles back into a flat
@@ -869,7 +874,9 @@
   {:theme-name (keyword shared-theme/default-theme-id)
    :show-python-code true
    :summarize-steps true
-   :zen-mode false})
+   :zen-mode false
+   :zen-left-image nil
+   :zen-right-image nil})
 
 (defn- load-persisted-settings
   []
@@ -879,17 +886,27 @@
                                  {:theme-name (get raw "theme_name")
                                   :show-python-code (get raw "show_python_code" true)
                                   :summarize-steps (get raw "summarize_steps" true)
-                                  :zen-mode (boolean (get raw "zen_mode" false))})))))
+                                  :zen-mode (boolean (get raw "zen_mode" false))
+                                  :zen-left-image (get raw "zen_left_image")
+                                  :zen-right-image (get raw "zen_right_image")})))))
 
 (defn- persist-settings!
   [settings]
-  (let [{:keys [theme-name show-python-code summarize-steps zen-mode]} (normalize-settings
-                                                                         settings)]
-    (try (vis/update-machine-config! #(assoc %
-                                        "theme_name" (name theme-name)
-                                        "show_python_code" show-python-code
-                                        "summarize_steps" (boolean summarize-steps)
-                                        "zen_mode" (boolean zen-mode)))
+  (let [{:keys [theme-name show-python-code summarize-steps zen-mode zen-left-image
+                zen-right-image]}
+        (normalize-settings settings)
+
+        picture
+        (fn [config k path]
+          (if path (assoc config k path) (dissoc config k)))]
+
+    (try (vis/update-machine-config! #(-> %
+                                          (assoc "theme_name" (name theme-name)
+                                                 "show_python_code" show-python-code
+                                                 "summarize_steps" (boolean summarize-steps)
+                                                 "zen_mode" (boolean zen-mode))
+                                          (picture "zen_left_image" zen-left-image)
+                                          (picture "zen_right_image" zen-right-image)))
          (catch Throwable _
            (vis/notify!
              "Terminal preferences could not be saved; changes apply only to this session."

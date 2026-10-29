@@ -525,6 +525,37 @@
            (video-paste-descriptor text workspace-root))
        (catch Throwable _ nil)))
 
+(defonce ^:private picture-files
+  ;; The last answer of `picture-file` for each path, with the file stamp that it read.
+  (atom {}))
+
+(defn picture-file
+  "The picture at `path` as `{:path :mime :width :height}`, or nil when the file is
+   missing or is no picture that a terminal can draw. A clip answers with its first
+   frame. A leading `~` names the home directory. The answer stays cached until the
+   file changes, so a frame can ask on each paint."
+  [path]
+  (when-let [path (some-> path
+                          str
+                          str/trim
+                          not-empty)]
+    (let [home (System/getProperty "user.home")
+          f (io/file (cond (= "~" path) home
+                           (str/starts-with? path "~/") (str home (subs path 1))
+                           :else path))
+          stamp [(.lastModified f) (.length f)]
+          cached (get @picture-files path)]
+
+      (if (= stamp (:stamp cached))
+        (:picture cached)
+        (let [picture (when (.isFile f)
+                        (let [{:keys [mime width height] :as found}
+                              (probe-paste-image (.getAbsolutePath f) {})]
+                          (when (and width height)
+                            {:path (:path found) :mime mime :width width :height height})))]
+          (swap! picture-files assoc path {:stamp stamp :picture picture})
+          picture)))))
+
 ;; Persisted-attachment materialization (durable history re-render)
 
 (defn attachment-cache-dir
