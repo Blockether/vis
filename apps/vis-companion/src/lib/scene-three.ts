@@ -18,11 +18,15 @@ import {
 } from 'three';
 import type { LiveSceneNode } from './live-view';
 import {
-  easePose,
+  easeAt,
+  easeDuration,
+  retarget,
   sceneCamera,
+  sceneGap,
   sceneGeometry,
   SCENE_LIGHT,
   type LiveSceneObject,
+  type SceneEase,
   type ScenePose,
 } from './scene';
 
@@ -77,9 +81,7 @@ function flatGeometry(vertices: number[][], faces: number[][]): BufferGeometry {
 
 interface Drawn {
   mesh: Mesh<BufferGeometry, ShaderMaterial>;
-  from: ScenePose;
-  to: ScenePose;
-  start: number;
+  ease: SceneEase;
 }
 
 export interface SceneEngine {
@@ -103,6 +105,10 @@ export function createSceneEngine(host: HTMLElement): SceneEngine {
   let camera: PerspectiveCamera | OrthographicCamera = new PerspectiveCamera();
   let current: LiveSceneNode | null = null;
   let frame = 0;
+  // Patches never come exactly one tick apart. Each move lasts as long as the
+  // measured gap, so the objects keep moving until the next patch.
+  let gap = 0;
+  let lastUpdate = 0;
 
   const light = new Vector3(...SCENE_LIGHT.direction).normalize();
 
@@ -125,11 +131,12 @@ export function createSceneEngine(host: HTMLElement): SceneEngine {
     item.mesh.scale.setScalar(pose.scale);
   }
 
+  function wrapOf(): LiveSceneNode | undefined {
+    return current?.is_wrapping ? current : undefined;
+  }
+
   function poseAt(item: Drawn, now: number): ScenePose {
-    const tick = current?.tick_ms ?? 0;
-    const t = tick > 0 ? (now - item.start) / tick : 1;
-    const wrap = current?.is_wrapping ? current : undefined;
-    return easePose(item.from, item.to, t, wrap);
+    return easeAt(item.ease, now, wrapOf());
   }
 
   function resize() {
@@ -144,7 +151,7 @@ export function createSceneEngine(host: HTMLElement): SceneEngine {
     let isMoving = false;
     for (const item of drawn.values()) {
       place(item, poseAt(item, now));
-      if (current && current.tick_ms > 0 && now - item.start < current.tick_ms) isMoving = true;
+      if (now - item.ease.start < item.ease.duration) isMoving = true;
     }
     renderer.render(world, camera);
     if (isMoving) frame = requestAnimationFrame(render);
@@ -179,6 +186,9 @@ export function createSceneEngine(host: HTMLElement): SceneEngine {
     update(node) {
       const now = performance.now();
       current = node;
+      gap = lastUpdate ? sceneGap(gap || node.tick_ms, now - lastUpdate, node.tick_ms) : node.tick_ms;
+      lastUpdate = now;
+      const duration = easeDuration(node.tick_ms, gap);
       renderer.setClearColor(new Color(node.background), 1);
       const view = sceneCamera(node.width, node.height, node.fov);
       const [halfWidth, halfHeight] = [node.width / 2, node.height / 2];
@@ -198,14 +208,10 @@ export function createSceneEngine(host: HTMLElement): SceneEngine {
         if (!item) {
           const mesh = new Mesh(geometry, material(object));
           world.add(mesh);
-          drawn.set(object.id, { mesh, from: object, to: object, start: now });
+          drawn.set(object.id, { mesh, ease: retarget(undefined, object, now, duration) });
           continue;
         }
-        // Ease from where the object is NOW, so a patch that lands mid-tick
-        // bends the path instead of jumping back to the last target.
-        item.from = poseAt(item, now);
-        item.to = object;
-        item.start = now;
+        item.ease = retarget(item.ease, object, now, duration, wrapOf());
         item.mesh.geometry = geometry;
         item.mesh.material.uniforms.uColor.value = rgb(object.color);
         item.mesh.material.uniforms.uEmissive.value = object.is_emissive ? 1 : 0;

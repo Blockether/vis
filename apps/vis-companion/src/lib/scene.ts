@@ -225,3 +225,57 @@ export function easePose(
     scale: from.scale + (to.scale - from.scale) * k,
   };
 }
+
+/** One object on its way from one pose to the next. */
+export interface SceneEase {
+  from: ScenePose;
+  to: ScenePose;
+  start: number;
+  duration: number;
+}
+
+/** How much longer than the gap between two patches a move lasts. A move that
+ * ends a little after the next patch arrives never stands still. */
+const EASE_SLACK = 1.15;
+
+/**
+ * The smoothed gap between two patches of a scene, in ms. One late patch moves
+ * it only a little, and a pause longer than three ticks does not count.
+ */
+export function sceneGap(gap: number, sample: number, tickMs: number): number {
+  if (!(sample > 0) || sample > tickMs * 3) return gap;
+  return gap * 0.75 + sample * 0.25;
+}
+
+/** How long one move lasts: the gap between patches and a margin, from one to two ticks. */
+export function easeDuration(tickMs: number, gap: number): number {
+  if (tickMs <= 0) return 0;
+  return Math.min(tickMs * 2, Math.max(tickMs, gap) * EASE_SLACK);
+}
+
+/** The pose of `ease` at `now`. */
+export function easeAt(
+  ease: SceneEase,
+  now: number,
+  wrap?: { width: number; height: number },
+): ScenePose {
+  const t = ease.duration > 0 ? (now - ease.start) / ease.duration : 1;
+  return easePose(ease.from, ease.to, t, wrap);
+}
+
+/**
+ * The ease after a patch gives an object the pose `to`. It starts where the
+ * object is now, so the path bends and never jumps. A pose that did not change
+ * keeps its ease, so a patch for other objects does not slow this one.
+ */
+export function retarget(
+  ease: SceneEase | undefined,
+  to: ScenePose,
+  now: number,
+  duration: number,
+  wrap?: { width: number; height: number },
+): SceneEase {
+  if (!ease) return { from: to, to, start: now, duration };
+  if (POSE_KEYS.every((key) => ease.to[key] === to[key])) return ease;
+  return { from: easeAt(ease, now, wrap), to, start: now, duration };
+}

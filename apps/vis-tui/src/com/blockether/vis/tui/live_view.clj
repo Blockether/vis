@@ -55,10 +55,12 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.transient :as tr]
+            [com.blockether.vis.tui.scene-motion :as scene-motion]
             [com.blockether.vis.tui.scene-raster :as scene-raster]
             [com.blockether.vis.tui.view-materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec])
   (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
+           [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
            [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -825,8 +827,37 @@
   "Cell rows a scene may take: 40 pixels high, so the nodes under it stay on screen."
   20)
 
-;; The band paints many times between two ticks; a scene rasters once per state.
+;; The band paints many times between two ticks; a scene rasters once per frame.
 (def ^:private scene-frame (atom nil))
+
+;; The motion of each scene by node id: objects ease between two patches.
+(def ^:private scene-motion (atom {}))
+
+(defn- now-ms ^double [] (/ (double (System/nanoTime)) 1.0e6))
+
+(defn scene-moving?
+  "Whether a painted scene still eases, so its surface paints again soon."
+  []
+  (let [now (now-ms)]
+    (boolean (some #(< now (double (:until %))) (vals @scene-motion)))))
+
+(defn- scene-now
+  "Scene `node` as it shows now: each object partway to its last pose."
+  [node]
+  (let [now
+        (now-ms)
+
+        {:keys [held node]}
+        (scene-motion/step (get @scene-motion (:id node)) node now)
+
+        until
+        (reduce (fn [^double m {:keys [start duration]}]
+                  (max m (+ (double start) (double duration))))
+                0.0
+                (vals (:eases held)))]
+
+    (swap! scene-motion assoc (:id node) (assoc held :until until))
+    node))
 
 (defn- scene-raster
   [node pw ph]
@@ -849,7 +880,7 @@
         (scene-raster/size node text-w scene-max-rows)
 
         frame
-        (scene-raster node pw ph)
+        (scene-raster (scene-now node) pw ph)
 
         pad
         (quot (- (long text-w) (long pw)) 2)]
@@ -1832,12 +1863,13 @@
                               (get page "lines"))))))
 
 (defn animating?
-  "Whether the visible, expanded pane contains an active spinner."
+  "Whether the visible, expanded pane contains an active spinner or a moving scene."
   [panes]
   (when-let [pane (last (remove dormant? panes))]
     (when-not (or (settled? pane) (minimized? pane))
       (letfn [(active? [node]
                 (or (and (= :spinner (:type node)) (:is-active node))
+                    (and (= :scene (:type node)) (scene-moving?))
                     (and (= :group (:type node))
                          (or (not (:is-collapsible node))
                              (get (:disclosures pane) (:id node) (:default-expanded node)))
@@ -2174,8 +2206,10 @@
 
 (defn- paint-scene!
   "One cell row of a scene: `▀` in the ink of the upper pixel on the paper of
-   the lower one, so each cell shows two pixels in truecolor."
-  [g left row inner-w {:keys [frame scene-row pad]}]
+   the lower one, so each cell shows two pixels in truecolor. A cell is set
+   directly: the glyph is fixed, so the string path's sanitizing and width
+   measuring would run once per pixel pair for nothing."
+  [^TextGraphics g left row inner-w {:keys [frame scene-row pad]}]
   (fill! g left row inner-w t/dialog-fg)
   (let [{:keys [width pixels]}
         frame
@@ -2194,7 +2228,7 @@
 
     (dotimes [c (min w (max 0 (- (long inner-w) 3 pad)))]
       (p/set-colors! g (rgb-ink (aget pixels (+ top c))) (rgb-ink (aget pixels (+ top w c))))
-      (p/put-str! g (+ (long left) 2 pad c) row "▀"))))
+      (.setCharacter g (int (+ (long left) 2 pad c)) (int row) \▀))))
 
 (defn- paint-runs!
   "One row of styled markdown runs over a base ink. [[run-segments]] decides which

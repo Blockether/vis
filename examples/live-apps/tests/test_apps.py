@@ -519,6 +519,37 @@ def test_incident_tick_loop_survives_a_gateway_outage(recorder):
     assert runner.state["tick"] >= 5
 
 
+def test_a_slow_paint_does_not_slow_the_tick_rate(recorder):
+    # The Companion eases each object over one tick. An SDK owner sends each
+    # patch over HTTP, and a loop that waited a whole tick after that send ran
+    # slower than `tick_ms`, so every object stopped before the next patch.
+    import time
+
+    runner = start(recorder, asteroids)
+    recorder.press("Space")
+    paint = runner._paint
+    stamps = []
+
+    def slow(state):
+        stamps.append(time.monotonic())
+        time.sleep(0.03)
+        paint(state)
+
+    runner._paint = slow
+    tick = asteroids.TICK_SECONDS
+    try:
+        asteroids.TICK_SECONDS = 0.05
+        runner.start()
+        time.sleep(0.62)
+    finally:
+        runner.stop()
+        runner._ticker.join(1)
+        asteroids.TICK_SECONDS = tick
+    gaps = [b - a for a, b in zip(stamps, stamps[1:], strict=False)]
+    assert len(stamps) >= 10
+    assert sum(gaps) / len(gaps) < 0.06
+
+
 # -- wizard --------------------------------------------------------------------
 
 

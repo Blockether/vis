@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - Python SDK: `vis.ui.table` refuses text columns where you write them and names the `vis.ui.table_column` fix. The test recorder refuses a live group without an id, as the engine does. Both test hosts drop the selection of rows that a clear or remove takes away (#428).
 - TUI: scrolling a turn with large Activity output and code results is fast again. A frame clips and anchors only the rows that changed.
+- Live views: a `scene` moves smoothly between ticks in the TUI too. The TUI eases each object at about 60 frames a second and paints the scene about 3.7 times faster.
+- Live views: the Companion fits each scene ease to the measured time between patches, so a late patch does not stop an object.
+- Examples: a live app ticks at a fixed rate. A slow paint or gateway call no longer makes the game slower.
 
 ## [v0.3.4] - 2026-10-26
 

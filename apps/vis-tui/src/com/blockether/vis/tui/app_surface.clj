@@ -1018,7 +1018,8 @@
                      (if (and key (= KeyType/PasteStart (.getKeyType ^KeyStroke key)))
                        {:paste (dlg/drain-modal-paste! screen)}
                        key))
-                   (do (Thread/sleep 40) nil)))}))
+                   ;; A moving scene paints about 60 times a second, and a key waits less.
+                   (do (Thread/sleep (if (lv/scene-moving?) 12 40)) nil)))}))
 
 (defn show!
   "Open the app attachment `row` of `session-id` until the human closes it."

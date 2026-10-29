@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import logging
 import threading
+import time
 from collections.abc import Callable, Mapping, MutableMapping
 from typing import Any
 
@@ -673,8 +674,15 @@ class Runner:
         def loop():
             # A failed tick keeps the old state, so the next tick tries again.
             # The gateway can restart; the door then adopts the app again.
+            # Ticks keep a fixed rate: surfaces ease each move over one tick, so
+            # the time of a paint must not add to the period. A loop that falls
+            # a whole tick behind starts again from now and does not burst.
             failing = False
-            while not self._stop.wait(seconds):
+            due = time.monotonic() + seconds
+            while not self._stop.wait(max(0.0, due - time.monotonic())):
+                due += seconds
+                if time.monotonic() > due:
+                    due = time.monotonic() + seconds
                 try:
                     self.dispatch({"type": "tick"})
                 except Exception as error:  # noqa: BLE001 - logged, the next tick retries
