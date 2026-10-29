@@ -1069,78 +1069,146 @@
 
     (when (<= (long lo) (long hi)) [lo hi])))
 
+(defn- line-identity
+  "Stable identity of one projected line, or nil for a blank line without metadata."
+  [meta text role]
+  (cond (and (:run-header? meta) (:view-id meta)) [:view (:view-id meta)]
+        (:item-id meta) [:activity (:item-id meta) (:kind meta)]
+        (:node-id meta) [:node (:node-id meta) (:kind meta)]
+        :else (when-not (str/blank? text) [:text role text])))
+
+(defn- message-anchors*
+  "Line anchors of one projection, rows relative to it:
+   `{:rows [[row key] ...] :by-key {key row}}` in row order."
+  [projected]
+  (let [turn
+        (turn-identity projected)
+
+        role
+        (:role projected)
+
+        ;; Plain transcript lines may have no disclosure metadata. They still
+        ;; need an identity when an append invalidates positional offsets (#248).
+        text-lines
+        (str/split (or (:text projected) "") #"\n" -1)
+
+        line-meta
+        (vec (:line-meta projected))
+
+        n
+        (long (count line-meta))]
+
+    ;; Transients: this walk runs again on each frame of the live bubble.
+    (loop [i
+           0
+
+           seen
+           (transient {})
+
+           rows
+           (transient [])
+
+           by-key
+           (transient {})]
+
+      (if (< i n)
+        (if-let [identity (line-identity (nth line-meta i) (get text-lines i) role)]
+          (let [key (into [turn] identity)
+                occurrence (long (get seen key 0))
+                anchor (conj key occurrence)]
+
+            (recur (unchecked-inc i)
+                   (assoc! seen key (inc occurrence))
+                   (conj! rows [i anchor])
+                   (assoc! by-key anchor i)))
+          (recur (unchecked-inc i) seen rows by-key))
+        {:rows (persistent! rows) :by-key (persistent! by-key)}))))
+
+;; Identity memo for `message-anchors*`. Layout re-anchors every visible line on
+;; every frame, which walked the whole text and metadata of a large Activity bubble
+;; each scroll tick. A stable projection keeps its `:line-meta` and `:text` objects,
+;; so later frames are lookups. A value holds the text, role and turn it was built
+;; from; any change recomputes. Cleared on overflow, like the other identity memos.
+(defonce ^:private ^IdentityHashMap message-anchors-memo (IdentityHashMap. 256))
+
+(defn- message-anchors
+  "Memoized `message-anchors*`."
+  [projected]
+  (if-let [line-meta (:line-meta projected)]
+    (let [text (:text projected)
+          role (:role projected)
+          turn (turn-identity projected)
+          cached (locking message-anchors-memo
+                   (.get ^IdentityHashMap message-anchors-memo line-meta))]
+
+      (if (and cached
+               (identical? text (nth cached 0))
+               (= role (nth cached 1))
+               (= turn (nth cached 2)))
+        (nth cached 3)
+        (let [anchors (message-anchors* projected)]
+          (locking message-anchors-memo
+            (when (> (long (.size ^IdentityHashMap message-anchors-memo)) 512)
+              (.clear ^IdentityHashMap message-anchors-memo))
+            (.put ^IdentityHashMap message-anchors-memo line-meta [text role turn anchors]))
+          anchors)))
+    {:rows [] :by-key {}}))
+
 (defn- row-anchors
-  "Stable transcript lines in projected messages, in document row coordinates."
+  "Line anchors of each visible projection with its first document row."
   [{:keys [visible offsets]}]
-  (vec
-    (mapcat
-      (fn [{:keys [idx projected]}]
-        (let [turn
-              (turn-identity projected)
+  (mapv (fn [{:keys [idx projected]}]
+          {:start (+ (long (nth offsets idx)) (long (get-in projected [:lines-window :start] 0)))
+           :anchors (message-anchors projected)})
+        visible))
 
-              ;; Plain transcript lines may have no disclosure metadata. They still
-              ;; need an identity when an append invalidates positional offsets (#248).
-              text-lines
-              (str/split (or (:text projected) "") #"\n" -1)
-
-              start
-              (+ (long (nth offsets idx)) (long (get-in projected [:lines-window :start] 0)))]
-
-          (:anchors
-            (reduce-kv
-              (fn [{:keys [seen] :as acc} i meta]
-                (if-let [identity (cond (and (:run-header? meta) (:view-id meta)) [:view
-                                                                                   (:view-id meta)]
-                                        (:item-id meta) [:activity (:item-id meta) (:kind meta)]
-                                        (:node-id meta) [:node (:node-id meta) (:kind meta)]
-                                        :else (let [text (get text-lines i)]
-                                                (when-not (str/blank? text)
-                                                  [:text (:role projected) text])))]
-                  (let [key (into [turn] identity)
-                        occurrence (get seen key 0)]
-
-                    (->
-                      acc
-                      (assoc-in [:seen key] (inc (long occurrence)))
-                      (update :anchors conj {:key (conj key occurrence) :row (+ start (long i))})))
-                  acc))
-              {:seen {} :anchors []}
-              (or (:line-meta projected) [])))))
-      visible)))
+(defn- anchor-row
+  "Document row of anchor `key` in `messages`, or nil. A later message wins."
+  [messages key]
+  (some (fn [{:keys [start anchors]}]
+          (when-let [row (get (:by-key anchors) key)]
+            (+ (long start) (long row))))
+        (rseq messages)))
 
 (defn- anchor-rows
   "Keep a visible transcript line fixed through regrouping and live-to-retained transitions."
   [result previous scroll inner-h]
-  (let [anchors
+  (let [messages
         (row-anchors result)
-
-        rows-by-key
-        (into {} (map (juxt :key :row)) anchors)
 
         old
         (when (some? scroll)
           (some #(when (and (<= (long scroll) (long (:row %)))
                             (< (long (:row %)) (+ (long scroll) (long inner-h)))
-                            (contains? rows-by-key (:key %)))
+                            (anchor-row messages (:key %)))
                    %)
                 previous))
 
         corrected
         (if old
           (max 0
-               (min (+ (long scroll) (- (long (get rows-by-key (:key old))) (long (:row old))))
+               (min (+ (long scroll) (- (long (anchor-row messages (:key old))) (long (:row old))))
                     (max 0 (- (long (:total-h result)) (long inner-h)))))
           (:eff-scroll result))
 
         shift
-        (- (long (:eff-scroll result)) (long corrected))]
+        (- (long (:eff-scroll result)) (long corrected))
+
+        bottom
+        (+ (long corrected) (long inner-h))]
 
     (assoc result
       :eff-scroll corrected
       :visible (mapv #(update % :top + shift) (:visible result))
-      :row-anchors (filterv #(and (<= (long corrected) (long (:row %)))
-                                  (< (long (:row %)) (+ (long corrected) (long inner-h))))
-                     anchors))))
+      ;; Only the rows in the viewport become anchor maps.
+      :row-anchors (into []
+                         (mapcat (fn [{:keys [start anchors]}]
+                                   (keep (fn [[i key]]
+                                           (let [row (+ (long start) (long i))]
+                                             (when (and (<= (long corrected) row) (< row bottom))
+                                               {:key key :row row})))
+                                         (:rows anchors))))
+                         messages))))
 
 (defn layout
   "Plan a paint of `messages` into a vertical viewport of `inner-h`

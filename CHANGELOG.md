@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Settings: Subagents is a stable setting under Council and is on by default. While Council is off, subagents are off and their row is locked.
 - TUI: settings rows have no leading mark, because the value column gives the state. Each header is bold and has one blank line above it. Subsection names line up with the setting names under them.
 
+### Fixed
+- TUI: scrolling a turn with large Activity output and code results is fast again. A frame clips and anchors only the rows that changed.
+
 ## [v0.3.4] - 2026-10-26
 
 ### Added

@@ -329,19 +329,39 @@
       (str marker (truncate-ansi-cols body max-width))
       (truncate-ansi-cols (str line) max-width))))
 
-(defn- clip-lines-preserving-markers
-  [lines max-width]
-  (mapv #(clip-line-preserving-marker % max-width) lines))
-
 (defn- full-band-marker?
   [line]
   (let [marker (when (and (string? line) (pos? (count line))) (subs line 0 1))]
     (contains? #{p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD} marker)))
 
+(def ^:private ^:const clipped-line-memo-cap 65536)
+
+;; Identity memo for one clipped painter row. The live progress bubble builds a new
+;; line vector on every frame, so `clipped-lines` misses its vector key each frame.
+;; Its cached body keeps the same row strings, so a miss clips only the new rows
+;; (the spinner row), not the whole bubble. A value holds its widths: a width change
+;; recomputes. Cleared on overflow, like the other identity memos.
+(defonce ^:private ^IdentityHashMap clipped-line-memo (IdentityHashMap. 4096))
+
+(defn- clipped-line
+  "Clip one painter row at `content-w`, or at `full-w` for a full-band row."
+  [line ^long content-w ^long full-w]
+  (let [cached (locking clipped-line-memo (.get ^IdentityHashMap clipped-line-memo line))]
+    (if (and cached (== content-w (long (nth cached 0))) (== full-w (long (nth cached 1))))
+      (nth cached 2)
+      (let [clipped (clip-line-preserving-marker line
+                                                 (if (full-band-marker? line) full-w content-w))]
+        (locking clipped-line-memo
+          (when (> (.size ^IdentityHashMap clipped-line-memo) (long clipped-line-memo-cap))
+            (.clear ^IdentityHashMap clipped-line-memo))
+          (.put ^IdentityHashMap clipped-line-memo line [content-w full-w clipped]))
+        clipped))))
+
 (defn- clipped-lines
   "Memoized clipping for prewrapped painter lines. Large trace bubbles can
    carry hundreds of rows plus occasional huge raw tool-output rows; scrolling
-   must not re-clip every off-screen row on each frame."
+   must not re-clip every off-screen row on each frame. A vector miss reuses
+   each row that `clipped-line` already clipped."
   [raw-lines content-w full-w]
   (let [content-w
         (long content-w)
@@ -349,13 +369,10 @@
         full-w
         (long full-w)]
 
-    (cached*
-      [::clipped-lines (System/identityHashCode raw-lines) content-w full-w]
-      #(if (some full-band-marker? raw-lines)
-         (mapv (fn [line]
-                 (clip-line-preserving-marker line (if (full-band-marker? line) full-w content-w)))
-               raw-lines)
-         (clip-lines-preserving-markers raw-lines content-w)))))
+    (cached* [::clipped-lines (System/identityHashCode raw-lines) content-w full-w]
+             #(mapv (fn [line]
+                      (clipped-line line content-w full-w))
+                    raw-lines))))
 
 (defn wrap-text*
   "Uncached implementation. Prefer `wrap-text` everywhere except inside
@@ -4526,6 +4543,31 @@
       (:vis.channel-tui/expand-all-details? detail-expansions)
       (conj [:vis.channel-tui/expand-all-details? true]))))
 
+(defonce ^:private expansions-key-memo
+  ;; One-slot memo of disclosure keys for ONE `detail-expansions` map: [map {k key}].
+  ;; Layout asks for the key of each message more than once per frame, and each call
+  ;; walks and sorts every expansion of every session. The map changes only on a fold
+  ;; toggle, so later calls are lookups. A different map replaces the slot.
+  (atom [nil {}]))
+
+(defn- memo-expansions-key
+  "`(compute)`, memoized under `k` for this exact `detail-expansions` map."
+  [detail-expansions k compute]
+  (let [[m cache]
+        @expansions-key-memo
+
+        hit
+        (when (identical? m detail-expansions) (find cache k))]
+
+    (if hit
+      (val hit)
+      (let [v (compute)]
+        (swap! expansions-key-memo (fn [[m' cache']]
+                                     (if (identical? m' detail-expansions)
+                                       [m' (assoc cache' k v)]
+                                       [detail-expansions {k v}])))
+        v))))
+
 (defn- turn-detail-expansions-key
   "Stable cache key for any disclosure belonging to this rendered assistant
    turn. Used by the outer trace+answer projection, which may contain thinking,
@@ -4554,20 +4596,23 @@
         (when turn-fragment (str ":t" turn-fragment))
 
         per-node
-        (->> detail-expansions
-             (keep (fn [[k expanded?]]
-                     (when (vector? k)
-                       (let [[cid node-id]
-                             k
+        (memo-expansions-key detail-expansions
+                             [::turn session-id turn-token]
+                             #(->> detail-expansions
+                                   (keep (fn [[k expanded?]]
+                                           (when (vector? k)
+                                             (let [[cid node-id]
+                                                   k
 
-                             node-id
-                             (str node-id)]
+                                                   node-id
+                                                   (str node-id)]
 
-                         (when (and (= session-id (str cid))
-                                    (or (nil? turn-token) (str/includes? node-id turn-token)))
-                           [node-id expanded?])))))
-             sort
-             vec)]
+                                               (when (and (= session-id (str cid))
+                                                          (or (nil? turn-token)
+                                                              (str/includes? node-id turn-token)))
+                                                 [node-id expanded?])))))
+                                   sort
+                                   vec))]
 
     (cond-> per-node
       (:vis.channel-tui/baseline detail-expansions)
@@ -4596,19 +4641,22 @@
    count) painted the transcript at a different place — the \"click something
    collapsed and the view jumps up\" bug."
   [session-id detail-expansions]
-  (->> detail-expansions
-       (keep (fn [[k expanded?]]
-               (when (vector? k)
-                 (let [[cid node-id]
-                       k
+  (memo-expansions-key detail-expansions
+                       [::untagged (str session-id)]
+                       #(->> detail-expansions
+                             (keep (fn [[k expanded?]]
+                                     (when (vector? k)
+                                       (let [[cid node-id]
+                                             k
 
-                       node-id
-                       (str node-id)]
+                                             node-id
+                                             (str node-id)]
 
-                   (when (and (= (str session-id) (str cid)) (not (re-find turn-token-re node-id)))
-                     [node-id expanded?])))))
-       sort
-       vec))
+                                         (when (and (= (str session-id) (str cid))
+                                                    (not (re-find turn-token-re node-id)))
+                                           [node-id expanded?])))))
+                             sort
+                             vec)))
 
 (defn message-detail-expansions-key
   "Per-message disclosure-expansion fingerprint for the height cache: the

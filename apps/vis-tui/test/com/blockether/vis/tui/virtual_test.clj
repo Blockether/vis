@@ -2249,3 +2249,87 @@
                                                           (source-form "(defn- image-rows-est")))]
                      (expect (not (str/includes? warnings "Boxed math")) warnings)
                      (expect (not (str/includes? warnings "Reflection warning")) warnings)))))
+
+;; Regression (session 6b6f8d70): scrolling a running turn with large Activity
+;; results re-clipped every row of the live bubble on each frame (~20 ms), and
+;; re-anchored every row of each visible bubble on each frame.
+(defdescribe
+  large-bubble-frame-work-test
+  (describe
+    "a large bubble"
+    (let [stdout
+          (str/join "\n" (map #(str "row " % " " (gensym "out")) (range 300)))
+
+          iterations
+          [{:forms [{:code "print(rows)" :stdout stdout :success? true :duration-ms 10}]}]
+
+          messages
+          [{:role :user :text "go" :client-turn-id "t1"}
+           {:role :assistant :text "" :client-turn-id "t1"}]
+
+          settled
+          (assoc-in messages [1 :traces] iterations)
+
+          settings
+          {:show-iterations true :summarize-steps false}
+
+          ;; Open the code and its result, so each row of the output is painted.
+          expansions
+          (into {}
+                (for [kind [:code :result]]
+                  [["s1"
+                    (@#'render/detail-node-id
+                     {:session-turn-id "t1"
+                      :iteration-number 1
+                      :block-number 1
+                      :section :iteration
+                      :kind kind})] true]))
+
+          frame
+          (fn [messages loading? now-ms scroll]
+            (virtual/layout messages
+                            100
+                            settings
+                            scroll
+                            30
+                            {:progress {:iterations iterations}
+                             :loading? loading?
+                             :progress-extra {:now-ms now-ms :turn-start-ms 0}}
+                            {:session-id "s1" :detail-expansions expansions}))
+
+          counted
+          (fn [v f]
+            (let [n
+                  (atom 0)
+
+                  real
+                  @v]
+
+              (with-redefs-fn {v (fn [& args]
+                                   (swap! n inc)
+                                   (apply real args))}
+                (fn []
+                  (let [r (f)]
+                    [@n r])))))]
+
+      (it "clips only the new rows of the live bubble on the next frame"
+          (let [[first-clips first-frame]
+                (counted #'render/clip-line-preserving-marker #(frame messages true 1000 0))
+
+                [next-clips next-frame]
+                (counted #'render/clip-line-preserving-marker #(frame messages true 1090 3))]
+
+            (expect (< 300 (long (:total-h first-frame))))
+            (expect (< 300 (long first-clips)))
+            (expect (<= (long next-clips) 2) (str next-clips " rows clipped again"))
+            (expect (= (:total-h first-frame) (:total-h next-frame)))))
+      (it "anchors a stable bubble once while it scrolls"
+          (let [_
+                (frame settled false 0 0)
+
+                [calls scrolled]
+                (counted #'virtual/message-anchors* #(frame settled false 0 40))]
+
+            (expect (zero? (long calls)) (str calls " anchor walks"))
+            (expect (seq (:row-anchors scrolled)))
+            (expect (every? #(<= 40 (long (:row %)) 69) (:row-anchors scrolled))))))))

@@ -24,7 +24,9 @@
 
 (def ^:private bang-prefix @#'render/bang-prefix)
 
-(def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
+(defn- clip-lines-preserving-markers
+  [lines max-width]
+  (mapv #(@#'render/clip-line-preserving-marker % max-width) lines))
 
 (def ^:private truncate-with-suffix @#'render/truncate-with-suffix)
 
