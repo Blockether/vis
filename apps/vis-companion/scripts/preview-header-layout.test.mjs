@@ -28,6 +28,7 @@ const client = {
   attachmentUrl: async () => 'data:application/octet-stream;base64,AA==',
   attachmentBlob: async () => new Blob(['0']),
   retainAttachment: () => () => {},
+  appViews: async () => [],
 } as unknown as GatewayClient;
 function Preview() {
   const [closed, setClosed] = useState(false);
