@@ -1762,9 +1762,11 @@
 
 (defn- assistant-meta?
   "Keep recorded provider usage, including model runs started by slash commands.
-   Local commands and empty cancellations have no meaningful model attribution."
-  [{:keys [role slash? status] :as message}]
-  (and (not= role :user)
+   Local commands and empty cancellations have no meaningful model attribution.
+   A message that Zen mode projected (`:hide-meta?`) shows no summary line."
+  [{:keys [role slash? status hide-meta?] :as message}]
+  (and (not hide-meta?)
+       (not= role :user)
        (or (assistant-usage? message) (and (not slash?) (not= status :cancelled)))))
 
 (defn- register-toggle-region!

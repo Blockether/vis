@@ -4379,6 +4379,7 @@ therapy line 2"
 
 ;; User request: Zen mode hides the header and the footer, so the screen shows only
 ;; the transcript and the prompt. The echo row takes over the header's notification.
+;; The turn summary line under each answer (model, tokens, speed, cost, time) is hidden.
 ;; The transcript and the prompt stay in a centred column: cols divided by the golden ratio.
 (defdescribe
   zen-mode-frame-test
@@ -4387,7 +4388,16 @@ therapy line 2"
           (let [db {:session {:id "8c1f2a90-0000-4000-8000-000000000001"}
                     :title "Zen title"
                     :workspace {}
-                    :messages [{:role :user :text "hello zen" :id "m1"}]
+                    :messages [{:role :user :text "hello zen" :id "m1"}
+                               {:role :assistant
+                                :text "zen answer"
+                                :id "m2"
+                                :tokens {"input" 5700000 "output" 32100 "cached" 5600000}
+                                :tokens-per-second 83.7
+                                :cost 2.36
+                                :duration-ms 705000
+                                :model "claude-opus-5-5"
+                                :provider "anthropic-coding-plan"}]
                     :scroll scroll/follow
                     :input (input/empty-input)
                     :settings settings
@@ -4436,6 +4446,7 @@ therapy line 2"
           (expect (= 1 (row-of rows "Zen title")))
           (expect (= 1 (row-of rows "Copied zen")))
           (expect (some? (row-of rows "Limits")))
+          (expect (some? (row-of rows "anthropic-coding-plan/claude-opus-5-5")))
           (expect (= 4 (:messages-top layout)))
           (expect (= 2 (str/index-of (nth rows (row-of rows "hello zen")) "│ hello zen")))))
     (it "gives the header and footer rows to the transcript on every repaint path"
@@ -4444,6 +4455,9 @@ therapy line 2"
             (let [{:keys [rows layout]} (frame 80 {:zen-mode true} path)]
               (expect (nil? (row-of rows "Zen title")))
               (expect (nil? (row-of rows "Limits")))
+              ;; The turn summary line under an answer is hidden as well.
+              (expect (some? (row-of rows "zen answer")))
+              (expect (nil? (row-of rows "claude-opus-5-5")))
               (expect (= 4 (row-of rows "hello zen")))
               (expect (= 1 (:messages-top layout)))
               (expect (= (+ 5 (long (:inner-h normal))) (:inner-h layout)))

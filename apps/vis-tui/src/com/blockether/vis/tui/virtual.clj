@@ -124,7 +124,7 @@
 
 (def ^:private settings-fingerprint-keys
   [:show-thinking :show-iterations :show-silent :show-python-code :show-iteration-headers
-   :summarize-steps :preview/default-lines])
+   :summarize-steps :zen-mode :preview/default-lines])
 
 ;; One-slot identity memo. `layout` threads the SAME `settings` object into
 ;; `height-key` for every message (~2x per bubble -> ~120 calls/tick), and each
@@ -839,7 +839,9 @@
    (let [message
          (assoc message
            :session-id session-id
-           :copy-source-text (:text message))
+           :copy-source-text (:text message)
+           ;; Zen mode shows no turn summary line (model, tokens, speed, cost, time).
+           :hide-meta? (boolean (get settings :zen-mode)))
 
          trace
          (message-trace message)
