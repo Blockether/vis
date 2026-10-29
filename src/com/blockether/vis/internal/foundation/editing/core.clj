@@ -4024,6 +4024,161 @@
           (str "patch refused at edit " (inc (long index)) " of " total " — nothing was written.")))
       (patch-version-refusal! rel :lines-not-shown message current-version from index total))))
 
+(defn- blank-code?
+  "True for a whitespace or space-separator code point, ASCII or not."
+  [^long i]
+  (or (Character/isWhitespace (int i)) (Character/isSpaceChar (int i))))
+
+(defn- edge-run
+  "The leading or trailing whitespace run of `s`."
+  [^String s lead?]
+  (let [n
+        (.length s)
+
+        k
+        (loop [k 0]
+          (if (and (< k n) (blank-code? (long (int (.charAt s (int (if lead? k (- n 1 k))))))))
+            (recur (inc k))
+            k))]
+
+    (if lead? (subs s 0 k) (subs s (- n k)))))
+
+(defn- whitespace-run-text
+  "Name a whitespace run in order, such as `none`, `3 spaces` or `1 tab, 2 spaces`."
+  [^String run]
+  (if (= "" run)
+    "none"
+    (->> (partition-by identity run)
+         (map
+           (fn [group]
+             (let [i
+                   (long (int (first group)))
+
+                   n
+                   (count group)
+
+                   unit
+                   (case i
+                     32
+                     "space"
+
+                     9
+                     "tab"
+
+                     13
+                     "CR"
+
+                     (format "U+%04X" i))]
+
+               (str n " " unit (when (and (> n 1) (#{32 9} i)) "s")))))
+         (str/join ", "))))
+
+(defn- visible-line
+  "Quote ONE line for a refusal. Tabs, CRs and invisible code points are escaped, so a
+   whitespace difference shows. A line longer than 200 characters keeps its start."
+  [^String s]
+  (let [s (if (> (.length s) 200) (str (subs s 0 200) "...") s)]
+    (str "\""
+         (str/join (map (fn [c]
+                          (let [i (long (int c))]
+                            (cond (= i 9) "\\t"
+                                  (= i 13) "\\r"
+                                  (and (> i 127)
+                                       (or (blank-code? i)
+                                           (= (Character/getType (int i)) (int Character/FORMAT))))
+                                  (format "\\u%04x" i)
+                                  :else (str c))))
+                        s))
+         "\"")))
+
+(defn- near-miss
+  "Align `old-lines` with `file-lines` at each 1-based near line, where line
+   `head-index` of `old` lands. Return the first line that differs at the alignment
+   that matches longest, the earliest on a tie. The first and last `old` lines can be
+   parts of their file lines. `:file` is nil past either end of the file."
+  [old-lines file-lines ^long head-index nears]
+  (let [m
+        (count old-lines)
+
+        same?
+        (fn [^long k ^String a ^String b]
+          (cond (= 1 m) (str/includes? b a)
+                (zero? k) (str/ends-with? b a)
+                (= k (dec m)) (str/starts-with? b a)
+                :else (= a b)))
+
+        miss
+        (fn [^long n]
+          (some (fn [^long k]
+                  (let [fi
+                        (+ n (- k head-index) -1)
+
+                        b
+                        (when (< -1 fi (count file-lines)) (nth file-lines fi))
+
+                        a
+                        (nth old-lines k)]
+
+                    (when-not (and b (same? k a b))
+                      {:at n :old-line (inc k) :file-line (inc fi) :old a :file b})))
+                (range m)))
+
+        misses
+        (keep miss nears)]
+
+    (when (seq misses)
+      (reduce (fn [best x]
+                (if (> (long (:old-line x)) (long (:old-line best))) x best))
+              misses))))
+
+(defn- near-miss-lines
+  "Refusal rows for a near match: where it is, how one line differs, and the two lines."
+  [{:keys [at old-line file-line old file]} others]
+  (let [squash
+        #(str/replace % #"[\s\p{Z}]+" "")
+
+        [la ta]
+        [(edge-run old true) (edge-run old false)]
+
+        [lb tb]
+        (when file [(edge-run file true) (edge-run file false)])
+
+        spaces-only?
+        (and file (= (squash old) (squash file)))
+
+        lead?
+        (and spaces-only? (not= la lb))
+
+        trail?
+        (and spaces-only? (not= ta tb))
+
+        how
+        (cond (nil? file)
+              (str "runs past the " (if (pos? (long file-line)) "end" "start") " of the file")
+              (and lead? (not trail?)) (str "differs from file line " file-line " in indentation")
+              (and trail? (not lead?))
+              (str "differs from file line " file-line " in trailing whitespace")
+              spaces-only? (str "differs from file line " file-line " in whitespace")
+              :else (str "differs from file line " file-line))
+
+        note
+        (fn [lead trail]
+          (let [parts (cond-> []
+                        lead?
+                        (conj (str "leading: " (whitespace-run-text lead)))
+
+                        trail?
+                        (conj (str "trailing: " (whitespace-run-text trail))))]
+            (when (seq parts) (str " (" (str/join "; " parts) ")"))))]
+
+    (cond-> [(str "    Near match at line " at ": line " old-line " of `old` " how ".")
+             (str "    old:  " (visible-line old) (note la ta))]
+      file
+      (conj (str "    file: " (visible-line file) (note lb tb)))
+
+      (seq others)
+      (conj (str "    Other near matches: line(s) " (str/join ", " others) ".")))))
+
 (defn- patch-text-spans!
   "Resolve ONE text edit against the CURRENT file: one char span for each exact match
    of `old`. The text is its own address, so it needs no version and no earlier read.
@@ -4083,27 +4238,48 @@
                 gutter?
                 (some #(re-find #"^\s*\d+(?::[0-9a-f]+)?│ " %) lines)
 
+                head-index
+                (first (keep-indexed (fn [i l]
+                                       (when-not (str/blank? l) i))
+                                     lines))
+
                 head
-                (some #(not-empty (str/trim %)) lines)
+                (when head-index (str/trim (nth lines head-index)))
+
+                file-lines
+                (version/split-content-lines content)
 
                 near
                 (when head
-                  (->> (version/split-content-lines content)
+                  (->> file-lines
                        (keep-indexed (fn [i l]
                                        (when (str/includes? l head) (inc (long i)))))
                        (take 5)
-                       vec))]
+                       vec))
+
+                ;; Blockether/vis#424: a near match names the line that differs and shows
+                ;; both lines with visible whitespace, not only the line number.
+                bare
+                (fn [ls]
+                  (if crlf? (mapv #(str/replace % #"\r$" "") ls) ls))
+
+                miss
+                (when (and (seq near) (not gutter?))
+                  (near-miss (bare lines) (bare file-lines) head-index near))]
 
             (patch-refusal!
               rel
               {:reason :text-not-found :edit-index index}
-              [(str at
-                    "`old` is not in the file. "
-                    (cond gutter? "Remove the `line│ ` gutters from `old`."
-                          (seq near) (str "Its first line occurs at line(s) "
-                                          (str/join ", " near)
-                                          ": copy the next lines exactly, with their whitespace.")
-                          :else "Read the file and copy the text exactly."))]))
+              (into [(str at
+                          "`old` is not in the file. "
+                          (cond gutter? "Remove the `line│ ` gutters from `old`."
+                                miss "Copy the file text exactly, with its whitespace."
+                                (seq near)
+                                (str "Its trimmed first line occurs at line(s) "
+                                     (str/join ", " near)
+                                     ": copy the next lines exactly, with their whitespace.")
+                                :else "Read the file and copy the text exactly."))]
+                    (when miss (near-miss-lines miss (remove #{(:at miss)} near))))))
           (empty? picked) (patch-refusal! rel
                                           {:reason :text-line-mismatch
                                            :edit-index index

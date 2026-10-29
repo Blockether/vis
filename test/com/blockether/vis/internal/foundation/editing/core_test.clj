@@ -5699,7 +5699,7 @@
 
           (expect (= :edit-mixed-address (:reason (ex-data e))))
           (expect (= "a\n" (slurp rel)))))
-    (it "refuses text that is not in the file and points at its first line"
+    (it "refuses text that is not in the file and names the line that differs"
         (let [rel
               (write-temp! "patch/text-miss.py" "def f():\n    return 1\n")
 
@@ -5708,8 +5708,33 @@
                 #((private-fn "patch-tool") rel [{"old" "def f():\n  return 1" "replace" "x"}]))]
 
           (expect (= :text-not-found (:reason (ex-data e))))
-          (expect (string/includes? (ex-message e) "line(s) 1"))
+          (expect (string/includes?
+                    (ex-message e)
+                    (str "Near match at line 1: line 2 of `old` differs from file line 2"
+                         " in indentation.")))
           (expect (= "def f():\n    return 1\n" (slurp rel)))))
+    ;; Blockether/vis#424: a near match showed only its line number, so an agent
+    ;; retried with the same extra space. Show both lines with visible whitespace.
+    (it "shows the whitespace difference of a near match and keeps exact matching"
+        (let [rel
+              (write-temp! "patch/text-near.txt" "  Optional parameters.\n\tTabbed \nother\n")
+
+              message
+              #(ex-message (refusal (fn []
+                                      ((private-fn "patch-tool") rel [{"old" % "replace" "x"}]))))]
+
+          (expect (string/includes? (message "   Optional parameters.")
+                                    (str
+                                      "    old:  \"   Optional parameters.\" (leading: 3 spaces)\n"
+                                      "    file: \"  Optional parameters.\" (leading: 2 spaces)")))
+          (expect (string/includes?
+                    (message "  Optional parameters.\n    Tabbed")
+                    (str "line 2 of `old` differs from file line 2 in whitespace.\n"
+                         "    old:  \"    Tabbed\" (leading: 4 spaces; trailing: none)\n"
+                         "    file: \"\\tTabbed \" (leading: 1 tab; trailing: 1 space)")))
+          (expect (string/includes? (message "other\nmore")
+                                    "line 2 of `old` runs past the end of the file."))
+          (expect (= "  Optional parameters.\n\tTabbed \nother\n" (slurp rel)))))
     (it "applies two text edits on one line, and refuses overlapping text"
         (let [rel (write-temp! "patch/text-line.py" "a = b + c\n")]
           ((private-fn "patch-tool") rel [{"old" "a =" "replace" "z ="} {"old" "c" "replace" "d"}])
