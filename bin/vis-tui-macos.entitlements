@@ -5,5 +5,8 @@
   <!-- Hardened-runtime microphone capture for the standalone terminal client. -->
   <key>com.apple.security.device.audio-input</key>
   <true/>
+  <!-- The imaging cdylib is extracted from its jar at run time and has no Team ID. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
 </dict>
 </plist>
