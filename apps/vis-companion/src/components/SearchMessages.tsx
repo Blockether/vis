@@ -124,8 +124,9 @@ function MessageList({
                 </span>
               )}
             </span>
-            {/* Phrasing elements only: the row is a button. Prose is justified like the chat. */}
-            <span className="mt-1 block break-words font-mono text-ui text-dialog-foreground">
+            {/* Phrasing elements only: the row is a button. Prose is justified like the chat.
+                Blocks keep a gap, as the chat's paragraphs do. */}
+            <span className="mt-1 block space-y-2 break-words font-mono text-ui text-dialog-foreground">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[[highlightMarkdown, terms]]}
