@@ -5697,7 +5697,27 @@
                   (now-ms)
 
                   fork-title
-                  (or title (str (:title current) " (fork)"))]
+                  (or title (str (:title current) " (fork)"))
+
+                  ;; A fork through the last turn keeps the source's provider prefix
+                  ;; checkpoint when it ends at that turn: its next request then reuses
+                  ;; the cached prefix. Another cut has another history and starts fresh.
+                  prompt-cache-state
+                  (when (and (not agent) (= (count cut) (count turns)))
+                    (some-> (query-one! tx-info
+                                        {:select [:prompt_cache_state]
+                                         :from :session_state
+                                         :where [:= :id (:id current)]})
+                            :prompt_cache_state
+                            <-blob))
+
+                  ;; The checkpoint must describe the last copied turn, and the fork numbers
+                  ;; that turn the same: the next request then follows it directly.
+                  prompt-cache-blob
+                  (when (= (count cut)
+                           (:position (peek cut))
+                           (get-in prompt-cache-state [:entry :completed-turn :turn-position]))
+                    (->blob prompt-cache-state))]
 
               (when (and agent
                          (>= (long (:n (query-one! tx-info
@@ -5717,6 +5737,7 @@
                 (throw (ex-info (str "A leader may run at most " max-active-children " subagents.")
                                 {:error :agent-limit})))
               ;; A managed fork is hidden under its parent; an ordinary fork remains a leader.
+              ;; Each fork keeps the model pick of its source.
               (execute! tx-info
                         {:insert-into :session_soul
                          :values [(cond-> {:id new-soul-id
@@ -5725,12 +5746,11 @@
                                            :owner_id (or (:owner_id src-soul) "local")
                                            :claimed_at now
                                            :forked_from_session_id soul-id-s
-                                           :forked_from_turn_id through-s}
+                                           :forked_from_turn_id through-s
+                                           :llm_pref_provider (:llm_pref_provider src-soul)
+                                           :llm_pref_model (:llm_pref_model src-soul)}
                                     agent
-                                    (assoc :parent_state_id
-                                      (:id current) :llm_pref_provider
-                                      (:llm_pref_provider src-soul) :llm_pref_model
-                                      (:llm_pref_model src-soul)))]})
+                                    (assoc :parent_state_id (:id current)))]})
               ;; Root state: version 0, no parent — the fork's own history.
               (execute! tx-info
                         {:insert-into :session_state
@@ -5745,7 +5765,10 @@
                                            :created_at now}
                                     (:llm_root_provider current)
                                     (assoc :llm_root_provider
-                                      (name (->kw (:llm_root_provider current)))))]})
+                                      (name (->kw (:llm_root_provider current))))
+
+                                    prompt-cache-blob
+                                    (assoc :prompt_cache_state prompt-cache-blob))]})
               ;; Deep-copy each source turn into the fork's root state. A child gets the handoff.
               (doseq [[idx turn] (map-indexed vector (when-not agent cut))]
                 (insert-turn-copy! tx-info

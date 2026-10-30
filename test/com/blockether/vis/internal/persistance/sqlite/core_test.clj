@@ -3038,6 +3038,58 @@
                        ((juxt :session-id :turn-id)
                          (:forked-from (persistance/db-get-session s fork-id))))))
       (expect (nil? (:forked-from (persistance/db-get-session s cid))))))
+  ;; Regression, user report: a fork's first request reused almost no cached input, because
+  ;; the fork rendered a new prefix and ran without the source's model pick.
+  (it
+    "fork-at-turn keeps the model pick and, through the last turn, the prefix checkpoint"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :tui :title "Src"})
+
+          t1
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "Q1" :status :done})
+
+          t2
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "Q2" :status :done})
+
+          state-id
+          (fn [sid]
+            (:id (first (raw-query s
+                                   {:select [:id]
+                                    :from :session_state
+                                    :where [:= :session_soul_id (str sid)]
+                                    :order-by [[:version :desc]]
+                                    :limit 1}))))
+
+          checkpoint
+          {:route ["anthropic" "claude"]
+           :entry {:completed-turn {:turn-position 2}}
+           :standing-ctx {:block "session = {}" :baseline {}}}
+
+          _
+          (persistance/db-set-session-prompt-cache-state! s (state-id cid) checkpoint)
+
+          _
+          (persistance/db-set-session-model-pref! s cid "anthropic" "claude")
+
+          whole
+          (h/fork-session-at-turn! s cid {:through-turn-id t2})
+
+          earlier
+          (h/fork-session-at-turn! s cid {:through-turn-id t1})]
+
+      (expect (= checkpoint (persistance/db-get-session-prompt-cache-state s (state-id whole))))
+      ;; An earlier cut has another history: its next request starts fresh.
+      (expect (nil? (persistance/db-get-session-prompt-cache-state s (state-id earlier))))
+      (expect (= {:provider "anthropic" :model "claude"}
+                 (persistance/db-get-session-model-pref s whole)
+                 (persistance/db-get-session-model-pref s earlier)))))
   (it "returns nil instead of throwing when there is no state to fork"
       (let [s (h/store)]
         (expect (nil? (h/fork-session! s (random-uuid) {}))))))
