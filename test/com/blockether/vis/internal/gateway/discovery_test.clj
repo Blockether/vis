@@ -445,6 +445,32 @@
                           (expect (.isFile (io/file boot-log)))
                           (finally (when handle (.destroy handle))))))))
 
+;; Regression: a spawned gateway ignored SIGINT and SIGQUIT, because a shell
+;; job in the background ignores them without job control. Every process that
+;; the gateway started, for example a shell or a test JVM, then ignored them too.
+(defdescribe spawn-detached!-keeps-the-interrupt-signal
+             (it "spawn detached! keeps the interrupt signal"
+                 (with-redefs [paths/logs-dir
+                               #(.getPath (io/file *tmp* "logs"))
+
+                               disco/spawn-argv
+                               (constantly ["/bin/sh" "-c"
+                                            "echo pid=$$; kill -INT $$; sleep 1; echo survived"])]
+
+                   (let [{:keys [pid boot-log]}
+                         (disco/spawn-detached! {:db "/tmp/sigint-report/vis.db"})
+
+                         deadline
+                         (+ (System/currentTimeMillis) 5000)]
+
+                     (loop []
+
+                       (when (and (disco/pid-alive? pid) (< (System/currentTimeMillis) deadline))
+                         (Thread/sleep 50)
+                         (recur)))
+                     (expect (= (str "pid=" pid) (str/trim (slurp boot-log)))
+                             "the daemon dies of SIGINT, and the reported pid is its own")))))
+
 (defdescribe discover-or-start!-emits-nothing-on-the-fast-attach-path
              (it "discover or start! emits nothing on the fast attach path"
                  (let [db

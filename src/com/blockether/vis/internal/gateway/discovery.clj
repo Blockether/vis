@@ -386,13 +386,19 @@
 
 (defn unix-launch-cmd
   "Full command vector of a shell, its `-c` flag, and a script that backgrounds
-   `argv` with its stdio in `log-path`, then prints the background job's pid. Every
-   step `exec`s in place, and `setsid` forks only for a process-group leader, which
-   an asynchronous job of a non-interactive shell never is, so that pid is the
-   daemon's own. On Linux/WSL, `setsid` gives the daemon a new session and process
-   group, so terminal job-control signals aimed at the TUI cannot stop it. HUP and
-   TSTP are also ignored across every exec as a defensive fallback. Bash preserves
-   the readable `vis <subcommand> …` argv0; plain `sh` keeps the executable path.
+   `argv` with its stdio in `log-path`, then prints the daemon's pid. Every step
+   `exec`s in place.
+
+   `set -m` gives the job its own process group. Without job control, a shell job
+   in the background ignores SIGINT and SIGQUIT, and every process that the daemon
+   starts inherits that. HUP and TSTP stay ignored across every exec.
+
+   On Linux/WSL, `setsid` also gives the daemon a new session. `setsid` forks for a
+   process-group leader, so `$!` is not the daemon. The shell after `setsid` writes
+   its own pid to fd 3, and the wrapper prints it. The wrapper must print it itself:
+   `Process` stops reading stdout when the wrapper exits.
+   Bash preserves the readable `vis <subcommand> …` argv0; plain `sh` keeps the
+   executable path.
 
    The three-arity form injects `{:bash path-or-nil :setsid path-or-nil}` for tests."
   ([argv log-path] (unix-launch-cmd argv log-path {:bash (argv0-shell) :setsid (setsid-command)}))
@@ -400,18 +406,24 @@
    (let [quoted-argv
          (str/join " " (map sh-quote argv))
 
-         readable-exec
-         (str "exec -a " (sh-quote spawn-argv0) " " quoted-argv)
+         program-exec
+         (if bash (str "exec -a " (sh-quote spawn-argv0) " " quoted-argv) (str "exec " quoted-argv))
 
-         detached-exec
-         (cond (and bash setsid)
-               (str "exec " (sh-quote setsid) " " (sh-quote bash) " -c " (sh-quote readable-exec))
-               bash readable-exec
-               setsid (str "exec " (sh-quote setsid) " " quoted-argv)
-               :else (str "exec " quoted-argv))
+         log
+         (sh-quote log-path)
 
          script
-         (str "{ trap '' HUP TSTP; " detached-exec "; } >" (sh-quote log-path) " 2>&1 & echo $!")]
+         (if setsid
+           (str "pid=$(set -m; { trap '' HUP TSTP; exec "
+                (sh-quote setsid)
+                " "
+                (sh-quote (or bash "sh"))
+                " -c "
+                (sh-quote (str "echo $$ >&3; exec 3>&-; " program-exec))
+                "; } 3>&1 >"
+                log
+                " 2>&1 &); echo \"$pid\"")
+           (str "set -m; { trap '' HUP TSTP; " program-exec "; } >" log " 2>&1 & echo $!"))]
 
      [(or bash "sh") "-c" script])))
 
