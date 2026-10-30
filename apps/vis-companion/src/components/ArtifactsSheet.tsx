@@ -744,7 +744,7 @@ function DetailOverlay({
   fill?: boolean;
   children: ReactNode;
 }) {
-  // The cells follow the host: Save as… and Share on the desktop, one Share on a phone,
+  // The cells follow the host: Save… and Share on the desktop, one Share on a phone,
   // a download in a browser. Their outcome never takes a header line; see `useFileActions`.
   const file = useFileActions(
     share
@@ -764,7 +764,7 @@ function DetailOverlay({
         isCloseLeading
         title={name}
         isTitleTruncated
-        subtitle={file.saved ?? subtitle}
+        subtitle={subtitle}
         actions={
           file.cells || actions ? (
             <>

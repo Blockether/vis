@@ -1,10 +1,8 @@
 //! Artifact hand-off: retain a copy in Downloads, then open it or show it in its folder,
 //! or save it where the person chooses in the system save panel.
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
@@ -106,10 +104,6 @@ pub async fn reveal_artifact(
     })
 }
 
-/// The files that `save_artifact_as` wrote in this run. Only these can be revealed,
-/// so the page cannot ask the host to show an arbitrary path.
-static SAVED: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
-
 const LAST_DIRECTORY_FILE: &str = "last-save-directory";
 
 /// The folder of the previous save, if it still exists.
@@ -173,32 +167,10 @@ pub async fn save_artifact_as(
     };
     let path = chosen.path().to_path_buf();
     write_chosen(&config, &path, &data)?;
-    SAVED
-        .lock()
-        .map_err(|e| e.to_string())?
-        .get_or_insert_with(HashSet::new)
-        .insert(path.clone());
     Ok(SaveArtifactResult {
         saved: true,
         path: Some(path.to_string_lossy().into_owned()),
     })
-}
-
-/// Show a file that `save_artifact_as` wrote in Finder, Explorer or the Linux file manager.
-#[tauri::command]
-pub async fn reveal_saved_artifact(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let path = PathBuf::from(path);
-    let known = SAVED
-        .lock()
-        .map_err(|e| e.to_string())?
-        .as_ref()
-        .is_some_and(|saved| saved.contains(&path));
-    if !known {
-        return Err("Vis did not save this file".into());
-    }
-    app.opener()
-        .reveal_item_in_dir(&path)
-        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

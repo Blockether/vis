@@ -114,10 +114,10 @@ describe('desktop package', () => {
     const [libPath, lib] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('lib.rs'));
     expect(libPath).toBe(join('/tools', 'node_modules', 'pake-cli', 'src-tauri', 'src', 'lib.rs'));
     expect(lib).toContain(
-      'mod artifact;\nuse artifact::{open_xlsx, reveal_artifact, save_artifact_as, reveal_saved_artifact};',
+      'mod artifact;\nuse artifact::{open_xlsx, reveal_artifact, save_artifact_as};',
     );
     expect(lib).toContain(
-      '.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,\n            save_artifact_as,\n            reveal_saved_artifact,download_file,',
+      '.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,\n            save_artifact_as,download_file,',
     );
     const [, cargo] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('Cargo.toml'));
     expect(cargo).toContain(`[dependencies]\n${RFD_DEPENDENCY}\nserde = "1"`);
@@ -130,7 +130,6 @@ describe('desktop package', () => {
     expect(command).toContain('pub async fn reveal_artifact(');
     expect(command).toContain('.reveal_item_in_dir(&path)');
     expect(command).toContain('pub async fn save_artifact_as(');
-    expect(command).toContain('pub async fn reveal_saved_artifact(');
     expect(
       writeFileSync.mock.calls.some(([path]) => String(path).endsWith('tauri.windows.conf.json')),
     ).toBe(false);

@@ -3,7 +3,7 @@ import { desktopInvoke } from './desktop';
 
 /**
  * Keeping an opened file: which verbs its band offers on this host, and the desktop
- * save panel behind `Save as…`.
+ * save panel behind `Save…`.
  *
  * The desktop app saves where the person chooses, as a PDF reader does. A phone
  * offers one Share, because its share sheet already holds Save to Files. A browser
@@ -11,7 +11,7 @@ import { desktopInvoke } from './desktop';
  */
 
 /** One verb of an opened file's band. */
-export type FileVerb = 'Share' | 'Save as…' | 'Download' | 'Open in app' | 'Save';
+export type FileVerb = 'Share' | 'Save…' | 'Download' | 'Open in app' | 'Save';
 
 /** The three hosts of this one bundle. */
 export type FileHost = 'desktop' | 'phone' | 'web';
@@ -27,8 +27,8 @@ export function fileHost(): FileHost {
 /** The verbs of the band in order. The last one is the primary. */
 export function fileVerbs(host: FileHost, kind: FileKind, canShare: boolean): FileVerb[] {
   if (host === 'desktop') {
-    if (kind === 'workbook') return ['Open in app', 'Save as…'];
-    return kind === 'file' && canShare ? ['Share', 'Save as…'] : ['Save as…'];
+    if (kind === 'workbook') return ['Open in app', 'Save…'];
+    return kind === 'file' && canShare ? ['Share', 'Save…'] : ['Save…'];
   }
   if (host === 'phone') {
     if (kind === 'workbook') return ['Open in app'];
@@ -48,12 +48,6 @@ export function proposedFilename(name: string): string {
   return safe || 'artifact';
 }
 
-/** The folder and the name of a saved path, enough to recognise it in one line. */
-export function savedPlace(path: string): string {
-  const parts = path.split(/[\\/]+/u).filter(Boolean);
-  return parts.slice(-2).join('/') || path;
-}
-
 /** A file the desktop host wrote. */
 export type SavedFile = { path: string };
 
@@ -63,17 +57,10 @@ export type SavedFile = { path: string };
  */
 export async function saveArtifactAs(blob: Blob, name: string): Promise<SavedFile | null> {
   const invoke = desktopInvoke();
-  if (!invoke) throw new Error('Save as needs the desktop app.');
+  if (!invoke) throw new Error('Saving needs the desktop app.');
   const result = (await invoke('save_artifact_as', {
     filename: proposedFilename(name),
     data: Array.from(new Uint8Array(await blob.arrayBuffer())),
   })) as { saved: boolean; path: string | null };
   return result.saved && result.path ? { path: result.path } : null;
-}
-
-/** Show a file that `saveArtifactAs` wrote in Finder, Explorer or the file manager. */
-export async function revealSavedArtifact(path: string): Promise<void> {
-  const invoke = desktopInvoke();
-  if (!invoke) throw new Error('Showing a file needs the desktop app.');
-  await invoke('reveal_saved_artifact', { path });
 }

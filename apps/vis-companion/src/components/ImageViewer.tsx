@@ -368,7 +368,6 @@ export function ImageViewer({
       <DialogHeader
         title={shown.name}
         isTitleTruncated
-        subtitle={file.saved}
         actions={file.cells}
         isCloseLeading
         closeLabel={`Close ${shown.name}`}

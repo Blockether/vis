@@ -25,9 +25,7 @@ import {
 import {
   fileHost,
   fileVerbs,
-  revealSavedArtifact,
   saveArtifactAs,
-  savedPlace,
   type FileKind,
   type FileVerb,
 } from '../lib/artifact-save';
@@ -44,7 +42,6 @@ import { ImageGallery } from '../lib/gallery';
 import type { TranscriptionSegment } from '../lib/types';
 import {
   ArrowOutIcon,
-  CheckIcon,
   CircleXIcon,
   DownloadIcon,
   PauseIcon,
@@ -243,17 +240,17 @@ function verbIcon(verb: FileVerb): ReactNode {
   return <DownloadIcon />;
 }
 
-/** What one verb does with the bytes. Resolves the sentence to announce, or a saved path. */
+/** What one verb does with the bytes. Resolves the sentence to announce. */
 async function handOff(
   verb: FileVerb,
   blob: Blob,
   source: ArtifactShareSource,
   kind: FileKind,
-): Promise<{ status: string; saved?: string }> {
+): Promise<{ status: string }> {
   const noun = source.noun ?? 'Artifact';
-  if (verb === 'Save as…') {
+  if (verb === 'Save…') {
     const file = await saveArtifactAs(blob, source.name);
-    return file ? { status: `Saved to ${file.path}.`, saved: file.path } : { status: '' };
+    return { status: file ? `Saved to ${file.path}.` : '' };
   }
   if (verb === 'Open in app' || (verb === 'Download' && kind === 'workbook')) {
     return { status: await openSpreadsheet(blob, source.name, source.mediaType) };
@@ -269,7 +266,7 @@ async function handOff(
 }
 
 function failure(verb: FileVerb, kind: FileKind, name: string, cause: unknown): string {
-  if (verb === 'Save as…') {
+  if (verb === 'Save…') {
     const reason = cause instanceof Error ? cause.message : String(cause);
     return `Could not save ${name}: ${reason}. Choose another folder or try again.`;
   }
@@ -279,28 +276,25 @@ function failure(verb: FileVerb, kind: FileKind, name: string, cause: unknown): 
 }
 
 /**
- * The file cells of an opened artifact's band, its outcome, and the saved path.
+ * The file cells of an opened artifact's band, and their outcome.
  *
- * The desktop offers `Save as…` as the primary verb, as a PDF reader does, and the
+ * The desktop offers `Save…` as the primary verb, as a PDF reader does, and the
  * share sheet beside it. A phone offers one Share. See `fileVerbs`.
  *
  * The outcome is never a header line of its own. A success is announced only; the
- * share sheet, the download or the `saved` line under the name is its visible
- * result. A failure floats over the body, which must be the `relative` box that
- * `notice` is rendered in.
+ * save panel, the share sheet or the download is its visible result. A failure
+ * floats over the body, which must be the `relative` box that `notice` is
+ * rendered in.
  */
 export function useFileActions(source: ArtifactShareSource | null): {
   cells: ReactNode;
   notice: ReactNode;
-  /** `Saved to <place>` for the band's subtitle, or null. Its place shows the file. */
-  saved: ReactNode;
 } {
   const [press, setPress] = useState<Press>(null);
   const [isBusy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const [savedPath, setSavedPath] = useState<string | null>(null);
-  if (!source) return { cells: null, notice: null, saved: null };
+  if (!source) return { cells: null, notice: null };
   const kind: FileKind = isXlsxMedia(source.mediaType, source.name)
     ? 'workbook'
     : isZipMedia(source.mediaType, source.name)
@@ -312,13 +306,11 @@ export function useFileActions(source: ArtifactShareSource | null): {
     setPress({ verb, isFailed: false });
     setStatus('');
     setError('');
-    setSavedPath(null);
     void source
       .load()
       .then((blob) => handOff(verb, blob, source, kind))
       .then((done) => {
         setStatus(done.status);
-        setSavedPath(done.saved ?? null);
         setPress(null);
       })
       .catch((cause: unknown) => {
@@ -330,17 +322,14 @@ export function useFileActions(source: ArtifactShareSource | null): {
   const cells = verbs.map((verb, at) => {
     const isPressed = press?.verb === verb;
     const isFailed = isPressed && press.isFailed;
-    const isSaved = verb === 'Save as…' && savedPath !== null;
-    const isPrimary = at === verbs.length - 1 && (verb === 'Save as…' || verb === 'Download');
+    const isPrimary = at === verbs.length - 1 && (verb === 'Save…' || verb === 'Download');
     const text = isFailed
       ? 'Try again'
       : isPressed && isBusy
-        ? verb === 'Save as…'
+        ? verb === 'Save…'
           ? 'Saving…'
           : `${verb.replace(/…$/u, '')}…`
-        : isSaved
-          ? 'Saved'
-          : verb;
+        : verb;
     return (
       <BandButton
         key={verb}
@@ -351,30 +340,12 @@ export function useFileActions(source: ArtifactShareSource | null): {
         onClick={() => run(verb)}
       >
         <span className="flex items-center gap-2">
-          {isFailed ? <CircleXIcon /> : isSaved ? <CheckIcon /> : verbIcon(verb)}
+          {isFailed ? <CircleXIcon /> : verbIcon(verb)}
           <span className="max-sm:sr-only">{text}</span>
         </span>
       </BandButton>
     );
   });
-  const reveal = /Mac/i.test(navigator.userAgent) ? 'Show in Finder' : 'Show in folder';
-  const saved = savedPath ? (
-    <>
-      Saved to{' '}
-      <button
-        type="button"
-        title={`${reveal}: ${savedPath}`}
-        className="underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
-        onClick={() =>
-          void revealSavedArtifact(savedPath).catch(() =>
-            setError('Could not show the file. It may have moved.'),
-          )
-        }
-      >
-        {savedPlace(savedPath)}
-      </button>
-    </>
-  ) : null;
   const notice = (
     <>
       <span role="status" className="sr-only">
@@ -390,7 +361,7 @@ export function useFileActions(source: ArtifactShareSource | null): {
       ) : null}
     </>
   );
-  return { cells: <>{cells}</>, notice, saved };
+  return { cells: <>{cells}</>, notice };
 }
 
 /**

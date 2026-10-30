@@ -562,7 +562,7 @@ export const DocOverlay = memo(function DocOverlay({
   const chrome: DocumentChrome = ({ actions, note, body }) => (
     <OverlayScreen
       title={name}
-      subtitle={file.saved ?? (note || [docKindLabel(mime), shownLabel].filter(Boolean).join(', '))}
+      subtitle={note || [docKindLabel(mime), shownLabel].filter(Boolean).join(', ')}
       actions={
         <>
           {versionCell}

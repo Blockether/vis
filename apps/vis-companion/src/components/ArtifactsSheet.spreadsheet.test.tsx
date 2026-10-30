@@ -100,7 +100,7 @@ describe('spreadsheet artifacts', () => {
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(invoke).toHaveBeenCalledTimes(2);
   });
-  it('saves where the person chooses and shows the saved file', async () => {
+  it('saves where the person chooses', async () => {
     const invoke = vi.fn(async (command: string) =>
       command === 'save_artifact_as'
         ? { saved: true, path: '/Users/ana/Documents/Q3 report.xlsx' }
@@ -110,15 +110,13 @@ describe('spreadsheet artifacts', () => {
     const user = userEvent.setup();
     render(<ArtifactsSheet client={client} sid="s1" artifacts={[workbook]} onClose={() => {}} />);
     await user.click(screen.getByRole('button', { name: /^Open Q3 report.xlsx,/ }));
-    await user.click(await screen.findByRole('button', { name: 'Save as…' }));
+    await user.click(await screen.findByRole('button', { name: 'Save…' }));
     expect(invoke).toHaveBeenCalledWith('save_artifact_as', {
       filename: 'Q3 report.xlsx',
       data: [80, 75, 3, 4],
     });
-    await user.click(await screen.findByRole('button', { name: 'Documents/Q3 report.xlsx' }));
-    expect(invoke).toHaveBeenLastCalledWith('reveal_saved_artifact', {
-      path: '/Users/ana/Documents/Q3 report.xlsx',
-    });
+    expect(await screen.findByText('Saved to /Users/ana/Documents/Q3 report.xlsx.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save…' })).toBeEnabled();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -129,8 +127,8 @@ describe('spreadsheet artifacts', () => {
     const user = userEvent.setup();
     render(<ArtifactsSheet client={client} sid="s1" artifacts={[workbook]} onClose={() => {}} />);
     await user.click(screen.getByRole('button', { name: /^Open Q3 report.xlsx,/ }));
-    await user.click(await screen.findByRole('button', { name: 'Save as…' }));
-    expect(await screen.findByRole('button', { name: 'Save as…' })).toBeEnabled();
+    await user.click(await screen.findByRole('button', { name: 'Save…' }));
+    expect(await screen.findByRole('button', { name: 'Save…' })).toBeEnabled();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByText(/Saved to/)).not.toBeInTheDocument();
   });
