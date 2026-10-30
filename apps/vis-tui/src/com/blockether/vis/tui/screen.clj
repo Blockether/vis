@@ -3943,7 +3943,7 @@
           (frame/paint! g root-frame :header)
 
           _
-          (doseq [section-id [:attachments :composer :echo :footer]]
+          (doseq [section-id [:dock :attachments :composer :echo :footer]]
             (frame/paint! g root-frame section-id))
 
           _

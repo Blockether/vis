@@ -7,6 +7,7 @@
    `--sessions-id`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.artifact-inspector :as artifact-inspector]
             [com.blockether.vis.tui.capture :as cap]
@@ -85,6 +86,53 @@
                        #(expect (= :full
                                    (choose-frame-path (frame-change-flags
                                                         (assoc frame :last-db refreshed)))))))))))
+
+;; Regression (user report): the agent dock blinked during a turn. The full frame never painted
+;; the dock section, so each full frame erased the dock that a live tick had painted.
+(defdescribe
+  full-frame-agent-dock-test
+  (it
+    "paints the dock of a working team in a full frame"
+    (let [db
+          {:session {:id "dock-frame"}
+           :workspace {}
+           :messages []
+           :scroll scroll/follow
+           :input (input/empty-input)
+           :settings {}
+           :pending-sends []
+           :detail-expansions {}
+           :live-views []
+           :loading? false
+           :cancelling? false
+           :progress nil
+           :channel-status {}
+           :tabs []
+           :tab-locals {}
+           :slash-command-index 0
+           :render-version 0}
+
+          team
+          {:agents [{"session_id" "child"
+                     "team_id" "turn-1"
+                     "task" "Fix the parser"
+                     "title" "Fix parser"
+                     "role" "implement"
+                     "status" "running"
+                     "created_at" 0}]}]
+
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [{:keys [terminal screen]} (term/virtual-screen)]
+        (with-open [^TerminalScreen terminal-screen screen]
+          (with-redefs [state/app-db (atom db)
+                        timg/images-protocol (constantly nil)
+                        agent-team/summary (fn [sid]
+                                             (when (= "dock-frame" sid) team))]
+
+            (#'screen/render-frame! terminal-screen 80 30 @state/app-db 1000)
+            (.refresh terminal-screen)
+            (expect (some #(str/starts-with? (str/trim %) "Agents") (term/grid terminal)))))))))
 
 (defdescribe
   attachment-picker-gateway-test
