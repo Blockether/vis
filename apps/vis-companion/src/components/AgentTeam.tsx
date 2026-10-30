@@ -2,7 +2,7 @@ import { type CSSProperties, useCallback, useEffect, useId, useLayoutEffect, use
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
 import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
-import { BandButton, DialogFrame, Modal, TextButton } from './ui';
+import { Button, DialogFrame, Modal, TextButton } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
@@ -381,8 +381,8 @@ function AgentTask({ task }: { task: string }) {
 // How long an armed stop waits for its second press.
 const STOP_ARMED_MS = 5000;
 
-// The stop of a working agent: one quiet control after the time on the status line. The first
-// press arms it, and the second press stops the agent. It disarms on blur or after a wait.
+// The stop of a working agent, beside the way into its session. The first press arms it, and the
+// second press stops the agent. It disarms on blur or after a wait.
 function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => void }) {
   const [isArmed, setArmed] = useState(false);
   const scope = useId();
@@ -392,10 +392,10 @@ function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => vo
     return () => window.clearTimeout(timer);
   }, [isArmed]);
   return (
-    <span className={isArmed ? 'text-err-ink' : 'text-dialog-hint'}>
+    <>
       <span id={scope} className="sr-only">Stops this agent and its descendants, including queued work.</span>
-      <TextButton
-        isTally
+      <Button
+        variant={isArmed ? 'danger' : 'secondary'}
         disabled={isPending}
         aria-describedby={scope}
         title="Stops this agent and its descendants, including queued work."
@@ -407,16 +407,16 @@ function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => vo
         }}
       >
         {isArmed ? 'Confirm stop' : 'Stop agent'}
-      </TextButton>
-    </span>
+      </Button>
+    </>
   );
 }
 
 /**
  * The steps of one agent with their times, read from the timeline route, and the way into its
  * session. The sheet takes the whole session pane. The outcome comes first, then the task, then
- * the steps. Its one verb, the way into the session, stands in the title band, so a long timeline
- * never hides it. A working agent also has a stop on its status line.
+ * the steps. The way into the session is the primary action under the outcome, so a long
+ * timeline never hides it. A working agent has a stop beside it.
  */
 export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, onCancel, onClose }: {
   agent: Subagent;
@@ -453,7 +453,6 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
       <DialogFrame
         title={label}
         onClose={onClose}
-        actions={<BandButton onClick={() => onOpen(child)}>Open session</BandButton>}
       >
         <div className="w-full max-w-[100ch] space-y-6 px-3 py-4 font-mono text-ui text-white sm:px-4 sm:text-body" data-agent-timeline>
           <div className="space-y-1">
@@ -461,11 +460,14 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
               <span className={`uppercase ${role.ink}`}>{role.text}</span>
               <span className={`uppercase ${status.ink}`}>{status.text}</span>
               {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
-              {live && <StopAgent isPending={pending === child} onStop={() => onCancel(child)} />}
             </div>
             {outcome && (
               <p className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${live ? '' : 'font-semibold'}`} data-agent-outcome>{outcome}</p>
             )}
+            <div className="flex flex-wrap gap-2 pt-3">
+              <Button onClick={() => onOpen(child)}>Open session</Button>
+              {live && <StopAgent isPending={pending === child} onStop={() => onCancel(child)} />}
+            </div>
           </div>
           {task && <AgentTask task={task} />}
           <section aria-label="Steps">
