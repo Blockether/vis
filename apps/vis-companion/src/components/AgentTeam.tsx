@@ -364,7 +364,7 @@ function AgentTask({ task }: { task: string }) {
     return () => observer.disconnect();
   }, [task, isOpen]);
   return (
-    <section aria-label="Task">
+    <section aria-label="Task" className="max-w-[100ch]">
       <h3 className={PART_NAME}>Task</h3>
       <p ref={text} className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isOpen ? '' : 'line-clamp-4'}`}>{task}</p>
       {(isCut || isOpen) && (
@@ -381,7 +381,7 @@ function AgentTask({ task }: { task: string }) {
 // How long an armed stop waits for its second press.
 const STOP_ARMED_MS = 5000;
 
-// The stop of a working agent, beside the way into its session. The first press arms it, and the
+// The stop of a working agent, before the way into its session. The first press arms it, and the
 // second press stops the agent. It disarms on blur or after a wait.
 function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => void }) {
   const [isArmed, setArmed] = useState(false);
@@ -415,8 +415,8 @@ function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => vo
 /**
  * The steps of one agent with their times, read from the timeline route, and the way into its
  * session. The sheet takes the whole session pane. The outcome comes first, then the task, then
- * the steps. The way into the session is the primary action under the outcome, so a long
- * timeline never hides it. A working agent has a stop beside it.
+ * the steps. The way into the session is the primary action at the right of the outcome, so a
+ * long timeline never hides it. A working agent has a stop before it.
  */
 export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, onCancel, onClose }: {
   agent: Subagent;
@@ -454,23 +454,25 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
         title={label}
         onClose={onClose}
       >
-        <div className="w-full max-w-[100ch] space-y-6 px-3 py-4 font-mono text-ui text-white sm:px-4 sm:text-body" data-agent-timeline>
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-baseline gap-x-4">
-              <span className={`uppercase ${role.ink}`}>{role.text}</span>
-              <span className={`uppercase ${status.ink}`}>{status.text}</span>
-              {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
+        <div className="w-full space-y-6 px-3 py-4 font-mono text-ui text-white sm:px-4 sm:text-body" data-agent-timeline>
+          <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+            <div className="min-w-0 flex-1 basis-[28ch] space-y-1">
+              <div className="flex flex-wrap items-baseline gap-x-4">
+                <span className={`uppercase ${role.ink}`}>{role.text}</span>
+                <span className={`uppercase ${status.ink}`}>{status.text}</span>
+                {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
+              </div>
+              {outcome && (
+                <p className={`max-w-[100ch] whitespace-pre-wrap [overflow-wrap:anywhere] ${live ? '' : 'font-semibold'}`} data-agent-outcome>{outcome}</p>
+              )}
             </div>
-            {outcome && (
-              <p className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${live ? '' : 'font-semibold'}`} data-agent-outcome>{outcome}</p>
-            )}
-            <div className="flex flex-wrap gap-2 pt-3">
-              <Button onClick={() => onOpen(child)}>Open session</Button>
+            <div className="ml-auto flex shrink-0 gap-2">
               {live && <StopAgent isPending={pending === child} onStop={() => onCancel(child)} />}
+              <Button onClick={() => onOpen(child)}>Open session</Button>
             </div>
           </div>
           {task && <AgentTask task={task} />}
-          <section aria-label="Steps">
+          <section aria-label="Steps" className="max-w-[100ch]">
             <h3 className={PART_NAME}>Timeline</h3>
             {steps === null ? (
               <p className="text-dialog-hint">Reading the timeline…</p>
