@@ -701,8 +701,9 @@ function LogRows({
             }
           }}
         />
-        {/* The actions wrap as ONE group. Copy wears the filled face, Search the outline. */}
-        <span className="flex shrink-0 items-center gap-2">
+        {/* The actions wrap as ONE group at the right edge, also on their own line. */}
+        {/* Copy wears the filled face, Search the outline. */}
+        <span className="ml-auto flex shrink-0 items-center gap-2">
           <Button type="submit" variant="secondary" density="panel">
             Search
           </Button>
