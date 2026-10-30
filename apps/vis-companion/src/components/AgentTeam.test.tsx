@@ -166,9 +166,9 @@ describe('agent timeline', () => {
     expect(agentOutcome(done)).toBe('All 40 tests pass');
     expect(timelineStep(end, done)).toEqual({ word: { text: 'done', ink: 'text-ok-ink', isStatus: true }, text: undefined });
     expect(timelineStep(end, { ...done, result: 'Other words' }).text).toBe('All 40 tests pass');
-    // While the agent works, its newest note is the outcome, never its task.
-    expect(agentOutcome({ ...child, note: ' Reading the schema ' })).toBe('Reading the schema');
-    expect(agentOutcome(child)).toBeUndefined();
+    // While the agent works, its Activity line is the outcome. Its note is already a step.
+    expect(agentOutcome({ ...child, note: 'Reading the schema', activity: ' Search files agents ' })).toBe('Search files agents');
+    expect(agentOutcome({ ...child, note: 'Reading the schema' })).toBeUndefined();
     expect(timelineStep({ at: T0, kind: 'note', text: 'Plain prose' }, child)).toEqual({ word: undefined, text: 'Plain prose' });
   });
 
@@ -186,6 +186,10 @@ describe('agent timeline', () => {
     const onCancel = vi.fn();
     render(<TurnAgents {...props} onCancel={onCancel} agents={[child]} />);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
+    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
+    expect(onCancel).not.toHaveBeenCalled();
+    // A blur disarms the stop, so a later stray press does not stop the agent.
+    fireEvent.blur(screen.getByRole('button', { name: 'Confirm stop' }));
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
     expect(onCancel).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));

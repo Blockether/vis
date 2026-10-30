@@ -1,8 +1,8 @@
-import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
 import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
-import { BandButton, Button, DialogFrame, Modal } from './ui';
+import { BandButton, DialogFrame, Modal, TextButton } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
@@ -308,11 +308,11 @@ const STEP_WORDS: Partial<Record<AgentTimelineItem['kind'], string>> = {
 };
 
 /**
- * What the sheet shows above the timeline: the newest note or Activity line while the agent
- * works, else its result or the reason of its end.
+ * What the sheet shows above the timeline: the latest Activity line while the agent works, else
+ * its result or the reason of its end. A note is a step of the timeline, so it never shows here.
  */
 export function agentOutcome(agent: Subagent): string | undefined {
-  const text = isLive(agent) ? agent.note ?? agent.activity : agent.result ?? END_REASON[agent.status];
+  const text = isLive(agent) ? agent.activity : agent.result ?? END_REASON[agent.status];
   return text?.trim() || undefined;
 }
 
@@ -368,19 +368,55 @@ function AgentTask({ task }: { task: string }) {
       <h3 className={PART_NAME}>Task</h3>
       <p ref={text} className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isOpen ? '' : 'line-clamp-4'}`}>{task}</p>
       {(isCut || isOpen) && (
-        <Button density="inline" variant="quiet" className="mt-1 -ml-2" aria-expanded={isOpen} onClick={() => setOpen((open) => !open)}>
-          {isOpen ? 'Show less' : 'Show the whole task'}
-        </Button>
+        <p className="mt-1 text-dialog-hint">
+          <TextButton isTally aria-expanded={isOpen} onClick={() => setOpen((open) => !open)}>
+            {isOpen ? 'Show less' : 'Show the whole task'}
+          </TextButton>
+        </p>
       )}
     </section>
+  );
+}
+
+// How long an armed stop waits for its second press.
+const STOP_ARMED_MS = 5000;
+
+// The stop of a working agent: one quiet control after the time on the status line. The first
+// press arms it, and the second press stops the agent. It disarms on blur or after a wait.
+function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => void }) {
+  const [isArmed, setArmed] = useState(false);
+  const scope = useId();
+  useEffect(() => {
+    if (!isArmed) return undefined;
+    const timer = window.setTimeout(() => setArmed(false), STOP_ARMED_MS);
+    return () => window.clearTimeout(timer);
+  }, [isArmed]);
+  return (
+    <span className={isArmed ? 'text-err-ink' : 'text-dialog-hint'}>
+      <span id={scope} className="sr-only">Stops this agent and its descendants, including queued work.</span>
+      <TextButton
+        isTally
+        disabled={isPending}
+        aria-describedby={scope}
+        title="Stops this agent and its descendants, including queued work."
+        onBlur={() => setArmed(false)}
+        onClick={() => {
+          if (!isArmed) { setArmed(true); return; }
+          setArmed(false);
+          onStop();
+        }}
+      >
+        {isArmed ? 'Confirm stop' : 'Stop agent'}
+      </TextButton>
+    </span>
   );
 }
 
 /**
  * The steps of one agent with their times, read from the timeline route, and the way into its
  * session. The sheet takes the whole session pane. The outcome comes first, then the task, then
- * the steps. The verbs stand in the title band, so a long timeline never hides them. A working
- * agent can also be stopped here, after a confirmation in the foot of the sheet.
+ * the steps. Its one verb, the way into the session, stands in the title band, so a long timeline
+ * never hides it. A working agent also has a stop on its status line.
  */
 export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, onCancel, onClose }: {
   agent: Subagent;
@@ -393,7 +429,6 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
   onClose: () => void;
 }) {
   const [steps, setSteps] = useState<{ items: AgentTimelineItem[] } | { error: string } | null>(null);
-  const [confirm, setConfirm] = useState(false);
   const child = agent.session_id;
   // Read again when the agent moves on, not on a clock.
   const progress = `${agent.status}:${agent.iterations_used}:${agent.finished_at ?? ''}:${agent.resumed_at ?? ''}`;
@@ -418,35 +453,18 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
       <DialogFrame
         title={label}
         onClose={onClose}
-        actions={
-          <>
-            {live && (
-              <BandButton disabled={pending === child || confirm} onClick={() => setConfirm(true)}>
-                Stop agent
-              </BandButton>
-            )}
-            <BandButton onClick={() => onOpen(child)}>Open session</BandButton>
-          </>
-        }
-        footer={live && confirm ? (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <p className="min-w-0 flex-1">Stops this agent and its descendants, including queued work.</p>
-            <Button density="inline" variant="secondary" onClick={() => setConfirm(false)}>Keep working</Button>
-            <Button density="inline" variant="danger" disabled={pending === child} onClick={() => { setConfirm(false); onCancel(child); }}>
-              Confirm stop
-            </Button>
-          </div>
-        ) : undefined}
+        actions={<BandButton onClick={() => onOpen(child)}>Open session</BandButton>}
       >
         <div className="w-full max-w-[100ch] space-y-6 px-3 py-4 font-mono text-ui text-white sm:px-4 sm:text-body" data-agent-timeline>
           <div className="space-y-1">
-            <p className="flex flex-wrap gap-x-4">
+            <div className="flex flex-wrap items-baseline gap-x-4">
               <span className={`uppercase ${role.ink}`}>{role.text}</span>
               <span className={`uppercase ${status.ink}`}>{status.text}</span>
               {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
-            </p>
+              {live && <StopAgent isPending={pending === child} onStop={() => onCancel(child)} />}
+            </div>
             {outcome && (
-              <p className="whitespace-pre-wrap font-semibold [overflow-wrap:anywhere]" data-agent-outcome>{outcome}</p>
+              <p className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${live ? '' : 'font-semibold'}`} data-agent-outcome>{outcome}</p>
             )}
           </div>
           {task && <AgentTask task={task} />}
