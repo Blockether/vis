@@ -6,6 +6,7 @@ import type { AgentTimeline, Subagent } from '../lib/types';
 import {
   TurnAgents,
   agentLabel,
+  agentOutcome,
   agentStatus,
   agentTime,
   agentUpdate,
@@ -15,6 +16,7 @@ import {
   formatAgentTime,
   teamCounts,
   teamTime,
+  timelineStep,
   useAgentTeam,
 } from './AgentTeam';
 
@@ -133,9 +135,9 @@ describe('agent timeline', () => {
     const items = within(sheet).getAllByRole('listitem').map((item) => item.textContent);
     expect(items).toEqual([
       `${clockTime(T0)}StartedVerify the contract`,
-      `${clockTime(T0 + 12_000)}NoteThe schema has the new fields.`,
+      `${clockTime(T0 + 12_000)}The schema has the new fields.`,
       `${clockTime(T0 + 40_000)}MessageAsked: keep the old API?`,
-      `${clockTime(T0 + 61_000)}Finisheddone · All 40 tests pass`,
+      `${clockTime(T0 + 61_000)}doneAll 40 tests pass`,
     ]);
     expect(clockTime(T0)).toBe('14:03:07');
     expect(within(sheet).queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
@@ -151,9 +153,23 @@ describe('agent timeline', () => {
     render(<TurnAgents {...props} timeline={timeline} agents={[{ ...child, status: 'budget_limited', finished_at: T0 + 9_000 }]} />);
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /failed/ })); });
     const sheet = screen.getByRole('dialog', { name: '#1' });
+    expect(sheet.querySelector('[data-agent-outcome]')).toHaveTextContent('out of budget');
     expect(within(sheet).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
-      `${clockTime(T0 + 9_000)}Finishedfailed · out of budget`,
+      `${clockTime(T0 + 9_000)}failed`,
     ]);
+  });
+
+  // User report: the sheet showed the result at its end and the end step said it again.
+  it('shows the outcome above the steps, and the end step does not repeat it', () => {
+    const end = { at: T0 + 61_000, kind: 'finished' as const, status: 'completed' as const, outcome: 'passed' as const, text: 'All 40 tests pass' };
+    const done = { ...child, status: 'completed' as const, outcome: 'passed' as const, result: 'All 40 tests pass' };
+    expect(agentOutcome(done)).toBe('All 40 tests pass');
+    expect(timelineStep(end, done)).toEqual({ word: { text: 'done', ink: 'text-ok-ink', isStatus: true }, text: undefined });
+    expect(timelineStep(end, { ...done, result: 'Other words' }).text).toBe('All 40 tests pass');
+    // While the agent works, its newest note is the outcome, never its task.
+    expect(agentOutcome({ ...child, note: ' Reading the schema ' })).toBe('Reading the schema');
+    expect(agentOutcome(child)).toBeUndefined();
+    expect(timelineStep({ at: T0, kind: 'note', text: 'Plain prose' }, child)).toEqual({ word: undefined, text: 'Plain prose' });
   });
 
   it('says when there are no steps, and shows a read error', async () => {

@@ -50,3 +50,6 @@ export const Timeline: Story = {
     await expect(within(sheet).getByRole('button', { name: 'Open session' })).toBeVisible();
   },
 };
+
+/** A finished team. The untitled failed verifier has a long task, which the sheet cuts to four lines. */
+export const Finished: Story = {};

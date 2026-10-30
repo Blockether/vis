@@ -1,8 +1,8 @@
-import { type CSSProperties, useCallback, useEffect, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
 import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
-import { Button, DialogFrame, Modal } from './ui';
+import { BandButton, Button, DialogFrame, Modal } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
 export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
@@ -299,13 +299,42 @@ export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline,
   );
 }
 
-const STEP_WORDS: Record<AgentTimelineItem['kind'], string> = {
+// The word of a step that starts a task or carries a message. A note is the agent's own prose,
+// so it carries no word, and the end carries its status word.
+const STEP_WORDS: Partial<Record<AgentTimelineItem['kind'], string>> = {
   started: 'Started',
   continued: 'Continued',
-  note: 'Note',
   message: 'Message',
-  finished: 'Finished',
 };
+
+/**
+ * What the sheet shows above the timeline: the newest note or Activity line while the agent
+ * works, else its result or the reason of its end.
+ */
+export function agentOutcome(agent: Subagent): string | undefined {
+  const text = isLive(agent) ? agent.note ?? agent.activity : agent.result ?? END_REASON[agent.status];
+  return text?.trim() || undefined;
+}
+
+/**
+ * One step as the timeline shows it: its word with its ink, then its text. The end shows its
+ * status word. The sheet shows the outcome above the timeline, so the end does not repeat it.
+ */
+export function timelineStep(item: AgentTimelineItem, agent: Subagent): {
+  word?: { text: string; ink: string; isStatus: boolean };
+  text?: string;
+} {
+  if (item.kind !== 'finished') {
+    const word = STEP_WORDS[item.kind];
+    return { word: word ? { text: word, ink: 'text-dialog-hint', isStatus: false } : undefined, text: item.text };
+  }
+  const end = item.status ? agentStatus({ ...agent, status: item.status, outcome: item.outcome }) : undefined;
+  const text = item.text?.trim() || (item.status ? END_REASON[item.status] : undefined);
+  return {
+    word: end && { ...end, isStatus: true },
+    text: text === agentOutcome(agent) ? undefined : text,
+  };
+}
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
@@ -315,9 +344,43 @@ export function clockTime(at: number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+// The name of a part of the sheet. It is one step smaller than the text that it names.
+const PART_NAME = 'mb-1 text-meta text-dialog-hint sm:text-ui';
+
+// The task of an agent: its first four lines, and all of it on request. The control under the
+// task shows only when the four lines cut it.
+function AgentTask({ task }: { task: string }) {
+  const [isOpen, setOpen] = useState(false);
+  const [isCut, setCut] = useState(false);
+  const text = useRef<HTMLParagraphElement>(null);
+  useLayoutEffect(() => {
+    const element = text.current;
+    if (element === null || isOpen) return undefined;
+    const measure = () => setCut(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [task, isOpen]);
+  return (
+    <section aria-label="Task">
+      <h3 className={PART_NAME}>Task</h3>
+      <p ref={text} className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isOpen ? '' : 'line-clamp-4'}`}>{task}</p>
+      {(isCut || isOpen) && (
+        <Button density="inline" variant="quiet" className="mt-1 -ml-2" aria-expanded={isOpen} onClick={() => setOpen((open) => !open)}>
+          {isOpen ? 'Show less' : 'Show the whole task'}
+        </Button>
+      )}
+    </section>
+  );
+}
+
 /**
- * The steps of one agent with their times, read from the timeline route, and the
- * way into its session. A working agent can also be stopped here.
+ * The steps of one agent with their times, read from the timeline route, and the way into its
+ * session. The sheet takes the whole session pane. The outcome comes first, then the task, then
+ * the steps. The verbs stand in the title band, so a long timeline never hides them. A working
+ * agent can also be stopped here, after a confirmation in the foot of the sheet.
  */
 export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, onCancel, onClose }: {
   agent: Subagent;
@@ -347,57 +410,71 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
   const role = agentRole(agent);
   const status = agentStatus(agent);
   const time = agentTime(agent, now);
+  const live = isLive(agent);
+  const outcome = agentOutcome(agent);
+  const task = agent.task.trim();
   return (
-    <Modal size="fit" within="session" onDismiss={onClose}>
-      <DialogFrame title={label} onClose={onClose}>
-        <div className="space-y-3 px-4 py-3 font-mono text-meta text-white sm:text-ui" data-agent-timeline>
-          <p className="flex flex-wrap gap-x-3">
-            <span className={`uppercase ${role.ink}`}>{role.text}</span>
-            <span className={`uppercase ${status.ink}`}>{status.text}</span>
-            {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
-          </p>
-          <p className="whitespace-pre-wrap break-words text-dialog-hint">{agent.task}</p>
-          {steps === null ? (
-            <p className="text-dialog-hint">Reading the timeline…</p>
-          ) : 'error' in steps ? (
-            <p role="alert" className="text-err-ink">{steps.error}</p>
-          ) : steps.items.length === 0 ? (
-            <p className="text-dialog-hint">No steps yet.</p>
-          ) : (
-            <ol aria-label="Timeline" className="space-y-1">
-              {steps.items.map((item, index) => {
-                const end = item.kind === 'finished' && item.status
-                  ? agentStatus({ ...agent, status: item.status, outcome: item.outcome })
-                  : null;
-                const text = item.text || (item.kind === 'finished' && item.status ? END_REASON[item.status] : undefined);
-                return (
-                  <li key={index} className="grid grid-cols-[8ch_9ch_minmax(0,1fr)] gap-x-3">
-                    <time dateTime={new Date(item.at).toISOString()} className="text-dialog-hint tabular-nums">{clockTime(item.at)}</time>
-                    <span className="text-dialog-hint">{STEP_WORDS[item.kind] ?? item.kind}</span>
-                    <span className="whitespace-pre-wrap break-words">
-                      {end && <span className={`uppercase ${end.ink}`}>{end.text}</span>}
-                      {end && text && ' · '}
-                      {text}
-                    </span>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <Button density="inline" onClick={() => onOpen(child)}>Open session</Button>
-            {isLive(agent) && (confirm ? <>
-              <Button density="inline" variant="danger" disabled={pending === child} onClick={() => { setConfirm(false); onCancel(child); }}>
-                Confirm stop
-              </Button>
-              <Button density="inline" variant="secondary" onClick={() => setConfirm(false)}>Keep working</Button>
-            </> : (
-              <Button density="inline" variant="secondary" disabled={pending === child} onClick={() => setConfirm(true)}>
+    <Modal size="full" within="session" onDismiss={onClose}>
+      <DialogFrame
+        title={label}
+        onClose={onClose}
+        actions={
+          <>
+            {live && (
+              <BandButton disabled={pending === child || confirm} onClick={() => setConfirm(true)}>
                 Stop agent
-              </Button>
-            ))}
+              </BandButton>
+            )}
+            <BandButton onClick={() => onOpen(child)}>Open session</BandButton>
+          </>
+        }
+        footer={live && confirm ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <p className="min-w-0 flex-1">Stops this agent and its descendants, including queued work.</p>
+            <Button density="inline" variant="secondary" onClick={() => setConfirm(false)}>Keep working</Button>
+            <Button density="inline" variant="danger" disabled={pending === child} onClick={() => { setConfirm(false); onCancel(child); }}>
+              Confirm stop
+            </Button>
           </div>
-          {confirm && <p className="text-dialog-hint">Stops this agent and its descendants, including queued work.</p>}
+        ) : undefined}
+      >
+        <div className="w-full max-w-[100ch] space-y-6 px-3 py-4 font-mono text-ui text-white sm:px-4 sm:text-body" data-agent-timeline>
+          <div className="space-y-1">
+            <p className="flex flex-wrap gap-x-4">
+              <span className={`uppercase ${role.ink}`}>{role.text}</span>
+              <span className={`uppercase ${status.ink}`}>{status.text}</span>
+              {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
+            </p>
+            {outcome && (
+              <p className="whitespace-pre-wrap font-semibold [overflow-wrap:anywhere]" data-agent-outcome>{outcome}</p>
+            )}
+          </div>
+          {task && <AgentTask task={task} />}
+          <section aria-label="Steps">
+            <h3 className={PART_NAME}>Timeline</h3>
+            {steps === null ? (
+              <p className="text-dialog-hint">Reading the timeline…</p>
+            ) : 'error' in steps ? (
+              <p role="alert" className="text-err-ink">{steps.error}</p>
+            ) : steps.items.length === 0 ? (
+              <p className="text-dialog-hint">No steps yet.</p>
+            ) : (
+              <ol aria-label="Timeline" className="space-y-2">
+                {steps.items.map((item, index) => {
+                  const { word, text } = timelineStep(item, agent);
+                  return (
+                    <li key={index} className="grid grid-cols-[8ch_minmax(0,1fr)] gap-x-3">
+                      <time dateTime={new Date(item.at).toISOString()} className="text-dialog-hint tabular-nums">{clockTime(item.at)}</time>
+                      <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                        {word && <span className={`mr-3 ${word.isStatus ? 'uppercase' : ''} ${word.ink}`}>{word.text}</span>}
+                        {text}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </section>
         </div>
       </DialogFrame>
     </Modal>

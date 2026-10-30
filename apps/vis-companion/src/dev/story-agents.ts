@@ -71,6 +71,17 @@ export const STORY_DONE_TEAM: Subagent[] = [
   }), 1.5),
   ended(member(STORY_AGENT_DONE_TURN, 'done-gateway', 29.8, {
     role: 'verify', status: 'completed', outcome: 'failed', result: '2 of 40 tests fail: the timeline of a grandchild gives 404',
+    task: [
+      'Verify the gateway agent routes against the agents contract.',
+      '',
+      'Acceptance criteria:',
+      '- GET /v1/sessions/:sid/agents lists every child of the session in spawn order.',
+      '- GET /v1/sessions/:sid/agents/:child/timeline gives the steps oldest first.',
+      '- A grandchild timeline answers 200 for its leader, and 404 for another session.',
+      '- POST /v1/sessions/:sid/agents/:child/cancel stops the child and its descendants.',
+      '',
+      'Run the gateway tests in a clean JVM and report each failing case with its route.',
+    ].join('\n'),
   }), 4),
   ended(member(STORY_AGENT_DONE_TURN, 'done-fix', 29.7, {
     role: 'implement', title: 'Fix the 404', status: 'failed', result: 'Stopped on a merge conflict in state.clj',
@@ -90,7 +101,7 @@ export const STORY_DONE_TEAM: Subagent[] = [
 export function storyTimeline(agent: Subagent): AgentTimeline {
   const start = agent.created_at ?? NOW;
   const items: AgentTimeline['items'] = [
-    { at: start, kind: 'started', text: agent.task },
+    { at: start, kind: 'started' },
     { at: start + 9_000, kind: 'note', text: 'Read the contract and the current views first.' },
   ];
   items.push({ at: start + 20_000, kind: 'note', text: agent.note ?? agent.activity ?? 'Changed the rows and ran the checks.' });
