@@ -3643,12 +3643,15 @@
     (p/put-str! g 0 row (p/center-text label (long cols)))))
 
 (defn- progress-live-runs
-  "Project active views only when their receipt has not landed on an earlier turn."
+  "Project active views only when their receipt has not landed on an earlier turn. Held
+   apps join too: their rows land only when the block ends (#429)."
   [db]
   (let [earlier-view-ids (into #{} (mapcat #(map :view-id (:runs %))) (butlast (:messages db)))]
-    (mapv lv/transcript-run
-          (remove #(or (lv/dormant? %) (contains? earlier-view-ids (lv/view-id %)))
-            (:live-views db)))))
+    (into (mapv lv/transcript-run
+                (remove #(or (lv/dormant? %) (contains? earlier-view-ids (lv/view-id %)))
+                  (:live-views db)))
+          (keep render/app-run)
+          (vals (:app-views db)))))
 
 (defn- queue-focus-view
   "The C-x e queue focus that the renderer paints, with `:undo?` while a removal can come

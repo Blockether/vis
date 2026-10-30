@@ -27,7 +27,9 @@ import { LiveView } from './LiveView';
 import { MermaidBlock } from './MermaidBlock';
 import { JustifiedProse } from './JustifiedProse';
 import {
+  APP_ATTACHMENT_MEDIA,
   liveOwnerMatches,
+  livePlacement,
   type LiveView as LiveViewModel,
   type LiveViewOwner,
 } from '../lib/live-view';
@@ -2871,6 +2873,8 @@ type TraceSegmentProps = {
   liveViews: LiveViewModel[];
   /** Views that no renderable form of the trace owns. Only the last segment gets them. */
   strayViews: LiveViewModel[];
+  /** Open apps of the session. A step lists each app that it owns. */
+  appViews: LiveViewModel[];
 };
 
 /**
@@ -2896,7 +2900,8 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
     a.client !== b.client ||
     a.sid !== b.sid ||
     a.liveViews !== b.liveViews ||
-    a.strayViews !== b.strayViews
+    a.strayViews !== b.strayViews ||
+    a.appViews !== b.appViews
   )
     return false;
   const before = a.segment;
@@ -3244,6 +3249,7 @@ const TraceSegment = memo(function TraceSegment({
   sid,
   liveViews,
   strayViews,
+  appViews,
 }: TraceSegmentProps) {
   const [open, setOpen] = useState(false);
   // Summarized, a run's consecutive Python forms share one source and Activity; otherwise
@@ -3279,6 +3285,20 @@ const TraceSegment = memo(function TraceSegment({
     return built;
   }, [segment, showCode, summarize]);
   const attachments = useMemo(() => segment.items.flatMap((entry) => entry.attachments), [segment]);
+  // #429: an app that waits for the person keeps its block open, and its durable row lands
+  // only when the block ends. Until then the owning step lists the open app itself.
+  const appRows = useMemo(() => {
+    if (!appViews.length) return NO_ATTACHMENTS;
+    const forms = segment.items.flatMap((entry) => entry.forms);
+    const rows = appViews
+      .filter(
+        (view) =>
+          !attachments.some((entry) => entry.view_id === view.id) &&
+          forms.some((form) => liveOwnerMatches(view.owner, form.activity)),
+      )
+      .map((view) => appAttachment(view));
+    return rows.length ? rows : NO_ATTACHMENTS;
+  }, [appViews, attachments, segment]);
   // A run already has its own section (live now or retained beside Activity). Do not
   // list earlier record files from the same execution as a second stack of RUN rows.
   // Without a section, the recorded artifact remains the reload-safe fallback. A closed
@@ -3333,6 +3353,12 @@ const TraceSegment = memo(function TraceSegment({
     ).map((thread) => thread[0]);
     return { views, records };
   }, [chunks, liveViews, strayViews, attachments]);
+
+  const railAttachments = useMemo(() => {
+    const shown =
+      hasRun || !expanded ? attachments.filter((entry) => !attachmentIsLive(entry)) : attachments;
+    return appRows.length ? [...shown, ...appRows] : shown;
+  }, [hasRun, expanded, attachments, appRows]);
 
   // A session switch, the ramp and a late history page mount restored steps. Only a step
   // streamed while the reader watches enters.
@@ -3406,11 +3432,7 @@ const TraceSegment = memo(function TraceSegment({
         <AttachmentRail
           client={client}
           sid={sid}
-          attachments={
-            hasRun || !expanded
-              ? attachments.filter((entry) => !attachmentIsLive(entry))
-              : attachments
-          }
+          attachments={railAttachments}
         />
       )}
     </section>
@@ -3418,6 +3440,20 @@ const TraceSegment = memo(function TraceSegment({
 }, sameTraceSegment);
 
 const NO_LIVE_VIEWS: LiveViewModel[] = [];
+const NO_ATTACHMENTS: IterationAttachment[] = [];
+
+/** The transcript row of an open app, until its durable row lands. */
+function appAttachment(view: LiveViewModel): IterationAttachment {
+  return { index: 0, media_type: APP_ATTACHMENT_MEDIA, filename: view.title, view_id: view.id };
+}
+
+/** Split session views into the views that a trace places and the open apps. */
+function splitAppViews(views: LiveViewModel[]): [LiveViewModel[], LiveViewModel[]] {
+  const apps = views.filter((view) => livePlacement(view) === 'attachment');
+  if (!apps.length) return [views, NO_LIVE_VIEWS];
+  const placed = views.filter((view) => livePlacement(view) !== 'attachment');
+  return [placed.length ? placed : NO_LIVE_VIEWS, apps];
+}
 
 /** Activity attachment IDs resolve only against this turn's own iterations. */
 function iterationAttachment(
@@ -3448,7 +3484,7 @@ export const IterationTrace = memo(function IterationTrace({
   client,
   sid,
   showCode: codeOverride,
-  liveViews = NO_LIVE_VIEWS,
+  liveViews: sessionViews = NO_LIVE_VIEWS,
 }: {
   iterations: TranscriptIteration[];
   /** Prose the ANSWER band already paints — see `answeredProse`. */
@@ -3466,6 +3502,7 @@ export const IterationTrace = memo(function IterationTrace({
   const preferredCode = usePythonCodeShown();
   const showCode = useDeferredValue(codeOverride ?? preferredCode);
   const summarize = useDeferredValue(useStepsSummarized());
+  const [liveViews, appViews] = useMemo(() => splitAppViews(sessionViews), [sessionViews]);
   const rootRef = useRef<HTMLDivElement>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
   const [rampId] = useState(() => Symbol('trace-ramp'));
@@ -3614,6 +3651,7 @@ export const IterationTrace = memo(function IterationTrace({
             sid={sid}
             liveViews={liveViews}
             strayViews={index === shown.length - 1 ? strayViews : NO_LIVE_VIEWS}
+            appViews={appViews}
           />
         ))}
       </div>

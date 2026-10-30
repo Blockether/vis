@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.render
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.attachments :as attach]
@@ -4296,7 +4297,7 @@
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
   [{:keys [thinking assistant-prose content-stream forms recaps provider-fallbacks error
-           repeat-count attachments iteration-id user-input]}]
+           repeat-count attachments iteration-id user-input app-rows]}]
   [(text-fingerprint thinking) (mapv form-fingerprint forms) recaps provider-fallbacks
    ;; `:error` is USUALLY a map, but some paths (e.g. CONSULT failures) carry a
    ;; plain String. `select-keys` only works on associatives and throws on a
@@ -4316,7 +4317,7 @@
    ;; replace the cached stdout-only receipt immediately.
    iteration-id attachments
    ;; The queued messages the step received (`→ Send now`) paint at its top.
-   user-input])
+   user-input app-rows])
 
 (defn- short-id-fragment
   ^String [id]
@@ -5750,6 +5751,21 @@
 
     (get artifact "owner")
     (assoc :owner (wire/->engine (get artifact "owner")))))
+
+(defn app-run
+  "A transcript row for a held app view `{:view v}` while its block still runs. The
+   durable attachment row lands only when the block ends, and `app.run` keeps the block
+   open, so this row lets the person open the app from its owning step. Nil without an
+   owner or a view id."
+  [{:keys [view]}]
+  (let [view-id (str (:id view))]
+    (when (and (:owner view) (not (str/blank? view-id)))
+      {:view-id view-id
+       :owner (:owner view)
+       :app-row {:filename (or (not-empty (str (:title view))) "App")
+                 :media-type app/media-type
+                 :view-id view-id
+                 :owner (:owner view)}})))
 
 (defn- iteration-artifact-rows
   "Durable document rows from a step's gateway attachment descriptors. Pictures, videos and
@@ -8238,35 +8254,57 @@
                       :session-id (str session-id)}}]))
          runs)))))
 
+(defn- lift-app-rows
+  "Move placed app rows from run sections to `:app-rows` of their step, which lists them
+   with its attachments. An app row without an owning step has no place, so it drops."
+  [{:keys [iterations unplaced]}]
+  {:iterations
+   (mapv (fn [iteration]
+           (let [apps (into [] (comp (mapcat :runs) (keep :app-row)) (:forms iteration))]
+             (if (empty? apps)
+               iteration
+               (-> iteration
+                   (update :forms
+                           (partial mapv
+                                    (fn [form]
+                                      (cond-> form
+                                        (some :app-row (:runs form))
+                                        (update :runs
+                                                #(not-empty (into [] (remove :app-row) %)))))))
+                   (assoc :app-rows apps)))))
+         iterations)
+   :unplaced (into [] (remove :app-row) unplaced)})
+
 (defn- place-run-rows
   "Attach run rows only to their trusted Activity owner.
    Unmatched and ownerless receipts remain standalone and reachable."
   [iterations runs]
-  (reduce (fn [{:keys [iterations] :as layout} run]
-            (let [{:keys [iteration-index form-index]}
-                  (when-let [owner (:owner run)]
-                    (first (for [[iteration-index iteration] (map-indexed vector iterations)
-                                 [form-index form] (map-indexed vector (:forms iteration))
-                                 :when (owns-live-view? (:activity form) owner)]
+  (lift-app-rows
+    (reduce (fn [{:keys [iterations] :as layout} run]
+              (let [{:keys [iteration-index form-index]}
+                    (when-let [owner (:owner run)]
+                      (first (for [[iteration-index iteration] (map-indexed vector iterations)
+                                   [form-index form] (map-indexed vector (:forms iteration))
+                                   :when (owns-live-view? (:activity form) owner)]
 
-                             {:iteration-index iteration-index :form-index form-index})))
+                               {:iteration-index iteration-index :form-index form-index})))
 
-                  forms
-                  (when (and (integer? iteration-index) (not (neg? (long iteration-index))))
-                    (get-in iterations [(long iteration-index) :forms]))]
+                    forms
+                    (when (and (integer? iteration-index) (not (neg? (long iteration-index))))
+                      (get-in iterations [(long iteration-index) :forms]))]
 
-              (if (and (integer? form-index)
-                       (not (neg? (long form-index)))
-                       (< (long form-index) (count forms)))
-                (update layout
-                        :iterations
-                        update-in
-                        [(long iteration-index) :forms (long form-index) :runs]
-                        (fnil conj [])
-                        run)
-                (update layout :unplaced conj run))))
-          {:iterations (vec (or iterations [])) :unplaced []}
-          (or runs [])))
+                (if (and (integer? form-index)
+                         (not (neg? (long form-index)))
+                         (< (long form-index) (count forms)))
+                  (update layout
+                          :iterations
+                          update-in
+                          [(long iteration-index) :forms (long form-index) :runs]
+                          (fnil conj [])
+                          run)
+                  (update layout :unplaced conj run))))
+            {:iterations (vec (or iterations [])) :unplaced []}
+            (or runs []))))
 
 (defn owned-live-view-ids
   "Exact live owners in the complete trace, independent of viewport virtualization."
@@ -8451,7 +8489,7 @@
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
   (let [{:keys [thinking content-stream assistant-prose forms recaps provider-fallbacks error
-                repeat-count attachments user-input]}
+                repeat-count attachments user-input app-rows]}
         entry
 
         ;; Summarized steps share one source and Activity per adjacent Python run;
@@ -8470,6 +8508,13 @@
                          (not (and (:view-id artifact)
                                    (some #(= (:view-id artifact) (:view-id %))
                                          (mapcat :runs forms))))))))
+
+        ;; #429: a running app joins as a row until its durable row lands.
+        iteration-artifacts
+        (into (vec iteration-artifacts)
+              (remove (fn [row]
+                        (some #(= (:view-id row) (:view-id %)) iteration-artifacts)))
+              app-rows)
 
         ;; `:content-stream` is the LIVE prose accumulation streamed alongside
         ;; reasoning (dropped after parse). `:assistant-prose` is the SAME markdown

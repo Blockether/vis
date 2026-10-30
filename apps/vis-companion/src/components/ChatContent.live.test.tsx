@@ -510,3 +510,45 @@ it('keeps only the newest owned receipt version in the shared surface', () => {
   );
   expect(mounted.getAllByRole('button', { name: 'Open run Monitor' })).toHaveLength(1);
 });
+
+// Regression #429: an app that waits for the person keeps its block open, so its durable row
+// had not landed and the step showed nothing to open. The owning step lists the open app, once.
+it('lists an open app at its owning step until its durable row lands', () => {
+  const activity = activityHistoryPage();
+  const app = {
+    ...STORY_LIVE_VIEW,
+    id: 'app-429',
+    title: 'Pick a plan',
+    placement: 'attachment' as const,
+    owner: { invocation_id: 'absent', activity_id: activity.history!.id },
+  };
+  const iterations = [{ id: 'step-1', forms: [{ source: 'pick()', activity }] }];
+  const props = { client: {} as GatewayClient, sid: 'session' };
+  const mounted = renderOpenSteps(
+    <IterationTrace iterations={iterations} liveViews={[app]} {...props} />,
+  );
+  expect(mounted.getAllByRole('button', { name: 'Open app Pick a plan' })).toHaveLength(1);
+  expect(mounted.queryByRole('button', { name: /live view/ })).toBeNull();
+
+  const landed = [
+    {
+      ...iterations[0],
+      attachments: [
+        {
+          filename: 'Pick a plan.app.json',
+          media_type: 'application/vnd.vis.app+json',
+          iteration_id: 'step-1',
+          index: 0,
+          view_id: 'app-429',
+        },
+      ],
+    },
+  ];
+  mounted.rerender(<IterationTrace iterations={landed} liveViews={[app]} {...props} />);
+  expect(mounted.getAllByRole('button', { name: 'Open app Pick a plan' })).toHaveLength(1);
+
+  mounted.rerender(
+    <IterationTrace iterations={iterations} liveViews={[{ ...app, owner: undefined }]} {...props} />,
+  );
+  expect(mounted.queryByRole('button', { name: 'Open app Pick a plan' })).toBeNull();
+});

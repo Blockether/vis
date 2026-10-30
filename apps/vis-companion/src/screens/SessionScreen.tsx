@@ -4678,6 +4678,11 @@ export function SessionScreen({
     () => sessionLiveViews.filter((view) => livePlacement(view) === 'inline'),
     [sessionLiveViews],
   );
+  // The turn also gets the open apps: its step lists one before the block ends (#429).
+  const traceViews = useMemo(
+    () => sessionLiveViews.filter((view) => livePlacement(view) !== 'panel'),
+    [sessionLiveViews],
+  );
   const panelViews = useMemo(
     () => sessionLiveViews.filter((view) => livePlacement(view) === 'panel'),
     [sessionLiveViews],
@@ -4951,7 +4956,7 @@ export function SessionScreen({
           client={client}
           sid={sid}
           onOpenAttachment={openLinkedArtifact}
-          liveViews={liveViews}
+          liveViews={traceViews}
           team={teamFor(runningTurn.id)}
         />
       </div>
@@ -4968,7 +4973,7 @@ export function SessionScreen({
     fetchedRunningTurnAttachments,
     workspaceRoots,
     watching,
-    liveViews,
+    traceViews,
     openLinkedArtifact,
     session?.agent_name,
   ]);
@@ -5001,7 +5006,7 @@ export function SessionScreen({
           client={client}
           sid={sid}
           onOpenAttachment={openLinkedArtifact}
-          liveViews={liveViews}
+          liveViews={traceViews}
           team={teamFor(settlingTurn.id)}
         />
       </div>
@@ -5014,7 +5019,7 @@ export function SessionScreen({
     turns.length,
     client,
     sid,
-    liveViews,
+    traceViews,
     openLinkedArtifact,
     session?.agent_name,
   ]);

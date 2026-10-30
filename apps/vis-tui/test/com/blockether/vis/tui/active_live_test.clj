@@ -1,5 +1,6 @@
 (ns com.blockether.vis.tui.active-live-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.tui.app-model :as app-model]
             [com.blockether.vis.tui.live-view :as lv]
             [com.blockether.vis.tui.live-view-fixture :as fixture]
             [com.blockether.vis.tui.view-materializer :as materializer]
@@ -510,6 +511,46 @@
         (expect (seq (:unplaced (#'render/place-run-rows
                                  [{:forms [{}]}]
                                  [{:anchor {:iteration-index 0 :form-index 0}}])))))))
+
+(defdescribe
+  running-app-row-at-owning-step
+  (it "running app row at owning step"
+      ;; #429: an app that waits in app.run had no transcript row until its block ended.
+      (let [view
+            {:id "33333333-3333-4333-8333-333333333333"
+             :title "Pick a plan"
+             :placement :attachment
+             :seq 1
+             :owner owner}
+
+            project
+            (fn [progress held]
+              (render/progress->lines-data progress
+                                           90
+                                           {:show-thinking true :show-iterations true}
+                                           {:session-id "app-test"
+                                            :now-ms 0
+                                            :live-runs (vec (keep render/app-run [held]))
+                                            :detail-expansions {["app-test" "iteration:i1:digest"]
+                                                                true}}))
+
+            app-rows
+            (fn [payload]
+              (keep #(when (app-model/app-row? (:artifact %)) (:view-id (:artifact %)))
+                    (:line-meta payload)))
+
+            durable
+            (assoc-in review-progress
+              [:iterations 0 :attachments]
+              [{"filename" "Pick a plan"
+                "media_type" app-model/media-type
+                "view_id" (:id view)
+                "iteration_id" "i1"
+                "index" 0}])]
+
+        (expect (= [(:id view)] (app-rows (project review-progress {:view view :is-gap false}))))
+        (expect (= [(:id view)] (app-rows (project durable {:view view :is-gap false}))))
+        (expect (empty? (app-rows (project review-progress {:view (dissoc view :owner)})))))))
 
 (defdescribe
   empty-history-keeps-owned-live-and-settled-surface
