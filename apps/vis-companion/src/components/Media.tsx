@@ -15,9 +15,22 @@ import {
   archiveOpenVerb,
   keepArchive,
   openSpreadsheet,
-  spreadsheetOpenVerb,
 } from '../lib/artifact-open';
-import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
+import {
+  artifactShareVerb,
+  canShareArtifactFiles,
+  downloadArtifact,
+  shareArtifact,
+} from '../lib/artifact-share';
+import {
+  fileHost,
+  fileVerbs,
+  revealSavedArtifact,
+  saveArtifactAs,
+  savedPlace,
+  type FileKind,
+  type FileVerb,
+} from '../lib/artifact-save';
 import { artifactMedia, attachmentBytes, isXlsxMedia, isZipMedia } from '../lib/artifacts';
 import {
   mediaCaptionClass,
@@ -29,7 +42,15 @@ import {
 } from '../lib/media-frame';
 import { ImageGallery } from '../lib/gallery';
 import type { TranscriptionSegment } from '../lib/types';
-import { ArrowOutIcon, DownloadIcon, PauseIcon, PlayIcon, ShareIcon } from './icons';
+import {
+  ArrowOutIcon,
+  CheckIcon,
+  CircleXIcon,
+  DownloadIcon,
+  PauseIcon,
+  PlayIcon,
+  ShareIcon,
+} from './icons';
 import { BandButton, Disclosure, IconButton, PROSE } from './ui';
 
 /**
@@ -209,65 +230,151 @@ export type ArtifactShareSource = {
   name: string;
   mediaType: string;
   load: () => Promise<Blob>;
+  /** What the outcome and the share sheet call this file. */
+  noun?: string;
 };
 
+/** The verb a running or failed press belongs to. */
+type Press = { verb: FileVerb; isFailed: boolean } | null;
+
+function verbIcon(verb: FileVerb): ReactNode {
+  if (verb === 'Share') return <ShareIcon />;
+  if (verb === 'Open in app') return <ArrowOutIcon />;
+  return <DownloadIcon />;
+}
+
+/** What one verb does with the bytes. Resolves the sentence to announce, or a saved path. */
+async function handOff(
+  verb: FileVerb,
+  blob: Blob,
+  source: ArtifactShareSource,
+  kind: FileKind,
+): Promise<{ status: string; saved?: string }> {
+  const noun = source.noun ?? 'Artifact';
+  if (verb === 'Save as…') {
+    const file = await saveArtifactAs(blob, source.name);
+    return file ? { status: `Saved to ${file.path}.`, saved: file.path } : { status: '' };
+  }
+  if (verb === 'Open in app' || (verb === 'Download' && kind === 'workbook')) {
+    return { status: await openSpreadsheet(blob, source.name, source.mediaType) };
+  }
+  if (verb === 'Save') return { status: await keepArchive(blob, source.name, source.mediaType) };
+  if (verb === 'Download') return { status: downloadArtifact(blob, source.name, noun) };
+  return {
+    status: await shareArtifact(blob, source.name, source.mediaType, {
+      dialogTitle: `Share ${noun.toLowerCase()}`,
+      noun,
+    }),
+  };
+}
+
+function failure(verb: FileVerb, kind: FileKind, name: string, cause: unknown): string {
+  if (verb === 'Save as…') {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    return `Could not save ${name}: ${reason}. Choose another folder or try again.`;
+  }
+  if (kind === 'workbook') return 'Could not open workbook. Try again.';
+  if (kind === 'archive') return 'Could not save archive. Try again.';
+  return 'Could not share artifact.';
+}
+
 /**
- * The share cell of an opened artifact's band, and the outcome it reports.
+ * The file cells of an opened artifact's band, its outcome, and the saved path.
  *
- * The outcome is never a header line. As the band's subtitle it added a second
- * line, so the band grew after each press. A success is announced only; the
- * share sheet or the download is its visible result. A failure floats over the
- * body, which must be the `relative` box that `notice` is rendered in.
+ * The desktop offers `Save as…` as the primary verb, as a PDF reader does, and the
+ * share sheet beside it. A phone offers one Share. See `fileVerbs`.
+ *
+ * The outcome is never a header line of its own. A success is announced only; the
+ * share sheet, the download or the `saved` line under the name is its visible
+ * result. A failure floats over the body, which must be the `relative` box that
+ * `notice` is rendered in.
  */
-export function useArtifactShare(source: ArtifactShareSource | null): {
-  cell: ReactNode;
+export function useFileActions(source: ArtifactShareSource | null): {
+  cells: ReactNode;
   notice: ReactNode;
+  /** `Saved to <place>` for the band's subtitle, or null. Its place shows the file. */
+  saved: ReactNode;
 } {
-  const [busy, setBusy] = useState(false);
+  const [press, setPress] = useState<Press>(null);
+  const [isBusy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  if (!source) return { cell: null, notice: null };
-  const workbook = isXlsxMedia(source.mediaType, source.name);
-  const archive = !workbook && isZipMedia(source.mediaType, source.name);
-  const verb = workbook
-    ? spreadsheetOpenVerb()
-    : archive
-      ? archiveOpenVerb()
-      : artifactShareVerb(source.name, source.mediaType);
-  const cell = (
-    <BandButton
-      label={busy ? `${verb}…` : verb}
-      disabled={busy}
-      onClick={() => {
-        setBusy(true);
-        setStatus('');
-        setError('');
-        const handoff = workbook ? openSpreadsheet : archive ? keepArchive : shareArtifact;
-        void source
-          .load()
-          .then((blob) => handoff(blob, source.name, source.mediaType))
-          .then(setStatus)
-          .catch(() =>
-            setError(
-              workbook
-                ? 'Could not open workbook. Try again.'
-                : archive
-                  ? 'Could not save archive. Try again.'
-                  : 'Could not share artifact.',
-            ),
+  const [savedPath, setSavedPath] = useState<string | null>(null);
+  if (!source) return { cells: null, notice: null, saved: null };
+  const kind: FileKind = isXlsxMedia(source.mediaType, source.name)
+    ? 'workbook'
+    : isZipMedia(source.mediaType, source.name)
+      ? 'archive'
+      : 'file';
+  const verbs = fileVerbs(fileHost(), kind, canShareArtifactFiles(source.name, source.mediaType));
+  const run = (verb: FileVerb) => {
+    setBusy(true);
+    setPress({ verb, isFailed: false });
+    setStatus('');
+    setError('');
+    setSavedPath(null);
+    void source
+      .load()
+      .then((blob) => handOff(verb, blob, source, kind))
+      .then((done) => {
+        setStatus(done.status);
+        setSavedPath(done.saved ?? null);
+        setPress(null);
+      })
+      .catch((cause: unknown) => {
+        setError(failure(verb, kind, source.name, cause));
+        setPress({ verb, isFailed: true });
+      })
+      .finally(() => setBusy(false));
+  };
+  const cells = verbs.map((verb, at) => {
+    const isPressed = press?.verb === verb;
+    const isFailed = isPressed && press.isFailed;
+    const isSaved = verb === 'Save as…' && savedPath !== null;
+    const isPrimary = at === verbs.length - 1 && (verb === 'Save as…' || verb === 'Download');
+    const text = isFailed
+      ? 'Try again'
+      : isPressed && isBusy
+        ? verb === 'Save as…'
+          ? 'Saving…'
+          : `${verb.replace(/…$/u, '')}…`
+        : isSaved
+          ? 'Saved'
+          : verb;
+    return (
+      <BandButton
+        key={verb}
+        isPrimary={isPrimary && !isFailed}
+        disabled={isBusy}
+        aria-busy={isPressed && isBusy}
+        className={`${isPrimary ? 'sm:min-w-32' : ''} ${isFailed ? 'bg-warn-surface text-answer-foreground' : ''}`}
+        onClick={() => run(verb)}
+      >
+        <span className="flex items-center gap-2">
+          {isFailed ? <CircleXIcon /> : isSaved ? <CheckIcon /> : verbIcon(verb)}
+          <span className="max-sm:sr-only">{text}</span>
+        </span>
+      </BandButton>
+    );
+  });
+  const reveal = /Mac/i.test(navigator.userAgent) ? 'Show in Finder' : 'Show in folder';
+  const saved = savedPath ? (
+    <>
+      Saved to{' '}
+      <button
+        type="button"
+        title={`${reveal}: ${savedPath}`}
+        className="underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
+        onClick={() =>
+          void revealSavedArtifact(savedPath).catch(() =>
+            setError('Could not show the file. It may have moved.'),
           )
-          .finally(() => setBusy(false));
-      }}
-    >
-      {verb === 'Share' ? (
-        <ShareIcon />
-      ) : verb === 'Open in app' || verb.startsWith('Show in') ? (
-        <ArrowOutIcon />
-      ) : (
-        <DownloadIcon />
-      )}
-    </BandButton>
-  );
+        }
+      >
+        {savedPlace(savedPath)}
+      </button>
+    </>
+  ) : null;
   const notice = (
     <>
       <span role="status" className="sr-only">
@@ -283,7 +390,7 @@ export function useArtifactShare(source: ArtifactShareSource | null): {
       ) : null}
     </>
   );
-  return { cell, notice };
+  return { cells: <>{cells}</>, notice, saved };
 }
 
 /**

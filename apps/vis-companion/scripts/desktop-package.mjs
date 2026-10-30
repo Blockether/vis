@@ -91,7 +91,18 @@ export function pakeArgs({ distDir, version, target, icon = ICON, dev = false })
   ];
 }
 
-/** Install a private Pake template with Vis's native file-opening command. */
+/**
+ * The save panel. Tauri's own dialog plugin uses the same crate and features: GTK 3 on
+ * Linux, the system panels on macOS and Windows.
+ */
+export const RFD_DEPENDENCY = 'rfd = { version = "0.15", default-features = false, features = ["gtk3"] }';
+
+/** Vis's own commands in `native/desktop/artifact.rs`. */
+export const ARTIFACT_COMMANDS = ['open_xlsx', 'reveal_artifact', 'save_artifact_as', 'reveal_saved_artifact'];
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Install a private Pake template with Vis's native file commands. */
 export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = false }) {
   if (windowsSigning) {
     for (const name of ['ENDPOINT', 'ACCOUNT', 'PROFILE', 'PUBLISHER']) {
@@ -124,11 +135,22 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
   if (!lib.includes(module) || !lib.includes(handler)) {
     throw new Error('Pake native command registration changed');
   }
-  if (!lib.includes('mod artifact;')) {
-    lib = lib.replace(module, `${module}\nmod artifact;\nuse artifact::{open_xlsx, reveal_artifact};`);
-    lib = lib.replace(handler, `${handler}\n            open_xlsx,\n            reveal_artifact,`);
-  }
+  // A kept tools directory holds the registration of an earlier build, so drop it first.
+  lib = lib
+    .replace(/\nmod artifact;\nuse artifact::\{[^}]*\};/, '')
+    .replace(
+      new RegExp(`(${escapeRegExp(handler)})(?:\\n {12}(?:${ARTIFACT_COMMANDS.join('|')}),)+`),
+      '$1',
+    );
+  lib = lib.replace(module, `${module}\nmod artifact;\nuse artifact::{${ARTIFACT_COMMANDS.join(', ')}};`);
+  lib = lib.replace(handler, `${handler}${ARTIFACT_COMMANDS.map((name) => `\n            ${name},`).join('')}`);
   writeFileSync(libPath, lib);
+  const cargoPath = join(pakeDir, 'src-tauri', 'Cargo.toml');
+  const cargo = readFileSync(cargoPath, 'utf8');
+  if (!/^rfd = /m.test(cargo)) {
+    if (!cargo.includes('\n[dependencies]\n')) throw new Error('Pake Cargo.toml changed');
+    writeFileSync(cargoPath, cargo.replace('\n[dependencies]\n', `\n[dependencies]\n${RFD_DEPENDENCY}\n`));
+  }
   writeFileSync(
     join(sourceDir, 'artifact.rs'),
     readFileSync(new URL('../native/desktop/artifact.rs', import.meta.url), 'utf8'),

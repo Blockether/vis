@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { EDGE_ZONE_PX } from '../lib/edge-back';
 import { openPdf, type PdfPages, type RenderedPage } from '../lib/pdf-annotate';
@@ -6,8 +14,7 @@ import { FIT_SCALE, type Transform } from '../lib/zoom-pan';
 import { isKeyboardInputElement } from '../lib/viewport';
 import { useZoomPan, ZOOM_FRAME_CLASS, ZOOMED_CLASS } from '../lib/zoom-surface';
 import type { DocumentChrome } from './MarkdownArtifact';
-import { ChevronIcon } from './icons';
-import { BandButton } from './ui';
+import { ChevronIcon, MinusIcon, PlusIcon } from './icons';
 
 /**
  * The density a page is rasterised at for a zoom. A zoomed page is drawn again more
@@ -22,7 +29,7 @@ export function rasterScale(zoom: number): number {
 const SHARPEN_MS = 200;
 
 /**
- * A PDF PAGE FITTED BY THE APP, WITH THE PAGER IN ITS OWN BAND.
+ * A PDF PAGE FITTED BY THE APP, WITH THE PAGER FLOATING ON IT.
  *
  * The browser's viewer cannot be sized, so a page is rasterised
  * (`lib/pdf-annotate`) and fitted to the overlay. The reader is read-only.
@@ -155,7 +162,7 @@ export const PdfReader = memo(function PdfReader({
   // again more sharply once the zoom rests, and a page turn starts the next page fitted.
   const sharpenRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(sharpenRef.current), []);
-  const { viewportRef, transformedRef, handlers } = useZoomPan({
+  const { viewportRef, transformedRef, handlers, labelRef, reset, zoomBy } = useZoomPan({
     resetKey: page,
     swipe: {
       back: page > 1,
@@ -199,43 +206,26 @@ export const PdfReader = memo(function PdfReader({
     return () => observer.disconnect();
   }, [viewportRef, aspect]);
 
-  const position = pageCount ? `Page ${page} of ${pageCount}` : `Page ${page}`;
+  const position = pageCount ? `${page} of ${pageCount}` : `${page}`;
   return chrome({
-    // THE PAGER IS A CELL OF THE BAND THAT NAMES THE FILE.
+    // THE PAGER FLOATS OVER THE FOOT OF THE PAGE, AS IN EVERY PDF READER.
     //
-    // They stood in a docked strip under the page instead: three bordered boxes and
-    // a counter on a second paper, at the opposite end of the screen from the ✕,
-    // taking a band's worth of an 844px phone away from the page they act on. The
-    // note settled this shape already (`MarkdownArtifact`) — what is done to the
-    // WHOLE document is a cell of its own band, one hairline from the way out.
+    // It stood in the band, two cells from the ✕ and one from Share, so the band mixed
+    // reading, sending and leaving in one run of look-alike squares. The band now holds
+    // the file and its verbs. Turning and zooming are done to the page, so they sit on
+    // it. A finger swipes instead, so a touch screen keeps only the counter.
     //
-    // A CELL IS BOUND BY THE DOCUMENT, NEVER BY THE WORK IN FLIGHT. All three were
-    // disabled while a page rasterised, so every press dimmed the row it was aimed
-    // at — and a disabled button drops the focus it was just handed, leaving a second
-    // › to land on nothing. The bounds are the document's own: the first page, the
-    // last page.
-    actions: (
-      <>
-        <BandButton label="Previous page" disabled={page <= 1} onClick={() => turn(-1)}>
-          <ChevronIcon back className="size-3" />
-        </BandButton>
-        <BandButton
-          label="Next page"
-          disabled={pageCount === 0 || page >= pageCount}
-          onClick={() => turn(1)}
-        >
-          <ChevronIcon className="size-3" />
-        </BandButton>
-      </>
-    ),
-    // Where the reader stands in the document, and what just became of it: the two
-    // things this band has to report under the filename.
-    note: status ? `${position} · ${status}` : position,
+    // A CELL IS BOUND BY THE DOCUMENT, NEVER BY THE WORK IN FLIGHT. A button disabled
+    // while a page rasterised drops the focus it was just handed. The bounds are the
+    // document's own: the first page, the last page.
+    actions: null,
+    // A failure is the one thing the band has to report about the page.
+    note: status,
     body: (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-input">
         <div
           ref={viewportRef}
-          className={`relative grid min-h-0 flex-1 cursor-grab place-items-center p-2 active:cursor-grabbing sm:p-4 ${ZOOM_FRAME_CLASS}`}
+          className={`relative grid min-h-0 flex-1 cursor-grab place-items-center p-2 pb-14 active:cursor-grabbing sm:p-4 sm:pb-16 ${ZOOM_FRAME_CLASS}`}
           {...handlers}
         >
           {rendered ? (
@@ -260,7 +250,67 @@ export const PdfReader = memo(function PdfReader({
         <span className="sr-only" role="status">
           {status}
         </span>
+        <nav
+          aria-label={`Pages of ${name}`}
+          className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 border border-dialog-edge bg-panel p-0.5 font-mono text-chip text-white shadow-float"
+        >
+          <span className="hidden mouse:contents">
+            <PagerButton label="Previous page" disabled={page <= 1} onClick={() => turn(-1)}>
+              <ChevronIcon back className="size-3" />
+            </PagerButton>
+          </span>
+          <span className="min-w-[9ch] px-2 py-1.5 text-center tabular-nums mouse:py-0">{position}</span>
+          <span className="hidden mouse:contents">
+            <PagerButton
+              label="Next page"
+              disabled={pageCount === 0 || page >= pageCount}
+              onClick={() => turn(1)}
+            >
+              <ChevronIcon className="size-3" />
+            </PagerButton>
+            <span aria-hidden="true" className="mx-1 h-4 w-px bg-dialog-edge" />
+            <PagerButton label="Zoom out" onClick={() => zoomBy(1 / 1.35)}>
+              <MinusIcon className="size-3" />
+            </PagerButton>
+            <PagerButton label="Reset zoom" isWide onClick={reset}>
+              <span ref={labelRef}>100%</span>
+            </PagerButton>
+            <PagerButton label="Zoom in" onClick={() => zoomBy(1.35)}>
+              <PlusIcon className="size-3" />
+            </PagerButton>
+          </span>
+        </nav>
       </div>
     ),
   });
 });
+
+/** One square of the floating pager: 32px, with the 44px reach a finger needs. */
+function PagerButton({
+  label,
+  isWide = false,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  isWide?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`relative grid h-8 place-items-center bg-transparent font-bold text-current transition-colors duration-150 after:absolute after:-inset-1.5 after:content-[""] enabled:hover:bg-current/10 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none ${
+        isWide ? 'min-w-[6ch] px-2' : 'w-8'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}

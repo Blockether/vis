@@ -8,6 +8,8 @@ import {
   pakeArgs,
   packageDesktop,
   prepareDesktopHost,
+  ARTIFACT_COMMANDS,
+  RFD_DEPENDENCY,
 } from './desktop-package.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -24,6 +26,9 @@ vi.mock('node:fs', async (importOriginal) => {
     readFileSync: vi.fn((...args) => {
       if (String(args[0]).endsWith('lib.rs')) {
         return 'mod util;\nfn run() { builder.invoke_handler(tauri::generate_handler![download_file,]); }\n';
+      }
+      if (String(args[0]).endsWith('Cargo.toml')) {
+        return '[package]\n\n[dependencies]\nserde = "1"\n';
       }
       if (String(args[0]).endsWith('tauri.windows.conf.json')) {
         return JSON.stringify({
@@ -102,16 +107,20 @@ describe('desktop package', () => {
     ]);
   });
 
-  it('registers the workbook command in every private desktop template', () => {
+  it('registers the file commands and the save dialog crate in every private desktop template', () => {
     vi.clearAllMocks();
     const cli = prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
     expect(cli).toBe(join('/tools', 'node_modules', 'pake-cli', 'dist', 'cli.js'));
     const [libPath, lib] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('lib.rs'));
     expect(libPath).toBe(join('/tools', 'node_modules', 'pake-cli', 'src-tauri', 'src', 'lib.rs'));
-    expect(lib).toContain('mod artifact;\nuse artifact::{open_xlsx, reveal_artifact};');
     expect(lib).toContain(
-      '.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,',
+      'mod artifact;\nuse artifact::{open_xlsx, reveal_artifact, save_artifact_as, reveal_saved_artifact};',
     );
+    expect(lib).toContain(
+      '.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,\n            save_artifact_as,\n            reveal_saved_artifact,download_file,',
+    );
+    const [, cargo] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('Cargo.toml'));
+    expect(cargo).toContain(`[dependencies]\n${RFD_DEPENDENCY}\nserde = "1"`);
     const [, command] = writeFileSync.mock.calls.find(([path]) =>
       String(path).endsWith('artifact.rs'),
     );
@@ -120,9 +129,41 @@ describe('desktop package', () => {
     expect(command).toContain('.open_path(');
     expect(command).toContain('pub async fn reveal_artifact(');
     expect(command).toContain('.reveal_item_in_dir(&path)');
+    expect(command).toContain('pub async fn save_artifact_as(');
+    expect(command).toContain('pub async fn reveal_saved_artifact(');
     expect(
       writeFileSync.mock.calls.some(([path]) => String(path).endsWith('tauri.windows.conf.json')),
     ).toBe(false);
+  });
+
+  // A kept tools directory already holds an earlier registration. A second `mod artifact;`
+  // or `rfd` line fails the Rust build, and an older command list misses the new commands.
+  it('replaces the registration of an earlier build in a kept tools directory', () => {
+    const fresh = readFileSync.getMockImplementation();
+    readFileSync.mockImplementation((path, ...rest) => {
+      if (String(path).endsWith('lib.rs')) {
+        return 'mod util;\nmod artifact;\nuse artifact::{open_xlsx, reveal_artifact};\nfn run() { builder.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,download_file,]); }\n';
+      }
+      if (String(path).endsWith('Cargo.toml')) {
+        return `[package]\n\n[dependencies]\n${RFD_DEPENDENCY}\nserde = "1"\n`;
+      }
+      return fresh(path, ...rest);
+    });
+    try {
+      vi.clearAllMocks();
+      prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
+      const [, lib] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('lib.rs'));
+      expect(lib.match(/mod artifact;/g)).toHaveLength(1);
+      expect(lib).toContain(`use artifact::{${ARTIFACT_COMMANDS.join(', ')}};`);
+      for (const name of ARTIFACT_COMMANDS) {
+        expect(lib.match(new RegExp(`\\n {12}${name},`, 'g'))).toHaveLength(1);
+      }
+      expect(writeFileSync.mock.calls.some(([path]) => String(path).endsWith('Cargo.toml'))).toBe(
+        false,
+      );
+    } finally {
+      readFileSync.mockImplementation(fresh);
+    }
   });
 
   it('clears release signing before a later unsigned development build', () => {

@@ -1,7 +1,10 @@
-//! Artifact hand-off: retain a copy in Downloads, then open it or show it in its folder.
+//! Artifact hand-off: retain a copy in Downloads, then open it or show it in its folder,
+//! or save it where the person chooses in the system save panel.
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
@@ -103,6 +106,101 @@ pub async fn reveal_artifact(
     })
 }
 
+/// The files that `save_artifact_as` wrote in this run. Only these can be revealed,
+/// so the page cannot ask the host to show an arbitrary path.
+static SAVED: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+
+const LAST_DIRECTORY_FILE: &str = "last-save-directory";
+
+/// The folder of the previous save, if it still exists.
+fn last_directory(config: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(config.join(LAST_DIRECTORY_FILE)).ok()?;
+    let directory = PathBuf::from(text.trim_end_matches(['\r', '\n']));
+    directory.is_dir().then_some(directory)
+}
+
+/// Write `data` to the chosen path, then remember its folder for the next save.
+/// A failed write leaves the remembered folder as it was.
+fn write_chosen(config: &Path, path: &Path, data: &[u8]) -> Result<(), String> {
+    fs::write(path, data).map_err(|e| e.to_string())?;
+    if let Some(directory) = path.parent() {
+        // The save succeeded, so a folder that cannot be remembered is not an error.
+        let _ = fs::create_dir_all(config).and_then(|_| {
+            fs::write(
+                config.join(LAST_DIRECTORY_FILE),
+                directory.to_string_lossy().as_bytes(),
+            )
+        });
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct SaveArtifactResult {
+    /// False when the person closed the panel without a choice.
+    saved: bool,
+    path: Option<String>,
+}
+
+/// Save the original bytes where the person chooses. The panel opens in the
+/// previous folder, else in Downloads, with the artifact's own name.
+#[tauri::command]
+pub async fn save_artifact_as(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    filename: String,
+    data: Vec<u8>,
+) -> Result<SaveArtifactResult, String> {
+    if !is_plain_filename(&filename) {
+        return Err("Expected a plain filename".into());
+    }
+    let config = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let directory = match last_directory(&config) {
+        Some(directory) => directory,
+        None => app.path().download_dir().map_err(|e| e.to_string())?,
+    };
+    let chosen = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .set_directory(&directory)
+        .set_file_name(&filename)
+        .save_file()
+        .await;
+    let Some(chosen) = chosen else {
+        return Ok(SaveArtifactResult {
+            saved: false,
+            path: None,
+        });
+    };
+    let path = chosen.path().to_path_buf();
+    write_chosen(&config, &path, &data)?;
+    SAVED
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get_or_insert_with(HashSet::new)
+        .insert(path.clone());
+    Ok(SaveArtifactResult {
+        saved: true,
+        path: Some(path.to_string_lossy().into_owned()),
+    })
+}
+
+/// Show a file that `save_artifact_as` wrote in Finder, Explorer or the Linux file manager.
+#[tauri::command]
+pub async fn reveal_saved_artifact(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    let known = SAVED
+        .lock()
+        .map_err(|e| e.to_string())?
+        .as_ref()
+        .is_some_and(|saved| saved.contains(&path));
+    if !known {
+        return Err("Vis did not save this file".into());
+    }
+    app.opener()
+        .reveal_item_in_dir(&path)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +278,45 @@ mod tests {
         assert_eq!(path.file_name().unwrap(), "bundle 2.zip");
         assert!(path.starts_with(downloads.0.join("Vis Artifacts")));
         assert_eq!(fs::read(path).unwrap(), data);
+    }
+
+    #[test]
+    fn remembers_the_folder_of_the_last_save() {
+        let root = Downloads::new();
+        let config = root.0.join("config");
+        let reports = root.0.join("Reports");
+        fs::create_dir(&reports).unwrap();
+        assert_eq!(last_directory(&config), None);
+        let path = reports.join("plan.pdf");
+        write_chosen(&config, &path, b"%PDF").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"%PDF");
+        assert_eq!(last_directory(&config), Some(reports.clone()));
+        // A second save of the same name replaces the file, as the panel confirmed.
+        write_chosen(&config, &path, b"%PDF-2").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"%PDF-2");
+    }
+
+    #[test]
+    fn keeps_the_remembered_folder_when_a_write_fails() {
+        let root = Downloads::new();
+        let config = root.0.join("config");
+        let reports = root.0.join("Reports");
+        fs::create_dir(&reports).unwrap();
+        write_chosen(&config, &reports.join("a.pdf"), b"a").unwrap();
+        let missing = root.0.join("gone").join("b.pdf");
+        assert!(write_chosen(&config, &missing, b"b").is_err());
+        assert_eq!(last_directory(&config), Some(reports));
+    }
+
+    #[test]
+    fn forgets_a_remembered_folder_that_no_longer_exists() {
+        let root = Downloads::new();
+        let config = root.0.join("config");
+        let reports = root.0.join("Reports");
+        fs::create_dir(&reports).unwrap();
+        write_chosen(&config, &reports.join("a.pdf"), b"a").unwrap();
+        fs::remove_dir_all(&reports).unwrap();
+        assert_eq!(last_directory(&config), None);
     }
 
     #[test]

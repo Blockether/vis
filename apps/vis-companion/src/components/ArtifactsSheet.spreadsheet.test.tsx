@@ -97,6 +97,41 @@ describe('spreadsheet artifacts', () => {
     await user.click(screen.getByRole('button', { name: /^Open Q3 report.xlsx,/ }));
     await user.click(await screen.findByRole('button', { name: 'Open in app' }));
     expect(await screen.findByText('Could not open workbook. Try again.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open in app' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+  it('saves where the person chooses and shows the saved file', async () => {
+    const invoke = vi.fn(async (command: string) =>
+      command === 'save_artifact_as'
+        ? { saved: true, path: '/Users/ana/Documents/Q3 report.xlsx' }
+        : undefined,
+    );
+    vi.stubGlobal('__TAURI__', { core: { invoke } });
+    const user = userEvent.setup();
+    render(<ArtifactsSheet client={client} sid="s1" artifacts={[workbook]} onClose={() => {}} />);
+    await user.click(screen.getByRole('button', { name: /^Open Q3 report.xlsx,/ }));
+    await user.click(await screen.findByRole('button', { name: 'Save as…' }));
+    expect(invoke).toHaveBeenCalledWith('save_artifact_as', {
+      filename: 'Q3 report.xlsx',
+      data: [80, 75, 3, 4],
+    });
+    await user.click(await screen.findByRole('button', { name: 'Documents/Q3 report.xlsx' }));
+    expect(invoke).toHaveBeenLastCalledWith('reveal_saved_artifact', {
+      path: '/Users/ana/Documents/Q3 report.xlsx',
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  // Closing the save panel is a choice. It must not read as a failure.
+  it('treats a closed save panel as no change', async () => {
+    const invoke = vi.fn(async () => ({ saved: false, path: null }));
+    vi.stubGlobal('__TAURI__', { core: { invoke } });
+    const user = userEvent.setup();
+    render(<ArtifactsSheet client={client} sid="s1" artifacts={[workbook]} onClose={() => {}} />);
+    await user.click(screen.getByRole('button', { name: /^Open Q3 report.xlsx,/ }));
+    await user.click(await screen.findByRole('button', { name: 'Save as…' }));
+    expect(await screen.findByRole('button', { name: 'Save as…' })).toBeEnabled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Saved to/)).not.toBeInTheDocument();
   });
 });

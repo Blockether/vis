@@ -2051,6 +2051,7 @@ export function NotifyConnectionSwitch({
 export function CloseButton({
   label,
   isBand = false,
+  isLeading = false,
   isStandalone = false,
   className = '',
   ...props
@@ -2059,6 +2060,8 @@ export function CloseButton({
   label: string;
   /** This close action fills the band's final cell, including wrapped titles. */
   isBand?: boolean;
+  /** This band close is the FIRST cell, ruled off from the title after it. */
+  isLeading?: boolean;
   /** This close action ends a compact row rather than a title band. */
   isStandalone?: boolean;
 }) {
@@ -2070,7 +2073,9 @@ export function CloseButton({
       title={label}
       className={`${iconControlClass} grid shrink-0 items-center bg-transparent text-current transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${
         isBand
-          ? 'w-12 justify-items-end self-stretch pr-3 sm:pr-4 mouse:w-9'
+          ? isLeading
+            ? 'w-12 justify-items-center self-stretch border-r border-current/20 mouse:w-9'
+            : 'w-12 justify-items-end self-stretch pr-3 sm:pr-4 mouse:w-9'
           : 'size-8 justify-items-center self-center after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none'
       } ${className}`}
       {...props}
@@ -2984,6 +2989,7 @@ export function DialogHeader({
   onClose,
   isUnderNotch = false,
   isStacked = false,
+  isCloseLeading = false,
   className = '',
 }: {
   title: ReactNode;
@@ -3023,6 +3029,12 @@ export function DialogHeader({
    * tells the two of them apart — an artifact opened inside the artifacts sheet.
    */
   isStacked?: boolean;
+  /**
+   * A file viewer leads with the way out and ends with the file's verbs, as Preview,
+   * Quick Look and every PDF reader do. The close then never stands one cell from Share,
+   * where a slip of the pointer closed the file instead of sending it.
+   */
+  isCloseLeading?: boolean;
   /** Placement only; the band's own face is fixed. */
   className?: string;
 } & (
@@ -3045,6 +3057,9 @@ export function DialogHeader({
         isUnderNotch ? 'box-content pt-[env(safe-area-inset-top)] sm:pt-0' : ''
       } ${isStacked ? 'border-t border-dialog-title-foreground/20' : ''} ${className}`}
     >
+      {isCloseLeading && onClose && closeLabel && (
+        <CloseButton isBand isLeading label={closeLabel} onClick={onClose} />
+      )}
       <div className={`min-w-0 flex-1 self-center py-1.5 ${LIST_EDGE}`}>
         {/* File names keep one row. Questions can wrap to three lines. */}
         <h2
@@ -3069,7 +3084,9 @@ export function DialogHeader({
       {actions}
       {/* The two travel together by type; the second test is what TypeScript needs
           to see it, because a destructured union does not narrow on its own. */}
-      {onClose && closeLabel && <CloseButton isBand label={closeLabel} onClick={onClose} />}
+      {!isCloseLeading && onClose && closeLabel && (
+        <CloseButton isBand label={closeLabel} onClick={onClose} />
+      )}
     </header>
   );
 }

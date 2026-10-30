@@ -50,7 +50,7 @@ import { DocFrame } from './DocArtifact';
 import { ImageViewer } from './ImageViewer';
 import { MarkdownArtifact } from './MarkdownArtifact';
 import { DiffArtifact } from './DiffArtifact';
-import { ClipVideo, clockTime, MediaRecording, RecordingPlayer, useArtifactShare } from './Media';
+import { ClipVideo, clockTime, MediaRecording, RecordingPlayer, useFileActions } from './Media';
 import { PdfReader } from './PdfArtifact';
 import { parseSubtitles } from '../lib/subtitles';
 import { readArtifactText, TextFrame } from './TextArtifact';
@@ -744,9 +744,9 @@ function DetailOverlay({
   fill?: boolean;
   children: ReactNode;
 }) {
-  // The cell follows the platform: a share sheet where there is one, a download
-  // where there is not. Its outcome never takes a header line; see `useArtifactShare`.
-  const { cell: shareAction, notice: shareNotice } = useArtifactShare(
+  // The cells follow the host: Save as… and Share on the desktop, one Share on a phone,
+  // a download in a browser. Their outcome never takes a header line; see `useFileActions`.
+  const file = useFileActions(
     share
       ? { name: share.name, mediaType: share.mediaType, load: async () => share.blob }
       : null,
@@ -761,14 +761,15 @@ function DetailOverlay({
       <DialogHeader
         isUnderNotch
         isStacked
+        isCloseLeading
         title={name}
         isTitleTruncated
-        subtitle={subtitle}
+        subtitle={file.saved ?? subtitle}
         actions={
-          shareAction || actions ? (
+          file.cells || actions ? (
             <>
               {actions}
-              {shareAction}
+              {file.cells}
             </>
           ) : undefined
         }
@@ -782,7 +783,7 @@ function DetailOverlay({
             : 'relative min-h-0 flex-1 overflow-y-auto p-3 sm:p-4'
         }
       >
-        {shareNotice}
+        {file.notice}
         {children}
       </div>
     </div>

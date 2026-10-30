@@ -20,7 +20,7 @@ import { DiffArtifact } from './DiffArtifact';
 import { PdfReader } from './PdfArtifact';
 import { TextFrame } from './TextArtifact';
 import { ChevronIcon } from './icons';
-import { useArtifactShare } from './Media';
+import { useFileActions } from './Media';
 import { BandButton, DialogHeader, ListRow, overlayLayer } from './ui';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 import { useBackLayer } from '../lib/edge-back';
@@ -74,6 +74,7 @@ export function OverlayScreen({
       className={`${position} inset-0 z-50 flex h-full min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain bg-panel pt-[env(safe-area-inset-top)]`}
     >
       <DialogHeader
+        isCloseLeading
         title={title}
         isTitleTruncated
         subtitle={subtitle}
@@ -552,7 +553,7 @@ export const DocOverlay = memo(function DocOverlay({
     ) : null;
   // The shown cut's original bytes, so a document read in the session leaves the
   // app exactly as one opened from the artifacts sheet does.
-  const share = useArtifactShare(
+  const file = useFileActions(
     url && !failed
       ? { name, mediaType: mime, load: async () => (await fetch(url)).blob() }
       : null,
@@ -561,17 +562,17 @@ export const DocOverlay = memo(function DocOverlay({
   const chrome: DocumentChrome = ({ actions, note, body }) => (
     <OverlayScreen
       title={name}
-      subtitle={note || [docKindLabel(mime), shownLabel].filter(Boolean).join(' · ')}
+      subtitle={file.saved ?? (note || [docKindLabel(mime), shownLabel].filter(Boolean).join(', '))}
       actions={
         <>
           {versionCell}
           {actions}
-          {share.cell}
+          {file.cells}
         </>
       }
       onClose={onClose}
     >
-      {share.notice}
+      {file.notice}
       {body}
     </OverlayScreen>
   );

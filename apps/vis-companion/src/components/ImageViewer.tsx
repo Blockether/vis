@@ -8,7 +8,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { PEN_COLORS, flattenAnnotations, type PenToken } from '../lib/annotate';
-import { copyImage, shareImage, shareVerb } from '../lib/image-share';
+import { copyImage } from '../lib/image-share';
+import { editedFilename } from '../lib/image-file';
 import { partPixels, visiblePart } from '../lib/zoom-pan';
 import { useZoomPan, ZOOM_FRAME_CLASS, ZOOMED_CLASS } from '../lib/zoom-surface';
 import { AnnotationLayer, PenToolbar, type AnnotationSurface } from './AnnotationLayer';
@@ -16,13 +17,12 @@ import {
   CheckIcon,
   ChevronIcon,
   CopyIcon,
-  DownloadIcon,
   DrawIcon,
   MinusIcon,
   PlusIcon,
-  ShareIcon,
   TrimIcon,
 } from './icons';
+import { useFileActions } from './Media';
 import { Button, DialogHeader, IconButton, Spinner } from './ui';
 import { useGalleryStep, type GalleryPicture } from '../lib/gallery';
 import { useStickyOverlay } from '../lib/sticky-overlay';
@@ -164,9 +164,7 @@ export function ImageViewer({
   const [drawingToolsOpen, setDrawingToolsOpen] = useState(true);
   const [penColor, setPenColor] = useState<PenToken>(PEN_COLORS[0].token);
   const [strokeCount, setStrokeCount] = useState(0);
-  const [busy, setBusy] = useState<'copy' | 'share' | 'apply' | 'trim' | null>(null);
-  // Probed once per open: the sheet cannot appear or disappear mid-viewer.
-  const [shareAction] = useState(shareVerb);
+  const [busy, setBusy] = useState<'copy' | 'apply' | 'trim' | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   // A gallery of one is not a gallery: nothing to step to, so no stepper, no
@@ -306,9 +304,17 @@ export function ImageViewer({
     return flattenAnnotations(image, annotationRef.current?.canvas() ?? null);
   }
 
+  // The picture leaves as the viewer shows it: trimmed and drawn on, as a PNG.
+  const file = useFileActions({
+    name: editedFilename(shown.name),
+    mediaType: 'image/png',
+    noun: 'Image',
+    load: async () => editedImage(),
+  });
+
   /** Announce completed work without leaving a visible line below the toolbar. */
   async function run(
-    kind: 'copy' | 'share' | 'apply',
+    kind: 'copy' | 'apply',
     fallback: string,
     work: (blob: Blob) => Promise<string>,
   ) {
@@ -362,11 +368,17 @@ export function ImageViewer({
       <DialogHeader
         title={shown.name}
         isTitleTruncated
+        subtitle={file.saved}
+        actions={file.cells}
+        isCloseLeading
         closeLabel={`Close ${shown.name}`}
         onClose={onClose}
         isUnderNotch
         className="absolute inset-x-0 top-0 z-20"
       />
+      <div className="pointer-events-none absolute inset-x-0 top-[calc(3rem+env(safe-area-inset-top))] z-20 sm:top-12 mouse:top-9">
+        {file.notice}
+      </div>
 
       {editable && drawing && (
         <div className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-1/2 z-20 flex -translate-y-1/2 items-center gap-1 sm:right-4">
@@ -572,19 +584,6 @@ export function ImageViewer({
               disabled={busy !== null}
             >
               <CopyIcon />
-            </IconButton>
-            {/* The check becomes the primary only after there is an edit to keep;
-                until then Share remains the strip's one filled verb. */}
-            <IconButton
-              variant={onApply && hasEdits ? 'secondary' : 'primary'}
-              label={`${shareAction} image`}
-              title={`${shareAction} image`}
-              onClick={() =>
-                run('share', 'Could not share image', (blob) => shareImage(blob, shown.name))
-              }
-              disabled={busy !== null}
-            >
-              {shareAction === 'Share' ? <ShareIcon /> : <DownloadIcon />}
             </IconButton>
           </div>
         </div>
