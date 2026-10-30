@@ -28,7 +28,11 @@
 
           run
           (fn [args]
-            (#'binary/run-binary project (into [(.getAbsolutePath bin) "python"] args) 120))]
+            (#'binary/run-binary
+             project
+             (into [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir)) "python"]
+                   args)
+             120))]
 
       (try
         (spit

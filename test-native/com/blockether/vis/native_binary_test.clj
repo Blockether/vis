@@ -27,10 +27,12 @@
    The stub records what it was asked, so the assertions are about the request
    the binary actually made.
 
-   The overlay is the ONLY isolation there is: `~/.vis` hangs off `user.home`,
-   which both the JVM and the native image read from the operating system's
-   passwd entry — setting HOME moves nothing (measured on macOS: HOME=/tmp/…
-   still resolves user.home to the real account)."
+   `~/.vis` hangs off `user.home`, which both the JVM and the native image read
+   from the operating system's passwd entry — setting HOME moves nothing
+   (measured on macOS: HOME=/tmp/… still resolves user.home to the real account).
+   So each direct run passes `-Duser.home=<dir>`, and `run-binary` refuses a run
+   without it. A run without it once prepared the real `~/.vis/extensions`
+   environments with the CI interpreter, which CI deletes after the job."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -135,8 +137,20 @@
    fills at 64 KiB and would hang the TUI mid-frame.
 
    Returns `{:finished? :exit :output}`; `:finished?` false means the deadline
-   killed a process that was still running, which for the TUI is the assertion."
+   killed a process that was still running, which for the TUI is the assertion.
+
+   A direct run of the binary must name its own `-Duser.home`: else it reads and
+   writes the real `~/.vis`, extensions included."
   [^File dir argv timeout-secs]
+  (let [binary
+        (native-binary)
+
+        isolated?
+        (boolean (or (not-any? (hash-set (.getAbsolutePath binary) (.getCanonicalPath binary)) argv)
+                     (some #(str/starts-with? (str %) "-Duser.home=") argv)))]
+
+    (expect isolated?
+            (str "Pass -Duser.home=<dir> to " (pr-str argv) " or it uses the real ~/.vis.")))
   (let [log
         (io/file dir "run.log")
 
@@ -369,7 +383,10 @@
                        (temp-dir "vis-native-version")
 
                        {:keys [exit output]}
-                       (run-binary dir [(.getAbsolutePath (require-binary)) "--version"] 60)]
+                       (run-binary dir
+                                   [(.getAbsolutePath (require-binary))
+                                    (str "-Duser.home=" (.getAbsolutePath dir)) "--version"]
+                                   60)]
 
                    (try (expect (= 0 exit) output)
                         (expect (re-find #"(?m)^vis-agent\s+\S+" output) output)
@@ -970,11 +987,12 @@
 
                    (try (overlay! dir port)
                         (spit (io/file dir "report.md") "# Native report\n")
-                        (let [{:keys [exit output]} (run-binary dir
-                                                                [(.getAbsolutePath (require-binary))
-                                                                 "--db" ":memory" "--raw"
-                                                                 "Link the report"]
-                                                                180)]
+                        (let [{:keys [exit output]} (run-binary
+                                                      dir
+                                                      [(.getAbsolutePath (require-binary))
+                                                       (str "-Duser.home=" (.getAbsolutePath dir))
+                                                       "--db" ":memory" "--raw" "Link the report"]
+                                                      180)]
                           (expect (= 0 exit) output)
                           (expect (str/includes? output "attachment://") output)
                           (expect (not (str/includes? output "](report.md)")) output))
@@ -989,7 +1007,10 @@
     (expect library
             (str "No CPython sidecar beside " (.getAbsolutePath bin)
                  " — `clojure -T:build native` stages vis-agent-python/ there. " build-it))
-    (run-binary dir [(.getAbsolutePath bin) "python" "-c" code] 300)))
+    (run-binary dir
+                [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir)) "python" "-c"
+                 code]
+                300)))
 
 (defn- python-tool-body
   [code call-number stream?]
@@ -2290,7 +2311,8 @@
                              (.getCanonicalPath
                                (io/file
                                  "test-native/com/blockether/vis/fixtures/python_cli_tty.py"))
-                             (.getCanonicalPath (require-binary)) "python"]
+                             (.getCanonicalPath (require-binary))
+                             (str "-Duser.home=" (.getAbsolutePath dir)) "python"]
                             240)]
                (expect (:finished? result) (:output result))
                (expect (= 0 (:exit result)) (:output result))
