@@ -381,8 +381,8 @@ function AgentTask({ task }: { task: string }) {
 // How long an armed stop waits for its second press.
 const STOP_ARMED_MS = 5000;
 
-// The stop of a working agent, before the way into its session. The first press arms it, and the
-// second press stops the agent. It disarms on blur or after a wait.
+// The stop of a working agent, before the way into its session. The first press arms it and turns
+// it red, and the second press stops the agent. It disarms on blur or after a wait.
 function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => void }) {
   const [isArmed, setArmed] = useState(false);
   const scope = useId();
@@ -396,6 +396,7 @@ function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => vo
       <span id={scope} className="sr-only">Stops this agent and its descendants, including queued work.</span>
       <Button
         variant={isArmed ? 'danger' : 'secondary'}
+        aria-label={isArmed ? 'Confirm stop' : 'Stop agent'}
         disabled={isPending}
         aria-describedby={scope}
         title="Stops this agent and its descendants, including queued work."
@@ -406,7 +407,7 @@ function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => vo
           onStop();
         }}
       >
-        {isArmed ? 'Confirm stop' : 'Stop agent'}
+        Stop
       </Button>
     </>
   );
@@ -415,8 +416,8 @@ function StopAgent({ isPending, onStop }: { isPending: boolean; onStop: () => vo
 /**
  * The steps of one agent with their times, read from the timeline route, and the way into its
  * session. The sheet takes the whole session pane. The outcome comes first, then the task, then
- * the steps. The way into the session is the primary action at the right of the outcome, so a
- * long timeline never hides it. A working agent has a stop before it.
+ * the steps. Open and Stop stand at the right end of the status line on every width, so a long
+ * timeline never hides them.
  */
 export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, onCancel, onClose }: {
   agent: Subagent;
@@ -455,21 +456,21 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
         onClose={onClose}
       >
         <div className="w-full space-y-6 px-3 py-4 font-mono text-ui text-white sm:px-4 sm:text-body" data-agent-timeline>
-          <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
-            <div className="min-w-0 flex-1 basis-[28ch] space-y-1">
-              <div className="flex flex-wrap items-baseline gap-x-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-x-4">
+              <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-4">
                 <span className={`uppercase ${role.ink}`}>{role.text}</span>
                 <span className={`uppercase ${status.ink}`}>{status.text}</span>
                 {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
               </div>
-              {outcome && (
-                <p className={`max-w-[100ch] whitespace-pre-wrap [overflow-wrap:anywhere] ${live ? '' : 'font-semibold'}`} data-agent-outcome>{outcome}</p>
-              )}
+              <div className="flex shrink-0 gap-2">
+                {live && <StopAgent isPending={pending === child} onStop={() => onCancel(child)} />}
+                <Button aria-label="Open session" onClick={() => onOpen(child)}>Open</Button>
+              </div>
             </div>
-            <div className="ml-auto flex shrink-0 gap-2">
-              {live && <StopAgent isPending={pending === child} onStop={() => onCancel(child)} />}
-              <Button onClick={() => onOpen(child)}>Open session</Button>
-            </div>
+            {outcome && (
+              <p className={`max-w-[100ch] whitespace-pre-wrap [overflow-wrap:anywhere] ${live ? '' : 'font-semibold'}`} data-agent-outcome>{outcome}</p>
+            )}
           </div>
           {task && <AgentTask task={task} />}
           <section aria-label="Steps" className="max-w-[100ch]">
