@@ -807,7 +807,8 @@ function LogRows({
             searchInput.current?.focus();
           }
         }}
-        className="max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-all bg-panel-2 p-2 font-mono text-ui text-dialog-hint"
+        // The frame shows that the pane scrolls: its paper alone is 1.0-1.15:1 on the page.
+        className="max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-all border border-dialog-edge bg-panel-2 p-2 font-mono text-ui text-dialog-hint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
       >
         {search ? (
           result && (
