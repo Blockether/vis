@@ -289,27 +289,34 @@
             fds (fn []
                   (when (instance? com.sun.management.UnixOperatingSystemMXBean os)
                     (.getOpenFileDescriptorCount ^com.sun.management.UnixOperatingSystemMXBean os)))
+            interrupt-waiters!
+            (fn []
+              (let [ran (atom 0)
+                    seen (atom [])
+                    threads (doall (for [_ (range 25)]
+                                     (doto (Thread. #(try (oauth/call-with-file-lock path
+                                                                                     60000
+                                                                                     (fn []
+                                                                                       (swap! ran inc)))
+                                                          (catch Throwable t
+                                                            (swap! seen conj
+                                                              [(class t)
+                                                               (.isInterrupted (Thread/currentThread))]))))
+                                       (.start))))]
+                (Thread/sleep 200)
+                (doseq [^Thread t threads]
+                  (.interrupt t))
+                (doseq [^Thread t threads]
+                  (.join t 5000))
+                [@ran (frequencies @seen)]))
+            ;; The first run loads classes and can open jar files: release run
+            ;; 41120931788 counted 31 new fds on macOS. Measure the second run only.
+            warm (interrupt-waiters!)
             before (fds)
-            ran (atom 0)
-            seen (atom [])
-            threads (doall (for [_ (range 25)]
-                             (doto (Thread. #(try (oauth/call-with-file-lock path
-                                                                             60000
-                                                                             (fn []
-                                                                               (swap! ran inc)))
-                                                  (catch Throwable t
-                                                    (swap! seen conj
-                                                      [(class t)
-                                                       (.isInterrupted (Thread/currentThread))]))))
-                               (.start))))]
+            measured (interrupt-waiters!)]
 
-        (Thread/sleep 200)
-        (doseq [^Thread t threads]
-          (.interrupt t))
-        (doseq [^Thread t threads]
-          (.join t 5000))
-        (expect (= 0 @ran))
-        (expect (= {[InterruptedException true] 25} (frequencies @seen)))
+        (doseq [result [warm measured]]
+          (expect (= [0 {[InterruptedException true] 25}] result)))
         (when before
           ;; Pre-fix this grew by one fd per interrupted acquisition.
           (expect (< (- (fds) before) 10)))))))
