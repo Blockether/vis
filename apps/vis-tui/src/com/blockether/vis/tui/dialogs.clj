@@ -2084,8 +2084,8 @@
    they can be exercised in tests WITHOUT a terminal. Only `:paint` touches the
    screen. `items`/opts match `list-dialog!`."
   [title items
-   {:keys [filter? placeholder enter-label height column-offset selected max-rows multi?
-           query-items]}]
+   {:keys [filter? placeholder enter-label height column-offset selected max-rows multi? query-items
+           min-width]}]
   (let [raw
         (vec items)
 
@@ -2169,7 +2169,7 @@
                                    items))))
 
              content-w
-             (footer-content-width cols footer item-w)
+             (footer-content-width cols footer (max (long item-w) (long (or min-width 0))))
 
              content-h-req
              (if content?
@@ -2379,6 +2379,8 @@
                     `:content` inside a `*dialog-region*` band.
      :column-offset (fn [cols rows] -> left) scopes the dialog to columns from
                     `left` to the terminal edge. Recomputed for each paint.
+     :min-width    content columns the box keeps when its items are narrower,
+                    still bounded by the terminal
      :selected     index of the item that starts selected (default 0)
      :multi?       Tab marks rows; Enter returns a vec of the marked items, or of
                    the selected item when none is marked. Items need a unique `:id`.
@@ -9315,6 +9317,7 @@
                      :filter? true
                      :placeholder "Type to filter models…"
                      :enter-label "choose"
+                     :min-width 76
                      :height :content)))))
 
 (defn text-viewer-dialog!
