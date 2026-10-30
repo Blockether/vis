@@ -243,12 +243,24 @@ def test_table_builder_refuses_text_columns():
 
 def test_recorder_refuses_a_live_group_without_an_id(monkeypatch):
     # #428: the recorder hid the buttons of an unnamed group; the engine refuses it.
+    # Vis raises VisToolError, a RuntimeError, so the recorder must raise one too.
     monkeypatch.setattr(vis, "_host", vis.testing.LiveRecorder(vis._host))
-    with pytest.raises(AssertionError, match="group needs an id"):
+    with pytest.raises(
+        RuntimeError, match=r"group needs an id.*vis\.ui\.group\('actions'"
+    ):
         with vis.live(
             "Chats", [vis.ui.wrap(vis.ui.button("save", "Save"))], flush_ms=0
         ):
             pass
+
+
+def test_outside_refuses_a_live_group_without_an_id_with_the_fix():
+    # #428: outside Vis the refusal named no fix for an unnamed group.
+    view = {"title": "Chats", "nodes": [vis.ui.wrap(vis.ui.button("save", "Save"))]}
+    with pytest.raises(
+        RuntimeError, match=r"group needs an id.*vis\.ui\.group\('actions'"
+    ):
+        _outside.live(json.dumps({"op": "open", "view": view}))
 
 
 def test_outside_refused_patch_leaves_state_unchanged():

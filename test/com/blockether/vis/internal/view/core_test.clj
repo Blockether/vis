@@ -1875,6 +1875,18 @@
                   (hi/patch-live! (:id view) [{:op "set" :node-id "why" :tone "error"}])
                   (let [row (first (:nodes (hi/live-view (:id view))))]
                     (expect (= :error (:tone (second (:children row)))))))))
+  (it "refuses a group without an id and names the Python fix"
+      ;; #428: the refusal gave no fix, so an extension author did not know what to write.
+      (recorded (fn []
+                  (let [refused (live-refusal #(hi/open-live! (live-spec (hi/spec<-json
+                                                                           {"type" "group"
+                                                                            "direction" "wrap"
+                                                                            "children"
+                                                                            [{"id" "save"
+                                                                              "type" "button"
+                                                                              "label" "Save"}]}))))]
+                    (expect (some? refused))
+                    (expect (str/includes? (str refused) "vis.ui.group('actions', ...)"))))))
   (it
     "keeps every ACCEPTED patch on disk, in the order the engine accepted them"
     (recorded

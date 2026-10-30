@@ -1076,6 +1076,10 @@ def _live_check_node(node, seen, *, is_declaration=True):
             return f"a {kind} input has no value: only the host holds its handle"
     node_id = node.get("id")
     if not isinstance(node_id, str) or not node_id.strip():
+        if is_group:
+            from .extension import _LIVE_GROUP_NEEDS_ID
+
+            return _LIVE_GROUP_NEEDS_ID
         return f"a {kind} node needs an id"
     if node_id in seen:
         return f"two nodes answer to {node_id!r}"

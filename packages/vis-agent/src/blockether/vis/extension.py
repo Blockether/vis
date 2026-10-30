@@ -6277,6 +6277,12 @@ def live(title, nodes, placement=None, key=None, on_event=None, **options):
 
 # -- Extension live-view test harness -----------------------------------------
 
+# The refusal of a live group without an id, in the recorder and the outside host.
+_LIVE_GROUP_NEEDS_ID = (
+    "a live view group needs an id, because patches and after= name it: "
+    "write vis.ui.group('actions', ...) or vis.ui.wrap('actions', ...)"
+)
+
 
 class _LiveRecorder:
     """An isolated in-memory live host for testing any extension live view.
@@ -6568,12 +6574,9 @@ class _LiveRecorder:
         if action == "open":
             for node in self._nodes(envelope["view"].get("nodes")):
                 # The engine refuses a live group without an id, so a test must too.
+                # Vis raises VisToolError, a RuntimeError, so the recorder does too.
                 if node.get("type") == "group" and not node.get("id"):
-                    raise AssertionError(
-                        "a live view group needs an id, because patches and "
-                        "after= name it: write vis.ui.group('actions', ...) "
-                        "or vis.ui.wrap('actions', ...)"
-                    )
+                    raise RuntimeError(_LIVE_GROUP_NEEDS_ID)
             self._view = self._materialize(envelope["view"])
             self._declared = set(envelope.get("validators") or [])
             self._verdicts = {}

@@ -1145,7 +1145,9 @@
                     fail!)
        (if is-group
          (let [id (or (trimmed (:id node))
-                      (fail! "a group needs a non-blank :id — `add-node :after` names it too"))
+                      (fail!
+                        (str "a group needs an id, because patches and `after` name it: "
+                             "write vis.ui.group('actions', ...) or vis.ui.wrap('actions', ...)")))
                group-fail! (fn [message]
                              (fail! (str "group " id ": " message)))
                children (:children node)
