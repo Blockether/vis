@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { GatewayClient } from '../lib/gateway';
+import { GatewayError, type GatewayClient } from '../lib/gateway';
 import { FilePreview } from './FilePreview';
 
 afterEach(cleanup);
@@ -54,4 +54,35 @@ it('says when the file runs past what a preview reads', async () => {
   );
 
   await waitFor(() => expect(screen.getByText(/past what a preview reads/)).toBeVisible());
+});
+
+// #432: a PNG linked from Activity opened a text sheet that said "that file is not text".
+it('shows a picture in the image viewer when the gateway says the file is not text', async () => {
+  const createObjectURL = vi.fn(() => 'blob:shot');
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }));
+  const client = gateway({
+    readPath: vi.fn().mockRejectedValue(new GatewayError(415, 'that file is not text')),
+    readImagePath: vi.fn().mockResolvedValue(new Blob(['png'], { type: 'image/png' })),
+  });
+  render(<FilePreview client={client} sid="session-1" path="/tmp/shot.png" onClose={vi.fn()} />);
+
+  const picture = await screen.findByRole('img', { name: 'shot.png' });
+  expect(picture).toHaveAttribute('src', 'blob:shot');
+  expect(client.readImagePath).toHaveBeenCalledWith('session-1', '/tmp/shot.png', expect.anything());
+  expect(screen.queryByText('that file is not text')).toBeNull();
+  cleanup();
+  expect(revokeObjectURL).toHaveBeenCalledWith('blob:shot');
+  vi.unstubAllGlobals();
+});
+
+it('offers the editor for a binary file that is not a picture', async () => {
+  const client = gateway({
+    readPath: vi.fn().mockRejectedValue(new GatewayError(415, 'that file is not text')),
+    readImagePath: vi.fn().mockRejectedValue(new GatewayError(415, 'that file is not an image')),
+  });
+  render(<FilePreview client={client} sid="session-1" path="/tmp/app.zip" onClose={vi.fn()} />);
+
+  await waitFor(() => expect(screen.getByText(/no preview for this kind of file/)).toBeVisible());
+  expect(screen.getByRole('button', { name: 'Open in editor' })).toBeVisible();
 });

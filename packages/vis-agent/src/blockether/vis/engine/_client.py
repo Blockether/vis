@@ -1588,6 +1588,19 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def get_session_fs_image(
+        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> Response:
+        """GET /v1/sessions/:sid/fs/image — binary response of one workspace picture."""
+        response = self._request(
+            "GET",
+            "/v1/sessions/:sid/fs/image",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+        )
+        return response
+
     def put_session_group(
         self,
         sid: str,

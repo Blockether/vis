@@ -7592,6 +7592,67 @@
                    (.delete outside))))))
 
 (defdescribe
+  a-pressed-picture-is-served-as-its-bytes
+  (it "a pressed picture is served as its bytes"
+      ;; Regression #432: a PNG linked from Activity opened a text sheet that said
+      ;; "that file is not text". The picture route serves a drawable picture under
+      ;; the same read gates, and refuses another binary file.
+      (let [sid
+            (random-uuid)
+
+            root
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-read-image"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            png
+            (byte-array (map unchecked-byte [0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A 0 0 0 13]))
+
+            picture
+            (io/file root "shot.png")
+
+            archive
+            (io/file root "fake.png")
+
+            outside
+            (ungranted-test-file)
+
+            answer
+            (fn [query]
+              (with-redefs-fn {#'state/soul (fn [id]
+                                              (when (= sid id) {"id" (str id)}))
+                               #'state/session-workspace-info (fn [id]
+                                                                (when (= sid id)
+                                                                  {"root" (.getPath root)}))
+                               #'lp/env-for
+                               (fn [_]
+                                 {:workspace {:root (.getPath root) :repo-root (.getPath root)}
+                                  :security-policy {:jail-enabled true :process-jail {}}
+                                  :security/filesystem-roots []})}
+                #(#'fs-api/read-image-handler
+                   {:path-params {:sid (str sid)} :query-params query})))]
+
+        (with-open [out (java.io.FileOutputStream. picture)]
+          (.write out ^bytes png))
+        (with-open [out (java.io.FileOutputStream. archive)]
+          (.write out (byte-array (map unchecked-byte [0x50 0x4B 0x03 0x04 0 0 0 0]))))
+        (try
+          ;; a picture comes back as its own bytes, typed by its content
+          (let [response (answer {"path" "shot.png"})]
+            (expect (= 200 (:status response)))
+            (expect (= "image/png" (get-in response [:headers "Content-Type"])))
+            (expect (= (seq png) (seq (.readAllBytes ^java.io.InputStream (:body response))))))
+          ;; a binary file that is not a picture is refused, whatever its name says
+          (expect (= 415 (:status (answer {"path" "fake.png"}))))
+          ;; a picture above the cap is refused instead of streamed
+          (with-redefs-fn {#'fs-api/image-byte-limit 4}
+            #(expect (= 413 (:status (answer {"path" "shot.png"})))))
+          ;; an ungranted path is not read
+          (expect (= 403 (:status (answer {"path" (.getPath outside)}))))
+          (expect (= 404 (:status (answer {"path" "absent.png"}))))
+          (finally (.delete picture) (.delete archive) (.delete root) (.delete outside))))))
+
+(defdescribe
   session-readable-external-file-preview-test
   (it
     "session readable external file preview"

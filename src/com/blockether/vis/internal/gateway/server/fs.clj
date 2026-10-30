@@ -296,6 +296,83 @@
                                                 :invalid-request "that file could not be read"
                                                 :path (.getPath target)))))))))
 
+(def ^:private image-byte-limit
+  "Bytes one picture preview serves. A screenshot or a chart fits well under it; a file
+   above it is a raw photo or a texture atlas, and the editor opens it on its machine."
+  (* 32 1024 1024))
+
+(defn- bytes-at?
+  "True when `head` holds the Latin-1 bytes of `ascii` from index `at`."
+  [^bytes head at ^String ascii]
+  (let [^bytes wanted
+        (.getBytes ascii java.nio.charset.StandardCharsets/ISO_8859_1)
+
+        from
+        (int at)
+
+        to
+        (+ from (alength wanted))]
+
+    (and (<= to (alength head)) (java.util.Arrays/equals head from to wanted 0 (alength wanted)))))
+
+(defn- image-media-type
+  "The media type of a picture that a browser draws, read from the first bytes of
+   `head`, or nil. The bytes decide, not the file name: a `.png` with text stays out."
+  [^bytes head]
+  (cond (bytes-at? head 0 "\u0089PNG\r\n\u001a\n") "image/png"
+        (bytes-at? head 0 "ÿØÿ") "image/jpeg"
+        (or (bytes-at? head 0 "GIF87a") (bytes-at? head 0 "GIF89a")) "image/gif"
+        (and (bytes-at? head 0 "RIFF") (bytes-at? head 8 "WEBP")) "image/webp"
+        (and (bytes-at? head 4 "ftyp") (or (bytes-at? head 8 "avif") (bytes-at? head 8 "avis")))
+        "image/avif"))
+
+(defn- file-head
+  "The first bytes of `file`, enough for `image-media-type`."
+  ^bytes [^java.io.File file]
+  (with-open [in (java.io.FileInputStream. file)]
+    (.readNBytes in 16)))
+
+(defn- read-image-handler
+  "GET /v1/sessions/:sid/fs/image?path=… — the bytes of ONE session-readable picture.
+
+   The text preview refuses a binary file, so a press on a `.png` path showed a
+   refusal instead of the picture (#432). This route serves only a picture that
+   a browser draws, under a byte cap, with the same resolver and gates as the
+   text preview. Another binary file gets 415 `not-an-image`."
+  [request]
+  (let [sid (http/path-sid request)]
+    (if-not (and sid (state/soul sid))
+      (http/session-404 (get-in request [:path-params :sid]))
+      (let [found (session-readable-file sid (get-in request [:query-params "path"]))
+            ^java.io.File target (:file found)]
+
+        (or (:error found)
+            (try (let [media-type (image-media-type (file-head target))
+                       ^bytes picture (when media-type
+                                        (with-open [in (java.io.FileInputStream. target)]
+                                          (.readNBytes in (int (inc (long image-byte-limit))))))]
+
+                   (cond (nil? media-type) (http/error-response 415
+                                                                :not-an-image
+                                                                "that file is not an image"
+                                                                :path (.getPath target))
+                         (> (alength picture) (long image-byte-limit))
+                         (http/error-response 413
+                                              :image-too-large
+                                              "that picture is too large to preview"
+                                              :path (.getPath target))
+                         :else {:status 200
+                                :headers {"Content-Type" media-type
+                                          "Content-Length" (str (alength picture))
+                                          "Cache-Control" "private, no-store"
+                                          "Content-Security-Policy" "sandbox"
+                                          "X-Content-Type-Options" "nosniff"}
+                                :body (java.io.ByteArrayInputStream. picture)}))
+                 (catch java.io.IOException _
+                   (http/error-response 400
+                                        :invalid-request "that file could not be read"
+                                        :path (.getPath target)))))))))
+
 (defn- workspace-handler
   [request]
   (if-let [sid (http/path-sid request)]
@@ -316,4 +393,5 @@
    [:get "/v1/sessions/:sid/workspace"] workspace-handler
    [:patch "/v1/sessions/:sid/workspace/root"] change-root-handler
    [:post "/v1/sessions/:sid/fs/actions/open"] open-file-handler
-   [:get "/v1/sessions/:sid/fs/file"] read-file-handler})
+   [:get "/v1/sessions/:sid/fs/file"] read-file-handler
+   [:get "/v1/sessions/:sid/fs/image"] read-image-handler})

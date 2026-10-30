@@ -3421,6 +3421,18 @@ export class GatewayClient {
     );
   }
 
+  // GET /v1/sessions/:sid/fs/image — the bytes of one workspace picture, for the
+  // file a press named when the text window refused it (#432). `requestBody`, not
+  // `request`: a PNG is not text, and `<img src>` cannot carry the bearer header.
+  async readImagePath(sid: string, path: string, signal?: AbortSignal): Promise<Blob> {
+    return this.requestBody(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/fs/image?path=${encodeURIComponent(path)}`,
+      { signal },
+      (res) => res.blob(),
+    );
+  }
+
   // ── Sessions ────────────────────────────────────────────────────
   //
   // The list, one session's meta, its transcript and its queued backlog are each

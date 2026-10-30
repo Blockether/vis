@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import type { GatewayClient } from '../lib/gateway';
+import { GatewayError, type GatewayClient } from '../lib/gateway';
 import type { FileWindow } from '../lib/types';
 import { ArrowOutIcon } from './icons';
+import { ImageViewer } from './ImageViewer';
 import { BandButton, Banner, DialogFrame, Modal, Spinner } from './ui';
 
 /**
@@ -15,8 +16,10 @@ import { BandButton, Banner, DialogFrame, Modal, Spinner } from './ui';
  * and the sheet stands at the line the press named, with an editor icon for the
  * machine that actually holds the tree.
  *
- * What the gateway refuses — a path this session cannot read, a file that is
- * gone, a binary file — is shown in its own words rather than as an empty box.
+ * A file that is not text (415) is asked for again as a picture, and a picture
+ * opens in the image viewer (#432). Another binary file says that it has no
+ * preview here. Other refusals — a path this session cannot read, a file that
+ * is gone — are shown in the gateway's own words rather than as an empty box.
  */
 export function FilePreview({
   client,
@@ -33,6 +36,8 @@ export function FilePreview({
   onClose: () => void;
 }) {
   const [file, setFile] = useState<FileWindow | null>(null);
+  const [picture, setPicture] = useState<string | null>(null);
+  const [isWithoutPreview, setIsWithoutPreview] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
   const name = path.slice(path.lastIndexOf('/') + 1) || path;
@@ -40,7 +45,14 @@ export function FilePreview({
   useEffect(() => {
     const abort = new AbortController();
     let isLive = true;
+    let url: string | null = null;
+    const isNotText = (cause: unknown) => cause instanceof GatewayError && cause.status === 415;
+    const fail = (cause: unknown) => {
+      if (isLive) setFailure((cause as Error).message);
+    };
     setFile(null);
+    setPicture(null);
+    setIsWithoutPreview(false);
     setFailure(null);
     void client
       .readPath(sid, path, line, abort.signal)
@@ -48,11 +60,23 @@ export function FilePreview({
         if (isLive) setFile(answer);
       })
       .catch((cause: unknown) => {
-        if (isLive) setFailure((cause as Error).message);
+        if (!isNotText(cause)) return fail(cause);
+        return client.readImagePath(sid, path, abort.signal).then(
+          (blob) => {
+            if (!isLive) return;
+            url = URL.createObjectURL(blob);
+            setPicture(url);
+          },
+          (refusal: unknown) => {
+            if (!isNotText(refusal)) return fail(refusal);
+            if (isLive) setIsWithoutPreview(true);
+          },
+        );
       });
     return () => {
       isLive = false;
       abort.abort();
+      if (url) URL.revokeObjectURL(url);
     };
   }, [client, sid, path, line]);
 
@@ -69,6 +93,8 @@ export function FilePreview({
       .catch((cause: unknown) => setFailure((cause as Error).message))
       .finally(() => setIsOpening(false));
   };
+
+  if (picture) return <ImageViewer src={picture} name={name} onClose={onClose} />;
 
   return (
     <Modal within="session" onDismiss={onClose}>
@@ -89,6 +115,11 @@ export function FilePreview({
             <div className="p-3">
               <Banner kind="err">{failure}</Banner>
             </div>
+          ) : isWithoutPreview ? (
+            <p className="p-3 font-sans text-dialog-hint">
+              Vis has no preview for this kind of file. Open it in the editor on the machine
+              that ran the step.
+            </p>
           ) : !file ? (
             <p className="flex items-center gap-2 p-3 text-dialog-hint">
               <Spinner /> Reading {name}…
