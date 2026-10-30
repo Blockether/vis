@@ -17,6 +17,23 @@ export const VIEW_GROUP_DIRECTIONS = viewSchema.$defs.group_direction
   .enum as readonly ViewGroupDirection[];
 
 type SchemaBranch = { properties: Record<string, { const?: string; maximum?: number }> };
+export type ViewButtonVariant = 'primary' | 'secondary' | 'destructive';
+type ButtonSchemaBranch = {
+  properties: { type?: { const?: string }; variant?: { enum: string[]; default: string } };
+};
+const BUTTON_VARIANT = (viewSchema.$defs.component.oneOf as unknown as ButtonSchemaBranch[]).find(
+  (branch) => branch.properties.type?.const === 'button',
+)?.properties.variant;
+/** The rank of a button (`variant` of the button component in view.json). CLOSED. */
+export const VIEW_BUTTON_VARIANTS = (BUTTON_VARIANT?.enum ?? []) as readonly ViewButtonVariant[];
+
+/** Read a button variant; an absent or unknown one is the schema default. */
+export function viewButtonVariant(raw: unknown): ViewButtonVariant {
+  return (VIEW_BUTTON_VARIANTS as readonly unknown[]).includes(raw)
+    ? (raw as ViewButtonVariant)
+    : ((BUTTON_VARIANT?.default ?? 'secondary') as ViewButtonVariant);
+}
+
 /** The largest `max_columns` of a grid group (view.json). */
 export const VIEW_MAX_COLUMNS =
   (viewSchema.$defs.component.oneOf as unknown as SchemaBranch[]).find(

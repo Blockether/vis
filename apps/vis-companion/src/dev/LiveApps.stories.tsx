@@ -9,6 +9,7 @@ import {
   COUNTER,
   DASHBOARD,
   type Job,
+  SORT,
   StoryAppHost,
   TODO,
   type StoryApp,
@@ -136,6 +137,11 @@ export const Dashboard: Story = {
     await userEvent.click(await legend(canvasElement, 'Resume'));
     await waitFor(() => expect(canvas.getByText('Building release')).toBeVisible());
   },
+};
+
+/** Six neutral rows, one choice for each item and ranked buttons. Check it on a phone width (#430). */
+export const Sort: Story = {
+  render: () => <OpenApp app={SORT} />,
 };
 
 /** A closed app is a record: no key legend, no live controls and no key reaches it. */

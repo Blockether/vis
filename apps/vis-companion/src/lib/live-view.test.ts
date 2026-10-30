@@ -158,6 +158,21 @@ describe('a live view read off the wire', () => {
     expect(leaves(view.nodes).map((node) => node.id)).toContain('why');
   });
 
+  // Issue #430: the wire variant of a button gave the app no rank to paint.
+  it('reads a button variant and paints an absent or unknown one as secondary', () => {
+    const view = liveViewFromWire({
+      ...fixture,
+      nodes: [
+        { id: 'save', type: 'button', label: 'Save', variant: 'primary' },
+        { id: 'drop', type: 'button', label: 'Drop', variant: 'destructive' },
+        { id: 'skip', type: 'button', label: 'Skip' },
+        { id: 'odd', type: 'button', label: 'Odd', variant: 'danger' },
+      ],
+    });
+    const variants = view?.nodes.map((node) => (node.type === 'button' ? node.variant : null));
+    expect(variants).toEqual(['primary', 'destructive', 'secondary', 'secondary']);
+  });
+
   // An app that paints half a node paints a lie. A node it cannot read is
   // dropped, and a view with nothing left to paint is not a view.
   it('drops what it cannot paint instead of guessing', () => {

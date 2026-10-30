@@ -272,6 +272,83 @@ export const COUNTER: StoryApp<{ count: number }> = {
   },
 };
 
+// ── Sort: six rows, one choice for each item and ranked buttons (#430). ──────────
+
+type SortState = { kinds: Record<string, string>; picked: string[]; saved: boolean };
+
+const SORT_ITEMS = ['Item one', 'Item two', 'Item three', 'Item four', 'Item five', 'Item six'];
+
+function sortNodes(state: SortState) {
+  return {
+    nodes: [
+      {
+        id: 'summary',
+        type: 'status',
+        text: state.saved ? 'Saved' : `${state.picked.length} of ${SORT_ITEMS.length} picked`,
+        tone: state.saved ? 'ok' : 'idle',
+      },
+      {
+        id: 'items',
+        type: 'table',
+        label: 'Items',
+        columns: [
+          { id: 'item', label: 'Item' },
+          { id: 'kind', label: 'Kind' },
+        ],
+        rows: SORT_ITEMS.map((label, index) => ({
+          id: `item-${index + 1}`,
+          cells: [label, state.kinds[`item-${index + 1}`] ?? 'Work'],
+        })),
+        is_selectable: true,
+        selected_ids: state.picked,
+      },
+      {
+        id: 'sort',
+        type: 'group',
+        direction: 'column',
+        label: 'Kind of each item',
+        children: [
+          ...SORT_ITEMS.map((label, index) => ({
+            id: `kind-${index + 1}`,
+            type: 'select',
+            name: `kind-${index + 1}`,
+            label,
+            options: [
+              { value: 'Work', label: 'Work' },
+              { value: 'Personal', label: 'Personal' },
+            ],
+            value: state.kinds[`item-${index + 1}`] ?? 'Work',
+          })),
+          { id: 'save', type: 'button', label: 'Save', action: 'submit', variant: 'primary' },
+          { id: 'cancel', type: 'button', label: 'Cancel' },
+          { id: 'discard', type: 'button', label: 'Discard', variant: 'destructive', is_disabled: state.picked.length === 0 },
+        ],
+      },
+    ],
+  };
+}
+
+export const SORT: StoryApp<SortState> = {
+  id: 'app-sort',
+  title: 'Sort items',
+  initial: () => ({ kinds: {}, picked: ['item-2'], saved: false }),
+  render: sortNodes,
+  act: (state, action, values) => {
+    if (action.action === 'select') {
+      const next = { ...state, picked: action.item_ids, saved: false };
+      return { state: next, answer: sortNodes(next) };
+    }
+    if (action.action === 'submit') {
+      const kinds = Object.fromEntries(
+        SORT_ITEMS.map((_, index) => [`item-${index + 1}`, String(values[`kind-${index + 1}`] ?? 'Work')]),
+      );
+      const next = { ...state, kinds, saved: true };
+      return { state: next, answer: sortNodes(next) };
+    }
+    return { state };
+  },
+};
+
 // ── Todo: an input, a selectable table and owner validation. ───────────────────
 
 type TodoState = { items: { id: string; text: string; done: boolean }[]; next: number };

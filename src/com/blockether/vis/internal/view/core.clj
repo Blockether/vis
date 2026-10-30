@@ -1233,13 +1233,21 @@
                  :is-active (bool-value node-fail! ":is-active" (:is-active node) true))
 
                :button
-               (assoc base
-                 :label (live-text node-fail! "button :label" (:label node))
-                 :action (live-term node-fail!
-                                    ":action"
-                                    view-spec/button-actions
-                                    (or (:action node) "activate"))
-                 :is-disabled (bool-value node-fail! ":is-disabled" (:is-disabled node) false))
+               (cond-> (assoc base
+                         :label (live-text node-fail! "button :label" (:label node))
+                         :action (live-term node-fail!
+                                            ":action"
+                                            view-spec/button-actions
+                                            (or (:action node) "activate"))
+                         :is-disabled
+                         (bool-value node-fail! ":is-disabled" (:is-disabled node) false))
+                 ;; Declared only: an absent variant stays absent and reads as secondary.
+                 (some? (:variant node))
+                 (assoc :variant
+                   (live-term node-fail!
+                              "button :variant"
+                              view-spec/button-variants
+                              (:variant node))))
 
                :card
                (cond-> (assoc base :title (live-text node-fail! "a card's :title" (:title node)))
@@ -2068,7 +2076,8 @@
    :tone view-spec/live-tones
    :line-tones view-spec/live-tones
    :op view-spec/live-ops
-   :variant view-spec/spinner-variants
+   ;; Spinner and button variants share the key; their terms never collide.
+   :variant (merge view-spec/spinner-variants view-spec/button-variants)
    :order view-spec/live-orders
    :dir view-spec/live-sort-dirs
    :align view-spec/live-aligns

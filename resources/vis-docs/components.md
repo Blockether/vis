@@ -113,7 +113,31 @@ Data components show records that a person can read, open or select.
 
 `vis.ui.table(id, columns=[...], rows=[...])` shows rows with an id each. Use `vis.ui.table_column`,
 `vis.ui.table_row` and `vis.ui.table_group` to build them. With `is_selectable=True`, a person can select
-rows, and `selected_ids` holds the selection.
+rows, and `selected_ids` holds the selection. Each surface marks a selectable row with `●` when it
+is selected and with `○` when it is not.
+
+### Choose one value for each item
+
+A table cell holds text only. To let a person choose one value for each item, give each item its
+own `vis.ui.select`. Put the selects in one group with a submit button. The submit event then holds
+every choice under the name of its select.
+
+```python
+ITEMS = [("item-1", "Item one"), ("item-2", "Item two"), ("item-3", "Item three"),
+         ("item-4", "Item four"), ("item-5", "Item five"), ("item-6", "Item six")]
+
+vis.ui.group(
+    "sort",
+    *[vis.ui.select(item_id, ["Work", "Personal"], label=label) for item_id, label in ITEMS],
+    vis.ui.button("save", "Save", action="submit", variant="primary"),
+    vis.ui.button("cancel", "Cancel"),
+)
+```
+
+Keep the submit button directly in the group of the selects. A button inside a nested `vis.ui.wrap`
+collects only the inputs of that wrap.
+
+Use a selectable table only when the person picks items, not values for items.
 
 ### Link
 
@@ -200,6 +224,10 @@ client. The extension decides what a press does.
 - `action="submit"` collects the inputs of the nearest group of the button. Vis checks each
   required input and each validator first. Then it sends one `submit` event with all `values`.
 - `is_disabled=True` refuses presses. Change it with `view[id].set(is_disabled=False)`.
+- `variant` sets the rank of the button: `primary`, `secondary` (the default) or `destructive`.
+  Give the main action of a group `variant="primary"`. Give an action that deletes or discards
+  data `variant="destructive"`. The terminal fills a primary button, so its rank does not need
+  colour. An unknown variant is refused, with the allowed names in the error.
 
 A form has its own submit and cancel buttons. Use buttons in live views.
 

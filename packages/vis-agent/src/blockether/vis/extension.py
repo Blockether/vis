@@ -6372,6 +6372,12 @@ class _LiveRecorder:
                 node.setdefault("variant", "braille")
                 node.setdefault("is_active", True)
             elif kind == "button":
+                from blockether.vis import _contracts
+
+                complaint = _contracts.button_variant_error(node.get("variant"))
+                if complaint:
+                    # Vis raises VisToolError, a RuntimeError, so the recorder does too.
+                    raise RuntimeError(f"button {node.get('id')}: {complaint}")
                 node["clicks"] = 0
                 node.setdefault("is_disabled", False)
             elif kind == "card" and node.get("is_selectable"):
@@ -7080,14 +7086,22 @@ def _ui_spinner(node_id, text="Working", *, variant="braille", is_active=True, *
     )
 
 
-def _ui_button(node_id, label, *, is_disabled=False, **spec):
+def _ui_button(node_id, label, *, is_disabled=False, variant=None, **spec):
     """An operator action. Accepted presses increment ``clicks`` in ``view.state()``.
 
-    No callback or code crosses the wire. The producer decides how to respond.
+    ``variant`` is ``"primary"``, ``"secondary"`` (the default) or ``"destructive"``.
+    Give one primary action per group. No callback or code crosses the wire.
     Disabled buttons and completed receipts cannot be activated.
     """
+    from blockether.vis import _contracts
+
+    complaint = _contracts.button_variant_error(variant)
+    if complaint:
+        raise ValueError(f"button {node_id}: {complaint}")
     return _live_node(
-        "button", node_id, dict(spec, label=str(label), is_disabled=is_disabled)
+        "button",
+        node_id,
+        dict(spec, label=str(label), is_disabled=is_disabled, variant=variant),
     )
 
 

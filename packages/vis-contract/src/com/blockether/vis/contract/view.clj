@@ -135,6 +135,10 @@
   "Wire button action to internal action."
   (keyword-map (get-in live-nodes ["button" "properties" "action" "enum"])))
 
+(def button-variants
+  "Wire button variant to internal variant."
+  (keyword-map (get-in live-nodes ["button" "properties" "variant" "enum"])))
+
 (def link-targets
   "Wire link target name to internal target type."
   (keyword-map (enum-values "link_target")))

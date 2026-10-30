@@ -61,6 +61,22 @@ def live_items(key: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _button_branch() -> dict[str, Any]:
+    return next(
+        branch
+        for branch in definition("view", "component")["oneOf"]
+        if branch["properties"]["type"].get("const") == "button"
+    )
+
+
+def button_variant_error(variant: Any) -> str | None:
+    """Answer why a declared button variant is invalid, or None when it is valid."""
+    allowed = _button_branch()["properties"]["variant"]["enum"]
+    if variant is None or variant in allowed:
+        return None
+    return f"button variant must be one of {', '.join(allowed)}, not {variant!r}"
+
+
 def _defaults(key: str) -> dict[str, Any]:
     properties = definition("view", key)["properties"]
     return {

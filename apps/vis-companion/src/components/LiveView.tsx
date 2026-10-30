@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type HTMLAttributes,
   type ReactNode,
 } from 'react';
@@ -47,7 +48,13 @@ import {
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent } from '../lib/types';
-import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
+import {
+  VIEW_CLOSE_EVENT,
+  VIEW_OPEN_EVENT,
+  VIEW_PATCH_EVENT,
+  type ViewAction,
+  type ViewButtonVariant,
+} from '../lib/view';
 import {
   applyLiveViewEvent,
   LIVE_NOTE_CHARS,
@@ -123,7 +130,8 @@ const MARK_INK: Record<LiveTone, string> = {
 const TONE_WORD: Record<LiveTone, string> = {
   idle: 'Waiting',
   running: 'Running',
-  ok: 'Passed',
+  // Neutral: an ok status is not a test verdict, and "Passed" read as one (#430).
+  ok: 'OK',
   warn: 'Warning',
   error: 'Failed',
 };
@@ -988,7 +996,20 @@ const LiveTableRow = memo(function LiveTableRow({
             aria-label={`Select ${row.cells[0] || row.id}`}
           >
             <span className={`flex min-w-0 flex-1 items-start gap-2 font-mono text-body ${mark}`}>
-              <LineMark tone={row.tone} />
+              {/* The selection state as a glyph, as in the terminal, so it reads without
+                  the row's tint (#430). It keeps one gap before the tone mark. */}
+              <span
+                data-selection-mark
+                aria-hidden="true"
+                className={`flex h-[1lh] w-[1ch] shrink-0 items-center justify-center ${
+                  isSelected ? 'text-accent-ink' : 'text-dialog-hint'
+                }`}
+              >
+                {isSelected ? '●' : '○'}
+              </span>
+              {/* An idle row says nothing more, so the selection glyph stays its only
+                  mark, as an idle stat shows none. */}
+              {row.tone !== 'idle' && <LineMark tone={row.tone} />}
               <RowFace columns={columns} row={row} />
             </span>
           </ListRow>
@@ -1516,6 +1537,16 @@ function CardTile({
   );
 }
 
+/**
+ * The control rank of each wire variant (#430). A primary action is FILLED, so it
+ * reads without colour; a destructive one takes the error ink of `danger`.
+ */
+const BUTTON_RANK = {
+  primary: 'primary',
+  secondary: 'secondary',
+  destructive: 'danger',
+} as const satisfies Record<ViewButtonVariant, ComponentProps<typeof Button>['variant']>;
+
 /** An operator button waits for acknowledgement and is inert in receipts. */
 function ActionButton({
   node,
@@ -1531,7 +1562,7 @@ function ActionButton({
   const [pending, setPending] = useState(false);
   return (
     <Button
-      variant="secondary"
+      variant={BUTTON_RANK[node.variant]}
       data-node-id={node.id}
       // The key cap is decorative: the name stays the label, never `Nextn`.
       aria-label={shortcut ? node.label : undefined}
@@ -1917,6 +1948,8 @@ export function LiveViewPanel({
   // In the dialog the band names the run, so the stop stands on the headline's line
   // instead of on an empty header row above it.
   const headlineHoldsStop = inDialog && canInterrupt && view.nodes[0]?.type === 'status';
+  // An app's own chrome names its lifecycle once (#430), so its panel adds no verdict.
+  const showsVerdict = isSettled && !app;
   const stopInHeadline = headlineHoldsStop ? (
     <Button
       variant="secondary"
@@ -1940,7 +1973,7 @@ export function LiveViewPanel({
         role={isSettled ? undefined : 'status'}
         aria-live={isSettled ? undefined : 'polite'}
       >
-        {(!inDialog || (canInterrupt && !headlineHoldsStop) || isSettled) && (
+        {(!inDialog || (canInterrupt && !headlineHoldsStop) || showsVerdict) && (
         <header
           className={
             embedded
@@ -2022,7 +2055,7 @@ export function LiveViewPanel({
               </TextButton>
             </>
           )}
-          <ViewState view={view} isSettled={isSettled} />
+          <ViewState view={view} isSettled={showsVerdict} />
         </header>
         )}
         {!isSettled && isArmed && onInterrupt && (

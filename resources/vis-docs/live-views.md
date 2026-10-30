@@ -335,7 +335,7 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.ui.divider(id)` | a horizontal rule between sections | none (use `view.add(...)` or `view.drop(id)`) |
 | `vis.ui.code(id, text, language=None)` | literal, whitespace-preserving code | `.set(text, language=)` |
 | `vis.ui.spinner(id, text="Working", variant="braille")` | an explicit activity indicator | `.set(text=, variant=, is_active=)` |
-| `vis.ui.button(id, label, is_disabled=False)` | an operator action | `.set(label=, is_disabled=)` |
+| `vis.ui.button(id, label, is_disabled=False, variant=None)` | an operator action; `variant` is `primary`, `secondary` or `destructive` | `.set(label=, is_disabled=)` |
 | `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | a collapsible column | children update by their own ids |
 | `vis.ui.scene(id, width, height, objects=[vis.ui.scene_object(…)])` | a 3D world, [drawn on every surface](#draw-a-3d-scene) | `.put(object_id, **changes)`, `.mesh(mesh_id, vertices, faces)`, `.set(background=, fov=, is_wrapping=, tick_ms=)`, `.remove(*ids)`, `.clear()` |
 

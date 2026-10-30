@@ -917,10 +917,11 @@
     :is-active (and is-interactive is-active)}])
 
 (defmethod node-rows :button
-  [{:keys [id label is-disabled]} {:keys [is-interactive]}]
+  [{:keys [id label is-disabled variant]} {:keys [is-interactive]}]
   [{:kind :button
     :node-id id
     :text (str "[ " (flat-text label) " ]")
+    :variant (or variant :secondary)
     :is-disabled (or is-disabled (not is-interactive))}])
 
 (defmethod node-rows :status
@@ -1271,14 +1272,16 @@
                       (head item)
                       (let [is-fresh (contains? fresh (:id row))
                             is-selected (contains? selected (:id row))
+                            ;; The mark is prefixed FIRST, so a leg's indent stands before
+                            ;; it and the mark moves in with its words (#430).
                             cells (cond-> (mapv (fn [col-idx]
                                                   (md-runs (cell-of row col-idx)))
                                                 (range (count columns)))
-                                    (and (:is-leg item) (seq columns))
-                                    (update 0 #(into [{:text "  "}] %))
-
                                     (and is-selectable (seq columns))
-                                    (update 0 #(into [{:text (if is-selected "● " "○ ")}] %)))]
+                                    (update 0 #(into [{:text (if is-selected "● " "○ ")}] %))
+
+                                    (and (:is-leg item) (seq columns))
+                                    (update 0 #(into [{:text "  "}] %)))]
 
                         (merge {:kind :trow
                                 :node-id id
@@ -2367,14 +2370,23 @@
                     :direction (:direction entry)
                     :enabled? true}))
 
+    ;; The rank of the components' action buttons: a primary action is FILLED and
+    ;; bold, so a monochrome terminal still shows it. A destructive one takes the
+    ;; error ink, and a disabled one is dim and loses its weight.
     :button
-    (do (paint-styled! g
-                       left
-                       row
-                       inner-w
-                       (if (:is-disabled entry) t/dialog-hint t/dialog-hint-key)
-                       [p/BOLD]
-                       (:text entry))
+    (do (cond (:is-disabled entry) (paint-plain! g left row inner-w t/dialog-hint (:text entry))
+              (= :primary (:variant entry))
+              (do (fill! g left row inner-w t/dialog-fg)
+                  (p/set-colors! g t/dialog-bg t/dialog-hint-key)
+                  (p/styled g [p/BOLD] (put! g left row inner-w (:text entry))))
+              :else (paint-styled!
+                      g
+                      left
+                      row
+                      inner-w
+                      (if (= :destructive (:variant entry)) t/footer-error-fg t/dialog-hint-key)
+                      [p/BOLD]
+                      (:text entry)))
         (when-not (:is-disabled entry)
           (.register interactions/hit-map
                      {:bounds {:row (+ (long row) (long *hit-row-offset*))

@@ -1065,6 +1065,33 @@
 
         (expect (str/includes? (nth (heads-of renamed) 0) "▾ Compile · 1 row")
                 "expansion is keyed by [table-id group-id], so a new label is the same fold"))
+      ;; Issue #430: a leg's selection mark stayed at the outer edge, away from its words.
+      (let [p
+            (lv/expanded (lv/opened (mounted
+                                      {}
+                                      (fixture/table
+                                        "jobs"
+                                        [(fixture/table-column "job" "Job")]
+                                        {:label "Jobs"
+                                         :is-selectable true
+                                         :groups [(fixture/table-group "build" {:label "Build"})]
+                                         :rows
+                                         [(fixture/table-row "lint" ["lint"])
+                                          (fixture/table-row "b-1" ["image"] {:parent "build"})]})))
+                         ["jobs" "build"])
+
+            texts
+            (mapv :text (kinds-of p :trow))
+
+            top
+            (first (filter #(str/includes? % "lint") texts))
+
+            leg
+            (first (filter #(str/includes? % "image") texts))]
+
+        (expect (str/includes? leg "  ○ image") "the leg indent stands before the mark")
+        (expect (= (+ 2 (long (str/index-of top "○"))) (long (str/index-of leg "○")))
+                "a leg's mark moves in with its words"))
       ;; a band too narrow for the whole name trims the NAME and keeps the count
       (let [head (first (filterv #(= :tparent (:kind %))
                           (lv/plan
@@ -1385,6 +1412,39 @@
           (expect (= (mapv #(str "b" %) (range 6)) (mapv :node-id hits)))
           (expect (= (count hits) (count (set (map #(select-keys (:bounds %) [:row :col]) hits))))
                   "every button owns its own cell of the band"))))
+  ;; Issue #430: every live button painted alike, so the main action had no rank.
+  (it "a button paints its variant: primary is filled, disabled is not bold"
+      (let [pane
+            (layout-pane :column
+                         [{:id "save" :type :button :label "Save" :variant :primary}
+                          {:id "skip" :type :button :label "Skip"}
+                          {:id "drop" :type :button :label "Drop" :variant :destructive}
+                          {:id "wait" :type :button :label "Wait" :is-disabled true}])
+
+            frame
+            (last (:frames (paint-frames [pane] 60 24)))
+
+            label-cell
+            (fn [label]
+              (some (fn [row]
+                      (let [text
+                            (apply str (map :ch row))
+
+                            at
+                            (str/index-of text (str "[ " label " ]"))]
+
+                        (when at (nth row (+ (long at) 2)))))
+                    frame))
+
+            [save skip drop wait]
+            (mapv label-cell ["Save" "Skip" "Drop" "Wait"])]
+
+        (expect (every? some? [save skip drop wait]) "each button paints its label")
+        (expect (not= (:bg save) (:bg skip)) "a primary button is filled")
+        (expect (:bold save) "a primary button is bold as well as filled")
+        (expect (= (:bg skip) (:bg drop)) "only the primary action is filled")
+        (expect (not= (:fg drop) (:fg skip)) "a destructive button takes the error ink")
+        (expect (not (:bold wait)) "a disabled button loses its weight")))
   (it "an input inside a grid is still an editable control"
       (let [pane
             (layout-pane :grid

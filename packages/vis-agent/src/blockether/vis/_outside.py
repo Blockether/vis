@@ -1133,6 +1133,9 @@ def _live_check_node(node, seen, *, is_declaration=True):
             return "a button needs a label"
         if is_declaration and "clicks" in node:
             return "button clicks are stamped by the engine"
+        complaint = _contracts.button_variant_error(node.get("variant"))
+        if complaint:
+            return complaint
         node.setdefault("clicks", 0)
         node.setdefault("is_disabled", False)
         if type(node["clicks"]) is not int or node["clicks"] < 0:

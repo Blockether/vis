@@ -241,6 +241,22 @@ def test_table_builder_refuses_text_columns():
         vis.ui.table("chats", columns=[vis.ui.table_column("chat", "Chat"), "Category"])
 
 
+def test_button_variant_is_kept_and_a_typo_names_the_variants():
+    # #430: a button had no hierarchy, and a misspelled variant reached the host.
+    assert vis.ui.button("save", "Save", variant="primary")["variant"] == "primary"
+    assert "variant" not in vis.ui.button("save", "Save")
+    with pytest.raises(ValueError, match=r"primary, secondary, destructive.*'danger'"):
+        vis.ui.button("drop", "Drop", variant="danger")
+
+
+def test_outside_refuses_an_unknown_button_variant():
+    # #430: outside Vis a raw button with a typo variant was accepted.
+    button = {"id": "drop", "type": "button", "label": "Drop", "variant": "danger"}
+    view = {"title": "Rows", "nodes": [button]}
+    with pytest.raises(RuntimeError, match=r"primary, secondary, destructive"):
+        _outside.live(json.dumps({"op": "open", "view": view}))
+
+
 def test_recorder_refuses_a_live_group_without_an_id(monkeypatch):
     # #428: the recorder hid the buttons of an unnamed group; the engine refuses it.
     # Vis raises VisToolError, a RuntimeError, so the recorder must raise one too.

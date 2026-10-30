@@ -1493,6 +1493,14 @@
               ],
               "default": "activate"
             },
+            "variant": {
+              "enum": [
+                "primary",
+                "secondary",
+                "destructive"
+              ],
+              "default": "secondary"
+            },
             "is_disabled": {
               "type": "boolean"
             },

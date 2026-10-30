@@ -170,6 +170,15 @@ describe('AppSurface', () => {
     expect(screen.getByRole('button', { name: 'Send review' })).toHaveProperty('disabled', true);
   });
 
+  it('names a closed app once and never as Done', async () => {
+    // Issue #430: a closed app read "Closed" in the title and "Done" over the body,
+    // and "Done" looked like a successful Save that the app never reported.
+    const closed = liveViewFromWire({ ...wire(3), is_closed: true });
+    const { client } = fakeClient(closed ? [closed] : [], async () => ({}));
+    open(client, null);
+    expect(await screen.findAllByText('Closed')).toHaveLength(1);
+    expect(screen.queryByText('Done')).toBeNull();
+  });
 });
 
 // Live apps: an app is any app, so its buttons, cards, tables and keys reach the owner.

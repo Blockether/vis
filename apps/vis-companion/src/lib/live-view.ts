@@ -14,11 +14,12 @@ import {
   VIEW_SHORTCUT_LABEL_MAX,
   VIEW_SHORTCUT_NAMED_KEYS,
   VIEW_SHORTCUTS_MAX,
+  viewButtonVariant,
   viewGroupDirection,
   viewKind,
   viewMaxColumns,
 } from './view';
-import type { ViewAnchor } from './view';
+import type { ViewAnchor, ViewButtonVariant } from './view';
 import {
   mergeSceneObjects,
   sceneColor,
@@ -291,6 +292,8 @@ export interface LiveButtonNode extends LiveNodeBase {
   label: string;
   /** `activate` sends one click; `submit` sends the inputs of the nearest group. */
   action: 'activate' | 'submit';
+  /** The rank of the action. Only one primary action stands in a group. */
+  variant: ViewButtonVariant;
   is_disabled: boolean;
   clicks: number;
 }
@@ -932,6 +935,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         type: 'button',
         label: base.label || id,
         action: node.action === 'submit' ? 'submit' : 'activate',
+        variant: viewButtonVariant(node.variant),
         is_disabled: node.is_disabled === true,
         clicks: count(node.clicks, 0),
       };

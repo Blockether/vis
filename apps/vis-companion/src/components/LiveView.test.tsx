@@ -128,6 +128,18 @@ describe('selecting a table row', () => {
     fireEvent.click(spelled[spelled.length - 1]);
     expect(onSelect).toHaveBeenCalledWith('hosts', ['db-2']);
   });
+  // Issue #430: a selected row showed its state only as a tint, unlike the terminal.
+  it('marks each selectable row with ● or ○, not with colour alone', () => {
+    const view = selectableView();
+    const hosts = hostsTable(view);
+    hosts.selected_ids = ['db-1'];
+    paint({ view, onSelect: vi.fn() });
+
+    const mark = (name: string) =>
+      screen.getByRole('button', { name }).querySelector('[data-selection-mark]')?.textContent;
+    expect(mark('Select db-1')).toBe('●');
+    expect(mark('Select db-2')).toBe('○');
+  });
   /** The hosts table of a view, which sits one level down when the view groups it. */
   const hostsTable = (view: LiveView) => {
     const node = view.nodes

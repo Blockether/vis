@@ -98,7 +98,20 @@
         (expect (try (engine/normalize-live-view {:title "Invalid" :nodes [bad]})
                      false
                      (catch clojure.lang.ExceptionInfo _ true))))
-      (expect (empty? (:text (engine/normalize-live-node {:id "empty" :type "code" :text ""}))))))
+      (expect (empty? (:text (engine/normalize-live-node {:id "empty" :type "code" :text ""})))))
+  (it "keeps a declared button variant and names the allowed variants for a typo"
+      ;; Issue #430: a button had no hierarchy, and a misspelled variant vanished silently.
+      (expect (= :primary
+                 (:variant (engine/normalize-live-node
+                             {:id "save" :type "button" :label "Save" :variant "primary"}))))
+      (expect (nil? (:variant (engine/normalize-live-node
+                                {:id "save" :type "button" :label "Save"}))))
+      (let [message (try (engine/normalize-live-node
+                           {:id "drop" :type "button" :label "Drop" :variant "danger"})
+                         nil
+                         (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+        (expect (str/includes? (str message) "destructive, primary, secondary"))
+        (expect (str/includes? (str message) "\"danger\"")))))
 
 (defdescribe
   live-primitives-lifecycle-test
