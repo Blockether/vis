@@ -88,6 +88,7 @@
                          :codex-session? true
                          :has-images? true
                          :graphical-terminal? true
+                         :session {:group-id "g1"}
                          :tabs [{:id :a} {:id :b}]}]
                (it "every band is a legal transient the band can paint"
                    (expect (nil? (tr/check (keymap/prefix-spec {}))))
@@ -99,6 +100,14 @@
                    (doseq [{:keys [key id]} (mapcat :items (:groups (keymap/prefix-spec full)))]
                      (let [r (press (first key))]
                        (expect (= id (or (get-in r [:state :prefix-group]) (:action r))) key))))
+               ;; User report 2026-10-30: C-x had no keys for groups.
+               (it "offers the verbs of the session's group only while the session is in one"
+                   (expect (= [:group-new :group-rename :group-recolour :group-settings
+                               :group-archive :group-delete]
+                              (mapv :action (keymap/available-prefix-commands full :group))))
+                   (expect (= [:group-new]
+                              (mapv :action (keymap/available-prefix-commands {} :group))))
+                   (expect (= :group-rename (:action (press \g \r)))))
                (it "every group row runs its verb, and every reachable verb has a row"
                    (doseq [{group :id gkey :key} keymap/prefix-groups
                            :when (not= :extensions group)]

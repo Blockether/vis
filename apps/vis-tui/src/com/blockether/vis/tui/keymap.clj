@@ -84,6 +84,7 @@
    so the C-x keys no longer run out. The Extensions group shows only when an
    extension binds a key. `:description` is the dim text of the group row."
   [{:id :session :key \s :title "Session" :description "Switch, start, fork and file sessions"}
+   {:id :group :key \g :title "Group" :description "Rename, colour, archive and delete groups"}
    {:id :model :key \m :title "Model" :description "Model, reasoning and answer length"}
    {:id :view :key \b :title "View" :description "Search, folds, Zen mode and panels"}
    {:id :attachments :key \a :title "Attachments" :description "Attach files and look at pictures"}
@@ -153,6 +154,42 @@
     :label "session metrics"
     :group :session
     :description "Show the token use and budgets of this session"}
+   ;; The Group verbs act on the group that holds the current session.
+   {:action :group-new
+    :key \n
+    :label "new group"
+    :group :group
+    :description "Create a group in this session's project"}
+   {:action :group-rename
+    :key \r
+    :label "rename group"
+    :group :group
+    :show-when :has-group
+    :description "Rename this session's group"}
+   {:action :group-recolour
+    :key \c
+    :label "group colour"
+    :group :group
+    :show-when :has-group
+    :description "Change the colour of this session's group"}
+   {:action :group-settings
+    :key \s
+    :label "group settings"
+    :group :group
+    :show-when :has-group
+    :description "Open the settings of this session's group"}
+   {:action :group-archive
+    :key \a
+    :label "archive group"
+    :group :group
+    :show-when :has-group
+    :description "Archive this session's group, or restore it"}
+   {:action :group-delete
+    :key \d
+    :label "delete group"
+    :group :group
+    :show-when :has-group
+    :description "Delete this session's group after you confirm"}
    {:action :cycle-model
     :key \m
     :label "next model"
@@ -640,7 +677,8 @@
    {:id :rename :key \R :label "Rename the row"}
    {:id :recolour :key \c :label "Change the group colour"}
    {:id :archive :key \A :label "Archive or restore the row"}
-   {:id :show-archived :key \v :label "Show or hide archived rows"}
+   {:id :show-archived :key \v :label "Show or hide archived sessions"}
+   {:id :show-archived-groups :key \V :label "Show or hide archived groups"}
    {:id :delete :key \D :label "Delete the row"}
    {:id :rename-group :key \N :label "Rename the session's group"}
    {:id :group-settings :key \S :label "Open the session's group settings"}
@@ -720,7 +758,8 @@
    fork at, `:codex` needs a session on OpenAI Codex (the screen marks it as
    `:codex-session?`), `:has-images` needs a picture in the session (the screen
    marks it as `:has-images?`), `:image-viewer` also needs a graphical terminal (the
-   screen marks it as `:graphical-terminal?`) and `:has-panel` needs a panel view.
+   screen marks it as `:graphical-terminal?`), `:has-panel` needs a panel view and
+   `:has-group` needs a current session in a group.
    Resolving a chord does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
@@ -741,6 +780,9 @@
 
     :has-panel
     (boolean (some #(= :panel (get-in % [:view :placement])) (:live-views db)))
+
+    :has-group
+    (not (str/blank? (str (get-in db [:session :group-id]))))
 
     true))
 

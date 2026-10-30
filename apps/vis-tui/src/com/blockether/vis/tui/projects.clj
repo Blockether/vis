@@ -1608,7 +1608,7 @@
       [(menu-item :new "New group…" :new-group)
        (menu-item :toggle-group-archive
                   (if (:archived? entry) "Hide archived groups" "Show archived groups")
-                  :show-archived) (menu-item :settings "Project settings…" :settings)]
+                  :show-archived-groups) (menu-item :settings "Project settings…" :settings)]
       :else [(menu-item :use-project "Use project" nil)
              (menu-item :new-session "New session" :new-session)
              (menu-item :new "New group…" :new-group)
@@ -1618,6 +1618,39 @@
              (menu-item :refresh "Refresh projects" :refresh)
              (menu-item :delete-project "Remove project and sessions…" :delete)])))
 
+(defn- archive-menu-items
+  "The two archive switches of the project that holds `entry`, each with its key."
+  [db entry]
+  (when-let [pid (some-> (get-in entry [:project "id"])
+                         str)]
+    [(menu-item :toggle-session-archive
+                (if (get-in db [:project-sidebar :session-archived? pid])
+                  "Hide archived sessions"
+                  "Show archived sessions")
+                :show-archived)
+     (menu-item :toggle-group-archive
+                (if (get-in db [:project-sidebar :group-archived? pid])
+                  "Hide archived groups"
+                  "Show archived groups")
+                :show-archived-groups)]))
+
+(defn- with-archive-items
+  "`items` and the archive switches that they lack. A menu with sections puts the
+   switches in their own Archived section."
+  [db entry items]
+  (let [have
+        (set (map :id items))
+
+        more
+        (remove #(have (:id %)) (archive-menu-items db entry))]
+
+    (cond-> (vec items)
+      (and (seq more) (some :section? items))
+      (conj {:id ::archive-section :label "Archived" :section? true})
+
+      true
+      (into more))))
+
 (def ^:private group-commands
   "The sidebar command of each group verb whose key a session verb also uses."
   {:rename :rename-group
@@ -1626,12 +1659,8 @@
    :unarchive-group :archive-group
    :delete :delete-group})
 
-(defn row-menu-items
-  "The row menu of a sidebar `entry`, each verb with the key that runs it. The keys
-   work on the row without the menu: a key acts exactly where the menu lists it.
-   A session's menu has a Session section and a section for its group. An item of
-   the group section carries the group row as its `:target`. When a session verb uses
-   its key, it takes its own group key from `group-commands`."
+(defn- session-or-own-menu-items
+  "The row menu of `entry` without its archive switches."
   [db entry]
   (let [own (own-menu-items db entry)]
     (if-not (:session entry)
@@ -1662,6 +1691,16 @@
                    :label (if target (str "Group · " (get group "name")) "Groups")
                    :section? true})
             (into more))))))
+
+(defn row-menu-items
+  "The row menu of a sidebar `entry`, each verb with the key that runs it. The keys
+   work on the row without the menu: a key acts exactly where the menu lists it.
+   A session's menu has a Session section and a section for its group. An item of
+   the group section carries the group row as its `:target`. When a session verb uses
+   its key, it takes its own group key from `group-commands`. Every menu of a project
+   ends with the switches that show its archived sessions and groups."
+  [db entry]
+  (with-archive-items db entry (session-or-own-menu-items db entry)))
 
 (def ^:private menu-kinds
   "Row kinds that own a row menu."

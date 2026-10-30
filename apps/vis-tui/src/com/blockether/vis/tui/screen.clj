@@ -6430,7 +6430,7 @@
               (let [answer (vis/gateway-search-sessions
                              q
                              (cond-> (with-session-drafts (assoc scope :limit picker-search-rows))
-                               (not (str/blank? q))
+                               (and (not (str/blank? q)) (nil? (:archived scope)))
                                (assoc :archived :include)))]
                 {:sessions (mapv enrich-session-row (map session-summary (:sessions answer)))
                  :next-cursor (:next-cursor answer)
@@ -7570,6 +7570,64 @@
           (state/dispatch [:refresh-session-settings active])))
 
       nil)))
+
+(def ^:private group-verb-actions
+  "The row-menu verb that each C-x Group verb runs."
+  {:group-new :new
+   :group-rename :rename
+   :group-recolour :recolour
+   :group-settings :settings
+   :group-archive :archive-group
+   :group-delete :delete})
+
+(defn- session-group-verb!
+  "Run the C-x Group verb `action` on the group that holds the session `sid`, through the
+   sidebar row menu. A session outside a project, or outside a group for a verb that
+   needs one, gets a notice instead."
+  [screen sid action]
+  (when sid
+    (let [soul
+          (try (vis/gateway-soul (str sid)) (catch Throwable _ nil))
+
+          pid
+          (some-> (get soul "project_id")
+                  str
+                  not-empty)
+
+          gid
+          (some-> (get soul "group_id")
+                  str
+                  not-empty)
+
+          group
+          (when (and pid gid)
+            (some #(when (= gid (str (get % "id"))) %)
+                  (try (vis/gateway-list-session-groups {:project-id pid :archived :include})
+                       (catch Throwable _ nil))))
+
+          verb
+          (group-verb-actions action)]
+
+      (cond (nil? pid) (vis/notify! "Add this session to a project first - groups live inside one"
+                                    :level :warn
+                                    :ttl-ms copy-success-ttl-ms)
+            (= :new verb)
+            (sidebar-row-menu!
+              screen
+              {:kind :project-set :set :groups :project {"id" pid} :initial-action :new}
+              nil)
+            (nil? group)
+            (vis/notify! "This session is in no group" :level :warn :ttl-ms copy-success-ttl-ms)
+            :else (sidebar-row-menu! screen
+                                     {:kind :project-group
+                                      :project {"id" pid}
+                                      :group group
+                                      :label (str (get group "name"))
+                                      :initial-action (if (and (= :archive-group verb)
+                                                               (get group "archived_at"))
+                                                        :unarchive-group
+                                                        verb)}
+                                     nil)))))
 
 (defn- toggle-project-sidebar!
   []
@@ -10122,6 +10180,10 @@
                                      :session-group
                                      (move-session-to-group! screen (current-session-id))
 
+                                     (:group-new :group-rename :group-recolour
+                                                 :group-archive :group-delete)
+                                     (session-group-verb! screen (current-session-id) cmd-id)
+
                                      :switch-project
                                      (switch-project!)
 
@@ -10382,6 +10444,12 @@
 
                          :session-group
                          (do (move-session-to-group! screen (current-session-id)) (recur))
+
+                         ;; C-x g — the verbs of the group that holds this session.
+                         (:group-new :group-rename
+                                     :group-recolour :group-settings
+                                     :group-archive :group-delete)
+                         (do (session-group-verb! screen (current-session-id) action) (recur))
 
                          :switch-project
                          (do (switch-project!) (recur))

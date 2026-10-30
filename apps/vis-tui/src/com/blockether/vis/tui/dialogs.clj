@@ -7472,6 +7472,8 @@
         (into #{} (map str) (:group-ids scope))]
 
     (and (= "session.created" (str (get frame "type")))
+         ;; A new session is never archived.
+         (not= :only (:archived scope))
          (or (not known?)
              (and (or (str/blank? scope-pid) (= scope-pid pid))
                   (or (empty? scope-gids) (contains? scope-gids gid)))))))
@@ -8482,6 +8484,12 @@
              :groups
              (choose-groups!)
 
+             :archived
+             (change-scope! (if (= :only (:archived @search-scope))
+                              (dissoc @search-scope :archived)
+                              (assoc @search-scope :archived :only))
+                            @scope-project-label)
+
              nil))]
         (try
           (when-let [load-initial (:load-initial opts)]
@@ -8571,13 +8579,14 @@
                   (reduce + 0 (navigator-block-heights unfiltered))
 
                   bounds
-                  (draw-dialog-chrome! g
-                                       cols
-                                       rows-n
-                                       "Sessions"
-                                       (- cols 4)
-                                       (max (long navigator-min-height) (+ (long desired-lines) 3))
-                                       {:extra-rows navigator-extra-rows})
+                  (draw-dialog-chrome!
+                    g
+                    cols
+                    rows-n
+                    (if (= :only (:archived @search-scope)) "Sessions · archived" "Sessions")
+                    (- cols 4)
+                    (max (long navigator-min-height) (+ (long desired-lines) 3))
+                    {:extra-rows navigator-extra-rows})
 
                   {:keys [left right inner-w]}
                   bounds
@@ -8745,15 +8754,17 @@
                                   t/dialog-bg
                                   t/dialog-hint-key
                                   t/dialog-bg))
-                (draw-hint-bar! g
-                                left
-                                hint-row
-                                inner-w
-                                [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"]
-                                 ["C-s" "star"] ["C-d" "delete"] ["C-b" "project"]
-                                 [(keymap/chord \u)
-                                  (if @show-empty-untitled? "hide empty" "show empty")]
-                                 ["Esc" "cancel"]])
+                (draw-hint-bar!
+                  g
+                  left
+                  hint-row
+                  inner-w
+                  [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"] ["C-s" "star"]
+                   ["C-d" "delete"] ["C-b" "project"]
+                   [(keymap/chord \u) (if @show-empty-untitled? "hide empty" "show empty")]
+                   [(keymap/chord \a)
+                    (if (= :only (:archived @search-scope)) "hide archived" "show archived")]
+                   ["Esc" "cancel"]])
                 (.setCursorPosition screen cursor-pos)
                 (frame/refresh! screen))
               (let [key (read-navigator-key!
@@ -8773,6 +8784,7 @@
                                                   (recur))
                     (input/ctrl-char? key \g) (do (when group-choice? (scope-action! :groups))
                                                   (recur))
+                    (input/ctrl-char? key \a) (do (scope-action! :archived) (recur))
                     (and (instance? MouseAction key)
                          (= MouseActionType/CLICK_DOWN (.getActionType ^MouseAction key))
                          (= (long query-row) (.getRow (.getPosition ^MouseAction key))))
@@ -9116,6 +9128,26 @@
     :group "Session"
     :label "Close Tab"
     :description "Close this tab and keep the session"}
+   {:id :group-new
+    :group "Group"
+    :label "New Group"
+    :description "Create a group in this session's project"}
+   {:id :group-rename
+    :group "Group"
+    :label "Rename Group"
+    :description "Rename this session's group"}
+   {:id :group-recolour
+    :group "Group"
+    :label "Change Group Colour"
+    :description "Change the colour of this session's group"}
+   {:id :group-archive
+    :group "Group"
+    :label "Archive Group"
+    :description "Archive this session's group, or restore it"}
+   {:id :group-delete
+    :group "Group"
+    :label "Delete Group"
+    :description "Delete this session's group after you confirm"}
    {:id :search-open
     :group "Conversation"
     :label "Search in Session"

@@ -67,6 +67,7 @@ first, such as a turn to fork, appears once it can act.
 | Keys | Group or command |
 |---|---|
 | Ctrl+X s | Sessions: new, switch, delete, archive, fork, group and metrics |
+| Ctrl+X g | Group of this session: new, rename, colour, settings, archive and delete |
 | Ctrl+X m | Models and answers: model, thinking level, answer length and providers |
 | Ctrl+X b | View: search, jump, folds, zen mode, side panel, **Projects** and agent details |
 | Ctrl+X a | Attachments: attach a file, review attachments and pictures |
@@ -110,6 +111,12 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | `fork-at-turn` | Ctrl+X s t | Fork from an earlier turn |
 | `switch-project` | Ctrl+X b w | Open **Projects** |
 | `session-group` | Ctrl+X s m | Move this session to a group |
+| `group-new` | Ctrl+X g n | Create a group in the project of this session |
+| `group-rename` | Ctrl+X g r | Rename the group of this session |
+| `group-recolour` | Ctrl+X g c | Change the colour of the group of this session |
+| `group-settings` | Ctrl+X g s | Open the settings of the group of this session |
+| `group-archive` | Ctrl+X g a | Archive or restore the group of this session |
+| `group-delete` | Ctrl+X g d | Delete the group of this session |
 | `cycle-model` | Ctrl+X m m | Use the next model |
 | `pick-model` | Ctrl+X m c | Choose a model |
 | `pick-reasoning` | Ctrl+X m r | Choose the reasoning level |
@@ -135,13 +142,14 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | Keys | What they do |
 |---|---|
 | Ctrl+X s n | Start a new session |
-| Ctrl+X s s | Switch to another session |
+| Ctrl+X s s | Switch to another session. Press **Ctrl+A** in the list to show only archived sessions, and again to show the others |
 | Ctrl+X s s d, Ctrl+X s s Delete or Ctrl+X s s Backspace | Delete this session permanently. Vis asks you to confirm first |
 | Ctrl+X s a | Archive this session. If the session is archived, restore it. You cannot archive a session while it works |
 | Ctrl+X b w | Open **Projects**, the list of saved sessions |
 | Ctrl+X s f | Fork this session: open a new session with a copy of the whole conversation |
 | Ctrl+X s t | Fork from an earlier turn: choose the last turn the new session keeps |
 | Ctrl+X s m | Move this session to a group |
+| Ctrl+X g n, r, c, s, a or d | Create a group, or rename, colour, open the settings of, archive or delete the group of this session. A command for the group appears only when this session is in a group |
 | Ctrl+X s u | Show session metrics: context health, totals and cache |
 | Ctrl+X q s | Send the queued messages now: the running turn reads them at its next step |
 | Ctrl+X m f 1 to 9 | Send that queued message now, or press again to keep it for the turn end |
@@ -349,7 +357,9 @@ Press **?** to see them in Vis.
 | f | Star or unstar a session |
 | R (Shift+R) | Rename the row |
 | A (Shift+A) | Archive or restore the row |
-| v | Show or hide archived rows |
+| v | Show or hide the archived sessions of the project |
+| V (Shift+V) | Show or hide the archived groups of the project |
+| N, S, H or X (Shift) | On a session in a group: rename, open the settings of, archive or delete its group |
 | D (Shift+D) | Delete the row. Vis asks you to confirm first |
 | / | Search sessions |
 | Esc or Tab | Return to the chat |

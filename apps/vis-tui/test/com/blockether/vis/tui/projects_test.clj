@@ -4710,7 +4710,10 @@
                      group-items
                      (filterv :target items)]
 
-                 (expect (= ["Session" "Group · Release apps"] (mapv :label sections)))
+                 (expect (= ["Session" "Group · Release apps" "Archived"] (mapv :label sections)))
+                 ;; User report 2026-10-30: the sidebar showed no keys to show archived rows.
+                 (expect (= [[:toggle-session-archive \v] [:toggle-group-archive \V]]
+                            (mapv (juxt :id :key) (take-last 2 items))))
                  (expect (:section? (first items)))
                  (expect (not-any? #(= :new-session (:id %)) group-items)
                          "The session section already starts a session in the group")
@@ -4725,9 +4728,11 @@
                               (assoc-in db [:project-sidebar :index] (:index grouped))
                               (cap/key-stroke \c)))
                          "A group key on a session row acts on its group")
-                 (expect (= ["Session" "Groups"]
+                 (expect (= ["Session" "Groups" "Archived"]
                             (mapv :label (filter :section? (projects/row-menu-items db loose)))))
-                 (expect (= :new (:id (last (projects/row-menu-items db loose))))))))
+                 (expect (= :new
+                            (:id (last (take-while #(not= "Archived" (:label %))
+                                                   (projects/row-menu-items db loose)))))))))
 
 (defdescribe sidebar-row-keys-test
              (it "runs every keyed menu item from its key on the focused row"

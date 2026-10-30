@@ -4377,6 +4377,52 @@
              (expect (= 2 @phase))
              (expect (= [["" {:group-ids #{"g1"}}]] @asked)))
            (finally (future-cancel task)))))
+  ;; User report 2026-10-30: C-x s s had no way to show archived sessions.
+  (it
+    "C-a shows only archived sessions, and a second C-a brings back the live list"
+    (let [live
+          {"id" "one" "title" "Live one" "turn_count" 1}
+
+          archived
+          {"id" "old" "title" "Archived one" "turn_count" 1 "archived_at" "2026-10-01T00:00:00Z"}
+
+          asked
+          (atom [])
+
+          phase
+          (atom 0)
+
+          ctrl-a
+          (KeyStroke. (Character/valueOf \a) true false false)
+
+          task
+          (future
+            (capture-navigator!
+              {:sessions [live]
+               :search-sessions (fn [query scope]
+                                  (swap! asked conj [query scope])
+                                  {:sessions [(if (= :only (:archived scope)) archived live)]})}
+              (fn [^DefaultVirtualTerminal terminal]
+                (let [text (str/join "\n" (terminal-lines terminal))]
+                  (cond (and (= 0 @phase) (str/includes? text "Live one"))
+                        (do (expect (str/includes? text "C-a show archived"))
+                            (reset! phase 1)
+                            (.addInput terminal ctrl-a))
+                        (and (= 1 @phase) (str/includes? text "Archived one"))
+                        (do (expect (str/includes? text "Sessions · archived"))
+                            (expect (str/includes? text "C-a hide archived"))
+                            (expect (not (str/includes? text "Live one")))
+                            (reset! phase 2)
+                            (.addInput terminal ctrl-a))
+                        (and (= 2 @phase) (str/includes? text "Live one"))
+                        (do (reset! phase 3) (.addInput terminal (cap/key-stroke :esc))))))
+              {:cols 160}))]
+
+      (try (let [result (deref task 5000 ::blocked)]
+             (expect (map? result))
+             (expect (= 3 @phase))
+             (expect (= [["" {:archived :only}] ["" {}]] @asked)))
+           (finally (future-cancel task)))))
   (it
     "with one project and one group offers no scope choice and names no location"
     (let [phase
