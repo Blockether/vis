@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.4.0] - 2026-10-30
+## [v0.4.1] - 2026-10-30
+
+The `v0.4.0` tag was not published: its native release checks failed.
 
 ### Added
 - Sandbox: `VIS_RUNTIME_DIR` keeps temporary files and the control socket of each Python worker in a task directory, not in `/tmp` (#423).
