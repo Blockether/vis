@@ -1349,6 +1349,10 @@
         (fn [text]
           {:text text :tone :hint})
 
+        explain
+        (fn [text]
+          (assoc (hint text) :italic? true))
+
         head
         (fn [text]
           {:text text :tone :heading})
@@ -1451,7 +1455,7 @@
           (concat
             (if-not health
               [(head "Session health") (hint "Context measurement unavailable")
-               (hint "Session totals below do not measure context size.")]
+               (explain "Session totals below do not measure context size.")]
               (concat
                 [(assoc (stat "Session health" pressure)
                    :tone :heading
@@ -1474,7 +1478,7 @@
                          (str (metric-count (get health "budget_remaining_tokens")) " budget left")
                          (some? (get health "budget_overage_tokens"))
                          (str (metric-count (get health "budget_overage_tokens")) " over budget")
-                         :else "Working budget was not recorded"))
+                         :else "Working budget was not recorded")) (row "")
                  (stat "Model input limit" (metric-count limit)) (row "")]
                 (if (some? estimate)
                   (concat [{:text (str (if parts? "▾" "▸") " Context breakdown [b]")
@@ -1530,11 +1534,11 @@
 
                                                  "Guidance estimate unavailable"))]))
                                     roots)
-                            [(hint
+                            [(explain
                                "Disk estimates do not add to context usage or imply that the agent loaded the file. Main workspace guidance is listed above.")])))))
                   [(hint "Linked filesystem details unavailable")])))
             [(row "") (head "Session totals")
-             (hint "Across all calls, including repeated context.")]
+             (explain "Across all calls, including repeated context.")]
             (map (fn [[label field]]
                    (stat label (metric-count (get usage field))))
                  [["Total input" "input_tokens"] ["Total output" "output_tokens"]])
@@ -1544,13 +1548,14 @@
                    (stat label (metric-count (get usage field))))
                  [["Folds" "fold_count"] ["Turns" "turn_count"] ["Calls" "iteration_count"]
                   ["Tools" "tool_call_count"]])
-            [(stat "Active"
+            [(row "")
+             (stat "Active"
                    (if-let [ms (get usage "duration_ms")]
                      (or (vis/format-duration ms) "0s")
-                     "—")) (hint "Time spent inside turns")]
+                     "—")) (explain "Time spent inside turns")]
             (when-let [subagents (get usage "subagents")]
               (concat [(row "") (head "Subagents")
-                       (hint "Every subagent below this session, at any depth.")
+                       (explain "Every subagent below this session, at any depth.")
                        (stat "Subagents"
                              (str (metric-count (get subagents "agent_count"))
                                   " · "
@@ -1560,25 +1565,25 @@
                              (stat label (metric-count (get subagents field))))
                            [["Calls" "iteration_count"] ["Total input" "input_tokens"]
                             ["Total output" "output_tokens"]])
-                      [(stat "Subagent cost" (metric-usd (get subagents "cost_usd")))
+                      [(stat "Subagent cost" (metric-usd (get subagents "cost_usd"))) (row "")
                        (stat "Total cost" (metric-usd (get usage "total_cost_usd")))
-                       (hint "Session cost plus subagent cost")]))
+                       (explain "Session cost plus subagent cost")]))
             [(row "") (head "Prompt cache")
              (stat "Cached input" (metric-percent (get usage "cache_read_share_percent")))
-             (hint "Share of all input served from provider cache")
+             (explain "Share of all input served from provider cache") (row "")
              (stat "Reuse coverage"
                    (str (when (and estimated?
                                    (number? (get usage "reusable_prefix_coverage_percent")))
                           "~")
                         (metric-percent (get usage "reusable_prefix_coverage_percent"))))
-             (hint (str (if estimated? "Estimated share" "Share")
-                        " of reusable prior input recovered from cache"
-                        (when (number? samples)
-                          (str " · "
-                               (metric-count samples)
-                               " of "
-                               (metric-count (get usage "iteration_count"))
-                               " calls")))) (row "") (head "Model")
+             (explain (str (if estimated? "Estimated share" "Share")
+                           " of reusable prior input recovered from cache"
+                           (when (number? samples)
+                             (str " · "
+                                  (metric-count samples)
+                                  " of "
+                                  (metric-count (get usage "iteration_count"))
+                                  " calls")))) (row "") (head "Model")
              (stat "Name" (or (not-empty (get usage "model")) (:model session) "—"))
              (stat "Provider" (or (not-empty (get usage "provider")) (:provider session) "—"))]))
 
@@ -1653,7 +1658,7 @@
                             (str "Session metrics · " (keymap/label-or-palette :session-metrics))
                             content-w
                             content-h-req)
-       (doseq [[i {:keys [text tone toggle value value-col indent meter fill value-tone]}]
+       (doseq [[i {:keys [text tone toggle value value-col indent meter fill value-tone italic?]}]
                (map-indexed vector (take content-h (drop scroll lines)))]
          (let [y (+ (long content-top) (long i))
                x (+ (long left) 2 (long (or indent 0)))
@@ -1684,6 +1689,7 @@
                          (p/set-fg! g t/border-fg)
                          (p/put-str! g (+ x fill) y (subs text fill)))
                  (= :heading tone) (p/styled g [p/BOLD] (p/put-str! g x y (ellipsize text w)))
+                 italic? (p/styled g [p/ITALIC] (p/put-str! g x y (ellipsize text w)))
                  :else (p/put-str! g x y (ellipsize text w)))
            (when value-col
              (if (= :hint tone)
