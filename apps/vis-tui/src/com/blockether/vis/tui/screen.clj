@@ -7307,7 +7307,8 @@
                                (= :project-set (:kind entry))
                                (str (:label entry) " · " (projects/project-label project))
                                :else (str "Project · " (projects/project-label project)))
-                         (projects/row-menu-items @state/app-db entry))))
+                         (projects/row-menu-items @state/app-db entry)
+                         {:min-width 64})))
 
         ;; An item of a session menu's group section acts on the group row.
         pick

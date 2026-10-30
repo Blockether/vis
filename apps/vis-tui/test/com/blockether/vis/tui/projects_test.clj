@@ -2938,7 +2938,7 @@
                        #'screen/with-dialog-lock (fn [f]
                                                    (f))
                        #'screen/load-project-page! #(swap! loaded conj %)
-                       #'dlg/select-dialog! (fn [_ _ items]
+                       #'dlg/select-dialog! (fn [_ _ items & _]
                                               (reset! choice items)
                                               {:id :toggle-session-archive})}
         (fn []
@@ -3133,7 +3133,7 @@
                       (f))
 
                     dlg/select-dialog!
-                    (fn [_ _ _]
+                    (fn [_ _ _ & _]
                       {:id :move-selected})]
 
         (#'screen/sidebar-row-menu! nil group-entry nil)
@@ -3150,7 +3150,7 @@
         (expect (some #(str/includes? % "1 of 2") @notices))
         (reset! calls [])
         (reset! notices [])
-        (with-redefs [dlg/select-dialog! (fn [_ _ _]
+        (with-redefs [dlg/select-dialog! (fn [_ _ _ & _]
                                            {:id :ungroup-selected})]
           (#'screen/sidebar-row-menu! nil loose-entry nil))
         (expect (= [["s2" nil] [:refresh]] @calls))
@@ -3208,7 +3208,7 @@
                       (f))
 
                     dlg/select-dialog!
-                    (fn [_ _ items]
+                    (fn [_ _ items & _]
                       (expect (some #(= :move-session (:id %)) items))
                       {:id :move-session})
 
@@ -3279,7 +3279,7 @@
                       @typed)
 
                     dlg/select-dialog!
-                    (fn [_ title items]
+                    (fn [_ title items & _]
                       (if (= title "Group colour")
                         {:id "cyan"}
                         (do (expect (some #(= :new-session (:id %)) items))
@@ -3624,7 +3624,7 @@
                       (f))
 
                     dlg/select-dialog!
-                    (fn [_ _ items]
+                    (fn [_ _ items & _]
                       (if (or (some #(= :archive-group (:id %)) items)
                               (some #(= :unarchive-group (:id %)) items))
                         (do (when (some #(= :unarchive-group (:id %)) items)
@@ -3709,7 +3709,7 @@
                         (f))
 
                       dlg/select-dialog!
-                      (fn [_ _ items]
+                      (fn [_ _ items & _]
                         (expect (some #(= :toggle-group-archive (:id %)) items))
                         {:id :toggle-group-archive})]
 
@@ -3979,7 +3979,7 @@
                       (f))
 
                     dlg/select-dialog!
-                    (fn [_ _ items]
+                    (fn [_ _ items & _]
                       (expect (= #{:use-project :delete-project}
                                  (set (map :id
                                            (filter #(#{:use-project :delete-project} (:id %))
@@ -4718,6 +4718,8 @@
                  (expect (= #{:new :rename :recolour :settings :archive-group :delete}
                             (set (map :id group-items))))
                  (expect (apply distinct? (keep :key items)) "A key runs one item")
+                 ;; User report 2026-10-30: group verbs in a session menu had no key.
+                 (expect (every? :key (remove :section? items)) "Every menu item has a key")
                  (expect (= [:menu (assoc (:target (first group-items)) :initial-action :recolour)]
                             (projects/key-action
                               (assoc-in db [:project-sidebar :index] (:index grouped))

@@ -1618,12 +1618,20 @@
              (menu-item :refresh "Refresh projects" :refresh)
              (menu-item :delete-project "Remove project and sessions…" :delete)])))
 
+(def ^:private group-commands
+  "The sidebar command of each group verb whose key a session verb also uses."
+  {:rename :rename-group
+   :settings :group-settings
+   :archive-group :archive-group
+   :unarchive-group :archive-group
+   :delete :delete-group})
+
 (defn row-menu-items
   "The row menu of a sidebar `entry`, each verb with the key that runs it. The keys
    work on the row without the menu: a key acts exactly where the menu lists it.
    A session's menu has a Session section and a section for its group. An item of
-   the group section carries the group row as its `:target`. It keeps its key only
-   when no session verb uses that key."
+   the group section carries the group row as its `:target`. When a session verb uses
+   its key, it takes its own group key from `group-commands`."
   [db entry]
   (let [own (own-menu-items db entry)]
     (if-not (:session entry)
@@ -1641,7 +1649,10 @@
                                (map (fn [item]
                                       (cond-> (assoc item :target target)
                                         (taken (:key item))
-                                        (dissoc :key :hint)))))
+                                        (-> (dissoc :key :hint)
+                                            (merge (select-keys
+                                                     (menu-item nil nil (group-commands (:id item)))
+                                                     [:key :hint])))))))
                          (own-menu-items db target))
                    [(menu-item :new "New group…" :new-group)])]
 

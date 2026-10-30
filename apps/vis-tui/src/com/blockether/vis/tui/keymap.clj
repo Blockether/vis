@@ -642,6 +642,10 @@
    {:id :archive :key \A :label "Archive or restore the row"}
    {:id :show-archived :key \v :label "Show or hide archived rows"}
    {:id :delete :key \D :label "Delete the row"}
+   {:id :rename-group :key \N :label "Rename the session's group"}
+   {:id :group-settings :key \S :label "Open the session's group settings"}
+   {:id :archive-group :key \H :label "Archive or restore the session's group"}
+   {:id :delete-group :key \X :label "Delete the session's group"}
    {:id :add-here :key \+ :label "Add a group, session or project here"}
    {:id :search :key \/ :label "Search sessions"} {:id :refresh :key \r :label "Reload projects"}
    {:id :help :key sidebar-help-alias-key :keys sidebar-help-hint :label "Show these keys"}

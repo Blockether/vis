@@ -2428,9 +2428,10 @@
 
 (defn select-dialog!
   "Show a selection list dialog. Returns the selected item map or nil on Esc.
-   `items` is a vec of `{:label str, …}` maps. Thin wrapper over `list-dialog!`."
-  [^TerminalScreen screen title items]
-  (list-dialog! screen title items {}))
+   `items` is a vec of `{:label str, …}` maps. Thin wrapper over `list-dialog!`, which
+   takes the optional `opts`."
+  ([screen title items] (select-dialog! screen title items {}))
+  ([^TerminalScreen screen title items opts] (list-dialog! screen title items opts)))
 
 (defn multi-select-dialog!
   "Checkbox multi-select over `items` (vec of strings). Space toggles the
