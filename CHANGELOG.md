@@ -7,20 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-10-30
+
 ### Added
 - Sandbox: `VIS_RUNTIME_DIR` keeps temporary files and the control socket of each Python worker in a task directory, not in `/tmp` (#423).
 - Live views: `view[id].replace(rows)` sets every row of a table in one step. A selected row that is in the new rows stays selected (#428).
 - Examples: the live apps example adds Asteroids, a game that you play with the keyboard in the TUI and the Companion. It sends at most one patch each tick and stops when it pauses.
 - Live views: a `scene` node draws a 3D world that Python describes with meshes, places, turns and colors. The Companion draws it with WebGL and moves objects smoothly between ticks at the frame rate of the screen. The TUI draws the same scene with `▀` true-color half blocks. A tick sends only the keys that changed. Asteroids now uses a scene.
+- Apps: an attached app keeps its state and has Save and Send (#421). Apps get shortcuts, extension key bindings and button variants (#430). An app or HTML page can give the model a note.
+- Council: the TUI and the Companion show the title, result and timeline of each subagent. A leader can pause to ask the person a child's question. A follow-up ping replaces `council.resume`, and a task can have 65536 characters.
+- TUI: Zen mode hides the header and footer, centres the transcript and shows pictures and text files beside it. C-x commands use two-level keymaps, and extensions can add their own C-x e group.
+- TUI: Tab and Ctrl+O move focus between areas. Attachments and pictures show as tables with thumbnails, and C-x O opens a picture. Mermaid pie charts draw as a disc.
+- TUI: the agent dock shows each team as a role table with status and time.
+- Companion: Zen mode with side pictures. The desktop app saves an opened artifact with `Save…` in the native save panel and remembers the last folder.
+- Extensions: a function can run on a key press and notify the clients.
 
 ### Changed
 - Agent: the system prompt tells the model to use `$TMPDIR` or `tempfile`, never a fixed `/tmp` path (#423).
 - Settings: Subagents is a stable setting under Council and is on by default. While Council is off, subagents are off and their row is locked.
 - TUI: settings rows have no leading mark, because the value column gives the state. Each header is bold and has one blank line above it. Subsection names line up with the setting names under them.
+- Agent: the core system prompt is a short state machine. `ls`, `cat`, `grep` and `patch` have signatures and examples.
+- Context: workspace paths under the home folder show as `~/`.
+- Performance: a reload lists work tree files with git and shares one package context (#422). The Companion opens sessions faster and loads earlier turns when you scroll. App frames stay out of the session journal.
+- Extensions: Vis pins vis-spel 0.1.24 (Spel 0.9.52), vis-lang-interface 3.1.0, vis-lang-clojure 1.20.2 and vis-lang-python 1.16.1.
 
 ### Removed
 - Council messages have no kind. `council.publish` and `council.wake` refuse a `kind` argument, and entries and threads have no `kind` field. The TUI and the Companion no longer show a kind label on a Council turn.
 - At its first start, Vis drops the `kind` column of Council entries. An old automatic complaint now has the source `host`.
+- Council Rooms.
+- Gateway: `/fs/image` and the SDK call `get_session_fs_image`. `GET /v1/sessions/:sid/fs/file` answers every preview with its kind: text, image or binary (#432).
 
 ### Fixed
 - Python SDK: `vis.ui.table` refuses text columns where you write them and names the `vis.ui.table_column` fix. The test recorder refuses a live group without an id, as the engine does. Both test hosts drop the selection of rows that a clear or remove takes away (#428).
@@ -34,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Live views: the record of a busy app stays small. Vis rewrites a large record as the last picture of the app, and log nodes keep every line. After 4000 ticks of Asteroids, its record holds 234 KB, not 3.1 MB.
 - Live views: an app that a gateway restart reads back keeps the action of each button as the engine term, not as text.
 - Examples: a live app stores its data only when the data changes. Asteroids stores only its best score, not the game on each tick.
+- Jail: a read rule also closes writes, and git can read its configuration (#420).
+- Python: workers and their children stop on exit and after `shutdown-agents`. Each embedded Python has its own extension environment. A `~/` workspace path expands against the host home.
+- Patch: a near match shows its whitespace (#424).
+- Extensions: nested record arguments are built again by their class (#427).
+- Session: a fork keeps the prompt cache prefix.
+- Gateway: a spawned gateway keeps SIGINT and SIGQUIT. A pressed picture opens in the image viewer (#432).
+- Companion: no more iOS scroll-up jumps in the transcript. A cached running turn replays the frames that it missed. The keyboard band and sheets stay still under the keyboard.
+- Browser: a managed Spel profile keeps its cookies when a reservation changes between headed and headless mode (Spel #149).
 
 ## [v0.3.4] - 2026-10-26
 
