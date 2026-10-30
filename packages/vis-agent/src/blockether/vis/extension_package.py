@@ -43,6 +43,8 @@ LATEST = "latest"
 LOCK_WAIT_S = 300
 MAX_METADATA = 128 * 1024
 _EXCLUDED = {".git", ".venv", "venv", "__pycache__", "node_modules", ".DS_Store"}
+# `.env*` holds secrets. `.venv-*` is an environment that Vis prepares for one interpreter.
+_EXCLUDED_PREFIXES = (".env", ".venv-")
 
 
 def _relative(value):
@@ -51,7 +53,7 @@ def _relative(value):
     if len(value) > 512 or any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise ValueError("Project paths are too long or contain control characters")
     if any(
-        p in {"", ".", ".."} or p in _EXCLUDED or p.startswith(".env")
+        p in {"", ".", ".."} or p in _EXCLUDED or p.startswith(_EXCLUDED_PREFIXES)
         for p in value.split("/")
     ):
         raise ValueError("Project contains an unsafe or excluded path")
@@ -346,7 +348,11 @@ def _checkout(repository, directory, revision):
 
 def _copy_project(source, destination):
     def excluded(_directory, names):
-        return {name for name in names if name in _EXCLUDED or name.startswith(".env")}
+        return {
+            name
+            for name in names
+            if name in _EXCLUDED or name.startswith(_EXCLUDED_PREFIXES)
+        }
 
     count, size = 0, 0
     for base, directories, files in os.walk(source):

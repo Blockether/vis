@@ -47,6 +47,8 @@
              (spit-rel root "node_modules/skip.js" "skip")
              (spit-rel root "target/skip.clj" "skip")
              (spit-rel root ".git/config" "skip")
+             ;; User report 2026-10-30: the per-interpreter extension environment.
+             (spit-rel root ".venv-0123456789ab/lib/skip.py" "skip = 1")
              (let [scan (languages/scan root)]
                (expect (= 1 (:total-files scan)))
                (expect (= "clojure" (:primary scan))))

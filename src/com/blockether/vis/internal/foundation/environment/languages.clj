@@ -36,6 +36,12 @@
     "vendor" ".cache" "out" ".out" ".verification" ".verification-baseline" "book" "_site" "public"
     "site" "_book"})
 
+(defn- skip-directory?
+  "True for a directory in `skip-directories`, or for an automatic `.venv-<hash>`
+   environment that Vis prepares for each interpreter (`python/runtime.clj`)."
+  [name]
+  (boolean (or (contains? skip-directories name) (str/starts-with? (str name) ".venv-"))))
+
 (def ^:private extension-to-language
   {"clj" "clojure"
    "cljs" "clojure"
@@ -140,7 +146,7 @@
 (defn- dir-decision
   ^FileVisitResult [^Path dir]
   (let [name (str (.getFileName dir))]
-    (if (contains? skip-directories name) FileVisitResult/SKIP_SUBTREE FileVisitResult/CONTINUE)))
+    (if (skip-directory? name) FileVisitResult/SKIP_SUBTREE FileVisitResult/CONTINUE)))
 
 (defn- listed-file-size
   "Size of the regular file `rel` below `start`, or nil for a link, a directory or a missing file."
@@ -271,7 +277,7 @@
            (if (or (>= (aget visited 0) (long max-files)) (> (util/now-ms) deadline))
              (aset truncated 0 true)
              (let [parts (str/split rel #"/")]
-               (when-not (some skip-directories (butlast parts))
+               (when-not (some skip-directory? (butlast parts))
                  (when-let [size (listed-file-size start rel)]
                    (aset visited 0 (inc (aget visited 0)))
                    (count-file! (peek parts) (constantly size))))

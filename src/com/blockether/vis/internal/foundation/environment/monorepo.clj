@@ -28,6 +28,12 @@
     "vendor" ".cache" "out" ".out" ".verification" ".verification-baseline" "book" "_site" "public"
     "site" "_book"})
 
+(defn- skip-directory?
+  "True for a directory in `skip-directories`, or for an automatic `.venv-<hash>`
+   environment that Vis prepares for each interpreter (`python/runtime.clj`)."
+  [name]
+  (boolean (or (contains? skip-directories name) (str/starts-with? (str name) ".venv-"))))
+
 (def ^:private manifest-kinds
   "Filename -> ecosystem label."
   {"deps.edn" :clojure
@@ -115,7 +121,7 @@
              (cond (> (util/now-ms) deadline) (do (aset truncated 0 true) FileVisitResult/TERMINATE)
                    (= dir start) FileVisitResult/CONTINUE
                    :else (let [name (str (.getFileName dir))]
-                           (if (contains? skip-directories name)
+                           (if (skip-directory? name)
                              FileVisitResult/SKIP_SUBTREE
                              FileVisitResult/CONTINUE))))
            (visitFile [^Path file ^BasicFileAttributes _attrs]
@@ -144,7 +150,7 @@
            (if (or (>= (aget visited 0) (long max-files)) (> (util/now-ms) deadline))
              (aset truncated 0 true)
              (let [parts (str/split rel #"/")]
-               (when-not (some skip-directories (butlast parts))
+               (when-not (some skip-directory? (butlast parts))
                  (aset visited 0 (inc (aget visited 0)))
                  (when-let [kind (when (next parts) (get manifest-kinds (peek parts)))]
                    (.put buckets kind (conj (or (.get buckets kind) []) rel))))

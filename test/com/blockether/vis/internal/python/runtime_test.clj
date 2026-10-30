@@ -14,7 +14,8 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
+  (:import [com.blockether.vispython Interpreter]
+           [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.net InetSocketAddress]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -506,58 +507,65 @@
 ;; Issue #407: a verified preparation skips uv until the project, lock or environment changes.
 (defdescribe
   automatic-project-preparation-reuses-a-stamped-environment
-  (it "skips uv while the stamped inputs are unchanged"
-      (python-runtime/ensure-library!)
-      (let [project
-            (temp-dir "vis-stamped-project")
+  (it
+    "skips uv while the stamped inputs are unchanged"
+    (python-runtime/ensure-library!)
+    (let [project
+          (temp-dir "vis-stamped-project")
 
-            site
-            (io/file project ".venv" "lib" "python3.14" "site-packages")
+          site
+          (io/file project
+                   (#'python-runtime/automatic-environment)
+                   "lib"
+                   "python3.14"
+                   "site-packages")
 
-            calls
-            (atom [])]
+          calls
+          (atom [])]
 
-        (try (spit (io/file project "pyproject.toml") "[project]\nname = \"stamped\"\n")
-             (spit (io/file project "uv.lock") "version = 1\n")
-             (.mkdirs site)
-             (spit (io/file project ".venv" "pyvenv.cfg") "home = /embedded/bin\n")
-             (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
-                                                         (swap! calls conj (second args)))
-                              #'python-runtime/shared-project? (constantly false)
-                              #'python-runtime/runtime-environment? (constantly true)
-                              #'python-runtime/project-packages (fn [_]
-                                                                  (.getCanonicalFile site))}
-               (fn []
-                 (let [packages
-                       (.getCanonicalFile site)
+      (try (spit (io/file project "pyproject.toml") "[project]\nname = \"stamped\"\n")
+           (spit (io/file project "uv.lock") "version = 1\n")
+           (.mkdirs site)
+           (spit (io/file project (#'python-runtime/automatic-environment) "pyvenv.cfg")
+                 "home = /embedded/bin\n")
+           (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
+                                                       (swap! calls conj (second args)))
+                            #'python-runtime/shared-project? (constantly false)
+                            #'python-runtime/runtime-environment? (constantly true)
+                            #'python-runtime/project-packages (fn [_]
+                                                                (.getCanonicalFile site))}
+             (fn []
+               (let [packages
+                     (.getCanonicalFile site)
 
-                       prepare!
-                       #(do (reset! calls [])
-                            (expect (= packages (python-runtime/ensure-project! project)))
-                            @calls)]
+                     prepare!
+                     #(do (reset! calls [])
+                          (expect (= packages (python-runtime/ensure-project! project)))
+                          @calls)]
 
-                   (expect (= ["sync"] (prepare!)) "the first preparation asks uv")
-                   (expect (= [] (prepare!)) "an unchanged project skips uv")
-                   (spit (io/file project "uv.lock") "version = 1\n# changed\n")
-                   (expect (= ["sync"] (prepare!)) "a changed lock asks uv again")
-                   (expect (= [] (prepare!)))
-                   (.setLastModified site (- (.lastModified site) 60000))
-                   (expect (= ["sync"] (prepare!)) "a changed environment asks uv again")
-                   (.delete (io/file project ".venv" ".vis-prepared.edn"))
-                   (expect (= []
-                              (do (#'python-runtime/stamp-synced-project!
-                                   ["sync" (str "--project=" (.getPath project))])
-                                  (prepare!)))
-                           "a successful vis-agent python uv sync stamps the project"))))
-             (finally (#'python-runtime/delete-tree! project)))))
-  ;; A container image holds a prepared, read-only `.venv`; a failed stamp must not fail it.
+                 (expect (= ["sync"] (prepare!)) "the first preparation asks uv")
+                 (expect (= [] (prepare!)) "an unchanged project skips uv")
+                 (spit (io/file project "uv.lock") "version = 1\n# changed\n")
+                 (expect (= ["sync"] (prepare!)) "a changed lock asks uv again")
+                 (expect (= [] (prepare!)))
+                 (.setLastModified site (- (.lastModified site) 60000))
+                 (expect (= ["sync"] (prepare!)) "a changed environment asks uv again")
+                 (.delete
+                   (io/file project (#'python-runtime/automatic-environment) ".vis-prepared.edn"))
+                 (expect (= []
+                            (do (#'python-runtime/stamp-synced-project!
+                                 ["sync" (str "--project=" (.getPath project))])
+                                (prepare!)))
+                         "a successful vis-agent python uv sync stamps the project"))))
+           (finally (#'python-runtime/delete-tree! project)))))
+  ;; A container image holds a prepared, read-only environment; a failed stamp must not fail it.
   (it "prepares a read-only environment with the uv check alone"
       (python-runtime/ensure-library!)
       (let [project
             (temp-dir "vis-read-only-project")
 
             environment
-            (io/file project ".venv")
+            (io/file project (#'python-runtime/automatic-environment))
 
             site
             (io/file environment "lib" "python3.14" "site-packages")
@@ -592,13 +600,18 @@
             (temp-dir "vis-compiled-prefix")
 
             site
-            (io/file project ".venv" "lib" "python3.14" "site-packages")]
+            (io/file project
+                     (#'python-runtime/automatic-environment)
+                     "lib"
+                     "python3.14"
+                     "site-packages")]
 
         (try (spit (io/file project "pyproject.toml") "[project]\nname = \"compiled\"\n")
              (spit (io/file project "extension.py") "VALUE = 1\n")
              (.mkdirs site)
              (spit (io/file site "dependency.py") "VALUE = 2\n")
-             (spit (io/file project ".venv" "pyvenv.cfg") "home = /embedded/bin\n")
+             (spit (io/file project (#'python-runtime/automatic-environment) "pyvenv.cfg")
+                   "home = /embedded/bin\n")
              (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
                                                          (when (some #{"--check"} args)
                                                            (throw (ex-info "not ready" {}))))
@@ -618,6 +631,43 @@
                    (expect (some #(str/starts-with? % "dependency.") compiled)))))
              (finally (#'python-runtime/delete-tree! project)
                       (#'python-runtime/delete-tree! prefix))))))
+
+;; User report 2026-10-30: graphify failed with "No module named graphify". A native run
+;; rebuilt the shared `.venv` of an extension under a running JVM gateway.
+(defdescribe automatic-environment-per-interpreter-test
+             (it "gives the JVM and the native interpreter separate environments"
+                 (let [jvm-python
+                       "/home/user/.vis/python/runtime/0.5.25/darwin-arm64/python/bin/python3"
+
+                       jvm
+                       (#'python-runtime/environment-name jvm-python)
+
+                       native
+                       (#'python-runtime/environment-name
+                        "/opt/vis/vis-agent-python/python/bin/python3")]
+
+                   (expect (not= jvm native))
+                   (expect (= jvm (#'python-runtime/environment-name jvm-python)))
+                   ;; Extension scans and snapshots skip these directories by this prefix.
+                   (expect (every? #(str/starts-with? % ".venv-") [jvm native]))))
+             ;; A declared project keeps its manually synced `.venv` and its editable paths.
+             (it "keeps a project .venv of this Python and leaves another Python's .venv alone"
+                 (python-runtime/ensure-library!)
+                 (let [project
+                       (temp-dir "vis-own-venv")
+
+                       config
+                       (io/file project ".venv" "pyvenv.cfg")
+
+                       own-home
+                       (.getParent (io/file (Interpreter/pythonExecutable)))]
+
+                   (try (io/make-parents config)
+                        (spit config (str "home = " own-home "\n"))
+                        (expect (= ".venv" (#'python-runtime/own-venv project)))
+                        (spit config "home = /other/embedded/python/bin\n")
+                        (expect (nil? (#'python-runtime/own-venv project)))
+                        (finally (#'python-runtime/delete-tree! project))))))
 
 (defdescribe
   automatic-project-preparation-replaces-an-environment-from-another-python

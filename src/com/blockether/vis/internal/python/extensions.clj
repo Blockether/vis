@@ -3428,6 +3428,8 @@
         (let [k (.getCanonicalPath dir)]
           (if (or (seen k)
                   (contains? #{"__pycache__" ".git" ".venv" "venv" "node_modules"} (.getName dir))
+                  ;; The automatic environment of each interpreter (`python/runtime.clj`).
+                  (str/starts-with? (.getName dir) ".venv-")
                   (and (not= dir root) (.isFile (io/file dir "current" "extension.py"))))
             (recur more seen out)
             (let [children (vec (.listFiles dir))]

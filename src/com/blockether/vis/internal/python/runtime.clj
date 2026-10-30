@@ -347,6 +347,30 @@
   "Nil, or an atom of uv workspace directories by project path for one preparation."
   nil)
 
+(defn- environment-name
+  "The directory of the environment that automatic preparation owns for `python`.
+   The JVM and the native image embed different interpreters. With one shared `.venv`, each
+   rebuilt the other's environment under a running gateway, and a removed interpreter broke both."
+  ^String [python]
+  (str ".venv-" (subs (util/sha256-hex (.getCanonicalPath (io/file (str python)))) 0 12)))
+
+(def ^:dynamic ^:private *environment*
+  "Nil, or the project's own `.venv` while this interpreter made it and prepares the project."
+  nil)
+
+(defn- automatic-environment
+  "The environment that automatic preparation uses: the bound `.venv` of this interpreter,
+   else the automatic environment of this process's embedded Python."
+  ^String []
+  (or *environment* (environment-name (Interpreter/pythonExecutable))))
+
+(defn- automatic-environment!
+  "Point uv at the automatic environment during preparation, never at the caller's
+   UV_PROJECT_ENVIRONMENT. Elsewhere keep the caller's choice."
+  [^ProcessBuilder builder]
+  (when *extension-preparation?*
+    (.put (.environment builder) "UV_PROJECT_ENVIRONMENT" (automatic-environment))))
+
 (defn- run-uv!
   "Run bundled uv. Failure and timeout retain phase, exit and safe diagnostics."
   ([project command] (run-uv! project command {}))
@@ -359,9 +383,8 @@
                               (.directory project)
                               uv-index!
                               bytecode-cache!
+                              automatic-environment!
                               (.redirectErrorStream true))]
-                (when *extension-preparation?*
-                  (.remove (.environment builder) "UV_PROJECT_ENVIRONMENT"))
                 (.start builder))
               (catch java.io.IOException e
                 (throw (installer-error "uv" phase {:out (.getMessage e)}))))
@@ -418,21 +441,19 @@
 
 (defn project-environment-exists?
   "Check for uv's environment without creating it or resolving dependencies.
-   UV_PROJECT_ENVIRONMENT overrides .venv.
+   UV_PROJECT_ENVIRONMENT overrides .venv. The automatic environment of this interpreter counts too.
    An existing but invalid environment still needs preparation, not shared fallback."
   [^File project]
-  (.exists (project-environment project (System/getenv "UV_PROJECT_ENVIRONMENT"))))
+  (binding [*workspace-dirs* (or *workspace-dirs* (atom {}))]
+    (boolean (or (.exists (project-environment project (System/getenv "UV_PROJECT_ENVIRONMENT")))
+                 (.exists (project-environment project (automatic-environment)))))))
 
-(defn- runtime-environment?
-  "True when the selected extension environment comes from the embedded Python.
-   Automatic preparation ignores UV_PROJECT_ENVIRONMENT. Manual validation honors it.
-   Its PEP 405 pyvenv.cfg names the directory of the base interpreter as home."
-  [^File project]
+(defn- own-environment?
+  "True when the PEP 405 pyvenv.cfg of `environment` names the directory of this
+   process's embedded Python as home. Reads one file and starts no uv."
+  [^File environment]
   (let [config
-        (io/file (project-environment project
-                                      (when-not *extension-preparation?*
-                                        (System/getenv "UV_PROJECT_ENVIRONMENT")))
-                 "pyvenv.cfg")
+        (io/file environment "pyvenv.cfg")
 
         home
         (when (.isFile config)
@@ -445,11 +466,28 @@
                          .getCanonicalFile
                          .getParentFile))))))
 
+(defn- own-venv
+  "`.venv` when this interpreter made the project's `.venv`, else nil.
+   That `.venv` stays the project environment, as before. A `.venv` of the other
+   embedded Python stays untouched: each Python then prepares its own environment."
+  [^File project]
+  (when (own-environment? (io/file project ".venv")) ".venv"))
+
+(defn- runtime-environment?
+  "True when the selected extension environment comes from the embedded Python.
+   Automatic preparation uses its own environment. Manual validation honors UV_PROJECT_ENVIRONMENT.
+   Its PEP 405 pyvenv.cfg names the directory of the base interpreter as home."
+  [^File project]
+  (own-environment? (project-environment project
+                                         (if *extension-preparation?*
+                                           (automatic-environment)
+                                           (System/getenv "UV_PROJECT_ENVIRONMENT")))))
+
 (defn- remove-environment-shell!
-  "Remove a project environment that holds only empty directories.
+  "Remove an automatic environment that holds only empty directories.
    uv rejects such a shell and never replaces it. A file or link can be user data, so keep it."
   [^File project]
-  (let [environment (project-environment project nil)]
+  (let [environment (project-environment project (automatic-environment))]
     (when (and (.isDirectory environment)
                (not-any? #(or (.isFile ^File %) (Files/isSymbolicLink (.toPath ^File %)))
                          (file-seq environment)))
@@ -567,7 +605,7 @@
       (.flush config/original-stderr))))
 
 (def ^:private prepared-stamp
-  "The file in a project's own `.venv` that records its last verified preparation."
+  "The file in a project's own automatic environment that records its last verified preparation."
   ".vis-prepared.edn")
 
 (defn- path-sources
@@ -587,10 +625,10 @@
 (defn- prepared-inputs
   "Digest what uv's offline check reads, without uv: project and lock files, local path
    sources, the environment and the embedded tools. The bytecode cache is an input too:
-   a stamp records that its compile ran. Nil without an own `.venv`."
+   a stamp records that its compile ran. Nil without an own automatic environment."
   [^File project ^File packages]
   (let [config
-        (io/file project ".venv" "pyvenv.cfg")
+        (io/file project (automatic-environment) "pyvenv.cfg")
 
         text
         #(let [file (io/file project %)] (when (.isFile file) (slurp file)))
@@ -607,7 +645,7 @@
 (defn- stamped-packages
   "The site-packages of the project's last verified preparation, while its inputs are unchanged."
   ^File [^File project]
-  (let [stamp (io/file project ".venv" prepared-stamp)]
+  (let [stamp (io/file project (automatic-environment) prepared-stamp)]
     (when (.isFile stamp)
       (try (let [{:keys [inputs packages]} (edn/read-string (slurp stamp))
                  packages (io/file (str packages))]
@@ -617,12 +655,12 @@
            (catch Exception _ nil)))))
 
 (defn- stamp-prepared!
-  "Record a verified preparation in the project's own `.venv` and return `packages`.
+  "Record a verified preparation in the project's own automatic environment and return `packages`.
    An environment elsewhere, such as a workspace member's, keeps the uv check.
-   A read-only `.venv`, such as one in a container image, keeps the uv check too."
+   A read-only environment, such as one in a container image, keeps the uv check too."
   ^File [^File project ^File packages]
   (let [environment
-        (.getCanonicalFile (io/file project ".venv"))
+        (.getCanonicalFile (io/file project (automatic-environment)))
 
         inputs
         (prepared-inputs project packages)]
@@ -704,6 +742,7 @@
    Source-only projects without dependencies beyond Vis use shared packages.
    Otherwise uv owns lock updates, dependency groups and its package cache.
    A ready private environment must pass uv's offline check and use the embedded Python.
+   A project `.venv` of this Python is that environment. Else each embedded Python owns its own.
    A stamp of that check skips uv while the project, lock and environment are unchanged (#407).
    A preparation without that stamp also compiles the bytecode into the embedded Python's cache."
   [^File project]
@@ -713,7 +752,10 @@
               true
 
               *workspace-dirs*
-              (atom {})]
+              (atom {})
+
+              *environment*
+              (own-venv project)]
 
       (try (if-let [packages (stamped-packages project)]
              (do (preparation-stage! project "cached") packages)
@@ -1255,7 +1297,8 @@
   [args]
   (let [project (sync-project args)]
     (try (binding [*extension-preparation?* true
-                   *workspace-dirs* (atom {})]
+                   *workspace-dirs* (atom {})
+                   *environment* (own-venv project)]
 
            (when (and (.isFile (io/file project "pyproject.toml"))
                       (not (shared-project? project false))

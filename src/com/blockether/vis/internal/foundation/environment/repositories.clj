@@ -9,6 +9,7 @@
    scan itself is bounded by max files, max repos, and a wall-clock
    deadline. Never throws."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.foundation.environment.git :as git]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
@@ -36,6 +37,12 @@
     ".cpcache" ".cljs-cache" ".shadow-cljs" ".clj-kondo" ".lsp" ".idea" ".gradle" ".next" ".nuxt"
     "vendor" ".cache" "out" ".out" ".verification" ".verification-baseline" "book" "_site" "public"
     "site" "_book" "DerivedData" "Pods" ".build"})
+
+(defn- skip-directory?
+  "True for a directory in `skip-directories`, or for an automatic `.venv-<hash>`
+   environment that Vis prepares for each interpreter (`python/runtime.clj`)."
+  [name]
+  (boolean (or (contains? skip-directories name) (str/starts-with? (str name) ".venv-"))))
 
 (defonce ^:private inventory-cache (atom {}))
 
@@ -106,7 +113,7 @@
                   (= dir start) (do (when (repo-root? dir) (add-root! roots dir (long max-repos)))
                                     FileVisitResult/CONTINUE)
                   :else (let [name (str (.getFileName dir))]
-                          (cond (contains? skip-directories name) FileVisitResult/SKIP_SUBTREE
+                          (cond (skip-directory? name) FileVisitResult/SKIP_SUBTREE
                                 (repo-root? dir) (do (add-root! roots dir (long max-repos))
                                                      (if (>= (.size roots) (long max-repos))
                                                        (do (aset truncated 0 true)

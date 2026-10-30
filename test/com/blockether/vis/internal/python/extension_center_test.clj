@@ -91,6 +91,7 @@
                (fn [project args]
                  (let [builder (doto (ProcessBuilder. ^java.util.List args)
                                  (.directory project)
+                                 (#'python-runtime/automatic-environment!)
                                  (.redirectErrorStream true))]
                    ;; Upstream uv reads its own settings, not Vis pip configuration.
                    (.put (.environment builder)
@@ -189,7 +190,8 @@
                       (expect (= 1 (:failed (pyx/reload-python-extensions! opts))))
                       (expect (str/includes? (:error (first (pyx/load-failures)))
                                              "ModuleNotFoundError"))
-                      (expect (not (.exists (io/file source ".venv"))))
+                      (expect (not (.exists (io/file source
+                                                     (#'python-runtime/automatic-environment)))))
                       (expect (not (.exists (io/file source "uv.lock"))))
                       (expect
                         (= ["workspace"] (mapv second @calls))
@@ -202,7 +204,8 @@
                               (pr-str {:failures (pyx/load-failures) :uv @diagnostics})))
                     (expect (= 42 (invoke)))
                     (expect (.isFile (io/file source "uv.lock")))
-                    (expect (.isDirectory (io/file source ".venv")))
+                    (expect (.isDirectory (io/file source
+                                                   (#'python-runtime/automatic-environment))))
                     ;; Reload finds the environment. Issue #407: the stamp of the sync that
                     ;; prepared it replaces uv's check while the project and lock are unchanged.
                     (expect
