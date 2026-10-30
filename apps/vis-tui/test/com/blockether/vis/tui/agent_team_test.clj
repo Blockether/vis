@@ -80,6 +80,32 @@
                                               (throw (java.io.IOException. "offline")))]
                    (expect (string? (:error (team/fetch! "leader")))))))
 
+(defdescribe
+  failed-refresh-keeps-dock-test
+  ;; Regression (user report): one failed team refresh hid the agent dock until the next
+  ;; refresh. The snapshot dropped the last agent list on a gateway or settings error.
+  (it "keeps the last agent list after a failed refresh"
+      (let [body (str "[{\"session_id\":\"c1\",\"team_id\":\"turn-1\",\"task\":\"Fix the parser\","
+                      "\"status\":\"running\",\"created_at\":0}]")]
+        (with-redefs [vis/request! (constantly {:status 200 :body body})]
+          (team/fetch! "flaky-leader"))
+        (expect (= 1 (team/dock-height "flaky-leader" "turn-1" 120)))
+        (with-redefs [vis/request! (fn [& _]
+                                     (throw (java.io.IOException. "offline")))]
+          (expect (string? (:error (team/fetch! "flaky-leader"))))
+          (expect (= 1 (team/dock-height "flaky-leader" "turn-1" 120))
+                  "A gateway error keeps the dock")
+          (expect (= "Agents !" (team/header-label "flaky-leader" false))
+                  "The header still shows the failed refresh"))
+        (with-redefs [vis/setting (fn [& _]
+                                    (throw (java.io.IOException. "offline")))
+                      vis/request! (constantly {:status 503})]
+
+          (team/fetch! "flaky-leader")
+          (expect (team/enabled? "flaky-leader") "A settings error keeps Subagents on")
+          (expect (= 1 (team/dock-height "flaky-leader" "turn-1" 120))
+                  "A settings error keeps the dock")))))
+
 (defdescribe team-row-information-test
              (it "team row information"
                  (let [row

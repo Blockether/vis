@@ -91,13 +91,24 @@
   (true? (:enabled? (summary sid))))
 
 (defn fetch!
+  "Refresh the team snapshot of `sid`. A failed read keeps the last agent list and the last
+   Subagents state, so one error does not hide the dock until the next refresh."
   [sid]
-  (let [enabled?
+  (let [previous
+        (summary sid)
+
+        enabled?
         ;; Subagents accepts project, group and session overrides, and the session's
         ;; turns use its resolved value (issue #311). The global value can differ.
         (try (true? (get (vis/setting "subagents" {:scope "session" :target-id (str sid)})
                          "enabled"))
-             (catch Exception _ false))
+             (catch Exception _ (true? (:enabled? previous))))
+
+        failed
+        (fn [error]
+          (cond-> {:error error}
+            (:agents previous)
+            (assoc :agents (:agents previous))))
 
         result
         (if enabled?
@@ -111,9 +122,9 @@
                                             (string? (get % "status")))
                                       rows))
                        {:agents rows}
-                       {:error "Invalid team response. Refresh to retry."}))
-                   {:error "Could not load team. Refresh to retry."}))
-               (catch Exception _ {:error "Could not load team. Refresh to retry."}))
+                       (failed "Invalid team response. Refresh to retry.")))
+                   (failed "Could not load team. Refresh to retry.")))
+               (catch Exception _ (failed "Could not load team. Refresh to retry.")))
           {:agents []})
 
         result
