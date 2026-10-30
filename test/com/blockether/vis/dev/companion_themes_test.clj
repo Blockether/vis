@@ -66,3 +66,25 @@
                    (expect (<= 4.5
                                (contrast-ratio (get palette foreground) (get palette background)))
                            (str id " " foreground " on " background)))))
+
+(defdescribe dialog-edge-frames-read-on-every-ground
+             (it "dialog-edge frames read on every ground"
+                 ;; Regression #431: a framed log pane must show that it scrolls. The
+                 ;; dialog-edge frame was 2.0:1 in blockether-dark and solarized.
+                 ;; WCAG 1.4.11 asks 3:1 for the edge of a control.
+                 (doseq [[id t]
+                         theme/built-in-themes
+
+                         :let [css
+                               (theme/theme->web-css-vars t)
+
+                               rgb
+                               (fn [css-var]
+                                 (let [hex (subs (get css css-var) 1)]
+                                   (mapv #(Integer/parseInt (subs hex % (+ % 2)) 16) [0 2 4])))]
+                         ground
+                         ["--bg" "--surface" "--panel2" "--box-bg" "--input-field-bg" "--code-bg"
+                          "--hover"]]
+
+                   (expect (<= 3.0 (contrast-ratio (rgb "--dialog-border") (rgb ground)))
+                           (str id " --dialog-border on " ground)))))
