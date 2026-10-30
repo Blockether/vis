@@ -1301,7 +1301,9 @@
             (let [r (on-key state key geom)]
               (if (and (map? r) (contains? r ::done)) (::done r) (recur r)))))))))
 
-(defn- metric-count [n] (if (number? n) (str (long n)) "—"))
+(defn- metric-count
+  [n]
+  (if (number? n) (String/format Locale/US "%,d" (object-array [(long n)])) "—"))
 
 (defn- metric-usd
   [n]
@@ -1326,6 +1328,17 @@
                             (if signed? " (%+.1f%%)" " (%.1f%%)")
                             (object-array [(double percent)])))))))
 
+(defn- tone-ink
+  [tone fallback]
+  (case tone
+    :error
+    t/footer-error-fg
+
+    :warning
+    t/footer-warning-fg
+
+    fallback))
+
 (defn- session-metric-rows
   [session {:keys [phase usage parts? roots?]}]
   (let [row
@@ -1345,6 +1358,12 @@
           (assoc (row (str label "  " value))
             :label label
             :value value))
+
+        caption-pair
+        (fn [left right]
+          (assoc (hint (str left "  " right))
+            :label left
+            :value right))
 
         nested
         (fn [rows]
@@ -1430,15 +1449,16 @@
         (if-not usage
           [(hint "No measured calls yet. Metrics appear after the first model response.")]
           (concat
-            [(head "Session health")]
             (if-not health
-              [(hint "Context measurement unavailable")
+              [(head "Session health") (hint "Context measurement unavailable")
                (hint "Session totals below do not measure context size.")]
               (concat
-                [{:text pressure :tone tone}
+                [(assoc (stat "Session health" pressure)
+                   :tone :heading
+                   :value-tone tone)
                  (hint (str (if (get health "stale") "Earlier measurement" "Last measured call")
                             " · #"
-                            (get health "call")))
+                            (get health "call"))) (row "")
                  (stat "Context / working budget"
                        (str (metric-count input)
                             " / "
@@ -1446,10 +1466,10 @@
                             (when budget? (str "  " (metric-percent percent)))))]
                 (when-let [ratio (get health "budget_used_ratio")]
                   [{:meter ratio :tone tone}])
-                [(hint (if reminder
-                         (str "Reminder at " (metric-count reminder))
-                         "Reminder not reported"))
-                 (hint
+                [(caption-pair
+                   (if reminder
+                     (str "Reminder at " (metric-count reminder))
+                     "Reminder not reported")
                    (cond (some? (get health "budget_remaining_tokens"))
                          (str (metric-count (get health "budget_remaining_tokens")) " budget left")
                          (some? (get health "budget_overage_tokens"))
@@ -1524,6 +1544,10 @@
                    (stat label (metric-count (get usage field))))
                  [["Folds" "fold_count"] ["Turns" "turn_count"] ["Calls" "iteration_count"]
                   ["Tools" "tool_call_count"]])
+            [(stat "Active"
+                   (if-let [ms (get usage "duration_ms")]
+                     (or (vis/format-duration ms) "0s")
+                     "—")) (hint "Time spent inside turns")]
             (when-let [subagents (get usage "subagents")]
               (concat [(row "") (head "Subagents")
                        (hint "Every subagent below this session, at any depth.")
@@ -1554,13 +1578,9 @@
                                (metric-count samples)
                                " of "
                                (metric-count (get usage "iteration_count"))
-                               " calls")))) (row "")
-             (stat "Model" (or (not-empty (get usage "model")) (:model session) "—"))
-             (stat "Provider" (or (not-empty (get usage "provider")) (:provider session) "—"))
-             (stat "Active"
-                   (if-let [ms (get usage "duration_ms")]
-                     (or (vis/format-duration ms) "0s")
-                     "—")) (hint "Time spent inside turns")]))
+                               " calls")))) (row "") (head "Model")
+             (stat "Name" (or (not-empty (get usage "model")) (:model session) "—"))
+             (stat "Provider" (or (not-empty (get usage "provider")) (:provider session) "—"))]))
 
         []))))
 
@@ -1583,25 +1603,24 @@
 
            lines
            (vec
-             (mapcat
-               (fn [{:keys [text meter label value indent] :as row}]
-                 (let [w (long (max 1 (- (long text-w) (long (or indent 0)))))]
-                   (cond (some? meter)
-                         [(assoc row
-                            :text (str (apply str (repeat (long (* (double meter) w)) "─"))
-                                       (apply str (repeat (- w (long (* (double meter) w))) "─"))))]
-                         (and label (<= (+ (p/display-width label) 2 (p/display-width value)) w))
-                         [(assoc row
-                            :value-col (- w (p/display-width value))
-                            :text (str label
-                                       (apply str
-                                         (repeat
-                                           (- w (p/display-width label) (p/display-width value))
-                                           " "))
-                                       value))]
-                         :else (map #(assoc row :text %)
-                                    (if (str/blank? text) [""] (render/wrap-text text w))))))
-               (session-metric-rows session state)))
+             (mapcat (fn [{:keys [text meter label value indent] :as row}]
+                       (let [w (long (max 1 (- (long text-w) (long (or indent 0)))))]
+                         (cond
+                           (some? meter) [(assoc row
+                                            :text (apply str (repeat w "▀"))
+                                            :fill (p/clamp (Math/round (* (double meter) w)) 0 w))]
+                           (and label (<= (+ (p/display-width label) 2 (p/display-width value)) w))
+                           [(assoc row
+                              :value-col (- w (p/display-width value))
+                              :text (str label
+                                         (apply str
+                                           (repeat
+                                             (- w (p/display-width label) (p/display-width value))
+                                             " "))
+                                         value))]
+                           :else (map #(assoc row :text %)
+                                      (if (str/blank? text) [""] (render/wrap-text text w))))))
+                     (session-metric-rows session state)))
 
            content-h
            (adaptive-content-height rows (count lines))
@@ -1634,7 +1653,7 @@
                             (str "Session metrics · " (keymap/label-or-palette :session-metrics))
                             content-w
                             content-h-req)
-       (doseq [[i {:keys [text tone toggle label value value-col indent]}]
+       (doseq [[i {:keys [text tone toggle value value-col indent meter fill value-tone]}]
                (map-indexed vector (take content-h (drop scroll lines)))]
          (let [y (+ (long content-top) (long i))
                x (+ (long left) 2 (long (or indent 0)))
@@ -1657,13 +1676,20 @@
 
                             t/dialog-fg)
                           t/dialog-bg)
-           (when value-col (p/set-fg! g t/dialog-hint))
-           (if (or label (= :heading tone))
-             (p/styled g [p/BOLD] (p/put-str! g x y (ellipsize text w)))
-             (p/put-str! g x y (ellipsize text w)))
+           ;; Hallmark: a heading outranks a label, a label outranks its dim
+           ;; caption, and a value is never weaker than its label.
+           (cond meter (let [fill (long fill)]
+                         (p/set-fg! g (tone-ink tone t/dialog-fg))
+                         (p/put-str! g x y (subs text 0 fill))
+                         (p/set-fg! g t/border-fg)
+                         (p/put-str! g (+ x fill) y (subs text fill)))
+                 (= :heading tone) (p/styled g [p/BOLD] (p/put-str! g x y (ellipsize text w)))
+                 :else (p/put-str! g x y (ellipsize text w)))
            (when value-col
-             (p/set-fg! g t/dialog-fg)
-             (p/styled g [p/BOLD] (p/put-str! g (+ x (long value-col)) y value)))))
+             (if (= :hint tone)
+               (p/put-str! g (+ x (long value-col)) y value)
+               (do (p/set-fg! g (tone-ink value-tone t/dialog-fg))
+                   (p/styled g [p/BOLD] (p/put-str! g (+ x (long value-col)) y value)))))))
        (ScrollBar/draw g
                        Direction/VERTICAL
                        (TerminalPosition. (int (+ (long left) (long inner-w))) (int content-top))

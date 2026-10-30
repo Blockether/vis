@@ -100,7 +100,7 @@
                            (str/replace "−" "-"))
                    (get values "Estimate - reported"))
                 name)
-        (expect (= "2100000" (get values "Total input")) name)
+        (expect (= "2,100,000" (get values "Total input")) name)
         (if-let [percent (get expected "percent")]
           (do (expect (str/ends-with? (get values "Context / working budget") (str percent "%"))
                       name)
@@ -149,6 +149,20 @@
           (expect (str/includes? text value) value))
         (expect (= 0.17 (some :meter rows))))))
 
+;; User report 2026-10-30: the context meter drew one glyph for used and free
+;; cells, so a 64% budget looked like a full-width rule.
+(defdescribe context-meter-fill
+             (it "fills only the used share of the meter row and stops at its width"
+                 (doseq [[ratio share] [[0.0 0.0] [0.17 0.17] [0.8 0.8] [1.4 1.0]]]
+                   (let [usage (assoc-in measured-usage ["health" "budget_used_ratio"] ratio)
+                         component (dlg/session-metrics-component {} {:phase :ready :usage usage})
+                         meter (some #(when (:meter %) %)
+                                     (:lines ((:measure component) (:init component) 160 80)))
+                         width (count (:text meter))]
+
+                     (expect (< 40 width) (str ratio))
+                     (expect (= (Math/round (* share width)) (:fill meter)) (str ratio))))))
+
 (defdescribe
   subagent-cost-split
   (it "shows the session, subagent and total cost only when subagents exist"
@@ -172,8 +186,8 @@
 
         (expect (str/includes? plain "Cost $1.2749"))
         (expect (not (str/includes? plain "Subagent")))
-        (doseq [value ["Session cost $1.2749" "Subagents 100 · 4 active" "Calls 1659"
-                       "Total input 154022665" "Subagent cost $2.2500" "Total cost $3.5249"]]
+        (doseq [value ["Session cost $1.2749" "Subagents 100 · 4 active" "Calls 1,659"
+                       "Total input 154,022,665" "Subagent cost $2.2500" "Total cost $3.5249"]]
           (expect (str/includes? split value) value)))))
 
 (defdescribe
