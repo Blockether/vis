@@ -134,7 +134,8 @@ it.runIf(process.env.CI)('keeps image and artifact headers compact with long nam
           expect(closeBox.width).toBeGreaterThanOrEqual(44);
           expect(closeBox.height).toBeGreaterThanOrEqual(44);
           const titleBox = await title.boundingBox();
-          expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(closeBox.x);
+          // Close leads the band (7d82c6e73), so the title starts after it.
+          expect(closeBox.x + closeBox.width).toBeLessThanOrEqual(titleBox.x);
           heights.push(metrics.height);
           rows.push(metrics);
           await close.tap();
@@ -172,7 +173,7 @@ it.runIf(process.env.CI)('keeps the artifact header height when the file is shar
       await page.getByText('BIN · 1 B · ready to share').waitFor();
       expect(await headerHeight(page, name)).toBeCloseTo(bare, 1);
       const download = page.waitForEvent('download');
-      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      await page.getByRole('button', { name: 'Download', exact: true }).click();
       await download;
       await page.getByText('Artifact downloaded.', { exact: true }).waitFor();
       expect(await headerHeight(page, name)).toBeCloseTo(bare, 1);
