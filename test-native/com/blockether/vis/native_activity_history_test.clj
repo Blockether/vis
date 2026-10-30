@@ -68,8 +68,8 @@
           (#'binary/run-binary
            dir
            ["/usr/bin/env" (str "VIS_DB_PATH=" (.getAbsolutePath database)) "/bin/sh" "-c"
-            "exec \"$1\" \"-Duser.home=$2\" stdio < \"$3\"" "native-export" (.getAbsolutePath bin)
-            (.getAbsolutePath dir) (.getAbsolutePath request-file)]
+            "exec \"$1\" \"$2\" stdio < \"$3\"" "native-export" (.getAbsolutePath bin)
+            (str "-Duser.home=" (.getAbsolutePath dir)) (.getAbsolutePath request-file)]
            60)
           frames (try (mapv json/read-json (remove str/blank? (str/split-lines output)))
                       (catch Exception error

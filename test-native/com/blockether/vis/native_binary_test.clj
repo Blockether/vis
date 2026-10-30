@@ -2277,7 +2277,15 @@
                      "\n"))
           ;; Managed loads prepare declared project environments before registration.
           (expect (str/includes? (checked registration-command) "Package example."))
-          (checked "vis-agent python uv sync --project ./einmal --check")
+          ;; Each embedded Python owns a `.venv-*` environment; the CLI keeps its own `.venv`.
+          (let [^File managed
+                (->> (.listFiles project)
+                     (filter #(and (.isDirectory ^File %) (str/starts-with? (.getName ^File %) ".venv-")))
+                     (sort-by #(.lastModified ^File %))
+                     last)]
+            (expect (some? managed) (pr-str (vec (.list project))))
+            (checked (str "export UV_PROJECT_ENVIRONMENT=" (pr-str (.getAbsolutePath managed))
+                          "\nvis-agent python uv sync --project ./einmal --check")))
           (checked (commands 0))
           (checked (commands 1))
           (expect
