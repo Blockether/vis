@@ -8392,6 +8392,8 @@
                  last-wheel-at-ms (volatile! 0)
                  live-scroll-momentum (volatile! 0)
                  last-live-wheel-at-ms (volatile! 0)
+                 dock-scroll-momentum (volatile! 0)
+                 last-dock-wheel-at-ms (volatile! 0)
                  warm-session-render!
                  (fn [{:keys [id history]}]
                    (virtual/stop-rewarm!)
@@ -9014,6 +9016,9 @@
                    (do
                      (release-wheel-momentum! scroll-momentum last-wheel-at-ms :transcript)
                      (release-wheel-momentum! live-scroll-momentum last-live-wheel-at-ms :live-view)
+                     (release-wheel-momentum! dock-scroll-momentum
+                                              last-dock-wheel-at-ms
+                                              :agent-dock)
                      ;; Idle wait. During deferred startup, wake every 16ms to bind
                      ;; its result (and keep accepting keystrokes). Once settled and
                      ;; no wheel gesture is coasting, return to the zero-CPU blocking
@@ -9134,7 +9139,10 @@
                          ;; Truthy when this wheel belongs to a live pane rather than the
                          ;; transcript beneath it. The branch smooths and scales its OWN
                          ;; delta, so what is wanted here is only the verdict.
-                         live-wheel? (some? (live-view-wheel-event db my wheel-delta))]
+                         live-wheel? (some? (live-view-wheel-event db my wheel-delta))
+                         ;; The session whose agent dock is under the pointer of this wheel.
+                         dock-wheel-sid (when-not (zero? (long (or wheel-delta 0)))
+                                          (:dock (.lookup interactions/hit-map mx my)))]
 
                      (when (= atype MouseActionType/CLICK_DOWN) (vreset! mouse-control-press nil))
                      (cond
@@ -9290,6 +9298,16 @@
                        (do (state/dispatch [:move-slash-command-selection (long wheel-delta)
                                             (count slash-suggestions)])
                            (recur))
+                       ;; The wheel over the agent dock scrolls its agent table with its own
+                       ;; momentum. At an end of the table the wheel stops there.
+                       dock-wheel-sid
+                       (let [{:keys [eff]}
+                             (smooth-wheel! dock-scroll-momentum last-dock-wheel-at-ms wheel-delta)]
+                         (when (and
+                                 eff
+                                 (agent-team/scroll-dock! dock-wheel-sid (running-turn-id db) eff))
+                           (state/dispatch [:bump-render-version :full-frame]))
+                         (recur))
                        ;; The wheel over the live-view band scrolls the PANE. The band is
                        ;; painted ON TOP of the transcript, so the rows under the pointer
                        ;; are the pane's rows. The gesture is smoothed through the BAND's

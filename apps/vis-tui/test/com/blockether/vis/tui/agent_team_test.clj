@@ -4,6 +4,7 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.frame :as frame]
+            [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as theme]
             [lazytest.core :as lt :refer [defdescribe expect it]])
@@ -688,6 +689,41 @@
                                   "Agents   1m 04s   ")))
       (with-redefs [team/summary (constantly {:agents []})]
         (expect (zero? (team/dock-height "leader" "turn-1" 120)) "An empty team has no dock"))))
+
+(defdescribe
+  dock-scroll-test
+  ;; Regression, user report: the agent team in the dock does not scroll, so rows past the cap
+  ;; never show.
+  (it "scrolls the agent table to the rows past the cap and takes the wheel on every dock line"
+      (with-redefs [team/summary (constantly {:agents every-state})]
+        (expect (not (team/scroll-dock! "leader" "turn-1" 1)) "A collapsed dock does not move")
+        (team/toggle-dock! "leader")
+        (try (let [rows (fn []
+                          (team/dock-text "leader" "turn-1" 120 now-ms))]
+               (expect (not-any? #(str/includes? % "Run tests") (rows)))
+               (expect (true? (team/scroll-dock! "leader" "turn-1" 3)))
+               (expect (some #(str/includes? % "Run tests") (rows)) "A hidden row comes into view")
+               (expect (some #(str/includes? % "↑3 above  +2 more") (rows)))
+               (expect (= 11 (team/dock-height "leader" "turn-1" 120)) "Scrolling keeps the height")
+               (expect (true? (team/scroll-dock! "leader" "turn-1" 100)))
+               (expect (some #(str/includes? % "↑5 above") (rows)))
+               (expect (not-any? #(str/includes? % "more") (rows)))
+               (expect (false? (team/scroll-dock! "leader" "turn-1" 1))
+                       "The last row stops the wheel")
+               (expect (true? (team/scroll-dock! "leader" "turn-1" -100)))
+               (expect (some #(str/includes? % "+5 more") (rows)))
+               (let [terminal (DefaultVirtualTerminal. (TerminalSize. 120 20))
+                     screen (doto (TerminalScreen. terminal) (.startScreen))]
+
+                 (binding [interactions/hit-map (interactions/create-hit-map)]
+                   (.beginFrame interactions/hit-map)
+                   (team/draw-dock! (.newTextGraphics screen) "leader" "turn-1" 2 120)
+                   (.commitFrame interactions/hit-map)
+                   (doseq [y (range 2 13)]
+                     (expect (= "leader" (:dock (.lookup interactions/hit-map (int 40) (int y))))
+                             (str "Dock line " y " takes the wheel")))
+                   (expect (nil? (:dock (.lookup interactions/hit-map (int 40) (int 13))))))))
+             (finally (team/scroll-dock! "leader" "turn-1" -100) (team/toggle-dock! "leader"))))))
 
 (defdescribe child-traffic-test
              (it "hides Council requests that the leader's own agents send"

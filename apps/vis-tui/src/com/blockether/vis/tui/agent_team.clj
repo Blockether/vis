@@ -39,6 +39,10 @@
   (let [sid (str sid)]
     (contains? (swap! expanded-docks #(if (contains? % sid) (disj % sid) (conj % sid))) sid)))
 
+(defonce ^:private dock-offsets
+  ;; The first agent row that the dock table of each session shows. It lasts for this TUI run only.
+  (atom {}))
+
 (defn- roles
   "The subagent roles of the agents contract, in its order."
   []
@@ -423,11 +427,16 @@
       t/dialog-hint)))
 
 (defn- register-row!
-  "A click on a row opens the timeline of its agent."
-  [row screen-row left width]
-  (when-let [id (:session-id row)]
-    (.register interactions/hit-map
-               {:bounds {:row screen-row :col left :width width} :kind :agent-timeline :text id})))
+  "A click on a row opens the timeline of its agent. A row of the dock of `dock` also takes the
+   wheel of that dock."
+  ([row screen-row left width] (register-row! row screen-row left width nil))
+  ([row screen-row left width dock]
+   (when-let [id (:session-id row)]
+     (.register
+       interactions/hit-map
+       (cond-> {:bounds {:row screen-row :col left :width width} :kind :agent-timeline :text id}
+         dock
+         (assoc :dock dock))))))
 
 ;; ── Table ───────────────────────────────────────────────────────────────────
 
@@ -489,37 +498,61 @@
               (fit [status])
               [(assoc label :w (max 4 (- width (table-width [status]) 3))) status])))))
 
+(defn- window-start
+  "The first shown row of `n` rows in a window of `size` rows that asks to start at `offset`."
+  ^long [n size offset]
+  (max 0 (min (long (or offset 0)) (- (long n) (long size)))))
+
 (defn table-lines
   "The lines of the agent table for `rows`, from the top border to the bottom border:
-   `{:kind}` maps. With `max-rows`, a longer team shows `max-rows - 1` rows and a last row
-   that counts the rest."
-  ([rows] (table-lines rows nil))
-  ([rows max-rows]
-   (let [shown
-         (if (and max-rows (> (count rows) (long max-rows)))
-           (subvec (vec rows) 0 (dec (long max-rows)))
-           rows)
+   `{:kind}` maps. With `max-rows`, a longer team shows `max-rows - 1` rows from `offset` and
+   a last row that counts the rows above (`:above`) and below (`:n`) them."
+  ([rows] (table-lines rows nil 0))
+  ([rows max-rows] (table-lines rows max-rows 0))
+  ([rows max-rows offset]
+   (let [rows
+         (vec rows)
 
-         hidden
-         (- (count rows) (count shown))]
+         n
+         (count rows)
+
+         overflow?
+         (and max-rows (> n (long max-rows)))
+
+         size
+         (if overflow? (dec (long max-rows)) n)
+
+         start
+         (window-start n size offset)
+
+         shown
+         (subvec rows start (+ start (long size)))]
 
      (-> [{:kind :top} {:kind :head} {:kind :mid}]
          (into (map (fn [row]
                       {:kind :row :row row}))
                shown)
          (cond->
-           (pos? hidden)
-           (conj {:kind :more :n hidden}))
+           overflow?
+           (conj {:kind :more :above start :n (- n start (long size))}))
          (conj {:kind :bottom})))))
 
 (defn- cell-text
-  [{:keys [kind row n]} column-key now-ms]
+  [{:keys [kind row n above]} column-key now-ms]
   (case kind
     :head
     (table-heads column-key)
 
     :more
-    (if (= :label column-key) (str "+" n " more") "")
+    (if (= :label column-key)
+      (str/join "  "
+                (cond-> []
+                  (pos? (long (or above 0)))
+                  (conj (str "↑" above " above"))
+
+                  (pos? (long n))
+                  (conj (str "+" n " more"))))
+      "")
 
     (case column-key
       :time
@@ -832,6 +865,45 @@
       hint?
       (conj [hint-col hint :hint]))))
 
+(defn- dock-rows
+  "The agent rows of the docked teams of `sid`, in start order. Empty without a docked team."
+  [sid running-turn]
+  (let [agents
+        (:agents (summary sid))
+
+        docked
+        (dock-team-ids agents running-turn)]
+
+    (->> (numbered agents)
+         (filter #(contains? docked (get (second %) "team_id")))
+         (sort-by (fn [[n agent]]
+                    [(or (get agent "created_at") 0) (str (get agent "team_id")) n]))
+         (mapv (fn [[n agent]]
+                 (team-row n agent))))))
+
+(defn scroll-dock!
+  "Move the agent table of the dock of `sid` by `delta` rows. Returns true when the shown rows
+   changed. A collapsed dock or a team that fits does not move."
+  [sid running-turn delta]
+  (let [sid
+        (str sid)
+
+        n
+        (count (dock-rows sid running-turn))
+
+        size
+        (dec (long dock-max-rows))]
+
+    (when (and (dock-expanded? sid) (> n (long dock-max-rows)))
+      (let [old
+            (window-start n size (get @dock-offsets sid))
+
+            new
+            (window-start n size (+ old (long delta)))]
+
+        (swap! dock-offsets assoc sid new)
+        (not= old new)))))
+
 (defn dock-lines
   "The dock of `sid` above the prompt at `cols` columns: `{:line :columns}` maps, one for each
    screen row. A docked team shows one summary line. After `toggle-dock!`, the agent table
@@ -846,12 +918,7 @@
     (if (empty? docked)
       []
       (let [rows
-            (->> (numbered agents)
-                 (filter #(contains? docked (get (second %) "team_id")))
-                 (sort-by (fn [[n agent]]
-                            [(or (get agent "created_at") 0) (str (get agent "team_id")) n]))
-                 (mapv (fn [[n agent]]
-                         (team-row n agent))))
+            (dock-rows sid running-turn)
 
             expanded?
             (dock-expanded? sid)
@@ -871,7 +938,7 @@
             (into [head]
                   (map (fn [line]
                          {:line line :columns columns}))
-                  (table-lines rows dock-max-rows)))
+                  (table-lines rows dock-max-rows (get @dock-offsets (str sid)))))
           [head])))))
 
 (defn dock-height
@@ -920,9 +987,16 @@
             (.register interactions/hit-map
                        {:bounds {:row y :col 0 :width (max 1 (long cols))}
                         :kind :agent-dock-toggle
-                        :text (str sid)}))
+                        :text (str sid)
+                        :dock (str sid)}))
         (paint-table-line! g 2 y width line columns now))
-      (when (= :row (:kind line)) (register-row! (:row line) y 0 (max 1 (long cols)))))))
+      ;; Each dock line takes the wheel, so the wheel scrolls the agent table, not the transcript.
+      (cond (= :summary (:kind line)) nil
+            (:session-id (:row line)) (register-row! (:row line) y 0 (max 1 (long cols)) (str sid))
+            :else (.register interactions/hit-map
+                             {:bounds {:row y :col 0 :width (max 1 (long cols))}
+                              :kind :agent-dock
+                              :dock (str sid)})))))
 
 ;; ── Child traffic ───────────────────────────────────────────────────────────
 
