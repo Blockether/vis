@@ -1104,6 +1104,7 @@ describe('GatewayClient workspace file opening', () => {
 
   it('reads a bounded window of one workspace file, around a line', async () => {
     const answer = JSON.stringify({
+      kind: 'text',
       path: '/Users/ana/vis/AGENTS.md',
       line: 40,
       first_line: 1,
@@ -1122,7 +1123,7 @@ describe('GatewayClient workspace file opening', () => {
       '/v1/sessions/session-1/fs/file?path=src%2Fapp.ts&line=40',
     );
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET' });
-    expect(read.lines).toEqual(['first']);
+    expect(read).toMatchObject({ kind: 'text', lines: ['first'] });
 
     await client.readPath('session-1', 'src/app.ts');
     expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain('line=');

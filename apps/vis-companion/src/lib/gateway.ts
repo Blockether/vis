@@ -52,7 +52,6 @@ import type {
   GatewayOverview,
   GatewayConn,
   FileSuggestion,
-  FileWindow,
   GatewayStatus,
   SessionArtifactRow,
   Session,
@@ -91,6 +90,7 @@ import type {
   BrowseListing,
   SessionAlert,
   ExtensionReload,
+  WorkspaceFile,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
 import { inputViewsFromWire, type HumanInputRequest } from './human-input';
@@ -3402,34 +3402,22 @@ export class GatewayClient {
     );
   }
 
-  // GET /v1/sessions/:sid/fs/file — the LINES of one workspace file, around the
+  // GET /v1/sessions/:sid/fs/file — the preview of one workspace file, around the
   // line a pressed path named. The editor opens where the files are; this is what
-  // the device doing the reading can show for itself, phone included. The gateway
-  // answers one bounded window: clipped lines, a byte cap, and no binary file.
+  // the device doing the reading can show for itself, phone included. `kind` says
+  // whether the answer is a bounded text window, a picture or a binary file.
   async readPath(
     sid: string,
     path: string,
     line?: number,
     signal?: AbortSignal,
-  ): Promise<FileWindow> {
+  ): Promise<WorkspaceFile> {
     const at = line === undefined ? '' : `&line=${encodeURIComponent(String(line))}`;
-    return await this.request<FileWindow>(
+    return await this.request<WorkspaceFile>(
       'GET',
       `/v1/sessions/${encodeURIComponent(sid)}/fs/file?path=${encodeURIComponent(path)}${at}`,
       undefined,
       signal,
-    );
-  }
-
-  // GET /v1/sessions/:sid/fs/image — the bytes of one workspace picture, for the
-  // file a press named when the text window refused it (#432). `requestBody`, not
-  // `request`: a PNG is not text, and `<img src>` cannot carry the bearer header.
-  async readImagePath(sid: string, path: string, signal?: AbortSignal): Promise<Blob> {
-    return this.requestBody(
-      'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/fs/image?path=${encodeURIComponent(path)}`,
-      { signal },
-      (res) => res.blob(),
     );
   }
 

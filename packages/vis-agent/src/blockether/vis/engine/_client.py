@@ -1578,7 +1578,7 @@ class ExecutionLayer(ABC):
     def get_session_fs_file(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:
-        """GET /v1/sessions/:sid/fs/file — read one workspace file as text."""
+        """GET /v1/sessions/:sid/fs/file — preview one workspace file by its kind."""
         response = self._request(
             "GET",
             "/v1/sessions/:sid/fs/file",
@@ -1587,19 +1587,6 @@ class ExecutionLayer(ABC):
             timeout=timeout,
         )
         return response.json()
-
-    def get_session_fs_image(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> Response:
-        """GET /v1/sessions/:sid/fs/image — binary response of one workspace picture."""
-        response = self._request(
-            "GET",
-            "/v1/sessions/:sid/fs/image",
-            path={"sid": sid},
-            query=query,
-            timeout=timeout,
-        )
-        return response
 
     def put_session_group(
         self,

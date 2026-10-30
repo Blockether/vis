@@ -252,52 +252,8 @@
                               (subs 0 preview-line-length)))
                      taken))))))))
 
-(defn- read-file-handler
-  "GET /v1/sessions/:sid/fs/file?path=…&line=… — the LINES of one session-readable file
-   around the line a press named.
-
-   A path in a transcript names a file on the machine that ran the step. Opening
-   an editor there is the right answer for whoever sits at that machine, and no
-   answer at all for a reader holding a phone: the file is on the other side of
-   the room. This hands back the text itself, so the place a step touched can be
-   read where the session is being read.
-
-   A PREVIEW, NOT A DOWNLOAD. One window of lines, each clipped, under a byte cap,
-   and never a binary file — the route cannot become a way to pull a repository
-   through the gateway one file at a time. Both actions use `session-readable-file`."
-  [request]
-  (let [sid (http/path-sid request)]
-    (if-not (and sid (state/soul sid))
-      (http/session-404 (get-in request [:path-params :sid]))
-      (let [asked-line (not-empty (str (get-in request [:query-params "line"])))
-            line (when (and asked-line (re-matches #"\d+" asked-line)) (parse-long asked-line))
-            found (session-readable-file sid (get-in request [:query-params "path"]))
-            ^java.io.File target (:file found)]
-
-        (cond (:error found) (:error found)
-              (and asked-line (not (pos? (long (or line 0)))))
-              (http/error-response 400 :invalid-request "line must be a positive whole number")
-              :else (try (if (binary-file? target)
-                           (http/error-response 415
-                                                :not-text "that file is not text"
-                                                :path (.getPath target))
-                           (let [anchor (or line 1)
-                                 from (max 1 (- anchor (quot preview-line-limit 2)))
-                                 {:keys [lines is-truncated]} (file-window target from)]
-
-                             (http/json-response {:path (.getPath target)
-                                                  :line anchor
-                                                  :first-line from
-                                                  :lines lines
-                                                  :is-truncated is-truncated
-                                                  :size-bytes (.length target)})))
-                         (catch java.io.IOException _
-                           (http/error-response 400
-                                                :invalid-request "that file could not be read"
-                                                :path (.getPath target)))))))))
-
 (def ^:private image-byte-limit
-  "Bytes one picture preview serves. A screenshot or a chart fits well under it; a file
+  "Bytes one picture preview reads. A screenshot or a chart fits well under it; a file
    above it is a raw photo or a texture atlas, and the editor opens it on its machine."
   (* 32 1024 1024))
 
@@ -332,46 +288,72 @@
   (with-open [in (java.io.FileInputStream. file)]
     (.readNBytes in 16)))
 
-(defn- read-image-handler
-  "GET /v1/sessions/:sid/fs/image?path=… — the bytes of ONE session-readable picture.
+(defn- file-preview
+  "The preview of `target` as one answer whose `kind` says what it holds.
 
-   The text preview refuses a binary file, so a press on a `.png` path showed a
-   refusal instead of the picture (#432). This route serves only a picture that
-   a browser draws, under a byte cap, with the same resolver and gates as the
-   text preview. Another binary file gets 415 `not-an-image`."
+   - `image`: a picture that a browser draws, as base64 `data` with its `media-type`,
+     or 413 above `image-byte-limit`.
+   - `binary`: another file with a NUL byte. Only its path and size come back.
+   - `text`: the window of lines around `anchor`."
+  [^java.io.File target anchor]
+  (let [path (.getPath target)]
+    (if-let [media-type (image-media-type (file-head target))]
+      (let [^bytes picture (with-open [in (java.io.FileInputStream. target)]
+                             (.readNBytes in (int (inc (long image-byte-limit)))))]
+        (if (> (alength picture) (long image-byte-limit))
+          (http/error-response 413
+                               :image-too-large "that picture is too large to preview"
+                               :path path)
+          (http/json-response {:path path
+                               :kind "image"
+                               :media-type media-type
+                               :size-bytes (alength picture)
+                               :data (.encodeToString (java.util.Base64/getEncoder) picture)})))
+      (if (binary-file? target)
+        (http/json-response {:path path :kind "binary" :size-bytes (.length target)})
+        (let [from (max 1 (- (long anchor) (quot preview-line-limit 2)))
+              {:keys [lines is-truncated]} (file-window target from)]
+
+          (http/json-response {:path path
+                               :kind "text"
+                               :line anchor
+                               :first-line from
+                               :lines lines
+                               :is-truncated is-truncated
+                               :size-bytes (.length target)}))))))
+
+(defn- read-file-handler
+  "GET /v1/sessions/:sid/fs/file?path=…&line=… — the preview of one session-readable
+   file, with a `kind` of `text`, `image` or `binary`.
+
+   A path in a transcript names a file on the machine that ran the step. Opening
+   an editor there is the right answer for whoever sits at that machine, and no
+   answer at all for a reader holding a phone: the file is on the other side of
+   the room. This hands back the file itself, so the place a step touched can be
+   read where the session is being read. One route answers every file, so a client
+   never guesses the kind from the name and asks again (#432).
+
+   A PREVIEW, NOT A DOWNLOAD. Text is one window of clipped lines under a byte cap,
+   a picture is capped, and another binary file is never read — the route cannot
+   become a way to pull a repository through the gateway one file at a time. Both
+   actions use `session-readable-file`."
   [request]
   (let [sid (http/path-sid request)]
     (if-not (and sid (state/soul sid))
       (http/session-404 (get-in request [:path-params :sid]))
-      (let [found (session-readable-file sid (get-in request [:query-params "path"]))
+      (let [asked-line (not-empty (str (get-in request [:query-params "line"])))
+            line (when (and asked-line (re-matches #"\d+" asked-line)) (parse-long asked-line))
+            found (session-readable-file sid (get-in request [:query-params "path"]))
             ^java.io.File target (:file found)]
 
-        (or (:error found)
-            (try (let [media-type (image-media-type (file-head target))
-                       ^bytes picture (when media-type
-                                        (with-open [in (java.io.FileInputStream. target)]
-                                          (.readNBytes in (int (inc (long image-byte-limit))))))]
-
-                   (cond (nil? media-type) (http/error-response 415
-                                                                :not-an-image
-                                                                "that file is not an image"
-                                                                :path (.getPath target))
-                         (> (alength picture) (long image-byte-limit))
-                         (http/error-response 413
-                                              :image-too-large
-                                              "that picture is too large to preview"
-                                              :path (.getPath target))
-                         :else {:status 200
-                                :headers {"Content-Type" media-type
-                                          "Content-Length" (str (alength picture))
-                                          "Cache-Control" "private, no-store"
-                                          "Content-Security-Policy" "sandbox"
-                                          "X-Content-Type-Options" "nosniff"}
-                                :body (java.io.ByteArrayInputStream. picture)}))
-                 (catch java.io.IOException _
-                   (http/error-response 400
-                                        :invalid-request "that file could not be read"
-                                        :path (.getPath target)))))))))
+        (cond (:error found) (:error found)
+              (and asked-line (not (pos? (long (or line 0)))))
+              (http/error-response 400 :invalid-request "line must be a positive whole number")
+              :else (try (file-preview target (or line 1))
+                         (catch java.io.IOException _
+                           (http/error-response 400
+                                                :invalid-request "that file could not be read"
+                                                :path (.getPath target)))))))))
 
 (defn- workspace-handler
   [request]
@@ -393,5 +375,4 @@
    [:get "/v1/sessions/:sid/workspace"] workspace-handler
    [:patch "/v1/sessions/:sid/workspace/root"] change-root-handler
    [:post "/v1/sessions/:sid/fs/actions/open"] open-file-handler
-   [:get "/v1/sessions/:sid/fs/file"] read-file-handler
-   [:get "/v1/sessions/:sid/fs/image"] read-image-handler})
+   [:get "/v1/sessions/:sid/fs/file"] read-file-handler})

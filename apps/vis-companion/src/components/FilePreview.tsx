@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { GatewayError, type GatewayClient } from '../lib/gateway';
-import type { FileWindow } from '../lib/types';
+import type { GatewayClient } from '../lib/gateway';
+import type { WorkspaceFile } from '../lib/types';
 import { ArrowOutIcon } from './icons';
 import { ImageViewer } from './ImageViewer';
 import { BandButton, Banner, DialogFrame, Modal, Spinner } from './ui';
@@ -16,9 +16,9 @@ import { BandButton, Banner, DialogFrame, Modal, Spinner } from './ui';
  * and the sheet stands at the line the press named, with an editor icon for the
  * machine that actually holds the tree.
  *
- * A file that is not text (415) is asked for again as a picture, and a picture
- * opens in the image viewer (#432). Another binary file says that it has no
- * preview here. Other refusals — a path this session cannot read, a file that
+ * One read answers every file, and its `kind` says what came back: a picture
+ * opens in the image viewer (#432), and another binary file says that it has
+ * no preview here. Other refusals — a path this session cannot read, a file that
  * is gone — are shown in the gateway's own words rather than as an empty box.
  */
 export function FilePreview({
@@ -35,9 +35,8 @@ export function FilePreview({
   line?: number;
   onClose: () => void;
 }) {
-  const [file, setFile] = useState<FileWindow | null>(null);
+  const [file, setFile] = useState<WorkspaceFile | null>(null);
   const [picture, setPicture] = useState<string | null>(null);
-  const [isWithoutPreview, setIsWithoutPreview] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
   const name = path.slice(path.lastIndexOf('/') + 1) || path;
@@ -46,32 +45,23 @@ export function FilePreview({
     const abort = new AbortController();
     let isLive = true;
     let url: string | null = null;
-    const isNotText = (cause: unknown) => cause instanceof GatewayError && cause.status === 415;
-    const fail = (cause: unknown) => {
-      if (isLive) setFailure((cause as Error).message);
-    };
     setFile(null);
     setPicture(null);
-    setIsWithoutPreview(false);
     setFailure(null);
     void client
       .readPath(sid, path, line, abort.signal)
       .then((answer) => {
-        if (isLive) setFile(answer);
+        if (!isLive) return;
+        if (answer.kind === 'image') {
+          // `<img src>` cannot carry the bearer header, so the bytes come in the answer.
+          const bytes = Uint8Array.from(atob(answer.data), (char) => char.charCodeAt(0));
+          url = URL.createObjectURL(new Blob([bytes], { type: answer.media_type }));
+          setPicture(url);
+        }
+        setFile(answer);
       })
       .catch((cause: unknown) => {
-        if (!isNotText(cause)) return fail(cause);
-        return client.readImagePath(sid, path, abort.signal).then(
-          (blob) => {
-            if (!isLive) return;
-            url = URL.createObjectURL(blob);
-            setPicture(url);
-          },
-          (refusal: unknown) => {
-            if (!isNotText(refusal)) return fail(refusal);
-            if (isLive) setIsWithoutPreview(true);
-          },
-        );
+        if (isLive) setFailure((cause as Error).message);
       });
     return () => {
       isLive = false;
@@ -115,12 +105,12 @@ export function FilePreview({
             <div className="p-3">
               <Banner kind="err">{failure}</Banner>
             </div>
-          ) : isWithoutPreview ? (
+          ) : file?.kind === 'binary' ? (
             <p className="p-3 font-sans text-dialog-hint">
               Vis has no preview for this kind of file. Open it in the editor on the machine
               that ran the step.
             </p>
-          ) : !file ? (
+          ) : file?.kind !== 'text' ? (
             <p className="flex items-center gap-2 p-3 text-dialog-hint">
               <Spinner /> Reading {name}…
             </p>

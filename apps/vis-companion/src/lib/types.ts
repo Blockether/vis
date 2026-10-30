@@ -372,11 +372,17 @@ export interface FileSuggestion {
   status: string;
 }
 
-// One window of a workspace file from GET /v1/sessions/:sid/fs/file — the lines
-// themselves, around the line a pressed path named. The gateway bounds it: a
-// preview of a text file, never a download and never a binary one.
-export interface FileWindow {
+// The preview of one workspace file from GET /v1/sessions/:sid/fs/file. Its `kind`
+// says what it holds: a window of text around the pressed line, a picture, or a
+// binary file that has no preview. The gateway decides the kind from the file's
+// first bytes, not from its name, and bounds each answer.
+interface WorkspaceFileBase {
   path: string;
+  size_bytes: number;
+}
+
+export interface FileWindow extends WorkspaceFileBase {
+  kind: 'text';
   /** The file line the window stands at, 1-based. */
   line: number;
   /** The file line `lines[0]` is, 1-based. */
@@ -384,8 +390,20 @@ export interface FileWindow {
   lines: string[];
   /** The read stopped at the gateway's byte cap before the window ended. */
   is_truncated: boolean;
-  size_bytes: number;
 }
+
+export interface FilePicture extends WorkspaceFileBase {
+  kind: 'image';
+  media_type: string;
+  /** The picture's bytes, base64. */
+  data: string;
+}
+
+export interface FileWithoutPreview extends WorkspaceFileBase {
+  kind: 'binary';
+}
+
+export type WorkspaceFile = FileWindow | FilePicture | FileWithoutPreview;
 
 export interface Project {
   id: string;

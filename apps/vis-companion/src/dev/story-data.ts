@@ -969,6 +969,7 @@ export const STORY_QUEUE_CLIENT = {
 
 /** One bounded window of a workspace file, standing where a pressed path pointed. */
 export const STORY_FILE_WINDOW: FileWindow = {
+  kind: 'text',
   path: 'src/com/blockether/vis/internal/gateway/server.clj',
   line: 4902,
   first_line: 4897,

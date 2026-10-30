@@ -977,16 +977,6 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "binary"
-        }
-      },
-      "path": "/v1/sessions/:sid/fs/image"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
-        "get": {
-          "request": "none",
           "response": "binary",
           "extension": "background"
         }
