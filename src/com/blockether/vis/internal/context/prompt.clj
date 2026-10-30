@@ -40,6 +40,24 @@
          body
          (when-not (str/ends-with? body "\n") "\n"))))
 
+(defn opens-turn?
+  "True when MESSAGE is the user message that opens turn TURN.
+   Its text starts with the turn boundary; images come before that text."
+  [message turn]
+  (let [content
+        (:content message)
+
+        text
+        (if (string? content)
+          content
+          (some #(when (= "text" (:type %)) (:text %)) (when (sequential? content) content)))]
+
+    (and (= "user" (:role message))
+         (string? text)
+         (str/starts-with? text
+                           (prompt-block "turn-system-context"
+                                         (str "session[\"turn\"] = " turn))))))
+
 (defn- call-extension-callback
   "Run an extension's prompt/activation callback inside THE session context."
   [ext f environment]

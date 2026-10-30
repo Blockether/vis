@@ -5,6 +5,7 @@
    without a terminal: fork the whole session, or fork THROUGH one turn."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -87,6 +88,44 @@
                                  nil
                                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
              (finally (ps/db-close! store)))))
+  ;; Regression (session 80230818): a fork through an earlier turn missed the source's
+  ;; provider prefix cache, because it kept no prefix checkpoint.
+  (it
+    "keeps the source's prefix checkpoint cut to the last copied turn"
+    (let [store (ps/db-open! :memory)]
+      (try
+        (let [{:keys [sid turn-ids]} (seeded-session! store ["first ask" "second ask" "third ask"])
+              opening (fn [turn]
+                        (first (prompt/assemble-initial-messages
+                                 {:initial-user-content (str "ask " turn)
+                                  :turn-context (str "session[\"turn\"] = " turn)})))
+              request [{:role "system" :content "system"} (opening 1)
+                       {:role "assistant" :content "answer 1"} (opening 2)
+                       {:role "assistant" :content "answer 2"} (opening 3)]]
+
+          (ps/db-set-session-prompt-cache-state!
+            store
+            (ps/db-latest-session-state-id store sid)
+            {:route [:anthropic "claude-test"]
+             :entry {:messages request
+                     :weights (vec (repeat (count request) 1))
+                     :input-tokens 600
+                     :at-ms 1
+                     :completed-turn {:turn-position 3
+                                      :stable-message-count 1
+                                      :assistant-message {:role "assistant" :content "answer 3"}}}
+             :standing-ctx {:block "<context/>" :baseline {"turn" 3}}})
+          (with-redefs [lp/db-info (constantly store)]
+            (let [fork-id (get (state/fork-session! sid (second turn-ids)) "id")
+                  entry (:entry (ps/db-get-session-prompt-cache-state
+                                  store
+                                  (ps/db-latest-session-state-id store fork-id)))]
+
+              (expect (= (subvec request 0 4) (:messages entry)))
+              (expect (= {:role "assistant" :content "answer 2"}
+                         (get-in entry [:completed-turn :assistant-message])))
+              (expect (= 2 (get-in entry [:completed-turn :turn-position]))))))
+        (finally (ps/db-close! store)))))
   (it
     "lists the start of each prose answer with its fork point"
     (let [store (ps/db-open! :memory)]

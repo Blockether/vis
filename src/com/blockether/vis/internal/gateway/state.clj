@@ -39,6 +39,7 @@
     [com.blockether.vis.internal.loop :as lp]
     [com.blockether.vis.internal.loop.environment :as loop-env]
     [com.blockether.vis.internal.loop.router :as loop-router]
+    [com.blockether.vis.internal.loop.transcript :as transcript]
     [com.blockether.vis.internal.session.titling :as titling]
     [com.blockether.vis.internal.persistance.core :as persistance]
     [com.blockether.vis.internal.provider.auth-health :as auth-health]
@@ -7123,7 +7124,9 @@
           (persistance/db-fork-session-at-turn! db
                                                 sid
                                                 {:workspace-id workspace-id
-                                                 :through-turn-id through})]
+                                                 :through-turn-id through
+                                                 :prompt-cache-fork
+                                                 transcript/fork-prompt-cache-state})]
 
       (when-not forked (throw (ex-info "Could not fork this session" {:type :session/fork-failed})))
       (let [{:keys [group-id project-id]} (persistance/db-get-session db sid)]

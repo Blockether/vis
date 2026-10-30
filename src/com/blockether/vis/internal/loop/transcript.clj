@@ -2785,6 +2785,66 @@
          :summaries summaries
          :resumed? true}))))
 
+(defn fork-prompt-cache-state
+  "The checkpoint of a fork through turn TURN-POSITION, or nil.
+
+   The source's last request holds each earlier turn as it was sent, with its
+   answer before the next turn opens. A fork through an earlier turn keeps that
+   request up to its last answer, so the fork's next request reuses the cached
+   prefix. The context baseline of that turn is unknown, so it starts empty."
+  [state turn-position]
+  (let [{:keys [messages weights input-tokens completed-turn]}
+        (:entry state)
+
+        last-turn
+        (:turn-position completed-turn)]
+
+    (when (and (integer? turn-position) (integer? last-turn))
+      (cond (= turn-position last-turn) state
+            (< 0 turn-position last-turn)
+            (let [messages
+                  (vec messages)
+
+                  opening
+                  (first (keep-indexed (fn [i m]
+                                         (when (prompt/opens-turn? m (inc turn-position)) i))
+                                       messages))
+
+                  kept
+                  (some-> opening
+                          dec)
+
+                  answer
+                  (when (and kept (<= 0 kept)) (nth messages kept))
+
+                  weights
+                  (vec weights)]
+
+              (when (and (= "assistant" (:role answer))
+                         (integer? (:stable-message-count completed-turn))
+                         (<= (:stable-message-count completed-turn) kept)
+                         (= (count weights) (count messages)))
+                (let [kept-weights
+                      (subvec weights 0 kept)
+
+                      total
+                      (double (reduce + 0 weights))]
+
+                  (-> state
+                      (assoc-in [:entry :messages] (subvec messages 0 kept))
+                      (assoc-in [:entry :weights] kept-weights)
+                      (assoc-in [:entry :input-tokens]
+                                (if (pos? total)
+                                  (Math/round (/ (* (double input-tokens)
+                                                    (double (reduce + 0 kept-weights)))
+                                                 total))
+                                  input-tokens))
+                      (update-in [:entry :completed-turn]
+                                 assoc
+                                 :turn-position (long turn-position)
+                                 :assistant-message answer)
+                      (assoc-in [:standing-ctx :baseline] {})))))))))
+
 (defn- prompt-message-base
   "Project a fold-ledger change using the same canonical base as the next request."
   [base summaries canonical-messages-fn]

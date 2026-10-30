@@ -2730,6 +2730,75 @@
                    (.delete ^java.io.File file)))))))
 
 (defdescribe
+  fork-prompt-cache-state-test
+  ;; Regression (session 80230818): a fork through an earlier turn sent a new prefix and missed the
+  ;; provider cache that the source had already paid for.
+  (let [route
+        [:anthropic "claude-test"]
+
+        stable
+        [{:role "system" :content "system"}]
+
+        opening
+        (fn [turn request]
+          (first (prompt/assemble-initial-messages
+                   {:initial-user-content request
+                    :turn-context
+                    (str "session[\"turn\"] = " turn "\nsession[\"utilization\"] = {}")})))
+
+        request
+        (-> stable
+            (conj (opening 1 "one")
+                  {:role "assistant" :content "step"}
+                  {:role "user" :content "result"})
+            (conj {:role "assistant" :content "answer one"} (opening 2 "two"))
+            (conj {:role "assistant" :content "answer two"} (opening 3 "three")))
+
+        state
+        {:route route
+         :entry {:messages request
+                 :weights (vec (repeat (count request) 10))
+                 :input-tokens 900
+                 :at-ms (util/now-ms)
+                 :prompt-cache-context test-prompt-cache-context
+                 :completed-turn {:turn-position 3
+                                  :summaries []
+                                  :stable-message-count (count stable)
+                                  :assistant-message {:role "assistant" :content "answer three"}}}
+         :standing-ctx {:block "<context>exact</context>" :baseline {"turn" 3}}}
+
+        resume
+        (fn [forked turn]
+          (#'transcript/resumable-prompt-message-base
+           forked
+           (first route)
+           (second route)
+           test-prompt-cache-context
+           turn
+           []
+           stable
+           [(opening turn "fork")]))]
+
+    (it "keeps the source request through the answer of the last copied turn"
+        (let [forked
+              (transcript/fork-prompt-cache-state state 1)
+
+              base
+              (resume forked 2)]
+
+          (expect (:resumed? base))
+          (expect (= (subvec request 0 5) (subvec (:messages base) 0 5)))
+          (expect (= (opening 2 "fork") (peek (:messages base))))
+          (expect (= {} (get-in forked [:standing-ctx :baseline])))
+          (expect (= 450 (get-in forked [:entry :input-tokens])))))
+    (it "keeps the checkpoint unchanged through its own turn"
+        (expect (= state (transcript/fork-prompt-cache-state state 3))))
+    (it "drops the checkpoint when the copied turn closes without an answer"
+        (let [interrupted
+              (assoc-in state [:entry :messages 4] {:role "user" :content "interrupted"})]
+          (expect (nil? (transcript/fork-prompt-cache-state interrupted 1)))))))
+
+(defdescribe
   workspace-policy-isolation-test
   ;; Regression: two projects on one gateway shared its startup policy and health roots.
   (it

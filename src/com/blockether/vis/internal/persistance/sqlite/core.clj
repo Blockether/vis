@@ -5620,6 +5620,11 @@
                                                                iter-id-map))]}))
     new-turn-id))
 
+(defn- checkpoint-through-turn
+  "Keep the prefix checkpoint STATE only when it ends at turn TURN-POSITION."
+  [state turn-position]
+  (when (= turn-position (get-in state [:entry :completed-turn :turn-position])) state))
+
 (defn db-fork-session-at-turn!
   "Fork a session UP TO AND INCLUDING the turn whose `session_turn_soul` id is
    `:through-turn-id`, into a new independent session by default.
@@ -5646,8 +5651,12 @@
    so it stays correct as columns evolve. Required opt: `:workspace-id`. Returns
    the new SESSION SOUL UUID (for `resume-session`, which resolves sessions by
    `session_soul.id`), or nil when `:through-turn-id`
-   is not a turn of the source session (or the env has no datasource)."
-  [db-info session-id {:keys [title workspace-id through-turn-id agent]}]
+   is not a turn of the source session (or the env has no datasource).
+
+   Optional `:prompt-cache-fork` takes the source's prefix checkpoint and the last
+   copied turn position, and returns the fork's checkpoint or nil. By default the
+   fork keeps the checkpoint only when it ends at that turn."
+  [db-info session-id {:keys [title workspace-id through-turn-id agent prompt-cache-fork]}]
   (when-not workspace-id
     (throw (ex-info "db-fork-session-at-turn! requires :workspace-id (1:1 invariant)"
                     {:type :persistance/missing-workspace-id})))
@@ -5699,11 +5708,10 @@
                   fork-title
                   (or title (str (:title current) " (fork)"))
 
-                  ;; A fork through the last turn keeps the source's provider prefix
-                  ;; checkpoint when it ends at that turn: its next request then reuses
-                  ;; the cached prefix. Another cut has another history and starts fresh.
+                  ;; A fork keeps the source's provider prefix checkpoint, cut to the last
+                  ;; copied turn: its next request then reuses the cached prefix.
                   prompt-cache-state
-                  (when (and (not agent) (= (count cut) (count turns)))
+                  (when-not agent
                     (some-> (query-one! tx-info
                                         {:select [:prompt_cache_state]
                                          :from :session_state
@@ -5714,10 +5722,10 @@
                   ;; The checkpoint must describe the last copied turn, and the fork numbers
                   ;; that turn the same: the next request then follows it directly.
                   prompt-cache-blob
-                  (when (= (count cut)
-                           (:position (peek cut))
-                           (get-in prompt-cache-state [:entry :completed-turn :turn-position]))
-                    (->blob prompt-cache-state))]
+                  (when (= (count cut) (:position (peek cut)))
+                    (some-> prompt-cache-state
+                            ((or prompt-cache-fork checkpoint-through-turn) (count cut))
+                            ->blob))]
 
               (when (and agent
                          (>= (long (:n (query-one! tx-info
