@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.4.1] - 2026-10-30
+## [v0.4.2] - 2026-10-30
 
-The `v0.4.0` tag was not published: its native release checks failed.
+The `v0.4.0` and `v0.4.1` tags were not published: their release checks failed.
 
 ### Added
 - Sandbox: `VIS_RUNTIME_DIR` keeps temporary files and the control socket of each Python worker in a task directory, not in `/tmp` (#423).
@@ -40,6 +40,7 @@ The `v0.4.0` tag was not published: its native release checks failed.
 - Gateway: `/fs/image` and the SDK call `get_session_fs_image`. `GET /v1/sessions/:sid/fs/file` answers every preview with its kind: text, image or binary (#432).
 
 ### Fixed
+- Subagents: a wait that shows the new Council messages of a running child no longer fails with `kind is missing` in the Python SDK.
 - Python SDK: `vis.ui.table` refuses text columns where you write them and names the `vis.ui.table_column` fix. The test recorder refuses a live group without an id, as the engine does. Both test hosts drop the selection of rows that a clear or remove takes away (#428).
 - TUI: scrolling a turn with large Activity output and code results is fast again. A frame clips and anchors only the rows that changed.
 - Live views: a `scene` moves smoothly between ticks in the TUI too. The TUI eases each object at about 60 frames a second and paints the scene about 3.7 times faster.
