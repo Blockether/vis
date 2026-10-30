@@ -3,6 +3,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.progress :as progress]
             [com.blockether.vis.tui.render :as render]
@@ -4149,33 +4150,40 @@
         (fn [line-meta]
           (vec (distinct (keep #(get-in % [:table-target :doc :path]) line-meta))))]
 
-    (it "one picture gets a thumbnail, its file and an Open externally button"
-        (let [{:keys [text line-meta]}
-              (data :kitty (md [[1600 900]]))
+    (it
+      "one picture gets a thumbnail, its file and an Open externally button"
+      (let [{:keys [text line-meta]}
+            (data :kitty (md [[1600 900]]))
 
-              img-rows
-              (filter #(= :image (:kind %)) line-meta)
+            img-rows
+            (filter #(= :image (:kind %)) line-meta)
 
-              pad-rows
-              (filter #(= :image-pad (:kind %)) line-meta)
+            pad-rows
+            (filter #(= :image-pad (:kind %)) line-meta)
 
-              img
-              (:img (first img-rows))]
+            img
+            (:img (first img-rows))]
 
-          (expect (= 1 (count img-rows)))
-          (expect (= "/tmp/shot-1.png" (:path img)))
-          (expect (<= (long (:cols img)) 24))
-          (expect (<= (long (:rows img)) 8))
-          ;; Every reserved row carries the picture, so each one paints and opens the viewer.
-          (expect (= (dec (long (:rows img))) (count pad-rows)))
-          (expect (every? #(= "/tmp/shot-1.png" (:path (:img %))) pad-rows))
-          (expect (= ["/tmp/shot-1.png"] (targets line-meta)))
-          (expect (empty? (keep :card-title line-meta)))
-          (expect (not (str/includes? text "Thumbnail")))
-          (expect (str/includes? text "shot-1.png"))
-          (expect (str/includes? text "PNG · 1600x900 · 1.2 MB"))
-          (expect (str/includes? text
-                                 "Click a thumbnail or press Ctrl+X Shift+I to view pictures."))))
+        (expect (= 1 (count img-rows)))
+        (expect (= "/tmp/shot-1.png" (:path img)))
+        (expect (<= (long (:cols img)) 24))
+        (expect (<= (long (:rows img)) 8))
+        ;; Every reserved row carries the picture, so each one paints and opens the viewer.
+        (expect (= (dec (long (:rows img))) (count pad-rows)))
+        (expect (every? #(= "/tmp/shot-1.png" (:path (:img %))) pad-rows))
+        (expect (= ["/tmp/shot-1.png"] (targets line-meta)))
+        (expect (empty? (keep :card-title line-meta)))
+        (expect (not (str/includes? text "Thumbnail")))
+        (expect (str/includes? text "shot-1.png"))
+        (expect (str/includes? text "PNG · 1600x900 · 1.2 MB"))
+        ;; User report 2026-10-30: the hint named Ctrl+X Shift+I after C-x became
+        ;; two-level, and that key did nothing.
+        (expect (str/includes? text
+                               (str "Click a thumbnail or press "
+                                    (keymap/label-for :view-images)
+                                    " to view pictures.")))
+        (expect (str/includes? text
+                               (str (keymap/label-for :open-newest-image) " opens the newest.")))))
     (it "gives a wide and a tall picture one thumbnail size, each cut to its shape"
         (let [[wide tall] (map :img
                                (filter #(= :image (:kind %))
@@ -4216,8 +4224,11 @@
         (let [{:keys [text line-meta]} (data nil (md (repeat 3 [1200 900])))]
           (expect (str/includes? text "shot-2.png"))
           (expect (str/includes? text "PNG · 1200x900 · 1.2 MB"))
-          (expect (str/includes? text "This terminal cannot show pictures. Ctrl+X Shift+O opens"))
-          (expect (not (str/includes? text "Ctrl+X Shift+I"))
+          (expect (str/includes? text
+                                 (str "This terminal cannot show pictures. "
+                                      (keymap/label-for :open-newest-image)
+                                      " opens")))
+          (expect (not (str/includes? text (keymap/label-for :view-images)))
                   "A plain terminal has no image viewer")
           (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"] (targets line-meta)))
           (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta))))

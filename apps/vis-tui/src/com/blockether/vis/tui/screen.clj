@@ -3182,10 +3182,11 @@
   (let [images (session-images (:messages @state/app-db))]
     (cond (empty? images) (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000)
           (timg/graphical-terminal?) (open-image-viewer! screen images (dec (count images)))
-          :else (vis/notify!
-                  "This terminal cannot show pictures. Press Ctrl+X Shift+O to open the newest one."
-                  :level :info
-                  :ttl-ms 3000))))
+          :else (vis/notify! (str "This terminal cannot show pictures. Press "
+                                  (keymap/label-for :open-newest-image)
+                                  " to open the newest one.")
+                             :level :info
+                             :ttl-ms 3000))))
 
 (defn- open-newest-image!
   "C-x a o: open the newest picture of the session in the system viewer."
@@ -8805,7 +8806,9 @@
                              ;; user can configure a provider and get a session afterwards.
                              (do (vreset! startup-task ::no-provider)
                                  (vis/notify!
-                                   (str "No provider is configured yet. Press Ctrl+X o to add "
+                                   (str "No provider is configured yet. Press " (keymap/label-for
+                                                                                  :providers)
+                                        " to add "
                                         "one, and this session starts right after you save it.")
                                    :level :warn
                                    :ttl-ms nil)))
