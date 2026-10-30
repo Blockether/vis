@@ -637,9 +637,12 @@ export function CopyChip({
       ? `min-w-11 border-transparent bg-transparent mouse:min-w-7 sm:min-w-[6ch] ${
           isCopied ? 'text-ok' : 'text-white enabled:hover:text-accent-ink'
         }`
-      : `min-w-[6ch] bg-button ${
-          isCopied ? 'border-ok text-ok' : 'border-dialog-edge text-button-foreground'
+      : `min-w-[6ch] bg-button text-button-foreground ${
+          isCopied ? 'border-ok' : error ? 'border-err' : 'border-dialog-edge'
         }`;
+  // On the filled face, ok and err ink fall under 3:1 in light themes (1.4:1 in
+  // tokyonight-day), so the state shows in the edge and the word, not in the ink.
+  const markInk = density === 'compact' ? { ok: 'text-ok', err: 'text-err-ink' } : { ok: '', err: '' };
   return (
     <button
       type="button"
@@ -653,9 +656,9 @@ export function CopyChip({
       {isCopying ? (
         <Spinner />
       ) : isCopied ? (
-        <CheckIcon className="size-3 text-ok" />
+        <CheckIcon className={`size-3 ${markInk.ok}`} />
       ) : error ? (
-        <AlertIcon className="size-3 text-err-ink" />
+        <AlertIcon className={`size-3 ${markInk.err}`} />
       ) : (
         <CopyIcon className="size-3 opacity-60" />
       )}

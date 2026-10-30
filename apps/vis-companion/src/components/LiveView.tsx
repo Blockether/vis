@@ -159,6 +159,9 @@ const LOG_PAGE = 200;
  */
 const LOG_READ_PAGE = 2000;
 
+/** A pane this close to its end still follows: zoom and fractional pixels round scroll positions. */
+const FOLLOW_SLACK_PX = 4;
+
 /** A value at least this long is an identifier rather than a figure, so it gets a copy action. */
 const LONG_VALUE = 24;
 
@@ -548,7 +551,9 @@ function LogRows({
   const searchRequest = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
   const output = useRef<HTMLPreElement>(null);
-  const [isFollowing, setIsFollowing] = useState(true);
+  // The pane follows while it is scrolled to its end: scrolling up is the only pause.
+  const isFollowing = useRef(true);
+  const [copyError, setCopyError] = useState('');
   useEffect(
     () => () => {
       searchRequest.current += 1;
@@ -662,14 +667,14 @@ function LogRows({
     };
   }, [hasLoad, node.id, windowStart, readAttempt]);
 
-  // FOLLOW keeps the newest line in sight as lines arrive; a paused pane stays where
-  // the reader left it. Search results are a fixed page, so they never follow.
+  // FOLLOW keeps the newest line in sight as lines arrive; a pane the reader scrolled
+  // up stays where the reader left it. Search results are a fixed page, so they never follow.
   const lineCount = node.lines.length + (head?.lines.length ?? 0);
   useEffect(() => {
     const pane = output.current;
-    if (!isFollowing || search || !pane) return;
+    if (!isFollowing.current || search || !pane) return;
     pane.scrollTop = pane.scrollHeight;
-  }, [isFollowing, search, lineCount]);
+  }, [search, lineCount]);
 
   return (
     <div className="min-w-0 space-y-2">
@@ -696,31 +701,30 @@ function LogRows({
             }
           }}
         />
-        {/* The actions wrap as ONE group: a copy icon alone on a line read as a stray mark. */}
+        {/* The actions wrap as ONE group. Copy wears the filled face, Search the outline. */}
         <span className="flex shrink-0 items-center gap-2">
-        <Button type="submit" variant="secondary" density="panel">
-          Search
-        </Button>
-        {!search && (
-          <Button
-            variant="secondary"
-            density="panel"
-            onClick={() => setIsFollowing((follow) => !follow)}
-          >
-            {isFollowing ? 'Pause' : 'Follow'}
+          <Button type="submit" variant="secondary" density="panel">
+            Search
           </Button>
-        )}
-        <CopyChip
-          label="Copy output"
-          value={async () =>
-            (search
-              ? (result?.page.lines ?? [])
-              : (head?.lines ?? []).concat(node.lines)
-            ).join('\n')
-          }
-        />
+          <CopyChip
+            label="Copy"
+            onError={setCopyError}
+            value={async () =>
+              (search
+                ? (result?.page.lines ?? [])
+                : (head?.lines ?? []).concat(node.lines)
+              ).join('\n')
+            }
+          >
+            Copy
+          </CopyChip>
         </span>
       </form>
+      {copyError && (
+        <p role="alert" className="break-words font-mono text-ui text-err">
+          {`Could not copy the log. ${copyError}`}
+        </p>
+      )}
       {search && (
         <div className="space-y-2">
           <p role="status" className="break-words font-mono text-ui text-dialog-hint">
@@ -790,6 +794,11 @@ function LogRows({
         role="region"
         tabIndex={0}
         aria-label={`${node.label || 'Output'} output`}
+        onScroll={(event) => {
+          if (search) return;
+          const pane = event.currentTarget;
+          isFollowing.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight <= FOLLOW_SLACK_PX;
+        }}
         onKeyDown={(event) => {
           if (event.key === '/') {
             event.preventDefault();

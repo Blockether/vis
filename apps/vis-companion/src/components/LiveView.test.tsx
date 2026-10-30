@@ -448,6 +448,89 @@ describe('a log the panel shows whole', () => {
   });
 });
 
+// Regression #431: the log toolbar had a Pause toggle and an icon-only copy mark.
+describe('the log toolbar', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const log = (lines: string[], total = lines.length): LiveView =>
+    withNode(opened(), {
+      id: 'tail',
+      type: 'log',
+      label: 'Output',
+      lines,
+      window_lines: 2000,
+      total_lines: total,
+      default_expanded: true,
+    });
+
+  it('copies the whole retained log, whitespace kept, from a labelled Copy and no Pause', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const load = vi.fn(async (_node: string, from: number, limit: number) => ({
+      node_id: 'tail',
+      from,
+      lines: Array.from({ length: limit }, (_, at) => `line ${from + at}`),
+      total: 5,
+      matched: 5,
+      line_numbers: Array.from({ length: limit }, (_, at) => from + at + 1),
+    }));
+    paint({ view: log(['  indented\tcell  ', '', 'end'], 5), load });
+    await waitFor(() => expect(document.body.innerHTML).toContain('line 1'));
+
+    expect(screen.queryByRole('button', { name: /^(Pause|Follow)$/ })).toBeNull();
+    const copy = screen.getByRole('button', { name: 'Copy' });
+    expect(copy).toHaveTextContent('Copy');
+    fireEvent.click(copy);
+
+    expect(await screen.findByRole('button', { name: 'Copied' })).toHaveTextContent('Copied');
+    expect(writeText).toHaveBeenCalledWith('line 0\nline 1\n  indented\tcell  \n\nend');
+  });
+
+  it('says a failed copy beside the log', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('Clipboard access denied.'));
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    paint({ view: log(['only line']) });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not copy the log. Clipboard access denied.',
+    );
+  });
+
+  // Without Pause, the reader's scroll position is the only pause.
+  it('follows new lines at the end and keeps the place of a reader who scrolled up', () => {
+    const view = render(<LiveViewPanel view={log(['one'])} />);
+    const pane = screen.getByRole('region', { name: 'Output output' });
+    let height = 500;
+    let top = 0;
+    Object.defineProperty(pane, 'clientHeight', { configurable: true, get: () => 100 });
+    Object.defineProperty(pane, 'scrollHeight', { configurable: true, get: () => height });
+    Object.defineProperty(pane, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        top = value;
+      },
+    });
+
+    view.rerender(<LiveViewPanel view={log(['one', 'two'])} />);
+    expect(top).toBe(500);
+
+    top = 120;
+    fireEvent.scroll(pane);
+    height = 600;
+    view.rerender(<LiveViewPanel view={log(['one', 'two', 'three'])} />);
+    expect(top).toBe(120);
+
+    top = 500;
+    fireEvent.scroll(pane);
+    height = 700;
+    view.rerender(<LiveViewPanel view={log(['one', 'two', 'three', 'four'])} />);
+    expect(top).toBe(700);
+  });
+});
+
 describe('stopping the run from the phone', () => {
   it('arms the stop, takes the comment, and sends it with the interrupt', () => {
     const onInterrupt = vi.fn();
