@@ -638,16 +638,12 @@
                 "type": "integer",
                 "minimum": 1
               },
-              "kind": {
-                "type": "string"
-              },
               "content": {
                 "type": "string"
               }
             },
             "required": [
               "entry_id",
-              "kind",
               "content"
             ],
             "additionalProperties": false

@@ -1866,7 +1866,9 @@
                 @publisher
                 (expect (< (- (System/currentTimeMillis) started) 15000))
                 (expect (= [{"entry_id" 7 "content" "tokenize drops tabs"}] (get record "messages"))
-                        (pr-str record))))))))
+                        (pr-str record))
+                ;; Release run 41120931788: the SDK refused this record, as messages had no kind.
+                (expect (document/valid-json? "agents" "record" record) (pr-str record))))))))
     (it "does not end the wait for a child that ended before it"
         (let [{:keys [db leader env done busy]}
               (team)
