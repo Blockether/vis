@@ -7611,7 +7611,7 @@
                                                  (= :help id)
                                                  (assoc :ctrl-key keymap/sidebar-help-key)))
                                              keymap/sidebar-commands)
-                                       {:enter-label "run"})))
+                                       {:enter-label "run" :min-width 64})))
 
 (defn- project-sidebar-key!
   "Apply a rail action, returning whether it consumed the key. `keys!` opens the
