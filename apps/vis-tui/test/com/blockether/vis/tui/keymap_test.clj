@@ -111,10 +111,12 @@
                ;; Regression, issue: the palette used to buy a whole "Everything else"
                ;; heading of its own. It is the first top-level command, never a group.
                (it "the palette is a top-level command, not a group"
-                   (let [commands (first (filter #(= "Commands" (:title %))
-                                                 (:groups (keymap/prefix-spec {}))))]
-                     (expect (= :show-palette (:id (first (:items commands)))))
-                     (expect (= (str keymap/prefix-palette-key) (:key (first (:items commands)))))))
+                   (let [items (mapcat :items (:groups (keymap/prefix-spec {})))
+                         group-ids (set (map :id keymap/prefix-groups))
+                         palette (first (remove #(group-ids (:id %)) items))]
+
+                     (expect (= :show-palette (:id palette)))
+                     (expect (= (str keymap/prefix-palette-key) (:key palette)))))
                (it "the top band lists Extensions only when an extension binds a key"
                    (expect (not (contains? (ids {} nil) :extensions)))
                    (expect (nil? (keymap/prefix-group-for \e))))

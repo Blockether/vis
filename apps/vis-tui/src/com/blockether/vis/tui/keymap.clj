@@ -82,11 +82,14 @@
   "The C-x groups, in band order. C-x and a group key open the band of that group;
    the next key runs one of its verbs. Two levels give each group its own letters,
    so the C-x keys no longer run out. The Extensions group shows only when an
-   extension binds a key."
-  [{:id :session :key \s :title "Session"} {:id :model :key \m :title "Model"}
-   {:id :view :key \b :title "View"} {:id :attachments :key \a :title "Attachments"}
-   {:id :voice :key \v :title "Voice"} {:id :queue :key \q :title "Queue"}
-   {:id :extensions :key \e :title "Extensions"}])
+   extension binds a key. `:description` is the dim text of the group row."
+  [{:id :session :key \s :title "Session" :description "Switch, start, fork and file sessions"}
+   {:id :model :key \m :title "Model" :description "Model, reasoning and answer length"}
+   {:id :view :key \b :title "View" :description "Search, folds, Zen mode and panels"}
+   {:id :attachments :key \a :title "Attachments" :description "Attach files and look at pictures"}
+   {:id :voice :key \v :title "Voice" :description "Voice input and spoken answers"}
+   {:id :queue :key \q :title "Queue" :description "Send or edit queued messages"}
+   {:id :extensions :key \e :title "Extensions" :description "Keys that extensions add"}])
 
 (def ^:private group-by-id (into {} (map (juxt :id identity)) prefix-groups))
 
@@ -100,54 +103,178 @@
    without `:group` sits on the top level, so C-x and its key run it. `:key` is
    pressed as a PLAIN character: a Ctrl'd key is not reliable, because `Ctrl+S` and
    `Ctrl+Q` are tty flow control and `Ctrl+M` is Enter. Keys are case-sensitive
-   inside a group: an exact match wins, then the lower-case key.
+   inside a group: an exact match wins, then the lower-case key. `:description` is
+   the dim text that the band shows after the label.
 
    An optional `:show-when` tag gates the band row to the context where the verb can
    act (`verb-available?`). The chord, the palette and help still list every verb."
-  [{:action :toggle-help :key \h :label "help"}
-   {:action :new-session :key \n :label "new session" :group :session}
-   {:action :show-sessions :key \s :label "switch session" :group :session}
+  [{:action :toggle-help :key \h :label "help" :description "Show every key binding"}
+   {:action :new-session
+    :key \n
+    :label "new session"
+    :group :session
+    :description "Start an empty session"}
+   {:action :show-sessions
+    :key \s
+    :label "switch session"
+    :group :session
+    :description "Open another session"}
    ;; C-x s Backspace and C-x s Delete also delete (`input/resolve-prefix-key`).
-   {:action :delete-session :key \d :label "delete session" :group :session}
-   {:action :archive-session :key \a :label "archive session" :group :session}
-   {:action :fork-session :key \f :label "fork session" :group :session :show-when :has-turns}
-   {:action :fork-at-turn :key \t :label "fork at turn" :group :session :show-when :has-turns}
+   {:action :delete-session
+    :key \d
+    :label "delete session"
+    :group :session
+    :description "Delete this session after you confirm"}
+   {:action :archive-session
+    :key \a
+    :label "archive session"
+    :group :session
+    :description "Archive this session, or restore it"}
+   {:action :fork-session
+    :key \f
+    :label "fork session"
+    :group :session
+    :show-when :has-turns
+    :description "Copy this session into a new one"}
+   {:action :fork-at-turn
+    :key \t
+    :label "fork at turn"
+    :group :session
+    :show-when :has-turns
+    :description "Copy this session up to a turn that you choose"}
    ;; BLO-167: file the session under one of its project's groups.
-   {:action :session-group :key \m :label "move to group" :group :session}
-   {:action :session-metrics :key \u :label "session metrics" :group :session}
-   {:action :cycle-model :key \m :label "next model" :group :model}
-   {:action :pick-model :key \c :label "choose model" :group :model}
-   {:action :pick-reasoning :key \r :label "reasoning" :group :model}
+   {:action :session-group
+    :key \m
+    :label "move to group"
+    :group :session
+    :description "File this session under a project group"}
+   {:action :session-metrics
+    :key \u
+    :label "session metrics"
+    :group :session
+    :description "Show the token use and budgets of this session"}
+   {:action :cycle-model
+    :key \m
+    :label "next model"
+    :group :model
+    :description "Use the next configured model"}
+   {:action :pick-model
+    :key \c
+    :label "choose model"
+    :group :model
+    :description "Choose a model from a list"}
+   {:action :pick-reasoning
+    :key \r
+    :label "reasoning"
+    :group :model
+    :description "Set the reasoning effort"}
    ;; Fast mode acts only on OpenAI Codex, so other sessions do not see it (#333).
-   {:action :toggle-codex-fast :key \f :label "fast mode" :group :model :show-when :codex}
-   {:action :cycle-verbosity :key \l :label "length" :group :model}
-   {:action :toggle-thinking-summary :key \t :label "thinking summary" :group :model}
-   {:action :providers :key \p :label "providers" :group :model}
-   {:action :search-open :key \f :label "search" :group :view}
-   {:action :recenter :key \j :label "jump to bottom" :group :view}
+   {:action :toggle-codex-fast
+    :key \f
+    :label "fast mode"
+    :group :model
+    :show-when :codex
+    :description "Turn Codex fast mode on or off"}
+   {:action :cycle-verbosity
+    :key \l
+    :label "length"
+    :group :model
+    :description "Make answers shorter or longer"}
+   {:action :toggle-thinking-summary
+    :key \t
+    :label "thinking summary"
+    :group :model
+    :description "Show or hide the summary of model thinking"}
+   {:action :providers
+    :key \p
+    :label "providers"
+    :group :model
+    :description "Add model providers and sign in"}
+   {:action :search-open
+    :key \f
+    :label "search"
+    :group :view
+    :description "Find text in this conversation"}
+   {:action :recenter
+    :key \j
+    :label "jump to bottom"
+    :group :view
+    :description "Go to the newest message"}
    ;; `z` = vim's fold prefix: the jump-label overlay toggles folds.
-   {:action :toggle-detail-labels :key \z :label "label folds" :group :view}
+   {:action :toggle-detail-labels
+    :key \z
+    :label "label folds"
+    :group :view
+    :description "Put a key on each fold, then press it to jump"}
    ;; Zen mode shows only the transcript and the prompt.
-   {:action :toggle-zen-mode :key \Z :label "zen mode" :group :view}
-   {:action :live-panel :key \p :label "side panel" :group :view :show-when :has-panel}
-   {:action :switch-project :key \w :label "project sidebar" :group :view}
-   {:action :toggle-agent-dock :key \a :label "agent details" :group :view}
-   {:action :pick-file :key \a :label "attach file" :group :attachments}
-   {:action :focus-attachments :key \i :label "inspect attachments" :group :attachments}
+   {:action :toggle-zen-mode
+    :key \Z
+    :label "zen mode"
+    :group :view
+    :description "Show only the transcript and the prompt"}
+   {:action :live-panel
+    :key \p
+    :label "side panel"
+    :group :view
+    :show-when :has-panel
+    :description "Show or hide the side panel view"}
+   {:action :switch-project
+    :key \w
+    :label "project sidebar"
+    :group :view
+    :description "Show or hide the project sidebar"}
+   {:action :toggle-agent-dock
+    :key \a
+    :label "agent details"
+    :group :view
+    :description "Show or hide the subagent details"}
+   {:action :pick-file
+    :key \a
+    :label "attach file"
+    :group :attachments
+    :description "Add files to the next message"}
+   {:action :focus-attachments
+    :key \i
+    :label "inspect attachments"
+    :group :attachments
+    :description "List, preview and remove attachments"}
    ;; Only a graphical terminal can show the image viewer.
-   {:action :view-images :key \v :label "view images" :group :attachments :show-when :image-viewer}
+   {:action :view-images
+    :key \v
+    :label "view images"
+    :group :attachments
+    :show-when :image-viewer
+    :description "Show the session pictures in the terminal"}
    ;; The system viewer works on every terminal.
    {:action :open-newest-image
     :key \o
     :label "open picture"
     :group :attachments
-    :show-when :has-images} {:action :toggle-voice-recording :key \v :label "record" :group :voice}
+    :show-when :has-images
+    :description "Open the newest picture in the system viewer"}
+   {:action :toggle-voice-recording
+    :key \v
+    :label "record"
+    :group :voice
+    :description "Start or stop voice input"}
    ;; The conversation MODE speaks the answers of this conversation, and only this one.
-   {:action :toggle-voice-conversation :key \c :label "conversation" :group :voice}
+   {:action :toggle-voice-conversation
+    :key \c
+    :label "conversation"
+    :group :voice
+    :description "Speak the answers of this conversation"}
    ;; Mark every queued message for the running turn's next step.
-   {:action :queue-send-all-now :key \s :label "send all now" :group :queue}
+   {:action :queue-send-all-now
+    :key \s
+    :label "send all now"
+    :group :queue
+    :description "Give every queued message to the running turn"}
    ;; The keys act on the Queued block until Esc (`input/queue-focus-event`).
-   {:action :queue-edit :key \e :label "edit queued" :group :queue}])
+   {:action :queue-edit
+    :key \e
+    :label "edit queued"
+    :group :queue
+    :description "Edit, move or remove queued messages"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
@@ -620,9 +747,13 @@
   (filterv #(and (:key %) (= group (:group %)) (verb-available? db %)) (current-prefix-commands)))
 
 (defn- band-row
-  "The band row of C-x command `cmd`."
-  [{:keys [action key label]}]
-  {:key (str key) :type :action :id action :label label})
+  "The band row of C-x command `cmd`. An extension slash binding has no description,
+   so its row shows the command line that it runs."
+  [{:keys [action key label description command]}]
+  (let [text (or description command)]
+    (cond-> {:key (str key) :type :action :id action :label label}
+      (not (str/blank? text))
+      (assoc :description text))))
 
 (defn- visible-subgroups
   "The Extensions subgroups that have a command to show in `db`."
@@ -638,7 +769,7 @@
 (defn prefix-spec
   "PURE: the `transient/run!` spec of a C-x band in `db`. Without `group`, the top
    band lists the groups that have a verb to show, then the palette and the
-   top-level verbs. With `group`, the band lists the verbs of that group. Queue also
+   top-level verbs, in one untitled group. With `group`, the band lists the verbs of that group. Queue also
    lists its row digits as one `1` row, and Extensions also lists its subgroups.
 
    Rows are display-only: the band paints them and hands the raw keystroke back
@@ -646,21 +777,23 @@
    the chord that actually fires."
   ([db]
    {:title (str (chord prefix-key) " — vis commands")
-    :groups
-    [{:title "Groups"
-      :items
-      (into []
-            (keep
-              (fn [{:keys [id key title]}]
-                (when (group-visible? db id)
-                  {:key (str key) :type :action :id id :label (str (str/lower-case title) "…")})))
-            prefix-groups)}
-     {:title "Commands"
-      :items
-      (into
-        [{:key (str prefix-palette-key) :type :action :id :show-palette :label "command palette…"}]
-        (map band-row)
-        (available-prefix-commands db nil))}]})
+    ;; One untitled group keeps the band short: a band tall enough to reach the
+    ;; header hides every picture of the transcript.
+    :groups [{:items (into []
+                           (concat (keep (fn [{:keys [id key title description]}]
+                                           (when (group-visible? db id)
+                                             {:key (str key)
+                                              :type :action
+                                              :id id
+                                              :label (str (str/lower-case title) "…")
+                                              :description description}))
+                                         prefix-groups)
+                                   [{:key (str prefix-palette-key)
+                                     :type :action
+                                     :id :show-palette
+                                     :label "command palette…"
+                                     :description "Search and run any command"}]
+                                   (map band-row (available-prefix-commands db nil))))}]})
   ([db group]
    (let [{:keys [title]} (group-info group)]
      {:title (str (group-chord group) " — " title)

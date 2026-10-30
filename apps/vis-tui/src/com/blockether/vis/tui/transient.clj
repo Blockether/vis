@@ -182,8 +182,14 @@
    with an ellipsis."
   1)
 
+(def desc-min-w
+  "The narrowest description column still painted. Below it, the row drops the
+   description and keeps the whole label."
+  8)
+
 (defn pane-columns
-  "PURE: `{:key-w :label-w}` for ONE pane's display rows — that pane's OWN grid.
+  "PURE: `{:key-w :label-w :desc-w}` for ONE pane's display rows — that pane's OWN
+   grid. `:desc-w` is the widest `:description`, 0 when no item has one.
 
    A pane measures ITSELF: a category of long verbs never forces its label
    column onto the narrow category beside it, which is what left a wide band
@@ -192,7 +198,8 @@
   [pane]
   (let [items (keep :item pane)]
     {:key-w (reduce max 0 (map #(long (p/display-width (key-glyph %))) items))
-     :label-w (reduce max 0 (map #(long (p/display-width (str (:label %)))) items))}))
+     :label-w (reduce max 0 (map #(long (p/display-width (str (:label %)))) items))
+     :desc-w (reduce max 0 (map #(long (p/display-width (str (:description %)))) items))}))
 
 (defn columns
   "PURE: `{:key-w :label-w}` for the whole spec — the single column's grid, and
@@ -353,9 +360,10 @@
   "PURE: the columns ONE pane needs for its own content — the lead, its widest
    heading, and its own key/label grid with the indent, the gutter and the
    [[pane-trail]] it is painted with. Measuring the PANE (not the spec) is what
-   lets a band stand a narrow category beside a wide one."
+   lets a band stand a narrow category beside a wide one. A description column
+   adds its gap and its widest text."
   ^long [pane]
-  (let [{:keys [key-w label-w]}
+  (let [{:keys [key-w label-w desc-w]}
         (pane-columns pane)
 
         head-w
@@ -375,6 +383,7 @@
             (long key-w)
             (long key-gap)
             (long label-w)
+            (if (pos? (long desc-w)) (+ (long key-gap) (long desc-w)) 0)
             (long pane-trail))
          (+ (long pane-lead) (long head-w)))))
 
@@ -712,14 +721,16 @@
       :by-key (index-by-key spec)})))
 
 (defn- draw-item!
-  "One transient row as a GRID cell: key glyph column, description column, and the
-   git-argument column.
+  "One transient row as a GRID cell: key glyph column, label column, and then the
+   git-argument column of a flag or the dim `:description` of the item.
 
    A FLAG (`:switch` / `:option`) reads dim while OFF and turns BOLD `dialog-fg`
    with its argument accented while ON, so pressing its key visibly toggles it.
    A COMMAND (`:action`) always shows a BOLD accented key with its description in
-   full `dialog-fg` — a command is never `off`."
-  [g left row inner-w {:keys [key-w label-w]} {:keys [type label] :as it} active? value]
+   full `dialog-fg` — a command is never `off`. A description starts past the
+   widest label and is cut with an ellipsis at the pane edge; it is dropped when
+   fewer than [[desc-min-w]] columns are left."
+  [g left row inner-w {:keys [key-w label-w]} {:keys [type label description] :as it} active? value]
   (let [action?
         (= :action type)
 
@@ -760,9 +771,15 @@
             (cond (<= (+ col w) (- (long right) (long pane-trail))) col
                   (<= (+ inline w) (- (long right) (long pane-trail))) inline)))
 
+        ;; Description column: past the widest label, as wide as the pane allows.
+        desc-x
+        (when (and (not argtxt) (not (str/blank? (str description))))
+          (let [col (+ (long lx) (long label-w) (long key-gap))]
+            (when (>= (- (long right) (long pane-trail) col) (long desc-min-w)) col)))
+
         shown
         (p/ellipsize label-txt
-                     (long (max 0 (- (long (or arg-x right)) (long lx) (long pane-trail)))))
+                     (long (max 0 (- (long (or arg-x desc-x right)) (long lx) (long pane-trail)))))
 
         fg
         (if (or action? active?) t/dialog-fg t/dialog-hint)]
@@ -780,6 +797,12 @@
       (if active?
         (p/styled g [p/BOLD] (p/put-str! g arg-x row argtxt))
         (p/put-str! g arg-x row argtxt)))
+    (when desc-x
+      (p/set-colors! g t/dialog-hint t/dialog-bg)
+      (p/put-str! g
+                  desc-x
+                  row
+                  (p/ellipsize (str description) (- (long right) (long pane-trail) (long desc-x)))))
     (p/set-colors! g t/dialog-fg t/dialog-bg)))
 
 (defn draw-rule!

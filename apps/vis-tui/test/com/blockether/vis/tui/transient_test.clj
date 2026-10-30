@@ -115,18 +115,38 @@
           (expect (= :action (:kind r)))
           (expect (= :push (:id (:item r))))))))
 
-(defdescribe transient-columns-test
-             (it "the argument cell names the git flag, with an option's value inline"
-                 (expect (= "(--no-verify)" (tr/item-arg {:type :switch :arg "--no-verify"} nil)))
-                 (expect (= "(%topic=fix)" (tr/item-arg {:type :option :arg "%topic="} "fix")))
-                 (expect (nil? (tr/item-arg {:type :action :arg "--nope"} nil)))
-                 (expect (nil? (tr/item-arg {:type :switch} nil)))
-                 ;; A credential rides the transient WITHOUT ever being echoed.
-                 (expect (= "(••••••)" (tr/item-arg {:type :option :secret? true} "sk-live-123")))
-                 (expect (nil? (tr/item-arg {:type :option :secret? true} ""))))
-             (it "one shared key + description column aligns every group into a grid"
-                 (expect (= {:key-w 2 :label-w (count "Amend last commit")}
-                            (tr/columns commit-transient-spec)))))
+(defdescribe
+  transient-columns-test
+  (it "the argument cell names the git flag, with an option's value inline"
+      (expect (= "(--no-verify)" (tr/item-arg {:type :switch :arg "--no-verify"} nil)))
+      (expect (= "(%topic=fix)" (tr/item-arg {:type :option :arg "%topic="} "fix")))
+      (expect (nil? (tr/item-arg {:type :action :arg "--nope"} nil)))
+      (expect (nil? (tr/item-arg {:type :switch} nil)))
+      ;; A credential rides the transient WITHOUT ever being echoed.
+      (expect (= "(••••••)" (tr/item-arg {:type :option :secret? true} "sk-live-123")))
+      (expect (nil? (tr/item-arg {:type :option :secret? true} ""))))
+  (it "one shared key + description column aligns every group into a grid"
+      (expect (= {:key-w 2 :label-w (count "Amend last commit") :desc-w 0}
+                 (tr/columns commit-transient-spec))))
+  ;; User report 2026-10-30: the C-x band rows had no descriptions.
+  (it "a description follows the label, and a narrow pane drops it before it cuts the label"
+      (let [spec
+            {:groups [{:title "Attachments"
+                       :items [{:key "a"
+                                :type :action
+                                :id :attach
+                                :label "attach file"
+                                :description "Add files to the next message"}]}]}
+
+            wide
+            (str/join "\n" (transient-grid! spec 0 78 28))
+
+            narrow
+            (str/join "\n" (transient-grid! spec 0 24 28))]
+
+        (expect (str/includes? wide "attach file  Add files to the next message"))
+        (expect (str/includes? narrow "attach file"))
+        (expect (not (str/includes? narrow "Add"))))))
 
 (defdescribe
   transient-render-test

@@ -50,7 +50,9 @@
   "Keys only a valued item may carry: how its value is asked for and echoed."
   #{:prompt :mask :secret?})
 
-(def item-keys "Every key one item may carry." (into #{:key :type :id :label :arg} value-keys))
+(def item-keys
+  "Every key one item may carry."
+  (into #{:key :type :id :label :arg :description} value-keys))
 
 (def group-keys "Every key one group may carry." #{:title :items})
 
@@ -94,6 +96,8 @@
         (nil? (:id item)) "item needs a non-nil :id"
         (not (string? (:label item))) "item :label must be a string"
         (not (optional-valid? item :arg non-blank-string?)) "item :arg must be non-blank text"
+        (not (optional-valid? item :description non-blank-string?))
+        "item :description must be non-blank text"
         (not (optional-valid? item :prompt non-blank-string?)) "item :prompt must be non-blank text"
         (not (optional-valid? item :mask char?)) "item :mask must be one character"
         (not (optional-valid? item :secret? boolean?)) "item :secret? must be boolean"

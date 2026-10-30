@@ -6,6 +6,7 @@
             [com.blockether.vis.tui.composer-attachments :as composer]
             [com.blockether.vis.tui.attachments :as attachments]
             [com.blockether.vis.tui.file-picker :as file-picker]
+            [com.blockether.vis.tui.format :as fmt]
             [com.blockether.vis.tui.paths :as paths])
   (:import [java.io File]
            [java.net URI]))
@@ -99,22 +100,77 @@
     {:handled? false :source :picker}
     (intake-files capabilities current :picker selected-paths)))
 
-(defn picker-files
-  "Filter file-picker rows to readable files whose sniffed type appears in the live
-   gateway contract. Returns canonical paths in picker rank order."
+(defn- type-label
+  "Short file type for a picker row: the extension in capitals, else the media subtype."
+  [media-type ^File f]
+  (or (some-> (re-find #"\.([A-Za-z0-9]{1,8})$" (.getName f))
+              second
+              str/upper-case)
+      (some-> (second (str/split (str media-type) #"/"))
+              str/upper-case)
+      "FILE"))
+
+(defn- label-base
+  "The canonical `root` with a trailing separator, the prefix that `row-label` cuts."
+  [root]
+  (try (when-let [^String dir (not-empty (str root))]
+         (str (.getCanonicalPath (File. dir)) File/separator))
+       (catch Throwable _ nil)))
+
+(defn- row-label
+  "The picker label of `f`: relative to `base` inside it, else the path with `~`."
+  [base ^File f]
+  (let [path (.getCanonicalPath f)]
+    (if (and base (str/starts-with? path base))
+      (subs path (count base))
+      (paths/abbreviate-home path))))
+
+(defn- supported-item
+  "The picker row of readable file `f`, or nil when the gateway contract does not
+   take its sniffed media type."
+  [contract base ^File f]
+  (let [media-type (attachments/sniff-file-mime f)]
+    (when (contains? (:media-types contract) media-type)
+      {:id (.getCanonicalPath f)
+       :label (row-label base f)
+       :hint (str (type-label media-type f) " · " (fmt/format-bytes (.length f)))})))
+
+(defn picker-items
+  "Picker rows of the file-picker `rows` that are readable files of a type in the
+   live gateway contract, in rank order. A row is `{:id path :label :hint}`: `:id`
+   is the canonical path, `:label` the path relative to the workspace and `:hint`
+   the type and size."
   [capabilities workspace-root rows]
   (if-let [contract (composer/attachment-contract capabilities)]
     (into []
           (comp (map #(if (map? %) (:path %) %))
                 (keep #(token-file workspace-root (str %)))
-                (filter #(contains? (:media-types contract) (attachments/sniff-file-mime %)))
-                (map #(.getCanonicalPath ^File %))
+                (keep (let [base (label-base workspace-root)]
+                        #(supported-item contract base %)))
                 (distinct))
           rows)
     []))
 
-(defn workspace-picker-files
-  "Gateway-supported files from the workspace's pooled fuzzy-file index."
+(defn workspace-picker-items
+  "Picker rows for gateway-supported files from the workspace's fuzzy-file index."
   [capabilities workspace-root]
-  (try (picker-files capabilities workspace-root (file-picker/fuzzy-file-rows "" {:limit 1000}))
+  (try (picker-items capabilities workspace-root (file-picker/fuzzy-file-rows "" {:limit 1000}))
        (catch Throwable _ [])))
+
+(defn typed-path-items
+  "The picker row of the file that `query` names as a path, or []. A path starts
+   with `/`, `~`, `./`, `../` or `file://`, so it can name a file outside the
+   workspace. Ordinary search text gives []."
+  [capabilities workspace-root query]
+  (let [q
+        (str/trim (str query))
+
+        contract
+        (composer/attachment-contract capabilities)
+
+        f
+        (when (and contract (re-find #"^(/|~|\./|\.\./|file://)" q)) (token-file workspace-root q))]
+
+    (if-let [item (when f (supported-item contract (label-base workspace-root) f))]
+      [item]
+      [])))

@@ -109,7 +109,7 @@
 
       (try
         (spit pdf "%PDF-1.7\n")
-        (doseq [[keys expected-count] [[[\space :enter] 1] [[:esc] 0]]]
+        (doseq [[keys expected-count] [[[:tab :enter] 1] [[:esc] 0]]]
           (let [db (atom {:session {:id sid}
                           :workspace {"root" (.getCanonicalPath dir)}
                           :workspace/root (.getCanonicalPath dir)
@@ -140,7 +140,7 @@
                   (expect (nil? (:error capture)))
                   (expect (= [["GET" (str "/v1/sessions/" sid "/suggest?kind=file&q=&limit=1000")]]
                              @requests))
-                  (expect (str/includes? (cap/frame-text capture) "Space toggle"))
+                  (expect (str/includes? (cap/frame-text capture) "Tab mark"))
                   (expect (str/includes? (cap/frame-text capture) "report.pdf"))
                   (expect (empty? @notices))
                   (expect (= expected-count (count (:attachments @db))))

@@ -228,7 +228,33 @@
                        (write-bytes! dir "notes.txt" (.getBytes "plain text" "UTF-8"))]
 
                    (expect (= [(.getCanonicalPath pdf)]
-                              (intake/picker-files capabilities
-                                                   (.getPath dir)
-                                                   [{:path "report.bin"} {:path "notes.txt"}])))
-                   (expect (= [] (intake/picker-files {} (.getPath dir) [{:path "report.bin"}]))))))
+                              (mapv :id
+                                    (intake/picker-items capabilities
+                                                         (.getPath dir)
+                                                         [{:path "report.bin"}
+                                                          {:path "notes.txt"}]))))
+                   (expect (= [] (intake/picker-items {} (.getPath dir) [{:path "report.bin"}]))))))
+
+;; User report 2026-10-30: the C-x a a picker could not attach a file outside the
+;; workspace.
+(defdescribe
+  typed-path-picker-row
+  (it "a typed path outside the workspace gives its file as a row"
+      (let [outside
+            (temp-dir)
+
+            png
+            (png-file! outside "shot.png")
+
+            workspace
+            (temp-dir)]
+
+        (expect (= [(.getCanonicalPath png)]
+                   (mapv
+                     :id
+                     (intake/typed-path-items capabilities (.getPath workspace) (.getPath png)))))))
+  (it "search text and an unsupported file give no row"
+      (let [dir (temp-dir)]
+        (write-bytes! dir "notes.txt" (.getBytes "plain text" "UTF-8"))
+        (expect (= [] (intake/typed-path-items capabilities (.getPath dir) "shot")))
+        (expect (= [] (intake/typed-path-items capabilities (.getPath dir) "./notes.txt"))))))

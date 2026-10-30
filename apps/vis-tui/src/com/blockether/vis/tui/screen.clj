@@ -2801,21 +2801,34 @@
           (state/dispatch [:update-input (input/paste-text (:input db) text)]))))))
 
 (defn- pick-attachments!
+  "C-x a a: a searchable file list. Type to filter the workspace files, or type a
+   path such as `~/Downloads/a.png` for a file outside it. Tab marks several files;
+   Enter attaches the marked files, else the selected one."
   [screen]
   (let [db @state/app-db]
     (binding [file-picker/*session-id* (get-in db [:session :id])]
       (if-let [capabilities (attachment-capabilities!)]
         (let [workspace-root (or (:workspace/root db) (workspace/workspace-root (:workspace db)))
-              files (attachment-intake/workspace-picker-files capabilities workspace-root)]
+              items (attachment-intake/workspace-picker-items capabilities workspace-root)
+              typed-path (fn [query]
+                           (attachment-intake/typed-path-items capabilities workspace-root query))
+              open! (fn []
+                      (dlg/list-dialog! screen
+                                        "Attach Files"
+                                        items
+                                        {:filter? true
+                                         :multi? true
+                                         :query-items typed-path
+                                         :placeholder
+                                         "Find a file, or type a path like ~/Downloads/a.png"
+                                         :enter-label "attach"
+                                         :height :content
+                                         :max-rows 30}))]
 
-          (if (seq files)
-            (when-let [selected (with-dialog-lock
-                                  #(dlg/multi-select-dialog! screen "Attach Files" files))]
-              (apply-attachment-intake!
-                (attachment-intake/picker-selection capabilities (:attachments db) selected)))
-            (vis/notify! "No gateway-supported files were found in this workspace."
-                         :level :warn
-                         :ttl-ms status-error-ttl-ms)))
+          (when-let [selected (with-dialog-lock open!)]
+            (apply-attachment-intake! (attachment-intake/picker-selection capabilities
+                                                                          (:attachments db)
+                                                                          (mapv :id selected)))))
         (vis/notify! "Attachment capabilities are unavailable from the gateway."
                      :level :warn
                      :ttl-ms status-error-ttl-ms)))))

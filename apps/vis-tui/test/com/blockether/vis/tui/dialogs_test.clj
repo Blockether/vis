@@ -191,6 +191,44 @@
         (expect (= ["apple" "apricot"] (mapv :label (:filtered (measure s1 80 30)))))
         (expect (= "a" (:query s2)))
         (expect (= ["apple" "apricot" "banana"] (mapv :label (:filtered (measure s2 80 30)))))))
+  ;; User report 2026-10-30: the C-x a a attach list could not mark several files.
+  (it "multi-select: Tab marks rows, Enter returns the marked rows, else the selected row"
+      (let [items
+            (mapv #(hash-map :label % :id %) ["a.png" "b.pdf" "c.md"])
+
+            {:keys [init measure reconcile on-key]}
+            (dlg/select-modal-component "M" items {:filter? true :multi? true :height :content})
+
+            step
+            (fn [s k]
+              (on-key s k (measure s 80 30)))
+
+            s0
+            (reconcile init (measure init 80 30))
+
+            s2
+            (-> s0
+                (step (ks KeyType/Tab))
+                (step (ks KeyType/Tab)))
+
+            s4
+            (-> s2
+                (step (ks KeyType/ArrowUp))
+                (step (ks KeyType/Tab)))]
+
+        (expect (= ["a.png" "b.pdf"] (mapv :id (:marked s2))))
+        (expect (= ["a.png" "b.pdf"] (mapv :id (done-key (step s2 (ks KeyType/Enter))))))
+        (expect (= ["a.png"] (mapv :id (:marked s4))))
+        (expect (= ["a.png"] (mapv :id (done-key (step s0 (ks KeyType/Enter))))))))
+  (it "query-items rows come before the filtered rows"
+      (let [{:keys [init measure]} (dlg/select-modal-component
+                                     "Q"
+                                     [{:label "x.md" :id 1}]
+                                     {:filter? true
+                                      :multi? true
+                                      :query-items (fn [q]
+                                                     (when (= q "~/a") [{:label "~/a" :id 2}]))})]
+        (expect (= [2] (mapv :id (:filtered (measure (assoc init :query "~/a") 80 30)))))))
   (it "a wheel burst moves selection by the coalesced step"
       (let [items
             (mapv #(hash-map :label (str %) :id %) (range 20))

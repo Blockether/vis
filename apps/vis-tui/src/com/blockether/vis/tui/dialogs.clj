@@ -2083,7 +2083,9 @@
    (navigation / filtering / select) are plain functions of immutable state, so
    they can be exercised in tests WITHOUT a terminal. Only `:paint` touches the
    screen. `items`/opts match `list-dialog!`."
-  [title items {:keys [filter? placeholder enter-label height column-offset selected max-rows]}]
+  [title items
+   {:keys [filter? placeholder enter-label height column-offset selected max-rows multi?
+           query-items]}]
   (let [raw
         (vec items)
 
@@ -2103,9 +2105,17 @@
         choices
         (remove section-item? raw)
 
+        ;; A multi-select row wears its `[✓] ` box in front of the label.
+        mark-w
+        (if multi? (long (p/display-width (choice-mark false false))) 0)
+
+        marked?
+        (fn [marked item]
+          (boolean (some #(= (:id %) (:id item)) marked)))
+
         label-col
         (when (some :description choices)
-          (+ 4 (long (reduce max 0 (map #(p/display-width (str (:label %))) choices)))))
+          (+ 4 mark-w (long (reduce max 0 (map #(p/display-width (str (:label %))) choices)))))
 
         content?
         (= height :content)
@@ -2113,9 +2123,11 @@
         head-rows
         (if filter? 2 0)]
 
-    {:init {:query "" :selected (long (or selected 0)) :scroll 0}
+    {:init (cond-> {:query "" :selected (long (or selected 0)) :scroll 0}
+             multi?
+             (assoc :marked []))
      :measure
-     (fn [{:keys [query]} cols rows]
+     (fn [{:keys [query marked]} cols rows]
        (let [offset
              (p/clamp (if column-offset (column-offset cols rows) 0) 0 (max 0 (dec (long cols))))
 
@@ -2123,15 +2135,22 @@
              (- (long cols) (long offset))
 
              filtered
-             (if filter? (with-section-gaps (filter-select-items raw query)) items)
+             (cond->> (if filter? (with-section-gaps (filter-select-items raw query)) items)
+               query-items
+               (into (vec (query-items query))))
 
              total
              (count filtered)
 
              footer
+             ;; A multi-select list names its filter in the placeholder, so the
+             ;; bar keeps room for Esc.
              (cond-> []
-               filter?
+               (and filter? (not multi?))
                (conj ["type" "filter"])
+
+               multi?
+               (conj ["Tab" "mark"])
 
                true
                (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"]))
@@ -2172,7 +2191,7 @@
          {:column-offset offset
           :cols cols
           :rows rows
-          :title title
+          :title (if (seq marked) (str title " · " (count marked) " marked") title)
           :filtered filtered
           :total total
           :footer footer
@@ -2194,7 +2213,7 @@
            :selected selected
            :scroll (visible-window-start selected (:scroll state) list-h total))))
      :paint
-     (fn [^TextGraphics graphics {:keys [selected scroll query]}
+     (fn [^TextGraphics graphics {:keys [selected scroll query marked]}
           {:keys [cols rows title filtered total footer content-w content-h-req bounds content-top
                   content-h hint-row list-top list-h filter? placeholder column-offset]}]
        (binding [frame/*column-offset* column-offset]
@@ -2248,7 +2267,9 @@
                                         row
                                         width
                                         (= idx selected)
-                                        (str " " (:label item))
+                                        (str " "
+                                             (when multi? (choice-mark false (marked? marked item)))
+                                             (:label item))
                                         (:hint item)
                                         (when label-col (:description item))
                                         label-col))))))
@@ -2270,7 +2291,7 @@
                (TerminalPosition. (int (frame/screen-column (.getColumn ^TerminalPosition cursor)))
                                   (.getRow ^TerminalPosition cursor)))))))
      :on-key
-     (fn [{:keys [selected query] :as state} key {:keys [total filtered list-h] :as geom}]
+     (fn [{:keys [selected query marked] :as state} key {:keys [total filtered list-h] :as geom}]
        ;; A move that lands on a section header goes on past it in the same direction.
        (let [clampf
              #(let [to (p/clamp % 0 (max 0 (dec (long total))))] (selectable-index
@@ -2305,8 +2326,21 @@
                                       :selected (clampf (+ (long selected) (long list-h))))
                    KeyType/Home (assoc state :selected (clampf 0))
                    KeyType/End (assoc state :selected (clampf (dec (long total))))
+                   ;; Multi-select: Tab marks or unmarks the row and moves on.
+                   KeyType/Tab (let [item (when (pos? (long total)) (nth filtered selected))]
+                                 (if (and multi? item (not (section-item? item)))
+                                   (assoc state
+                                     :marked (if (marked? marked item)
+                                               (filterv #(not= (:id %) (:id item)) marked)
+                                               (conj marked item))
+                                     :selected (clampf (inc (long selected))))
+                                   state))
+                   ;; Multi-select returns the marked rows, else the row under the cursor.
                    KeyType/Enter (let [item (when (pos? (long total)) (nth filtered selected))]
-                                   (if (section-item? item) state {::done item}))
+                                   (cond (and multi? (seq marked)) {::done marked}
+                                         (or (nil? item) (section-item? item)) state
+                                         multi? {::done [item]}
+                                         :else {::done item}))
                    KeyType/Backspace (if filter?
                                        (assoc state
                                          :query
@@ -2345,7 +2379,11 @@
                     `:content` inside a `*dialog-region*` band.
      :column-offset (fn [cols rows] -> left) scopes the dialog to columns from
                     `left` to the terminal edge. Recomputed for each paint.
-     :selected     index of the item that starts selected (default 0)"
+     :selected     index of the item that starts selected (default 0)
+     :multi?       Tab marks rows; Enter returns a vec of the marked items, or of
+                   the selected item when none is marked. Items need a unique `:id`.
+     :query-items  (fn [query] items) put before the filtered items, for rows
+                   that come from the query itself, such as a typed path"
   [^TerminalScreen screen title items opts]
   (run-modal! screen
               (select-modal-component title
