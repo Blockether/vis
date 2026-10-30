@@ -872,6 +872,17 @@
           (expect (= 24 (count (line-text (first texts)))))
           (expect (some #(str/includes? (line-text %) "one") texts))
           (expect (< (count (line-text (last texts))) 24))))
+    ;; User report (paraphrased): in C-x s the message pane ran paragraphs together;
+    ;; it must keep one blank line between Markdown blocks, as the transcript does.
+    (it "the message pane keeps one blank line between paragraphs"
+        (let [lines (var-get #'dlg/navigator-preview-lines)
+              entry
+              {:title "T"
+               :recent
+               [{:label "Vis" :role :ai :side :reply :text "First part.\n\n\n**Second**\n- item"}]}
+              body (drop 3 (lines entry "" {:width 40 :height 20}))]
+
+          (expect (= [:text :blank :text :blank :text] (mapv :kind body)))))
     ;; User report (paraphrased): C-x s painted `[33mpatch [0m(path, …` in the pane; a
     ;; highlighted code fence must paint its token colors, never the escape text.
     (it "the message pane paints a highlighted code fence without escape text"

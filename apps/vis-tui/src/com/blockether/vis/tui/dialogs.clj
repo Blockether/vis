@@ -7821,9 +7821,10 @@
 
 (defn- navigator-markdown-lines
   "Lay out one message `text` in `width` columns as the transcript does: Markdown
-   through the shared layout walker, with blank block gaps dropped. A line that the
-   wrapper broke is justified to both edges; the last line of a block stays ragged.
-   Each line is a vector of IR runs."
+   through the shared layout walker. One empty line separates two blocks: blank runs
+   collapse to one, and none starts or ends the message. A line that the wrapper broke
+   is justified to both edges; the last line of a block stays ragged. Each line is a
+   vector of IR runs, and an empty vector is a blank line."
   [text width]
   (let [width
         (max 1 (long width))
@@ -7834,10 +7835,18 @@
     (if (str/blank? text)
       []
       (->> (layout/ast->lines (vis/markdown->ast text) width)
-           (remove (fn [{:keys [runs]}]
-                     (every? #(str/blank? (:text %)) runs)))
-           (mapv (fn [{:keys [runs wrap?]}]
-                   (if wrap? (layout/justify-line-runs runs width) runs)))))))
+           (map (fn [{:keys [runs wrap?]}]
+                  (cond (every? #(str/blank? (:text %)) runs) []
+                        wrap? (layout/justify-line-runs runs width)
+                        :else runs)))
+           (partition-by empty?)
+           (mapcat (fn [group]
+                     (if (empty? (first group)) [[]] group)))
+           (drop-while empty?)
+           reverse
+           (drop-while empty?)
+           reverse
+           vec))))
 
 (def ^:private sgr-pattern
   "One ANSI SGR escape, such as the token colors of a highlighted code fence."
@@ -7914,7 +7923,9 @@
                           :place (when (= :thinking side) "thinking")
                           :stamp (when (some? at) (navigator-stamp at))}]
                         (map (fn [runs]
-                               {:kind :text :segments (navigator-run-segments runs query)}))
+                               (if (empty? runs)
+                                 {:kind :blank}
+                                 {:kind :text :segments (navigator-run-segments runs query)})))
                         (navigator-markdown-lines text width)))
                 entries))
 
