@@ -1,9 +1,7 @@
 import {
   type ComponentProps,
-  lazy,
   memo,
   type ReactNode,
-  Suspense,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -52,7 +50,7 @@ import {
   noteReachable,
   noteUnreachable,
 } from './lib/reachability';
-import { warm } from './lib/warm';
+import { splitScreen } from './lib/split-screen';
 import { SessionEventsContext } from './lib/session-events';
 import { SessionSubscriptionHub } from './lib/subscriptions';
 import { parsePairing } from './lib/pairing';
@@ -175,48 +173,30 @@ const PUSH_SWEEP_WAKE_MIN_GAP_MS = 60_000;
 // dozen grammars — sat in the SAME chunk, so every cold start parsed and ran all
 // 857 kB before painting a row. Split both heavy screens out and warm them the
 // moment the list is up: by the time anything is tapped the module is resolved,
-// `lazy` mounts it in the same commit, and no boundary ever falls back.
-const SessionScreenLazy = lazy(async () => ({
-  default: (await import('./screens/SessionScreen')).SessionScreen,
-}));
-const SettingsDialogLazy = lazy(async () => ({
-  default: (await import('./screens/SettingsScreen')).SettingsDialog,
-}));
-const ScopedSettingsDialogLazy = lazy(async () => ({
-  default: (await import('./screens/settings/ScopedSettingsDialog')).ScopedSettingsDialog,
-}));
-
+// and `splitScreen` mounts it in the same commit, with no fallback.
+//
 // Each split screen keeps its own boundary so a miss costs that screen, never the
 // app shell. The transcript's fallback is the same ink sheet its own veil paints,
 // so a cold open reads as the load it already was; a dialog just arrives a frame
 // later.
-function SessionScreen(props: ComponentProps<typeof SessionScreenLazy>) {
-  return (
-    <Suspense fallback={<div className="h-full bg-ink" />}>
-      <SessionScreenLazy {...props} />
-    </Suspense>
-  );
-}
-
-function SettingsDialog(props: ComponentProps<typeof SettingsDialogLazy>) {
-  return (
-    <Suspense fallback={null}>
-      <SettingsDialogLazy {...props} />
-    </Suspense>
-  );
-}
-
-function ScopedSettingsDialog(props: ComponentProps<typeof ScopedSettingsDialogLazy>) {
-  return (
-    <Suspense fallback={null}>
-      <ScopedSettingsDialogLazy {...props} />
-    </Suspense>
-  );
-}
+const sessionScreen = splitScreen(
+  async () => (await import('./screens/SessionScreen')).SessionScreen,
+  <div className="h-full bg-ink" />,
+);
+const SessionScreen = sessionScreen.Screen;
+const settingsDialog = splitScreen(
+  async () => (await import('./screens/SettingsScreen')).SettingsDialog,
+  null,
+);
+const SettingsDialog = settingsDialog.Screen;
+const ScopedSettingsDialog = splitScreen(
+  async () => (await import('./screens/settings/ScopedSettingsDialog')).ScopedSettingsDialog,
+  null,
+).Screen;
 
 function prefetchScreens() {
-  warm(import('./screens/SessionScreen'));
-  warm(import('./screens/SettingsScreen'));
+  sessionScreen.warm();
+  settingsDialog.warm();
 }
 
 /**

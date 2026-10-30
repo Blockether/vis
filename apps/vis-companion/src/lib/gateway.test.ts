@@ -1344,7 +1344,7 @@ describe('GatewayClient opening a session', () => {
       }),
     );
 
-  it('reads the opening transcript ahead of requests already queued', async () => {
+  it('reads the opening transcript while queued polls wait for their slots', async () => {
     const paths: string[] = [];
     const held: Array<() => void> = [];
     vi.stubGlobal(
@@ -1359,14 +1359,13 @@ describe('GatewayClient opening a session', () => {
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);
 
-    // Four polls take this gateway's slots and three more queue behind them.
+    // Two polls take the slots that polls may use, and five more queue behind them.
     for (let index = 0; index < 7; index += 1) void client.status().catch(() => null);
-    await vi.waitFor(() => expect(paths).toHaveLength(4));
+    await vi.waitFor(() => expect(paths).toHaveLength(2));
     const opening = client.openingTranscript('session-1');
-    held.shift()?.();
 
-    await vi.waitFor(() => expect(paths.length).toBeGreaterThanOrEqual(5));
-    expect(paths[4]).toBe('/v1/sessions/session-1/transcript');
+    await vi.waitFor(() => expect(paths).toHaveLength(3));
+    expect(paths[2]).toBe('/v1/sessions/session-1/transcript');
     expect((await opening).map((turn) => turn.id)).toEqual(['turn-session-1']);
     for (const release of held.splice(0)) release();
   });

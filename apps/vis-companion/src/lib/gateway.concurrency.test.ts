@@ -24,7 +24,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 function heldGateway() {
   const pending: Array<(body: Response) => void> = [];
   const wire = vi.fn(
-    async () =>
+    async (_input: RequestInfo | URL) =>
       await new Promise<Response>((resolve) => {
         pending.push(resolve);
       }),
@@ -34,6 +34,10 @@ function heldGateway() {
     /** Requests actually put on the wire so far. */
     get started() {
       return wire.mock.calls.length;
+    },
+    /** How many of those read a transcript. */
+    get transcripts() {
+      return wire.mock.calls.filter(([input]) => String(input).includes('/transcript')).length;
     },
     async answerOne() {
       pending.shift()?.(
@@ -58,18 +62,43 @@ describe('requests to one gateway', () => {
     const polls = Array.from({ length: 7 }, () => client.status().catch(() => null));
     await settle();
 
-    expect(gateway.started).toBe(4);
+    // Polls get two of the four slots; the other two wait for a read the reader needs.
+    expect(gateway.started).toBe(2);
 
     // A slot is handed straight to the next waiter: the cap holds, and nothing
     // stalls behind a request that has already been answered.
     await gateway.answerOne();
-    expect(gateway.started).toBe(5);
+    expect(gateway.started).toBe(3);
     await gateway.answerOne();
-    expect(gateway.started).toBe(6);
+    expect(gateway.started).toBe(4);
 
     await gateway.answerAll();
     expect(gateway.started).toBe(7);
     await Promise.all(polls);
+  });
+
+  // Regression, user report ("opening a session still feels very slow"): on a
+  // slowed phone, the transcript being opened and its first traces waited about
+  // 250 ms for settings, artifacts and read-state polls to free a slot.
+  it('lets the transcript a reader is opening past a poll burst, within the cap', async () => {
+    const gateway = heldGateway();
+    const client = new GatewayClient(conn);
+    const polls = Array.from({ length: 7 }, () => client.status().catch(() => null));
+    await settle();
+    const opening = ['a', 'b', 'c'].map((sid) => client.openingTranscript(sid).catch(() => null));
+    await settle();
+
+    expect(gateway.transcripts).toBe(2);
+    expect(gateway.started).toBe(4);
+
+    // The cap holds for them too, and the first freed slot goes to the waiting
+    // transcript, not to a queued poll.
+    await gateway.answerOne();
+    expect(gateway.transcripts).toBe(3);
+    expect(gateway.started).toBe(5);
+
+    await gateway.answerAll();
+    await Promise.all([...polls, ...opening]);
   });
 
   it('puts a request nothing is holding up on the wire in the same tick', async () => {

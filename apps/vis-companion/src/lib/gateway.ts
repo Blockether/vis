@@ -350,32 +350,71 @@ const PROBE_TIMEOUT_MS = 5_000;
  */
 const MAX_INFLIGHT_PER_GATEWAY = 4;
 
+/**
+ * Slots that only an `urgent` request may take. Background polls fill the rest, so
+ * the transcript of the session being opened, and its first traces, never wait for
+ * a poll burst to drain: a cold open on a slow phone used to queue them for 250 ms
+ * behind settings, artifacts and read-state polls that nobody was looking at.
+ */
+const URGENT_RESERVE = 2;
+
 /** Requests on the wire per gateway base URL, and who is waiting for a slot. */
-type GatewaySlots = { active: number; waiting: Array<() => void> };
+type GatewaySlots = {
+  active: number;
+  /** Of `active`, the ones that are not urgent. */
+  background: number;
+  urgent: Array<() => void>;
+  waiting: Array<() => void>;
+};
 const inflight = new Map<string, GatewaySlots>();
 
 function slotsOf(base: string): GatewaySlots {
   let gate = inflight.get(base);
   if (!gate) {
-    gate = { active: 0, waiting: [] };
+    gate = { active: 0, background: 0, urgent: [], waiting: [] };
     inflight.set(base, gate);
   }
   return gate;
 }
 
-/**
- * Give the slot back — handing it straight to the next waiter, so the cap holds
- * without a gap for a newcomer to slip through. Calling it twice is harmless.
- */
-function releaseGatewaySlot(gate: GatewaySlots): () => void {
+/** Whether a request of this kind may take a slot on `gate` now. */
+function hasRoom(gate: GatewaySlots, urgent: boolean): boolean {
+  if (gate.active >= MAX_INFLIGHT_PER_GATEWAY) return false;
+  return urgent || gate.background < MAX_INFLIGHT_PER_GATEWAY - URGENT_RESERVE;
+}
+
+/** Count one request of this kind against the cap. */
+function occupy(gate: GatewaySlots, urgent: boolean): void {
+  gate.active += 1;
+  if (!urgent) gate.background += 1;
+}
+
+/** Give a counted slot back, then admit waiters. Calling it twice is harmless. */
+function releaseGatewaySlot(gate: GatewaySlots, urgent: boolean): () => void {
   let isReleased = false;
   return () => {
     if (isReleased) return;
     isReleased = true;
-    const next = gate.waiting.shift();
-    if (next) next();
-    else gate.active -= 1;
+    gate.active -= 1;
+    if (!urgent) gate.background -= 1;
+    admitWaiting(gate);
   };
+}
+
+/**
+ * Hand free slots to waiters, urgent ones first. It counts each slot before the
+ * waiter resumes, so a newcomer cannot slip in between the release and the waiter.
+ */
+function admitWaiting(gate: GatewaySlots): void {
+  for (const [queue, urgent] of [
+    [gate.urgent, true],
+    [gate.waiting, false],
+  ] as const) {
+    while (queue.length && hasRoom(gate, urgent)) {
+      occupy(gate, urgent);
+      queue.shift()?.();
+    }
+  }
 }
 
 /**
@@ -383,26 +422,26 @@ function releaseGatewaySlot(gate: GatewaySlots): () => void {
  * a request that nothing is holding up must reach the wire in the same tick it
  * was asked for, the way a tap on `Retry` expects.
  */
-function takeGatewaySlot(base: string): (() => void) | null {
+function takeGatewaySlot(base: string, urgent = false): (() => void) | null {
   const gate = slotsOf(base);
-  if (gate.active >= MAX_INFLIGHT_PER_GATEWAY) return null;
-  gate.active += 1;
-  return releaseGatewaySlot(gate);
+  if (!hasRoom(gate, urgent)) return null;
+  occupy(gate, urgent);
+  return releaseGatewaySlot(gate, urgent);
 }
 
 /**
  * Wait for this gateway's next free slot, then take it. An `urgent` request is one
  * the reader is waiting on, such as the transcript of the session being opened: it
- * goes to the FRONT of the queue instead of behind the polls the same navigation
- * fired. It still counts against the cap, so the streams keep their sockets.
+ * goes ahead of every waiting poll, and it may also use the `URGENT_RESERVE` slots.
+ * It still counts against the cap, so the streams keep their sockets.
  */
 async function awaitGatewaySlot(base: string, urgent = false): Promise<() => void> {
   const gate = slotsOf(base);
   await new Promise<void>((resume) => {
-    if (urgent) gate.waiting.unshift(resume);
-    else gate.waiting.push(resume);
+    (urgent ? gate.urgent : gate.waiting).push(resume);
   });
-  return releaseGatewaySlot(gate);
+  // `admitWaiting` already counted this slot; the release only gives it back.
+  return releaseGatewaySlot(gate, urgent);
 }
 
 /**
@@ -1550,7 +1589,8 @@ export class GatewayClient {
     // Queue for one of this gateway's few sockets BEFORE the clock starts: the
     // wait is this app's own backpressure, not a slow gateway, and reporting it
     // as a timeout would blame the machine for the app's own burst.
-    const release = takeGatewaySlot(this.base) ?? (await awaitGatewaySlot(this.base, urgent));
+    const release =
+      takeGatewaySlot(this.base, urgent) ?? (await awaitGatewaySlot(this.base, urgent));
     const diagnostic = startRequestDiagnostic(this.base, method, path);
     let exchangeStatus = 0;
     let exchangeFailure: { cause: unknown } | undefined;
