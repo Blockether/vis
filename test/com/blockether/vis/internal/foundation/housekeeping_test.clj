@@ -796,4 +796,32 @@
                                            (str (mirror live) "/removed.cpython-314.opt-1.pyc")))))
             (expect (not (.exists (io/file python (mirror emptied)))))
             (expect (not (.exists (io/file python (mirror vanished)))))
-            (expect (.isDirectory (io/file sources "live")))))))))
+            (expect (.isDirectory (io/file sources "live"))))))))
+  ;; Every process start walked the whole store: on a live machine 304,215 entries,
+  ;; about 1.7 GB of allocation and 20 s of CPU per start of any `vis-agent` command.
+  (it
+    "walks the bytecode store once a day across process starts, and again after a clock moves back"
+    (let [python
+          (tmp-dir "vis-hk-pycache-stamp")
+
+          now
+          (System/currentTimeMillis)
+
+          orphan
+          (fn []
+            (touch! python "pycache/no/such/source/gone.cpython-314.pyc" 0 "bytecode"))
+
+          swept
+          (fn [at]
+            (with-homes {:python python}
+                        #(:deleted (target (housekeeping/sweep-stale! {:now-ms at})
+                                           :python-pycache))))]
+
+      (orphan)
+      (expect (pos? (long (swept now))))
+      (let [kept (orphan)]
+        (expect (zero? (long (swept (+ now 3600000)))))
+        (expect (.isFile kept)))
+      (expect (pos? (long (swept (+ now (long housekeeping/day-ms))))))
+      (orphan)
+      (expect (pos? (long (swept (- now 3600000))))))))

@@ -436,30 +436,44 @@
     {:deleted 0 :bytes 0}
     (or (.listFiles root) (make-array File 0))))
 
-(defn- pycache-source
-  "The source path a bytecode entry mirrors. The prefix mirrors ABSOLUTE source
-   paths, so an entry's path below the root, rooted again, IS its source."
-  ^File [^File root ^File entry]
-  (io/file File/separator (str (.relativize (.toPath root) (.toPath entry)))))
+(def ^:private ^"[Ljava.nio.file.LinkOption;" no-follow
+  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
 
 (defn- pycache-source-present?
-  "Whether the module a `.pyc` caches still exists. CPython names an entry after the
-   source stem and its own tag — `c.py` becomes `c.cpython-314.pyc`, with an `.opt-N`
-   infix for an optimized build — so the stem ends where the tag begins."
-  [^File root ^File pyc]
-  (let [entry-name
-        (.getName pyc)
-
-        tag
+  "Whether the module a `.pyc` caches still exists among `names`, the entries of
+   its mirrored source directory. CPython names an entry after the source stem and
+   its own tag — `c.py` becomes `c.cpython-314.pyc`, with an `.opt-N` infix for an
+   optimized build — so the stem ends where the tag begins."
+  [names ^String entry-name]
+  (let [tag
         (.indexOf entry-name ".cpython-")
 
         stem
-        (if (neg? tag) entry-name (subs entry-name 0 tag))
+        (if (neg? tag) entry-name (subs entry-name 0 tag))]
 
-        dir
-        (pycache-source root (.getParentFile pyc))]
+    (or (contains? names (str stem ".py")) (contains? names (str stem ".pyw")))))
 
-    (or (.isFile (io/file dir (str stem ".py"))) (.isFile (io/file dir (str stem ".pyw"))))))
+(def ^:private pycache-stamp
+  "The file in the bytecode store root whose timestamp records its last walk."
+  ".vis-swept")
+
+(defn- claim-pycache-sweep!
+  "Whether this process walks the bytecode store now, re-stamping it when it does.
+
+   Every Vis process sweeps at startup, and a live store holds hundreds of
+   thousands of entries. The stamp is shared, so the store is walked once per
+   `day-ms` on a machine, not once per process start. A stamp from the future
+   counts as stale, so a clock moved back cannot stop the sweep."
+  [^File root ^long now]
+  (let [stamp
+        (io/file root pycache-stamp)
+
+        age
+        (- now (.lastModified stamp))]
+
+    (when (or (neg? age) (>= age (long day-ms)))
+      (try (.createNewFile stamp) (.setLastModified stamp now) (catch Throwable _ nil))
+      true)))
 
 (defn- sweep-pycache!
   "Reclaim compiled bytecode whose source is gone.
@@ -478,29 +492,43 @@
    source that still exists entries are judged one by one, and a directory the sweep
    emptied is removed.
 
+   A live store holds hundreds of thousands of entries, and every process sweeps it.
+   Each directory therefore reads its source directory once. A live entry costs no
+   filesystem call; only directories and reclaim candidates read their attributes.
+
    Returns `{:deleted :bytes}`."
   [^File root ^String canon]
   (letfn
-    [(visit [acc ^File dir]
-       (reduce (fn [acc ^File child]
-                 (cond (Files/isSymbolicLink (.toPath child)) acc
-                       (.isDirectory child) (if-not (.isDirectory (pycache-source root child))
-                                              (add-counts acc (reclaim-dir! child canon))
-                                              (let [swept (visit acc child)]
-                                                (if (delete-quietly! (.toPath child))
-                                                  (add-counts swept {:deleted 1 :bytes 0})
-                                                  swept)))
-                       (and (.endsWith (.getName child) ".pyc")
-                            (not (pycache-source-present? root child))
-                            (under? canon (canonical child)))
-                       (let [size (.length child)]
-                         (if (delete-quietly! (.toPath child))
-                           (add-counts acc {:deleted 1 :bytes size})
-                           acc))
-                       :else acc))
-               acc
-               (or (.listFiles dir) (make-array File 0))))]
-    (visit {:deleted 0 :bytes 0} root)))
+    [(visit [acc ^File dir ^File source-dir]
+       (let [names (delay (set (.list source-dir)))]
+         (reduce (fn [acc ^String entry-name]
+                   (if (and (.endsWith entry-name ".pyc")
+                            (pycache-source-present? @names entry-name))
+                     ;; The common case: a live cache, judged without a filesystem call.
+                     acc
+                     (let [child (File. dir entry-name)
+                           ^BasicFileAttributes attrs
+                           (try (Files/readAttributes (.toPath child) BasicFileAttributes no-follow)
+                                (catch java.io.IOException _ nil))]
+
+                       (cond (or (nil? attrs) (.isSymbolicLink attrs)) acc
+                             (.isDirectory attrs) (let [child-source (File. source-dir entry-name)]
+                                                    (if-not (.isDirectory child-source)
+                                                      (add-counts acc (reclaim-dir! child canon))
+                                                      (let [swept (visit acc child child-source)]
+                                                        ;; A full directory would raise per visit; try only an emptied one.
+                                                        (if (and (empty? (.list child))
+                                                                 (delete-quietly! (.toPath child)))
+                                                          (add-counts swept {:deleted 1 :bytes 0})
+                                                          swept))))
+                             (and (.endsWith entry-name ".pyc") (under? canon (canonical child)))
+                             (if (delete-quietly! (.toPath child))
+                               (add-counts acc {:deleted 1 :bytes (.size attrs)})
+                               acc)
+                             :else acc))))
+                 acc
+                 (or (.list dir) (make-array String 0)))))]
+    (visit {:deleted 0 :bytes 0} root (File. File/separator))))
 
 (defn- prune-version-stores!
   "Reclaim installed interpreter and source versions no process serves any more.
@@ -624,7 +652,7 @@
 
          pycache
          (merge {:id :python-pycache :root (canonical pycache-root)}
-                (if (.isDirectory pycache-root)
+                (if (and (.isDirectory pycache-root) (claim-pycache-sweep! pycache-root now))
                   (sweep-pycache! pycache-root (canonical pycache-root))
                   {:deleted 0 :bytes 0}))
 
