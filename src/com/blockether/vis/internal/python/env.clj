@@ -33,6 +33,7 @@
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [com.blockether.vis.internal.loop.perf :as perf]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -1459,12 +1460,15 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
         (when-let [on-configured (:on-configured network-opts)]
           (on-configured session)))
       (ensure-interpreter!))
-    (refresh-confinement! session
-                          roots-fn
-                          (select-keys network-opts [:jail-enabled? :write-limited? :write-rules])
-                          (:filesystem-policy-fn network-opts))
+    ;; The first request of a worker session starts its process.
+    (perf/timed :sandbox/confine
+                (refresh-confinement! session
+                                      roots-fn
+                                      (select-keys network-opts
+                                                   [:jail-enabled? :write-limited? :write-rules])
+                                      (:filesystem-policy-fn network-opts)))
     (py-stdin! session (guest-stdin-text stdin))
-    (py-install-runtime! session)
+    (perf/timed :sandbox/install-runtime (py-install-runtime! session))
     ;; Mirror stdout across the process boundary as it is written. A cancelled
     ;; block parked inside C may be killed before its StringIO outcome returns.
     (python-host/install-sync-tools! session
@@ -1475,9 +1479,10 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
     ;; host tool that callers must remember to inject. Seed it before protected-name
     ;; discovery so a block may shadow it locally but can never replace it for the session.
     (exec! session "globals().setdefault('println', print)")
-    (try (py-install-module! session "auto_imports") (catch Throwable _ nil))
+    (perf/timed :sandbox/auto-imports
+                (try (py-install-module! session "auto_imports") (catch Throwable _ nil)))
     ;; SDK declarations are shared source; no extension host callbacks enter the sandbox.
-    (py-exec! session sandbox-sdk-python)
+    (perf/timed :sandbox/sdk (py-exec! session sandbox-sdk-python))
     (install-protected-names! session custom-bindings)
     (py-exec! session context-bindings-python)
     (bind-ctx! session {})
@@ -1487,7 +1492,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                       (keep (fn [[sym val]]
                               (when (fn? val) [(sym->py-name sym) val])))
                       (or custom-bindings {}))]
-      (when (seq tools) (python-host/install-tools! session tools (partial py-install-tool!))))
+      (when (seq tools)
+        (perf/timed :sandbox/tools
+                    (python-host/install-tools! session tools (partial py-install-tool!)))))
     ;; …and the DATA bindings, which cross as JSON like every other value.
     (doseq [[sym val] (or custom-bindings {})
             :when (not (fn? val))]
@@ -1517,9 +1524,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                   "__vis_docs__"
                   {"shell"
                    (str (get PROCESS_SURFACE "off") " " (get PROCESS_SURFACE "extension"))}))
-    (install-shims! session)
-    (install-introspection! session)
-    (py-exec! session "import vis_results\nvis_results.install(globals())")
+    (perf/timed :sandbox/shims (install-shims! session))
+    (perf/timed :sandbox/introspection (install-introspection! session))
+    (perf/timed :sandbox/results (py-exec! session "import vis_results\nvis_results.install(globals())"))
     (exec! session "__vis_stamp_tools__()")
     (set-python-binding-contracts! session
                                    (into {}
@@ -1530,8 +1537,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
 
                                            [sym
                                             (extension/symbol-contract entry (sym->py-name sym))])))
-    (install-network! session network-opts)
-    (install-network-probe! session)
+    (perf/timed :sandbox/network
+                (install-network! session network-opts)
+                (install-network-probe! session))
     {:python-context session
      :sandbox-ns :python
      :initial-ns-keys (set (map str (or (guest-value session "sorted(globals())") [])))}))

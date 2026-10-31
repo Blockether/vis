@@ -63,6 +63,7 @@
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.loop.perf :as perf]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -157,7 +158,7 @@
       (locking open
         (when (pending-context? sess)
           (binding [*opening* sess]
-            (open))
+            (perf/timed :pyext/open-pending (open)))
           (swap! pending-contexts dissoc sess))))))
 
 (defn- exec-in! [sess code] (open-pending! sess) (pyext/exec! (worker-for sess) sess code))
@@ -1593,10 +1594,10 @@
         value
 
         :wait
-        (do @value (recur))
+        (do (perf/timed :pyext/context-wait @value) (recur))
 
         :build
-        (try (let [row (try (assoc (build!) :source-context source-ctx)
+        (try (let [row (try (assoc (perf/timed :pyext/context-build (build!)) :source-context source-ctx)
                             (catch Throwable t
                               (locking session-contexts (swap! context-builds dissoc cache-key))
                               (throw t)))]
@@ -1737,7 +1738,9 @@
 
     ;; A hook belongs to its Python extension, not the tool it observes.
     (try (extension/with-context {:ext {:ext/name ext-name} :env effective-env}
-                                 (python-host/conveying call-ctx (call-py call-ctx call-f args)))
+                                 (python-host/conveying call-ctx
+                                                         (perf/timed :pyext/call
+                                                                     (call-py call-ctx call-f args))))
          (catch Throwable t
            ;; A reload must not replay an operation which already ran and failed.
            (throw (ex-info (ex-message t) (assoc (ex-data t) ::call-started true) t)))

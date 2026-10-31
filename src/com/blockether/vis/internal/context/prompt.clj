@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.loop.perf :as perf]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -614,7 +615,10 @@
                             true
 
                             (boolean
-                              (call-extension-callback ext (:ext/activation-fn ext) environment)))
+                              (perf/timed (keyword "activation" (str (:ext/name ext)))
+                                          (call-extension-callback ext
+                                                                   (:ext/activation-fn ext)
+                                                                   environment))))
                           (catch Throwable t
                             (tel/log! {:level :error
                                        :id ::ext-activation-error

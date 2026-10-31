@@ -19,6 +19,7 @@
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.loop.cache-warmer :as cache-warmer]
             [com.blockether.vis.internal.loop.compaction :as compaction]
+            [com.blockether.vis.internal.loop.perf :as perf]
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.transcript :as transcript]
@@ -772,20 +773,22 @@
                 ;; builds the sandbox and loads extensions for the saved workspace (#364).
                 (binding [workspace/*workspace-root* (or (:root @workspace-atom)
                                                          workspace/*workspace-root*)]
-                  (let [built (env/create-python-context
-                                (merge env-bindings (:custom-bindings @state-atom))
-                                sandbox-roots-fn
-                                ;; The extension workers start while the
-                                ;; sandbox builds, not after it (#396).
-                                (assoc network-opts
-                                  :on-configured (fn [session]
-                                                   (when-let [environment @environment-atom]
-                                                     (python-extensions/prewarm-session-contexts!
-                                                       session
-                                                       environment
-                                                       (some-> (:active-extensions environment)
-                                                               deref)))))
-                                nil)
+                  (let [built (perf/timed
+                                :sandbox/create
+                                (env/create-python-context
+                                  (merge env-bindings (:custom-bindings @state-atom))
+                                  sandbox-roots-fn
+                                  ;; The extension workers start while the
+                                  ;; sandbox builds, not after it (#396).
+                                  (assoc network-opts
+                                    :on-configured (fn [session]
+                                                     (when-let [environment @environment-atom]
+                                                       (python-extensions/prewarm-session-contexts!
+                                                         session
+                                                         environment
+                                                         (some-> (:active-extensions environment)
+                                                                 deref)))))
+                                  nil))
                         python-context (:python-context built)]
 
                     (vreset! pending built)
@@ -800,14 +803,15 @@
                       ;; while the transcript still shows the helpers this session refined, so the
                       ;; next call would be a NameError against code the model can read. Re-create
                       ;; them from the snapshot `execute-code` wrote after every block.
-                      (env/restore-session-defs! python-context session-id)
+                      (perf/timed :sandbox/restore-defs (env/restore-session-defs! python-context session-id))
                       ;; Extensions installed while this sandbox was still cold skipped their
                       ;; symbol sync; give them their globals now. The context goes in by hand
                       ;; because reaching it through the environment would re-enter THIS delay.
                       (when-let [environment @environment-atom]
-                        (sync-extension-symbols-into! python-context
-                                                      environment
-                                                      (prompt/active-extensions environment)))
+                        (perf/timed :sandbox/sync-symbols
+                                    (sync-extension-symbols-into! python-context
+                                                                  environment
+                                                                  (prompt/active-extensions environment))))
                       built
                       (catch Throwable t
                         (try (env/dispose-python-context! python-context) (catch Throwable _ nil))
