@@ -193,21 +193,6 @@
                          :elapsed-ms elapsed-ms)}
                 (format "slow TUI input %s: %.1fms" (name phase) elapsed-ms)))))
 
-(defn- begin-input-timing!
-  "Keep one content-free timer for ordinary editing, not commands/modal dwell time."
-  [pending ^KeyStroke key db]
-  (when (and key
-             (not (.isCtrlDown key))
-             (not (.isAltDown key))
-             (not (get-in db [:input :prefix]))
-             (not (:human-input db))
-             (not (:detail-labels-active? db))
-             (not (:attachment-focus? db))
-             (contains? #{KeyType/Character KeyType/Backspace KeyType/Delete KeyType/ArrowLeft
-                          KeyType/ArrowRight KeyType/Home KeyType/End}
-                        (.getKeyType key)))
-    (vreset! pending [(.name (.getKeyType key)) (System/nanoTime)])))
-
 (defn- finish-input-timing!
   "Finish before the next poll/idle wait so human think time is never a stall."
   [pending db]
@@ -809,6 +794,23 @@
     (cond (and (areas :sidebar) (get-in db [:project-sidebar :focused?])) :sidebar
           (and (areas :panel) (get-in db [:live-panel :focused?])) :panel
           :else :chat)))
+
+(defn- begin-input-timing!
+  "Keep one content-free timer for ordinary editing, not commands/modal dwell time.
+   Only chat keys count: a sidebar or panel key can open a modal menu."
+  [pending ^KeyStroke key db]
+  (when (and key
+             (not (.isCtrlDown key))
+             (not (.isAltDown key))
+             (not (get-in db [:input :prefix]))
+             (not (:human-input db))
+             (not (:detail-labels-active? db))
+             (not (:attachment-focus? db))
+             (= :chat (focused-area db))
+             (contains? #{KeyType/Character KeyType/Backspace KeyType/Delete KeyType/ArrowLeft
+                          KeyType/ArrowRight KeyType/Home KeyType/End}
+                        (.getKeyType key)))
+    (vreset! pending [(.name (.getKeyType key)) (System/nanoTime)])))
 
 (defn- cycle-focus!
   "C-o: give the keyboard to the next open area, and wrap after the last one.

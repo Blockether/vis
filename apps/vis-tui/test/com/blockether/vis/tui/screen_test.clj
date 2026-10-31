@@ -2718,6 +2718,15 @@ therapy line 2"
         (expect (= 1 (count signals)))
         (expect (= :handle (get-in (first signals) [:data :phase])))
         (expect (not (str/includes? (pr-str (map :data signals)) "private-sentinel")))))
+  ;; Field logs showed 10-14 s "slow TUI input handle" warnings: `?` in the
+  ;; focused sidebar opens a modal menu, and the human's reading time was timed.
+  (it "a key for the focused sidebar starts no input timer"
+      (let [pending (volatile! nil)]
+        (#'screen/begin-input-timing!
+         pending
+         (term/keystroke \?)
+         {:project-sidebar {:open? true :focused? true}})
+        (expect (nil? @pending))))
   (it "polling logs no key payload and preserves the coalescer's actual event"
       (let [{:keys [screen terminal]}
             (term/virtual-screen)
