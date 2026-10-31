@@ -888,14 +888,17 @@ print(worker_value)"))))
                (str "import threading, vis_runtime\nextension_value = 42\n"
                     "def wait_for_cancel():\n"
                     (if native-wait?
-                      (str "    condition = threading.Condition()\n"
-                           "    def notify_waiting():\n        with condition:\n"
+                      ;; A raw `_thread` lock acquire stays in C: the runtime slices
+                      ;; threading's own waits, so those unwind on an interrupt.
+                      (str "    import _thread\n    gate = threading.Lock()\n"
+                           "    waiter = _thread.allocate_lock()\n    waiter.acquire()\n"
+                           "    def notify_waiting():\n        with gate:\n"
                            "            with open("
                            (pr-str (str marker))
                            ", 'w') as ready:\n"
-                           "                ready.write('waiting')\n" "    with condition:\n"
-                           "        threading.Thread(target=notify_waiting, daemon=True).start()\n"
-                           "        condition.wait(30)\n")
+                           "                ready.write('waiting')\n" "    gate.acquire()\n"
+                           "    threading.Thread(target=notify_waiting, daemon=True).start()\n"
+                           "    gate.release()\n    waiter.acquire(timeout=30)\n")
                       "    return vis_runtime.host_call('extension-blocked', '{}')\n")))
              (let [process ^Process (:process (get @(var-get #'worker/workers) key))]
                (with-redefs [python-host/dispatch (fn [host-session tool payload]
@@ -1353,21 +1356,23 @@ print(worker_value)"))))
           retired
           (atom false)
 
-          ;; The notifier acquires the condition only after the main thread
-          ;; releases it in wait: interruption cannot overtake the native wait.
+          ;; The notifier takes the gate only after the main thread releases it
+          ;; to wait. A raw `_thread` lock acquire stays in C, because the
+          ;; runtime slices threading's own waits so that they unwind.
           execution
           (future (env/run-python-block
                     session
-                    (str "import threading\n"
-                         "condition = threading.Condition()\n"
+                    (str "import threading, _thread\n"
+                         "gate = threading.Lock()\n"
+                         "waiter = _thread.allocate_lock()\nwaiter.acquire()\n"
                          "def notify_waiting():\n"
-                         "    with condition:\n"
+                         "    with gate:\n"
                          "        with open("
                          (pr-str (str marker))
                          ", 'w') as ready_file:\n"
-                         "            ready_file.write('ready')\n" "with condition:\n"
-                         "    threading.Thread(target=notify_waiting, daemon=True).start()\n"
-                         "    condition.wait(30)\n")))]
+                         "            ready_file.write('ready')\n" "gate.acquire()\n"
+                         "threading.Thread(target=notify_waiting, daemon=True).start()\n"
+                         "gate.release()\nwaiter.acquire(timeout=30)\n")))]
 
       (try (expect (loop [remaining 500]
                      (cond (.exists marker) true
