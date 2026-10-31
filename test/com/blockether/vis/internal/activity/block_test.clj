@@ -36,89 +36,95 @@
         [:council.run :council.wait :council.cancel :council.ask :council.result
          :vis.council.wait]))
 
-(defdescribe block-activity-test
-             (it "records events in order and settles them into the block's envelope"
-                 (let [seen
-                       (atom [])
+(def ^:private publish-details
+  "Council publications, built in and through the host door. User request: the team
+   notes already show each message, so Activity must not repeat it."
+  (mapv #(assoc details :operation %) [:council.publish :vis.council.publish]))
 
-                       activity
-                       (block/start! {:on-event #(swap! seen conj %)})
+(defdescribe
+  block-activity-test
+  (it "records events in order and settles them into the block's envelope"
+      (let [seen
+            (atom [])
 
-                       events
-                       (run-operation! activity)
+            activity
+            (block/start! {:on-event #(swap! seen conj %)})
 
-                       result
-                       (block/settle! activity {:stdout "done"})]
+            events
+            (run-operation! activity)
 
-                   (expect (= events @seen))
-                   (expect (= "done" (:stdout result)))
-                   (expect (nil? (:error result)))
-                   (expect (= "succeeded" (get-in result [:activity :rows 0 :state])))))
-             (it "leaves team calls to the agent table and still passes their events on"
-                 (let [seen
-                       (atom [])
+            result
+            (block/settle! activity {:stdout "done"})]
 
-                       activity
-                       (block/start! {:on-event #(swap! seen conj %)})
+        (expect (= events @seen))
+        (expect (= "done" (:stdout result)))
+        (expect (nil? (:error result)))
+        (expect (= "succeeded" (get-in result [:activity :rows 0 :state])))))
+  (it "leaves team calls and publications out and still passes their events on"
+      (let [seen
+            (atom [])
 
-                       events
-                       (into (into [] (mapcat #(run-operation! activity %)) team-details)
-                             (mapcat #(run-operation! activity %))
-                             [(assoc details :operation :council.publish) details])
+            activity
+            (block/start! {:on-event #(swap! seen conj %)})
 
-                       result
-                       (block/settle! activity {})]
+            events
+            (into
+              (into [] (mapcat #(run-operation! activity %)) (concat team-details publish-details))
+              (mapcat #(run-operation! activity %))
+              [(assoc details :operation :council.read) details])
 
-                   (expect (= events @seen))
-                   (expect (= ["council.publish" "read-record"]
-                              (map :operation (get-in result [:activity :rows]))))
-                   (expect (= 2 (get-in result [:activity :counts :succeeded])))))
-             (it "keeps team calls out of durable Activity"
-                 (let [applied
-                       (atom [])
+            result
+            (block/settle! activity {})]
 
-                       activity
-                       (block/start! {:store {:history-id "history-1"
-                                              :apply! (fn [event]
-                                                        (swap! applied conj event)
-                                                        {})
+        (expect (= events @seen))
+        (expect (= ["council.read" "read-record"]
+                   (map :operation (get-in result [:activity :rows]))))
+        (expect (= 2 (get-in result [:activity :counts :succeeded])))))
+  (it "keeps team calls and publications out of durable Activity"
+      (let [applied
+            (atom [])
+
+            activity
+            (block/start! {:store {:history-id "history-1"
+                                   :apply! (fn [event]
+                                             (swap! applied conj event)
+                                             {})
+                                   :settle! (fn [_ _]
+                                              nil)
+                                   :page (fn []
+                                           nil)}})]
+
+        (run! #(run-operation! activity %) (concat team-details publish-details))
+        (expect (= {} (block/settle! activity {})))
+        (expect (= [] @applied))))
+  (it "drops an event that arrives after the block settled"
+      (let [seen
+            (atom [])
+
+            activity
+            (block/start! {:on-event #(swap! seen conj %)})]
+
+        (block/settle! activity {})
+        (run-operation! activity)
+        (expect (= [] @seen))))
+  (it "reports a failed durable write only when the block has no error of its own"
+      (doseq [own-error [nil {:type :python/error :message "The block failed"}]]
+        (let [activity (block/start! {:store {:history-id "history-1"
+                                              :apply! (fn [_]
+                                                        (throw (ex-info "Storage unavailable" {})))
                                               :settle! (fn [_ _]
                                                          nil)
                                               :page (fn []
                                                       nil)}})]
-
-                   (run! #(run-operation! activity %) team-details)
-                   (expect (= {} (block/settle! activity {})))
-                   (expect (= [] @applied))))
-             (it "drops an event that arrives after the block settled"
-                 (let [seen
-                       (atom [])
-
-                       activity
-                       (block/start! {:on-event #(swap! seen conj %)})]
-
-                   (block/settle! activity {})
-                   (run-operation! activity)
-                   (expect (= [] @seen))))
-             (it "reports a failed durable write only when the block has no error of its own"
-                 (doseq [own-error [nil {:type :python/error :message "The block failed"}]]
-                   (let [activity (block/start!
-                                    {:store {:history-id "history-1"
-                                             :apply! (fn [_]
-                                                       (throw (ex-info "Storage unavailable" {})))
-                                             :settle! (fn [_ _]
-                                                        nil)
-                                             :page (fn []
-                                                     nil)}})]
-                     (run-operation! activity)
-                     (let [result (block/settle! activity
-                                                 (cond-> {}
-                                                   own-error
-                                                   (assoc :error own-error)))]
-                       (expect (= "history-1" (:history-id activity)))
-                       (if own-error
-                         (expect (= own-error (:error result)))
-                         (expect (= :activity/persistence (get-in result [:error :type])))))))))
+          (run-operation! activity)
+          (let [result (block/settle! activity
+                                      (cond-> {}
+                                        own-error
+                                        (assoc :error own-error)))]
+            (expect (= "history-1" (:history-id activity)))
+            (if own-error
+              (expect (= own-error (:error result)))
+              (expect (= :activity/persistence (get-in result [:error :type])))))))))
 
 (defdescribe serial-dispatcher-test
              ;; Regression, issue td-74427c: concurrent callbacks could reduce S2 before

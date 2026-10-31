@@ -307,51 +307,27 @@ def council_recovery_evidence(form_outputs, activities, expected):
             block.get("text") for block in blocks if block.get("type") == "markdown"
         ]
 
-    publications = [
-        row
-        for row in activities
-        if row.get("operation") == "council.publish" and row.get("state") == "succeeded"
-    ]
-    roots = [
-        row
-        for row in publications
-        if references(row, "council-entry") == {thread_id}
-        and references(row, "council-thread") == {thread_id}
-        and bodies(row) == [expected["root_content"]]
-    ]
-    replies = [
-        row
-        for row in publications
-        if references(row, "council-entry") == {entry_id}
-        and references(row, "council-thread") == {thread_id}
-        and bodies(row) == [expected["reply_content"]]
-    ]
+    # A publication has no Activity row. The repaired read proves both messages.
     reads = [
         row
         for row in activities
         if row.get("operation") == "council.read" and row.get("state") == "succeeded"
     ]
-    if (
-        len(publications) != 2
-        or len(roots) != 1
-        or len(replies) != 1
-        or len(reads) != 1
-    ):
+    if len(reads) != 1:
         return (
-            ["Council recovery lacks the two real publications and one repaired read"],
+            ["Council recovery lacks one repaired read"],
             set(),
             [],
         )
-    root, reply, repaired = roots[0], replies[0], reads[0]
+    repaired = reads[0]
     failures = []
     if failed.get("state") != "failed" or failed.get("scope") != event.get("scope"):
         failures.append("Council recovery error does not match its failed Activity")
     if any(
-        not row.get("scope") or row["scope"] not in order
-        for row in (root, reply, failed, repaired)
+        not row.get("scope") or row["scope"] not in order for row in (failed, repaired)
     ):
         failures.append("Council recovery is missing a form scope")
-    if not position(root) < position(reply) < position(failed) < position(repaired):
+    if not position(failed) < position(repaired):
         failures.append(
             "Council recovery did not read the thread after the reply-ID error"
         )

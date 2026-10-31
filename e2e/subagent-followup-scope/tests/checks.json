@@ -14,15 +14,13 @@
     "followup-done"
   ],
   "want_tools": [
-    "council.run",
-    "council.publish"
+    "council.run"
   ],
   "forbid_tools": [
     "patch",
     "council.grant"
   ],
   "want_activity_sequence": [
-    "council.run",
-    "council.publish"
+    "council.run"
   ]
 }

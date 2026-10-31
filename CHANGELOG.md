@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Activity: `council.publish` leaves no row. The team notes already show each Council message. Older histories keep the rows that they recorded.
+
 ## [v0.4.2] - 2026-10-30
 
 The `v0.4.0` and `v0.4.1` tags were not published: their release checks failed.

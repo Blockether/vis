@@ -104,14 +104,14 @@
             (try (on-snapshot (presentation block snapshot)) (catch Throwable _ nil)))))))
 
 (def ^:private council-conversation
-  "Council calls that carry the conversation between sessions. Activity keeps their rows."
-  #{"council.publish" "council.read" "council.get" "council.threads" "council.members"
-    "vis.council.publish" "vis.council.wake"})
+  "Council calls that read the conversation between sessions. Activity keeps their rows. A
+   publication has no row, because the team notes already show each message."
+  #{"council.read" "council.get" "council.threads" "council.members" "vis.council.wake"})
 
 (defn- team-call?
-  "Whether `event` belongs to a subagent call of a leader or a child, built in or through
-   the host door. The agent table shows the team, so a team call reaches `on-event` but
-   leaves no Activity row."
+  "Whether `event` belongs to a subagent call or a Council publication, built in or through
+   the host door. The agent table and the team notes show these, so such a call reaches
+   `on-event` but leaves no Activity row."
   [event]
   (let [operation (some-> (:operation event)
                           name)]

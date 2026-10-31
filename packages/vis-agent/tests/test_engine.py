@@ -602,9 +602,9 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                         "turn.cancelled",
                     }:
                         break
+            # User request: the team notes show each message, so a publication has no row.
             assert sorted(operations.values()) == [
                 "council.get",
-                "council.publish",
                 "council.threads",
             ]
             assert turn.wait(timeout=30)["status"] == "completed"

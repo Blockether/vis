@@ -7,7 +7,6 @@
     "council-reply-marker"
   ],
   "want_tools": [
-    "council.publish",
     "council.read"
   ],
   "want_council_recovery": {

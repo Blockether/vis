@@ -1525,17 +1525,6 @@ class CouncilRecoveryTest(unittest.TestCase):
             )
 
         return {
-            "root": row(
-                "root", "council.publish", "succeeded", [42], expected["root_content"]
-            ),
-            "reply": row(
-                "reply",
-                "council.publish",
-                "succeeded",
-                [43],
-                expected["reply_content"],
-                sequence=2,
-            ),
             "mistake": row("mistake", "council.read", "failed", []),
             "error": {
                 "type": "error",
@@ -1547,11 +1536,12 @@ class CouncilRecoveryTest(unittest.TestCase):
         }
 
     def blocks(self, parts):
-        """Return the publish, mistake and repair blocks of the run, in that order."""
+        """Return the publish, mistake and repair blocks of the run, in that order.
+
+        A Council publication leaves no Activity row, so the publish block has none.
+        """
         return [
-            atif.block(
-                "t1/i1/f1", activity=atif.receipt(parts["root"], parts["reply"])
-            ),
+            atif.block("t1/i1/f1"),
             atif.block(
                 "t1/i2/f1",
                 error=parts["error"],
