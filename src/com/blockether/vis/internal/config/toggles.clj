@@ -768,18 +768,17 @@
                        :persist? true})
     ;; The transcription model is ~640 MB of weights, and the first recording of
     ;; the day used to pay the whole read while a human watched "transcribing"
-    ;; (#275). Loading it once in the background, after the gateway is already
-    ;; serving, makes the first dictation as quick as the second one. A machine
-    ;; with no model installed never loads the backend at all and nothing is ever
-    ;; downloaded for it, so this defaults ON; OFF leaves that memory free until
-    ;; someone actually records.
+    ;; (#275). ON loads it once in the background after the gateway serves, so
+    ;; the first dictation is as quick as the second. It defaults OFF: a loaded
+    ;; model held 1.65 GB of an idle gateway's RSS, also for people who never
+    ;; record (user decision 2026-10-31). OFF loads it at the first recording.
     (register-toggle!
       {:id "speech_preload_model"
        :label "Preload the voice model"
        :description
        "Load the installed transcription model at startup so the first recording is fast."
        :type :boolean
-       :default true
+       :default false
        :owner :vis
        :group :voice
        :persist? true})
