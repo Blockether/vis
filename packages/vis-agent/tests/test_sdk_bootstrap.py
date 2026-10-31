@@ -35,7 +35,7 @@ def test_bundled_module_replaces_installed_sdk_but_preserves_packages(
 ):
     parent = importlib.import_module("blockether.vis")
     namespace = importlib.import_module("blockether")
-    search_path = parent.__path__
+    search_path = list(parent.__path__)
     sibling = ModuleType("blockether.sibling")
     monkeypatch.setitem(sys.modules, sibling.__name__, sibling)
     installed = sys.modules["blockether.vis.extension"]
@@ -46,7 +46,8 @@ def test_bundled_module_replaces_installed_sdk_but_preserves_packages(
     assert importlib.import_module("blockether.vis.extension") is sdk
     assert parent.extension is sdk
     assert sys.modules["blockether"] is namespace
-    assert parent.__path__ is search_path
+    staged = str(REPOSITORY / "resources/vis-host-python/vis_engine/blockether/vis")
+    assert list(parent.__path__) == [staged, *search_path]
     assert sys.modules[sibling.__name__] is sibling
     assert "blockether.vis._outside" not in sys.modules
     assert sdk.ActivityProgress("Inspect SDK", value=1, total=2).to_wire() == {
