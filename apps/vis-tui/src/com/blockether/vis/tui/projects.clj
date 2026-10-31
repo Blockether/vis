@@ -553,6 +553,14 @@
   [(:project-sidebar db) (:tabs db) (:active-tab-id db) (:session-drafts db) (tab-entry-inputs db)
    (mapv #(tab-entry-inputs (get-in db [:tab-locals (:id %)])) (:tabs db))])
 
+(defn paint-inputs
+  "Every input of `paint!` for a `cols` x `rows` screen at `now-ms`: the rows, the
+   active project, the rail hover and the minute of the time labels. An equal key
+   paints the same rail, so a frame that paints only the chat pane keeps the rail."
+  [db cols rows now-ms]
+  [(sidebar-entry-inputs db) (:active-project-id db) (.hovered ^HitRegionMap hit-map) cols rows
+   (quot (long now-ms) 60000)])
+
 (defonce ^:private sidebar-entries-memo
   ;; `[inputs entries]` of the last build. Every frame paints the rail, and a build
   ;; walks every loaded session, so an unchanged sidebar reuses its rows.

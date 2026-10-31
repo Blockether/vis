@@ -178,6 +178,11 @@
 
 (defn- record-frame-phases! [data] (when *frame-metrics* (vreset! *frame-metrics* data)))
 
+(defonce ^:private painted-rail
+  ;; `projects/paint-inputs` of the rail that the last full frame painted. Only the
+  ;; full frame writes it; a cheap path reads it to keep those rail cells.
+  (atom nil))
+
 (def ^:private gc-beans (delay (vec (ManagementFactory/getGarbageCollectorMXBeans))))
 
 (defn- gc-totals
@@ -185,7 +190,8 @@
    A slow frame subtracts two readings to show whether a GC pause caused the stall."
   []
   (reduce (fn [[n ms] ^GarbageCollectorMXBean bean]
-            [(+ (long n) (max 0 (.getCollectionCount bean))) (+ (long ms) (max 0 (.getCollectionTime bean)))])
+            [(+ (long n) (max 0 (.getCollectionCount bean)))
+             (+ (long ms) (max 0 (.getCollectionTime bean)))])
           [0 0]
           @gc-beans))
 
@@ -219,8 +225,8 @@
    exact sub-pass that blew up (e.g. `messages` for the copy-region storm in
    issue #24) instead of hiding it in one opaque `paint` number."
   [data]
-  (let [phases (for [[k label] [[:regions-ms "regions"] [:messages-ms "messages"] [:chrome-ms "chrome"]
-                                [:capture-ms "capture"] [:post-ms "post"]
+  (let [phases (for [[k label] [[:regions-ms "regions"] [:messages-ms "messages"]
+                                [:chrome-ms "chrome"] [:capture-ms "capture"] [:post-ms "post"]
                                 [:overlays-ms "overlays"] [:panel-ms "panel"] [:rail-ms "rail"]
                                 [:fade-ms "fade"]]
                      :let [v (get data k)]
@@ -4157,13 +4163,16 @@
                   (state/dispatch [:live-panel-select (:selected geom)]))
                 {:col (frame/screen-column left) :row top :width width :height height}))]
         (vswap! post-marks assoc :panel (System/nanoTime))
-        (let [rail-cursor (binding [frame/*column-offset* 0]
+        (let [rail-db (if (project-sidebar-locked? db screen-cols)
+                        (assoc-in db [:project-sidebar :open?] false)
+                        db)
+              rail-cursor (binding [frame/*column-offset* 0]
                             (projects/paint! (frame/surface-graphics screen screen-cols rows)
-                                             (if (project-sidebar-locked? db screen-cols)
-                                               (assoc-in db [:project-sidebar :open?] false)
-                                               db)
+                                             rail-db
                                              screen-cols
                                              rows))]
+
+          (reset! painted-rail (projects/paint-inputs rail-db screen-cols rows now-ms))
           (when-not (project-sidebar-locked? db screen-cols)
             (when-let [{:keys [width]} (projects/geometry db screen-cols rows)]
               ;; The rail's inline add field owns the caret while it is open; otherwise
@@ -5389,24 +5398,25 @@
         (live-panel-layout db chat-cols)
 
         path
-        (if (and live-panel (not= path :input) (not sidebar?)) :full path)
+        (if (and live-panel (not= path :input)) :full path)
 
         ;; The focused side panel fades the chat; only a full frame fades it again.
         path
         (if (= :panel (focused-area db)) :full path)
 
-        rail-cols
-        chat-cols
-
         chat-cols
         (if (:is-docked live-panel) (:chat-cols live-panel) chat-cols)
 
-        ;; On narrow terminals the rail covers the composer; a partial input paint
-        ;; would erase its lower rows. Wide terminals retain the cheap typing path.
+        ;; Every cheap path paints only the chat pane, so it keeps the rail cells of the
+        ;; last full frame. An overlay rail covers the pane, a focused rail fades the
+        ;; chat, and a changed rail must paint again: each takes the full frame. The
+        ;; typing path skips the rail check, because each key changes the tab draft.
         path
-        (if (and
-              sidebar?
-              (or (not= path :input) (= cols rail-cols) (get-in db [:project-sidebar :focused?])))
+        (if (and sidebar?
+                 (or (zero? (long (:base-left pane)))
+                     (get-in db [:project-sidebar :focused?])
+                     (and (not= path :input)
+                          (not= @painted-rail (projects/paint-inputs db cols rows now-ms)))))
           :full
           path)
 

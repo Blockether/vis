@@ -20,6 +20,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.screen :as screen]
@@ -2617,6 +2618,56 @@ therapy line 2"
             (it "accepts environment values with --continue, because only new sessions use them"
                 (expect (= {:sources ["project"]}
                            (launch-session-options {:continue true} {"VIS_SOURCES" "project"}))))))
+
+(defdescribe
+  project-rail-repaint-path-test
+  ;; Field logs of 2026-10-31: with the project rail open, all 8108 frames took the
+  ;; full path, so each 80 ms background spinner tick repainted the whole screen.
+  (let [db
+        {:project-sidebar {:open? true}
+         :tabs [{:id :t1} {:id :t2}]
+         :active-tab-id :t1
+         :tab-locals {:t2 {:loading? true}}
+         :session {:id "s1"}}
+
+        paint-path
+        (fn [db cols painted]
+          (with-redefs-fn {#'screen/painted-rail (atom painted)
+                           #'screen/frame-trend-state (atom nil)
+                           #'screen/render-header-hover-frame! (constantly nil)
+                           #'screen/render-frame! (constantly :new-layout)}
+            #(second (#'screen/paint-frame! nil :header-spinner cols 30 db 0 :old-layout))))]
+
+    (it "keeps a cheap path beside a docked rail that paints the same rows"
+        (expect (false? (paint-path db 140 (projects/paint-inputs db 140 30 0)))))
+    (it "paints the full frame when a background run changes the rail"
+        (expect (true? (paint-path (assoc-in db [:tab-locals :t2 :loading?] false)
+                                   140
+                                   (projects/paint-inputs db 140 30 0)))))
+    (it "paints the full frame when the rail covers the chat on a narrow terminal"
+        (expect (true? (paint-path db 90 (projects/paint-inputs db 90 30 0)))))
+    (it "records the painted rail in a real full frame, so the next spinner tick stays cheap"
+        (let [{:keys [screen]}
+              (term/virtual-screen)
+
+              db
+              (assoc db
+                :messages []
+                :input (input/empty-input)
+                :scroll scroll/follow)]
+
+          (try (with-redefs-fn {#'screen/painted-rail (atom nil)
+                                #'screen/frame-trend-state (atom nil)}
+                 (fn []
+                   (let [[layout full?]
+                         (#'screen/paint-frame! screen :full 140 30 db 0 nil)
+
+                         [_ cheap-full?]
+                         (#'screen/paint-frame! screen :header-spinner 140 30 db 0 layout)]
+
+                     (expect full?)
+                     (expect (false? cheap-full?)))))
+               (finally (.close ^TerminalScreen screen)))))))
 
 (defdescribe
   typing-diagnostics-test
