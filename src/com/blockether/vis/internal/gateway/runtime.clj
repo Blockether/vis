@@ -7,7 +7,8 @@
    adapters that combine it with that contract."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.contract.gateway :as contract]))
+            [com.blockether.vis.contract.gateway :as contract]
+            [com.blockether.vis.internal.paths :as paths]))
 
 (def ^:private build-version
   (delay (or (some-> (io/resource "vis/VERSION")
@@ -54,8 +55,7 @@
    a jar or an image, which carries its identity in `vis/BUILD` instead."
   []
   (when-let [^java.io.File f (resource-file "com/blockether/vis/internal/gateway/runtime.clj")]
-    (loop [^java.io.File dir (.getParentFile f)]
-      (when dir (if (.exists (io/file dir ".git")) dir (recur (.getParentFile dir)))))))
+    (paths/nearest-ancestor #(.exists (io/file % ".git")) (.getParentFile f))))
 
 (defn- git-dir
   "The directory holding `HEAD` for `root`: `.git` itself, or the path a linked

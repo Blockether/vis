@@ -131,16 +131,10 @@
   [env-or-root]
   (if-let [root (workspace-root env-or-root)]
     (let [start (.getCanonicalFile (io/file root))
-          stop (loop [d start]
-                 (when d (if (.exists (io/file d ".git")) d (recur (.getParentFile d)))))]
+          stop (paths/nearest-ancestor #(.exists (io/file % ".git")) start)
+          chain (paths/ancestor-chain start)]
 
-      (loop [d start
-             acc []]
-
-        (if (nil? d)
-          acc
-          (let [acc (conj acc d)]
-            (if (and stop (= d stop)) acc (recur (.getParentFile d) acc))))))
+      (if stop (conj (vec (take-while #(not= stop %) chain)) stop) (vec chain)))
     []))
 
 (defn backend-id

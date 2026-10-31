@@ -492,11 +492,10 @@
             ;; safe-path is the single source of truth for confinement: it accepts
             ;; a dir under any allowed root and throws :path-escape otherwise.
             (try (safe-path (.getPath d)) true (catch clojure.lang.ExceptionInfo _ false)))]
-    (loop [^File cur f]
-      (cond (nil? cur) nil
-            (not (confined? cur)) nil
-            (and (.exists cur) (.isDirectory cur)) cur
-            :else (recur (.getParentFile cur))))))
+    (->> (paths/ancestor-chain f)
+         (take-while confined?)
+         (some (fn [^File d]
+                 (when (.isDirectory d) d))))))
 
 (defn- resolve-search-roots
   "Resolve grep `paths` into

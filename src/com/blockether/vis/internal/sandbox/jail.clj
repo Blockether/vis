@@ -206,10 +206,8 @@
   [rule ^String path]
   (when-let [^PathMatcher matcher (try (.getPathMatcher (FileSystems/getDefault) (str "glob:" rule))
                                        (catch Throwable _ nil))]
-    (loop [^Path candidate (Paths/get path (make-array String 0))]
-      (cond (nil? candidate) false
-            (.matches matcher candidate) true
-            :else (recur (.getParent candidate))))))
+    (boolean (paths/nearest-ancestor #(.matches matcher ^Path %)
+                                     (Paths/get path (make-array String 0))))))
 
 ;; Live subagent file grants, by session id: {:owner env-token :jail value :stale? bool}. Only a
 ;; session with a live environment has an entry; a new environment reads its grant from the store.

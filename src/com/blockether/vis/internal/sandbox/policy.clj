@@ -38,22 +38,12 @@
                         raw
                         (.resolve (Paths/get (str base-dir) (make-array String 0)) raw)))]
 
-      (loop [^Path ancestor
-             absolute
-
-             tail
-             ()]
-
-        (cond (nil? ancestor) (.toString absolute)
-              (Files/exists ancestor no-link-options)
-              (let [real (try (.toRealPath ancestor no-link-options)
+      (if-let [^Path ancestor (paths/nearest-ancestor #(Files/exists ^Path % no-link-options)
+                                                      absolute)]
+        (let [^Path real (try (.toRealPath ancestor no-link-options)
                               (catch Throwable _ (.toAbsolutePath ancestor)))]
-                (.toString (.normalize ^Path
-                                       (reduce (fn [^Path p ^String segment]
-                                                 (.resolve p segment))
-                                               real
-                                               tail))))
-              :else (recur (.getParent ancestor) (cons (str (.getFileName ancestor)) tail)))))))
+          (.toString (.normalize (.resolve real (.relativize ancestor absolute)))))
+        (.toString absolute)))))
 
 (defn home-relative
   "Render an absolute path under HOME as `~` / `~/…`; leave other paths absolute."
@@ -311,10 +301,8 @@
                   (when (or (under? selected denied) (under? denied selected)) rule)))
               (literal-rules patterns))
         (some (fn [[_ ^PathMatcher matcher]]
-                (loop [^Path candidate selected]
-                  (cond (nil? candidate) nil
-                        (.matches matcher candidate) (str candidate)
-                        :else (recur (.getParent candidate)))))
+                (some-> (paths/nearest-ancestor #(.matches matcher ^Path %) selected)
+                        str))
               globs)
         (some (fn [[start [depth matchers]]]
                 (let [found (AtomicReference.)]

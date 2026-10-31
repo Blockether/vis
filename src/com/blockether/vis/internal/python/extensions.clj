@@ -743,10 +743,13 @@
           (.toPath (.getCanonicalFile (io/file entry)))]
 
       (when (and (.startsWith entry root) (not= entry root))
-        (loop [^java.nio.file.Path dir (.getParent entry)]
-          (cond (or (nil? dir) (= dir root)) ""
-                (.isDirectory (io/file (.toFile dir) ".vis")) (str (.relativize root dir))
-                :else (recur (.getParent dir))))))))
+        (let [project (paths/nearest-ancestor (fn [^java.nio.file.Path dir]
+                                                (or (= dir root)
+                                                    (.isDirectory (io/file (.toFile dir) ".vis"))))
+                                              (.getParent entry))]
+          (if (or (nil? project) (= project root))
+            ""
+            (str (.relativize root ^java.nio.file.Path project))))))))
 
 (defn- project-root-in
   "Map an extension's project path onto a session root (#399)."
@@ -3558,8 +3561,7 @@
 (defn- entry-label
   "A short name for an extension entry file: its package for `<package>/<version>/extension.py`."
   [^File f]
-  (let [names (->> (iterate #(.getParentFile ^File %) (.getParentFile f))
-                   (take-while some?)
+  (let [names (->> (paths/ancestor-chain (.getParentFile f))
                    (map #(.getName ^File %))
                    (remove #(or (= "current" %) (re-matches #"\d+\.[\w.+-]*" %))))]
     (if (= "extension.py" (.getName f))

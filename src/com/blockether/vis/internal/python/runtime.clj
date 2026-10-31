@@ -135,14 +135,12 @@
    checkout, neither of which anything here installs or reclaims."
   ^File [^String kind ^String path]
   (let [root (.getAbsolutePath (io/file (System/getProperty "user.home") ".vis" "python" kind))]
-    (loop [^File dir (some-> path
-                             io/file)]
-      (when dir
-        (if (= root
-               (some-> (.getParentFile dir)
-                       .getAbsolutePath))
-          dir
-          (recur (.getParentFile dir)))))))
+    (paths/nearest-ancestor (fn [^File dir]
+                              (= root
+                                 (some-> (.getParentFile dir)
+                                         .getAbsolutePath)))
+                            (some-> path
+                                    io/file))))
 
 (defn- claim-store-trees!
   "Claim the interpreter and source trees this process boots from, so cleanup in
@@ -1190,7 +1188,7 @@
 
         files
         (vec (for [^File dir
-                   (take-while some? (iterate #(.getParentFile ^File %) project))
+                   (paths/ancestor-chain project)
 
                    :let [pyproject
                          (text dir "pyproject.toml")

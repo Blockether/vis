@@ -19,6 +19,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.worker :as pyext]
@@ -134,17 +135,15 @@
    sitting next to the test."
   ([^File scan-dir ^File test-file] (test-sys-path scan-dir test-file nil))
   ([^File scan-dir ^File test-file extra]
-   (let [scan (.getCanonicalPath scan-dir)]
-     (vec (distinct (concat (remove str/blank? (map str extra))
-                            (loop [^File d (.getParentFile (.getCanonicalFile test-file))
-                                   acc []]
+   (let [scan
+         (.getCanonicalPath scan-dir)
 
-                              (if (nil? d)
-                                acc
-                                (let [p (.getCanonicalPath d)
-                                      acc (conj acc p)]
+         [below from-scan]
+         (split-with #(not= scan %)
+                     (map #(.getCanonicalPath ^File %)
+                          (paths/ancestor-chain (.getParentFile (.getCanonicalFile test-file)))))]
 
-                                  (if (= p scan) acc (recur (.getParentFile d) acc)))))))))))
+     (vec (distinct (concat (remove str/blank? (map str extra)) below (take 1 from-scan)))))))
 
 (def ^:private run-test-src
   "Python driver: prepend the bound `sys.path` roots, then
