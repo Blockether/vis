@@ -38,7 +38,7 @@
 
 ;; Short-TTL cache for per-frame DISPLAY readers (the TUI footer renders every
 ;; frame; the codebase avoids per-paint DB reads). Pending always wins over it.
-(defonce ^:private display-cache (atom {})) ; sid-string -> {:v val :at ms}
+(defonce ^:private display-cache (atom {})) ; sid-string -> [expires-at val], see util/ttl-cached
 
 (def ^:private display-ttl-ms 1500)
 
@@ -91,16 +91,7 @@
     (let [k (str sid)]
       (if (contains? @pending k)
         (pending->val (get @pending k))
-        (let [now (util/now-ms)
-              c (get @display-cache k)
-              at (long (or (:at c) 0))
-              c (get @display-cache k)]
-
-          (if (and c (< (- now at) (long display-ttl-ms)))
-            (:v c)
-            (let [v (db-read db-info sid)]
-              (swap! display-cache assoc k {:v v :at now})
-              v)))))))
+        (util/ttl-cached display-cache display-ttl-ms k #(db-read db-info sid))))))
 
 ;; ── Route commands ──────────────────────────────────────────────────────────
 ;; A manual pick is composer state: the gateway snapshots it when a turn is SUBMITTED, so

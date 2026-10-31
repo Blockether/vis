@@ -70,7 +70,7 @@
   instead of being rediscovered on every print or frozen for the process."
   30000)
 
-(def ^:private default-route-cache (atom nil))
+(def ^:private default-route-cache (atom {}))
 
 (defn- parse-proc-net-route
   "IPv4 default gateway from a Linux `/proc/net/route` table, or nil. The
@@ -127,24 +127,14 @@
   public default gateway is dropped: a link carrying a bearer token is a LAN
   guess, never an invitation to the ISP's router."
   []
-  (let [now
-        (util/now-ms)
-
-        cached
-        @default-route-cache]
-
-    (if (and cached (< (- now (long (:at cached))) (long DEFAULT_ROUTE_TTL_MS)))
-      (:host cached)
-      (let [found
-            (some-> (discover-default-route)
-                    str/trim
-                    not-empty)
-
-            host
-            (when (and found (site-local-ip? found)) found)]
-
-        (reset! default-route-cache {:at now :host host})
-        host))))
+  (util/ttl-cached default-route-cache
+                   DEFAULT_ROUTE_TTL_MS
+                   :host
+                   (fn []
+                     (let [found (some-> (discover-default-route)
+                                         str/trim
+                                         not-empty)]
+                       (when (and found (site-local-ip? found)) found)))))
 
 (defn wildcard-bind?
   "True when `host` names every interface instead of one address. Such a

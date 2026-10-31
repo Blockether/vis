@@ -1853,9 +1853,6 @@
             cache
             (rv 'resources-cache)
 
-            inflight
-            (rv 'resources-refreshing)
-
             calls
             (atom 0)]
 
@@ -1865,7 +1862,6 @@
                                                 [{"id" "bg"}])}
           (fn []
             (reset! @cache {})
-            (reset! @inflight #{})
             (let [t0
                   (System/nanoTime)
 
@@ -1893,7 +1889,11 @@
 
                 (expect (= [{"id" "bg"}] warm) "a fresh entry is served from cache")
                 (expect (< warm-ms 50.0) "warm read is a pure cache hit")
-                (expect (empty? @@inflight) "the in-flight slot is released after the fetch"))))))))
+                ;; a stale read after the fetch starts the next one
+                (swap! @cache assoc "sid-x" [0 [{"id" "old"}]])
+                (expect (= [{"id" "old"}] (client/list-resources-cached "sid-x")))
+                (await-value #(client/list-resources-cached "sid-x") [{"id" "bg"}])
+                (expect (= 2 @calls) "the in-flight slot is released after the fetch"))))))))
 
 (defdescribe
   session-model-cached-never-blocks-the-caller
@@ -1908,9 +1908,6 @@
             cache
             (rv 'session-model-cache)
 
-            inflight
-            (rv 'session-model-refreshing)
-
             calls
             (atom 0)]
 
@@ -1920,7 +1917,6 @@
                                                {:provider "anthropic" :model "opus"})}
           (fn []
             (reset! @cache {})
-            (reset! @inflight #{})
             (let [t0
                   (System/nanoTime)
 
@@ -1950,7 +1946,12 @@
                 (expect (= {:provider "anthropic" :model "opus"} warm)
                         "a fresh entry is served from cache")
                 (expect (< warm-ms 50.0) "warm read is a pure cache hit")
-                (expect (empty? @@inflight) "the in-flight slot is released after the fetch"))))))))
+                ;; a stale read after the fetch starts the next one
+                (swap! @cache assoc "sid-m" [0 {:provider "zai" :model "glm"}])
+                (expect (= {:provider "zai" :model "glm"} (client/session-model-cached "sid-m")))
+                (await-value #(client/session-model-cached "sid-m")
+                             {:provider "anthropic" :model "opus"})
+                (expect (= 2 @calls) "the in-flight slot is released after the fetch"))))))))
 
 (defdescribe set-session-model!-writes-through-the-session-model-cache
              (it "set session model! writes through the session model cache"
@@ -1966,7 +1967,7 @@
                        (reset! @cache {})
                        (expect (= {:provider "zai" :model "glm"}
                                   (client/set-session-model! "sid-w" "zai" "glm")))
-                       (expect (= {:provider "zai" :model "glm"} (:val (get @@cache "sid-w")))
+                       (expect (= {:provider "zai" :model "glm"} (second (get @@cache "sid-w")))
                                "the PATCHed pref lands in the footer cache immediately"))))))
 
 (defdescribe setting-actions-proxy-to-the-daemon

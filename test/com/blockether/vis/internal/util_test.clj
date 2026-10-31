@@ -461,6 +461,127 @@
                                            (util/scope-cached :values [] compute)))
                    (expect (= 1 @calls)))))
 
+(defn- eventually
+  "True once `pred` answers true within five seconds."
+  [pred]
+  (util/poll (util/deadline-ms 5) 5 #(if (pred) (reduced true) false)))
+
+;; User report 2026-10-31: each time-limited cache had its own copy of this expiry check.
+;; These rules pin the shared caches that replace the copies.
+(defdescribe ttl-cache-test
+             (it "reuses a value until its time ends, and computes it again after that"
+                 (let [calls
+                       (atom 0)
+
+                       cache
+                       (atom {})
+
+                       compute
+                       #(swap! calls inc)]
+
+                   (expect (= 1 (util/ttl-cached cache 60000 :fresh compute)))
+                   (expect (= 1 (util/ttl-cached cache 60000 :fresh compute)))
+                   (expect (= 2 (util/ttl-cached cache 0 :expired compute)))
+                   (expect (= 3 (util/ttl-cached cache 0 :expired compute)))))
+             (it "keeps nil and false, but not a failure"
+                 (let [calls
+                       (atom 0)
+
+                       cache
+                       (atom {})
+
+                       compute
+                       (fn [value]
+                         #(do
+                            (swap! calls inc)
+                            (if (= :failure value) (throw (ex-info "fixture failure" {})) value)))]
+
+                   (doseq [value [nil false]]
+                     (dotimes [_ 2]
+                       (expect (= value (util/ttl-cached cache 60000 [value] (compute value))))))
+                   (expect (= 2 @calls))
+                   (dotimes [_ 2]
+                     (expect (throws? clojure.lang.ExceptionInfo
+                                      #(util/ttl-cached cache 60000 :failure (compute :failure)))))
+                   (expect (= 4 @calls))))
+             (it "counts the time from the end of a slow computation"
+                 ;; A value slower than its time must still be reused. Dated from the start of the
+                 ;; computation, it was stale on arrival, so each read computed it again.
+                 (let [calls
+                       (atom 0)
+
+                       cache
+                       (atom {})
+
+                       compute
+                       #(do (Thread/sleep 500) (swap! calls inc))]
+
+                   (util/ttl-cached cache 400 :slow compute)
+                   (expect (= 1 (util/ttl-cached cache 400 :slow compute)))
+                   (expect (= 1 @calls)))))
+
+(defdescribe
+  refreshed-cache-test
+  (it "answers an expired value at once, and computes one next value for each cache and key"
+      (let [gate
+            (promise)
+
+            started
+            (atom [])
+
+            cache
+            (atom {:k [0 :old] :other [0 :old]})
+
+            twin
+            (atom {:k [0 :old]})
+
+            compute
+            (fn [label]
+              #(do (swap! started conj label) (deref gate 10000 nil) [:new label]))
+
+            read
+            (fn [c k label]
+              (deref (future (util/refreshed c 60000 k (compute label) false)) 2000 ::blocked))]
+
+        (expect (= :old (read cache :k :k)))
+        (expect (eventually #(= [:k] @started)))
+        (dotimes [_ 3]
+          (expect (= :old (read cache :k :k))))
+        (expect (= :old (read cache :other :other)))
+        (expect (= :old (read twin :k :twin)))
+        (expect (eventually #(= #{:k :other :twin} (set @started))))
+        (deliver gate true)
+        (expect (eventually #(= [:new :k] (read cache :k :again))))
+        (expect (= [:new :other] (read cache :other :again)))
+        (expect (= 3 (count @started)))))
+  (it "keeps the old value after a failure, and computes again after each expiry"
+      (let [calls
+            (atom 0)
+
+            cache
+            (atom {:k [0 :old]})
+
+            seen
+            (atom #{})
+
+            compute
+            #(if (= 1 (swap! calls inc)) (throw (ex-info "fixture failure" {})) :new)]
+
+        (expect (eventually #(let [value (util/refreshed cache 60000 :k compute false)] (swap! seen
+                                                                                          conj
+                                                                                          value)
+                               (= :new value))))
+        (expect (= #{:old :new} @seen))
+        (expect (= 2 @calls))
+        (swap! cache assoc :k [0 :new])
+        (expect (eventually #(do (util/refreshed cache 60000 :k compute false) (= 3 @calls))))))
+  (it "computes a missing value on this thread with wait?, else answers nil first"
+      (let [cache (atom {})]
+        (expect (= 1 (util/refreshed cache 60000 :wait (constantly 1) true)))
+        (expect (nil? (util/refreshed cache 60000 :background (constantly 2) false)))
+        (expect (eventually #(= 2
+                                (util/refreshed cache 60000 :background (constantly 3) false)))))))
+
 (defdescribe poll-test
              (it "stops at the first reduced answer"
                  (let [calls (atom 0)]

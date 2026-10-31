@@ -30,7 +30,7 @@
   60000)
 
 (defonce ^:private cache
-  ;; [service account] -> {:at epoch-ms :value secret-or-nil}
+  ;; [service account] -> [expires-at secret-or-nil], see `util/ttl-cached`
   (atom {}))
 
 (defn reset-cache!
@@ -65,17 +65,4 @@
   [service account]
   (when (and (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "mac")
              (nil? (System/getProperty "vis.push.home")))
-    (let [k
-          [service account]
-
-          now
-          (util/now-ms)
-
-          hit
-          (get @cache k)]
-
-      (if (and hit (< (- now (long (:at hit))) (long CACHE_TTL_MS)))
-        (:value hit)
-        (let [v (read-secret! service account)]
-          (swap! cache assoc k {:at now :value v})
-          v)))))
+    (util/ttl-cached cache CACHE_TTL_MS [service account] #(read-secret! service account))))

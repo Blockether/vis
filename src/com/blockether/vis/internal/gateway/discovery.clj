@@ -96,7 +96,7 @@
 
 (def ^:private ^:const PID_LIVENESS_TTL_MS 5000)
 
-;; pid -> [alive? checked-at-ms]. Best-effort TTL memo behind `pid-alive-cached?`.
+;; pid -> [expires-at alive?], the `util/ttl-cached` memo behind `pid-alive-cached?`.
 (defonce ^:private pid-liveness-cache (atom {}))
 
 (defn pid-alive-cached?
@@ -110,17 +110,7 @@
   [pid]
   (if (nil? pid)
     false
-    (let [now
-          (util/now-ms)
-
-          [alive? at]
-          (get @pid-liveness-cache pid)]
-
-      (if (and at (< (- now (long at)) (long PID_LIVENESS_TTL_MS)))
-        alive?
-        (let [fresh (pid-alive? pid)]
-          (swap! pid-liveness-cache assoc pid [fresh now])
-          fresh)))))
+    (util/ttl-cached pid-liveness-cache PID_LIVENESS_TTL_MS pid #(pid-alive? pid))))
 
 ;; Registry read / write / delete
 

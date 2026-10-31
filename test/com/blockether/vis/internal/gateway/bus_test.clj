@@ -46,8 +46,8 @@
       ;; clean
       (reset! (var-get #'bus/reaped-turns) {})
       (reset! (var-get #'bus/tails) {})
-      (reset! (var-get #'bus/live-cache) {:at 0 :turns {}})
-      (reset! (var-get #'bus/waiting-cache) {:at 0 :sessions {}})
+      (reset! (var-get #'bus/live-cache) {})
+      (reset! (var-get #'bus/waiting-cache) {})
       (bus/set-deliver-fn! (fn [_sid _store? ev]
                              (swap! capture conj ev)))
       (try (f capture
@@ -639,7 +639,7 @@
                                                                0))
             (spit f
                   (wire/json-str {"schema" 1 "session_id" sid "turn_id" "T-orphan" "pid" dead-pid}))
-            (reset! (var-get #'bus/live-cache) {:at 0 :turns {}})
+            (reset! (var-get #'bus/live-cache) {})
             ;; A crashed producer owes a retract it can no longer make, so the
             ;; reader retracts for it — otherwise one kill -9 lights a session up
             ;; forever on every client of this machine.
@@ -758,7 +758,7 @@
                                   "session_id" sid
                                   "pid" dead-pid
                                   "requests" [{"id" "req-orphan" "since" 1}]}))
-            (reset! (var-get #'bus/waiting-cache) {:at 0 :sessions {}})
+            (reset! (var-get #'bus/waiting-cache) {})
             ;; A dead process cannot answer its own dialog, and cannot retract
             ;; it either — without this reap one crash leaves a session demanding
             ;; input forever on every client of this machine.

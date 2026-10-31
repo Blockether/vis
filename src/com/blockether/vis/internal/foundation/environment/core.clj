@@ -29,6 +29,7 @@
             [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -41,7 +42,7 @@
 ;; extension reload (per plan caveat: extensions holding mutable
 ;; state across reload MUST use defonce). The cwd-keyed snapshot
 ;; covers host/git/languages/monorepo only — agents hold their own cache.
-(defonce ^:private cache (atom {:key nil :value nil}))
+(defonce ^:private cache (atom {}))
 
 (defn- canonical-cwd
   ^String []
@@ -105,17 +106,8 @@
 (defn snapshot
   "Full environment snapshot map {:host :git :languages :monorepo :repositories}. Cached per cwd; host helper, not a model tool."
   []
-  (let [cwd
-        (canonical-cwd)
-
-        cached
-        @cache]
-
-    (if (= cwd (:key cached))
-      (:value cached)
-      (let [value (compute-snapshot cwd)]
-        (reset! cache {:key cwd :value value})
-        value))))
+  (let [cwd (canonical-cwd)]
+    (util/cached cache 1 cwd [] #(compute-snapshot cwd))))
 
 (defn refresh!
   "Drop the cached env snapshot, forget the repository inventory, rescan project
@@ -124,7 +116,7 @@
    HOST-ONLY: refreshing the environment is a USER action registered as a
    `/reload` hook. The sandbox receives project facts through `session`."
   []
-  (reset! cache {:key nil :value nil})
+  (reset! cache {})
   (repositories/refresh-inventory!)
   (try (agents/reload!)
        (catch Throwable t

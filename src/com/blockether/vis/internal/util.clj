@@ -3,15 +3,18 @@
    a millisecond clock, the two blank-string idioms, a trimmed environment read,
    UTF-8 bytes, SHA-256, HMAC-SHA256, secure random bytes, unpadded base64url,
    byte concatenation, the hex fold, compact JWS signing, a daemon thread
-   factory and the caches: a bounded memo, an identity-checked cache and one memo
-   scope for work at one moment, such as a context render.
+   factory and the caches: a bounded memo, an identity-checked cache, one memo
+   scope for work at one moment, such as a context render, and a time-limited cache
+   that can refresh in the background.
 
    It requires NOTHING from the rest of vis and never will. That is the whole
    contract: a leaf can be required from anywhere — specs that load during
    namespace initialization, the gateway, the sandbox — without a cycle to
    reason about. Everything here is a pure function of its arguments (or of one
-   process-wide reading), so no reading here may become a top-level value: a
-   `def` that CALLS one freezes the BUILDER's answer into the native image
+   process-wide reading). The caches are the one exception: they change the atoms
+   that their callers pass, and [[refreshed]] also keeps the set of computations
+   that run now. No reading here may become a top-level value: a `def` that CALLS
+   one freezes the BUILDER's answer into the native image
    (`native-image-env-capture-test` is the gate).
 
    A name earns a place here when a THIRD namespace needs it. A helper with one
@@ -241,6 +244,47 @@
       (cond (reduced? v) @v
             (>= (now-ms) deadline) v
             :else (do (Thread/sleep (max 1 (min interval-ms (- deadline (now-ms))))) (recur))))))
+
+(defn- store!
+  "Keep `value` for `k` in `cache` until `ttl-ms` milliseconds from now, and return it."
+  [cache ttl-ms k value]
+  (swap! cache assoc k [(+ (now-ms) (long ttl-ms)) value])
+  value)
+
+(defn ttl-cached
+  "The value of `(f)` kept in `cache`, an atom of key -> `[expires-at value]`.
+   Reuse the value of `k` until `ttl-ms` milliseconds after `f` returned it. Nil and false
+   are kept too; a failure is not. Reset `cache` to `{}` to forget every value, or dissoc
+   a key to forget one. `f` runs outside the atom update, so concurrent misses can compute
+   more than once."
+  [cache ttl-ms k f]
+  (let [entry (get @cache k)]
+    (if (and entry (< (now-ms) (long (nth entry 0)))) (nth entry 1) (store! cache ttl-ms k (f)))))
+
+(defonce ^:private refreshing
+  ;; The `[cache key]` pairs whose [[refreshed]] computation runs now.
+  (atom #{}))
+
+(defn- refresh!
+  "Compute `k` of `cache` again on a future, unless that computation runs already."
+  [cache ttl-ms k f]
+  (let [slot [cache k]]
+    (when-not (contains? (first (swap-vals! refreshing conj slot)) slot)
+      (future (try (store! cache ttl-ms k (f))
+                   (catch Throwable _ nil)
+                   (finally (swap! refreshing disj slot)))))
+    nil))
+
+(defn refreshed
+  "The value of `(f)` kept in `cache` as in [[ttl-cached]], without a wait while a value
+   exists. After `ttl-ms`, return the old value and compute the next one on a future, one
+   at a time for each cache and key. A failure keeps the old value. For a key without a
+   value, compute it on this thread when `wait?`, else start the future and return nil."
+  [cache ttl-ms k f wait?]
+  (let [entry (get @cache k)]
+    (cond (nil? entry) (if wait? (ttl-cached cache ttl-ms k f) (refresh! cache ttl-ms k f))
+          (< (now-ms) (long (nth entry 0))) (nth entry 1)
+          :else (do (refresh! cache ttl-ms k f) (nth entry 1)))))
 
 (defn non-blank-string?
   "True when `x` is a string carrying something other than whitespace."

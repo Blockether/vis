@@ -183,23 +183,11 @@
     (wire/json-str {:iss team-id :iat (quot (util/now-ms) 1000)})))
 
 (defonce ^:private jwt-cache
-  ;; {:token "…" :at ms :key-id "…"} — one provider token per key, reused
-  ;; across every notification. Apple rate-limits token MINTING, not use.
-  (atom nil))
+  ;; key-id -> [expires-at token] (see `util/ttl-cached`) — one provider token per
+  ;; key, reused across every notification. Apple rate-limits token MINTING, not use.
+  (atom {}))
 
-(defn- provider-token
-  [cfg]
-  (let [{:keys [token at key-id]}
-        @jwt-cache
-
-        fresh?
-        (and token (= key-id (:key-id cfg)) (< (- (util/now-ms) (long at)) (long JWT_TTL_MS)))]
-
-    (if fresh?
-      token
-      (let [t (sign-jwt cfg)]
-        (reset! jwt-cache {:token t :at (util/now-ms) :key-id (:key-id cfg)})
-        t))))
+(defn- provider-token [cfg] (util/ttl-cached jwt-cache JWT_TTL_MS (:key-id cfg) #(sign-jwt cfg)))
 
 ;; Device registry
 

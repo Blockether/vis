@@ -289,7 +289,7 @@
                                            (deref gate 10000 nil)
                                            {:providers fleet})]
           ;; plant a STALE snapshot
-          (reset! @cache {:at 0 :val [{:id :old}]})
+          (reset! @cache {:fleet [0 [{:id :old}]]})
           (let [t0 (System/nanoTime)
                 stale (providers/configured-providers-cached)
                 stale-ms (/ (- (System/nanoTime) t0) 1e6)]
@@ -325,9 +325,9 @@
                                                        nil)
                                  config/reload-config! (constantly nil)]
 
-                     (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
+                     (reset! @cache {:fleet [Long/MAX_VALUE [{:id :warm}]]})
                      (providers/save-providers! [] nil)
-                     (expect (nil? @@cache) "save-providers! drops the snapshot"))
+                     (expect (empty? @@cache) "save-providers! drops the snapshot"))
                    (with-redefs [config/remove-config-provider! (fn [& _]
                                                                   true)
                                  config/load-global-config-raw (constantly {})
@@ -336,9 +336,9 @@
                                                        nil)
                                  config/reload-config! (constantly nil)]
 
-                     (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
+                     (reset! @cache {:fleet [Long/MAX_VALUE [{:id :warm}]]})
                      (providers/remove-provider! :warm nil)
-                     (expect (nil? @@cache) "remove-provider! drops the snapshot")))))
+                     (expect (empty? @@cache) "remove-provider! drops the snapshot")))))
 
 ;; Regression (user report): extension-owned providers must not be deleted,
 ;; including providers whose extension exposes an interactive sign-in flow.

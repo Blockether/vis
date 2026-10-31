@@ -917,11 +917,10 @@
   (vec (:providers (config/load-config))))
 
 (defonce ^:private fleet-cache
-  ;; {:at <epoch-ms> :val <fleet vec>} — last-known `configured-providers`
-  ;; snapshot; nil until the first read or right after an invalidation.
-  (atom nil))
-
-(defonce ^:private fleet-refreshing (atom false))
+  ;; :fleet -> [expires-at fleet-vec] (see `util/refreshed`) — the last-known
+  ;; `configured-providers` snapshot; empty until the first read or right after
+  ;; an invalidation.
+  (atom {}))
 
 (def ^:private fleet-cache-ttl-ms
   ;; Cross-process safety net ONLY: same-process fleet mutations invalidate
@@ -936,7 +935,7 @@
    lets the TTL stay long (issue #29 follow-up: invalidate on change instead
    of polling)."
   []
-  (reset! fleet-cache nil))
+  (reset! fleet-cache {}))
 
 ;; ── Shared-router rebuild hook ──────────────────────────────────────────────
 ;; The shared LLM router and every cached session env that snapshotted it live in
@@ -975,20 +974,6 @@
   (when-let [f @router-rebuild-hook]
     (try (f) (catch Throwable _ nil))))
 
-(defn- refresh-fleet-cache!
-  "Single-flight BACKGROUND re-enumeration of the fleet snapshot. Errors
-   leave the last-known value untouched."
-  []
-  (when (compare-and-set! fleet-refreshing false true)
-    (future (try (let [v (configured-providers)]
-                   ;; Stamp when the enumeration FINISHED. A snapshot dated from
-                   ;; before a ~200ms enumeration is born part-stale, and one
-                   ;; slower than the TTL would be stale on arrival — every later
-                   ;; read would fire yet another refresh, forever.
-                   (reset! fleet-cache {:at (util/now-ms) :val v}))
-                 (catch Throwable _ nil)
-                 (finally (reset! fleet-refreshing false))))))
-
 (defn configured-providers-cached
   "Frame/request-frequency read of `configured-providers` that never re-runs
    the full enumeration on a warm caller. The enumeration behind
@@ -1000,19 +985,12 @@
    - STALE snapshot → returned immediately; a single-flight background
      refresh replaces it off-thread.
    - COLD (first read / just invalidated) → enumerates synchronously ONCE, so
-     callers always get a real fleet, never a nil-because-cold."
+     callers always get a real fleet, never a nil-because-cold.
+
+   The TTL counts from the END of an enumeration: one slower than the TTL is
+   still reused instead of being stale on arrival."
   []
-  (let [now
-        (util/now-ms)
-
-        {:keys [at val]}
-        @fleet-cache]
-
-    (cond (nil? at) (let [v (configured-providers)]
-                      (reset! fleet-cache {:at (util/now-ms) :val v})
-                      v)
-          (>= (- now (long at)) (long fleet-cache-ttl-ms)) (do (refresh-fleet-cache!) val)
-          :else val)))
+  (util/refreshed fleet-cache fleet-cache-ttl-ms :fleet configured-providers true))
 
 (defn available-presets
   "Provider presets not yet in the configured fleet — the 'Add

@@ -169,9 +169,9 @@
 
 (defn- live-file ^File [sid] (.toFile (.resolve (live-dir) (str sid ".json"))))
 
-(defonce ^:private live-cache (atom {:at 0 :turns {}}))
+(defonce ^:private live-cache (atom {}))
 
-(defn- invalidate-live-cache! [] (swap! live-cache assoc :at 0) nil)
+(defn- invalidate-live-cache! [] (reset! live-cache {}) nil)
 
 (defn- scan-live-turns
   "Read every marker into `{sid turn-id}`, keeping only those whose producer
@@ -207,17 +207,7 @@
    registry lit up exactly the sessions the asking client happened to watch: two
    apps talking to the SAME gateway reported two different fleets."
   []
-  (let [{:keys [at turns]}
-        @live-cache
-
-        now
-        (util/now-ms)]
-
-    (if (< (- now (long at)) (long LIVE_CACHE_MS))
-      turns
-      (let [fresh (scan-live-turns)]
-        (reset! live-cache {:at now :turns fresh})
-        fresh))))
+  (util/ttl-cached live-cache LIVE_CACHE_MS :turns scan-live-turns))
 
 (defn live-turn-id
   "The turn `sid` is running in ANY vis process on this machine, or nil."
@@ -267,9 +257,9 @@
 
 (defn- waiting-file ^File [sid] (.toFile (.resolve (waiting-dir) (str sid ".json"))))
 
-(defonce ^:private waiting-cache (atom {:at 0 :sessions {}}))
+(defonce ^:private waiting-cache (atom {}))
 
-(defn- invalidate-waiting-cache! [] (swap! waiting-cache assoc :at 0) nil)
+(defn- invalidate-waiting-cache! [] (reset! waiting-cache {}) nil)
 
 (defn- waiting-marker
   "This machine's waiting marker for `sid`, or nil."
@@ -316,17 +306,7 @@
    own process; this index only says WHO is waiting, so every surface — session
    list, TUI picker, push — paints the same demand."
   []
-  (let [{:keys [at sessions]}
-        @waiting-cache
-
-        now
-        (util/now-ms)]
-
-    (if (< (- now (long at)) (long WAITING_CACHE_MS))
-      sessions
-      (let [fresh (scan-waiting)]
-        (reset! waiting-cache {:at now :sessions fresh})
-        fresh))))
+  (util/ttl-cached waiting-cache WAITING_CACHE_MS :sessions scan-waiting))
 
 (defn session-waiting?
   "True when `sid` is parked on an unanswered human-input request in ANY vis

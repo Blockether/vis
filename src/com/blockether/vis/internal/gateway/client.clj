@@ -1744,44 +1744,22 @@
 
 (defonce ^:private session-model-cache (atom {}))
 
-(defonce ^:private session-model-refreshing (atom #{}))
-
 (def ^:private session-model-cache-ttl-ms 750)
-
-(defn- refresh-session-model!
-  "Single-flight background refresh of the session-model cache for `sid` —
-   same discipline as `refresh-resources!`: the daemon round-trip is BLOCKING
-   and must never run on the render thread. Errors leave the last-known value
-   untouched."
-  [sid k]
-  (let [[old _] (swap-vals! session-model-refreshing conj k)]
-    (when-not (contains? old k)
-      (future (try (let [v (session-model sid)]
-                     (swap! session-model-cache assoc k {:at (util/now-ms) :val v}))
-                   (catch Throwable _ nil)
-                   (finally (swap! session-model-refreshing disj k)))))))
 
 (defn session-model-cached
   "Footer-frequency read of the session's model pref served from a per-sid
    cache that NEVER blocks the caller (issue #29, gateway leg: this used to
    be a live `session-model` HTTP round-trip per footer frame). A stale (or
    cold) entry kicks a background single-flight refresh and this returns the
-   last-known value immediately (nil before the first success).
-   `set-session-model!` writes through, so a pick made in THIS client shows
-   on the very next frame."
+   last-known value immediately (nil before the first success); a failed
+   refresh keeps it. `set-session-model!` writes through, so a pick made in
+   THIS client shows on the very next frame."
   [sid]
-  (let [k
-        (str sid)
-
-        now
-        (util/now-ms)
-
-        {:keys [at val]}
-        (get @session-model-cache k)]
-
-    (when-not (and at (< (- now (long at)) (long session-model-cache-ttl-ms)))
-      (refresh-session-model! sid k))
-    val))
+  (util/refreshed session-model-cache
+                  session-model-cache-ttl-ms
+                  (str sid)
+                  #(session-model sid)
+                  false))
 
 ;; Managed resources (backgrounds) — the daemon owns the registry (the agent's
 ;; tools register here while a turn runs IN THE DAEMON), so a client in another
@@ -1796,43 +1774,18 @@
 
 (defonce ^:private resources-cache (atom {}))
 
-(defonce ^:private resources-refreshing (atom #{}))
-
 (def ^:private resources-cache-ttl-ms 750)
-
-(defn- refresh-resources!
-  "Single-flight background refresh of the resource cache for `sid`. The daemon
-   round-trip (`list-resources`) is BLOCKING and must never run on the render
-   thread — a busy daemon then stalls every TUI frame. Only one fetch per sid is
-   ever in flight, so render-cadence misses can't pile futures up. Errors leave
-   the last-known value untouched."
-  [sid k]
-  (let [[old _] (swap-vals! resources-refreshing conj k)]
-    (when-not (contains? old k)
-      (future (try (let [v (list-resources sid)]
-                     (swap! resources-cache assoc k {:at (util/now-ms) :val v}))
-                   (catch Throwable _ nil)
-                   (finally (swap! resources-refreshing disj k)))))))
 
 (defn list-resources-cached
   "Footer-frequency read: the session's resource list served from a per-sid cache
    that NEVER blocks the caller. A stale (or cold) entry kicks a background
    single-flight refresh and this returns the last-known value immediately (nil
-   before the first success). Keeping the daemon HTTP round-trip OFF the render
-   thread is what stops a busy daemon from stalling every TUI frame."
+   before the first success); a failed refresh keeps it. Only one fetch per sid
+   is ever in flight, so render-cadence misses can't pile futures up. Keeping
+   the daemon HTTP round-trip OFF the render thread is what stops a busy daemon
+   from stalling every TUI frame."
   [sid]
-  (let [k
-        (str sid)
-
-        now
-        (util/now-ms)
-
-        {:keys [at val]}
-        (get @resources-cache k)]
-
-    (when-not (and at (< (- now (long at)) (long resources-cache-ttl-ms)))
-      (refresh-resources! sid k))
-    val))
+  (util/refreshed resources-cache resources-cache-ttl-ms (str sid) #(list-resources sid) false))
 
 (defn stop-resource!
   "Run the resource's stop-fn in the daemon and unregister it. Returns the
@@ -1876,7 +1829,9 @@
                                           (str "/v1/sessions/" (enc sid) "/model")
                                           {:provider provider :model model})
                               "model"))]
-    (swap! session-model-cache assoc (str sid) {:at (util/now-ms) :val pref})
+    (swap! session-model-cache assoc
+      (str sid)
+      [(+ (util/now-ms) (long session-model-cache-ttl-ms)) pref])
     pref))
 
 ;; ── Headless provider OAuth ────────────────────────────────────────────────

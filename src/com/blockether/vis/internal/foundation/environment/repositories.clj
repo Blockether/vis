@@ -168,27 +168,27 @@
          cache-key
          [root-path scan-opts]]
 
-     (or (get @inventory-cache cache-key)
-         (let [[roots truncated?]
-               (discover-roots root-file scan-opts)
+     (util/cached inventory-cache
+                  Long/MAX_VALUE
+                  cache-key
+                  []
+                  (fn []
+                    (let [[roots truncated?]
+                          (discover-roots root-file scan-opts)
 
-               repositories
-               (->> roots
-                    (map (fn [^Path repo-path]
-                           (let [repo-file (canonical-file (.toFile repo-path))]
-                             {:path (rel-path (.toPath root-file) (.toPath repo-file))
-                              :root (canonical-path repo-file)})))
-                    (sort-by :path)
-                    vec)
+                          repositories
+                          (->> roots
+                               (map (fn [^Path repo-path]
+                                      (let [repo-file (canonical-file (.toFile repo-path))]
+                                        {:path (rel-path (.toPath root-file) (.toPath repo-file))
+                                         :root (canonical-path repo-file)})))
+                               (sort-by :path)
+                               vec)]
 
-               result
-               {:root root-path
-                :count (count repositories)
-                :repositories repositories
-                :truncated? truncated?}]
-
-           (swap! inventory-cache assoc cache-key result)
-           result)))))
+                      {:root root-path
+                       :count (count repositories)
+                       :repositories repositories
+                       :truncated? truncated?}))))))
 
 (defn snapshot
   "Discover Git repositories below `root` and return compact summaries.
