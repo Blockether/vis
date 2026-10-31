@@ -1471,12 +1471,18 @@
 (defn- command-palette-extra-commands
   "Built-in team inspection is also reachable without a pointer."
   []
-  (if (agent-team/enabled? (get-in @state/app-db [:session :id]))
-    [{:id :agent-team
-      :group "Session"
-      :label "Agent team"
-      :description "Inspect tasks, budgets and subagents"}]
-    []))
+  (cond-> []
+    (agent-team/enabled? (get-in @state/app-db [:session :id]))
+    (conj {:id :agent-team
+           :group "Session"
+           :label "Agent team"
+           :description "Inspect tasks, budgets and subagents"})
+
+    (get-in @state/app-db [:session :agent :parent-id])
+    (conj {:id :agent-parent
+           :group "Session"
+           :label "Back to Parent Session"
+           :description "Open the session that started this subagent"})))
 
 (defn- menu-commands
   "Command universe for typed slash suggestion/exact-match handling.
@@ -7894,10 +7900,17 @@
     r
     ;; The band shows Fast mode only for a Codex session (#333), and View images
     ;; only when the session has a picture to show.
-    (let [db (assoc db
-               :codex-session? (state/codex-session? db)
-               :has-images? (boolean (seq (session-images (:messages db))))
-               :graphical-terminal? (timg/graphical-terminal?))]
+    (let [sid
+          (get-in db [:session :id])
+
+          db
+          (assoc db
+            :codex-session? (state/codex-session? db)
+            :has-images? (boolean (seq (session-images (:messages db))))
+            :graphical-terminal? (timg/graphical-terminal?)
+            :has-agents?
+            (boolean (and sid (agent-team/enabled? sid) (seq (:agents (agent-team/summary sid))))))]
+
       (loop [r r]
         (if-not (:prefix (:state r))
           r
@@ -8761,6 +8774,25 @@
                                                                                  [:session :agent
                                                                                   :parent-id])))]
                                         (switch-session! {:action :switch :id id}))))
+                 ;; C-x t b: back from a subagent session to the session that started it.
+                 open-agent-parent! (fn []
+                                      (if-let [id (not-empty (str (get-in @state/app-db
+                                                                          [:session :agent
+                                                                           :parent-id])))]
+                                        (switch-session! {:action :switch :id id})
+                                        (vis/notify! "This session has no parent session"
+                                                     :level :warn
+                                                     :ttl-ms copy-success-ttl-ms)))
+                 ;; C-x t 1-9: open the subagent that shows this digit in the dock.
+                 open-agent-nth! (fn [n]
+                                   (if-let [id (agent-team/dock-agent-id (current-session-id)
+                                                                         (running-turn-id
+                                                                           @state/app-db)
+                                                                         n)]
+                                     (switch-session! {:action :switch :id id})
+                                     (vis/notify! (str "No subagent " n " in the dock")
+                                                  :level :warn
+                                                  :ttl-ms copy-success-ttl-ms)))
                  show-agent-timeline! (fn [child-id]
                                         (when-not (:dialog-open? @state/app-db)
                                           (when-let [id (with-dialog-lock
@@ -10013,7 +10045,7 @@
                    :else
                    (let [_ (when (:queue-focus db) (state/dispatch [:queue-blur]))
                          escaped-char (and (:loading? db) (input/escaped-typing-character key))
-                         {:keys [action state character queue-index keybinding]}
+                         {:keys [action state character queue-index agent-index keybinding]}
                          (if escaped-char
                            {:action :escaped-typing :state (:input db) :character escaped-char}
                            (resolve-prefix! screen db (input/handle-key key (:input db))))]
@@ -10149,6 +10181,9 @@
 
                                      :agent-team
                                      (show-agent-team!)
+
+                                     :agent-parent
+                                     (open-agent-parent!)
 
                                      :live-panel
                                      (open-live-panel!)
@@ -10440,9 +10475,19 @@
                          :fork-at-turn
                          (do (switch-session! {:action :fork-at-turn}) (recur))
 
-                         ;; C-x T — show or hide the agent table of the dock.
+                         ;; C-x b a — show or hide the agent table of the dock.
                          :toggle-agent-dock
                          (do (toggle-agent-dock!) (recur))
+
+                         ;; C-x t — list, open and leave subagents.
+                         :agent-team
+                         (do (show-agent-team!) (recur))
+
+                         :agent-parent
+                         (do (open-agent-parent!) (recur))
+
+                         :agent-open-nth
+                         (do (open-agent-nth! agent-index) (recur))
 
                          ;; C-x Z — show or hide the header and the footer.
                          :toggle-zen-mode

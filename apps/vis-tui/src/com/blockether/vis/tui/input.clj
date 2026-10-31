@@ -1037,6 +1037,9 @@
       ;; C-x q 1-9 → send that queue row at the next step, or take its mark back.
       (and (= :queue group) (keymap/queue-row-index c))
       {:action :queue-send-nth :queue-index (keymap/queue-row-index c) :state state}
+      ;; C-x t 1-9 → open the subagent of that dock row.
+      (and (= :agents group) (keymap/agent-row-index c))
+      {:action :agent-open-nth :agent-index (keymap/agent-row-index c) :state state}
       ;; The Mac delete key sends Backspace; a PC keyboard can send either.
       (and (= :session group) (#{KeyType/Backspace KeyType/Delete} (.getKeyType key)))
       {:action :delete-session :state state}
@@ -1059,6 +1062,7 @@
      • <key> of a vis verb → the verb.
      • C-x e <key> of an Extensions subgroup → keeps the prefix and opens it.
      • C-x q 1-9 → toggle that queue row for the next step.
+     • C-x t 1-9 → open the subagent of that dock row.
      • C-x s Backspace or Delete → delete the current session.
    Anything else, C-g included, aborts the prefix (no-op), so a stray C-x never
    swallows the next keystroke."

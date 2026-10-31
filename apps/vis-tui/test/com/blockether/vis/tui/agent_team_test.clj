@@ -90,11 +90,11 @@
                       "\"status\":\"running\",\"created_at\":0}]")]
         (with-redefs [vis/request! (constantly {:status 200 :body body})]
           (team/fetch! "flaky-leader"))
-        (expect (= 1 (team/dock-height "flaky-leader" "turn-1" 120)))
+        (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120)))
         (with-redefs [vis/request! (fn [& _]
                                      (throw (java.io.IOException. "offline")))]
           (expect (string? (:error (team/fetch! "flaky-leader"))))
-          (expect (= 1 (team/dock-height "flaky-leader" "turn-1" 120))
+          (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120))
                   "A gateway error keeps the dock")
           (expect (= "Agents !" (team/header-label "flaky-leader" false))
                   "The header still shows the failed refresh"))
@@ -104,7 +104,7 @@
 
           (team/fetch! "flaky-leader")
           (expect (team/enabled? "flaky-leader") "A settings error keeps Subagents on")
-          (expect (= 1 (team/dock-height "flaky-leader" "turn-1" 120))
+          (expect (= 2 (team/dock-height "flaky-leader" "turn-1" 120))
                   "A settings error keeps the dock")))))
 
 (defdescribe team-row-information-test
@@ -381,19 +381,19 @@
   (it
     "counts the rows of each status in a fixed order"
     (doseq [[agents label]
-            [[nil ""] [[{"status" "completed"}] "1 DONE"]
+            [[nil ""] [[{"status" "completed"}] "• 1 DONE"]
              [[{"status" "completed"} {"status" "running" "iterations_used" 3 "iteration_budget" 20}
                {"status" "running" "pending_input" true "pending_input_count" 2}
-               {"status" "queued"}] "2 RUNNING · 1 QUEUED · 1 DONE"]
+               {"status" "queued"}] "• 2 RUNNING  • 1 QUEUED  • 1 DONE"]
              ;; A question goes to the leader, not to the person, so its agent still runs.
              [[{"status" "running" "role" "verify"} {"status" "running" "question" "Keep it?"}
                {"status" "running" "role" "research"} {"status" "completed" "role" "implement"}]
-              "3 RUNNING · 1 DONE"]
+              "• 3 RUNNING  • 1 DONE"]
              ;; Four status words only: a passed verdict is done; a failed verdict, a cancel and
              ;; a spent budget are failed.
              [[{"status" "completed" "outcome" "passed"} {"status" "completed" "outcome" "failed"}
                {"status" "failed"} {"status" "cancelled"} {"status" "budget_limited"}]
-              "1 DONE · 4 FAILED"]]]
+              "• 1 DONE  • 4 FAILED"]]]
       (expect (= label (team/summary-counts (map-indexed #(team/team-row (inc %1) %2) agents)))))))
 
 (defdescribe old-tab-response-does-not-repaint-new-tab-test
@@ -663,32 +663,52 @@
       (with-redefs [team/summary (constantly {:agents every-state})]
         (expect (not (team/dock-expanded? "leader")))
         (let [[line :as text] (team/dock-text "leader" "turn-1" 120 now-ms)]
-          (expect (= 1 (count text)) "The dock is one line")
+          (expect (= 2 (count text)) "The dock is one line and a blank line")
+          ;; User report 2026-10-31: the dock touched the C-g row under it.
+          (expect (= "" (peek text)) "A blank line parts the dock from the row below")
           (expect (str/starts-with? line "Agents   "))
           (expect (str/includes? line "3 RUNNING"))
           ;; The team time follows the head: from the first spawn to now while agents work.
-          (expect (str/starts-with? line "Agents   1m 04s   3 RUNNING"))
+          (expect (str/starts-with? line "Agents   1m 04s   • 3 RUNNING"))
           (expect (not (str/includes? line "waiting")))
           (expect (not (str/includes? line "asking")))
           (expect (str/ends-with? line "C-x b a details")))
         (try (expect (true? (team/toggle-dock! "leader")))
              (let [text (team/dock-text "leader" "turn-1" 120 now-ms)]
                (expect (str/ends-with? (first text) "C-x b a hide details"))
-               (expect (= 11 (count text)) "The table caps its rows and counts the rest")
+               (expect (= 12 (count text)) "The table caps its rows and counts the rest")
                (expect (some #(str/includes? % "+5 more") text))
-               (expect (= 11 (team/dock-height "leader" "turn-1" 120))))
+               (expect (= 12 (team/dock-height "leader" "turn-1" 120))))
              (finally (team/toggle-dock! "leader")))
-        (expect (= 1 (team/dock-height "leader" "turn-1" 120)) "C-x b a again hides the table")
-        (expect (= ["Agents"] (team/dock-text "leader" "turn-1" 6 now-ms))
+        (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "C-x b a again hides the table")
+        (expect (= ["Agents" ""] (team/dock-text "leader" "turn-1" 6 now-ms))
                 "A narrow line drops the counts and the hint"))
       (with-redefs [team/summary (constantly {:agents (drop 4 every-state)})]
         (expect (zero? (team/dock-height "leader" nil 120)) "No dock after a finished team")
-        (expect (= 1 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock")
+        (expect (= 2 (team/dock-height "leader" "turn-1" 120)) "The running turn keeps its dock")
         ;; A team without a working agent stops its time at the last end.
         (expect (str/starts-with? (first (team/dock-text "leader" "turn-1" 120 (+ now-ms 60000)))
                                   "Agents   1m 04s   ")))
       (with-redefs [team/summary (constantly {:agents []})]
         (expect (zero? (team/dock-height "leader" "turn-1" 120)) "An empty team has no dock"))))
+
+(defdescribe
+  dock-keys-test
+  ;; User report 2026-10-31: the TUI had no keys to open one subagent from the dock.
+  (it "shows a digit on the first nine dock rows, and the digit names the agent of its row"
+      (with-redefs [team/summary (constantly {:agents every-state})]
+        (team/toggle-dock! "leader")
+        (try (let [text (team/dock-text "leader" "turn-1" 120 now-ms)
+                   row-1 (first (filter #(str/starts-with? % "│ 1 │") text))]
+
+               (expect (some? row-1) "Row 1 shows its digit")
+               (expect (str/includes? row-1 "Map the gateway routes"))
+               (expect (= "s1" (team/dock-agent-id "leader" "turn-1" 1)))
+               (expect (nil? (team/dock-agent-id "leader" "turn-1" 10)) "Row 10 has no digit"))
+             (finally (team/toggle-dock! "leader")))))
+  (it "opens no agent without a dock"
+      (with-redefs [team/summary (constantly {:agents (drop 4 every-state)})]
+        (expect (nil? (team/dock-agent-id "leader" nil 1))))))
 
 (defdescribe
   dock-scroll-test
@@ -704,7 +724,7 @@
                (expect (true? (team/scroll-dock! "leader" "turn-1" 3)))
                (expect (some #(str/includes? % "Run tests") (rows)) "A hidden row comes into view")
                (expect (some #(str/includes? % "↑3 above  +2 more") (rows)))
-               (expect (= 11 (team/dock-height "leader" "turn-1" 120)) "Scrolling keeps the height")
+               (expect (= 12 (team/dock-height "leader" "turn-1" 120)) "Scrolling keeps the height")
                (expect (true? (team/scroll-dock! "leader" "turn-1" 100)))
                (expect (some #(str/includes? % "↑5 above") (rows)))
                (expect (not-any? #(str/includes? % "more") (rows)))

@@ -73,6 +73,7 @@ first, such as a turn to fork, appears once it can act.
 | Ctrl+X a | Attachments: attach a file, review attachments and pictures |
 | Ctrl+X v | Voice: recording and voice conversation |
 | Ctrl+X q | Queue: send or edit queued messages |
+| Ctrl+X t | Agents: open a subagent, list the subagents or go back to the parent session. This group appears only when it can act |
 | Ctrl+X e | Keys from extensions. This group appears only when an extension adds a key |
 | Ctrl+X p | Open the command palette with every command, then type to filter |
 | Ctrl+X h | Show or hide the keyboard shortcuts |
@@ -107,6 +108,8 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | `queue-send-all-now` | Ctrl+X q s | Send the queued messages now |
 | `queue-edit` | Ctrl+X q e | Edit, send, remove or merge queued messages |
 | `toggle-agent-dock` | Ctrl+X b a | Show or hide the agent team details |
+| `agent-team` | Ctrl+X t t | List the subagents, then open one or stop it |
+| `agent-parent` | Ctrl+X t b | Open the session that started this subagent |
 | `fork-session` | Ctrl+X s f | Fork this session |
 | `fork-at-turn` | Ctrl+X s t | Fork from an earlier turn |
 | `switch-project` | Ctrl+X b w | Open **Projects** |
@@ -155,6 +158,9 @@ To move a command, the extension names its verb id. These are the verb ids and t
 | Ctrl+X m f 1 to 9 | Send that queued message now, or press again to keep it for the turn end |
 | Ctrl+X q e | Select the queued messages to edit, send, remove or merge them. See [Queued messages](#queued-messages) |
 | Ctrl+X b a | Show or hide the agent team table under the one-line **Agents** summary. A click on the summary does the same |
+| Ctrl+X t 1 to 9 | Open the subagent with that number. The **#** column of the agent team table shows the numbers |
+| Ctrl+X t t | List the subagents of this session, then open one or stop it |
+| Ctrl+X t b | In a subagent session, go back to the session that started the subagent |
 
 ### Queued messages
 

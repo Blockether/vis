@@ -255,6 +255,7 @@
      :team-id (get agent "team_id")
      :session-id (get agent "session_id")
      :role (or (role-word agent) "")
+     :role-key (role-name agent)
      :label (agent-label n agent)
      :status word
      :tone (tone word)
@@ -398,33 +399,56 @@
   [row columns width now-ms]
   (mapv segments-text (row-segments row columns width now-ms)))
 
+(defn- role-ink
+  "The ink of contract role `role`, the same syntax ink as the Companion role ink."
+  [role]
+  (case role
+    "research"
+    t/code-syntax-number-fg
+
+    "implement"
+    t/code-syntax-string-fg
+
+    "verify"
+    t/code-syntax-keyword-fg
+
+    "audit"
+    t/code-syntax-special-fg
+
+    t/dialog-hint))
+
+(defn- tone-ink
+  "The ink of status tone `tone-key`. A running agent takes the warning ink, as in the Companion."
+  [tone-key]
+  (case tone-key
+    :ok
+    t/status-ok
+
+    :bad
+    t/status-bad
+
+    :running
+    t/warning-fg
+
+    t/dialog-hint))
+
 (defn- part-fg
-  [part tone-key]
+  "The ink of part `part` of `row` on `bg`. A role or status ink keeps 4.5:1 on `bg`."
+  [part row bg]
   (case part
     :role
-    t/dialog-hint
+    (t/legible-ink (role-ink (:role-key row)) bg)
 
     :label
     t/code-block-fg
 
-    :now
-    t/dialog-hint
-
-    :time
-    t/dialog-hint
+    :key
+    t/dialog-hint-key
 
     :status
-    (case tone-key
-      :ok
-      t/status-ok
+    (t/legible-ink (tone-ink (:tone row)) bg)
 
-      :bad
-      t/status-bad
-
-      :running
-      t/code-block-fg
-
-      t/dialog-hint)))
+    t/dialog-hint))
 
 (defn- register-row!
   "A click on a row opens the timeline of its agent. A row of the dock of `dock` also takes the
@@ -442,7 +466,7 @@
 
 (def ^:private table-heads
   "The column titles of the agent table."
-  {:role "Role" :label "Agent" :status "Status" :now "Detail" :time "Time"})
+  {:key "#" :role "Role" :label "Agent" :status "Status" :now "Detail" :time "Time"})
 
 (def ^:private ^:const detail-min-width
   "The fewest cells of the detail column. A narrower table drops the role column, then
@@ -458,10 +482,13 @@
   "The columns of the agent table for `rows` at `width` cells: `[{:key :w}]` in paint order.
    The order is role, title, detail, status and time. The detail column takes the free room,
    so the table fills `width`. A narrow table drops the role, detail and time columns in that
-   order, and then the title takes the room."
+   order, and then the title takes the room. Rows with a `:key` get a first key column."
   [rows width]
   (let [width
         (long width)
+
+        key-col
+        (if (some :key rows) [{:key :key :w (widest (cons (table-heads :key) (map :key rows)))}] [])
 
         fixed
         (fn [k texts]
@@ -487,16 +514,20 @@
               (into (conj (vec (drop-last 2 columns)) {:key :now :w room})
                     (take-last 2 columns)))))]
 
-    (or (with-detail [role label status time])
-        (with-detail [label status time])
+    (or (with-detail (into key-col [role label status time]))
+        (with-detail (into key-col [label status time]))
         ;; A phone keeps the title readable: the time column goes before the title gets short.
         (let [fit (fn [columns]
-                    (let [room (- width (table-width columns) 3)]
+                    (let [room (- width (table-width (into key-col columns)) 3)]
                       (when (>= room (min 10 (long (:w label))))
-                        (into [(assoc label :w room)] columns))))]
+                        (-> key-col
+                            (conj (assoc label :w room))
+                            (into columns)))))]
           (or (fit [status time])
               (fit [status])
-              [(assoc label :w (max 4 (- width (table-width [status]) 3))) status])))))
+              (conj key-col
+                    (assoc label :w (max 4 (- width (table-width (conj key-col status)) 3)))
+                    status))))))
 
 (defn- window-start
   "The first shown row of `n` rows in a window of `size` rows that asks to start at `offset`."
@@ -605,10 +636,11 @@
     (mapv #(segments-text (table-segments % columns now-ms)) (table-lines rows))))
 
 (defn- paint-table-line!
-  "Paint one agent table line at screen row `y` from column `left` across `width` cells."
-  [^TextGraphics g left y width line columns now-ms]
+  "Paint one agent table line at screen row `y` from column `left` across `width` cells, on
+   background `bg`."
+  [^TextGraphics g left y width line columns now-ms bg]
   (p/clear-styles! g)
-  (p/set-colors! g t/code-block-fg t/code-block-bg)
+  (p/set-colors! g t/code-block-fg bg)
   (p/fill-rect! g left y (min (long width) (table-width columns)) 1)
   (doseq [[col text part]
           (table-segments line columns now-ms)
@@ -625,17 +657,16 @@
 
       (case part
         :chrome
-        (do (p/set-colors! g t/code-border-fg t/code-block-bg) (p/put-str! g x y text))
+        (do (p/set-colors! g t/code-border-fg bg) (p/put-str! g x y text))
 
         :head
-        (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-            (p/styled g [p/BOLD] (p/put-str! g x y text)))
+        (do (p/set-colors! g t/code-block-fg bg) (p/styled g [p/BOLD] (p/put-str! g x y text)))
 
         :more
-        (do (p/set-colors! g t/dialog-hint t/code-block-bg) (p/put-str! g x y text))
+        (do (p/set-colors! g t/dialog-hint bg) (p/put-str! g x y text))
 
-        (do (p/set-colors! g (part-fg part (:tone (:row line))) t/code-block-bg)
-            (if (#{:label :status} part)
+        (do (p/set-colors! g (part-fg part (:row line) bg) bg)
+            (if (#{:key :label :status} part)
               (p/styled g [p/BOLD] (p/put-str! g x y text))
               (p/put-str! g x y text))))))
   (p/clear-styles! g))
@@ -644,7 +675,7 @@
   "Paint one transcript line of a team table."
   [^TextGraphics g left row width viewport-top {:keys [team-line]}]
   (let [{:keys [line columns]} team-line]
-    (paint-table-line! g left row width line columns (System/currentTimeMillis))
+    (paint-table-line! g left row width line columns (System/currentTimeMillis) t/code-block-bg)
     (when (= :row (:kind line))
       (register-row! (:row line) (+ (long viewport-top) (long row)) left width))))
 
@@ -787,16 +818,31 @@
   "The status words of the dock summary line, in their order."
   ["RUNNING" "QUEUED" "DONE" "FAILED"])
 
-(defn summary-counts
-  "The status counts of `rows`, such as `2 RUNNING · 1 QUEUED · 1 DONE`."
+(defn count-parts
+  "The status counts of `rows` in summary order: `{:text :tone}` maps, such as
+   `{:text \"2 RUNNING\" :tone :running}`. A status without a row has no part."
   [rows]
   (let [counts (frequencies (map :status rows))]
-    (str/join " · "
-              (for [word summary-words
-                    :let [n (get counts word 0)]
-                    :when (pos? (long n))]
+    (vec (for [word summary-words
+               :let [n (get counts word 0)]
+               :when (pos? (long n))]
 
-                (str n " " word)))))
+           {:text (str n " " word) :tone (tone word)}))))
+
+(def ^:private count-mark "The mark before each status count of the summary line." "•")
+
+(defn summary-counts
+  "The status counts of `rows` as the summary line writes them, such as
+   `• 2 RUNNING  • 1 QUEUED  • 1 DONE`."
+  [rows]
+  (str/join "  " (map #(str count-mark " " (:text %)) (count-parts rows))))
+
+(def ^:private strip-cell "One agent of the status strip of the summary line." "■")
+
+(defn- strip-text
+  "The status strip of `tones`: one `strip-cell` for each agent, with one space between."
+  [tones]
+  (str/join " " (repeat (count tones) strip-cell)))
 
 (defn- summary-hint
   [expanded?]
@@ -823,13 +869,17 @@
           active? (duration-text (- (long now-ms) (long start))))))
 
 (defn summary-segments
-  "The painted parts of the dock summary line at `width` cells: `[col text part]` vectors.
-   `part` is `:head`, `:time`, `:counts` or `:hint`. The time of the team follows the head.
-   Long counts shorten first, so the hint stays. A line too narrow for both drops the hint,
-   then shortens the counts."
-  [{:keys [counts expanded? span active?]} width now-ms]
+  "The painted parts of the dock summary line at `width` cells: `[col text part tone]` vectors.
+   `part` is `:head`, `:time`, `:mark`, `:count`, `:strip` or `:hint`; a mark, count or strip
+   has the `tone` of its status. The time of the team follows the head, then a marked count for
+   each status, then a strip with one cell for each agent in its status ink. A short line drops
+   the strip first, then the hint, then the last counts."
+  [{:keys [counts strip expanded? span active?]} width now-ms]
   (let [width
         (long width)
+
+        dw
+        #(long (p/display-width (str %)))
 
         head
         "Agents"
@@ -841,32 +891,74 @@
         (+ (count head) 3)
 
         counts-col
-        (if time (+ time-col (long (p/display-width time)) 3) time-col)
+        (if time (+ time-col (long (dw time)) 3) time-col)
 
         hint
         (summary-hint expanded?)
 
-        hint-col
-        (- width (long (p/display-width hint)))
+        hint-w
+        (long (dw hint))
+
+        ;; A count takes its mark, one space and its text.
+        count-ws
+        (mapv #(+ 2 (long (dw (:text %)))) counts)
 
         hint?
-        (>= hint-col (+ counts-col (min 12 (long (p/display-width counts))) 3))
+        (>= (- width hint-w) (+ counts-col (min 12 (long (or (first count-ws) 0))) 3))
 
-        room
-        (- (if hint? (- hint-col 3) width) counts-col)]
+        limit
+        (if hint? (- width hint-w 3) width)
+
+        [count-segs end]
+        (reduce (fn [[out col] [{:keys [text tone]} w]]
+                  (let [col
+                        (long col)
+
+                        w
+                        (long w)
+
+                        room
+                        (- (long limit) col)]
+
+                    (cond (>= room w) [(conj out
+                                             [col count-mark :mark tone]
+                                             [(+ col 2) text :count tone]) (+ col w 2)]
+                          ;; Only the first count shortens; a later count that does not fit goes.
+                          (and (empty? out) (> room 4))
+                          (reduced [(conj out
+                                          [col count-mark :mark tone]
+                                          [(+ col 2) (p/ellipsize text (- room 2)) :count tone])
+                                    (long limit)])
+                          :else (reduced [out col]))))
+                [[] counts-col]
+                (map vector counts count-ws))
+
+        strip-col
+        (if (seq count-segs) (inc (long end)) counts-col)
+
+        strip-s
+        (strip-text strip)]
 
     (cond-> [[0 head :head]]
-      (and time (<= (+ time-col (long (p/display-width time))) width))
+      (and time (<= (+ time-col (long (dw time))) width))
       (conj [time-col time :time])
 
-      (and (seq counts) (pos? room))
-      (conj [counts-col (p/ellipsize counts room) :counts])
+      true
+      (into count-segs)
+
+      (and (seq strip) (<= (+ (long strip-col) (long (dw strip-s))) (long limit)))
+      (conj [strip-col strip-s :strip (vec strip)])
 
       hint?
-      (conj [hint-col hint :hint]))))
+      (conj [(- width hint-w) hint :hint]))))
+
+(def ^:private ^:const dock-keys
+  "Dock rows that C-x t and a digit open: rows 1 to 9 show their digit in the key column."
+  9)
 
 (defn- dock-rows
-  "The agent rows of the docked teams of `sid`, in start order. Empty without a docked team."
+  "The agent rows of the docked teams of `sid`, in start order. Rows 1 to 9 have their digit as
+   `:key`. Empty without a docked team."
   [sid running-turn]
   (let [agents
         (:agents (summary sid))
@@ -878,8 +970,17 @@
          (filter #(contains? docked (get (second %) "team_id")))
          (sort-by (fn [[n agent]]
                     [(or (get agent "created_at") 0) (str (get agent "team_id")) n]))
-         (mapv (fn [[n agent]]
-                 (team-row n agent))))))
+         (map-indexed (fn [i [n agent]]
+                        (cond-> (team-row n agent)
+                          (< (long i) (long dock-keys))
+                          (assoc :key (str (inc (long i)))))))
+         vec)))
+
+(defn dock-agent-id
+  "The session id of dock row `n` of `sid`, the row that shows digit `n`, or nil."
+  [sid running-turn n]
+  (when (<= 1 (long n) (long dock-keys))
+    (:session-id (get (dock-rows sid running-turn) (dec (long n))))))
 
 (defn scroll-dock!
   "Move the agent table of the dock of `sid` by `delta` rows. Returns true when the shown rows
@@ -907,7 +1008,8 @@
 (defn dock-lines
   "The dock of `sid` above the prompt at `cols` columns: `{:line :columns}` maps, one for each
    screen row. A docked team shows one summary line. After `toggle-dock!`, the agent table
-   follows it. Empty without a docked team."
+   follows it. One blank line ends the dock, so it never touches the row below. Empty without
+   a docked team."
   [sid running-turn cols]
   (let [agents
         (:agents (summary sid))
@@ -928,18 +1030,20 @@
 
             head
             {:line {:kind :summary
-                    :counts (summary-counts rows)
+                    :counts (count-parts rows)
+                    :strip (mapv :tone rows)
                     :expanded? expanded?
                     :span (team-span team)
                     :active? (boolean (some active? team))}}]
 
-        (if expanded?
-          (let [columns (table-columns rows (dock-width cols))]
-            (into [head]
-                  (map (fn [line]
-                         {:line line :columns columns}))
-                  (table-lines rows dock-max-rows (get @dock-offsets (str sid)))))
-          [head])))))
+        (-> [head]
+            (cond->
+              expanded?
+              (into (let [columns (table-columns rows (dock-width cols))]
+                      (map (fn [line]
+                             {:line line :columns columns})))
+                    (table-lines rows dock-max-rows (get @dock-offsets (str sid)))))
+            (conj {:line {:kind :gap}}))))))
 
 (defn dock-height
   "Rows that the dock of `sid` takes above the prompt, 0 without a docked team."
@@ -950,18 +1054,42 @@
   "Plain dock lines of `sid`, as the painter shows them."
   [sid running-turn cols now-ms]
   (mapv (fn [{:keys [line columns]}]
-          (segments-text (if (= :summary (:kind line))
-                           (summary-segments line (dock-width cols) now-ms)
-                           (table-segments line columns now-ms))))
+          (case (:kind line)
+            :summary
+            (segments-text (summary-segments line (dock-width cols) now-ms))
+
+            :gap
+            ""
+
+            (segments-text (table-segments line columns now-ms))))
         (dock-lines sid running-turn cols)))
 
 (defn- paint-summary-line!
   "Paint the dock summary line at screen row `y` from column `left` across `width` cells."
   [^TextGraphics g left y width line now-ms]
-  (doseq [[col text part] (summary-segments line width now-ms)]
-    (let [x (+ (long left) (long col))]
-      (p/set-colors! g (if (= :head part) t/code-block-fg t/dialog-hint) t/terminal-bg)
-      (if (= :head part) (p/styled g [p/BOLD] (p/put-str! g x y text)) (p/put-str! g x y text))))
+  (doseq [[col text part tone] (summary-segments line width now-ms)]
+    (let [x (+ (long left) (long col))
+          ink #(t/legible-ink (tone-ink %) t/terminal-bg)]
+
+      (case part
+        :head
+        (do (p/set-colors! g t/code-block-fg t/terminal-bg)
+            (p/styled g [p/BOLD] (p/put-str! g x y text)))
+
+        :mark
+        (do (p/set-colors! g (ink tone) t/terminal-bg) (p/put-str! g x y text))
+
+        :count
+        (do (p/set-colors! g (ink tone) t/terminal-bg)
+            (p/styled g [p/ITALIC] (p/put-str! g x y text)))
+
+        ;; One cell for each agent, in its status ink.
+        :strip
+        (doseq [[i agent-tone] (map-indexed vector tone)]
+          (p/set-colors! g (ink agent-tone) t/terminal-bg)
+          (p/put-str! g (+ x (* (long i) (inc (count strip-cell)))) y strip-cell))
+
+        (do (p/set-colors! g t/dialog-hint t/terminal-bg) (p/put-str! g x y text)))))
   (p/clear-styles! g))
 
 (defn draw-dock!
@@ -981,7 +1109,8 @@
 
       (p/set-colors! g t/code-block-fg t/terminal-bg)
       (p/fill-rect! g 0 y (max 1 (long cols)) 1)
-      (if (= :summary (:kind line))
+      (case (:kind line)
+        :summary
         (do (paint-summary-line! g 2 y width line now)
             ;; A click on the summary line shows or hides the agent table, like C-x b a.
             (.register interactions/hit-map
@@ -989,9 +1118,13 @@
                         :kind :agent-dock-toggle
                         :text (str sid)
                         :dock (str sid)}))
-        (paint-table-line! g 2 y width line columns now))
+
+        :gap
+        nil
+
+        (paint-table-line! g 2 y width line columns now t/terminal-bg))
       ;; Each dock line takes the wheel, so the wheel scrolls the agent table, not the transcript.
-      (cond (= :summary (:kind line)) nil
+      (cond (#{:summary :gap} (:kind line)) nil
             (:session-id (:row line)) (register-row! (:row line) y 0 (max 1 (long cols)) (str sid))
             :else (.register interactions/hit-map
                              {:bounds {:row y :col 0 :width (max 1 (long cols))}

@@ -86,9 +86,10 @@
              ;; offer a key the chord itself does not resolve.
              (let [full {:messages [{:role :user}]
                          :codex-session? true
+                         :has-agents? true
                          :has-images? true
                          :graphical-terminal? true
-                         :session {:group-id "g1"}
+                         :session {:group-id "g1" :agent {:parent-id "p1"}}
                          :tabs [{:id :a} {:id :b}]}]
                (it "every band is a legal transient the band can paint"
                    (expect (nil? (tr/check (keymap/prefix-spec {}))))
@@ -108,6 +109,15 @@
                    (expect (= [:group-new]
                               (mapv :action (keymap/available-prefix-commands {} :group))))
                    (expect (= :group-rename (:action (press \g \r)))))
+               ;; User report 2026-10-31: the TUI had no keys to open a subagent or to go back to the leader.
+               (it "offers the agent keys only where they can act"
+                   (expect (= [:agent-team :agent-parent]
+                              (mapv :action (keymap/available-prefix-commands full :agents))))
+                   (expect (= [:agent-team]
+                              (mapv :action (keymap/available-prefix-commands {:has-agents? true} :agents))))
+                   (expect (empty? (keymap/available-prefix-commands {} :agents)))
+                   (expect (= {:action :agent-open-nth :agent-index 3}
+                              (select-keys (press \t \3) [:action :agent-index]))))
                (it "every group row runs its verb, and every reachable verb has a row"
                    (doseq [{group :id gkey :key} keymap/prefix-groups
                            :when (not= :extensions group)]
@@ -116,7 +126,7 @@
                        (doseq [{:keys [key id]} items]
                          (expect (= id (:action (press gkey (first key)))) (str gkey key)))
                        (expect (= (set (map :action (keymap/available-prefix-commands full group)))
-                                  (disj (set (map :id items)) :queue-send-nth))))))
+                                  (disj (set (map :id items)) :queue-send-nth :agent-open-nth))))))
                ;; Regression, issue: the palette used to buy a whole "Everything else"
                ;; heading of its own. It is the first top-level command, never a group.
                (it "the palette is a top-level command, not a group"
