@@ -78,7 +78,14 @@
    so a sweep of this process cannot delete them after the check."
   [root sources]
   (let [digest
-        (util/sha256-hex (pr-str (into (sorted-map) sources)))
+        ;; Stream the bytes: printing 660 KB of sources first cost about 30 ms per start.
+        (let [md (util/sha256-digest)]
+          (doseq [[^String name ^String source] (into (sorted-map) sources)]
+            (.update md (util/utf8 name))
+            (.update md (byte 0))
+            (.update md (util/utf8 source))
+            (.update md (byte 0)))
+          (util/bytes->hex (.digest md)))
 
         release
         (str/replace (gateway-runtime/release-version) #"[^A-Za-z0-9._-]" "_")
