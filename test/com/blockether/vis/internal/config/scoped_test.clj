@@ -933,6 +933,30 @@
                                        (scoped/live-values env)
                                        (scoped/with-live-snapshot (scoped/live-values env))))
           (expect (= 1 @calls)))))
+  ;; Perf pass 2026-11: one render resolved the session target for settings and MCP.
+  (it "resolves the session target once for settings and MCP definitions in one snapshot"
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              sid
+              (h/store-session! db {:title "Target"})
+
+              env
+              {:db-info db :session-id sid}
+
+              calls
+              (atom 0)
+
+              target
+              scoped/target]
+
+          (with-redefs [scoped/target (fn [& args]
+                                        (swap! calls inc)
+                                        (apply target args))]
+            (binding [extension/*current-environment* env]
+              (scoped/with-live-snapshot (scoped/live-values env) (#'mcp/session-definitions sid))))
+          (expect (= 1 @calls)))))
   (it "resolves no session settings unless a checked extension owns an engine setting"
       (with-empty-config
         (let [db

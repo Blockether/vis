@@ -121,7 +121,7 @@
         lists
         (fn [sid]
           (for [[_ entries]
-                (scoped/definition-layers db (scoped/target db "session" sid) ["tools"])
+                (scoped/definition-layers db (scoped/session-target db sid) ["tools"])
 
                 [k list-key]
                 [["allow" :allow] ["deny" :deny]]

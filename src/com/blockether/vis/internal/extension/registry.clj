@@ -258,6 +258,11 @@
 
 (defonce ^:private project-providers (atom {}))
 
+(defn catalog-state
+  "The global and project provider maps, for caches that compare them by identity."
+  []
+  [@provider-registry @project-providers])
+
 (defn set-project-providers!
   "Replace one project's providers and extension overrides. Providers from a shadowed
    global extension are excluded even when the project version uses different provider IDs."

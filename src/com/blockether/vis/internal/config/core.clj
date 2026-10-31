@@ -1577,12 +1577,20 @@
    live: 9 `stat`s (~50µs) replace 9 YAML parses."
   (atom nil))
 
+(def ^:private loaded-config-cache
+  "`{inputs {:key … :value …}}` memo for `load-config`. Interpolation and provider
+   metadata cost ~0.4 ms, and one context render loads the config several times.
+   An entry is reused only while every key part is IDENTICAL: the cached raw map,
+   the workspace bindings, the provider registries and the functions that read them."
+  (atom {}))
+
 (defn invalidate-config-cache!
   "Drop parsed-file and merged-config caches. Called on config writes and reloads,
    because same-size writes with a preserved mtime otherwise stamp identically."
   []
   (reset! yaml-config-cache empty-yaml-config-cache)
-  (reset! config-raw-cache nil))
+  (reset! config-raw-cache nil)
+  (reset! loaded-config-cache {}))
 
 (defn- config-source-stamp
   "mtime+size fingerprint of every config source. Uses NIO's NANOSECOND mtime
@@ -1751,12 +1759,32 @@
    without a persisted provider fleet."
   ([] (load-config true))
   ([require-providers?]
-   (some-> (load-config-raw)
-           ((fn [raw]
-              (when (or (not require-providers?) (seq (get raw "providers"))) raw)))
-           resolve-env-config
-           runtime-config
-           apply-config-metadata)))
+   (let [raw
+         (load-config-raw)
+
+         inputs
+         [require-providers? workspace/*workspace-root* (System/getProperty "user.dir")
+          registry/*provider-root*]
+
+         key
+         (into [raw catalog/template catalog/model-allowlist registry/provider-by-id]
+               (registry/catalog-state))
+
+         cached
+         (get @loaded-config-cache inputs)]
+
+     (if (and cached (every? true? (map identical? key (:key cached))))
+       (:value cached)
+       (let [value (some-> raw
+                           ((fn [raw]
+                              (when (or (not require-providers?) (seq (get raw "providers"))) raw)))
+                           resolve-env-config
+                           runtime-config
+                           apply-config-metadata)]
+         (swap! loaded-config-cache (fn [m]
+                                      (assoc (if (< (count m) 64) m {})
+                                        inputs {:key key :value value})))
+         value)))))
 
 (defn- active-provider-entry
   "The provider entry the string-keyed YAML `config` selects: its `default_provider`,

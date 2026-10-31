@@ -16,6 +16,29 @@
            (java.nio.file.attribute PosixFilePermissions)))
 
 (defdescribe
+  loaded-config-cache-test
+  ;; Perf pass 2026-11: one context render derived the provider metadata again
+  ;; on each of its config loads.
+  (it "reuses the derived config until the provider registry changes"
+      (let [raw
+            {"providers" [{"id" "cache-fixture" "models" [{"name" "probe"}]}]}
+
+            base-url
+            #(:base-url (first (:providers (config/load-config))))]
+
+        (with-redefs [config/load-config-raw (constantly raw)]
+          (try (registry/register-provider! {:provider/id :cache-fixture
+                                             :provider/label "Cache"
+                                             :provider/preset {:base-url "http://a.test/v1"}})
+               (expect (identical? (config/load-config) (config/load-config)))
+               (expect (= "http://a.test/v1" (base-url)))
+               (registry/register-provider! {:provider/id :cache-fixture
+                                             :provider/label "Cache"
+                                             :provider/preset {:base-url "http://b.test/v1"}})
+               (expect (= "http://b.test/v1" (base-url)))
+               (finally (registry/deregister-provider! :cache-fixture)))))))
+
+(defdescribe
   providerless-runtime-config-test
   (it "preserves validated settings when runtime providers do not need saved entries"
       (let [raw {"providers" [] "default_provider" "sdk-fixture" "default_model" "sdk-test"}]

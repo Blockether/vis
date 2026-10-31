@@ -364,7 +364,7 @@
       (scoped/snapshot-cached
         [::session-definitions session-id]
         db
-        #(scoped/definitions db (scoped/target db "session" session-id) ["mcp" "servers"])))))
+        #(scoped/definitions db (scoped/session-target db session-id) ["mcp" "servers"])))))
 
 (defn- local-session-specs
   [session-id]

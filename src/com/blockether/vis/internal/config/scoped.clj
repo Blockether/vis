@@ -507,6 +507,8 @@
                 (assoc :overridden-by {:scope source :value value}))))
           rows)))
 
+(declare session-target)
+
 (defn values
   "The session snapshot used by callbacks; does not mutate the global registry.
    The `:value` of each [[settings]] row, without its inherited and own columns."
@@ -514,7 +516,7 @@
   (perf/timed
     :config/session-values
     (let [target
-          (target db "session" session-id)
+          (session-target db session-id)
 
           specs
           (with-provider-defaults db target (toggles/target-toggles (:root target)))]
@@ -585,6 +587,11 @@
           (swap! snapshot assoc k [db v])
           v)))
     (f)))
+
+(defn session-target
+  "[[target]] of session `session-id`, resolved once inside [[with-live-snapshot]]."
+  [db session-id]
+  (snapshot-cached [::session-target session-id] db #(target db "session" session-id)))
 
 (defn live-values
   "The session values [[engine-mode]] and [[resource-enabled?]] read for `env`,
