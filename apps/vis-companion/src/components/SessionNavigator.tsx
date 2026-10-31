@@ -675,8 +675,9 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
 const MACHINE_AGE_TICK_MS = 30_000;
 
 /**
- * One tab of the machine switch. Each tab has a quiet grey frame. The chosen machine has
- * bold ink and a dark frame, never a fill or a colour. Yellow means news only: a chip counts the
+ * One tab of the machine switch. Each tab has a quiet grey frame and the name in ink, so
+ * the muted age never reads as part of the name. The chosen machine has bold ink and a
+ * dark frame, never a fill or a colour. Yellow means news only: a chip counts the
  * conversations with unread answers. The age of the newest activity follows, muted.
  * A machine known down becomes a retry action with no pressed state, count or age.
  */
@@ -744,7 +745,7 @@ export function MachineTab({
           ? 'border-edge-strong text-err-ink focus-visible:outline-err-ink'
           : isOn
             ? 'border-dialog-edge font-bold text-white focus-visible:outline-white'
-            : 'border-edge-strong text-dialog-hint hover:border-dialog-hint hover:text-white focus-visible:outline-white'
+            : 'border-edge-strong text-white hover:border-dialog-hint focus-visible:outline-white'
       }`}
     >
       {children}
