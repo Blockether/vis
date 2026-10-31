@@ -135,7 +135,15 @@
       (expect (= []
                  (reflective-classes '[com.blockether.vis.internal.activity.presenter
                                        com.blockether.vis.internal.config.core
-                                       com.blockether.vis.internal.foundation.housekeeping])))))
+                                       com.blockether.vis.internal.foundation.housekeeping]))))
+  ;; Perf pass 2026-11, native gateway log: `(File. dir ".git")` on an untyped ancestor
+  ;; failed with "No matching ctor found for class java.io.File" in every context render,
+  ;; so foundation-core dropped the session workspace block. The `ps` CPU sample of a busy
+  ;; block failed the same way on its ProcessBuilder constructor.
+  (it "compiles the git work tree lookup and the busy-block CPU sample without Reflector"
+      (expect (= []
+                 (reflective-classes '[com.blockether.vis.internal.workspace.git
+                                       com.blockether.vis.internal.loop.python-exec])))))
 
 (defdescribe
   onnx-runtime-jni-reachability-test

@@ -327,8 +327,9 @@
   "The nearest `.git` entry at `dir` or above it, or nil. Git finds a repository
    from this entry, so its path changes when a repository appears or goes away."
   ^File [^File dir]
-  (some-> (paths/nearest-ancestor #(.exists (File. ^File % ".git")) (.getAbsoluteFile dir))
-          (File. ".git")))
+  (when-let [^File repo (paths/nearest-ancestor #(.exists (File. ^File % ".git"))
+                                                (.getAbsoluteFile dir))]
+    (File. repo ".git")))
 
 (defn- git-env-discovery?
   "True when the process environment points git at a repository explicitly."

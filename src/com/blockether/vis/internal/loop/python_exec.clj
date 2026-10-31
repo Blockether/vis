@@ -336,8 +336,11 @@
   "Total CPU time of process `pid` from `ps -o time=`, in milliseconds, or nil.
    The output is `[[dd-]hh:]mm:ss[.cc]`."
   [pid]
-  (try (let [^Process p
-             (.start (ProcessBuilder. ^java.util.List ["ps" "-o" "time=" "-p" (str pid)]))
+  (try (let [^java.util.List command
+             ["ps" "-o" "time=" "-p" (str pid)]
+
+             ^Process p
+             (.start (ProcessBuilder. command))
 
              out
              (str/trim (slurp (.getInputStream p)))]
