@@ -52,6 +52,7 @@
     [com.blockether.vis.internal.workspace.cli :as workspace-cli]
     [com.blockether.vis.internal.workspace.core :as workspace]
     [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+    [com.blockether.vis.internal.native-libs :as native-libs]
     [com.blockether.vis-python-runtime :as pyrt]
     [com.blockether.vis.internal.python.env :as env]
     [com.blockether.vis.internal.python.host :as python-host]
@@ -3528,6 +3529,8 @@
       ;; one. Off-thread and best-effort — see `housekeeping/sweep-stale!` for
       ;; the windows and the guards.
       (try (housekeeping/sweep-stale-async!) (catch Throwable _ nil))
+      ;; A fresh temp copy of a bundled dylib costs about 1 s at its first dlopen on macOS.
+      (timed-startup! measure? "stage-native-libs" native-libs/stage-resolver-libs!)
       (cond (version-request? args) (println (str "vis-agent " (vis-version)))
             (root-help-request? args) (println (commandline/render-tree (root-command)))
             (fast-help-dispatched? measure? args) nil

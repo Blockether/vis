@@ -32,6 +32,7 @@
             [com.blockether.vis.internal.persistance.sqlite.migration :as migration]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
+            [com.blockether.vis.internal.native-libs :as native-libs]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.codec :refer
              [ds ->id ->uuid ->ref ->kw ->kw-back ->date new-uuid new-id normalize-status ->json
@@ -541,6 +542,7 @@
    Respect an explicit org.sqlite.tmpdir; resolve the default only at runtime."
   []
   (locking org.sqlite.SQLiteJDBCLoader
+    (native-libs/stage-sqlite!)
     (or (System/getProperty "org.sqlite.tmpdir")
         (let [dir
               (Paths/get (System/getProperty "user.home")
