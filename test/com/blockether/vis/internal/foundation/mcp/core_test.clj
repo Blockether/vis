@@ -2,6 +2,7 @@
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.context.renderer :as renderer]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as client]
@@ -109,6 +110,30 @@
             (expect (= (apply concat
                          (repeat 2 [["read" {}] ["read" {"query" "one"}] ["read" {"query" "two"}]]))
                        @called))))))))
+
+(defdescribe mcp-session-definitions-snapshot-test
+             ;; Perf pass 2026-11: one context render read the session's MCP definitions from
+             ;; the store for each of its four to six server-list computations.
+             (it "reads the session definitions once inside one settings snapshot"
+                 (let [reads
+                       (atom 0)
+
+                       env
+                       {:db-info ::db :session-id "s"}]
+
+                   (with-redefs [scoped/target
+                                 (fn [& _]
+                                   {:scope "session"})
+
+                                 scoped/definitions
+                                 (fn [& _]
+                                   (swap! reads inc)
+                                   [])]
+
+                     (binding [extension/*current-environment* env]
+                       (scoped/with-live-snapshot (#'mcp/visible-servers "s")
+                                                  (#'mcp/visible-servers "s"))))
+                   (expect (= 1 @reads)))))
 
 (defdescribe
   mcp-connect-tool-cache-test

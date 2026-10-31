@@ -573,6 +573,19 @@
   `(binding [*live-snapshot* (or *live-snapshot* (atom {}))]
      ~@body))
 
+(defn snapshot-cached
+  "`(f)`, computed once for `k` and store `db` inside [[with-live-snapshot]], else
+   on each call."
+  [k db f]
+  (if-let [snapshot *live-snapshot*]
+    (let [[cached-db cached] (get @snapshot k)]
+      (if (identical? db cached-db)
+        cached
+        (let [v (f)]
+          (swap! snapshot assoc k [db v])
+          v)))
+    (f)))
+
 (defn live-values
   "The session values [[engine-mode]] and [[resource-enabled?]] read for `env`,
    resolved once so a caller checking many extensions, skills or servers pays
@@ -586,15 +599,7 @@
         session-id
         (:session-id env)]
 
-    (when (and db session-id)
-      (if-let [snapshot *live-snapshot*]
-        (let [[cached-db cached] (get @snapshot session-id)]
-          (if (identical? db cached-db)
-            cached
-            (let [v (values db session-id)]
-              (swap! snapshot assoc session-id [db v])
-              v)))
-        (values db session-id)))))
+    (when (and db session-id) (snapshot-cached [::values session-id] db #(values db session-id)))))
 
 (defn- live-value
   "`id`'s live value from `live`, a map or a delay of one, resolved afresh when

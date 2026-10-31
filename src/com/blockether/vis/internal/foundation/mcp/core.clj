@@ -351,12 +351,20 @@
 (defonce ^:private scoped-spec-cache (atom {}))
 
 (defn- session-definitions
+  "The MCP server definitions that `session-id` resolves, read once for each
+   settings snapshot."
   [session-id]
-  (let [env extension/*current-environment*]
-    (when (and session-id (:db-info env))
-      (scoped/definitions (:db-info env)
-                          (scoped/target (:db-info env) "session" session-id)
-                          ["mcp" "servers"]))))
+  (let [env
+        extension/*current-environment*
+
+        db
+        (:db-info env)]
+
+    (when (and session-id db)
+      (scoped/snapshot-cached
+        [::session-definitions session-id]
+        db
+        #(scoped/definitions db (scoped/target db "session" session-id) ["mcp" "servers"])))))
 
 (defn- local-session-specs
   [session-id]
