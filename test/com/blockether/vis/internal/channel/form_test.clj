@@ -135,7 +135,34 @@
                                           (apply count-tokens args))]
           (form/clip-to-wire reloaded f)
           (form/clip-to-wire (String. ^String reloaded) f))
-        (expect (zero? @calls)))))
+        (expect (zero? @calls))))
+  (it "counts no tokens for stdout that fits the ceiling by its UTF-8 size"
+      ;; Regression (long-session bench): each short result took a tokenizer pass and a
+      ;; cache slot. Past 128 results the cache evicted large ones, and each request
+      ;; clipped the whole history again.
+      (let [f
+            {:scope "t1/i2" :svar/tool-call-id "call_small" :llm-model "glm-5.3"}
+
+            ascii
+            (str (random-uuid) (apply str (repeat (- form/MAX_FORM_OUTPUT_TOKENS 36) "a")))
+
+            calls
+            (atom 0)
+
+            count-tokens
+            svar/count-tokens]
+
+        (with-redefs [svar/count-tokens (fn [& args]
+                                          (swap! calls inc)
+                                          (apply count-tokens args))]
+          (expect (= ascii (form/clip-to-wire (str ascii " \n\t") f)))
+          (expect (nil? (form/clip-to-wire " \n" f)))
+          (let [wide (apply str (repeat (quot form/MAX_FORM_OUTPUT_TOKENS 2) "ż"))]
+            (expect (= wide (form/clip-to-wire wide f))))
+          (expect (zero? @calls))
+          (let [over (str ascii "b")]
+            (expect (= over (form/clip-to-wire over f)))
+            (expect (pos? @calls)))))))
 
 (defdescribe
   form-gateway-roundtrip-test

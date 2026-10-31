@@ -70,6 +70,24 @@
   "Additional work bound for unusually compressible text before token counting."
   32768)
 
+(defn- utf8-length
+  "Exact UTF-8 size of `s` without encoding it. A lone surrogate counts as 2 bytes,
+   which overstates the 1-byte replacement that the encoder writes."
+  ^long [^String s]
+  (let [n (.length s)]
+    (loop [i 0
+           total 0]
+
+      (if (< i n)
+        (let [c (int (.charAt s i))]
+          (recur (inc i)
+                 (+ total
+                    (long (cond (< c 0x80) 1
+                                (< c 0x800) 2
+                                (Character/isSurrogate (char c)) 2
+                                :else 3)))))
+        total))))
+
 (defn- clip-stdout
   [s model scope call-id max-output-tokens max-preview-chars]
   (let [s
@@ -211,6 +229,7 @@
    `form` supplies the serving model, iteration scope and tool-call identity.
    Normalize live scopes from `tN/iM/fN` to `tN/iM` for saved-block recovery.
 
+   Pass text within the ceiling by UTF-8 size without a count.
    Count the excerpt and recovery marker with Svar's tokenizer. Reuse up to 128 projections.
    Hold source text weakly. Match equal text by SHA-256 after a reload collects the original.
    Limit retained results and metadata to an estimated 8 MiB."
@@ -223,18 +242,25 @@
          (when (string? (:scope form)) (str/replace (:scope form) #"/f[1-9]\d*$" ""))
 
          call-id
-         (:svar/tool-call-id form)]
+         (:svar/tool-call-id form)
 
-     (cached-stdout (stdout-source s)
-                    s
-                    (or (:llm-model form) "unknown")
-                    (when (and scope (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)) scope)
-                    (when (and (string? call-id)
-                               (<= (count call-id) 512)
-                               (re-matches #"[A-Za-z0-9_|-]+" call-id))
-                      call-id)
-                    MAX_FORM_OUTPUT_TOKENS
-                    MAX_FORM_PREVIEW_CHARS))))
+         trimmed
+         (str/trimr s)]
+
+     ;; A byte-pair token covers at least one UTF-8 byte. Text within the ceiling by
+     ;; size cannot exceed it in tokens, so it needs no count and no cache slot.
+     (cond (str/blank? trimmed) nil
+           (<= (utf8-length trimmed) (long MAX_FORM_OUTPUT_TOKENS)) trimmed
+           :else (cached-stdout (stdout-source s)
+                                s
+                                (or (:llm-model form) "unknown")
+                                (when (and scope (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)) scope)
+                                (when (and (string? call-id)
+                                           (<= (count call-id) 512)
+                                           (re-matches #"[A-Za-z0-9_|-]+" call-id))
+                                  call-id)
+                                MAX_FORM_OUTPUT_TOKENS
+                                MAX_FORM_PREVIEW_CHARS)))))
 
 (defn stdout-display
   "Project a form's printed stdout into a human card. Artifact fences are passed
