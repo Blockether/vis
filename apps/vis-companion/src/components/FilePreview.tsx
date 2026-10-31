@@ -7,6 +7,17 @@ import { ImageViewer } from './ImageViewer';
 import { BandButton, Banner, DialogFrame, Modal, Spinner } from './ui';
 
 /**
+ * The bytes of a base64 string. A picture can be several MiB, so this fills one
+ * array in a plain loop, without a callback for each byte.
+ */
+function decodeBase64(data: string): Uint8Array<ArrayBuffer> {
+  const text = atob(data);
+  const bytes = new Uint8Array(text.length);
+  for (let at = 0; at < text.length; at += 1) bytes[at] = text.charCodeAt(at);
+  return bytes;
+}
+
+/**
  * THE FILE A PRESS NAMED, READ WHERE THE SESSION IS READ.
  *
  * A step names the files it touched by their path on the machine that ran it.
@@ -54,8 +65,9 @@ export function FilePreview({
         if (!isLive) return;
         if (answer.kind === 'image') {
           // `<img src>` cannot carry the bearer header, so the bytes come in the answer.
-          const bytes = Uint8Array.from(atob(answer.data), (char) => char.charCodeAt(0));
-          url = URL.createObjectURL(new Blob([bytes], { type: answer.media_type }));
+          url = URL.createObjectURL(
+            new Blob([decodeBase64(answer.data)], { type: answer.media_type }),
+          );
           setPicture(url);
         }
         setFile(answer);
@@ -105,14 +117,16 @@ export function FilePreview({
             <div className="p-3">
               <Banner kind="err">{failure}</Banner>
             </div>
-          ) : file?.kind === 'binary' ? (
+          ) : file === null ? (
+            <p className="flex items-center gap-2 p-3 text-dialog-hint">
+              <Spinner /> Reading {name}…
+            </p>
+          ) : file.kind !== 'text' ? (
+            // A binary file, or a kind that a newer gateway sends and this Companion
+            // does not know. The answer has come, so the sheet must not keep reading.
             <p className="p-3 font-sans text-dialog-hint">
               Vis has no preview for this kind of file. Open it in the editor on the machine
               that ran the step.
-            </p>
-          ) : file?.kind !== 'text' ? (
-            <p className="flex items-center gap-2 p-3 text-dialog-hint">
-              <Spinner /> Reading {name}…
             </p>
           ) : file.lines.length === 0 ? (
             <p className="p-3 text-dialog-hint">This file is empty.</p>

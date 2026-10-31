@@ -3,6 +3,7 @@
    a session's files."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.external-opener :as external-opener]
             [com.blockether.vis.internal.gateway.server.http :as http]
@@ -254,8 +255,10 @@
 
 (def ^:private image-byte-limit
   "Bytes one picture preview reads. A screenshot or a chart fits well under it; a file
-   above it is a raw photo or a texture atlas, and the editor opens it on its machine."
-  (* 32 1024 1024))
+   above it is a raw photo or a texture atlas, and the editor opens it on its machine.
+   The picture goes as base64 inside JSON, which is 4/3 larger and held in memory more
+   than once, and a phone decodes it. The contract sets the cap at 8 MiB."
+  gateway-contract/max-preview-image-bytes)
 
 (defn- bytes-at?
   "True when `head` holds the Latin-1 bytes of `ascii` from index `at`."

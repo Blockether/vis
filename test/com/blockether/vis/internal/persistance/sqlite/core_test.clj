@@ -3039,9 +3039,9 @@
                          (:forked-from (persistance/db-get-session s fork-id))))))
       (expect (nil? (:forked-from (persistance/db-get-session s cid))))))
   ;; Regression, user report: a fork's first request reused almost no cached input, because
-  ;; the fork rendered a new prefix and ran without the source's model pick.
+  ;; the fork ran without the source's model pick. The gateway fork test pins the checkpoint.
   (it
-    "fork-at-turn keeps the model pick and, through the last turn, the prefix checkpoint"
+    "fork-at-turn keeps the model pick"
     (let [s
           (h/store)
 
@@ -3084,9 +3084,8 @@
           earlier
           (h/fork-session-at-turn! s cid {:through-turn-id t1})]
 
-      (expect (= checkpoint (persistance/db-get-session-prompt-cache-state s (state-id whole))))
-      ;; An earlier cut has another history: its next request starts fresh.
-      (expect (nil? (persistance/db-get-session-prompt-cache-state s (state-id earlier))))
+      ;; Without a `:prompt-cache-fork` rule, a fork has no checkpoint.
+      (expect (nil? (persistance/db-get-session-prompt-cache-state s (state-id whole))))
       (expect (= {:provider "anthropic" :model "claude"}
                  (persistance/db-get-session-model-pref s whole)
                  (persistance/db-get-session-model-pref s earlier)))))

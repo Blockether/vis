@@ -967,7 +967,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "response_schema": "file_preview"
         }
       },
       "path": "/v1/sessions/:sid/fs/file"
@@ -3735,6 +3736,128 @@
           "pattern": "^[0-9a-f]{64}$"
         }
       }
+    },
+    "preview_image_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8388608,
+      "description": "Bytes of one picture in a file preview. The picture goes as base64 inside JSON, which is 4/3 larger, and a phone decodes it. A larger picture gets a 413 answer."
+    },
+    "file_preview": {
+      "description": "The answer of GET /v1/sessions/:sid/fs/file. The kind tells what the file holds and which keys come back.",
+      "oneOf": [
+        {
+          "type": "object",
+          "title": "Text",
+          "description": "One window of clipped lines around the line that the client named.",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "kind",
+            "line",
+            "first_line",
+            "lines",
+            "is_truncated",
+            "size_bytes"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "text"
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The line that the client named, or 1."
+            },
+            "first_line": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The number of the first line in lines."
+            },
+            "lines": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "is_truncated": {
+              "type": "boolean",
+              "description": "True when the byte cap stopped the read before the window ended."
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "Image",
+          "description": "A picture that a browser draws, typed by its first bytes, not by its file name.",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "kind",
+            "media_type",
+            "size_bytes",
+            "data"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "image"
+            },
+            "media_type": {
+              "enum": [
+                "image/png",
+                "image/jpeg",
+                "image/gif",
+                "image/webp",
+                "image/avif"
+              ]
+            },
+            "size_bytes": {
+              "$ref": "#/$defs/preview_image_bytes"
+            },
+            "data": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+              "description": "The bytes of the picture as standard base64."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "Binary",
+          "description": "Another file with a NUL byte. The gateway does not read it.",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "kind",
+            "size_bytes"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "binary"
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
     }
   }
 }

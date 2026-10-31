@@ -58,6 +58,9 @@ it('says when the file runs past what a preview reads', async () => {
   await waitFor(() => expect(screen.getByText(/past what a preview reads/)).toBeVisible());
 });
 
+// The PNG signature: bytes above 0x7f and a zero byte must survive the decoder.
+const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff];
+
 // #432: a PNG linked from Activity opened a text sheet that said "that file is not text".
 it('shows a picture in the image viewer when the file is an image', async () => {
   const createObjectURL = vi.fn((_: Blob) => 'blob:shot');
@@ -68,8 +71,8 @@ it('shows a picture in the image viewer when the file is an image', async () => 
       kind: 'image',
       path: '/tmp/shot.png',
       media_type: 'image/png',
-      data: btoa('png'),
-      size_bytes: 3,
+      data: btoa(String.fromCharCode(...PNG_BYTES)),
+      size_bytes: PNG_BYTES.length,
     }),
   });
   render(<FilePreview client={client} sid="session-1" path="/tmp/shot.png" onClose={vi.fn()} />);
@@ -78,7 +81,7 @@ it('shows a picture in the image viewer when the file is an image', async () => 
   expect(picture).toHaveAttribute('src', 'blob:shot');
   const blob = createObjectURL.mock.calls[0][0];
   expect(blob.type).toBe('image/png');
-  expect(await blob.text()).toBe('png');
+  expect([...new Uint8Array(await blob.arrayBuffer())]).toEqual(PNG_BYTES);
   cleanup();
   expect(revokeObjectURL).toHaveBeenCalledWith('blob:shot');
   vi.unstubAllGlobals();
@@ -92,4 +95,15 @@ it('offers the editor for a binary file that is not a picture', async () => {
 
   await waitFor(() => expect(screen.getByText(/no preview for this kind of file/)).toBeVisible());
   expect(screen.getByRole('button', { name: 'Open in editor' })).toBeVisible();
+});
+
+// Review of #432: a kind from a newer gateway kept an older Companion on "Reading…" forever.
+it('stops reading when the gateway answers with a kind it does not know', async () => {
+  const client = gateway({
+    readPath: vi.fn().mockResolvedValue({ kind: 'archive', path: '/tmp/app.tar', size_bytes: 8 }),
+  });
+  render(<FilePreview client={client} sid="session-1" path="/tmp/app.tar" onClose={vi.fn()} />);
+
+  await waitFor(() => expect(screen.getByText(/no preview for this kind of file/)).toBeVisible());
+  expect(screen.queryByText(/Reading app\.tar/)).toBeNull();
 });

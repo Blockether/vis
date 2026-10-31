@@ -2278,13 +2278,22 @@
           ;; Managed loads prepare declared project environments before registration.
           (expect (str/includes? (checked registration-command) "Package example."))
           ;; Each embedded Python owns a `.venv-*` environment; the CLI keeps its own `.venv`.
-          (let [^File managed
-                (->> (.listFiles project)
-                     (filter #(and (.isDirectory ^File %) (str/starts-with? (.getName ^File %) ".venv-")))
-                     (sort-by #(.lastModified ^File %))
-                     last)]
-            (expect (some? managed) (pr-str (vec (.list project))))
-            (checked (str "export UV_PROJECT_ENVIRONMENT=" (pr-str (.getAbsolutePath managed))
+          ;; Name it with the engine's rule for the interpreter that the binary resolves.
+          (let [python
+                (com.blockether.vispython.Locations/pythonExecutable
+                  (com.blockether.vispython.Locations/pythonHome (.getAbsolutePath
+                                                                   ^File (python-library bin))))
+
+                ^File managed
+                (io/file project (#'python-runtime/environment-name python))]
+
+            (expect (.isDirectory managed)
+                    (str "No environment " (.getName managed)
+                         " for " python
+                         " in " project
+                         ": " (pr-str (vec (.list project)))))
+            (checked (str "export UV_PROJECT_ENVIRONMENT="
+                          (pr-str (.getAbsolutePath managed))
                           "\nvis-agent python uv sync --project ./einmal --check")))
           (checked (commands 0))
           (checked (commands 1))

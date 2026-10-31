@@ -4,6 +4,7 @@
     [babashka.http-client :as http]
     [clojure.java.io :as io]
     [clojure.string :as str]
+    [com.blockether.vis.contract.document :as document]
     [com.blockether.vis.contract.gateway :as gateway-contract]
     [com.blockether.vis.contract.provider :as provider-contract]
     [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
@@ -7498,6 +7499,14 @@
           (expect (= 400 (:status response))))
         (finally (.delete inside) (.delete root) (.delete outside))))))
 
+(defn- holds-file-preview-contract?
+  "True when `answered` satisfies the contract `file_preview`, and fails it when any
+   one of its keys is dropped."
+  [answered]
+  (and (document/valid-json? "gateway" "file_preview" answered)
+       (not-any? #(document/valid-json? "gateway" "file_preview" (dissoc answered %))
+                 (keys answered))))
+
 (defdescribe
   a-previewed-file-is-one-bounded-window-of-text
   (it "a previewed file is one bounded window of text"
@@ -7559,7 +7568,9 @@
             (expect (= "line 400" (first (get answered "lines"))))
             (expect (= "line 799" (last (get answered "lines"))))
             (expect (false? (get answered "is_truncated")))
-            (expect (= (.length source) (get answered "size_bytes"))))
+            (expect (= (.length source) (get answered "size_bytes")))
+            ;; clients read the text answer as the contract `file_preview`
+            (expect (holds-file-preview-contract? answered)))
           ;; with no line named the window starts at the top of the file
           (let [answered (window {"path" "long.txt"})]
             (expect (= 1 (get answered "first_line")))
@@ -7654,13 +7665,18 @@
           (expect (= "image/png" (get answered "media_type")))
           (expect (= (count png) (get answered "size_bytes")))
           (expect (= (seq png)
-                     (seq (.decode (java.util.Base64/getDecoder) ^String (get answered "data"))))))
+                     (seq (.decode (java.util.Base64/getDecoder) ^String (get answered "data")))))
+          ;; clients read the image answer as the contract `file_preview`
+          (expect (holds-file-preview-contract? answered)))
         ;; a binary file that is not a picture is binary, whatever its name says
         (let [answered (wire/parse-json (:body (answer {"path" "fake.png"})))]
           (expect (= "binary" (get answered "kind")))
-          (expect (nil? (get answered "data"))))
-        ;; a picture above the cap is refused instead of streamed
-        (with-redefs-fn {#'fs-api/image-byte-limit 4}
+          (expect (nil? (get answered "data")))
+          (expect (holds-file-preview-contract? answered)))
+        ;; a picture of exactly the cap is served, and one byte more is refused
+        (with-redefs-fn {#'fs-api/image-byte-limit (count png)}
+          #(expect (= 200 (:status (answer {"path" "shot.png"})))))
+        (with-redefs-fn {#'fs-api/image-byte-limit (dec (count png))}
           #(expect (= 413 (:status (answer {"path" "shot.png"})))))
         ;; an ungranted path is not read
         (expect (= 403 (:status (answer {"path" (.getPath outside)}))))

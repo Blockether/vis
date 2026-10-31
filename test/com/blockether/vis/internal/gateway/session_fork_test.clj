@@ -106,7 +106,7 @@
           (ps/db-set-session-prompt-cache-state!
             store
             (ps/db-latest-session-state-id store sid)
-            {:route [:anthropic "claude-test"]
+            {:route ["anthropic" "claude-test"]
              :entry {:messages request
                      :weights (vec (repeat (count request) 1))
                      :input-tokens 600
@@ -124,7 +124,14 @@
               (expect (= (subvec request 0 4) (:messages entry)))
               (expect (= {:role "assistant" :content "answer 2"}
                          (get-in entry [:completed-turn :assistant-message])))
-              (expect (= 2 (get-in entry [:completed-turn :turn-position]))))))
+              (expect (= 2 (get-in entry [:completed-turn :turn-position]))))
+            (let [whole (get (state/fork-session! sid nil) "id")
+                  checkpoint (fn [id]
+                               (ps/db-get-session-prompt-cache-state
+                                 store
+                                 (ps/db-latest-session-state-id store id)))]
+
+              (expect (= (checkpoint sid) (checkpoint whole))))))
         (finally (ps/db-close! store)))))
   (it
     "lists the start of each prose answer with its fork point"
