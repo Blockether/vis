@@ -178,74 +178,73 @@ For access away from home or custom pairing addresses, see
 
 ## See Vis in action
 
-The terminal images show an earlier header with session tabs. Current builds show
-only the active session title. Use [Projects](sessions.md#find-a-saved-session)
-to browse saved sessions.
+All images come from one demo project, `fieldnotes`, after real tasks: a project tour,
+a bug fix with a regression test and a release preparation.
 
 <section class="screenshot-gallery" id="screenshot-gallery" data-screenshot-gallery role="region" aria-roledescription="carousel" aria-label="Vis screenshots">
   <div class="screenshot-gallery__track" id="screenshot-slides" tabindex="0" aria-label="Vis screenshots; use Left and Right arrow keys to browse">
 
   <figure class="screenshot-gallery__slide" id="desktop-gallery" role="group" aria-roledescription="slide" aria-label="1 of 9">
     <a class="screenshot-gallery__image" href="assets/screenshots/desktop-conversation.png" aria-label="Open full-size screenshot: Desktop · Conversation">
-      <img src="assets/screenshots/desktop-conversation.png" alt="Desktop Vis with the Fieldnotes project sidebar and a completed search task." width="1280" height="800" loading="lazy" decoding="async">
+      <img src="assets/screenshots/desktop-conversation.png" alt="Desktop Vis with the fieldnotes project sidebar and the tag search fix, with its patch and test run open." width="1280" height="800" loading="lazy" decoding="async">
     </a>
     <figcaption>Desktop · Conversation</figcaption>
   </figure>
 
   <figure class="screenshot-gallery__slide" id="ios-gallery" role="group" aria-roledescription="slide" aria-label="2 of 9">
     <a class="screenshot-gallery__image" href="assets/screenshots/ios-conversation.png" aria-label="Open full-size screenshot: iOS · Conversation">
-      <img src="assets/screenshots/ios-conversation.png" alt="Vis on iOS showing a completed search task, its goal, and a table of example checks." width="1206" height="2622" loading="lazy" decoding="async">
+      <img src="assets/screenshots/ios-conversation.png" alt="Vis on iOS showing the end of the tag search fix: regression tests, other checks and work not done." width="1206" height="2622" loading="lazy" decoding="async">
     </a>
     <figcaption>iOS · Conversation</figcaption>
   </figure>
 
   <figure class="screenshot-gallery__slide" id="tui-gallery" role="group" aria-roledescription="slide" aria-label="3 of 9">
     <a class="screenshot-gallery__image" href="assets/screenshots/tui-conversation.png" aria-label="Open full-size screenshot: TUI · Conversation">
-      <img src="assets/screenshots/tui-conversation.png" alt="Vis TUI showing the search task, example check results, and a completed goal." width="1255" height="756" loading="lazy" decoding="async">
+      <img src="assets/screenshots/tui-conversation.png" alt="Vis TUI with the Projects sidebar open next to the finished tag search fix in the fieldnotes project." width="1255" height="756" loading="lazy" decoding="async">
     </a>
     <figcaption>TUI · Conversation</figcaption>
   </figure>
 
   <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="4 of 9">
-    <a class="screenshot-gallery__image" href="assets/screenshots/desktop-project.png" aria-label="Open full-size screenshot: Desktop · Project tour">
-      <img src="assets/screenshots/desktop-project.png" alt="Desktop Vis showing a project tour and a table of fictional source directories." width="1280" height="800" loading="lazy" decoding="async">
+    <a class="screenshot-gallery__image" href="assets/screenshots/desktop-release.png" aria-label="Open full-size screenshot: Desktop · Release">
+      <img src="assets/screenshots/desktop-release.png" alt="Desktop Vis showing a release 0.3.0 preparation task with its version bump, changelog and checks." width="1280" height="800" loading="lazy" decoding="async">
     </a>
-    <figcaption>Desktop · Project tour</figcaption>
+    <figcaption>Desktop · Release</figcaption>
   </figure>
 
   <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="5 of 9">
     <a class="screenshot-gallery__image" href="assets/screenshots/ios-project.png" aria-label="Open full-size screenshot: iOS · Project tour">
-      <img src="assets/screenshots/ios-project.png" alt="Vis on iOS showing a tour of the fictional Fieldnotes project." width="1206" height="2622" loading="lazy" decoding="async">
+      <img src="assets/screenshots/ios-project.png" alt="Vis on iOS showing a tour of the fieldnotes project and the problems that the agent noticed." width="1206" height="2622" loading="lazy" decoding="async">
     </a>
     <figcaption>iOS · Project tour</figcaption>
   </figure>
 
   <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="6 of 9">
-    <a class="screenshot-gallery__image" href="assets/screenshots/tui-project.png" aria-label="Open full-size screenshot: TUI · Project tour">
-      <img src="assets/screenshots/tui-project.png" alt="Vis TUI with two session tabs and the fictional Fieldnotes project tour." width="1255" height="756" loading="lazy" decoding="async">
+    <a class="screenshot-gallery__image" href="assets/screenshots/tui-sessions.png" aria-label="Open full-size screenshot: TUI · Session navigator">
+      <img src="assets/screenshots/tui-sessions.png" alt="Vis TUI session navigator with the three fieldnotes sessions and a preview of the tag search fix." width="1255" height="756" loading="lazy" decoding="async">
     </a>
-    <figcaption>TUI · Project tour</figcaption>
+    <figcaption>TUI · Session navigator</figcaption>
   </figure>
 
   <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="7 of 9">
-    <a class="screenshot-gallery__image" href="assets/screenshots/desktop-release.png" aria-label="Open full-size screenshot: Desktop · Release checklist">
-      <img src="assets/screenshots/desktop-release.png" alt="Desktop Vis showing a fictional release checklist with verify, review, and publish steps." width="1280" height="800" loading="lazy" decoding="async">
+    <a class="screenshot-gallery__image" href="assets/screenshots/desktop-settings.png" aria-label="Open full-size screenshot: Desktop · Settings">
+      <img src="assets/screenshots/desktop-settings.png" alt="Desktop Vis settings with the paired machine, settings groups and application toggles." width="1280" height="800" loading="lazy" decoding="async">
     </a>
-    <figcaption>Desktop · Release checklist</figcaption>
+    <figcaption>Desktop · Settings</figcaption>
   </figure>
 
   <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="8 of 9">
     <a class="screenshot-gallery__image" href="assets/screenshots/ios-sessions.png" aria-label="Open full-size screenshot: iOS · Sessions">
-      <img src="assets/screenshots/ios-sessions.png" alt="Vis on iOS listing three fictional Fieldnotes sessions, with the search task starred." width="1206" height="2622" loading="lazy" decoding="async">
+      <img src="assets/screenshots/ios-sessions.png" alt="Vis on iOS listing the three sessions of the fieldnotes project on one paired machine." width="1206" height="2622" loading="lazy" decoding="async">
     </a>
     <figcaption>iOS · Sessions</figcaption>
   </figure>
 
   <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="9 of 9">
-    <a class="screenshot-gallery__image" href="assets/screenshots/tui-sessions.png" aria-label="Open full-size screenshot: TUI · Session navigator">
-      <img src="assets/screenshots/tui-sessions.png" alt="Vis TUI session navigator listing only the three fictional Fieldnotes sessions." width="1255" height="756" loading="lazy" decoding="async">
+    <a class="screenshot-gallery__image" href="assets/screenshots/tui-settings.png" aria-label="Open full-size screenshot: TUI · Settings">
+      <img src="assets/screenshots/tui-settings.png" alt="Vis TUI settings with general and view options and the configured model providers." width="1255" height="756" loading="lazy" decoding="async">
     </a>
-    <figcaption>TUI · Session navigator</figcaption>
+    <figcaption>TUI · Settings</figcaption>
   </figure>
 
   </div>

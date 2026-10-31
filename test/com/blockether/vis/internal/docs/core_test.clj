@@ -17,9 +17,9 @@
                             ["live-views" "live-stop"] ["extension-design" "nesting-finding"]
                             ["extension-design" "nesting-clear"] ["index" "ios-conversation"]
                             ["index" "ios-sessions"] ["index" "ios-project"]
-                            ["index" "desktop-conversation"] ["index" "desktop-project"]
+                            ["index" "desktop-conversation"] ["index" "desktop-settings"]
                             ["index" "desktop-release"] ["index" "tui-conversation"]
-                            ["index" "tui-sessions"] ["index" "tui-project"]]
+                            ["index" "tui-sessions"] ["index" "tui-settings"]]
               mode [:static :live]
               :let [page (first (filter #(= slug (:slug %)) pages))
                     html (docs/page-html site page mode)
@@ -108,8 +108,8 @@
   (it "serves every screenshot as a PNG and includes it in static assets"
       (doseq [name
               ["ask" "live-running" "live-stop" "nesting-finding" "nesting-clear" "ios-conversation"
-               "ios-sessions" "ios-project" "desktop-conversation" "desktop-project"
-               "desktop-release" "tui-conversation" "tui-sessions" "tui-project"]
+               "ios-sessions" "ios-project" "desktop-conversation" "desktop-settings"
+               "desktop-release" "tui-conversation" "tui-sessions" "tui-settings"]
 
               :let [rel
                     (str "screenshots/" name ".png")

@@ -48,48 +48,35 @@ Read the full [Rationale](resources/vis-docs/rationale.md) in the manual.
 
 ## Documentation
 
-Read the manual at [vis.blockether.com](https://vis.blockether.com/). The same pages are in
-[`resources/vis-docs/`](resources/vis-docs/). The manual has five modules, in reading order:
+Read the manual at [vis.blockether.com](https://vis.blockether.com/) or in
+[`resources/vis-docs/`](resources/vis-docs/). Its five modules, in reading order:
 
-- **Intro** — [Rationale](resources/vis-docs/rationale.md) explains why Vis exists.
-  [Getting started](resources/vis-docs/index.md) installs Vis, connects the apps and runs a first task.
-  [Running a gateway](resources/vis-docs/gateway-service.md) sets up a shared gateway, and
-  [Reporting a bug](resources/vis-docs/reporting-bugs.md) shows how to report a problem safely.
-- **Concepts** — one page for each feature, for example [Sessions](resources/vis-docs/sessions.md),
-  [Context management](resources/vis-docs/context-management.md), [Drafts](resources/vis-docs/drafts.md),
-  [Council](resources/vis-docs/council.md), [Automations](resources/vis-docs/automations.md),
-  [Evaluations](resources/vis-docs/evals.md) and [Live views](resources/vis-docs/live-views.md).
-- **Programmatic access** — the same concepts from your own code. Start with
-  [Python SDK basics](resources/vis-docs/python-sdk.md) or [HTTP API basics](resources/vis-docs/http-api.md). Then
-  read the API page for each concept, for example [Sessions API](resources/vis-docs/sessions-api.md).
-  Each API page shows Python first, and a switch shows the same steps as HTTP requests. The
-  [Extension API](resources/vis-docs/extension-api.md) describes the Python interface for extensions.
-- **Extensions** — add your own tools and checks with [Extending Vis](resources/vis-docs/extending.md).
-  Find extensions from other people in the [Extension Center](https://vis.blockether.com/extensions/).
-- **Reference** — exact facts, for example every key in
-  [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md).
+- **Intro**: [Rationale](resources/vis-docs/rationale.md) and [Getting started](resources/vis-docs/index.md).
+- **Concepts**: one page for each feature, such as [Sessions](resources/vis-docs/sessions.md).
+- **Programmatic access**: [Python SDK](resources/vis-docs/python-sdk.md) and [HTTP API](resources/vis-docs/http-api.md).
+- **Extensions**: [Extending Vis](resources/vis-docs/extending.md) and the [Extension Center](https://vis.blockether.com/extensions/).
+- **Reference**: exact facts, such as [Keyboard shortcuts](resources/vis-docs/keyboard-shortcuts.md).
 
 ## Screenshot gallery
 
-The terminal images show an earlier header with session tabs. Current builds show
-only the active session title. [Projects](resources/vis-docs/sessions.md#find-a-saved-session)
-lists saved sessions.
+All images come from one demo project, `fieldnotes`, after real tasks: a project tour,
+a bug fix with a regression test and a release preparation.
 
 <table width="100%">
   <tr>
-    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-conversation.png"><img src="resources/vis-docs/assets/screenshots/desktop-conversation.png" width="100%" alt="Desktop Vis with the Fieldnotes project sidebar and a completed search task."></a></td>
-    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-conversation.png"><img src="resources/vis-docs/assets/screenshots/ios-conversation.png" width="100%" alt="Vis on iOS showing a completed search task, its goal, and a table of example checks."></a></td>
-    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-conversation.png"><img src="resources/vis-docs/assets/screenshots/tui-conversation.png" width="100%" alt="Vis TUI showing the search task, example check results, and a completed goal."></a></td>
+    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-conversation.png"><img src="resources/vis-docs/assets/screenshots/desktop-conversation.png" width="100%" alt="Desktop Vis with the fieldnotes project sidebar and the tag search fix, with its patch and test run open."></a></td>
+    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-conversation.png"><img src="resources/vis-docs/assets/screenshots/ios-conversation.png" width="100%" alt="Vis on iOS showing the end of the tag search fix: regression tests, other checks and work not done."></a></td>
+    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-conversation.png"><img src="resources/vis-docs/assets/screenshots/tui-conversation.png" width="100%" alt="Vis TUI with the Projects sidebar open next to the finished tag search fix in the fieldnotes project."></a></td>
   </tr>
   <tr>
-    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-project.png"><img src="resources/vis-docs/assets/screenshots/desktop-project.png" width="100%" alt="Desktop Vis showing a project tour and a table of fictional source directories."></a></td>
-    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-project.png"><img src="resources/vis-docs/assets/screenshots/ios-project.png" width="100%" alt="Vis on iOS showing a tour of the fictional Fieldnotes project."></a></td>
-    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-project.png"><img src="resources/vis-docs/assets/screenshots/tui-project.png" width="100%" alt="Vis TUI with two session tabs and the fictional Fieldnotes project tour."></a></td>
+    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-release.png"><img src="resources/vis-docs/assets/screenshots/desktop-release.png" width="100%" alt="Desktop Vis showing a release 0.3.0 preparation task with its version bump, changelog and checks."></a></td>
+    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-project.png"><img src="resources/vis-docs/assets/screenshots/ios-project.png" width="100%" alt="Vis on iOS showing a tour of the fieldnotes project and the problems that the agent noticed."></a></td>
+    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-sessions.png"><img src="resources/vis-docs/assets/screenshots/tui-sessions.png" width="100%" alt="Vis TUI session navigator with the three fieldnotes sessions and a preview of the tag search fix."></a></td>
   </tr>
   <tr>
-    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-release.png"><img src="resources/vis-docs/assets/screenshots/desktop-release.png" width="100%" alt="Desktop Vis showing a fictional release checklist with verify, review, and publish steps."></a></td>
-    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-sessions.png"><img src="resources/vis-docs/assets/screenshots/ios-sessions.png" width="100%" alt="Vis on iOS listing three fictional Fieldnotes sessions, with the search task starred."></a></td>
-    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-sessions.png"><img src="resources/vis-docs/assets/screenshots/tui-sessions.png" width="100%" alt="Vis TUI session navigator listing only the three fictional Fieldnotes sessions."></a></td>
+    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-settings.png"><img src="resources/vis-docs/assets/screenshots/desktop-settings.png" width="100%" alt="Desktop Vis settings with the paired machine, settings groups and application toggles."></a></td>
+    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-sessions.png"><img src="resources/vis-docs/assets/screenshots/ios-sessions.png" width="100%" alt="Vis on iOS listing the three sessions of the fieldnotes project on one paired machine."></a></td>
+    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-settings.png"><img src="resources/vis-docs/assets/screenshots/tui-settings.png" width="100%" alt="Vis TUI settings with general and view options and the configured model providers."></a></td>
   </tr>
 </table>
 
