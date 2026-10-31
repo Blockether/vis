@@ -6182,6 +6182,24 @@
            :workspace-root
            not-empty))
 
+(defn- file-in-root-project!
+  "Put new session `sid` in the project of the folder of workspace `workspace-id`,
+   and create that project first when there is none. Clients that list a project
+   by its id then show the same sessions as clients that list it by folder. A
+   folder that is not a directory leaves the session in no project."
+  [sid workspace-id]
+  (when-let [root (some->> workspace-id
+                           (persistance/db-workspace-get (lp/db-info))
+                           ((fn [w]
+                              (or (:repo-root w) (:root w)))))]
+    (when (.isDirectory (java.io.File. (str root)))
+      (try (when-let [pid (:id (lp/ensure-project-for-root! "local" (str root) nil))]
+             (lp/assign-project! sid pid))
+           (catch Throwable t
+             (tel/log! :warn
+                       ["gateway: could not file a new session in its project" sid
+                        (ex-message t)]))))))
+
 (defn- create-session-cold!
   [{:keys [channel title external-id workspace-id root group-id sources extensions tools origin]}]
   (let [channel
@@ -6220,6 +6238,7 @@
                       (assoc :origin origin)))]
 
     (put-session! (:id created) {:next-seq 0 :last-active (util/now-ms)})
+    (when-not group-id (file-in-root-project! (:id created) workspace-id))
     ;; A session STARTED inside a group belongs to it from its first breath. The
     ;; client that offered the verb had the group under the cursor; filing the row
     ;; afterwards would show it loose for a beat and then move it.

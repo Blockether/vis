@@ -117,6 +117,41 @@
                                                                 (get created "workspace_id")))))))))
         (finally (sqlite/db-close! store) (.delete (io/file project-root)))))))
 
+;; User report (2026-10-31 gallery retake): sessions that the Python SDK started in
+;; a project folder were missing from the TUI Projects sidebar. The app lists a
+;; project by folder, but the TUI lists it by the stored project.
+(defdescribe create-session-files-root-project-test
+             (it "files a session started at a folder in the project of that folder"
+                 (let [store
+                       (sqlite/db-open! :memory)
+
+                       root
+                       (.getCanonicalPath
+                         (.toFile (java.nio.file.Files/createTempDirectory
+                                    "vis-root-project"
+                                    (make-array java.nio.file.attribute.FileAttribute 0))))]
+
+                   (try (with-redefs-fn {#'lp/db-info (constantly store)
+                                         #'lp/create! (fn [channel opts]
+                                                        {:id (persistance/db-store-session!
+                                                               store
+                                                               {:channel channel
+                                                                :workspace-id (:workspace-id opts)})
+                                                         :channel channel
+                                                         :workspace-id (:workspace-id opts)})
+                                         #'state/put-session! (fn [_ _]
+                                                                nil)}
+                          (fn []
+                            (let [created (state/create-session! {:channel :app :root root})]
+                              (expect (= (:id (lp/get-project-by-root "local" root))
+                                         (:project-id (persistance/db-get-session
+                                                        store
+                                                        (parse-uuid (get created "id"))))))
+                              (expect (some? (:project-id (persistance/db-get-session
+                                                            store
+                                                            (parse-uuid (get created "id")))))))))
+                        (finally (sqlite/db-close! store) (.delete (io/file root)))))))
+
 (defn- with-draft-workspace
   [ws f]
   (expect (await-for 5000 @#'state/draft-status-reader))
