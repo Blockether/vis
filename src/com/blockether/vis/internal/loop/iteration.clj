@@ -3750,6 +3750,7 @@
                                    (timed :context project-context)
                                    (timed :provider call-provider)
                                    (timed :apply apply-result))))
+                _ (perf/close-ledger! ledger)
                 _ (perf/log-iteration! (:iteration loop-state)
                                        (perf/ms-since iteration-start)
                                        @phases

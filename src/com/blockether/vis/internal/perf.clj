@@ -7,13 +7,29 @@
    loop phase, the model and tool time, the framework overhead and the heap."
   (:require [clojure.string :as str]
             [taoensso.telemere :as tel])
-  (:import (java.io File)))
+  (:import (java.io File)
+           (java.lang.management GarbageCollectorMXBean ManagementFactory)))
 
 (def ^:dynamic *ledger*
   "The atom of stage times of the running iteration: stage → `{:ms :n}`, or nil."
   nil)
 
-(defn new-ledger [] (atom {}))
+(def ^:private pause-collectors
+  ;; Concurrent cycles run beside the application, so their time is not a pause.
+  (delay (into []
+               (remove (fn [^GarbageCollectorMXBean bean]
+                         (re-find #"Concurrent|Cycles" (.getName bean))))
+               (ManagementFactory/getGarbageCollectorMXBeans))))
+
+(defn gc-pause-ms
+  "Collector pause time of the whole process since its start, in ms."
+  ^long []
+  (reduce (fn [^long total ^GarbageCollectorMXBean bean]
+            (+ total (max 0 (.getCollectionTime bean))))
+          0
+          @pause-collectors))
+
+(defn new-ledger [] (atom {} :meta {::gc-start (gc-pause-ms)}))
 
 (defn add-stage
   "Ledger `m` with `ms` added to `stage`. A nil or negative `ms` changes nothing."
@@ -29,6 +45,12 @@
   [stage ms]
   (when-let [a *ledger*]
     (swap! a add-stage stage ms)))
+
+(defn close-ledger!
+  "Add the process pause time since `ledger` started as its `:gc` stage. Another
+   session can cause a pause, so `:gc` explains a stall but does not assign it."
+  [ledger]
+  (swap! ledger add-stage :gc (- (gc-pause-ms) (long (::gc-start (meta ledger) 0)))))
 
 (defn now-ns ^long [] (System/nanoTime))
 

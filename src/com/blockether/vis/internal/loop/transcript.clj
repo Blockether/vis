@@ -24,6 +24,7 @@
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.python.env :as env]
+            [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
@@ -392,7 +393,9 @@
   ;; change. Without this, a long session tokenized its whole history on every step.
   (util/bounded-memoize
     (fn [model messages]
-      (max 0 (- (long (svar/count-messages model messages)) (long (svar/count-messages model [])))))
+      ;; Runs only on a miss, so the stage count is the number of misses.
+      (perf/timed :context/iter-universe-miss
+        (max 0 (- (long (svar/count-messages model messages)) (long (svar/count-messages model []))))))
     4096
     (* 32 1024 1024)
     (fn [[_ messages] _]
@@ -2093,7 +2096,7 @@
   (into {}
         (map (fn [[pos msgs]]
                [pos (messages-wire-tokens model msgs)]))
-        (conversation-suffix-groups wire-iters replay-target)))
+        (perf/timed :context/iter-universe-render (conversation-suffix-groups wire-iters replay-target))))
 
 (defn- estimated-boundary-tokens
   "Tokenizer-backed fallback for a turn boundary before its model is resolved."
