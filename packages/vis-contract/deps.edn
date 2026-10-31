@@ -1,4 +1,4 @@
-{:deps {com.blockether/skjema {:mvn/version "0.3.2"}
+{:deps {com.blockether/skjema {:mvn/version "0.3.3"}
         com.cnuernber/charred {:mvn/version "1.042"}
         org.clojure/clojure {:mvn/version "1.12.6"}}
  :paths ["src" "resources"]}
