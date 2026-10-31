@@ -8,7 +8,8 @@
             [taoensso.trove :as trove])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [java.util.concurrent TimeUnit]))
+           [java.util.concurrent TimeUnit]
+           [org.slf4j LoggerFactory]))
 
 (defn -main
   [mode directory]
@@ -25,7 +26,8 @@
         (str/ends-with? mode "debug")
 
         markers
-        (cond-> ["telemere-info-marker" "telemere-error-marker" "trove-info-marker"]
+        (cond-> ["telemere-info-marker" "telemere-error-marker" "trove-info-marker"
+                 "jetty-info-marker"]
           (not boot?)
           (into ["java-out-marker" "java-err-marker" "clojure-out-marker" "clojure-err-marker"])
 
@@ -55,7 +57,11 @@
                               (tel/log! :error "telemere-error-marker")
                               (tel/log! :debug "telemere-debug-marker")
                               (trove/log! {:level :debug :msg "trove-debug-marker"})
-                              (trove/log! {:level :info :msg "trove-info-marker"})))]
+                              (trove/log! {:level :info :msg "trove-info-marker"})
+                              (let [jetty (LoggerFactory/getLogger
+                                            "org.eclipse.jetty.server.Server")]
+                                (.debug jetty "jetty-debug-marker")
+                                (.info jetty "jetty-info-marker"))))]
         (.start thread)
         (.join thread 5000))
       ;; Observe the live file, without shutdown or manually flushing writers.
@@ -67,6 +73,11 @@
               (let [text (if (.isFile (io/file path)) (slurp path) "")
                     problem-text (if (.isFile (io/file problems)) (slurp problems) "")
                     missing (cond-> (vec (remove #(str/includes? text %) markers))
+                              ;; A gateway in debug mode wrote 8175 Jetty connection lines
+                              ;; in 3 s: 93% of its log and 66 MB of formatting garbage.
+                              (str/includes? text "jetty-debug-marker")
+                              (conj "jetty-debug-written")
+
                               ;; Issue #403: init also writes warnings and errors as
                               ;; JSON lines, and only those.
                               (and (not boot?)

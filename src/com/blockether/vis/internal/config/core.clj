@@ -99,9 +99,10 @@
    and without the kind of a plain `log!` signal. Each process writes its own file
    on one host, so these values repeat in each line."
   [signal]
-  (format-diagnostic-signal (cond-> (dissoc signal :host)
+  ;; `assoc` nil keeps the Signal record: its `dissoc` copies every field into a new map.
+  (format-diagnostic-signal (cond-> (assoc signal :host nil)
                               (= :log (:kind signal))
-                              (dissoc :kind))))
+                              (assoc :kind nil))))
 
 (defn diagnostic-file-handler
   "Telemere file handler over `diagnostic-log-options` and `opts` that writes

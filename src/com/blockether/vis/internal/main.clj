@@ -2980,6 +2980,8 @@
 
     (config/route-svar-logs!)
     (tel/set-min-level! (if debug? :debug :info))
+    ;; Jetty logs each connection step at DEBUG. That is 93% of a debug-mode gateway log.
+    (tel/set-min-level! :slf4j "org.eclipse.jetty.*" :info)
     ;; File handler ALWAYS on, so post-mortem reads always have data.
     (try (tel/add-handler! :file (config/diagnostic-file-handler {:path path}) {:min-level :debug})
          (catch Throwable _ nil))
