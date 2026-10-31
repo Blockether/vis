@@ -797,12 +797,38 @@
             (expect (not (.exists (io/file python (mirror emptied)))))
             (expect (not (.exists (io/file python (mirror vanished)))))
             (expect (.isDirectory (io/file sources "live"))))))))
+  ;; Every process start also walked ~/.vis/logs: 127,455 files, 0.7 to 2.2 s and
+  ;; 60 MB of allocation per start of any `vis-agent` command.
+  (it "walks the diagnostic logs once per sweep interval across process starts"
+      (let [logs
+            (tmp-dir "vis-hk-logs-stamp")
+
+            cache
+            (tmp-dir "vis-hk-logs-stamp-cache")
+
+            now
+            (System/currentTimeMillis)
+
+            swept
+            (fn [at]
+              (with-homes {:logs logs :cache cache}
+                          #(:deleted (target (housekeeping/sweep-stale! {:now-ms at}) :logs))))]
+
+        (touch! logs "first.log" 60 "old")
+        (expect (= 1 (swept now)))
+        (let [kept (touch! logs "second.log" 60 "old")]
+          (expect (zero? (long (swept (+ now 60000)))))
+          (expect (.isFile kept)))
+        (expect (= 1 (swept (+ now (long housekeeping/default-log-sweep-interval-ms)))))))
   ;; Every process start walked the whole store: on a live machine 304,215 entries,
   ;; about 1.7 GB of allocation and 20 s of CPU per start of any `vis-agent` command.
   (it
     "walks the bytecode store once a day across process starts, and again after a clock moves back"
     (let [python
           (tmp-dir "vis-hk-pycache-stamp")
+
+          cache
+          (tmp-dir "vis-hk-pycache-stamp-cache")
 
           now
           (System/currentTimeMillis)
@@ -813,7 +839,7 @@
 
           swept
           (fn [at]
-            (with-homes {:python python}
+            (with-homes {:python python :cache cache}
                         #(:deleted (target (housekeeping/sweep-stale! {:now-ms at})
                                            :python-pycache))))]
 

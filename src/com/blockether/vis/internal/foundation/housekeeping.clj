@@ -17,6 +17,8 @@
    — so they carry a window instead of a report. `sweep-targets` is the one list
    of them. Diagnostic
    logs also sweep hourly while the process runs; the other targets remain startup-only.
+   The logs and the bytecode store are the large walks, so a shared stamp lets one
+   process per interval walk them (`claim-sweep!`).
    Journals also self-sweep inside the tailer loop (`gateway.bus/sweep!`) after a
    single idle day, but that is a LIVENESS rule and it only runs while a daemon
    does — journals from crashed or never-restarted daemons used to stay forever.
@@ -259,9 +261,10 @@
                                (postVisitDirectory [^Path p _e]
                                  ;; A fresh empty directory may be waiting for its writer's open.
                                  (when (and (not= (.toFile p) root)
-                                            (under? canon (canonical (.toFile p)))
                                             (or (contains? @prunable p)
                                                 (< (.lastModified (.toFile p)) cutoff))
+                                            ;; Resolve the path only for a candidate; most directories are live.
+                                            (under? canon (canonical (.toFile p)))
                                             (delete-quietly! p))
                                    (vswap! prunable conj (.getParent p))
                                    (.incrementAndGet dirs))
@@ -453,26 +456,26 @@
 
     (or (contains? names (str stem ".py")) (contains? names (str stem ".pyw")))))
 
-(def ^:private pycache-stamp
-  "The file in the bytecode store root whose timestamp records its last walk."
-  ".vis-swept")
+(defn- sweep-stamp
+  "The file whose timestamp records the last walk of the root named `id`. Stamps
+   live outside the roots they describe, so a sweep never counts or lists one."
+  ^File [^String id]
+  (io/file (cache-dir "housekeeping") (str id ".stamp")))
 
-(defn- claim-pycache-sweep!
-  "Whether this process walks the bytecode store now, re-stamping it when it does.
+(defn- claim-sweep!
+  "Whether this process walks the root of `stamp` now, re-stamping it when it does.
 
    Every Vis process sweeps at startup, and a live store holds hundreds of
-   thousands of entries. The stamp is shared, so the store is walked once per
-   `day-ms` on a machine, not once per process start. A stamp from the future
-   counts as stale, so a clock moved back cannot stop the sweep."
-  [^File root ^long now]
-  (let [stamp
-        (io/file root pycache-stamp)
-
-        age
-        (- now (.lastModified stamp))]
-
-    (when (or (neg? age) (>= age (long day-ms)))
-      (try (.createNewFile stamp) (.setLastModified stamp now) (catch Throwable _ nil))
+   thousands of entries. The stamp is shared, so a machine walks each root once
+   per `interval-ms`, not once per process start. A stamp from the future counts
+   as stale, so a clock moved back cannot stop the sweep."
+  [^File stamp ^long now ^long interval-ms]
+  (let [age (- now (.lastModified stamp))]
+    (when (or (neg? age) (>= age interval-ms))
+      (try (.mkdirs (.getParentFile stamp))
+           (.createNewFile stamp)
+           (.setLastModified stamp now)
+           (catch Throwable _ nil))
       true)))
 
 (defn- sweep-pycache!
@@ -589,11 +592,15 @@
    subtree is skipped rather than allowed to take startup down.
 
    Options, all for tests: `:days` (overrides every target's window),
-   `:budget-bytes` (overrides every byte budget) and `:now-ms`."
+   `:budget-bytes` (overrides every byte budget), `:interval-ms` (the least time
+   between two walks of the logs) and `:now-ms`."
   ([] (sweep-stale! nil))
-  ([{:keys [days now-ms] budget-override :budget-bytes}]
+  ([{:keys [days now-ms interval-ms] budget-override :budget-bytes}]
    (let [now
          (long (or now-ms (util/now-ms)))
+
+         log-interval
+         (long (or interval-ms default-log-sweep-interval-ms))
 
          store-window
          (long (or days default-retention-days))
@@ -602,38 +609,41 @@
          (- now (* store-window (long day-ms)))
 
          reports
-         (mapv (fn [{:keys [id dir retention-days budget-bytes]}]
-                 (let [^File d
-                       (dir)
+         (mapv
+           (fn [{:keys [id dir retention-days budget-bytes]}]
+             (let [^File d
+                   (dir)
 
-                       window
-                       (long (or days retention-days))
+                   window
+                   (long (or days retention-days))
 
-                       cutoff
-                       (- now (* window (long day-ms)))
+                   cutoff
+                   (- now (* window (long day-ms)))
 
-                       base
-                       {:id id :root (canonical d) :days window :cutoff-ms cutoff}]
+                   base
+                   {:id id :root (canonical d) :days window :cutoff-ms cutoff}]
 
-                   (if-not (.isDirectory d)
-                     (merge base {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})
-                     (let [canon
-                           (canonical d)
+               (if-not (and (.isDirectory d)
+                            (or (not= :logs id)
+                                (claim-sweep! (sweep-stamp "logs") now log-interval)))
+                 (merge base {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})
+                 (let [canon
+                       (canonical d)
 
-                           swept
-                           (sweep-files! d canon cutoff)
+                       swept
+                       (sweep-files! d canon cutoff)
 
-                           trimmed
-                           (when budget-bytes
-                             (trim-to-budget! d canon (long (or budget-override budget-bytes))))]
+                       trimmed
+                       (when budget-bytes
+                         (trim-to-budget! d canon (long (or budget-override budget-bytes))))]
 
-                       (merge base
-                              swept
-                              (when trimmed
-                                {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
-                                 :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
-                                 :over-budget-deleted (:deleted trimmed)}))))))
-               sweep-targets)
+                   (merge base
+                          swept
+                          (when trimmed
+                            {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
+                             :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
+                             :over-budget-deleted (:deleted trimmed)}))))))
+           sweep-targets)
 
          ^File guest-root
          (python-dir "vis-guest")
@@ -652,7 +662,8 @@
 
          pycache
          (merge {:id :python-pycache :root (canonical pycache-root)}
-                (if (and (.isDirectory pycache-root) (claim-pycache-sweep! pycache-root now))
+                (if (and (.isDirectory pycache-root)
+                         (claim-sweep! (sweep-stamp "pycache") now day-ms))
                   (sweep-pycache! pycache-root (canonical pycache-root))
                   {:deleted 0 :bytes 0}))
 
@@ -667,7 +678,7 @@
 
 (defn- sweep-logs!
   "Repeat only diagnostic retention; other derived-state rules remain startup-only."
-  [{:keys [days now-ms]}]
+  [{:keys [days now-ms interval-ms]}]
   (let [dir
         (logs-dir)
 
@@ -677,7 +688,11 @@
         window
         (long (or days default-retention-days))]
 
-    (sweep-files! dir (canonical dir) (- now (* window (long day-ms))))))
+    (if (claim-sweep! (sweep-stamp "logs")
+                      now
+                      (long (or interval-ms default-log-sweep-interval-ms)))
+      (sweep-files! dir (canonical dir) (- now (* window (long day-ms))))
+      {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})))
 
 (defn sweep-stale-async!
   "Start the stale-state sweep on a lowest-priority daemon thread, then repeat
