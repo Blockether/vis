@@ -48,16 +48,22 @@ def sdk_flow(mode):
 
 def sdk_native_wait(marker: str):
     "Wait inside C until cancellation reclaims this trusted extension worker."
+    import _thread
     import os
     import threading
     from pathlib import Path
-    condition = threading.Condition()
+    # A raw `_thread` lock acquire stays in C. The runtime slices threading's
+    # own waits, so a Condition wait would unwind on the interrupt.
+    gate = threading.Lock()
+    waiter = _thread.allocate_lock()
+    waiter.acquire()
     def notify_waiting():
-        with condition:
+        with gate:
             Path(marker).write_text(str(os.getpid()))
-    with condition:
-        threading.Thread(target=notify_waiting, daemon=True).start()
-        condition.wait(120)
+    gate.acquire()
+    threading.Thread(target=notify_waiting, daemon=True).start()
+    gate.release()
+    waiter.acquire(timeout=120)
 
 vis.register_extension(vis.Extension(name="sdk-fixture", description="SDK integration fixture", alias="sdk",
     symbols=[vis.Symbol(sdk_flow, activity=vis.Activity(presenter="observation", label="SDK flow", render=sdk_activity)),
