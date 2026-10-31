@@ -2686,10 +2686,12 @@
            user-request]
     :as state}]
   (let [summaries
-        (transcript/current-session-summaries environment)
+        (perf/timed :context/summaries (transcript/current-session-summaries environment))
 
         message-base
-        (transcript/prompt-message-base! message-base-atom summaries canonical-messages)
+        (perf/timed
+          :context/message-base
+          (transcript/prompt-message-base! message-base-atom summaries canonical-messages))
 
         messages
         (:messages message-base)
@@ -2707,21 +2709,25 @@
         (into @emergency-summaries-atom summaries)
 
         summarized-trailer-iters
-        (transcript/apply-summaries trailer-iters transport-summaries)
+        (perf/timed :context/apply-summaries
+                    (transcript/apply-summaries trailer-iters transport-summaries))
 
         _visible-iter-state
-        (transcript/stamp-iter-universe! (:ctx-atom environment)
-                                         trailer-iters
-                                         summarized-trailer-iters
-                                         {:model (:model replay-target)
-                                          :replay-target replay-target})
+        (perf/timed :context/iter-universe
+                    (transcript/stamp-iter-universe! (:ctx-atom environment)
+                                                     trailer-iters
+                                                     summarized-trailer-iters
+                                                     {:model (:model replay-target)
+                                                      :replay-target replay-target}))
 
         ;; An exact carried request already contains every completed prior
         ;; turn. Keep only live-turn growth until a fold changes the ledger;
         ;; that one semantic rewrite switches to the canonical base, whose
         ;; trailer carries the whole conversation again.
         visible-trailer-iters
-        (transcript/conversation-trailer-for-base summarized-trailer-iters (:resumed? message-base))
+        (perf/timed :context/trailer-for-base
+                    (transcript/conversation-trailer-for-base summarized-trailer-iters
+                                                              (:resumed? message-base)))
 
         conversation-options
         {:describe-images
@@ -2744,9 +2750,10 @@
         (prompt/request-token-counter (select-keys pre-resolved-model [:tokenizer]))
 
         council-active
-        (when (council/enabled? environment)
-          (get (council/runtime (:db-info environment) (str (:session-id environment)))
-               (str (:session-id environment))))
+        (perf/timed :context/council-runtime
+                    (when (council/enabled? environment)
+                      (get (council/runtime (:db-info environment) (str (:session-id environment)))
+                           (str (:session-id environment)))))
 
         council-input
         (when council-active
@@ -2771,11 +2778,12 @@
         (transcript/target-supports-vision? replay-target)
 
         user-input
-        (delivered-user-input take-user-input
-                              environment
-                              session-turn-id
-                              (inc (long iteration))
-                              user-input-vision?)
+        (perf/timed :context/user-input
+                    (delivered-user-input take-user-input
+                                          environment
+                                          session-turn-id
+                                          (inc (long iteration))
+                                          user-input-vision?))
 
         user-input-messages
         (transcript/user-input-messages user-input user-input-vision?)
@@ -2812,30 +2820,33 @@
           (reset! effective-messages-atom (append-live-input (:messages projection))))
 
         context-estimator
-        (request-context-estimator @(:prompt-cache-history-atom environment)
-                                   (:provider pre-resolved-model)
-                                   (or (:name pre-resolved-model) (:model pre-resolved-model))
-                                   (transcript/resolved-prompt-cache-context environment
-                                                                             pre-resolved-model
-                                                                             routing
-                                                                             iteration-extra-body)
-                                   message-token-counter)
+        (perf/timed :context/estimator
+                    (request-context-estimator
+                      @(:prompt-cache-history-atom environment)
+                      (:provider pre-resolved-model)
+                      (or (:name pre-resolved-model) (:model pre-resolved-model))
+                      (transcript/resolved-prompt-cache-context environment
+                                                                pre-resolved-model
+                                                                routing
+                                                                iteration-extra-body)
+                      message-token-counter))
 
         _pre-request-fold
         (when-let [projection (perf/timed :context/pre-fold
                                           (pre-request-context-projection
-                                {:request-messages provider-messages
-                                 :base-messages messages
-                                 :trailer-iters visible-trailer-iters
-                                 :summaries transport-summaries
-                                 :replay-target replay-target
-                                 :model (or (:name pre-resolved-model) (:model pre-resolved-model))
-                                 :budget-tokens effective-fold-budget
-                                 :count-messages-fn context-estimator
-                                 :canonical-base-messages-fn (when (:resumed? message-base)
-                                                               canonical-messages)
-                                 :canonical-trailer-iters summarized-trailer-iters
-                                 :conversation-options recall-options}))]
+                                            {:request-messages provider-messages
+                                             :base-messages messages
+                                             :trailer-iters visible-trailer-iters
+                                             :summaries transport-summaries
+                                             :replay-target replay-target
+                                             :model (or (:name pre-resolved-model)
+                                                        (:model pre-resolved-model))
+                                             :budget-tokens effective-fold-budget
+                                             :count-messages-fn context-estimator
+                                             :canonical-base-messages-fn
+                                             (when (:resumed? message-base) canonical-messages)
+                                             :canonical-trailer-iters summarized-trailer-iters
+                                             :conversation-options recall-options}))]
           (install-projection! projection)
           (tel/log! {:level :info
                      :id ::context-proactive-fold

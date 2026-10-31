@@ -96,42 +96,75 @@
              {:rows rows :growth growth :recording (.getAbsolutePath file)})
            (finally (.stop recording) (.dump recording (.toPath file)))))))
 
-(defdescribe context-preparation-regression-test
-             (it "renders each native tool output once instead of building an unused fallback"
-                 ;; Regression: local JFR investigation found repeated historical stdout clipping.
-                 (let [calls
-                       (atom 0)
+(defdescribe
+  context-preparation-regression-test
+  (it "renders each native tool output once instead of building an unused fallback"
+      ;; Regression: local JFR investigation found repeated historical stdout clipping.
+      (let [calls
+            (atom 0)
 
-                       clip
-                       form/clip-to-wire
+            clip
+            form/clip-to-wire
 
-                       record
-                       (second (first (history 1)))]
+            record
+            (second (first (history 1)))]
 
-                   (with-redefs [form/clip-to-wire (fn [& args]
-                                                     (swap! calls inc)
-                                                     (apply clip args))]
-                     (#'transcript/iteration-results-message record))
-                   (expect (= 1 @calls))))
-             (it "reuses an unchanged stdout projection without another token search"
-                 (let [record
-                       (first (:forms-vec (second (first (history 1)))))
+        (with-redefs [form/clip-to-wire (fn [& args]
+                                          (swap! calls inc)
+                                          (apply clip args))]
+          (#'transcript/iteration-results-message record))
+        (expect (= 1 @calls))))
+  (it "reuses an unchanged stdout projection without another token search"
+      (let [record
+            (first (:forms-vec (second (first (history 1)))))
 
-                       calls
-                       (atom 0)
+            calls
+            (atom 0)
 
-                       count-tokens
-                       svar/count-tokens]
+            count-tokens
+            svar/count-tokens]
 
-                   (with-redefs [svar/count-tokens (fn [& args]
-                                                     (swap! calls inc)
-                                                     (apply count-tokens args))]
-                     (let [first-output (form/clip-to-wire (:stdout record) record)
-                           first-count @calls
-                           second-output (form/clip-to-wire (:stdout record) record)]
+        (with-redefs [svar/count-tokens (fn [& args]
+                                          (swap! calls inc)
+                                          (apply count-tokens args))]
+          (let [first-output (form/clip-to-wire (:stdout record) record)
+                first-count @calls
+                second-output (form/clip-to-wire (:stdout record) record)]
 
-                       (expect (= first-output second-output))
-                       (expect (= first-count @calls)))))))
+            (expect (= first-output second-output))
+            (expect (= first-count @calls))))))
+  (it "prices unchanged visible history without tokenizing it again"
+      ;; Regression: a 30-turn native benchmark spent about 150 ms on each step
+      ;; while `stamp-iter-universe!` tokenized the whole visible history again.
+      (let [entries
+            (assoc-in (history 4) [3 1 :forms-vec 0 :stdout] (str "fresh " (random-uuid)))
+
+            changed
+            (assoc-in entries [3 1 :forms-vec 0 :stdout] "small")
+
+            pricing
+            {:model model :replay-target target}
+
+            context
+            (atom {})
+
+            calls
+            (atom 0)
+
+            count-messages
+            svar/count-messages]
+
+        (with-redefs [svar/count-messages (fn [& args]
+                                            (swap! calls inc)
+                                            (apply count-messages args))]
+          (transcript/stamp-iter-universe! context (pop entries) (pop entries) pricing)
+          (reset! calls 0)
+          (transcript/stamp-iter-universe! context entries entries pricing)
+          ;; One new group: its own count and the empty-array baseline.
+          (expect (= 2 @calls))
+          (let [before (get-in @context ["engine_iter_weights" "t1/i4"])]
+            (transcript/stamp-iter-universe! context changed changed pricing)
+            (expect (< (get-in @context ["engine_iter_weights" "t1/i4"]) before)))))))
 
 (defdescribe
   context-cache-invalidation-test
