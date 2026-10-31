@@ -2510,10 +2510,11 @@
   "Plans the iteration's request: the route, the model and reasoning level, the
    provider extra body and the context budget."
   [{:keys [base-reasoning-level environment extra-body has-reasoning? llm-provider
-           max-context-tokens route-command-at-turn-start routing trailer-iters user-request]
+           max-context-tokens route-command-at-turn-start routing user-request]
     :as state}]
   (let [route-change
-        (agents/routing-change environment route-command-at-turn-start)
+        (perf/timed :plan/routing-change
+                    (agents/routing-change environment route-command-at-turn-start))
 
         environment
         (if route-change
@@ -2521,7 +2522,7 @@
           environment)
 
         environment
-        (loop-router/hydrate-environment-router environment)
+        (perf/timed :plan/router (loop-router/hydrate-environment-router environment))
 
         routing
         (if route-change
@@ -2531,10 +2532,14 @@
           routing)
 
         environment
-        (loop-router/hydrate-request-model-metadata environment routing)
+        (perf/timed :plan/model-metadata
+                    (loop-router/hydrate-request-model-metadata environment routing))
 
         pre-resolved-model
-        (loop-router/resolve-model-info (:router environment) (:provider routing) (:model routing))
+        (perf/timed :plan/resolve-model
+                    (loop-router/resolve-model-info (:router environment)
+                                                    (:provider routing)
+                                                    (:model routing)))
 
         raw-reasoning-level
         (when has-reasoning? base-reasoning-level)
@@ -2552,10 +2557,11 @@
         (when-not route-change (loop-router/turn-served-model environment))
 
         request-budget-atom
-        (atom (loop-router/resolved-context-budget environment
-                                                   (or served-model pre-resolved-model)
-                                                   routing
-                                                   iteration-extra-body))
+        (atom (perf/timed :plan/context-budget
+                          (loop-router/resolved-context-budget environment
+                                                               (or served-model pre-resolved-model)
+                                                               routing
+                                                               iteration-extra-body)))
 
         effective-fold-budget
         (loop-router/iteration-fold-budget max-context-tokens
@@ -2572,12 +2578,6 @@
                             (assoc :request routing))}
           (:error llm-provider)
           (assoc :error (:error llm-provider)))
-
-        ;; Canonical history stays intact; folds affect only the provider projection. Each
-        ;; iteration appends its assistant replay and result, including any context change. Stamp
-        ;; the raw universe before applying folds, then price the visible projection.
-        _raw-iter-state
-        (transcript/stamp-iter-universe! (:ctx-atom environment) trailer-iters)
 
         replay-target
         (transcript/replay-context pre-resolved-model)]
@@ -2712,6 +2712,9 @@
         (perf/timed :context/apply-summaries
                     (transcript/apply-summaries trailer-iters transport-summaries))
 
+        ;; Canonical history stays intact; folds affect only the provider projection. Each
+        ;; iteration appends its assistant replay and result, including any context change.
+        ;; One stamp records the raw universe and prices the visible projection.
         _visible-iter-state
         (perf/timed :context/iter-universe
                     (transcript/stamp-iter-universe! (:ctx-atom environment)
