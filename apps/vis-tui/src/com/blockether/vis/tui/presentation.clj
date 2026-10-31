@@ -799,6 +799,67 @@
   [text]
   (markdown->ast (normalize-reasoning text) {:soft-break :hard}))
 
+(def ^:private council-fence-re #"^ {0,3}(`{3,}|~{3,})")
+
+(def ^:private council-item-re #"^(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)")
+
+(defn- council-fence-closes?
+  [fence line]
+  (when-let [[opener marker] (re-find council-fence-re line)]
+    (and (= (first marker) (first fence))
+         (>= (count marker) (count fence))
+         (str/blank? (subs line (count opener))))))
+
+(defn- council-block-break?
+  "True when an authored line break between `prev` and `line` starts a new block.
+   Indented lines, list items after list lines, table rows and quotes stay joined."
+  [prev line]
+  (and (not (str/blank? prev))
+       (not (str/blank? line))
+       (not (re-find #"^[ \t]" line))
+       (not (and (re-find council-item-re line)
+                 (or (re-find council-item-re prev) (re-find #"^[ \t]" prev))))
+       (not (and (str/includes? line "|") (str/includes? prev "|")))
+       (not (and (str/starts-with? line ">") (str/starts-with? prev ">")))
+       (not (re-find #"^(?:=+|-+)[ \t]*$" line))))
+
+(defn council-markdown
+  "Council text -> Markdown where each authored line break outside a fence is a block break.
+   Agents write one line for each point, so CommonMark would run the lines together
+   and pull a plain line after a list into its last item. The Companion mirrors this rule."
+  [text]
+  (loop [[line & more :as lines]
+         (str/split (str/replace (str text) #"\r\n?" "\n") #"\n" -1)
+
+         prev
+         nil
+
+         fence
+         nil
+
+         out
+         []]
+
+    (if (empty? lines)
+      (str/join "\n" out)
+      (recur more
+             line
+             (if fence
+               (when-not (council-fence-closes? fence line) fence)
+               (second (re-find council-fence-re line)))
+             (cond-> out
+               (and (nil? fence) prev (council-block-break? prev line))
+               (conj "")
+
+               :always
+               (conj line))))))
+
+(defn council->ast
+  "Council request text -> canonical transient Markdown tree. A line break that stays inside
+   a block, such as an indented continuation, keeps its own row as a hard break."
+  [text]
+  (markdown->ast (council-markdown text) {:soft-break :hard}))
+
 ;; Walker helpers (canonical inputs)
 
 (defn- node-tag [node] (when (vector? node) (first node)))

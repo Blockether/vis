@@ -357,6 +357,25 @@ describe('request speaker labels', () => {
       height.mockRestore();
     }
   });
+
+  // User report 2026-10-31, Council thread #8805: the request showed raw backticks and
+  // ran a plain line after a list into the last list item.
+  it('renders Council Markdown and keeps each authored line as its own block', () => {
+    const view = render(
+      <UserMessage requestKind="council">
+        {'Context: run `npm test`.\nGoals:\n1. First goal\n2. Second goal\nDone: tests pass.'}
+      </UserMessage>,
+    );
+    const article = view.container.querySelector('article')!;
+    expect(article.querySelector('code')).toHaveTextContent('npm test');
+    expect([...article.querySelectorAll('li')].map((item) => item.textContent)).toEqual([
+      'First goal',
+      'Second goal',
+    ]);
+    expect([...article.querySelectorAll(':scope p')].map((line) => line.textContent)).toContain(
+      'Done: tests pass.',
+    );
+  });
 });
 
 // Regression, iOS scroll jump: a pasted picture used to be laid out at whatever

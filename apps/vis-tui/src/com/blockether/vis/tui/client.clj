@@ -3163,6 +3163,8 @@
 
 (def reasoning->ast presentation/reasoning->ast)
 
+(def council->ast presentation/council->ast)
+
 (def reasoning-preview-line-limit presentation/reasoning-preview-line-limit)
 
 (def reasoning-collapse-min-hidden presentation/reasoning-collapse-min-hidden)

@@ -98,6 +98,7 @@ import 'prismjs/components/prism-yaml';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import { councilMarkdown } from '../lib/council-markdown';
 import { parseUserMessage, type UserMessagePart } from '../lib/paste';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
@@ -4896,7 +4897,7 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
   );
 }
 
-/** Council requests and wakes share the justified prose of typed requests. */
+/** Council requests and wakes are agent Markdown; each authored line is its own block. */
 function CouncilRequestBody({ children }: { children: string }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodyId = useId();
@@ -4918,8 +4919,8 @@ function CouncilRequestBody({ children }: { children: string }) {
 
   return (
     <>
-      <div id={bodyId} ref={bodyRef} className={expanded ? '' : 'line-clamp-4'}>
-        {children && <UserRequestText text={children} />}
+      <div id={bodyId} ref={bodyRef} className={`whitespace-normal ${expanded ? '' : 'line-clamp-4'}`}>
+        {children && <Markdown hardBreaks>{councilMarkdown(children)}</Markdown>}
       </div>
       {collapsible && (
         <Disclosure

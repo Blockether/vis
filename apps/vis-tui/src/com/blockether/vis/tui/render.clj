@@ -10971,20 +10971,23 @@
   ([answer bubble-w opts] (:text (format-answer-markdown-data answer bubble-w opts))))
 
 (defn format-council-request-data
-  "Council requests use the user-prose layout, preview four rows and keep per-turn disclosure controls."
-  [text bubble-w {:keys [session-id session-turn-id detail-expansions]}]
+  "Council requests render as user-prose Markdown, preview four rows and keep per-turn disclosure controls."
+  [text bubble-w {:keys [session-id session-turn-id detail-expansions] :as opts}]
   (let [content-w
         (max 10 (- (long bubble-w) 4))
 
-        ;; Keep source newlines literal; only soft wraps use Justice and the shared justifier.
+        ;; Each authored line is its own Markdown block, laid out like a typed request.
+        ast
+        (vis/council->ast text)
+
         lines
-        (vec (mapcat (fn [line]
-                       (if (str/blank? line)
-                         [{:line "" :meta nil}]
-                         (layout/ast->entries [:ast [:p line]]
-                                              content-w
-                                              {:mode :channel :full-justify? true})))
-                     (str/split (or text "") #"\n" -1)))
+        (if (ast-non-empty? ast)
+          (trim-user-prompt-margin-entries (paste-aware-ast->entries ast
+                                                                     content-w
+                                                                     (assoc opts
+                                                                       :section :user
+                                                                       :full-justify? true)))
+          [])
 
         collapsible?
         (> (count lines) 4)
@@ -11008,7 +11011,6 @@
                                    :node-id node-id}))]
 
     (entries->payload (into body control))))
-
 ;;; Messages area
 ;; `screen.clj` derives width from these public constants so formatting and paint agree.
 (def ^:const MESSAGE_MARGIN_TOP 1)

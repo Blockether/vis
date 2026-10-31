@@ -3,6 +3,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.presentation :as presentation]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.virtual :as virtual]
@@ -12,6 +13,11 @@
   "Actual peer request.\nSecond line.\nThird line.\nFourth line.\nLast line remains available.")
 
 (def council-entry {"entry_id" 42 "thread_id" 42 "content" request-text})
+
+(defn- visible
+  "The words of a projected row, without paint markers and inline-style sentinels."
+  [row]
+  (str/replace (str row) #"[\u200B-\u200D\u2060-\u206F\uE000-\uF8FF]" ""))
 
 (defdescribe council-wire-history-and-live-events-retain-provenance
              (it "council wire history and live events retain provenance"
@@ -121,7 +127,7 @@
                                      :detail-expansions {["session" (:node-id control)] true}))
 
           lines
-          (vec (butlast (:prewrapped-lines expanded)))]
+          (mapv visible (butlast (:prewrapped-lines expanded)))]
 
       (expect (= ["A quiet paragraph" "can become much more" "comfortable when its"
                   "lines share a reasonably" "even rhythm of spaces" "instead of alternating"
@@ -129,44 +135,52 @@
                  (mapv #(str/replace % #" +" " ") lines)))
       (expect (every? #(= 24 (p/display-width %)) (butlast lines)))
       (expect (= "very loose arrangements." (last lines)))
-      (expect (= (subvec lines 0 4) (subvec (:prewrapped-lines collapsed) 0 4)))
+      (expect (= (subvec lines 0 4) (mapv visible (subvec (:prewrapped-lines collapsed) 0 4))))
       (expect (= :toggle-details (:kind control))))))
 
 (defdescribe
-  council-explicit-breaks-and-literal-text-survive-layout
-  (it
-    "council explicit breaks and literal text survive layout"
-    (let
-      [text
-       (str
-         "The first line contains enough ordinary words to wrap naturally and align its soft rows.\n"
-         "Short last line.\n\n*Keep* #literal text")
+  council-markdown-keeps-authored-lines-apart
+  ;; User report 2026-10-31, Council thread #8805: the request showed raw backticks
+  ;; and ran its authored lines together, with no gap between them.
+  (it "renders Markdown and keeps each authored line as its own block"
+      (let [text
+            "Context: run `npm test`.\nGoals:\n1. First goal\n2. Second goal\nDone: tests pass."
 
-       message
-       {:role :user :request-kind :council :text text :session-turn-id "council-turn"}
+            message
+            {:role :user :request-kind :council :text text :session-turn-id "council-turn"}
 
-       opts
-       {:session-id "session" :detail-expansions {}}
+            opts
+            {:session-id "session" :detail-expansions {}}
 
-       collapsed
-       (virtual/project-message message 44 {} opts)
+            control
+            (last (:line-meta (virtual/project-message message 60 {} opts)))
 
-       control
-       (last (:line-meta collapsed))
+            expanded
+            (virtual/project-message message
+                                     60
+                                     {}
+                                     (assoc opts
+                                       :detail-expansions {["session" (:node-id control)] true}))
 
-       expanded
-       (virtual/project-message message
-                                44
-                                {}
-                                (assoc opts
-                                  :detail-expansions {["session" (:node-id control)] true}))
+            rows
+            (vec (butlast (:prewrapped-lines expanded)))]
 
-       lines
-       (vec (butlast (:prewrapped-lines expanded)))]
+        (expect (= ["Context: run npm test." "" "Goals:" "" "1. First goal" "2. Second goal" ""
+                    "Done: tests pass."]
+                   (mapv (comp str/trimr visible) rows)))
+        (expect (str/includes? (first rows) (str p/INLINE_CODE_ON "npm test" p/INLINE_CODE_OFF))))))
 
-      (expect (= ["Short last line." "" "*Keep* #literal text"] (subvec lines (- (count lines) 3))))
-      (expect (every? nil? (butlast (:line-meta expanded))))
-      (expect (= :toggle-details (:kind (last (:line-meta expanded))))))))
+(defdescribe council-markdown-splits-only-lines-that-leave-a-block
+             ;; User report 2026-10-31, Council thread #8805: authored lines must read as separate blocks.
+             (it "splits plain lines and keeps lines that belong to one block joined"
+                 (doseq [[input expected]
+                         [["One.\nTwo." "One.\n\nTwo."] ["- a\n- b\nAfter." "- a\n- b\n\nAfter."]
+                          ["1. a\n   more\n2. b" "1. a\n   more\n2. b"]
+                          ["Intro:\n```\nx\ny\n```\nAfter." "Intro:\n\n```\nx\ny\n```\n\nAfter."]
+                          ["| a | b |\n| - | - |\n| 1 | 2 |" "| a | b |\n| - | - |\n| 1 | 2 |"]
+                          ["> a\n> b" "> a\n> b"] ["Title\n---" "Title\n---"]
+                          ["One.\r\nTwo.\n\nThree." "One.\n\nTwo.\n\nThree."]]]
+                   (expect (= expected (presentation/council-markdown input)) input))))
 
 (defdescribe short-council-requests-do-not-grow-a-control
              (it "short council requests do not grow a control"
@@ -175,5 +189,5 @@
                                    40
                                    {}
                                    {:session-id "session"})]
-                   (expect (= ["Short request"] (:prewrapped-lines projected)))
+                   (expect (= ["Short request"] (mapv visible (:prewrapped-lines projected))))
                    (expect (every? nil? (:line-meta projected))))))
