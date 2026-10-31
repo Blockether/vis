@@ -328,12 +328,6 @@
   --color-machine-olive: #8e8b10;
 }
 
-/* The machine switch is a segmented control: this track shows between its segments,
-   so each machine reads as its own tile. Unread news is the accent chip, not a tint. */
-@theme {
-  --color-machine-track: color-mix(in oklab, var(--fg) 10%, var(--surface));
-}
-
 /* Transcript entry motion — keyframes, NOT `@starting-style` + transition.
    WebKit applies starting styles to dynamically inserted nodes late (partial
    support before Safari 18, still a frame behind on device), so the element

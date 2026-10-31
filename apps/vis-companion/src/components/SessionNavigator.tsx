@@ -659,15 +659,12 @@ export function ProjectStatusCounts({
 }
 
 /**
- * A segmented control of machine identities: one track, one segment for each machine.
- * The gaps show the track, so two quiet machines never read as one. Overflow scrolls.
- *
- * The track's inset rides OUT into the row's padding (`-my-0.75`): the row keeps the
- * height of its segments, so the desk strip still ends on the session header's edge.
+ * A flat tab strip of machine identities, one tab for each machine. Overflow scrolls.
+ * It has no track, fill or frame: a frame inside a track read as a shadow.
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
-    <div className="-my-0.75 flex min-w-0 shrink items-center gap-0.75 overflow-x-auto bg-machine-track p-0.75">
+    <div className="flex min-w-0 shrink items-center gap-1 overflow-x-auto">
       {children}
     </div>
   );
@@ -677,8 +674,8 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
 const MACHINE_AGE_TICK_MS = 30_000;
 
 /**
- * One segment of the machine switch. The chosen machine is raised: page paper, bold ink
- * and a thin edge, never a colour. Yellow means news only: a chip counts the
+ * One tab of the machine switch. The chosen machine has bold ink and an ink underline,
+ * never a fill or a colour. Yellow means news only: a chip counts the
  * conversations with unread answers. The age of the newest activity follows, muted.
  * A machine known down becomes a retry action with no pressed state, count or age.
  */
@@ -738,13 +735,14 @@ export function MachineTab({
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
-      // The focus ring is drawn INSIDE the segment: the scrolling track clips anything outside it.
+      // The focus ring is drawn INSIDE the tab: the scrolling strip clips anything outside it.
+      // The underline is an inset shadow, so the chosen tab keeps the height of the others.
       className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-none px-2.5 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 motion-reduce:transition-none mouse:h-7 ${
         isDown
           ? 'text-err-ink hover:text-err-ink focus-visible:outline-err-ink'
           : isOn
-            ? 'bg-ink font-bold text-white ring-1 ring-inset ring-white/20 focus-visible:outline-white'
-            : 'bg-level-project text-dialog-hint hover:text-white focus-visible:outline-white'
+            ? 'font-bold text-white shadow-[inset_0_-2px_0_var(--color-white)] focus-visible:outline-white'
+            : 'text-dialog-hint hover:text-white focus-visible:outline-white'
       }`}
     >
       {children}
@@ -757,7 +755,7 @@ export function MachineTab({
         </span>
       )}
       {hasUnread && <span className="sr-only">{unread} unread</span>}
-      {/* Muted by the hint ink, not by opacity: a faded hint fell under 3:1 on a segment. */}
+      {/* Muted by the hint ink, not by opacity: a faded hint fell under 3:1 on a tab. */}
       {age && (
         <span aria-hidden="true" className="font-normal text-dialog-hint">
           {age}
