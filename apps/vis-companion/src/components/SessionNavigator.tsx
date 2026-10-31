@@ -665,7 +665,7 @@ export function ProjectStatusCounts({
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
     // The strip scrolls, so it clips: its own 6px of room keeps the 44px hit area inside.
-    <div className="-my-1.5 flex min-w-0 shrink items-center gap-1 overflow-x-auto py-1.5">
+    <div className="-my-1.5 flex min-w-0 shrink items-center gap-1.5 overflow-x-auto py-1.5">
       {children}
     </div>
   );
@@ -675,8 +675,8 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
 const MACHINE_AGE_TICK_MS = 30_000;
 
 /**
- * One tab of the machine switch. The chosen machine has bold ink and one hairline frame,
- * never a fill or a colour. Yellow means news only: a chip counts the
+ * One tab of the machine switch. Each tab has a quiet grey frame. The chosen machine has
+ * bold ink and a dark frame, never a fill or a colour. Yellow means news only: a chip counts the
  * conversations with unread answers. The age of the newest activity follows, muted.
  * A machine known down becomes a retry action with no pressed state, count or age.
  */
@@ -737,14 +737,14 @@ export function MachineTab({
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
       // The focus ring is drawn INSIDE the tab: the scrolling strip clips anything outside it.
-      // Every tab has a border, transparent unless chosen, so a press moves nothing. The
-      // chosen frame is the dialog edge: the resting hairline measured 1.3:1 on the page.
+      // Every tab has a frame. The others wear the quiet resting hairline of `Chip`'s OFF.
+      // The chosen frame is the dialog edge: the resting hairline measures 1.3:1 on the page.
       className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-none border px-2.5 font-mono text-meta transition-colors duration-150 after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] focus-visible:outline-2 focus-visible:-outline-offset-1 motion-reduce:transition-none mouse:h-7 mouse:after:content-none ${
         isDown
-          ? 'border-transparent text-err-ink focus-visible:outline-err-ink'
+          ? 'border-edge-strong text-err-ink focus-visible:outline-err-ink'
           : isOn
             ? 'border-dialog-edge font-bold text-white focus-visible:outline-white'
-            : 'border-transparent text-dialog-hint hover:border-edge-strong hover:text-white focus-visible:outline-white'
+            : 'border-edge-strong text-dialog-hint hover:border-dialog-hint hover:text-white focus-visible:outline-white'
       }`}
     >
       {children}
