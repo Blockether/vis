@@ -96,11 +96,13 @@
                            (let [directory (.toFile (Files/createTempDirectory
                                                       "vis-live-logs-"
                                                       (make-array FileAttribute 0)))
-                                 output (io/file directory "child-output")]
+                                 output (io/file directory "child-output")
+                                 errors (io/file directory "child-errors")]
 
                              {:mode mode
                               :directory directory
                               :output output
+                              :errors errors
                               :process (-> (ProcessBuilder.
                                              ^java.util.List
                                              [(str (System/getProperty "java.home") "/bin/java")
@@ -108,13 +110,18 @@
                                               (System/getProperty "java.class.path") "clojure.main"
                                               "-m" "com.blockether.vis.internal.config.logging-test"
                                               mode (.getAbsolutePath directory)])
-                                           (.redirectErrorStream true)
+                                           (.redirectError errors)
                                            (.redirectOutput output)
                                            (.start))}))
                          ["boot" "boot-debug" "cli" "cli-debug" "tui" "tui-debug"])]
-      (try (doseq [{:keys [mode output ^Process process]} children]
+      (try (doseq [{:keys [mode output errors ^Process process]} children]
              (expect (.waitFor process 180 TimeUnit/SECONDS) (str mode " logging child timed out"))
-             (expect (zero? (.exitValue process)) (str mode ": " (slurp output))))
+             (expect (zero? (.exitValue process)) (str mode ": " (slurp output) (slurp errors)))
+             ;; User report 2026-10-31: `--debug` log lines on stdout broke the
+             ;; `--full-trace-json-stream` JSON that a benchmark harness reads.
+             (when (= "boot-debug" mode)
+               (expect (not (str/includes? (slurp output) "telemere-info-marker"))
+                       (str "debug console wrote to stdout: " (slurp output)))))
            (finally (doseq [{:keys [directory ^Process process]} children]
                       (.destroyForcibly process)
                       (.waitFor process 5 TimeUnit/SECONDS)

@@ -2950,7 +2950,7 @@
  ;;     (`tui-…`, `gateway-…`, or `vis-…` for short-lived CLI work)
  ;;
 ;; Pass `--debug` / `--verbose` / `-v` (or set `VIS_DEBUG=1`) to KEEP
-;; the console handler in addition to the file handler.
+;; the console handler, on stderr, in addition to the file handler.
 
 (def ^:private debug-flags #{"--debug" "--verbose" "-v"})
 
@@ -2984,9 +2984,11 @@
          (catch Throwable _ nil))
     ;; Console handler: re-add only when the user asked for verbosity.
     ;; Boot-time noise is already gone (registry.clj removed it during
-    ;; namespace load); this restores the stdout stream for debugging.
+    ;; namespace load). It writes to stderr: stdout carries a one-shot answer,
+    ;; `--json-schema` output or the `--full-trace-json-stream` events.
     (when (and debug? (not= "stdio" (first args)))
-      (try (tel/add-handler! :default/console (tel/handler:console)) (catch Throwable _ nil)))))
+      (try (tel/add-handler! :default/console (tel/handler:console {:stream *err*}))
+           (catch Throwable _ nil)))))
 
 (defn- initialize-clojure-extensions! [] (manifest/initialize!) nil)
 
