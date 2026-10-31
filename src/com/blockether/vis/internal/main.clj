@@ -53,6 +53,7 @@
     [com.blockether.vis.internal.workspace.core :as workspace]
     [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
     [com.blockether.vis.internal.native-libs :as native-libs]
+    [com.blockether.vis.internal.context.prompt :as prompt]
     [com.blockether.vis-python-runtime :as pyrt]
     [com.blockether.vis.internal.python.env :as env]
     [com.blockether.vis.internal.python.host :as python-host]
@@ -3533,6 +3534,8 @@
       (try (housekeeping/sweep-stale-async!) (catch Throwable _ nil))
       ;; A fresh temp copy of a bundled dylib costs about 1 s at its first dlopen on macOS.
       (timed-startup! measure? "stage-native-libs" native-libs/stage-resolver-libs!)
+      ;; The first token count of a turn otherwise waits for the tokenizer ranks.
+      (prompt/warm-token-encoding!)
       (cond (version-request? args) (println (str "vis-agent " (vis-version)))
             (root-help-request? args) (println (commandline/render-tree (root-command)))
             (fast-help-dispatched? measure? args) nil

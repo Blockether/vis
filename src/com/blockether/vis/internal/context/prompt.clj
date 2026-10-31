@@ -1018,6 +1018,27 @@
       (throw (ex-info "Prepared request components unavailable" {})))
     parts))
 
+(defonce ^:private token-encoding-warmup
+  (delay (doto (Thread. ^Runnable
+                        (fn []
+                          (let [start (System/nanoTime)]
+                            (try (svar/count-tokens "unknown" "warm" {:tokenizer "o200k_base"})
+                                 (tel/log! {:level :debug
+                                            :id ::token-encoding-warm
+                                            :data {:ms (/ (double (- (System/nanoTime) start))
+                                                          1000000.0)}})
+                                 (catch Throwable _ nil))))
+                        "vis-token-encoding-warmup")
+           (.setDaemon true)
+           (.start))))
+
+(defn warm-token-encoding!
+  "Load the default tokenizer ranks on a daemon thread, once per process.
+   The first token count of a turn otherwise loads them, about 160 ms in the native image."
+  []
+  @token-encoding-warmup
+  nil)
+
 (def ^:private cached-message-tokens
   (util/bounded-memoize (fn [model message opts]
                           (svar/count-messages model [message] opts))
