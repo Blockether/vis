@@ -1528,6 +1528,36 @@
                                   (or (ex-message no-provider) "No AI provider is configured yet."))
              (http/error-response 500 :engine-error (or (ex-message t) "internal error")))))))
 
+(def ^:private slow-request-ms
+  "Handler time at or above which a gateway request is logged as slow."
+  250)
+
+(defn- response-chars
+  "Size of a response body that is already in memory, or nil for a streamed body."
+  [body]
+  (cond (string? body) (.length ^String body)
+        (bytes? body) (alength ^bytes body)
+        :else nil))
+
+(defn- wrap-timing
+  "Log each request whose handler takes [[slow-request-ms]] or more. A streamed
+   body counts only until the handler returns it, so an open event stream is cheap."
+  [handler]
+  (fn [request]
+    (let [start (System/nanoTime)
+          response (handler request)
+          ms (/ (double (- (System/nanoTime) start)) 1e6)]
+      (when (>= ms (double slow-request-ms))
+        (tel/log! {:level :warn
+                   :id ::slow-request
+                   :data {:method (:request-method request)
+                          :uri (:uri request)
+                          :status (:status response)
+                          :ms (Math/round ms)
+                          :body-chars (response-chars (:body response))}}
+                  "slow gateway request"))
+      response)))
+
 (def ^:private cors-allow-methods "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 
 (defn- cors-headers
@@ -1814,6 +1844,7 @@
       (web/wrap-web)
       (ring-cookies/wrap-cookies)
       (wrap-errors)
+      (wrap-timing)
       (wrap-cors)))
 
 (defonce ^:private live-app
