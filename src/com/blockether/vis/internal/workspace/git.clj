@@ -14,6 +14,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
@@ -326,10 +327,8 @@
   "The nearest `.git` entry at `dir` or above it, or nil. Git finds a repository
    from this entry, so its path changes when a repository appears or goes away."
   ^File [^File dir]
-  (loop [^File d (.getAbsoluteFile dir)]
-    (when d
-      (let [marker (File. d ".git")]
-        (if (.exists marker) marker (recur (.getParentFile d)))))))
+  (some-> (paths/nearest-ancestor #(.exists (File. ^File % ".git")) (.getAbsoluteFile dir))
+          (File. ".git")))
 
 (defn- git-env-discovery?
   "True when the process environment points git at a repository explicitly."

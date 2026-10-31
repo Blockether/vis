@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.test-python-context :as tpc]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
 ;; Direct MCP calls need the same op registration the distribution manifest supplies.
@@ -131,8 +132,8 @@
                                    [])]
 
                      (binding [extension/*current-environment* env]
-                       (scoped/with-live-snapshot (#'mcp/visible-servers "s")
-                                                  (#'mcp/visible-servers "s"))))
+                       (util/with-memo-scope (#'mcp/visible-servers "s")
+                                             (#'mcp/visible-servers "s"))))
                    (expect (= 1 @reads)))))
 
 (defdescribe

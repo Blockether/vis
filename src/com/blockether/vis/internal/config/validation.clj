@@ -40,7 +40,7 @@
 (defn explain-data [config] (contract-config/config-explain-data config))
 
 (defonce ^:private verdicts
-  ;; identity hash -> [config verdict]; at most 64 entries, then it starts again.
+  ;; identity hash -> [[config] verdict]; at most 64 entries, then it starts again.
   (atom {}))
 
 (defn valid?
@@ -48,17 +48,11 @@
    same map object: the YAML cache answers one object per file stamp, and one turn
    reads it many times."
   [config]
-  (let [k
-        (System/identityHashCode config)
-
-        [seen verdict]
-        (get @verdicts k)]
-
-    (if (and seen (identical? seen config))
-      verdict
-      (let [verdict (boolean (contract-config/config-valid? config))]
-        (swap! verdicts #(assoc (if (>= (count %) 64) {} %) k [config verdict]))
-        verdict))))
+  (util/cached verdicts
+               64
+               (System/identityHashCode config)
+               [config]
+               #(boolean (contract-config/config-valid? config))))
 
 (defn- pointer-segments
   [pointer]

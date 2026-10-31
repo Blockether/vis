@@ -361,9 +361,9 @@
         (:db-info env)]
 
     (when (and session-id db)
-      (scoped/snapshot-cached
+      (util/scope-cached
         [::session-definitions session-id]
-        db
+        [db]
         #(scoped/definitions db (scoped/session-target db session-id) ["mcp" "servers"])))))
 
 (defn- local-session-specs

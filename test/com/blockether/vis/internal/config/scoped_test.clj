@@ -20,6 +20,7 @@
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (h/use-mem-store!)
@@ -929,9 +930,9 @@
           (with-redefs [scoped/values (fn [& args]
                                         (swap! calls inc)
                                         (apply values args))]
-            (scoped/with-live-snapshot (scoped/live-values env)
-                                       (scoped/live-values env)
-                                       (scoped/with-live-snapshot (scoped/live-values env))))
+            (util/with-memo-scope (scoped/live-values env)
+                                  (scoped/live-values env)
+                                  (util/with-memo-scope (scoped/live-values env))))
           (expect (= 1 @calls)))))
   ;; Perf pass 2026-11: one render resolved the session target for settings and MCP.
   (it "resolves the session target once for settings and MCP definitions in one snapshot"
@@ -955,7 +956,7 @@
                                         (swap! calls inc)
                                         (apply target args))]
             (binding [extension/*current-environment* env]
-              (scoped/with-live-snapshot (scoped/live-values env) (#'mcp/session-definitions sid))))
+              (util/with-memo-scope (scoped/live-values env) (#'mcp/session-definitions sid))))
           (expect (= 1 @calls)))))
   (it "resolves no session settings unless a checked extension owns an engine setting"
       (with-empty-config

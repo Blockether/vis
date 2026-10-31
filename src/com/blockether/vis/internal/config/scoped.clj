@@ -563,41 +563,16 @@
                                    :owner (:ext/name ext)}))
       id)))
 
-(def ^:dynamic *live-snapshot*
-  "An atom of session id → [[values]] while [[with-live-snapshot]] runs, else nil."
-  nil)
-
-(defmacro with-live-snapshot
-  "Run `body` with one [[live-values]] resolution for each session. Use it for work
-   that reads the settings at one moment, such as one context render. An outer
-   snapshot stays in force."
-  [& body]
-  `(binding [*live-snapshot* (or *live-snapshot* (atom {}))]
-     ~@body))
-
-(defn snapshot-cached
-  "`(f)`, computed once for `k` and store `db` inside [[with-live-snapshot]], else
-   on each call."
-  [k db f]
-  (if-let [snapshot *live-snapshot*]
-    (let [[cached-db cached] (get @snapshot k)]
-      (if (identical? db cached-db)
-        cached
-        (let [v (f)]
-          (swap! snapshot assoc k [db v])
-          v)))
-    (f)))
-
 (defn session-target
-  "[[target]] of session `session-id`, resolved once inside [[with-live-snapshot]]."
+  "[[target]] of session `session-id`, resolved once inside [[util/with-memo-scope]]."
   [db session-id]
-  (snapshot-cached [::session-target session-id] db #(target db "session" session-id)))
+  (util/scope-cached [::session-target session-id] [db] #(target db "session" session-id)))
 
 (defn live-values
   "The session values [[engine-mode]] and [[resource-enabled?]] read for `env`,
    resolved once so a caller checking many extensions, skills or servers pays
    for one resolution. Pass it as a `delay`: only a check that needs a session
-   value forces it. Inside [[with-live-snapshot]], callers share one resolution.
+   value forces it. Inside [[util/with-memo-scope]], callers share one resolution.
    Nil outside a session, where both read the process-wide settings."
   [env]
   (let [db
@@ -606,7 +581,8 @@
         session-id
         (:session-id env)]
 
-    (when (and db session-id) (snapshot-cached [::values session-id] db #(values db session-id)))))
+    (when (and db session-id)
+      (util/scope-cached [::values session-id] [db] #(values db session-id)))))
 
 (defn- live-value
   "`id`'s live value from `live`, a map or a delay of one, resolved afresh when
@@ -615,7 +591,7 @@
   (let [live (force live)]
     (if (contains? live id)
       (get live id)
-      (if-let [fresh (binding [*live-snapshot* nil]
+      (if-let [fresh (binding [util/*memo-scope* nil]
                        (live-values env))]
         (get fresh id)
         (toggles/value-of id)))))

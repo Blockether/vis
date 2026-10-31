@@ -747,8 +747,7 @@
         (with-redefs [workspace/env-filesystem-roots (fn [e]
                                                        (swap! calls inc)
                                                        (roots e))]
-          (extension/with-derived-context
-            env
+          (util/with-memo-scope
             (dotimes [_ 3]
               (extension/with-context {:env env} workspace/*filesystem-roots*))
             (expect (= (workspace/normalize-root "target/derived-b")

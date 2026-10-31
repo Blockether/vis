@@ -1578,7 +1578,7 @@
   (atom nil))
 
 (def ^:private loaded-config-cache
-  "`{inputs {:key … :value …}}` memo for `load-config`. Interpolation and provider
+  "`{inputs [key value]}` memo for `load-config`, read through [[util/cached]]. Interpolation and provider
    metadata cost ~0.4 ms, and one context render loads the config several times.
    An entry is reused only while every key part is IDENTICAL: the cached raw map,
    the workspace bindings, the provider registries and the functions that read them."
@@ -1768,23 +1768,18 @@
 
          key
          (into [raw catalog/template catalog/model-allowlist registry/provider-by-id]
-               (registry/catalog-state))
+               (registry/catalog-state))]
 
-         cached
-         (get @loaded-config-cache inputs)]
-
-     (if (and cached (every? true? (map identical? key (:key cached))))
-       (:value cached)
-       (let [value (some-> raw
+     (util/cached loaded-config-cache
+                  64
+                  inputs
+                  key
+                  #(some-> raw
                            ((fn [raw]
                               (when (or (not require-providers?) (seq (get raw "providers"))) raw)))
                            resolve-env-config
                            runtime-config
-                           apply-config-metadata)]
-         (swap! loaded-config-cache (fn [m]
-                                      (assoc (if (< (count m) 64) m {})
-                                        inputs {:key key :value value})))
-         value)))))
+                           apply-config-metadata)))))
 
 (defn- active-provider-entry
   "The provider entry the string-keyed YAML `config` selects: its `default_provider`,
