@@ -309,6 +309,20 @@
         ;; Only the failing line: the model wrote the rest of the block.
         (expect (str/ends-with? msg "\n\n3:     return y / 0\n              ^^^^^"))
         (expect (not (str/includes? msg "def compute(x):")))))
+  (it "a SyntaxError raised by code the block ran points at that call, not at line 1"
+      ;; Regression (session 8a61ff31): `eval("await ...")` on line 3 raised a
+      ;; SyntaxError for `<string>`, and the error showed the block's own line 1.
+      (let [code
+            "import re as _re\nx = 1\ny = eval(\"await memo.wake()\")"
+
+            err
+            (:error (ep/run-python-block (py-ctx) code))]
+
+        (expect (= :python/runtime (get-in err [:data :phase])))
+        (expect (= 3 (get-in err [:data :line])))
+        (expect (str/includes? (:message err) "'await' outside function (<string>, line 1)"))
+        (expect (str/includes? (:message err) "3: y = eval("))
+        (expect (not (str/includes? (:message err) "1: import re")))))
   (it "an undefined name pins line+caret to the name, overriding the shallow loc"
       (let [r
             (ep/run-python-block (py-ctx) "print(undefined_zzz)")

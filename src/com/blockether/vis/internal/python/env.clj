@@ -1959,14 +1959,6 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
             ;; error, and the class name below is what classifies it.
             (str/replace #"^vis-python:\s+" ""))
 
-        syntax?
-        (str/starts-with? base "SyntaxError")
-
-        ;; IndentationError and TabError ARE SyntaxErrors — CPython names the
-        ;; subclass, and a block that mis-indents never ran either.
-        indent?
-        (boolean (re-find #"^(IndentationError|TabError)" base))
-
         host?
         (str/starts-with? base "VisToolError")
 
@@ -1981,11 +1973,25 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
         tool-message
         (when host? (str/replace-first base #"^VisToolError:\s*" ""))
 
+        ;; Only a block that RAN has user frames to walk. A SyntaxError raised
+        ;; by code it ran (`eval`, `exec`, `compile`, `ast.parse`) is a runtime
+        ;; failure at that call: its `(<string>, line N)` numbers another source.
+        location
+        (guest-error-location session)
+
+        refused?
+        (nil? location)
+
+        syntax?
+        (and refused? (str/starts-with? base "SyntaxError"))
+
+        ;; IndentationError and TabError ARE SyntaxErrors — CPython names the
+        ;; subclass, and a block that mis-indents never ran either.
+        indent?
+        (and refused? (boolean (re-find #"^(IndentationError|TabError)" base)))
+
         syntax-pos
         (when (or syntax? indent?) (syntax-error-position base))
-
-        location
-        (when-not syntax-pos (guest-error-location session))
 
         pos
         (or syntax-pos (:position location))
