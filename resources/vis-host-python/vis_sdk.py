@@ -40,8 +40,9 @@ class _SandboxHost:
 def install(source, host=None):
     """Load the bundled SDK without replacing other Blockether packages.
 
-    A new `blockether.vis` package also finds the staged SDK engine. Without a
-    host, the same source gives the module of the previous call.
+    The staged SDK engine comes first in `blockether.vis`, also when an extension
+    installs an older vis-agent. Without a host, the same source gives the module
+    of the previous call.
     """
     global _SANDBOX
     _add_packages()
@@ -62,6 +63,9 @@ def install(source, host=None):
                 sys.modules["blockether"].vis = package
         if not hasattr(package, "__path__"):
             raise ImportError(f"{name} must be a package")
+    staged = os.path.join(_ENGINE, "blockether", "vis")
+    if staged not in package.__path__:
+        package.__path__ = [staged, *package.__path__]
 
     filename = "blockether/vis/extension.py"
     compiled = vis_code.code(source, filename)

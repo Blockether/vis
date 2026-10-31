@@ -9877,6 +9877,39 @@ vis.register_extension(vis.Extension(
                          (:result ((symbol-fn (registered "decision-fixture") 'identity))))))))))))
 
 (defdescribe
+  bundled-sdk-engine-wins-over-installed-vis-agent-test
+  ;; User report (2026-10-31): spel.reservations() failed with "vis.sessions needs the
+  ;; Python package 'blockether.vis.engine._host'". The extension locked vis-agent 0.2.45,
+  ;; and its old engine package hid the engine that the host stages.
+  (it
+    "gives vis.sessions the staged engine when the extension packages hold an old vis-agent"
+    (with-shared-packages
+      (fn [packages]
+        (doseq [[path source] {"blockether/vis/__init__.py" ""
+                               "blockether/vis/engine/__init__.py" "STALE = True\n"}]
+          (let [file (io/file packages path)]
+            (.mkdirs (.getParentFile file))
+            (spit file source)))
+        (with-fresh-loaded
+          {"stale_sdk_fixture.py"
+           (str
+             "import importlib.machinery, os\n" "import blockether.vis\n"
+             "import blockether.vis.extension as vis\n"
+             "def layer():\n    \"Say whether the engine that vis.sessions imports has its host layer.\"\n"
+             "    spec = importlib.machinery.PathFinder.find_spec("
+             "'blockether.vis.engine', blockether.vis.__path__)\n"
+             "    found = any(os.path.isfile(os.path.join(d, '_host.py'))"
+             " for d in spec.submodule_search_locations)\n"
+             "    return 'HostLayer' if found else 'missing'\n"
+             "vis.register_extension(vis.Extension(name='stale-sdk-fixture', alias='stale', "
+             "description='Old vis-agent beside the bundled SDK', symbols=[vis.Symbol(layer, "
+             "activity=vis.Activity(label='Read layer', show_start=False))]))\n")}
+          (fn [loaded _]
+            (expect (= 1 (:loaded loaded)) (pr-str (pyx/load-failures)))
+            (let [answer ((symbol-fn (registered "stale-sdk-fixture") 'layer))]
+              (expect (= "HostLayer" (:result answer)) (pr-str answer)))))))))
+
+(defdescribe
   editor-sdk-version-doctor-test
   ;; #375: the project `.venv` locked an old vis-agent, so editors showed old SDK types
   ;; while Vis ran its bundled SDK. Doctor now names each wheel that differs.
