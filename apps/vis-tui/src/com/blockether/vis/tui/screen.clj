@@ -57,6 +57,7 @@
             UnixLikeTerminal$CtrlCBehaviour UnixTerminal]
            [com.googlecode.lanterna.terminal.html HtmlMedia HtmlMedia$Kind HtmlTerminal]
            [java.io PrintWriter StringWriter]
+           [java.lang.management GarbageCollectorMXBean ManagementFactory]
            [java.nio.charset Charset]
            [java.util IdentityHashMap]
            [java.util.concurrent TimeUnit]
@@ -177,6 +178,17 @@
 
 (defn- record-frame-phases! [data] (when *frame-metrics* (vreset! *frame-metrics* data)))
 
+(def ^:private gc-beans (delay (vec (ManagementFactory/getGarbageCollectorMXBeans))))
+
+(defn- gc-totals
+  "Return `[collections pause-ms]` summed over every collector since process start.
+   A slow frame subtracts two readings to show whether a GC pause caused the stall."
+  []
+  (reduce (fn [[n ms] ^GarbageCollectorMXBean bean]
+            [(+ (long n) (max 0 (.getCollectionCount bean))) (+ (long ms) (max 0 (.getCollectionTime bean)))])
+          [0 0]
+          @gc-beans))
+
 (def ^:private slow-input-threshold-ms 100)
 
 (defn- log-slow-input!
@@ -241,14 +253,16 @@
       (tel/log!
         {:level :warn :id ::slow-frame :data (merge (diagnostic-state db) data)}
         (format
-          "slow TUI %s frame: %.1fms total (setup %.1f, layout %.1f, paint %.1f%s, refresh %.1f)"
+          "slow TUI %s frame: %.1fms total (setup %.1f, layout %.1f, paint %.1f%s, refresh %.1f, gc %dms/%d)"
           path
           total-ms
           (double (:setup-ms data 0.0))
           layout-ms
           paint-ms
           (paint-phase-detail data)
-          refresh-ms)))))
+          refresh-ms
+          (long (:gc-ms data 0))
+          (long (:gc-count data 0)))))))
 
 (def ^:private frame-trend-interval-ms
   "Emit the always-on `::frame-trend` summary at most this often (ms). Rate
@@ -5408,6 +5422,9 @@
 
           (:cols pane))
 
+        gc-before
+        (gc-totals)
+
         started-ns
         (System/nanoTime)
 
@@ -5445,6 +5462,9 @@
         total-ms
         (nanos->ms started-ns (System/nanoTime))
 
+        [gc-count gc-ms]
+        (map - (gc-totals) gc-before)
+
         path-name
         (name path)]
 
@@ -5453,6 +5473,8 @@
                        :total-ms total-ms
                        :cols cols
                        :rows rows
+                       :gc-count gc-count
+                       :gc-ms gc-ms
                        :outside-phases-ms (max 0.0 (- total-ms (double (:total-ms @phases 0.0)))))
                      db)
     (record-frame! path-name total-ms db)
