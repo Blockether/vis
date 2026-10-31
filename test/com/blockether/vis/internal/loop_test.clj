@@ -1390,7 +1390,8 @@
              120
              0
              1))
-          (expect (= expected-renders @calls))
+          ;; Equal messages may reuse a fingerprint, so a render count is an upper bound.
+          (expect (<= @calls expected-renders))
           (expect (= (mapv #(count (render %)) messages)
                      (get-in @history [[:fixture "model"] :weights]))))))))
 
@@ -13682,7 +13683,40 @@
                           (- (svar/count-messages "m" tail opts) (svar/count-messages "m" [] opts)))
                        (estimate (update request :messages into tail)))))
           (reset! history {})
-          (expect (nil? (estimate request))))))))
+          (expect (nil? (estimate request)))))))
+  (it
+    ;; Vis sends breakpoint-marked messages and records unmarked ones. The estimator
+    ;; then declined every request, and Svar tokenized the whole conversation each step.
+    "anchors a request whose messages carry prompt-cache breakpoints"
+    (let [messages
+          [{:role "system" :content "shared system prompt"}
+           {:role "user" :content "accepted request"}
+           {:role "assistant" :content [{:type "text" :text "accepted answer"}]}]
+
+          context
+          {:id "account-and-tools" :fixed-prefix-weight 20}
+
+          history
+          (atom {})
+
+          tail
+          [{:role "user" :content "next request"}]
+
+          opts
+          {:tokenizer "cl100k_base"}
+
+          sent
+          (#'transcript/apply-cache-breakpoints (into messages tail) :anthropic)]
+
+      (transcript/note-prompt-cache-request! history :anthropic "m" context messages 12000 0 0)
+      (expect (not= (into messages tail) sent))
+      (expect (= (+ 12000 (- (svar/count-messages "m" tail opts) (svar/count-messages "m" [] opts)))
+                 ((#'iteration/request-input-token-estimator history)
+                   {:provider-id :anthropic
+                    :model "m"
+                    :messages sent
+                    :prompt-cache-context context
+                    :tokenizer "cl100k_base"}))))))
 
 (defdescribe
   calibrated-svar-preflight-boundary-test

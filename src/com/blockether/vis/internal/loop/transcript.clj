@@ -2485,23 +2485,81 @@
 
 (def ^:private PROMPT_CACHE_MESSAGE_LIMIT 4096)
 
+(defn- cache-neutral
+  "One message without Svar's prompt-cache marks. A marked string becomes one text
+   block, so a lone plain text block prints as that string again. Breakpoints move
+   every request, so a fingerprint must not see them."
+  [message]
+  (let [content
+        (:content message)
+
+        content
+        (if (sequential? content)
+          (mapv #(if (map? %) (dissoc % :svar/cache :svar/cache-ttl) %) content)
+          content)
+
+        lone
+        (when (and (vector? content) (= 1 (count content))) (first content))]
+
+    (if-not (contains? message :content)
+      message
+      (assoc message
+        :content (if (and (map? lone) (= #{:type :text} (set (keys lone))) (= "text" (:type lone)))
+                   (:text lone)
+                   content)))))
+
+(def ^:private message-fingerprint
+  ;; Each estimate renders the whole conversation as new but equal messages, so weak
+  ;; identity hints miss. A value lookup walks a message once and allocates nothing.
+  (util/bounded-memoize (fn [message]
+                          (let [rendered (pr-str (cache-neutral message))]
+                            [(util/sha256-hex rendered) (count rendered)]))
+                        8192
+                        (* 32 1024 1024)
+                        (fn [[message] _]
+                          (+ 256 (* 2 (util/string-chars message))))))
+
 (defn message-cache-data
   "Fingerprint messages without retaining their payloads. Weak identity hints avoid
-   serializing unchanged live messages again; collection only costs a rehash."
+   serializing unchanged live messages again; collection only costs a rehash.
+   Prompt-cache marks do not change a fingerprint. Reuse up to 8192 equal messages."
   [prior messages]
   (let [data (mapv (fn [i message]
                      (let [reference (get (:message-refs prior) i)]
                        (if (and reference
                                 (identical? message (.get ^java.lang.ref.WeakReference reference)))
                          [(get (:fingerprints prior) i) (get (:weights prior) i) reference]
-                         (let [rendered (pr-str message)]
-                           [(util/sha256-hex rendered) (count rendered)
-                            (java.lang.ref.WeakReference. message)]))))
+                         (conj (message-fingerprint message)
+                               (java.lang.ref.WeakReference. message)))))
                    (range (count messages))
                    messages)]
     {:fingerprints (mapv first data)
      :weights (mapv second data)
      :message-refs (mapv #(nth % 2) data)}))
+
+(defn same-message-prefix?
+  "True when `messages` start with the messages that `prior` fingerprinted.
+   Stop at the first different message."
+  [prior messages]
+  (let [messages
+        (vec messages)
+
+        fingerprints
+        (:fingerprints prior)
+
+        n
+        (count fingerprints)]
+
+    (and (<= n (count messages))
+         (loop [i 0]
+           (or (= i n)
+               (let [message (nth messages i)
+                     reference (get (:message-refs prior) i)]
+
+                 (and (or (and reference
+                               (identical? message (.get ^java.lang.ref.WeakReference reference)))
+                          (= (nth fingerprints i) (first (message-fingerprint message))))
+                      (recur (inc i)))))))))
 
 (defn compact-prompt-cache-entry
   "Restore telemetry from a disk checkpoint without retaining request or answer text."

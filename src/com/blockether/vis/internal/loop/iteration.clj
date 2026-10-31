@@ -1651,12 +1651,7 @@
         (long (count-messages model []))]
 
     (fn [messages]
-      (when-some [tail (when (and anchored?
-                                  (<= (count prior) (count messages))
-                                  (= prior
-                                     (:fingerprints (transcript/message-cache-data
-                                                      entry
-                                                      (subvec (vec messages) 0 (count prior))))))
+      (when-some [tail (when (and anchored? (transcript/same-message-prefix? entry messages))
                          (subvec (vec messages) (count prior)))]
         (+ (long input) (- (long (count-messages model tail)) priming))))))
 
