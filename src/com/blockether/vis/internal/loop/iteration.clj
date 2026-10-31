@@ -30,6 +30,7 @@
             [com.blockether.vis.internal.loop.compaction :as compaction]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.errors :as loop-errors]
+            [com.blockether.vis.internal.loop.perf :as perf]
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.transcript :as transcript]
@@ -213,7 +214,9 @@
         :else :debug))
 
 (defn log-stage!
+  "Log one loop stage. A stage with `:duration-ms` also adds to the `perf` ledger."
   [stage iteration data]
+  (perf/record-stage! stage (:duration-ms data))
   (tel/log! {:level (log-stage-level stage data)
              :id ::loop-stage
              :data (merge {:stage stage :iteration iteration} data)}))
@@ -3667,32 +3670,82 @@
    until the model emits `:answer` or the user cancels. [[prepare-turn]] resolves
    the turn map once; each iteration threads it with the loop state through
    [[plan-request]], [[project-context]], [[call-provider]] and [[apply-result]]
-   unless [[halted-turn]] ends the turn first."
+   unless [[halted-turn]] ends the turn first. Each iteration and the turn log
+   their phase times through `perf`."
   [environment user-request opts]
-  (let [turn
+  (let [turn-start
+        (perf/now-ns)
+
+        prepare-start
+        (perf/now-ns)
+
+        turn
         (prepare-turn environment user-request opts)
 
+        prepare-ms
+        (perf/ms-since prepare-start)
+
+        start-start
+        (perf/now-ns)
+
         first-state
-        (start-turn! turn)]
+        (start-turn! turn)
+
+        start-ms
+        (perf/ms-since start-start)]
 
     (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :iteration-loop})]
       ;; A settled turn ends running prompt-cache warms; `idle` mode keeps them.
-      (try (loop [loop-state first-state]
-             (let [outcome (or (halted-turn turn loop-state)
-                               (-> turn
-                                   (assoc :loop-state loop-state
-                                          :iteration (:iteration loop-state)
-                                          :trace (:trace loop-state)
-                                          :trailer-iters (:trailer-iters loop-state)
-                                          :llm-provider (:llm-provider loop-state))
-                                   plan-request
-                                   project-context
-                                   call-provider
-                                   apply-result))]
-               (if-let [next-state (::next-state outcome)]
-                 (recur next-state)
-                 outcome)))
-           (finally (cache-warmer/turn-settled! (:prompt-cache-warmer environment)))))))
+      (try
+        (loop [loop-state first-state
+               turn-phases {:prepare-turn prepare-ms :start-turn start-ms}
+               turn-stages {}
+               iterations 0]
+
+          (let [ledger (perf/new-ledger)
+                phases (volatile! {})
+                timed (fn [k f x]
+                        (let [s (perf/now-ns)
+                              r (f x)]
+
+                          (vswap! phases assoc k (perf/ms-since s))
+                          r))
+                iteration-start (perf/now-ns)
+                outcome (binding [perf/*ledger* ledger]
+                          (or (timed :halted
+                                     (fn [_]
+                                       (halted-turn turn loop-state))
+                                     nil)
+                              (->> (assoc turn
+                                     :loop-state loop-state
+                                     :iteration (:iteration loop-state)
+                                     :trace (:trace loop-state)
+                                     :trailer-iters (:trailer-iters loop-state)
+                                     :llm-provider (:llm-provider loop-state))
+                                   (timed :plan plan-request)
+                                   (timed :context project-context)
+                                   (timed :provider call-provider)
+                                   (timed :apply apply-result))))
+                _ (perf/log-iteration! (:iteration loop-state)
+                                       (perf/ms-since iteration-start)
+                                       @phases
+                                       @ledger)
+                turn-phases (merge-with + turn-phases @phases)
+                turn-stages (reduce-kv (fn [m k {:keys [ms n]}]
+                                         (-> m
+                                             (update-in [k :ms] (fnil + 0.0) ms)
+                                             (update-in [k :n] (fnil + 0) n)))
+                                       turn-stages
+                                       @ledger)]
+
+            (if-let [next-state (::next-state outcome)]
+              (recur next-state turn-phases turn-stages (inc (long iterations)))
+              (do (perf/log-turn! (inc (long iterations))
+                                  (perf/ms-since turn-start)
+                                  turn-phases
+                                  turn-stages)
+                  outcome))))
+        (finally (cache-warmer/turn-settled! (:prompt-cache-warmer environment)))))))
 
 (defn iteration-loop
   "Run the core loop with disk-backed trace history, released on every exit path."
