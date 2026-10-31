@@ -2066,7 +2066,8 @@
                 "    shift 2; while (( $# )); do if [[ $1 == --port ]]; then echo \"$2\" > \"$FIXTURE/port\"; fi; shift; done\n"
                 "    case \"$MODE\" in occupied) echo 'gateway port is occupied'; exit 0;; crashed) echo 'startup failed'; exit 17;; esac\n"
                 "    trap 'touch \"$FIXTURE/cleaned\"; exit 0' TERM\n"
-                "    while :; do sleep 0.02; done;;\n"
+                ;; Exit with the smoke script, so a killed test run leaves no loop behind.
+                "    while kill -0 \"$PPID\" 2>/dev/null; do sleep 0.02; done;;\n"
                 "  'gateway status')\n"
                 "    test -z \"${VIS_GATEWAY_URL:-}${VIS_GATEWAY_TOKEN:-}\" || exit 18\n"
                 "    test -f \"$FIXTURE/pid\" || exit 0\n" "    pid=$(cat \"$FIXTURE/pid\")\n"
