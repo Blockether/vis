@@ -322,15 +322,54 @@
 
 ;; repository discovery
 
+(defn- git-marker
+  "The nearest `.git` entry at `dir` or above it, or nil. Git finds a repository
+   from this entry, so its path changes when a repository appears or goes away."
+  ^File [^File dir]
+  (loop [^File d (.getAbsoluteFile dir)]
+    (when d
+      (let [marker (File. d ".git")]
+        (if (.exists marker) marker (recur (.getParentFile d)))))))
+
+(defn- git-env-discovery?
+  "True when the process environment points git at a repository explicitly."
+  []
+  (boolean (or (System/getenv "GIT_DIR") (System/getenv "GIT_WORK_TREE"))))
+
+(defonce ^:private work-trees
+  ;; [dir marker] -> work tree that git reported. Perf pass 2026-11: every context
+  ;; render ran `git rev-parse --show-toplevel` twice for the same root.
+  (atom {}))
+
 (defn repo-work-tree
   "Canonical work-tree directory (top level) of the repository containing
-   `start`, or nil when `start` is outside any git repo."
+   `start`, or nil when `start` is outside any git repo. Without a `.git` entry
+   above `start`, the answer is nil without a git run. A found work tree is
+   reused while the nearest `.git` entry stays the same."
   ^File [^File start]
   (when (and start (.exists ^File start))
-    (let [dir (if (.isDirectory ^File start) start (.getParentFile ^File start))]
-      (when-let [top (git-ok dir ["rev-parse" "--show-toplevel"])]
-        (let [top (str/trim top)]
-          (when (seq top) (.getCanonicalFile (io/file top))))))))
+    (let [dir
+          (if (.isDirectory ^File start) start (.getParentFile ^File start))
+
+          marker
+          (git-marker dir)
+
+          env?
+          (git-env-discovery?)
+
+          k
+          [(.getAbsolutePath ^File dir)
+           (some-> marker
+                   .getPath)]]
+
+      (when (or marker env?)
+        (or (when-not env? (get @work-trees k))
+            (when-let [top (git-ok dir ["rev-parse" "--show-toplevel"])]
+              (let [top (str/trim top)]
+                (when (seq top)
+                  (let [tree (.getCanonicalFile (io/file top))]
+                    (when-not env? (swap! work-trees #(assoc (if (< (count %) 256) % {}) k tree)))
+                    tree)))))))))
 
 (defn in-repository?
   "True when `start` is inside a git repository."

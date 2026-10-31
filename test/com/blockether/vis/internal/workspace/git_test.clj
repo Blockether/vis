@@ -93,3 +93,44 @@
                    (.join worker 10000)
                    (expect (nil? (:exit (deref result 5000 {:exit :never-returned}))))
                    (expect (settles? #(= before (git-descendants)))))))
+
+(defn- temp-dir
+  "A fresh empty directory outside any repository."
+  ^java.io.File []
+  (.toFile (java.nio.file.Files/createTempDirectory
+             "vis-git-test"
+             (make-array java.nio.file.attribute.FileAttribute 0))))
+
+(defdescribe repo-work-tree-test
+             ;; Perf pass 2026-11: each context render spawned `git rev-parse --show-toplevel`
+             ;; twice for the same session root.
+             (it "asks git once for a repository whose .git entry stays the same"
+                 (let [root
+                       (doto (temp-dir)
+                         (-> (io/file ".git")
+                             .mkdir))
+
+                       runs
+                       (atom 0)]
+
+                   (with-redefs [git/git-ok (fn [_ _]
+                                              (swap! runs inc)
+                                              (str (.getPath root) "\n"))]
+                     (expect (= (.getCanonicalFile root) (git/repo-work-tree root)))
+                     (expect (= (.getCanonicalFile root) (git/repo-work-tree root))))
+                   (expect (= 1 @runs))))
+             (it "runs no git outside a repository and sees one created later"
+                 (let [root
+                       (temp-dir)
+
+                       runs
+                       (atom 0)]
+
+                   (with-redefs [git/git-ok (fn [_ _]
+                                              (swap! runs inc)
+                                              (str (.getPath root) "\n"))]
+                     (expect (nil? (git/repo-work-tree root)))
+                     (expect (= 0 @runs))
+                     (.mkdir (io/file root ".git"))
+                     (expect (= (.getCanonicalFile root) (git/repo-work-tree root))))
+                   (expect (= 1 @runs)))))
