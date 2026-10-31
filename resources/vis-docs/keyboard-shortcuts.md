@@ -340,17 +340,21 @@ last area, Vis goes back to the first one. When only the chat is open, Ctrl+O do
 ## In Projects
 
 Press **Ctrl+X b w** to open **Projects**. While it has focus, these keys act on the selected row.
-Press **?** to see them in Vis.
+
+Press **?** or **Ctrl+H** to open the sidebar menu. It lists every key below, the same list on every
+row. Choose an entry to run it on the selected row. Right-click a row to open the same menu for it.
 
 | Keys | What they do |
 |---|---|
 | ↑ or ↓, Ctrl+P or Ctrl+N | Move between rows |
 | ← or → | Fold or unfold the row |
 | Enter | Open the row |
-| g | Open the row menu |
+| ? or Ctrl+H | Open the sidebar menu |
 | n | Start a session here |
 | G (Shift+G) | Create a group |
 | a | Add a project |
+| p | Use the project: open its current view, a saved session or a new one |
+| F (Shift+F) | Change the folder of the project |
 | + | Add a group, session or project here |
 | Space | Select or clear a session |
 | m or u | Move sessions to a group, or take them out of it |

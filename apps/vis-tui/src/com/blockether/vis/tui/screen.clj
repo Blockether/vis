@@ -7266,11 +7266,12 @@
                                                        :ttl-ms copy-success-ttl-ms))))))))))
 
 (defn- sidebar-row-menu!
-  "The rail's row menu for the row under the cursor, from `projects/row-menu-items`.
-   An `:initial-action` on `entry` runs that item without the menu, which is how
-   the sidebar keys act. Every verb that changes the gateway refreshes the rail
-   from the gateway's own answer. `start-in-group!` is called with a group id, its
-   project root and its project id when the human starts a session from the rail."
+  "Run the row verb `:initial-action` of `entry`, or show the session details of a
+   `:show-details?` entry. The sidebar keys and the sidebar menu act through it,
+   with the verb that `projects/row-menu-items` gives the key. Every verb that
+   changes the gateway refreshes the rail from the gateway's own answer.
+   `start-in-group!` is called with a group id, its project root and its project
+   id when the human starts a session from the rail."
   [screen entry start-in-group! & [choose!]]
   (let [group
         (:group entry)
@@ -7299,29 +7300,8 @@
         moving
         (when sid (if (contains? selected sid) (sort selected) [sid]))
 
-        choice
-        (cond (:show-details? entry) {:id :details}
-              (:initial-action entry) {:id (:initial-action entry)}
-              :else (with-dialog-lock
-                      #(dlg/select-dialog!
-                         screen
-                         (cond sid (str "Session · " (:label entry))
-                               gid (str "Group · " (get group "name"))
-                               (= :project-set (:kind entry))
-                               (str (:label entry) " · " (projects/project-label project))
-                               :else (str "Project · " (projects/project-label project)))
-                         (projects/row-menu-items @state/app-db entry)
-                         {:min-width 64})))
-
-        ;; An item of a session menu's group section acts on the group row.
         pick
-        (if-let [target (:target choice)]
-          (do (sidebar-row-menu! screen
-                                 (assoc target :initial-action (:id choice))
-                                 start-in-group!
-                                 choose!)
-              nil)
-          choice)]
+        {:id (if (:show-details? entry) :details (:initial-action entry))}]
 
     (case (:id pick)
       :use-project
@@ -7657,12 +7637,13 @@
                               (projects/entry-row db rows))
                      (when row (+ (long row) (long (or height 1)) -1)))}))
 
-(defn- sidebar-keys-dialog!
-  "List the sidebar's keys inside the rail and return the chosen command, or nil.
-   A command's own key chooses it, and the help keys close the list."
+(defn- sidebar-menu!
+  "The sidebar menu: every sidebar command inside the rail, the same list on every
+   row. Return the chosen command, or nil. A command's own key chooses it, and the
+   help keys close the menu."
   [screen]
   (with-dialog-lock #(dlg/list-dialog! screen
-                                       "Sidebar keys"
+                                       "Sidebar menu"
                                        (mapv (fn [{:keys [id label] :as command}]
                                                (cond-> {:id id
                                                         :label label
@@ -7677,7 +7658,7 @@
 
 (defn- project-sidebar-key!
   "Apply a rail action, returning whether it consumed the key. `keys!` opens the
-   sidebar key list; its chosen command runs as if its key was typed."
+   sidebar menu; its chosen command runs as if its key was typed."
   [key select! add! refresh! menu! open-session! & [new-folder! keys!]]
   (when (and (instance? MouseAction key)
              (= MouseActionType/MOVE (.getActionType ^MouseAction key))
@@ -7695,6 +7676,9 @@
           (case id
             (:help :rows :jump :fold)
             nil
+
+            :areas
+            (cycle-focus! @state/app-db)
 
             :hide
             (state/dispatch [:project-sidebar {:open? false :focused? false :adding nil}])
@@ -8929,10 +8913,11 @@
 
                         (create-project-folder! screen field add-project!)))
                     (fn []
-                      (binding [dlg/*dialog-region* (sidebar-dialog-region nil)
+                      (binding [dlg/*dialog-region* (sidebar-dialog-region (projects/focused-entry
+                                                                             @state/app-db))
                                 frame/*column-offset* 0]
 
-                        (sidebar-keys-dialog! screen))))]
+                        (sidebar-menu! screen))))]
 
              ;; Startup settlement opens the optional picker or restores the project
              ;; only after the gateway-backed session has been bound.

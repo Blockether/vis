@@ -420,37 +420,12 @@
 
             (expect (<= (abs (- lead trail)) 1)))
           (expect (= :project-rail (:kind (.lookup projects/hit-map 10 1))))
-          (expect (= :project-add (:kind (.lookup projects/hit-map 12 1))))
-          (expect (= [:add]
-                     (projects/key-action
-                       db
-                       (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 12 1)))))
           (expect (not-any? #(= :project-search (:kind %)) (.current projects/hit-map)))
           (expect (= :project-hide (:kind (.lookup projects/hit-map (- width 4) 1))))
           (expect (= [:select project-b]
                      (projects/key-action
                        db
                        (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 4)))))))))
-
-(defdescribe
-  project-sidebar-header-fit-test
-  (it "keeps the spaced header controls separate on narrow rails"
-      (doseq [cols [18 19]]
-        (let [db (fixture-db)
-              capture (cap/capture! {:cols cols
-                                     :rows 18
-                                     :paint!
-                                     (fn [{:keys [screen]}]
-                                       (projects/paint! (.newTextGraphics screen) db cols 18))})
-              hits (.current projects/hit-map)
-              add-bounds (:bounds (first (filter #(= :project-add (:kind %)) hits)))
-              close-bounds (:bounds (first (filter #(= :project-hide (:kind %)) hits)))]
-
-          (expect (nil? (:error capture)))
-          (if (= cols 18)
-            (expect (nil? add-bounds))
-            (do (expect (= {:col 11 :row 1 :width 3} add-bounds))
-                (expect (<= (+ (:col add-bounds) (:width add-bounds)) (:col close-bounds)))))))))
 
 (defdescribe
   project-sidebar-inline-add-test
@@ -1528,24 +1503,6 @@
         (expect (str/includes? (cap/frame-text capture) "Release apps"))
         (expect (not (str/includes? (cap/frame-text capture) "3 sessions"))))))
 
-(defdescribe project-rail-g-opens-the-row-menu-test
-             (it "project rail g opens the row menu"
-                 ;; `g` acts on the row under the cursor: group verbs on a group row, project
-                 ;; verbs on a project row, and nothing above the first row.
-                 (let [db
-                       (grouped-db)
-
-                       action
-                       #(projects/key-action (assoc-in db [:project-sidebar :index] %)
-                                             (cap/key-stroke \g))]
-
-                   (expect (= :project-select (:kind (second (action 1)))))
-                   (expect (= :menu (first (action 2))))
-                   (expect (= "Release apps" (:label (second (action 2)))))
-                   (expect (= "Gateway" (:label (second (action 3)))))
-                   (expect (= [:noop] (action 0)))
-                   (expect (= [:noop] (action 99))))))
-
 (defdescribe saved-project-page-shows-sessions-not-opened-here-test
              (it "saved project page shows sessions not opened here"
                  ;; The project navigator reads gateway pages rather than the TUI's open views.
@@ -2025,21 +1982,22 @@
                                                              (swap! calls conj [:star sid value]))
                        #'vis/gateway-set-session-title! (fn [sid title]
                                                           (swap! calls conj [:rename sid title]))
-                       #'dlg/select-dialog! (fn [& _]
-                                              {:id :favorite})
                        #'dlg/text-input-dialog! (fn [& _]
                                                   "  New title  ")
                        #'dlg/session-metrics-dialog! (fn [_ sid session]
                                                        (swap! calls conj
                                                          [:details sid (get session "id")]))}
         (fn []
-          (#'screen/sidebar-row-menu! nil entry nil)
-          (#'screen/sidebar-row-menu! nil (assoc entry :favorite? true) nil)
+          (#'screen/sidebar-row-menu! nil (assoc entry :initial-action :favorite) nil)
+          (#'screen/sidebar-row-menu!
+           nil
+           (assoc entry
+             :favorite? true
+             :initial-action :favorite)
+           nil)
           (expect (= [[:star "saved" true] [:refresh] [:star "saved" false] [:refresh]] @calls))
           (reset! calls [])
-          (with-redefs [dlg/select-dialog! (fn [& _]
-                                             {:id :rename-session})]
-            (#'screen/sidebar-row-menu! nil entry nil))
+          (#'screen/sidebar-row-menu! nil (assoc entry :initial-action :rename-session) nil)
           (expect (= [[:rename "saved" "New title"] [:refresh]] @calls))
           (reset! calls [])
           (#'screen/sidebar-row-menu! nil (assoc entry :show-details? true) nil)
@@ -2053,47 +2011,44 @@
                         (fn [message & _]
                           (swap! calls conj [:warning message]))]
 
-            (#'screen/sidebar-row-menu! nil entry nil))
+            (#'screen/sidebar-row-menu! nil (assoc entry :initial-action :favorite) nil))
           (expect (= [[:warning "Could not change favorite"]] @calls)))))))
 
 ;; Regression, user report (paraphrased: a renamed session in a group kept its old name for a
 ;; while). The sidebar showed the new name only after the project refresh had read every page.
 (defdescribe
   renamed-session-shows-its-new-name-at-once-test
-  (it
-    "renames the row in every loaded page before the refresh reads them"
-    (let [filed
-          {"id" "saved" "title" "Saved elsewhere" "group_id" "g1"}
+  (it "renames the row in every loaded page before the refresh reads them"
+      (let [filed
+            {"id" "saved" "title" "Saved elsewhere" "group_id" "g1"}
 
-          db
-          (assoc-in (fixture-db)
-            [:project-sidebar :pages]
-            {"a" {:sessions [{"id" "loose" "title" "Loose"}] :grouped [filed] :current filed}})
+            db
+            (assoc-in (fixture-db)
+              [:project-sidebar :pages]
+              {"a" {:sessions [{"id" "loose" "title" "Loose"}] :grouped [filed] :current filed}})
 
-          seen
-          (atom nil)
+            seen
+            (atom nil)
 
-          entry
-          {:kind :project-session :label "Saved elsewhere" :project project-a :session filed}]
+            entry
+            {:kind :project-session :label "Saved elsewhere" :project project-a :session filed}]
 
-      (with-redefs-fn {#'state/app-db (atom db)
-                       #'screen/with-dialog-lock (fn [f]
-                                                   (f))
-                       #'screen/refresh-projects!
-                       #(reset! seen (get-in @state/app-db [:project-sidebar :pages "a"]))
-                       #'vis/worker-future (fn [_ f]
-                                             (f))
-                       #'vis/gateway-set-session-title! (fn [_ _]
-                                                          {})
-                       #'dlg/select-dialog! (fn [& _]
-                                              {:id :rename-session})
-                       #'dlg/text-input-dialog! (fn [& _]
-                                                  "  New title  ")}
-        (fn []
-          (#'screen/sidebar-row-menu! nil entry nil)
-          (expect (= "New title" (get-in @seen [:grouped 0 "title"])))
-          (expect (= "New title" (get-in @seen [:current "title"])))
-          (expect (= "Loose" (get-in @seen [:sessions 0 "title"]))))))))
+        (with-redefs-fn {#'state/app-db (atom db)
+                         #'screen/with-dialog-lock (fn [f]
+                                                     (f))
+                         #'screen/refresh-projects!
+                         #(reset! seen (get-in @state/app-db [:project-sidebar :pages "a"]))
+                         #'vis/worker-future (fn [_ f]
+                                               (f))
+                         #'vis/gateway-set-session-title! (fn [_ _]
+                                                            {})
+                         #'dlg/text-input-dialog! (fn [& _]
+                                                    "  New title  ")}
+          (fn []
+            (#'screen/sidebar-row-menu! nil (assoc entry :initial-action :rename-session) nil)
+            (expect (= "New title" (get-in @seen [:grouped 0 "title"])))
+            (expect (= "New title" (get-in @seen [:current "title"])))
+            (expect (= "Loose" (get-in @seen [:sessions 0 "title"]))))))))
 
 (defdescribe
   saved-session-archive-view-is-independent-and-gateway-paged-test
@@ -2205,159 +2160,59 @@
                     (fn [f]
                       (f))
 
-                    dlg/select-dialog!
-                    (fn [& _]
-                      {:id @pick})
-
                     dlg/confirm-dialog!
                     (fn [& _]
                       @confirmed?)]
 
         (#'screen/sidebar-row-menu!
          nil
-         (assoc entry :session (assoc (:session entry) "live" true))
+         (assoc entry
+           :session (assoc (:session entry) "live" true)
+           :initial-action @pick)
          nil)
         (expect (empty? @calls) "Busy sessions must not be archived")
-        (#'screen/sidebar-row-menu! nil entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc entry :initial-action @pick) nil)
         (expect (= [[:archive "saved" true] [:refresh]] @calls))
         (reset! calls [])
         (reset! pick :unarchive-session)
         (#'screen/sidebar-row-menu!
          nil
-         (assoc entry :session (assoc (:session entry) "archived_at" "now"))
+         (assoc entry
+           :session (assoc (:session entry) "archived_at" "now")
+           :initial-action @pick)
          nil)
         (expect (= [[:archive "saved" false] [:refresh]] @calls))
         (reset! calls [])
         (reset! pick :delete-session)
-        (#'screen/sidebar-row-menu! nil entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc entry :initial-action @pick) nil)
         (expect (empty? @calls) "Canceling deletion leaves the gateway untouched")
         (reset! confirmed? true)
-        (#'screen/sidebar-row-menu! nil entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc entry :initial-action @pick) nil)
         (expect (= [[:delete "saved"] [:refresh]] @calls))
         (expect (= :tab-1 (:active-tab-id @state/app-db))
                 "Deleting an unopened row does not change focus")))))
 
-(defdescribe
-  set-creation-shortcuts-and-buttons-test
-  (it
-    "set creation shortcuts and buttons"
-    (let [db
-          (-> (fixture-db)
-              (assoc-in [:project-sidebar :expanded] #{"a"})
-              (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped []}))
+(defdescribe set-creation-shortcuts-and-buttons-test
+             (it "set creation shortcuts"
+                 (let [db
+                       (-> (fixture-db)
+                           (assoc-in [:project-sidebar :expanded] #{"a"})
+                           (assoc-in [:project-sidebar :pages "a"] {:sessions [] :grouped []}))
 
-          entries
-          (projects/sidebar-entries db)
+                       entries
+                       (projects/sidebar-entries db)
 
-          group-entry
-          (first (filter #(= :groups (:set %)) entries))
+                       group-entry
+                       (first (filter #(= :groups (:set %)) entries))
 
-          session-entry
-          (first (filter #(= :sessions (:set %)) entries))]
+                       session-entry
+                       (first (filter #(= :sessions (:set %)) entries))]
 
-      (let [hits-at
-            (fn [entry]
-              (cap/capture! {:cols 120
-                             :rows 24
-                             :paint! (fn [{:keys [screen]}]
-                                       (projects/paint!
-                                         (.newTextGraphics screen)
-                                         (-> db
-                                             (assoc-in [:project-sidebar :focused?] true)
-                                             (assoc-in [:project-sidebar :index] (:index entry)))
-                                         120
-                                         24))})
-              (.current projects/hit-map))
-
-            group-hits
-            (hits-at group-entry)
-
-            group-hit
-            (first (filter #(= :project-group-add (:kind %)) group-hits))
-
-            hits
-            (hits-at session-entry)
-
-            session-hit
-            (first (filter #(= :project-session-add (:kind %)) hits))]
-
-        ;; Only the focused or hovered row shows its buttons.
-        (expect (not-any? #(= :project-session-add (:kind %)) group-hits))
-        (expect (some? group-hit))
-        (expect (some? session-hit))
-        (doseq [[entry hit expected]
-                [[group-entry group-hit [:menu (assoc group-entry :initial-action :new)]]
-                 [session-entry session-hit
-                  [:menu (assoc session-entry :initial-action :new-session)]]]
-
-                :when hit]
-
-          (let [{:keys [col row]}
-                (:bounds hit)
-
-                click
-                (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row)))]
-
-            (hits-at entry)
-            (expect (= expected
-                       (projects/key-action (assoc-in db [:project-sidebar :focused?] true)
-                                            click))))))
-      (doseq [[entry choice] [[group-entry :new] [session-entry :new-session]]]
-        (expect (= [:menu (assoc entry :initial-action choice)]
-                   (projects/key-action (assoc-in db [:project-sidebar :index] (:index entry))
-                                        (cap/key-stroke \+)))))
-      (expect (= [:menu group-entry]
-                 (projects/key-action (assoc-in db [:project-sidebar :index] (:index group-entry))
-                                      (cap/key-stroke \g)))))))
-
-(defdescribe
-  sidebar-row-buttons-align-and-offer-the-same-add-test
-  ;; User report: a hovered session row showed a `⋯` and then a `+` button. Session
-  ;; and group rows show no button; `g` opens their menu.
-  (it
-    "gives only Groups and Sessions a + button, and session rows no button"
-    (doseq [cols [32 120]]
-      (let [db (-> (fixture-db)
-                   (assoc-in [:project-sidebar :expanded] #{"a"})
-                   (assoc-in [:project-sidebar :focused?] true)
-                   (assoc-in [:project-sidebar :pages "a"]
-                             {:sessions [{"id" "saved" "title" "Saved session"}] :grouped []}))
-            buttons
-            (for [entry (projects/sidebar-entries db)
-                  :when (or (= "a" (str (get-in entry [:project "id"])))
-                            (= "saved" (get-in entry [:session "id"])))
-                  :when (or (#{:groups :sessions} (:set entry)) (= :project-session (:kind entry)))
-                  :let [capture (cap/capture! {:cols cols
-                                               :rows 24
-                                               :paint! (fn [{:keys [screen]}]
-                                                         (projects/paint! (.newTextGraphics screen)
-                                                                          (assoc-in db
-                                                                            [:project-sidebar
-                                                                             :index]
-                                                                            (:index entry))
-                                                                          cols
-                                                                          24))})
-                        lines (str/split-lines (cap/frame-text capture))
-                        row (long (some #(when (= (:index entry) (:index %))
-                                           (get-in % [:bounds :row]))
-                                        (.current projects/hit-map)))]
-                  button (vec (filter #(and (contains? #{:project-group-add :project-session-add}
-                                                       (:kind %))
-                                            (= row (get-in % [:bounds :row])))
-                                      (.current projects/hit-map)))]
-
-              (assoc button
-                :error (:error capture)
-                :lines lines))]
-
-        (expect (every? (comp nil? :error) buttons))
-        (expect (= 2 (count buttons)) "Groups and Sessions; the saved session has none")
-        (expect (= 1 (count (distinct (map #(get-in % [:bounds :col]) buttons))))
-                "Every row button shares a right-aligned column")
-        (doseq [{:keys [bounds]} buttons
-                :let [{:keys [width]} bounds]]
-
-          (expect (= 3 width)))))))
+                   (doseq [[entry choice] [[group-entry :new] [session-entry :new-session]]]
+                     (expect (= [:menu (assoc entry :initial-action choice)]
+                                (projects/key-action
+                                  (assoc-in db [:project-sidebar :index] (:index entry))
+                                  (cap/key-stroke \+))))))))
 
 (defdescribe
   set-buttons-use-web-bands-and-direct-actions-test
@@ -2910,13 +2765,11 @@
           selected
           (assoc-in db [:project-sidebar :index] (:index entry))
 
-          choice
-          (atom nil)
-
           loaded
           (atom [])]
 
-      (expect (= [:menu entry] (projects/key-action selected (cap/key-stroke \g))))
+      (expect (= [:menu (assoc entry :initial-action :toggle-session-archive)]
+                 (projects/key-action selected (cap/key-stroke \v))))
       (cap/capture! {:cols 120
                      :rows 24
                      :paint! (fn [{:keys [screen]}]
@@ -2928,24 +2781,25 @@
             {:keys [col row]}
             (:bounds hit)]
 
-        (expect (= :menu
-                   (first (projects/key-action selected
-                                               (MouseAction. MouseActionType/CLICK_DOWN
-                                                             3
-                                                             (TerminalPosition. (int col)
-                                                                                (int row))))))))
+        (expect (= [:help]
+                   (projects/key-action selected
+                                        (MouseAction. MouseActionType/CLICK_DOWN
+                                                      3
+                                                      (TerminalPosition. (int col) (int row)))))))
       (with-redefs-fn {#'state/app-db (atom selected)
                        #'screen/with-dialog-lock (fn [f]
                                                    (f))
-                       #'screen/load-project-page! #(swap! loaded conj %)
-                       #'dlg/select-dialog! (fn [_ _ items & _]
-                                              (reset! choice items)
-                                              {:id :toggle-session-archive})}
+                       #'screen/load-project-page! #(swap! loaded conj %)}
         (fn []
-          (#'screen/sidebar-row-menu! nil entry nil)
+          (#'screen/sidebar-row-menu! nil (assoc entry :initial-action :toggle-session-archive) nil)
           (expect (true? (get-in @state/app-db [:project-sidebar :session-archived? "a"])))
           (expect (= ["a"] @loaded))
-          (#'screen/sidebar-row-menu! nil (assoc entry :archived? true) nil)
+          (#'screen/sidebar-row-menu!
+           nil
+           (assoc entry
+             :archived? true
+             :initial-action :toggle-session-archive)
+           nil)
           (expect (false? (get-in @state/app-db [:project-sidebar :session-archived? "a"]))))))))
 
 (defdescribe
@@ -2988,20 +2842,16 @@
                     (fn [f]
                       (f))
 
-                    dlg/select-dialog!
-                    (fn [& _]
-                      {:id :delete-session})
-
                     dlg/confirm-dialog!
                     (fn [& _]
                       true)]
 
-        (#'screen/sidebar-row-menu! nil entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc entry :initial-action :delete-session) nil)
         (expect (= "a1" (get-in @state/app-db [:session :id]))
                 "A failed DELETE keeps the active view")
         (expect (= #{"a1"} (get-in @state/app-db [:project-sidebar :selected "a"])))
         (reset! fail? false)
-        (#'screen/sidebar-row-menu! nil entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc entry :initial-action :delete-session) nil)
         (expect (= ["a1" "a1"] @attempts))
         (expect (= "a2" (get-in @state/app-db [:session :id])))
         (expect (= [:tab-2 :tab-3] (mapv :id (:tabs @state/app-db))))
@@ -3048,11 +2898,11 @@
           (expect (nil? (:error capture)))
           (expect (str/includes? (cap/frame-text capture) "First"))
           (expect (not-any? #(= :project-selection (:kind %)) (.current projects/hit-map)))
-          (expect (= [:menu hit]
-                     (projects/key-action unfocused
-                                          (MouseAction. MouseActionType/CLICK_DOWN
-                                                        3
-                                                        (TerminalPosition. (int col) (int row))))))
+          ;; A right press selects the pressed row, and the sidebar menu acts on it.
+          (let [right
+                (MouseAction. MouseActionType/CLICK_DOWN 3 (TerminalPosition. (int col) (int row)))]
+            (expect (= {:focused? true :index (:index hit)} (projects/click-focus unfocused right)))
+            (expect (= [:help] (projects/key-action unfocused right))))
           (expect (= [:session "s1"]
                      (projects/key-action unfocused
                                           (MouseAction. MouseActionType/CLICK_DOWN
@@ -3130,13 +2980,9 @@
 
                     screen/with-dialog-lock
                     (fn [f]
-                      (f))
+                      (f))]
 
-                    dlg/select-dialog!
-                    (fn [_ _ _ & _]
-                      {:id :move-selected})]
-
-        (#'screen/sidebar-row-menu! nil group-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc group-entry :initial-action :move-selected) nil)
         (expect (= [["s1" "g1"] ["s2" "g1"] [:refresh]] @calls))
         (expect (= #{"s2"} (get-in @state/app-db [:project-sidebar :selected "a"])))
         (expect (= ["s1"]
@@ -3150,9 +2996,7 @@
         (expect (some #(str/includes? % "1 of 2") @notices))
         (reset! calls [])
         (reset! notices [])
-        (with-redefs [dlg/select-dialog! (fn [_ _ _ & _]
-                                           {:id :ungroup-selected})]
-          (#'screen/sidebar-row-menu! nil loose-entry nil))
+        (#'screen/sidebar-row-menu! nil (assoc loose-entry :initial-action :ungroup-selected) nil)
         (expect (= [["s2" nil] [:refresh]] @calls))
         (expect (= #{"s2"} (get-in @state/app-db [:project-sidebar :selected "a"])))
         (expect (some #(str/includes? % "1 of 1") @notices))))))
@@ -3207,17 +3051,12 @@
                     (fn [f]
                       (f))
 
-                    dlg/select-dialog!
-                    (fn [_ _ items & _]
-                      (expect (some #(= :move-session (:id %)) items))
-                      {:id :move-session})
-
                     dlg/searchable-select!
                     (fn [_ _ items _]
                       (reset! options items)
                       {:id @pick})]
 
-        (#'screen/sidebar-row-menu! nil entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc entry :initial-action :move-session) nil)
         (expect (= [["s1" "g2"] [:refresh]] @calls))
         (expect (= ["g1" "g2" ::screen/new-group ::screen/remove-group] (mapv :id @options)))
         (reset! calls [])
@@ -3225,7 +3064,7 @@
         (state/dispatch [:project-session-select-toggle "a" "s2"])
         (state/dispatch [:project-session-select-toggle "b" "other"])
         (reset! pick ::screen/remove-group)
-        (#'screen/sidebar-row-menu! nil entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc entry :initial-action :move-session) nil)
         (expect (= [["s1" nil] ["s2" nil] [:refresh]] @calls))
         (expect (empty? (get-in @state/app-db [:project-sidebar :selected "a"])))
         (expect (= #{"other"} (get-in @state/app-db [:project-sidebar :selected "b"])))))))
@@ -3279,11 +3118,8 @@
                       @typed)
 
                     dlg/select-dialog!
-                    (fn [_ title items & _]
-                      (if (= title "Group colour")
-                        {:id "cyan"}
-                        (do (expect (some #(= :new-session (:id %)) items))
-                            (if (map? @choice) @choice {:id @choice}))))
+                    (fn [& _]
+                      {:id "cyan"})
 
                     vis/gateway-create-session-group!
                     (fn [opts]
@@ -3302,46 +3138,42 @@
                     (fn [message & _]
                       (swap! notices conj message))]
 
-        (#'screen/sidebar-row-menu! nil loose-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc loose-entry :initial-action @choice) nil)
         (expect (= [[:create {:name "New group" :project-id "a" :color "cyan"}] [:refresh]] @calls))
         (reset! choice :rename)
         (reset! typed "  Renamed  ")
-        (#'screen/sidebar-row-menu! nil group-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc group-entry :initial-action @choice) nil)
         (reset! choice :recolour)
-        (#'screen/sidebar-row-menu! nil group-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc group-entry :initial-action @choice) nil)
         (expect (= [[:update "g1" {:name "Renamed"}] [:refresh] [:update "g1" {:color "cyan"}]
                     [:refresh]]
                    (subvec @calls 2)))
         (reset! fail? true)
         (reset! notices [])
         (reset! choice :rename)
-        (#'screen/sidebar-row-menu! nil group-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc group-entry :initial-action @choice) nil)
         (expect (= [:update "g1" {:name "Renamed"}] (last @calls))
                 "A failed rename does not refresh as though it succeeded")
         (reset! choice :new-session)
-        (#'screen/sidebar-row-menu! nil loose-entry #(swap! calls conj [:start %1 %2 %3]))
-        (#'screen/sidebar-row-menu! nil group-entry #(swap! calls conj [:start %1 %2 %3]))
+        (#'screen/sidebar-row-menu!
+         nil
+         (assoc loose-entry :initial-action @choice)
+         #(swap! calls conj [:start %1 %2 %3]))
+        (#'screen/sidebar-row-menu!
+         nil
+         (assoc group-entry :initial-action @choice)
+         #(swap! calls conj [:start %1 %2 %3]))
         ;; User report: a session row inside a group could not start a session there.
         (#'screen/sidebar-row-menu!
          nil
          {:kind :project-session
           :project (:project loose-entry)
-          :session {"id" "s9" "group_id" "g1"}}
+          :session {"id" "s9" "group_id" "g1"}
+          :initial-action @choice}
          #(swap! calls conj [:start %1 %2 %3]))
         (expect (= [[:start nil "/work/vis" "a"] [:start "g1" "/work/vis" "a"]
                     [:start "g1" "/work/vis" "a"]]
-                   (subvec @calls (- (count @calls) 3))))
-        ;; A group item in a session menu acts on that session's group.
-        (reset! fail? false)
-        (reset! typed "  From session  ")
-        (reset! choice {:id :rename :target group-entry})
-        (#'screen/sidebar-row-menu!
-         nil
-         {:kind :project-session
-          :project (:project loose-entry)
-          :session {"id" "s9" "group_id" "g1"}}
-         nil)
-        (expect (= [[:update "g1" {:name "From session"}] [:refresh]] (take-last 2 @calls)))))))
+                   (subvec @calls (- (count @calls) 3))))))))
 
 (defdescribe
   saved-project-pagers-and-pointer-test
@@ -3391,16 +3223,12 @@
                        :rows 24
                        :paint! (fn [{:keys [screen]}]
                                  (projects/paint! (.newTextGraphics screen) selected 144 24))})
-        (expect (not-any? #(#{:project-session-add :project-group-add} (:kind %))
-                          (.current projects/hit-map))
-                "A focused session row shows no button")
         (expect (= [:details "saved-1"] (projects/key-action selected (cap/key-stroke \d))))
-        (expect (= :menu
-                   (first (projects/key-action db
-                                               (MouseAction. MouseActionType/CLICK_DOWN
-                                                             3
-                                                             (TerminalPosition. (int col)
-                                                                                (int row))))))))
+        (expect (= [:help]
+                   (projects/key-action db
+                                        (MouseAction. MouseActionType/CLICK_DOWN
+                                                      3
+                                                      (TerminalPosition. (int col) (int row)))))))
       ;; Live groups are never paged, whatever total the gateway reports beside them.
       (expect (not-any? #(= :project-group-page (:kind %)) entries))
       (with-redefs [state/app-db (atom db)]
@@ -3624,13 +3452,9 @@
                       (f))
 
                     dlg/select-dialog!
-                    (fn [_ _ items & _]
-                      (if (or (some #(= :archive-group (:id %)) items)
-                              (some #(= :unarchive-group (:id %)) items))
-                        (do (when (some #(= :unarchive-group (:id %)) items)
-                              (expect (not-any? #(= :new-session (:id %)) items)))
-                            {:id @choice})
-                        (do (swap! asked inc) (when @mode {:id @mode}))))
+                    (fn [& _]
+                      (swap! asked inc)
+                      (when @mode {:id @mode}))
 
                     vis/gateway-update-session-group!
                     (fn [gid opts]
@@ -3652,31 +3476,33 @@
                     (fn [message & _]
                       (swap! notices conj message))]
 
-        (#'screen/sidebar-row-menu! nil group-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc group-entry :initial-action @choice) nil)
         (expect (= [[:archive "g1" {:archived true}] [:refresh]] @calls))
         (reset! fail? true)
         (reset! choice :unarchive-group)
         (#'screen/sidebar-row-menu!
          nil
-         (assoc group-entry :group (assoc group-release "archived_at" "today"))
+         (assoc group-entry
+           :group (assoc group-release "archived_at" "today")
+           :initial-action @choice)
          nil)
         (expect (= [:archive "g1" {:archived false}] (last @calls)))
         (reset! fail? false)
         (reset! choice :delete)
-        (#'screen/sidebar-row-menu! nil group-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc group-entry :initial-action @choice) nil)
         (expect (= 3 (count @calls)) "Cancel at the choice does not touch the gateway")
         (reset! mode :detach)
-        (#'screen/sidebar-row-menu! nil group-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc group-entry :initial-action @choice) nil)
         (expect (= [[:delete "g1" :detach] [:refresh]] (take-last 2 @calls)))
         (expect (empty? (get-in @state/app-db [:project-sidebar :selected "a"])))
         (expect (some #(= :tab-2 (:id %)) (:tabs @state/app-db)) "Detach keeps the open session")
         (reset! mode :with-sessions)
-        (#'screen/sidebar-row-menu! nil group-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc group-entry :initial-action @choice) nil)
         (expect (= [[:delete "g1" :with-sessions] [:refresh]] (take-last 2 @calls)))
         (expect (not-any? #(= :tab-2 (:id %)) (:tabs @state/app-db))
                 "Delete prunes only its returned IDs")
         (reset! fail? true)
-        (#'screen/sidebar-row-menu! nil group-entry nil)
+        (#'screen/sidebar-row-menu! nil (assoc group-entry :initial-action @choice) nil)
         (expect (= [:delete "g1" :with-sessions] (last @calls)))
         ;; #361: a group with no sessions, archived or not, has nothing to ask about.
         (reset! fail? false)
@@ -3684,7 +3510,9 @@
         (reset! asked 0)
         (#'screen/sidebar-row-menu!
          nil
-         (assoc group-entry :group (assoc group-release "session_count" 0))
+         (assoc group-entry
+           :group (assoc group-release "session_count" 0)
+           :initial-action @choice)
          nil)
         (expect (zero? @asked) "An empty group is deleted without the sessions question")
         (expect (= [[:delete "g1" :detach] [:refresh]] (take-last 2 @calls)))))))
@@ -3706,18 +3534,15 @@
 
                       screen/with-dialog-lock
                       (fn [f]
-                        (f))
-
-                      dlg/select-dialog!
-                      (fn [_ _ items & _]
-                        (expect (some #(= :toggle-group-archive (:id %)) items))
-                        {:id :toggle-group-archive})]
+                        (f))]
 
           (with-redefs-fn {#'screen/load-project-page! #(swap! reads conj %)}
             (fn []
               (#'screen/sidebar-row-menu!
                nil
-               (first (filter #(= :groups (:set %)) (projects/sidebar-entries @state/app-db)))
+               (assoc (first (filter #(= :groups (:set %))
+                                     (projects/sidebar-entries @state/app-db)))
+                 :initial-action :toggle-group-archive)
                nil)
               (expect (= ["a"] @reads))
               (expect (true? (get-in @state/app-db [:project-sidebar :group-archived? "a"])))
@@ -3961,47 +3786,37 @@
         (expect (empty? (get-in @state/app-db [:project-sidebar :selected "a"])))
         (expect (nil? (get-in @state/app-db [:project-sidebar :removing])))))))
 
-(defdescribe
-  project-menu-chooses-or-removes-only-the-project-row-test
-  (it
-    "project menu chooses or removes only the project row"
-    (let [choice
-          (atom :use-project)
+(defdescribe project-menu-chooses-or-removes-only-the-project-row-test
+             (it "project menu chooses or removes only the project row"
+                 (let [choice
+                       (atom :use-project)
 
-          calls
-          (atom [])]
+                       calls
+                       (atom [])]
 
-      (with-redefs [state/app-db
-                    (atom (fixture-db))
+                   (with-redefs [state/app-db
+                                 (atom (fixture-db))
 
-                    screen/with-dialog-lock
-                    (fn [f]
-                      (f))
+                                 screen/with-dialog-lock
+                                 (fn [f]
+                                   (f))
 
-                    dlg/select-dialog!
-                    (fn [_ _ items & _]
-                      (expect (= #{:use-project :delete-project}
-                                 (set (map :id
-                                           (filter #(#{:use-project :delete-project} (:id %))
-                                                   items)))))
-                      {:id @choice})
+                                 screen/remove-project!
+                                 (fn [_ project]
+                                   (swap! calls conj [:remove (get project "id")]))]
 
-                    screen/remove-project!
-                    (fn [_ project]
-                      (swap! calls conj [:remove (get project "id")]))]
-
-        (#'screen/sidebar-row-menu!
-         nil
-         {:kind :project-select :project project-a}
-         nil
-         #(swap! calls conj [:choose (get % "id")]))
-        (reset! choice :delete-project)
-        (#'screen/sidebar-row-menu!
-         nil
-         {:kind :project-select :project project-b}
-         nil
-         #(swap! calls conj [:choose (get % "id")]))
-        (expect (= [[:choose "a"] [:remove "b"]] @calls))))))
+                     (#'screen/sidebar-row-menu!
+                      nil
+                      {:kind :project-select :project project-a :initial-action @choice}
+                      nil
+                      #(swap! calls conj [:choose (get % "id")]))
+                     (reset! choice :delete-project)
+                     (#'screen/sidebar-row-menu!
+                      nil
+                      {:kind :project-select :project project-b :initial-action @choice}
+                      nil
+                      #(swap! calls conj [:choose (get % "id")]))
+                     (expect (= [[:choose "a"] [:remove "b"]] @calls))))))
 
 ;; Regression, user report (paraphrased: a project needs its own menu to rename it and to
 ;; give it another folder, the same as in the app): the rail's project menu offers both
@@ -4798,9 +4613,6 @@
                  (let [db
                        (every-kind-db)
 
-                       entry
-                       (first (projects/sidebar-entries db))
-
                        capture
                        (paint-rail db 240 24)
 
@@ -4818,10 +4630,10 @@
 
                    (expect (nil? (:error capture)))
                    ;; User report: the settings and add project pairs crowded the footer.
-                   ;; The row menu and the s and a keys still reach both.
-                   (expect (= [:help :menu :back] (mapv :command buttons)))
+                   ;; The sidebar menu and the s and a keys still reach both.
+                   (expect (= [:help :back] (mapv :command buttons)))
                    (expect (every? #(= 22 (get-in % [:bounds :row])) buttons))
-                   (expect (= [[:help] [:menu entry] [:blur]] (mapv click buttons))))))
+                   (expect (= [[:help] [:blur]] (mapv click buttons))))))
 
 (defdescribe
   sidebar-dialog-anchor-test

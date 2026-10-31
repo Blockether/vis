@@ -39,9 +39,8 @@ apps and the command line.
 ## Start a new session
 
 In the terminal, press **Ctrl+X s n**. In the desktop or phone app, choose **New session**. To start
-it inside a group, use the **+** on the group's band in the app. You can also choose **＋ New session
-here** in the group's **g** menu in [Projects](#find-a-saved-session). The session then opens at the
-top of that group.
+it inside a group, use the **+** on the group's band in the app. In the terminal, select the group in
+[Projects](#find-a-saved-session) and press **n**. The session then opens at the top of that group.
 
 ## Control a running session
 
@@ -171,13 +170,16 @@ The switcher also has these keys:
 To browse by project, press **Ctrl+X b w** to open **Projects**. It lists saved
 sessions from the connected gateway, including ones you have not opened in this
 terminal. Use **↑** and **↓** to choose a project, group or session, and press
-**Enter** to expand it or to resume a session. Press **g** on a row for its menu.
-If your terminal reports mouse clicks, you can click rows and menu items instead.
+**Enter** to expand it or to resume a session.
+
+Press **?** for the sidebar menu. It lists every key of Projects and runs the one that you choose on
+the selected row. If your terminal reports mouse clicks, you can click rows and menu items instead.
+Right-click a row to open the menu for it.
 
 Each project shows only its name. A new project takes the name of its folder. To rename a project
-or change its folder, press **g** on the project row. Then choose **Rename project…** or
-**Change folder…**. For a new folder, type its path and press **Enter**. The project keeps its
-sessions, and Vis does not move your files.
+or change its folder, select the project row. Then press **R** to rename it, or **F** to change its
+folder. For a new folder, type its path and press **Enter**. The project keeps its sessions, and Vis
+does not move your files.
 
 To search saved session titles and conversation text, press **/** while Projects has focus. The
 search also finds sessions outside the pages on screen. Result-page rows show more matches. Press
@@ -286,10 +288,10 @@ other in [Council](council.md#groups-and-settings).
   **New group**. The same menu renames a group, changes its colour, deletes it and
   files the sessions listed on that page into a group. To move one session, choose
   **Move to...** in its actions or drag its row onto a group's band.
-- **Terminal:** in Projects, choose **＋ New group…** in the **g** menu of a
-  project, **Groups** or **Sessions** row. A group's own **g** menu renames it,
-  changes its colour, archives it or deletes it. To file sessions, use **g** on a
-  session row, or mark several with **Space** and use the group's **g** menu.
+- **Terminal:** in Projects, press **G** on a project, **Groups** or **Sessions**
+  row to create a group. On a group row, **R** renames it, **c** changes its
+  colour, **A** archives it and **D** deletes it. To file sessions, press **m** on
+  a session row, or mark several with **Space** and press **m** on the group row.
   **Ctrl+X s m** moves the session you are in.
 
 Deleting a group asks whether to keep its sessions, which return to the project
@@ -299,9 +301,9 @@ ungrouped, or to delete them with the group.
 
 - **Desktop or phone app:** a session's actions include **Rename**, **Star**,
   **Archive** and **Delete**.
-- **Terminal:** in Projects, the **g** menu on a session row has its details and
-  the same actions. The **g** menus on **Sessions** and **Groups** show archived
-  sessions and groups.
+- **Terminal:** in Projects, select a session row. Press **d** for its details,
+  **R** to rename it, **f** to star it, **A** to archive it or **D** to delete it.
+  Press **v** to show archived sessions and **V** to show archived groups.
 
 Stars are shared, so a session you star in the terminal is also starred in the
 apps. Archived sessions leave the usual lists until you show them. Removing a

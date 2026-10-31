@@ -1173,7 +1173,7 @@
 (def ^:private footer-commands
   "The footer's sidebar commands in priority order; a narrow rail drops them from
    the end. Each pair is a button that runs the same action as its key."
-  [[:help "keys"] [:menu "menu"] [:back "chat"]])
+  [[:help "menu"] [:back "chat"]])
 
 (defn- footer-pairs
   "The footer's `[key label command]` triples for the rail's mode, most important
@@ -1325,21 +1325,6 @@
 
     nil))
 
-(defn- row-tools
-  "Paint the plain `+` button of a focused or hovered Groups or Sessions row. Return
-   the columns that it takes at the row's right edge. Session and group rows show no
-   button: `g` opens their menu."
-  [g entry left width row]
-  (if-let [choice (when (= :project-set (:kind entry)) (add-choice entry))]
-    (do (components/button! g
-                            (- (+ (long left) (long width)) 4)
-                            row
-                            " + "
-                            (if (= :new choice) :project-group-add :project-session-add)
-                            {:plain? true :extra {:index (:index entry)}})
-        4)
-    2))
-
 (defn- paint-row!
   "Paint one sidebar row: a focus bar, the indented name and the statuses that
    fit whole at the right. Only a focused or hovered row shows its buttons and
@@ -1378,7 +1363,7 @@
                     (cond active? "●"
                           (:favorite? entry) "*"
                           :else "-")))
-      (let [end (- (+ left width) (if hot? (long (row-tools g entry left width row)) 2))
+      (let [end (- (+ left width) 2)
             lead (row-lead entry sidebar)
             name-col
             (+ start (long (reduce + 0 (map #(long (p/display-width (first %))) (butlast lead)))))
@@ -1441,12 +1426,6 @@
         (when (and (>= width 19) (> rows 3))
           (p/set-fg! g t/header-fg)
           (p/styled g [p/BOLD] (p/put-str! g (+ left 2) 1 "Projects"))
-          (components/button! g
-                              (+ left 11)
-                              1 " + "
-                              :project-add {:plain? true
-                                            :accent? (and (:focused? sidebar)
-                                                          (zero? (long (or (:index sidebar) 0))))})
           (components/button! g (- (+ left width) 5) 1 " ✕ " :project-hide {:plain? true}))
         (doseq [[{:keys [index project kind] :as entry} row] (map vector visible (iterate inc top))
                 :let [row (long row)
@@ -1478,7 +1457,9 @@
                       (+ left 2)
                       top
                       (p/truncate-cols
-                        (if (:loading? sidebar) "Loading projects…" "Add a project with +")
+                        (if (:loading? sidebar)
+                          "Loading projects…"
+                          (str "Press " (keymap/sidebar-key :add-project) " to add a project"))
                         (max 0 (- width 4)))))
         (when (> rows 6)
           (when-let [error (:error sidebar)]
@@ -1609,11 +1590,11 @@
        (menu-item :toggle-group-archive
                   (if (:archived? entry) "Hide archived groups" "Show archived groups")
                   :show-archived-groups) (menu-item :settings "Project settings…" :settings)]
-      :else [(menu-item :use-project "Use project" nil)
+      :else [(menu-item :use-project "Use project" :use-project)
              (menu-item :new-session "New session" :new-session)
              (menu-item :new "New group…" :new-group)
              (menu-item :rename-project "Rename project…" :rename)
-             (menu-item :move-project "Change folder…" nil)
+             (menu-item :move-project "Change folder…" :change-folder)
              (menu-item :settings "Project settings…" :settings)
              (menu-item :refresh "Refresh projects" :refresh)
              (menu-item :delete-project "Remove project and sessions…" :delete)])))
@@ -1693,9 +1674,8 @@
             (into more))))))
 
 (defn row-menu-items
-  "The row menu of a sidebar `entry`, each verb with the key that runs it. The keys
-   work on the row without the menu: a key acts exactly where the menu lists it.
-   A session's menu has a Session section and a section for its group. An item of
+  "The row verbs of a sidebar `entry`, each with the key that runs it on that row.
+   A session's verbs have a Session section and a section for its group. An item of
    the group section carries the group row as its `:target`. When a session verb uses
    its key, it takes its own group key from `group-commands`. Every menu of a project
    ends with the switches that show its archived sessions and groups."
@@ -1703,10 +1683,10 @@
   (with-archive-items db entry (session-or-own-menu-items db entry)))
 
 (def ^:private menu-kinds
-  "Row kinds that own a row menu."
+  "Row kinds that own row verbs."
   #{:project-select :project-group :project-set :project-session})
 
-(defn- focused-entry
+(defn focused-entry
   "The entry under the sidebar cursor, or nil on the header row."
   [db]
   (let [index (long (or (get-in db [:project-sidebar :index]) 0))]
@@ -1719,7 +1699,7 @@
 
 (defn char-action
   "The action of the plain character `c` on the row under the sidebar cursor.
-   A key that the row's menu lists runs that item without opening the menu."
+   A key runs the row verb that `row-menu-items` gives it on this row."
   [db c]
   (let [entry
         (focused-entry db)
@@ -1744,8 +1724,6 @@
           (is? :add-here) (if-let [choice (add-choice entry)]
                             [:menu (assoc entry :initial-action choice)]
                             [:add])
-          ;; `g` opens the row's own menu. Nothing to act on above the first row.
-          (is? :menu) (if (menu-kinds (:kind entry)) [:menu entry] [:noop])
           (is? :add-project) [:add]
           (is? :refresh) [:refresh]
           item [:menu (assoc (or (:target item) entry) :initial-action (:id item))]
@@ -1816,9 +1794,8 @@
 (def ^:private rail-kinds
   "Hit kinds that belong to the rail, so a mouse event on them is a sidebar event."
   #{:project-rail :project-select :project-group :project-input :project-unread :project-session
-    :project-set :project-page :project-group-page :project-state :project-add :project-hide
-    :project-suggest :project-new-folder :project-search-field :project-group-add
-    :project-session-add :project-footer})
+    :project-set :project-page :project-group-page :project-state :project-hide :project-suggest
+    :project-new-folder :project-search-field :project-footer})
 
 (defn click-focus
   "Return the sidebar change for a mouse press in the rail, or nil for other events.
@@ -1861,52 +1838,44 @@
               (.lookup hit-map (.getColumn pos) (.getRow pos))]
 
           (if (rail-kinds (:kind hit))
-            (cond
-              (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
-              (let [delta (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
-                ;; While the add field is open the wheel walks its completions:
-                ;; the project list is not what the rail is showing.
-                (if-let [field (:adding sidebar)]
-                  [:adding (add-field-move field delta)]
-                  [:move delta]))
-              (and (= MouseActionType/CLICK_DOWN (.getActionType mouse))
-                   (= 3 (.getButton mouse))
-                   (#{:project-select :project-group :project-set :project-session} (:kind hit)))
-              [:menu hit]
-              (and (= MouseActionType/CLICK_DOWN (.getActionType mouse)) (= 1 (.getButton mouse)))
-              (case (:kind hit)
-                (:project-select :project-group :project-input
-                                 :project-unread :project-session
-                                 :project-set :project-page
-                                 :project-group-page :project-state)
-                (:action hit)
+            (cond (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
+                  (let [delta (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
+                    ;; While the add field is open the wheel walks its completions:
+                    ;; the project list is not what the rail is showing.
+                    (if-let [field (:adding sidebar)]
+                      [:adding (add-field-move field delta)]
+                      [:move delta]))
+                  (and (= MouseActionType/CLICK_DOWN (.getActionType mouse))
+                       (= 3 (.getButton mouse))
+                       (#{:project-select :project-group :project-set :project-session}
+                        (:kind hit)))
+                  [:help]
+                  (and (= MouseActionType/CLICK_DOWN (.getActionType mouse))
+                       (= 1 (.getButton mouse)))
+                  (case (:kind hit)
+                    (:project-select :project-group :project-input
+                                     :project-unread :project-session
+                                     :project-set :project-page
+                                     :project-group-page :project-state)
+                    (:action hit)
 
-                (:project-group-add :project-session-add)
-                (when-let [entry (some #(when (= (:index hit) (:index %)) %) (sidebar-entries db))]
-                  [:menu
-                   (assoc entry
-                     :initial-action (if (= :project-group-add (:kind hit)) :new :new-session))])
+                    :project-suggest
+                    [:add-commit (:path hit)]
 
-                :project-suggest
-                [:add-commit (:path hit)]
+                    :project-new-folder
+                    [:add-folder]
 
-                :project-new-folder
-                [:add-folder]
+                    :project-search-field
+                    [:focus]
 
-                :project-search-field
-                [:focus]
+                    :project-hide
+                    [:hide]
 
-                :project-add
-                [:add]
+                    :project-footer
+                    (footer-action db (:command hit))
 
-                :project-hide
-                [:hide]
-
-                :project-footer
-                (footer-action db (:command hit))
-
-                [:focus])
-              :else [:noop])
+                    [:focus])
+                  :else [:noop])
             (when (and (:focused? sidebar) (= MouseActionType/CLICK_DOWN (.getActionType mouse)))
               [:blur-pass])))
         (not (:focused? sidebar)) nil

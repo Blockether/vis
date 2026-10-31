@@ -90,6 +90,7 @@
    {:id :attachments :key \a :title "Attachments" :description "Attach files and look at pictures"}
    {:id :voice :key \v :title "Voice" :description "Voice input and spoken answers"}
    {:id :queue :key \q :title "Queue" :description "Send or edit queued messages"}
+   {:id :agents :key \t :title "Agents" :description "Open a subagent, or go back to its parent"}
    {:id :extensions :key \e :title "Extensions" :description "Keys that extensions add"}])
 
 (def ^:private group-by-id (into {} (map (juxt :id identity)) prefix-groups))
@@ -311,7 +312,20 @@
     :key \e
     :label "edit queued"
     :group :queue
-    :description "Edit, move or remove queued messages"}])
+    :description "Edit, move or remove queued messages"}
+   ;; C-x t 1-9 opens that dock row (`input/resolve-group-key`).
+   {:action :agent-team
+    :key \t
+    :label "agent team"
+    :group :agents
+    :show-when :has-agents
+    :description "List the subagents, then open one or stop it"}
+   {:action :agent-parent
+    :key \b
+    :label "back to parent"
+    :group :agents
+    :show-when :child-session
+    :description "Open the session that started this subagent"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
@@ -603,6 +617,12 @@
   [ch]
   (when (and ch (Character/isDigit ^char ch) (not= \0 ch)) (long (Character/digit ^char ch 10))))
 
+(defn agent-row-index
+  "The 1-based dock row that C-x t followed by `ch` opens, or nil. Only the digits 1-9 bind,
+   and the key column of the dock shows them."
+  [ch]
+  (queue-row-index ch))
+
 (defn queue-row-chord
   "The chord label that toggles queue row `n` (1-based), or nil past row 9."
   [n]
@@ -649,10 +669,10 @@
        (not (.isAltDown ^KeyStroke key))
        (= focus-key (Character/toLowerCase (.charValue (.getCharacter ^KeyStroke key))))))
 
-(def ^:const sidebar-help-key "C-h — open or close help while the sidebar has focus." \h)
+(def ^:const sidebar-help-key "C-h — open the sidebar menu while the sidebar has focus." \h)
 
 (def ^:const sidebar-help-alias-key
-  "? — sidebar help outside an inline search or project field."
+  "? — the sidebar menu outside an inline search or project field."
   \?)
 
 (def sidebar-help-hint
@@ -662,12 +682,14 @@
 (def sidebar-commands
   "The project sidebar's own keys while it has focus, in the order help lists
    them. `:key` is the plain character the sidebar reads; `:keys` labels a key
-   that is not one plain character. Row menus show the same keys beside their
-   items, and the help keys list this table inside the sidebar."
-  [{:id :open :keys "Enter" :label "Open the row"} {:id :menu :key \g :label "Open the row menu"}
+   that is not one plain character. The help keys open this whole table as the
+   sidebar menu, and a chosen command runs as its key on the selected row."
+  [{:id :open :keys "Enter" :label "Open the row"}
    {:id :new-session :key \n :label "Start a session here"}
    {:id :new-group :key \G :label "Create a group"}
    {:id :add-project :key \a :label "Add a project"}
+   {:id :use-project :key \p :label "Use the project"}
+   {:id :change-folder :key \F :label "Change the project folder"}
    {:id :settings :key \s :label "Open settings for the row"}
    {:id :select :key \space :label "Select or clear a session"}
    {:id :move :key \m :label "Move sessions to a group"}
@@ -686,7 +708,7 @@
    {:id :delete-group :key \X :label "Delete the session's group"}
    {:id :add-here :key \+ :label "Add a group, session or project here"}
    {:id :search :key \/ :label "Search sessions"} {:id :refresh :key \r :label "Reload projects"}
-   {:id :help :key sidebar-help-alias-key :keys sidebar-help-hint :label "Show these keys"}
+   {:id :help :key sidebar-help-alias-key :keys sidebar-help-hint :label "Open this menu"}
    {:id :back :keys "Esc · Tab" :label "Return to the chat"}
    {:id :areas :keys (chord focus-key) :label "Move to the next area"}
    {:id :hide :keys (label-for :switch-project) :label "Hide the sidebar"}
@@ -758,8 +780,9 @@
    fork at, `:codex` needs a session on OpenAI Codex (the screen marks it as
    `:codex-session?`), `:has-images` needs a picture in the session (the screen
    marks it as `:has-images?`), `:image-viewer` also needs a graphical terminal (the
-   screen marks it as `:graphical-terminal?`), `:has-panel` needs a panel view and
-   `:has-group` needs a current session in a group.
+   screen marks it as `:graphical-terminal?`), `:has-panel` needs a panel view,
+   `:has-group` needs a current session in a group, `:has-agents` needs a subagent (the
+   screen marks it as `:has-agents?`) and `:child-session` needs a subagent session.
    Resolving a chord does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
@@ -783,6 +806,12 @@
 
     :has-group
     (not (str/blank? (str (get-in db [:session :group-id]))))
+
+    :has-agents
+    (true? (:has-agents? db))
+
+    :child-session
+    (not (str/blank? (str (get-in db [:session :agent :parent-id]))))
 
     true))
 
@@ -847,6 +876,13 @@
                 :items (cond-> (mapv band-row (available-prefix-commands db group))
                          (= group :queue)
                          (conj {:key "1" :type :action :id :queue-send-nth :label "send row 1-9"})
+
+                         (and (= group :agents) (verb-available? db {:show-when :has-agents}))
+                         (conj {:key "1"
+                                :type :action
+                                :id :agent-open-nth
+                                :label "open agent 1-9"
+                                :description "Open the subagent with that number in the dock"})
 
                          (= group default-binding-group)
                          (into (map (fn [{:keys [id key title]}]

@@ -2,7 +2,6 @@
   "Regression coverage for session-scoped composer recall."
   (:require [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.client :as vis]
-            [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.state :as state]
@@ -226,8 +225,6 @@
         (let [events (atom [])]
           (with-redefs-fn {#'state/app-db (atom {})
                            #'state/dispatch #(swap! events conj %)
-                           #'dlg/select-dialog! (fn [& _]
-                                                  {:id action})
                            #'vis/worker-future (fn [_ f]
                                                  (f))
                            #'vis/gateway-set-session-archived! (fn [& _]
@@ -236,15 +233,13 @@
                                                                  {"archived_at" stamp})
                            #'screen/refresh-projects! (fn [& _])}
             (fn []
-              (#'screen/sidebar-row-menu! nil entry nil)))
+              (#'screen/sidebar-row-menu! nil (assoc entry :initial-action action) nil)))
           (expect (= [[effect (if (:session entry) "s" "g") stamp]]
                      (filterv #(= effect (first %)) @events))))))
   (it "does not discard history when the gateway refuses an archive"
       (let [events (atom [])]
         (with-redefs-fn {#'state/app-db (atom {})
                          #'state/dispatch #(swap! events conj %)
-                         #'dlg/select-dialog! (fn [& _]
-                                                {:id :archive-session})
                          #'vis/worker-future (fn [_ f]
                                                (f))
                          #'vis/gateway-set-session-archived! (fn [& _]
@@ -253,7 +248,10 @@
                          #'vis/notify! (fn [& _])
                          #'screen/refresh-projects! (fn [& _])}
           (fn []
-            (#'screen/sidebar-row-menu! nil {:session {"id" "s"}} nil)))
+            (#'screen/sidebar-row-menu!
+             nil
+             {:session {"id" "s"} :initial-action :archive-session}
+             nil)))
         (expect (empty? (filterv #(#{:session-archive-changed :session-group-archive-changed}
                                     (first %))
                           @events))))))
