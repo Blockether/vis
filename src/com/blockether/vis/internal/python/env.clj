@@ -21,7 +21,7 @@
      create-python-context / dispose-python-context! / retire-python-context! /
      interrupt-guest! / take-partial-block-stdout! / python-worker-pids /
      set-python-binding! / bind-and-bump! / count-top-level-forms /
-     validate-no-banned-defs! / run-python-block / persist-session-defs! /
+     run-python-block / persist-session-defs! /
      restore-session-defs! / forget-session-defs! /
      SYSTEM_VAR_NAMES / system-var-sym? / boundary-view / ctx->python-str / bind-ctx!"
   (:require [charred.api :as json]
@@ -484,11 +484,6 @@
                 (or facts {}))]
     (assoc m :names (mapv str (or (:names m) [])))))
 
-(def BANNED_DEF_HEADS
-  "Python constructs refused pre-eval — belt-and-suspenders against the obvious
-   sandbox-escape footguns on top of the interpreter's own confinement."
-  #{"exec" "eval" "compile" "__import__"})
-
 (def SYSTEM_VAR_NAMES
   "Host-owned globals refreshed with the standing context and hidden from user live vars."
   '#{session project_root_path VIS_PYTHON_RUNTIME_VERSION VIS_SHA_RELEASE VIS_VERSION
@@ -497,7 +492,7 @@
 (def ^:private protected-baseline-names
   "Python globals the agent may CALL but must not rebind. Rebinding output, tool, or
    parser-helper names would shadow the persistent session substrate."
-  #{"print" "println" "apropos" "doc" "defs" "gather" "__vis_count_forms__" "__vis_banned_name__"})
+  #{"print" "println" "apropos" "doc" "defs" "gather" "__vis_count_forms__"})
 
 (def PROCESS_SURFACE
   "THE sentences about this sandbox's process surface — written ONCE, here, and
@@ -978,21 +973,6 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    answer 0 for both — reporting `nothing to execute` for a real syntax error."
   [session code]
   (long (or (read-json (py-run session (str "__vis_count_forms__(" (pr-str (str code)) ")"))) 0)))
-
-(defn validate-no-banned-defs!
-  "Throws `:vis/banned-def-head` when `code` references a banned construct
-   ([[BANNED_DEF_HEADS]]). A parse failure is silent — the run that follows
-   surfaces a clean syntax error with its line and column."
-  [session code]
-  (when-let [head (guest-value session
-                               (str "__vis_banned_name__("
-                                    (pr-str (str code))
-                                    ", "
-                                    (py-json-literal (vec BANNED_DEF_HEADS))
-                                    ")"))]
-    (throw (ex-info (str "Block uses `" head
-                         "` which is banned in the Python sandbox " "(sandbox-escape footgun).")
-                    {:type :vis/banned-def-head :head (str head)}))))
 
 ;; =============================================================================
 ;; Discovery: apropos / doc
