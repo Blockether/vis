@@ -14,6 +14,7 @@
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminal-image :as timg]
+            [com.blockether.vis.tui.theme :as theme]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke]
@@ -312,4 +313,53 @@
           (expect (= "c" (.getCharacterString once)))
           (expect (not= (.getForegroundColor painted) (.getForegroundColor once)))
           (fade!)
-          (expect (identical? once (.getBackCharacter ts 0 0)))))))
+          (expect (identical? once (.getBackCharacter ts 0 0))))))
+  ;; Perf pass 2026-10-31: a field log showed full frames with a 270 ms post phase, and
+  ;; the fade made two colours and two cells for each unfocused cell of each frame.
+  (it "reuses one faded cell for an equal cell that a new frame painted"
+      (with-open [terminal
+                  (DefaultVirtualTerminal. (TerminalSize. 20 4))
+
+                  ts
+                  (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (let [db
+              (frame-db)
+
+              fade!
+              #(#'screen/fade-unfocused-areas! ts db 20 4 0 {:col 12 :row 0 :width 8 :height 4})
+
+              paint!
+              #(.putString (.newTextGraphics ts) 0 0 "chat text")]
+
+          (paint!)
+          (fade!)
+          (let [once (.getBackCharacter ts 0 0)]
+            (paint!)
+            (expect (not (identical? once (.getBackCharacter ts 0 0))))
+            (fade!)
+            (expect (identical? once (.getBackCharacter ts 0 0)))))))
+  (it "fades with the colours of the theme in use"
+      (let [before
+            @theme/active-theme-id
+
+            faded-ink
+            (fn [theme-id]
+              (theme/apply-theme! theme-id)
+              (with-open [terminal
+                          (DefaultVirtualTerminal. (TerminalSize. 20 4))
+
+                          ts
+                          (doto (TerminalScreen. terminal) (.startScreen))]
+
+                (.putString (.newTextGraphics ts) 0 0 "chat text")
+                (#'screen/fade-unfocused-areas! ts
+                                                (frame-db)
+                                                20
+                                                4
+                                                0
+                                                {:col 12 :row 0 :width 8 :height 4})
+                (.getForegroundColor (.getBackCharacter ts 0 0))))]
+
+        (try (expect (not= (faded-ink :vis-light) (faded-ink :vis-dark)))
+             (finally (theme/apply-theme! before))))))

@@ -861,6 +861,26 @@
         (.withForegroundColor (t/mix-color fg bg unfocused-ink-fade))
         (.withBackgroundColor (t/mix-color bg t/terminal-bg unfocused-paper-fade)))))
 
+(defonce ^:private fade-cache
+  ;; Faded copies of painted cells by cell VALUE, for one theme. A full frame paints
+  ;; new cell objects, so the identity check never saves their work; blank paper and
+  ;; plain text repeat, so most cells of a faded area share a few hundred values.
+  (atom nil))
+
+(defn- fade-cache-cells
+  "The faded-cell cache of the current theme. A theme change or 8192 values start a
+   new cache."
+  ^java.util.HashMap []
+  (let [theme
+        [t/terminal-bg t/text-fg]
+
+        cache
+        @fade-cache]
+
+    (if (and cache (= theme (:theme cache)) (< (.size ^java.util.HashMap (:cells cache)) 8192))
+      (:cells cache)
+      (:cells (reset! fade-cache {:theme theme :cells (java.util.HashMap.)})))))
+
 (defn- fade-unfocused-areas!
   "Fade every screen cell outside the area that holds the keyboard. `sidebar-width`
    is the rail's screen columns, 0 while it is closed. `panel` is the side panel's
@@ -903,21 +923,25 @@
                 :else :chat))]
 
     (when (< 1 (count (focus-areas db)))
-      (dotimes [r rows]
-        (loop [c 0]
-          (when (< c cols)
-            (let [i (+ (* r cols) c)
-                  cell (.getBackCharacter screen (int c) (int r))
-                  wide? (and cell (.isDoubleWidth cell))]
+      (let [^java.util.HashMap cache (fade-cache-cells)]
+        (dotimes [r rows]
+          (loop [c 0]
+            (when (< c cols)
+              (let [i (+ (* r cols) c)
+                    cell (.getBackCharacter screen (int c) (int r))
+                    wide? (and cell (.isDoubleWidth cell))]
 
-              (when (and cell (not= focus (area c r)))
-                (if (and previous (identical? cell (aget previous i)))
-                  (aset faded i cell)
-                  (let [cell (faded-cell cell)]
-                    (.setCharacter screen (int c) (int r) cell)
-                    (aset faded i cell))))
-              ;; A wide character owns the next cell too; that cell is not faded again.
-              (recur (if wide? (+ c 2) (inc c))))))))
+                (when (and cell (not= focus (area c r)))
+                  (if (and previous (identical? cell (aget previous i)))
+                    (aset faded i cell)
+                    (let [cell (or (.get cache cell)
+                                   (let [fresh (faded-cell cell)]
+                                     (.put cache cell fresh)
+                                     fresh))]
+                      (.setCharacter screen (int c) (int r) cell)
+                      (aset faded i cell))))
+                ;; A wide character owns the next cell too; that cell is not faded again.
+                (recur (if wide? (+ c 2) (inc c)))))))))
     (reset! faded-cells faded)))
 
 (defn- live-pane
