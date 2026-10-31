@@ -12,7 +12,8 @@
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.state :as gw]
             [com.blockether.vis.contract.wire :as wire]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import (java.lang.ref WeakReference)))
 
 (def ^:private chunk->event @#'gw/chunk->event)
 
@@ -101,7 +102,40 @@
 
         (expect (not (str/starts-with? body "````vis-doc")))
         (expect (<= (svar/count-tokens "glm-5.3" (form/clip-to-wire (:stdout f) f))
-                    form/MAX_FORM_OUTPUT_TOKENS)))))
+                    form/MAX_FORM_OUTPUT_TOKENS))))
+  (it "reuses a projection after a reload replaced the collected source string"
+      ;; Regression: once per turn, prior turns reload from the database as new strings.
+      ;; A GC then cleared every weak key, and the next request clipped all history again.
+      (let [f
+            {:scope "t1/i2" :svar/tool-call-id "call_reload" :llm-model "glm-5.3"}
+
+            [probe reloaded]
+            ((fn []
+               (let [s (str "HEAD " (random-uuid)
+                            "\n" (apply str (repeat 3000 "line of output\n")))]
+                 (form/clip-to-wire s f)
+                 [(WeakReference. s) (String. ^String s)])))
+
+            _
+            (loop [n 0]
+              (when (and (not (.refersTo ^WeakReference probe nil)) (< n 50))
+                (System/gc)
+                (Thread/sleep 10)
+                (recur (inc n))))
+
+            calls
+            (atom 0)
+
+            count-tokens
+            svar/count-tokens]
+
+        (expect (.refersTo ^WeakReference probe nil))
+        (with-redefs [svar/count-tokens (fn [& args]
+                                          (swap! calls inc)
+                                          (apply count-tokens args))]
+          (form/clip-to-wire reloaded f)
+          (form/clip-to-wire (String. ^String reloaded) f))
+        (expect (zero? @calls)))))
 
 (defdescribe
   form-gateway-roundtrip-test

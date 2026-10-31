@@ -16,7 +16,8 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.python.format :as pyfmt]
             [com.blockether.vis.internal.util :as util])
-  (:import (java.lang.ref WeakReference)))
+  (:import (java.lang.ref WeakReference)
+           (java.util Arrays)))
 
 (def ^:private display-fields
   "Every field carried VERBATIM from the loop to a channel to render a form,
@@ -141,33 +142,69 @@
                 (recur low (dec mid))))
             (preview low)))))))
 
-(deftype ^:private WeakStdout [^WeakReference source ^int hash-value]
+(definterface StdoutSource (liveText []) (digest []) (rebind [s]))
+
+(deftype ^:private WeakStdout [^:volatile-mutable ^WeakReference source ^int hash-value
+                               ^:volatile-mutable digest-bytes]
+  StdoutSource
+    (liveText [_] (.get source))
+    ;; Computed while the text is alive. A cache miss seals its key this way, so the
+    ;; entry still matches equal text after a reload lets the original string die.
+    (digest [_]
+      (or digest-bytes
+          (when-let [text (.get source)]
+            (let [d (util/sha256 (util/utf8 text))]
+              (set! digest-bytes d)
+              d))))
+    (rebind [_ s] (set! source (WeakReference. s)))
   Object
     (hashCode [_] hash-value)
     (equals [this other]
       (or (identical? this other)
           (and (instance? WeakStdout other)
-               (let [text
-                     (.get source)
+               (let [^WeakStdout other
+                     other
+
+                     text
+                     (.liveText this)
 
                      other-text
-                     (.get ^WeakReference (.-source ^WeakStdout other))]
+                     (.liveText other)]
 
-                 (and (some? text) (some? other-text) (= text other-text)))))))
+                 (if (and (some? text) (some? other-text))
+                   (= text other-text)
+                   (let [d
+                         (.digest this)
+
+                         other-d
+                         (.digest other)]
+
+                     (and (some? d)
+                          (some? other-d)
+                          (Arrays/equals ^bytes d ^bytes other-d)
+                          ;; Point the collected side at the live equal text, so later
+                          ;; lookups compare strings again instead of digests.
+                          (do (if (some? text)
+                                (.rebind other text)
+                                (when (some? other-text) (.rebind this other-text)))
+                              true)))))))))
+
+(defn- stdout-source [^String s] (WeakStdout. (WeakReference. s) (.hashCode s) nil))
 
 (defn- stdout-key
-  [[s model scope call-id max-output-tokens max-preview-chars]]
-  [(WeakStdout. (WeakReference. s) (.hashCode ^String s)) model scope call-id max-output-tokens
-   max-preview-chars])
+  [[k _ model scope call-id max-output-tokens max-preview-chars]]
+  [k model scope call-id max-output-tokens max-preview-chars])
 
 (def ^:private cached-stdout
-  (util/bounded-memoize clip-stdout
-                        128
-                        (* 8 1024 1024)
-                        (fn [[_ model scope call-id] result]
-                          (+ 1024
-                             (* 2 (+ (count model) (count scope) (count call-id) (count result)))))
-                        stdout-key))
+  (util/bounded-memoize
+    (fn [^WeakStdout k s model scope call-id max-output-tokens max-preview-chars]
+      (.digest k)
+      (clip-stdout s model scope call-id max-output-tokens max-preview-chars))
+    128
+    (* 8 1024 1024)
+    (fn [[_ _ model scope call-id] result]
+      (+ 1024 (* 2 (+ (count model) (count scope) (count call-id) (count result)))))
+    stdout-key))
 
 (defn clip-to-wire
   "Project stdout for model replay, gateway wire and human display. Keep raw stdout unchanged.
@@ -175,16 +212,21 @@
    Normalize live scopes from `tN/iM/fN` to `tN/iM` for saved-block recovery.
 
    Count the excerpt and recovery marker with Svar's tokenizer. Reuse up to 128 projections.
-   Hold source text weakly. Limit retained results and metadata to an estimated 8 MiB."
+   Hold source text weakly. Match equal text by SHA-256 after a reload collects the original.
+   Limit retained results and metadata to an estimated 8 MiB."
   ([s] (clip-to-wire s {}))
   ([s form]
-   (let [scope
+   (let [s
+         (str (or s ""))
+
+         scope
          (when (string? (:scope form)) (str/replace (:scope form) #"/f[1-9]\d*$" ""))
 
          call-id
          (:svar/tool-call-id form)]
 
-     (cached-stdout (str (or s ""))
+     (cached-stdout (stdout-source s)
+                    s
                     (or (:llm-model form) "unknown")
                     (when (and scope (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)) scope)
                     (when (and (string? call-id)

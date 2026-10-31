@@ -10,7 +10,6 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import (com.sun.management ThreadMXBean)
            (java.lang.management ManagementFactory)
-           (java.lang.ref WeakReference)
            (jdk.jfr Configuration Recording)))
 
 (def ^:private model "gpt-6.1-sol")
@@ -255,17 +254,19 @@
 (defdescribe
   weak-stdout-cache-test
   (it "uses exact string equality and keeps hashes stable after a reference is cleared"
-      (let [args
-            ["Aa" model "t23/i101" "call_weak" 4096 32768]
+      (let [key-of
+            (fn [s]
+              (#'form/stdout-key
+               [(#'form/stdout-source s) s model "t23/i101" "call_weak" 4096 32768]))
 
             a
-            (#'form/stdout-key args)
+            (key-of "Aa")
 
             equal-a
-            (#'form/stdout-key (assoc args 0 (String. ^String (first args))))
+            (key-of (String. "Aa"))
 
             b
-            (#'form/stdout-key (assoc args 0 "BB"))
+            (key-of "BB")
 
             ^com.blockether.vis.internal.channel.form.WeakStdout leaf
             (first a)
@@ -276,10 +277,28 @@
         (expect (= (hash a) (hash b)))
         (expect (= a equal-a))
         (expect (not= a b))
-        (.clear ^WeakReference (.-source leaf))
+        (.rebind leaf nil)
         (expect (= before (hash leaf)))
         (expect (= leaf leaf))
         (expect (not= a equal-a))))
+  (it "matches a sealed key by digest after its source is collected, never other text"
+      (let [key-of
+            (fn [s]
+              (#'form/stdout-key
+               [(#'form/stdout-source s) s model "t23/i101" "call_weak" 4096 32768]))
+
+            a
+            (key-of "Aa")
+
+            ^com.blockether.vis.internal.channel.form.WeakStdout leaf
+            (first a)]
+
+        (.digest leaf)
+        (.rebind leaf nil)
+        (expect (not= a (key-of "BB")))
+        (expect (= a (key-of (String. "Aa"))))
+        ;; The match points the collected key at the live text again.
+        (expect (= "Aa" (.liveText leaf)))))
   (it
     "treats cleared sources as misses and can evict their entries"
     (let [keys
@@ -289,7 +308,7 @@
           (atom 0)
 
           cached
-          (util/bounded-memoize (fn [s & _]
+          (util/bounded-memoize (fn [_ s & _]
                                   (swap! calls inc)
                                   (count s))
                                 2
@@ -301,19 +320,23 @@
                                     (swap! keys conj key)
                                     key)))
 
+          args-of
+          (fn [s]
+            [(#'form/stdout-source s) s model nil nil 4096 32768])
+
           args
-          ["source" model nil nil 4096 32768]]
+          (args-of "source")]
 
       (expect (= 6 (apply cached args)))
-      (expect (= 6 (apply cached args)))
+      (expect (= 6 (apply cached (args-of "source"))))
       (expect (= 1 @calls))
       (let [^com.blockether.vis.internal.channel.form.WeakStdout leaf (ffirst @keys)]
-        (.clear ^WeakReference (.-source leaf)))
-      (expect (= 6 (apply cached args)))
+        (.rebind leaf nil))
+      (expect (= 6 (apply cached (args-of "source"))))
       (expect (= 2 @calls))
-      (expect (= 5 (apply cached (assoc args 0 "other"))))
-      (expect (= 5 (apply cached (assoc args 0 "third"))))
-      (expect (= 6 (apply cached args)))
+      (expect (= 5 (apply cached (args-of "other"))))
+      (expect (= 5 (apply cached (args-of "third"))))
+      (expect (= 6 (apply cached (args-of "source"))))
       (expect (= 5 @calls))))
   (it "separates colliding large inputs and preserves Unicode head and tail output"
       (let [prefix
