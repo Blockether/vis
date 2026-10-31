@@ -208,7 +208,9 @@
    issue #24) instead of hiding it in one opaque `paint` number."
   [data]
   (let [phases (for [[k label] [[:regions-ms "regions"] [:messages-ms "messages"] [:chrome-ms "chrome"]
-                                [:capture-ms "capture"] [:post-ms "post"]]
+                                [:capture-ms "capture"] [:post-ms "post"]
+                                [:overlays-ms "overlays"] [:panel-ms "panel"] [:rail-ms "rail"]
+                                [:fade-ms "fade"]]
                      :let [v (get data k)]
                      :when (some? v)]
 
@@ -4040,7 +4042,11 @@
           viewport
           (if overlay-sel?
             {:viewport-top 0 :eff-scroll 0}
-            {:viewport-top text-top :eff-scroll (:eff-scroll layout)})]
+            {:viewport-top text-top :eff-scroll (:eff-scroll layout)})
+
+          ;; End times of the post passes, so a slow `post` names its pass.
+          post-marks
+          (volatile! {})]
 
       (when overlay-geom
         (when (not= (:max-scroll overlay-geom) (:ctx-scroll-max db))
@@ -4115,6 +4121,7 @@
           (when (:is-log-search geom) (.setCursorPosition screen (:cursor geom)))))
       ;; The agent dock goes ABOVE the band, never between the band and the prompt.
       (when band-top (paint-agent-dock! g db (- (long band-top) dock-h) cols))
+      (vswap! post-marks assoc :overlays (System/nanoTime))
       ;; The side panel spans the whole height when docked; an overlay covers only
       ;; the transcript rows, so the composer stays usable.
       (let [panel-box
@@ -4135,6 +4142,7 @@
                 (when (not= (:selected geom) (get-in db [:live-panel :selected]))
                   (state/dispatch [:live-panel-select (:selected geom)]))
                 {:col (frame/screen-column left) :row top :width width :height height}))]
+        (vswap! post-marks assoc :panel (System/nanoTime))
         (let [rail-cursor (binding [frame/*column-offset* 0]
                             (projects/paint! (frame/surface-graphics screen screen-cols rows)
                                              (if (project-sidebar-locked? db screen-cols)
@@ -4153,6 +4161,7 @@
                   (when (or (get-in db [:project-sidebar :focused?])
                             (< (.getColumn cursor) (long width)))
                     (.setCursorPosition screen nil)))))))
+        (vswap! post-marks assoc :rail (System/nanoTime))
         ;; The areas without the keyboard fade, so the focused area stands out. A modal
         ;; card owns the screen and keeps its colours.
         (when-not (overlay-locked? db)
@@ -4163,7 +4172,8 @@
                                  (if (project-sidebar-locked? db screen-cols)
                                    0
                                    (long (or (:width (projects/geometry db screen-cols rows)) 0)))
-                                 panel-box)))
+                                 panel-box))
+        (vswap! post-marks assoc :fade (System/nanoTime)))
       (.commitFrame interactions/hit-map)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
       ;; the commit so `interactions/hit-map` holds this frame's fresh toggle regions and
@@ -4188,6 +4198,10 @@
                :chrome-ms (nanos->ms messages-end-ns capture-start-ns)
                :capture-ms (nanos->ms capture-start-ns capture-end-ns)
                :post-ms (nanos->ms capture-end-ns refresh-start-ns)
+               :overlays-ms (nanos->ms capture-end-ns (:overlays @post-marks))
+               :panel-ms (nanos->ms (:overlays @post-marks) (:panel @post-marks))
+               :rail-ms (nanos->ms (:panel @post-marks) (:rail @post-marks))
+               :fade-ms (nanos->ms (:rail @post-marks) (:fade @post-marks))
                :refresh-ms (nanos->ms refresh-start-ns frame-end-ns)
                :cols cols
                :rows rows
