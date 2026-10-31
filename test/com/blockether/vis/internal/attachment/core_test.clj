@@ -2,6 +2,7 @@
   "User-message image attachment collection: path extraction from
    drop-shaped text, magic-byte MIME sniffing, and the size/count caps."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.imaging :as imaging]
             [clojure.string :as str]
             [com.blockether.vis.internal.attachment.core :as attachments]
@@ -24,10 +25,7 @@
   ;; decodable image, which is fine: the sniffer never decodes).
   (byte-array (concat [0xff 0xd8 0xff 0xe0] (repeat 32 0))))
 
-(defn- temp-dir
-  ^File []
-  (.toFile (Files/createTempDirectory "vis-attachments-test"
-                                      (make-array java.nio.file.attribute.FileAttribute 0))))
+(defn- temp-dir ^File [] (test-temp/temp-dir "vis-attachments-test"))
 
 (defn- write-file
   ^File [^File dir ^String name ^bytes data]

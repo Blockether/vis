@@ -21,15 +21,18 @@
   "A gateway that also takes ZIP archives."
   (update-in capabilities ["features" "attachments" "media_types"] conj "application/zip"))
 
+;; The JVM deletes in reverse order of registration: each file, then its directory.
+;; Without this, the suite left hundreds of directories in the user's temp directory.
 (defn- temp-dir
   []
-  (.toFile (java.nio.file.Files/createTempDirectory
-             "vis-tui-intake"
-             (make-array java.nio.file.attribute.FileAttribute 0))))
+  (doto (.toFile (java.nio.file.Files/createTempDirectory
+                   "vis-tui-intake"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+    (.deleteOnExit)))
 
 (defn- write-bytes!
   [^java.io.File dir name bytes]
-  (let [f (io/file dir name)]
+  (let [f (doto (io/file dir name) (.deleteOnExit))]
     (with-open [out (io/output-stream f)]
       (.write out ^bytes bytes))
     f))

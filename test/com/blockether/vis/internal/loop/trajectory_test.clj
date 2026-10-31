@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop.trajectory-test
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop.trajectory :as trajectory]
             [lazytest.core :refer [defdescribe expect it]])
@@ -59,7 +60,8 @@
 
 (defn- temp-dir
   ^Path []
-  (Files/createTempDirectory "vis-trajectory-test" (make-array FileAttribute 0)))
+  (test-temp/delete-at-exit! (Files/createTempDirectory "vis-trajectory-test"
+                                                        (make-array FileAttribute 0))))
 
 (defn- block-step
   "The agent step of one iteration that runs `blocks`."

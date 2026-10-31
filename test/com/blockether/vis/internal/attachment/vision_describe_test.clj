@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.attachment.vision-describe-test
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.test-temp :as test-temp]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.attachment.core :as attachments]
@@ -21,7 +22,7 @@
   (let [dir (java.io.File. (System/getProperty "java.io.tmpdir")
                            (str "vis-vision-memory-" (System/nanoTime)))]
     (.mkdirs dir)
-    (.getPath dir)))
+    (.getPath ^java.io.File (test-temp/delete-at-exit! dir))))
 
 ;; The learned facts outlive the process on purpose, so every test starts from an empty
 ;; store AND empty registries, and leaves both behind even when it fails.

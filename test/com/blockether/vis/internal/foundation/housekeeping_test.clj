@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.test-temp :as test-temp]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]
            [java.nio.file Files LinkOption]
@@ -20,11 +21,7 @@
 
 ;; Fixtures
 
-(defn- tmp-dir
-  ^File [prefix]
-  (let [d (.toFile (Files/createTempDirectory prefix (make-array FileAttribute 0)))]
-    (.deleteOnExit d)
-    d))
+(defn- tmp-dir ^File [prefix] (test-temp/temp-dir prefix))
 
 (def ^:private day-ms 86400000)
 

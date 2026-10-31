@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.speech.tts-test
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.test-temp :as test-temp]
             [clojure.string :as str]
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
@@ -310,6 +311,7 @@
   ^java.io.File []
   (doto (io/file (System/getProperty "java.io.tmpdir")
                  (str "vis-speech-samples-" (System/nanoTime)))
+    (test-temp/delete-at-exit!)
     (.mkdirs)))
 
 (defn- write-wav! [^java.io.File f] (io/make-parents f) (spit f "RIFF....WAVEfmt ") f)

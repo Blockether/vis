@@ -6,6 +6,7 @@
    wedging the session queue (new sends stall `queued`) and spinning every
    watcher forever. The pid-liveness gate is what tells the two apart."
   (:require [clojure.string :as str]
+            [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -17,9 +18,7 @@
    where `write-journal!` spits ndjson lines for a sid."
   [f]
   (let [tmp
-        (java.nio.file.Files/createTempDirectory "bus-test"
-                                                 (make-array java.nio.file.attribute.FileAttribute
-                                                             0))
+        (.toPath (test-temp/temp-dir "bus-test"))
 
         capture
         (atom [])

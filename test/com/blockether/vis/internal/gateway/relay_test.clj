@@ -6,6 +6,7 @@
    `apps/vis-companion-relay`, and against a throwaway push home, so neither
    the real `~/.vis/devices.edn` nor a provider is ever touched."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.test-temp :as test-temp]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.internal.gateway.push :as push]
@@ -18,6 +19,7 @@
 (defn- temp-home
   ^java.io.File []
   (let [d (io/file (System/getProperty "java.io.tmpdir") (str "vis-relay-test-" (System/nanoTime)))]
+    (test-temp/delete-at-exit! d)
     (.mkdirs d)
     d))
 

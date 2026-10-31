@@ -5,6 +5,7 @@
    Every test redirects the push home (`vis.push.home`) at a temp dir, so the
    real `~/.vis/devices.edn` is never read or written."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.test-temp :as test-temp]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
@@ -20,6 +21,7 @@
 (defn- temp-home
   ^java.io.File []
   (let [d (io/file (System/getProperty "java.io.tmpdir") (str "vis-push-test-" (System/nanoTime)))]
+    (test-temp/delete-at-exit! d)
     (.mkdirs (io/file d "apns"))
     d))
 

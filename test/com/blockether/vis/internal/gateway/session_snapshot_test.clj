@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.gateway.session-snapshot-test
   "Session snapshots (#405): export a session tree to `.vissnap` bytes and restore it."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.test-temp :as test-temp]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
@@ -9,11 +10,7 @@
             [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]))
 
-(defn- temp-dir
-  [prefix]
-  (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
-                                prefix
-                                (make-array java.nio.file.attribute.FileAttribute 0)))))
+(defn- temp-dir [prefix] (.getCanonicalPath (test-temp/temp-dir prefix)))
 
 (defn- rows
   [store sql-params]

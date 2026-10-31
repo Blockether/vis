@@ -5,6 +5,7 @@
    Every test redirects the push home (`vis.push.home`) at a temp dir, which also
    disables keychain reads — the developer's real credentials can never leak in."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.test-temp :as test-temp]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.internal.gateway.fcm :as fcm]
@@ -15,6 +16,7 @@
 (defn- temp-home
   ^java.io.File []
   (let [d (io/file (System/getProperty "java.io.tmpdir") (str "vis-fcm-test-" (System/nanoTime)))]
+    (test-temp/delete-at-exit! d)
     (.mkdirs (io/file d "fcm"))
     d))
 
