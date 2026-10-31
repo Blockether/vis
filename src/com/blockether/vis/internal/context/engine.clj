@@ -243,7 +243,7 @@
   (str "the key is a string — \"t2/i5\" one step · \"t2\" a whole turn · "
        "\"t2-t5\" whole turns · \"t2/i1-i56\" a range · "
        "\"-t2/i56\" everything through it · \"t2/i5-\" everything since it · "
-       "comma-separate several"))
+       "\"..\" works like \"-\" · comma-separate several"))
 
 (defn- fold-endpoint
   "Canonical `tN`/`tN/iM` id for ONE end of a fold target. A `tN/iM/fK` form id
@@ -268,8 +268,10 @@
 
 (defn- fold-token
   "Parse ONE target token into `[:scope id]`, `[:range selector]` or
-   `[:error token]`. `..` and `-` are the same separator, so `\"t2/i1-i56\"` and
-   `\"t2/i1..i56\"` are the same window; an omitted side opens the range."
+   `[:error token reason?]`. `..` and `-` are the same separator, so `\"t2/i1-i56\"`
+   and `\"t2/i1..i56\"` are the same window; an omitted side opens the range. A
+   key such as `\"-t3/i1..i21\"` has two separators; its refusal names both keys
+   that the caller could have meant, and folds nothing."
   [token]
   (let [t
         (str/replace (str/trim (str token)) ".." "-")
@@ -309,6 +311,24 @@
                   (when from (fold-endpoint b (or (first (scope-key from)) (turn-key from))))]
 
               (if (and from to) [:range {"from" from "to" to}] err)))
+
+      3
+      (let [[_ b c]
+            parts
+
+            {:strs [from to]}
+            (when (str/blank? a) (second (fold-token (str b "-" c))))]
+
+        (if (and from to)
+          (conj err
+                (str "one separator per key: \""
+                     from
+                     "-"
+                     to
+                     "\" one window, \"-"
+                     to
+                     "\" everything through it"))
+          err))
 
       err)))
 
@@ -351,7 +371,7 @@
             (into [] (comp (filter #(= kind (first %))) (map second)) parsed))
 
           errors
-          (of-kind :error)
+          (filterv #(= :error (first %)) parsed)
 
           ranges
           (of-kind :range)
@@ -361,7 +381,12 @@
 
       (cond (empty? tokens) nil
             (seq errors) {:error (str "fold_session: not a step key: "
-                                      (str/join ", " (map pr-str errors))
+                                      (str/join ", "
+                                                (map (fn [[_ token why]]
+                                                       (cond-> (pr-str token)
+                                                         why
+                                                         (str " (" why ")")))
+                                                     errors))
                                       " — " fold-key-grammar)}
             :else {:intent (cond-> {}
                              (seq scopes)

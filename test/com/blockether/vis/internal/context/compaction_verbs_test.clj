@@ -600,6 +600,12 @@
       (expect (str/includes? (:error (eng/fold-key "t2/i1-i56x")) "not a step key"))
       (expect (str/includes? (:error (eng/fold-key "nonsense")) "not a step key"))
       (expect (str/includes? (:error (eng/fold-key "-")) "not a step key"))
+      ;; Regression, user report (session 6d57806d): "-t3/i1..i21" mixed the open-start
+      ;; template with a window. A guess could fold turns 1 and 2 too, so the refusal names
+      ;; both keys the caller could have meant instead of only the grammar.
+      (let [e (:error (eng/fold-key "-t3/i1..i21"))]
+        (expect (str/includes? e "\"t3/i1-t3/i21\" one window"))
+        (expect (str/includes? e "\"-t3/i21\" everything through it")))
       ;; Regression, user report: the verb is `fold_session(key, gist)` and nothing else, so a
       ;; leftover selector structure is REFUSED with the grammar instead of folding nothing.
       (expect (str/includes? (:error (eng/fold-key {"through" "t1/i5"}))
