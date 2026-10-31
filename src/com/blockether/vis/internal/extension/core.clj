@@ -36,6 +36,7 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.loop.perf :as perf]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
@@ -1604,9 +1605,11 @@
     (apply merge-with merge-entry maps)))
 
 (defn- ctx-contribution
-  "Run one extension's `:ext/ctx-fn`. Log a throw and answer nil."
+  "Run one extension's `:ext/ctx-fn` and add its time to the `perf` ledger.
+   Log a throw and answer nil."
   [environment ext]
-  (try (with-context {:ext ext :env environment} ((:ext/ctx-fn ext) environment))
+  (try (perf/timed (keyword "ctx-fn" (str (:ext/name ext)))
+                   (with-context {:ext ext :env environment} ((:ext/ctx-fn ext) environment)))
        (catch Throwable t
          (tel/log! {:level :warn
                     :id ::ctx-contribution-error

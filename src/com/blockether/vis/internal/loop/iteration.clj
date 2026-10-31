@@ -955,15 +955,16 @@
                           iteration
                           {:idx (inc (long idx)) :total total-blocks :code expr})
               (when (and on-chunk (not suppress-form-start?))
-                (on-chunk {:phase :form-start
-                           :iteration iteration-position
-                           :position idx
-                           :count total-blocks
-                           :vis/tool-name (:vis/tool-name entry)
-                           :scope (form-scope idx)
-                           :code expr
-                           :render-segments render-segments
-                           :started-at-ms (util/now-ms)}))
+                (perf/timed :exec/form-start-chunk
+                            (on-chunk {:phase :form-start
+                                       :iteration iteration-position
+                                       :position idx
+                                       :count total-blocks
+                                       :vis/tool-name (:vis/tool-name entry)
+                                       :scope (form-scope idx)
+                                       :code expr
+                                       :render-segments render-segments
+                                       :started-at-ms (util/now-ms)})))
               ;; Stamp form-idx BEFORE eval so the
               ;; executing block's position is recorded
               ;; on the turn-state atom.
@@ -992,9 +993,10 @@
                                              :duration-ms 0
                                              :op :vis/guard}
                             :else
-                            (if-let [err (python-exec/literal-code-block-error (env/python-context
-                                                                                 environment)
-                                                                               expr)]
+                            (if-let [err (perf/timed :exec/literal-guard
+                                                     (python-exec/literal-code-block-error
+                                                       (env/python-context environment)
+                                                       expr))]
                               {:error (loop-errors/op-error err {:code expr :phase :vis/guard})
                                :duration-ms 0
                                :op :vis/guard}
@@ -2732,10 +2734,11 @@
         (transcript/recall-options conversation-options)
 
         provider-base
-        (transcript/conversation-messages message-base
-                                          summarized-trailer-iters
-                                          replay-target
-                                          conversation-options)
+        (perf/timed :context/conversation
+                    (transcript/conversation-messages message-base
+                                                      summarized-trailer-iters
+                                                      replay-target
+                                                      conversation-options))
 
         message-token-counter
         (prompt/request-token-counter (select-keys pre-resolved-model [:tokenizer]))
@@ -2819,7 +2822,8 @@
                                    message-token-counter)
 
         _pre-request-fold
-        (when-let [projection (pre-request-context-projection
+        (when-let [projection (perf/timed :context/pre-fold
+                                          (pre-request-context-projection
                                 {:request-messages provider-messages
                                  :base-messages messages
                                  :trailer-iters visible-trailer-iters
@@ -2831,7 +2835,7 @@
                                  :canonical-base-messages-fn (when (:resumed? message-base)
                                                                canonical-messages)
                                  :canonical-trailer-iters summarized-trailer-iters
-                                 :conversation-options recall-options})]
+                                 :conversation-options recall-options}))]
           (install-projection! projection)
           (tel/log! {:level :info
                      :id ::context-proactive-fold
@@ -3579,7 +3583,9 @@
                   (let [;; util-inclusive: live token usage rides as a cheap
                         ;; appended `session["utilization"] = …` delta (the
                         ;; frozen block stays util-free for cache stability).
-                        cur (ctx-loop/render-block! environment ctx-renderer/ctx-delta-map)
+                        cur (perf/timed :apply/render-ctx
+                                        (ctx-loop/render-block! environment
+                                                                ctx-renderer/ctx-delta-map))
                         prev @last-context-atom
                         rebase? (true? (:pending? (some-> (:session-rebase-atom environment)
                                                           deref)))]
@@ -3679,8 +3685,12 @@
         prepare-start
         (perf/now-ns)
 
+        prepare-ledger
+        (perf/new-ledger)
+
         turn
-        (prepare-turn environment user-request opts)
+        (binding [perf/*ledger* prepare-ledger]
+          (prepare-turn environment user-request opts))
 
         prepare-ms
         (perf/ms-since prepare-start)
@@ -3699,7 +3709,7 @@
       (try
         (loop [loop-state first-state
                turn-phases {:prepare-turn prepare-ms :start-turn start-ms}
-               turn-stages {}
+               turn-stages @prepare-ledger
                iterations 0]
 
           (let [ledger (perf/new-ledger)

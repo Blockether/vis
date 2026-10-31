@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [com.blockether.vis.internal.loop.perf :as perf]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
@@ -878,9 +879,10 @@
               (merge {:write-limited? (boolean (:write-limited? granted))
                       :write-rules (:write-rules granted)}))
             policy-fn)))
-      (when-let [snap (ctx-loop/session-snapshot environment)]
-        ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
-        (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))
+      (perf/timed :exec/bind-ctx
+                  (when-let [snap (ctx-loop/session-snapshot environment)]
+                    ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
+                    (env/bind-ctx! python-context (ctx-renderer/project-ctx snap))))
       (let [start-time (util/now-ms)
             folds-before (long (or (get (some-> (:ctx-atom environment)
                                                 deref)
@@ -914,7 +916,8 @@
         ;; imports and variables are snapshotted after every block and re-created
         ;; by `restore-session-defs!` in the next process's fresh sandbox. Best
         ;; effort, after the outcome is in hand — never in its way.
-        (env/persist-session-defs! python-context (:session-id environment))
+        (perf/timed :exec/persist-defs
+                    (env/persist-session-defs! python-context (:session-id environment)))
         ;; Count successful operations even if their receipts were not printed or
         ;; the rest of this block failed. Summary supersession cannot erase usage.
         (let [folds (- (long (or (get (some-> (:ctx-atom environment)

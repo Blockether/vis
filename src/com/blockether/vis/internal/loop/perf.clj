@@ -34,6 +34,12 @@
 
 (defn ms-since ^double [^long start-ns] (/ (double (- (System/nanoTime) start-ns)) 1000000.0))
 
+(defmacro timed
+  "Run `body` and add its wall time to `stage` in the bound ledger, also on a throw."
+  [stage & body]
+  `(let [start# (now-ns)]
+     (try ~@body (finally (record-stage! ~stage (ms-since start#))))))
+
 (defn- round1 [x] (when (number? x) (/ (Math/round (* 10.0 (double x))) 10.0)))
 
 (defn summary

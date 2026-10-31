@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.context.engine :as eng]
             [com.blockether.vis.internal.context.env-digest :as env-digest]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.loop.perf :as perf]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [taoensso.telemere :as tel]))
 
@@ -178,24 +179,26 @@
    fresh without pushing it back into `ctx-atom`."
   [env ctx]
   (let [active-exts
-        (try (prompt/active-extensions env) (catch Throwable _ nil))
+        (perf/timed :ctx/active-exts (try (prompt/active-extensions env) (catch Throwable _ nil)))
 
         ext-ctx
-        (try (extension/ctx-contributions env active-exts)
+        (try (perf/timed :ctx/contributions (extension/ctx-contributions env active-exts))
              (catch Throwable t
                (tel/log!
                  {:level :warn :id ::ctx-contributions-failed :data {:error (ex-message t)}})
                {}))
 
         env-block
-        (try (env-digest/deep-merge (env-digest/base-digest env) (get ext-ctx "session_env"))
+        (try (perf/timed :ctx/env-digest
+                         (env-digest/deep-merge (env-digest/base-digest env)
+                                                (get ext-ctx "session_env")))
              (catch Throwable t
                (tel/log! {:level :warn :id ::env-digest-failed :data {:error (ex-message t)}})
                nil))
 
         access-view
         (try (when-let [f (:access-view-fn env)]
-               (f))
+               (perf/timed :ctx/access-view (f)))
              (catch Throwable t
                (tel/log! {:level :warn :id ::access-view-failed :data {:error (ex-message t)}})
                nil))]
@@ -230,7 +233,7 @@
    `eng/session-view` projection. Returns nil when ctx-atom is absent."
   [env]
   (when-let [ctx (current-ctx env)]
-    (eng/session-view (enrich-ctx env ctx))))
+    (perf/timed :ctx/session-view (eng/session-view (enrich-ctx env ctx)))))
 
 (defn render-block!
   "Build the standing `<context>` block for the next user message. Pure data
@@ -242,7 +245,8 @@
     ;; rendered TEXT and the bound dict are one shape by construction.
     ;; Tool results reach the model through append-only message history,
     ;; not through mutable context.
-    (renderer-fn {:ctx (enrich-ctx env ctx) :warnings []})))
+    (let [enriched (enrich-ctx env ctx)]
+      (perf/timed :ctx/render (renderer-fn {:ctx enriched :warnings []})))))
 
 ;; lens / find — model-facing recovery bindings
 ;;
