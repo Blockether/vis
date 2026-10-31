@@ -3,6 +3,7 @@
             [com.blockether.vis.internal.foundation.harness.discovery :as d]
             [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [lazytest.core :refer [defdescribe it expect throws?]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -274,6 +275,29 @@
                  (expect (= ["flows-skill"]
                             (filterv #{"typer" "pkg-skill" "flows-skill"}
                               (map :name (d/discover-skills)))))))
+             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
+  ;; Regression: the first turn in this repository waited 2.7 to 5 s for skill discovery.
+  ;; Re-include globs such as `**/.agents/**` made fff walk `target/` and extension venvs.
+  (it "finds a gitignored nested harness through an index that keeps every ignore rule"
+      (let [root
+            (.getCanonicalFile (.toFile (Files/createTempDirectory "vis-skill-index-scope"
+                                                                   (make-array FileAttribute 0))))
+
+            skill-md
+            (io/file root "apps" "web" ".agents" "skills" "web-skill" "SKILL.md")]
+
+        (try (expect (= 0 (:exit (git/run-git root ["init" "-q"]))))
+             (spit (io/file root ".gitignore") ".agents/\ntarget/\n")
+             (io/make-parents skill-md)
+             (spit skill-md "---\nname: web-skill\ndescription: d\n---\nBODY")
+             (binding [workspace/*workspace-root* (.getPath root)]
+               (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
+                 (expect (some #{"web-skill"} (map :name (d/discover-skills))))))
+             (let [entries
+                   (filterv #(= (.getPath root) (first (:pool-key %)))
+                            (:entries (fff-index/pool-stats)))]
+               (expect (seq entries))
+               (expect (every? #(empty? (last (nth (:pool-key %) 2))) entries)))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
   (it "skips skills whose owner directory Git ignores, through root and nested ignore files"
       (let [root

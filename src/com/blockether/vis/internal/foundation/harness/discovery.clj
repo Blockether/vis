@@ -354,12 +354,6 @@
    ships with a dependency, so its directory is never a nested project."
   #{".venv" "venv" "site-packages" "dist-packages" "__pypackages__" "node_modules" ".tox" ".nox"})
 
-(defn- nested-owner
-  "Repository-relative owner directory of a nested `<owner>/<parts…>/<name>/SKILL.md`
-   match, or \"\" for the repository root."
-  [^String relative-path parts]
-  (str/join "/" (drop-last (+ 2 (count parts)) (str/split relative-path #"[/\\]"))))
-
 (defn- dependency-owner?
   [^String owner]
   (boolean (some dependency-dir-names (str/split owner #"/"))))
@@ -374,33 +368,24 @@
           (git/run-git repo (into ["-c" "core.quotePath=false" "check-ignore" "--"] owners))]
       (if (= 0 exit) (set (remove str/blank? (str/split-lines (or out "")))) #{}))))
 
-(defn- skill-path-in?
-  "True when `relative-path` is `<any>/<parts>/<name>/SKILL.md`: the glob `**/<parts>/*/SKILL.md`."
-  [^String relative-path parts]
-  (let [segments
-        (str/split relative-path #"/")
-
-        n
-        (count parts)
-
-        k
-        (count segments)]
-
-    (and (>= k (+ n 2))
-         (= "SKILL.md" (peek segments))
-         (= (vec parts) (subvec segments (- k n 2) (- k 2))))))
+(def ^:private max-owner-dirs
+  "Most directories that one nested-skill lookup reads from the pooled index."
+  1000000)
 
 (defn- nested-skill-files
   "Project-skill files below a repository-root session, discovered through Vis' one
-   pooled fff index. Git ignores stay enabled for the tree; only the explicit harness
-   configuration directories are reopened. A match counts only when its owner directory
-   is a real project: not inside a dependency directory and not ignored by Git. Nested
-   app sessions deliberately do not scan siblings.
+   pooled fff index. Each directory of the index is a candidate owner. A match is a
+   `<owner>/<harness>/<kind>/<name>/SKILL.md` file. The harness directory can be
+   ignored by Git; the owner directory cannot.
 
-   The index reads paths only and skips the read-your-writes rescan. Prompt assembly
-   runs this on every turn, and the re-include globs make the native walk cover the
-   whole tree, so a content index or a blocking rescan can stall every turn. The
-   watcher keeps the paths current (Blockether/vis#384, Blockether/vis#385)."
+   The index keeps every ignore rule and reads paths only. Thus it never walks an
+   ignored tree such as `target/`, `node_modules/` or an extension venv. A re-include
+   glob like `**/.agents/**` made fff walk those trees without ignore rules. In this
+   repository that cost 2.7 to 5 s on the first turn of each gateway.
+
+   An owner below a dependency directory never counts. Prompt assembly runs this on
+   every turn, so it skips the read-your-writes rescan. The watcher keeps the
+   directories current (Blockether/vis#384, Blockether/vis#385)."
   []
   (let [^java.io.File repo
         (repository-root)
@@ -418,32 +403,46 @@
                  distinct
                  vec)
 
-            harnesses
-            (map #(nth % 2) specs)
-
-            overlay
-            {:unignore-globs (vec (distinct (mapcat (fn [h]
-                                                      [(str h "/**") (str "**/" h "/**")])
-                                                    harnesses)))}
-
-            ;; One glob for every harness: each glob call scans the whole index.
-            skill-paths
+            owners
             (fff-index/with-index
-              [idx (fff-index/lease repo true overlay {:content-indexing? false :resync? false})]
-              (vec (sort (map :relative-path
-                              (:items (fff/glob idx {:pattern "**/SKILL.md" :page-size 10000}))))))
+              [idx (fff-index/lease repo true nil {:content-indexing? false :resync? false})]
+              (->> (:items (fff/search-directories idx {:query "" :page-size max-owner-dirs}))
+                   (map :relative-path)
+                   (remove dependency-owner?)
+                   sort
+                   vec))
+
+            owner-dir
+            (fn [owner]
+              (if (str/blank? owner) repo (io/file repo owner)))
+
+            ;; One stat for each owner and harness; most owners have no harness directory.
+            harness-owners
+            (into {}
+                  (map (fn [harness]
+                         [harness
+                          (filterv #(.isDirectory (io/file ^java.io.File (owner-dir %)
+                                                           ^String harness))
+                            owners)]))
+                  (distinct (map #(nth % 2) specs)))
 
             matches
-            (vec (mapcat (fn [[tool _ & parts]]
-                           (for [relative-path
-                                 skill-paths
+            (vec (mapcat (fn [[tool _ harness & kinds]]
+                           (sort-by #(.getPath ^java.io.File (:file %))
+                                    (for [owner
+                                          (harness-owners harness)
 
-                                 :when (skill-path-in? relative-path parts)
-                                 :let [owner
-                                       (nested-owner relative-path parts)]
-                                 :when (not (dependency-owner? owner))]
+                                          :let [^java.io.File kind-dir
+                                                (apply io/file (owner-dir owner) harness kinds)]
+                                          :when (.isDirectory kind-dir)
+                                          ^java.io.File skill-dir
+                                          (.listFiles kind-dir)
 
-                             {:tool tool :owner owner :file (io/file repo relative-path)}))
+                                          :let [file
+                                                (io/file skill-dir "SKILL.md")]
+                                          :when (.isFile file)]
+
+                                      {:tool tool :owner owner :file file})))
                          specs))
 
             ignored
@@ -452,7 +451,7 @@
         (vec (for [{:keys [tool owner ^java.io.File file]}
                    matches
 
-                   :when (and (not (contains? ignored owner)) (.isFile file))]
+                   :when (not (contains? ignored owner))]
 
                [tool file]))))))
 
