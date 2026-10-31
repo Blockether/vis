@@ -465,10 +465,8 @@
           [{:kind :project-page :label "More search results" :action [:search-page :next]}])
         (when loading? [{:kind :project-state :label "Searching sessions…"}])
         (when error [{:kind :project-state :label (str "Search failed · " error)}])
-        (when (and (not loading?) (not error) (zero? total))
-          [{:kind :project-state
-            :label
-            (if (str/blank? text) "Type to search saved sessions" "No saved sessions match")}]))
+        (when (and (not loading?) (not error) (zero? total) (not (str/blank? text)))
+          [{:kind :project-state :label "No saved sessions match"}]))
       (map-indexed #(assoc %2 :index (inc (long %1))))
       vec)))
 
@@ -1168,7 +1166,7 @@
                                     (long width)
                                     (str (:text field))
                                     (long (or (:cursor field) 0))
-                                    "Search saved sessions")))))
+                                    "Type to search saved session")))))
 
 (def ^:private footer-commands
   "The footer's sidebar commands in priority order; a narrow rail drops them from
