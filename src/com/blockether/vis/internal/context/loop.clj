@@ -180,51 +180,54 @@
    fresh without pushing it back into `ctx-atom`."
   [env ctx]
   (scoped/with-live-snapshot
-    (let [active-exts
-          (perf/timed :ctx/active-exts (try (prompt/active-extensions env) (catch Throwable _ nil)))
+    (extension/with-derived-context
+      env
+      (let [active-exts
+            (perf/timed :ctx/active-exts
+                        (try (prompt/active-extensions env) (catch Throwable _ nil)))
 
-          ext-ctx
-          (try (perf/timed :ctx/contributions (extension/ctx-contributions env active-exts))
-               (catch Throwable t
-                 (tel/log!
-                   {:level :warn :id ::ctx-contributions-failed :data {:error (ex-message t)}})
-                 {}))
+            ext-ctx
+            (try (perf/timed :ctx/contributions (extension/ctx-contributions env active-exts))
+                 (catch Throwable t
+                   (tel/log!
+                     {:level :warn :id ::ctx-contributions-failed :data {:error (ex-message t)}})
+                   {}))
 
-          env-block
-          (try (perf/timed :ctx/env-digest
-                           (env-digest/deep-merge (env-digest/base-digest env active-exts)
-                                                  (get ext-ctx "session_env")))
-               (catch Throwable t
-                 (tel/log! {:level :warn :id ::env-digest-failed :data {:error (ex-message t)}})
-                 nil))
+            env-block
+            (try (perf/timed :ctx/env-digest
+                             (env-digest/deep-merge (env-digest/base-digest env active-exts)
+                                                    (get ext-ctx "session_env")))
+                 (catch Throwable t
+                   (tel/log! {:level :warn :id ::env-digest-failed :data {:error (ex-message t)}})
+                   nil))
 
-          access-view
-          (try (when-let [f (:access-view-fn env)]
-                 (perf/timed :ctx/access-view (f)))
-               (catch Throwable t
-                 (tel/log! {:level :warn :id ::access-view-failed :data {:error (ex-message t)}})
-                 nil))]
+            access-view
+            (try (when-let [f (:access-view-fn env)]
+                   (perf/timed :ctx/access-view (f)))
+                 (catch Throwable t
+                   (tel/log! {:level :warn :id ::access-view-failed :data {:error (ex-message t)}})
+                   nil))]
 
-      (cond-> (assoc (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
-                "session_extension_context"
-                (into (sorted-map)
-                      (filter (fn [[key _]]
-                                (and (string? key) (not (re-find #"^(engine|session)_" key)))))
-                      ext-ctx))
-        (seq env-block)
-        (assoc "session_env" env-block)
+        (cond-> (assoc (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
+                  "session_extension_context"
+                  (into (sorted-map)
+                        (filter (fn [[key _]]
+                                  (and (string? key) (not (re-find #"^(engine|session)_" key)))))
+                        ext-ctx))
+          (seq env-block)
+          (assoc "session_env" env-block)
 
-        (seq access-view)
-        (assoc "session_access" access-view)
+          (seq access-view)
+          (assoc "session_access" access-view)
 
-        ;; current model + available models, so the agent can reason about cost
-        ;; (read-only). `:routing env` is loop-internal; its VALUE
-        ;; is built string-keyed at the loop because it crosses the boundary.
-        ;; A turn RESCUED onto another provider overrides that plan: the session
-        ;; dict must name the model that ANSWERED, because `session_utilization`
-        ;; is measured against THAT model's window, not the pinned one's.
-        (seq (:routing env))
-        (assoc "session_routing" (merge (:routing env) (eng/served-route ctx)))))))
+          ;; current model + available models, so the agent can reason about cost
+          ;; (read-only). `:routing env` is loop-internal; its VALUE
+          ;; is built string-keyed at the loop because it crosses the boundary.
+          ;; A turn RESCUED onto another provider overrides that plan: the session
+          ;; dict must name the model that ANSWERED, because `session_utilization`
+          ;; is measured against THAT model's window, not the pinned one's.
+          (seq (:routing env))
+          (assoc "session_routing" (merge (:routing env) (eng/served-route ctx))))))))
 
 (defn session-snapshot
   "Read-only data mirror of the Python `session` dict bound in the sandbox.

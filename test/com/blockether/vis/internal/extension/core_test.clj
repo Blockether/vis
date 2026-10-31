@@ -728,7 +728,32 @@
                    (extension/with-context {:env nil} (:db-info extension/*current-environment*))))
         (expect (= "sid-inner"
                    (extension/with-context {:env {:session-id "sid-inner"}}
-                                           (:session-id extension/*current-environment*)))))))
+                                           (:session-id extension/*current-environment*))))))
+  ;; Perf pass 2026-11: each extension callback of one render derived the
+  ;; filesystem roots again.
+  (it "derives the workspace view once for many callbacks of one environment"
+      (let [calls
+            (atom 0)
+
+            roots
+            workspace/env-filesystem-roots
+
+            env
+            {:session-id "sid-derived" :workspace/root "target/derived-a"}
+
+            other
+            {:session-id "sid-other" :workspace/root "target/derived-b"}]
+
+        (with-redefs [workspace/env-filesystem-roots (fn [e]
+                                                       (swap! calls inc)
+                                                       (roots e))]
+          (extension/with-derived-context
+            env
+            (dotimes [_ 3]
+              (extension/with-context {:env env} workspace/*filesystem-roots*))
+            (expect (= (workspace/normalize-root "target/derived-b")
+                       (extension/with-context {:env other} (str workspace/*workspace-root*))))))
+        (expect (= 2 @calls)))))
 
 ;; ── plain :inject-env? symbols share invoke-symbol-wrapper with draft-aware cwd ──
 ;;

@@ -1509,6 +1509,24 @@
   (some-> *current-extension*
           :ext/name))
 
+(def ^:dynamic *derived-context*
+  "`{:env env :workspace-root delay :filesystem-roots delay}` while
+   [[with-derived-context]] runs, else nil."
+  nil)
+
+(defmacro with-derived-context
+  "Run `body` with the workspace view of `env` derived at most once. A
+   [[with-context]] for the same `env` object reuses it. Use it for work that
+   calls many extension callbacks at one moment, such as one context render."
+  [env & body]
+  `(let [env# ~env]
+     (binding [*derived-context* (when (seq env#)
+                                   {:env env#
+                                    :workspace-root (delay (workspace/workspace-root env#))
+                                    :filesystem-roots (delay (workspace/env-filesystem-roots
+                                                               env#))})]
+       ~@body)))
+
 (defmacro with-context
   "Install THE extension context around `body` and evaluate it.
 
@@ -1528,18 +1546,37 @@
    silently drop the session out from under it. `:symbol` is never inherited —
    only a symbol call has one."
   [{:keys [ext env] sym :symbol} & body]
-  `(let [env# (or (not-empty ~env) *current-environment*)]
-     (binding [*current-extension* (or ~ext *current-extension*)
-               *current-symbol* ~sym
-               *current-environment* env#
-               toggles/*overrides* (or (some-> (:config/toggles env#)
-                                               deref)
-                                       toggles/*overrides*)
-               workspace/*workspace-root* (workspace/workspace-root env#)
-               workspace/*config-sources* (if (contains? env# :config/sources)
-                                            (:config/sources env#)
-                                            workspace/*config-sources*)
-               workspace/*filesystem-roots* (workspace/env-filesystem-roots env#)]
+  `(let [env#
+         (or (not-empty ~env) *current-environment*)
+
+         derived#
+         (let [d# *derived-context*]
+           (when (and d# (identical? env# (:env d#))) d#))]
+
+     (binding [*current-extension*
+               (or ~ext *current-extension*)
+
+               *current-symbol*
+               ~sym
+
+               *current-environment*
+               env#
+
+               toggles/*overrides*
+               (or (some-> (:config/toggles env#)
+                           deref)
+                   toggles/*overrides*)
+
+               workspace/*workspace-root*
+               (if derived# @(:workspace-root derived#) (workspace/workspace-root env#))
+
+               workspace/*config-sources*
+               (if (contains? env# :config/sources)
+                 (:config/sources env#)
+                 workspace/*config-sources*)
+
+               workspace/*filesystem-roots*
+               (if derived# @(:filesystem-roots derived#) (workspace/env-filesystem-roots env#))]
 
        ~@body)))
 
