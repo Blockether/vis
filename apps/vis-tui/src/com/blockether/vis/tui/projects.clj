@@ -1425,8 +1425,7 @@
             (p/put-str! g left row (str "├" (p/horiz-line (- width 2)) "┤"))))
         (when (and (>= width 19) (> rows 3))
           (p/set-fg! g t/header-fg)
-          (p/styled g [p/BOLD] (p/put-str! g (+ left 2) 1 "Projects"))
-          (components/button! g (- (+ left width) 5) 1 " ✕ " :project-hide {:plain? true}))
+          (p/styled g [p/BOLD] (p/put-str! g (+ left 2) 1 "Projects")))
         (doseq [[{:keys [index project kind] :as entry} row] (map vector visible (iterate inc top))
                 :let [row (long row)
                       active? (case kind
@@ -1794,7 +1793,7 @@
 (def ^:private rail-kinds
   "Hit kinds that belong to the rail, so a mouse event on them is a sidebar event."
   #{:project-rail :project-select :project-group :project-input :project-unread :project-session
-    :project-set :project-page :project-group-page :project-state :project-hide :project-suggest
+    :project-set :project-page :project-group-page :project-state :project-suggest
     :project-new-folder :project-search-field :project-footer})
 
 (defn click-focus
@@ -1867,9 +1866,6 @@
 
                     :project-search-field
                     [:focus]
-
-                    :project-hide
-                    [:hide]
 
                     :project-footer
                     (footer-action db (:command hit))

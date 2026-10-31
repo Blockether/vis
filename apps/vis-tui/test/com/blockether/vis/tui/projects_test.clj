@@ -406,8 +406,7 @@
                                      :paint!
                                      (fn [{:keys [screen]}]
                                        (projects/paint! (.newTextGraphics screen) db cols 18))})
-              text (cap/frame-text capture)
-              width (:width (projects/geometry db cols 18))]
+              text (cap/frame-text capture)]
 
           (expect (nil? (:error capture)))
           (when (>= cols 26) (expect (str/includes? text "Companion")))
@@ -421,7 +420,6 @@
             (expect (<= (abs (- lead trail)) 1)))
           (expect (= :project-rail (:kind (.lookup projects/hit-map 10 1))))
           (expect (not-any? #(= :project-search (:kind %)) (.current projects/hit-map)))
-          (expect (= :project-hide (:kind (.lookup projects/hit-map (- width 4) 1))))
           (expect (= [:select project-b]
                      (projects/key-action
                        db
