@@ -312,15 +312,16 @@
   (it "a SyntaxError raised by code the block ran points at that call, not at line 1"
       ;; Regression (session 8a61ff31): `eval("await ...")` on line 3 raised a
       ;; SyntaxError for `<string>`, and the error showed the block's own line 1.
+      ;; That text runs now, so text that eval still refuses stands in for it.
       (let [code
-            "import re as _re\nx = 1\ny = eval(\"await memo.wake()\")"
+            "import re as _re\nx = 1\ny = eval(\"1 +\")"
 
             err
             (:error (ep/run-python-block (py-ctx) code))]
 
         (expect (= :python/runtime (get-in err [:data :phase])))
         (expect (= 3 (get-in err [:data :line])))
-        (expect (str/includes? (:message err) "'await' outside function (<string>, line 1)"))
+        (expect (str/includes? (:message err) "invalid syntax (<string>, line 1)"))
         (expect (str/includes? (:message err) "3: y = eval("))
         (expect (not (str/includes? (:message err) "1: import re")))))
   (it "an undefined name pins line+caret to the name, overriding the shallow loc"
