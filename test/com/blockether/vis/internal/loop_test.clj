@@ -13397,7 +13397,8 @@
                                            (mapcat :forms iterations)))
                       operations (filter #(str/starts-with? (:operation %) "council.") rows)]
 
-                  (expect (= (if (= request "receive") 3 2) (count operations))
+                  ;; A publication has no Activity row since 3bb30c504; only council.members stays.
+                  (expect (= (if (= request "receive") 3 1) (count operations))
                           (pr-str {:request request
                                    :loop-result @loop-result
                                    :worker-policy (select-keys ((:jail-policy-fn environment))
