@@ -660,11 +660,12 @@ export function ProjectStatusCounts({
 
 /**
  * A flat tab strip of machine identities, one tab for each machine. Overflow scrolls.
- * It has no track, fill or frame: a frame inside a track read as a shadow.
+ * It has no track or fill: a frame inside a tinted track read as a shadow.
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-w-0 shrink items-center gap-1 overflow-x-auto">
+    // The strip scrolls, so it clips: its own 6px of room keeps the 44px hit area inside.
+    <div className="-my-1.5 flex min-w-0 shrink items-center gap-1 overflow-x-auto py-1.5">
       {children}
     </div>
   );
@@ -674,7 +675,7 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
 const MACHINE_AGE_TICK_MS = 30_000;
 
 /**
- * One tab of the machine switch. The chosen machine has bold ink and an ink underline,
+ * One tab of the machine switch. The chosen machine has bold ink and one hairline frame,
  * never a fill or a colour. Yellow means news only: a chip counts the
  * conversations with unread answers. The age of the newest activity follows, muted.
  * A machine known down becomes a retry action with no pressed state, count or age.
@@ -736,13 +737,14 @@ export function MachineTab({
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
       // The focus ring is drawn INSIDE the tab: the scrolling strip clips anything outside it.
-      // The underline is an inset shadow, so the chosen tab keeps the height of the others.
-      className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-none px-2.5 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 motion-reduce:transition-none mouse:h-7 ${
+      // Every tab has a border, transparent unless chosen, so a press moves nothing. The
+      // chosen frame is the dialog edge: the resting hairline measured 1.3:1 on the page.
+      className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-none border px-2.5 font-mono text-meta transition-colors duration-150 after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] focus-visible:outline-2 focus-visible:-outline-offset-1 motion-reduce:transition-none mouse:h-7 mouse:after:content-none ${
         isDown
-          ? 'text-err-ink hover:text-err-ink focus-visible:outline-err-ink'
+          ? 'border-transparent text-err-ink focus-visible:outline-err-ink'
           : isOn
-            ? 'font-bold text-white shadow-[inset_0_-2px_0_var(--color-white)] focus-visible:outline-white'
-            : 'text-dialog-hint hover:text-white focus-visible:outline-white'
+            ? 'border-dialog-edge font-bold text-white focus-visible:outline-white'
+            : 'border-transparent text-dialog-hint hover:border-edge-strong hover:text-white focus-visible:outline-white'
       }`}
     >
       {children}

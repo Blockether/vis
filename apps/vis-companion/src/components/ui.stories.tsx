@@ -702,7 +702,7 @@ function MachineSwitcherDemo() {
 }
 
 /**
- * The switcher is a flat tab strip: an underlined chosen tab, a yellow news chip, error ink for retry.
+ * The switcher is a flat tab strip: a framed chosen tab, a yellow news chip, error ink for retry.
  * A cached machine keeps its pending-check tooltip alongside any unread activity.
  */
 export const Switcher: Story = {
