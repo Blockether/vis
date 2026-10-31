@@ -98,6 +98,21 @@
                                       (update :weight + weight)))))))
              value)))))))
 
+(defn string-chars
+  "The characters of every string inside `value`, a cheap retained-size weight for
+   [[bounded-memoize]]."
+  ^long [value]
+  (cond (string? value) (count value)
+        (map? value) (reduce-kv (fn [^long n _ v]
+                                  (+ n (string-chars v)))
+                                0
+                                value)
+        (coll? value) (reduce (fn [^long n v]
+                                (+ n (string-chars v)))
+                              0
+                              value)
+        :else 0))
+
 (defn- same-parts?
   "True when `parts` and `stored` have the same length and each part is the same object."
   [parts stored]

@@ -164,7 +164,31 @@
           (expect (= 2 @calls))
           (let [before (get-in @context ["engine_iter_weights" "t1/i4"])]
             (transcript/stamp-iter-universe! context changed changed pricing)
-            (expect (< (get-in @context ["engine_iter_weights" "t1/i4"]) before)))))))
+            (expect (< (get-in @context ["engine_iter_weights" "t1/i4"]) before))))))
+  (it "counts a long request again without tokenizing its unchanged messages"
+      ;; Regression: the request counter kept 512 messages, so a longer history evicted
+      ;; each message before its reuse and the whole request was tokenized again.
+      (let [messages
+            (vec (for [i (range 600)]
+                   {:role (if (even? i) "assistant" "user")
+                    :content (str "message " i " " (random-uuid))}))
+
+            counter
+            (prompt/request-token-counter)
+
+            calls
+            (atom 0)
+
+            count-messages
+            svar/count-messages]
+
+        (with-redefs [svar/count-messages (fn [& args]
+                                            (swap! calls inc)
+                                            (apply count-messages args))]
+          (let [first-count (counter model messages)]
+            (reset! calls 0)
+            (expect (= first-count (counter model messages)))
+            (expect (zero? @calls)))))))
 
 (defdescribe
   context-cache-invalidation-test

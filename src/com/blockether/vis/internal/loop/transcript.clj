@@ -387,21 +387,6 @@
              (pos? (long local-tokens)))
     (max 1.0 (/ (double reported-tokens) (double local-tokens)))))
 
-(defn- message-chars
-  "The characters of every string inside `value`: the retained weight of a cached
-   message group."
-  ^long [value]
-  (cond (string? value) (count value)
-        (map? value) (reduce-kv (fn [^long n _ v]
-                                  (+ n (message-chars v)))
-                                0
-                                value)
-        (coll? value) (reduce (fn [^long n v]
-                                (+ n (message-chars v)))
-                              0
-                              value)
-        :else 0))
-
 (def ^:private cached-messages-wire-tokens
   ;; Each request prices every visible iteration again, and earlier groups do not
   ;; change. Without this, a long session tokenized its whole history on every step.
@@ -411,7 +396,7 @@
     4096
     (* 32 1024 1024)
     (fn [[_ messages] _]
-      (+ 256 (* 2 (message-chars messages))))))
+      (+ 256 (* 2 (util/string-chars messages))))))
 
 (defn- messages-wire-tokens
   "Svar's tokenized marginal cost for a group of canonical messages inside a larger

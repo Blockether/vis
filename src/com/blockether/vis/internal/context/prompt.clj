@@ -1046,14 +1046,16 @@
 (def ^:private cached-message-tokens
   (util/bounded-memoize (fn [model message opts]
                           (svar/count-messages model [message] opts))
-                        512
-                        (* 4 1024 1024)
-                        (fn [args _]
-                          (+ 1024 (* 4 (count (pr-str args)))))))
+                        8192
+                        (* 32 1024 1024)
+                        ;; A long session sends more than 512 messages or 4 MiB. The scan
+                        ;; then evicted each entry before its reuse and re-tokenized it all.
+                        (fn [[_ message] _]
+                          (+ 256 (* 2 (util/string-chars message))))))
 
 (defn request-token-counter
   "Count messages with bounded reuse by model, tokenizer options and complete content.
-   Retain at most 512 messages within a 4 MiB weight limit across requests.
+   Retain at most 8192 messages within a 32 MiB weight limit across requests.
    Provider usage remains the authority for an accepted request."
   ([] (request-token-counter {}))
   ([opts]
