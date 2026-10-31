@@ -14,7 +14,7 @@
             [com.blockether.vis.internal.context.env-digest :as env-digest]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.loop.perf :as perf]
+            [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [taoensso.telemere :as tel]))
 

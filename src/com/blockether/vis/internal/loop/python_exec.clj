@@ -15,7 +15,7 @@
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
-            [com.blockether.vis.internal.loop.perf :as perf]
+            [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]

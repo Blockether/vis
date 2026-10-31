@@ -12,7 +12,7 @@
             [com.blockether.vis.contract.toggle :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.loop.perf :as perf]
+            [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]

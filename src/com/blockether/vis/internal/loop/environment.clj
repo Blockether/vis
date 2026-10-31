@@ -19,7 +19,7 @@
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.loop.cache-warmer :as cache-warmer]
             [com.blockether.vis.internal.loop.compaction :as compaction]
-            [com.blockether.vis.internal.loop.perf :as perf]
+            [com.blockether.vis.internal.perf :as perf]
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.transcript :as transcript]

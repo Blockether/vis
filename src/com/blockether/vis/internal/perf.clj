@@ -1,5 +1,5 @@
 ;; User request 2026-10-31: measure what each part of a turn costs in time and memory.
-(ns com.blockether.vis.internal.loop.perf
+(ns com.blockether.vis.internal.perf
   "Time and memory of each iteration and turn, logged at info level.
 
    `iteration-loop*` binds `*ledger*` for one iteration. Each `log-stage!` with a

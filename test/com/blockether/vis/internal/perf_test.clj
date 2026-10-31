@@ -1,7 +1,7 @@
 ;; User request 2026-10-31: the perf lines must separate framework time from model
 ;; and tool time, or a slow model reads as a slow framework.
-(ns com.blockether.vis.internal.loop.perf-test
-  (:require [com.blockether.vis.internal.loop.perf :as perf]
+(ns com.blockether.vis.internal.perf-test
+  (:require [com.blockether.vis.internal.perf :as perf]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe summary-test
