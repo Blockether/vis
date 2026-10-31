@@ -1721,8 +1721,10 @@
          (mapv (fn [{:keys [path operations]}]
                  [path
                   (into {}
+                        ;; Route data, not a bare fn: reitit's Expand would otherwise grow
+                        ;; its protocol cache once per handler class at every cold start.
                         (map (fn [method]
-                               [method (get handlers [method path])]))
+                               [method {:handler (get handlers [method path])}]))
                         (keys operations))])))))
 
 (defn- router
