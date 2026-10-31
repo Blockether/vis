@@ -311,6 +311,10 @@
           existing (do (close-in-pool! pool k) (recur pool k server spec accept?))
           :else (try
                   (let [conn (mcp/connect server spec)
+                        ;; List the tools before publication, on this connecting thread. A
+                        ;; render that met a fresh conn paid the `tools/list` round trip
+                        ;; (perf pass 2026-11: 420 ms in one context render).
+                        _ (try (mcp/list-tools conn) (catch Throwable _ nil))
                         [accepted stale]
                         (locking pool
                           (let [winner (get @pool k)]

@@ -111,6 +111,33 @@
                        @called))))))))
 
 (defdescribe
+  mcp-connect-tool-cache-test
+  ;; Perf pass 2026-11: a context render met a fresh conn and paid the `tools/list`
+  ;; round trip itself, 420 ms on the turn thread.
+  (it "publishes a new connection with its tools already listed"
+      (let [requests
+            (atom [])
+
+            conn
+            {:tools (atom nil)
+             :alive-fn (constantly true)
+             :close-fn (fn []
+                         nil)
+             :request-fn (fn [method _ _]
+                           (swap! requests conj method)
+                           {"tools" [{"name" "read"}]})}
+
+            pool
+            (atom {})]
+
+        (with-redefs [client/connect (constantly conn)]
+          (#'mcp/ensure-in-pool! pool "remote" "remote" {:transport :stdio} (constantly true)))
+        (expect (= ["tools/list"] @requests))
+        (expect (= {:names ["read"] :omitted 0}
+                   (#'mcp/ctx-tool-names (get-in @pool ["remote" :conn]))))
+        (expect (= ["tools/list"] @requests)))))
+
+(defdescribe
   mcp-failed-catalog-status-test
   (it "marks a failed inventory listing disconnected in the same snapshot"
       ;; Regression: Linear rejected credentials while inventory still claimed connected, 0 tools.
