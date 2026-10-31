@@ -7,8 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.4.3] - 2026-10-31
+
+### Added
+- TUI: one sidebar menu on `?` replaces the row menus and `+` buttons. C-x t keys control agents, and the agent dock has a new style.
+- Editing: `patch` re-indents an edit when its whole indentation is off by the same amount.
+- Extension SDK: `vis.write_private_file` writes a file atomically with owner-only (0600) mode.
+- Python: the log names the owner, role and start time of each Python worker.
+- Diagnostics: the gateway logs each request slower than 250 ms with its route and status. The loop logs the time, memory, GC pause and history render of each iteration. A slow TUI frame names its pass and its GC pause.
+
 ### Changed
 - Activity: `council.publish` leaves no row. The team notes already show each Council message. Older histories keep the rows that they recorded.
+- Council: agents write Council content in Markdown, and Council requests show as Markdown blocks.
+- OAuth: Vis logs each token refresh once, for providers and MCP servers, without secrets. Token files are written atomically with owner-only mode.
+- Sandbox: a block cannot replace a bound tool or helper with `global <name>`. It gets a clear error.
+- Sandbox: `asyncio.timeout` stops a wait at its deadline. Stop interrupts waits on `threading` events, queues, joins, conditions, semaphores, barriers and futures.
+- Performance: skill discovery skips ignored trees. It takes 42 ms instead of 5 s in a large workspace.
+- Performance: the voice model loads on the first recording, not at startup. This saves about 1.6 GB of idle memory.
+- Performance: long sessions keep earlier tool output projections after a history reload and GC. 30 large outputs take 3 ms instead of 250 ms.
+- Performance: TUI repaints beside an unchanged project rail take 0.4 ms instead of about 10 ms. Faded cells are reused across frames.
+- Performance: the loop prices the history once per iteration and reuses token counts of unchanged history groups. The tokenizer loads at startup.
+- Performance: a context render derives configuration, session settings, MCP server definitions and the workspace view once. The git work tree is reused while `.git` stays the same.
+- Performance: validation errors are faster with skjema 0.3.3. Bundled native libraries are staged at stable paths.
+
+### Fixed
+- Fork: a fork at an earlier turn keeps the prompt cache.
+- Python: a `SyntaxError` from `eval` shows as a runtime error. The staged SDK engine comes first in `blockether.vis`.
+- Gateway: sessions that the SDK creates are filed in their root project.
+- Companion: long code lines wrap and do not scroll sideways.
+- CLI: `--debug` writes console logs to stderr.
+- Context: a fold key that mixes `-` and `..` gets an error that names both meant keys.
 
 ## [v0.4.2] - 2026-10-30
 
