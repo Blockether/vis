@@ -1444,6 +1444,22 @@ class EvaluationIntegrationEdgeTest(unittest.TestCase):
         group = atif.row("group-call-1", "patch", children=split)
         self.assertEqual(1, len(run(group)))
 
+    def test_patch_refusals_stay_within_the_limit(self):
+        # User report 2026-10-31: each refused patch cost the agent one more step.
+        def run(*rows):
+            return grade.structured_failures(
+                {"max_patch_refusals": 0}, ".", "", list(rows)
+            )
+
+        written = atif.row("call-1", "patch", summary="app.py")
+        refused = atif.row("call-2", "patch", "failed", summary="app.py", sequence=2)
+        self.assertEqual([], run(written))
+        self.assertEqual(
+            ["patch was refused 1 times; the limit is 0"], run(written, refused)
+        )
+        group = atif.row("group-call-1", "patch", children=[written, refused])
+        self.assertEqual(1, len(run(group)))
+
     def test_malformed_run_metrics_are_a_failure_not_a_crash(self):
         helper = DiscoveryEvaluationTest()
         malformed = {

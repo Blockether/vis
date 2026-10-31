@@ -1,0 +1,21 @@
+{
+  "want": {
+    "test/app/dock_test.clj": [
+      "[[{\"status\" \"completed\"}] \"• 1 DONE\"]",
+      "                          \"• 2 RUNNING  • 1 QUEUED  • 1 DONE\"]",
+      "                          \"• 3 RUNNING  • 1 DONE\"]",
+      "                          \"• 1 DONE  • 4 FAILED\"]]]",
+      "(expect (= \"Agents   1m 04s   • 3 RUNNING  • 1 QUEUED\"\n                                       line))",
+      "[[[] \"\"]"
+    ]
+  },
+  "wantnot": {
+    "test/app/dock_test.clj": [
+      " · ",
+      "\"1 DONE\"]",
+      "\t"
+    ]
+  },
+  "max_patch_calls_per_file": 1,
+  "max_patch_refusals": 0
+}

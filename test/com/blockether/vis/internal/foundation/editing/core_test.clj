@@ -5603,9 +5603,9 @@
               #(ex-message (refusal (fn []
                                       ((private-fn "patch-tool") rel [{"old" % "new" "x"}]))))]
 
-          (expect (string/includes? (message "   Optional parameters.")
+          (expect (string/includes? (message "\tOptional parameters.")
                                     (str
-                                      "    old:  \"   Optional parameters.\" (leading: 3 spaces)\n"
+                                      "    old:  \"\\tOptional parameters.\" (leading: 1 tab)\n"
                                       "    file: \"  Optional parameters.\" (leading: 2 spaces)")))
           (expect (string/includes?
                     (message "  Optional parameters.\n    Tabbed")
@@ -5615,6 +5615,45 @@
           (expect (string/includes? (message "other\nmore")
                                     "line 2 of `old` runs past the end of the file."))
           (expect (= "  Optional parameters.\n\tTabbed \nother\n" (slurp rel)))))
+    ;; User report 2026-10-31 (session 745130f6): four of five refused patches
+    ;; copied deep lines with one extra space, and each refusal cost a retry.
+    (it "re-indents `old` and `new` by one uniform shift that names one place, and says so"
+        (let [rel
+              (write-temp! "patch/text-shift.clj"
+                           (str "(it \"y\"\n" "    (expect (= [\"a\"\n"
+                                "                \"3 RUNNING\"]\n" "               (f))))\n"))
+
+              out
+              (:result ((private-fn "patch-tool")
+                         rel
+                         [{"old" "                 \"3 RUNNING\"]"
+                           "new" "                 \"• 3 RUNNING\"]"}]))]
+
+          (expect (string/includes? out "note: edit 1 re-indented -1 space to match the file"))
+          (expect (= (str "(it \"y\"\n" "    (expect (= [\"a\"\n"
+                          "                \"• 3 RUNNING\"]\n" "               (f))))\n")
+                     (slurp rel)))
+          ((private-fn "patch-tool")
+            rel
+            [{"old" "  (expect (= [\"a\"\n              \"• 3 RUNNING\"]"
+              "new" "  (expect (= [\"b\"\n              \"• 3 RUNNING\"]"}
+             {"old" "(it \"y\"" "new" "(it \"z\""}])
+          (expect (string/starts-with? (slurp rel) "(it \"z\"\n    (expect (= [\"b\"\n"))))
+    (it "refuses a shift that names two places, misses `line`, or cannot move `new`"
+        (let [content
+              "(a\n  (b 1))\n(c\n  (b 1))\n(d\n    (e 2))\n"
+
+              rel
+              (write-temp! "patch/text-shift-refused.clj" content)
+
+              reason
+              #(:reason (ex-data (refusal (fn []
+                                            ((private-fn "patch-tool") rel [%])))))]
+
+          (expect (= :text-not-found (reason {"old" "   (b 1))" "new" "   (b 2))"})))
+          (expect (= :text-not-found (reason {"old" "     (e 2))" "new" "     (e 3))" "line" 5})))
+          (expect (= :text-not-found (reason {"old" "     (e 2))" "new" "(e 3))"})))
+          (expect (= content (slurp rel)))))
     (it "applies two text edits on one line, and refuses overlapping text"
         (let [rel (write-temp! "patch/text-line.py" "a = b + c\n")]
           ((private-fn "patch-tool") rel [{"old" "a =" "new" "z ="} {"old" "c" "new" "d"}])

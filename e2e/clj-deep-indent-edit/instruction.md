@@ -1,0 +1,1 @@
+In test/app/dock_test.clj the dock summary changes format. Put "• " before each count and join the counts with two spaces instead of " · ". For example, "2 RUNNING · 1 QUEUED · 1 DONE" becomes "• 2 RUNNING  • 1 QUEUED  • 1 DONE". Update every expected summary string in that file and keep all other text and indentation exactly as it is.

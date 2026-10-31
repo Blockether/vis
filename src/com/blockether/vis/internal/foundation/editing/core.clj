@@ -4179,12 +4179,89 @@
       (seq others)
       (conj (str "    Other near matches: line(s) " (str/join ", " others) ".")))))
 
+(defn- shift-indent
+  "`text` with `d` spaces added to each non-blank line, or removed when `d` is negative.
+   Answers nil when such a line has a tab in its indentation or fewer than `-d` spaces."
+  [^String text ^long d]
+  (let [out (mapv (fn [^String l]
+                    (let [lead (count (re-find #"^[ \t]*" l))]
+                      (cond (str/blank? l) l
+                            (str/includes? (subs l 0 lead) "\t") nil
+                            (pos? d) (str (apply str (repeat d \space)) l)
+                            (>= lead (- d)) (subs l (- d)))))
+                  (str/split text #"\n" -1))]
+    (when (every? some? out) (str/join "\n" out))))
+
+(defn- indent-shift-match
+  "User report 2026-10-31: agents copied deep lines with one extra space, and each copy
+   cost a refused patch. When `needle` is in `content` only after one uniform space shift
+   of its indentation, at exactly one line start, answer that match as
+   `{:start :needle :replacement :shift}` with `replacement` shifted the same way.
+   Answer nil for no match, more than one match, or a `replacement` that cannot shift."
+  [^String content ^String needle ^String replacement]
+  (let [lines
+        (str/split needle #"\n" -1)
+
+        head
+        (first (remove str/blank? lines))
+
+        spaces
+        (fn [^String l]
+          (let [ws (re-find #"^[ \t]*" l)]
+            (when-not (str/includes? ws "\t") (count ws))))
+
+        head-lead
+        (when head (spaces head))
+
+        trimmed
+        (when head (str/trim head))
+
+        shifts
+        (when head-lead
+          (->> (str/split content #"\n" -1)
+               (filter #(str/includes? % trimmed))
+               (keep spaces)
+               (map #(- (long %) (long head-lead)))
+               (remove zero?)
+               distinct))
+
+        line-start?
+        (fn [^long i]
+          (or (zero? i) (= \newline (.charAt content (dec i)))))
+
+        matches
+        (for [d
+              shifts
+
+              :let [^String shifted
+                    (shift-indent needle d)]
+              :when shifted
+              :let [starts
+                    (loop [from
+                           0
+
+                           acc
+                           []]
+
+                      (let [i (.indexOf content shifted (int from))]
+                        (if (neg? i) acc (recur (inc i) (conj acc i)))))]
+              i
+              (filter line-start? starts)]
+
+          {:start i :needle shifted :shift d})]
+
+    (when (= 1 (count matches))
+      (let [{:keys [shift] :as m} (first matches)]
+        (when-let [r (shift-indent replacement shift)]
+          (assoc m :replacement r))))))
+
 (defn- patch-text-spans!
   "Resolve ONE text edit against the CURRENT file: one char span for each exact match
    of `old`. The text is its own address, so it needs no version and no earlier read.
-   A `line` keeps only the matches that cover that line. Refuse a missing match, and
-   more than one match without `all`. On a CRLF file, an `old` or `new` text with bare
-   LF line ends gets CRLF line ends."
+   A `line` keeps only the matches that cover that line. Without an exact match, use
+   `indent-shift-match` when it finds one place. Refuse a missing match, and more than
+   one match without `all`. On a CRLF file, an `old` or `new` text with bare LF line
+   ends gets CRLF line ends."
   [rel ^String content {:keys [index old all? line replace]} total]
   (let [crlf?
         (str/includes? content "\r\n")
@@ -4229,9 +4306,35 @@
                      (let [e (+ (long s) (.length needle))]
                        (<= (long (line-at s)) (long line) (long (line-at (max (long s) (dec e)))))))
             starts)
-          starts)]
+          starts)
 
-    (cond (empty? starts)
+        ;; A uniform indentation slip is resolved, not refused, when it names one place.
+        shifted
+        (when (empty? starts)
+          (when-let [{:keys [start] ^String shifted-needle :needle :as m}
+                     (indent-shift-match content needle new-text)]
+            (when (or (nil? line)
+                      (<= (long (line-at start))
+                          (long line)
+                          (long (line-at (+ (long start) (max 0 (dec (.length shifted-needle))))))))
+              m)))]
+
+    (cond shifted (let [{:keys [start shift replacement] ^String shifted-needle :needle}
+                        shifted
+
+                        e
+                        (+ (long start) (.length shifted-needle))]
+
+                    [{:index index
+                      :text? true
+                      :start start
+                      :end e
+                      :replacement replacement
+                      :new-text replacement
+                      :shift shift
+                      :from-line (line-at start)
+                      :to-line (line-at (max (long start) (dec e)))}])
+          (empty? starts)
           (let [lines
                 (version/split-content-lines needle)
 
@@ -4641,6 +4744,17 @@
                             "  note: a replacement carries a `line│ ` gutter, written verbatim")
             moved-clause (when moved-from
                            (str "  note: moved from @" moved-from " over changes elsewhere"))
+            ;; Say which edit `patch` re-indented, so the caller can check that edit.
+            shift-clause (str/join (for [{:keys [index shift]} resolved
+                                         :when shift]
+
+                                     (str "  note: edit "
+                                          (inc (long index))
+                                          " re-indented "
+                                          (if (pos? (long shift)) "+" "")
+                                          shift
+                                          (if (= 1 (abs (long shift))) " space" " spaces")
+                                          " to match the file")))
             _ (when-not (= original (slurp f))
                 (patch-refusal!
                   rel
@@ -4673,7 +4787,7 @@
                                                total
                                                (count (version/split-content-lines original))
                                                (count new-lines)
-                                               (str moved-clause gutter-clause))
+                                               (str moved-clause gutter-clause shift-clause))
                             "\n"
                             (str/join "\n" (patch-edit-rows applied))
                             (when (seq repair-notes)
