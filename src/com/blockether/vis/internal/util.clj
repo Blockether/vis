@@ -2,8 +2,9 @@
   "The engine's one shared leaf: the primitives every namespace kept re-rolling —
    a millisecond clock, the two blank-string idioms, a trimmed environment read,
    UTF-8 bytes, SHA-256, HMAC-SHA256, secure random bytes, unpadded base64url,
-   byte concatenation, the hex fold, compact JWS signing and a daemon thread
-   factory.
+   byte concatenation, the hex fold, compact JWS signing, a daemon thread
+   factory and the caches: a bounded memo, an identity-checked cache and one memo
+   scope for work at one moment, such as a context render.
 
    It requires NOTHING from the rest of vis and never will. That is the whole
    contract: a leaf can be required from anywhere — specs that load during
@@ -93,6 +94,52 @@
                                       (update :order conj key)
                                       (update :weight + weight)))))))
              value)))))))
+
+(defn- same-parts?
+  "True when `parts` and `stored` have the same length and each part is the same object."
+  [parts stored]
+  (let [n (count parts)]
+    (and (== n (count stored))
+         (loop [i 0]
+           (or (== i n) (and (identical? (nth parts i) (nth stored i)) (recur (inc i))))))))
+
+(defn cached
+  "The value of `(f)` kept in `cache`, an atom of key -> `[parts value]`.
+   Reuse the value of `k` while each item of the `parts` vector is `identical?` to the
+   stored one. A new but equal input computes again, without a deep compare. Put every
+   input of `f` in `k` or `parts`. Nil and false are kept too; a failure is not.
+   A new key empties the map first when it already holds `limit` keys. Reset `cache`
+   to `{}` to forget every value. `f` runs outside the atom update, so concurrent
+   misses can compute more than once."
+  [cache limit k parts f]
+  (let [entry (get @cache k)]
+    (if (and entry (same-parts? parts (nth entry 0)))
+      (nth entry 1)
+      (let [value (f)]
+        (swap! cache (fn [m]
+                       (assoc (if (or (contains? m k) (< (count m) (long limit))) m {})
+                         k [parts value])))
+        value))))
+
+(def ^:dynamic *memo-scope*
+  "An atom of key -> `[parts value]` while [[with-memo-scope]] runs, else nil."
+  nil)
+
+(defmacro with-memo-scope
+  "Run `body` in one memo scope, where [[scope-cached]] computes each key once. Use it for
+   work that reads its inputs at one moment, such as one context render. An outer scope
+   stays in force. Bind [[*memo-scope*]] to nil inside it for a fresh read."
+  [& body]
+  `(binding [*memo-scope* (or *memo-scope* (atom {}))]
+     ~@body))
+
+(defn scope-cached
+  "`(f)`, kept for `k` and `parts` as in [[cached]] inside [[with-memo-scope]], else
+   computed on each call."
+  [k parts f]
+  (if-let [scope *memo-scope*]
+    (cached scope Long/MAX_VALUE k parts f)
+    (f)))
 
 (def ^:private secret-key-pattern
   #"(?i)(?:password|passwd|passphrase|secret|token|authorization|cookie|otp|(?:api|private|access)[_-]?key|credentials?)")

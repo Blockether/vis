@@ -121,6 +121,28 @@
               word
               (str "'" (str/replace word "'" "'\\''") "'")))))))
 
+(defn ancestor-chain
+  "`dir` and each parent up to the filesystem root, nearest first, as a lazy seq.
+   `dir` is a `File` or a `Path`, and each item has the same type. Nil gives an empty
+   seq. Make `dir` absolute or canonical first, because a relative path stops at its
+   first segment."
+  [dir]
+  (if (instance? Path dir)
+    (take-while some?
+                (iterate (fn [^Path p]
+                           (.getParent p))
+                         dir))
+    (take-while some?
+                (iterate (fn [^File f]
+                           (.getParentFile f))
+                         dir))))
+
+(defn nearest-ancestor
+  "The first item of [[ancestor-chain]] of `dir` for which `pred` is true, or nil.
+   For example, `(nearest-ancestor #(.exists (File. ^File % \".git\")) dir)`."
+  [pred dir]
+  (some #(when (pred %) %) (ancestor-chain dir)))
+
 (defn runtime-dir-setting
   "The task runtime directory: JVM property `vis.runtime.dir`, then `VIS_RUNTIME_DIR`.
    Empty is unset. A set value holds worker control endpoints and temporary files (#423)."

@@ -31,6 +31,25 @@
       (expect (= "~/x" (paths/expand-home "~/x" nil)))
       (expect (= "~/x" (paths/expand-home "~/x" "")))))
 
+(defdescribe ancestor-chain-test
+             (it "lists a File and each parent, nearest first, up to the root"
+                 (expect (= ["/a/b/c" "/a/b" "/a" "/"]
+                            (map #(.getPath ^File %) (paths/ancestor-chain (File. "/a/b/c"))))))
+             (it "keeps the Path type"
+                 (let [chain (paths/ancestor-chain (.toPath (File. "/a/b")))]
+                   (expect (every? #(instance? Path %) chain))
+                   (expect (= ["/a/b" "/a" "/"] (map str chain)))))
+             (it "gives an empty chain for nil" (expect (empty? (paths/ancestor-chain nil)))))
+
+(defdescribe nearest-ancestor-test
+             (it "answers the nearest match, or nil when nothing matches"
+                 (let [named (fn [name]
+                               #(= name (.getName ^File %)))]
+                   (expect (= "/b/x/b"
+                              (.getPath ^File
+                                        (paths/nearest-ancestor (named "b") (File. "/b/x/b/y")))))
+                   (expect (nil? (paths/nearest-ancestor (named "z") (File. "/b/x")))))))
+
 (defdescribe abbreviate-home-test
              (it "renders home itself as `~/` and descendants with `/` separators"
                  (expect (= "~/" (paths/abbreviate-home "/home/u" "/home/u")))

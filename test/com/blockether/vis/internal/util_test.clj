@@ -378,6 +378,89 @@
                    (expect (= 1 @calls))
                    (expect (= [[[first-request] 1]] @weighed)))))
 
+;; User report 2026-10-31: each cache had its own copy of this identity check. These
+;; rules pin the one shared cache that replaces the copies.
+(defdescribe
+  identity-checked-cache-test
+  (it "reuses a value while each part is the same object, and computes an equal copy again"
+      (let [calls
+            (atom 0)
+
+            cache
+            (atom {})
+
+            config
+            {"a" 1}
+
+            copy
+            (into {} config)
+
+            compute
+            #(swap! calls inc)]
+
+        (expect (not (identical? config copy)))
+        (expect (= 1 (util/cached cache 4 :config [config] compute)))
+        (expect (= 1 (util/cached cache 4 :config [config] compute)))
+        (expect (= 2 (util/cached cache 4 :config [copy] compute)))
+        (expect (= 3 (util/cached cache 4 :config [copy config] compute)))
+        (expect (= 3 @calls))))
+  (it "keeps nil and false, but not a failure"
+      (let [calls
+            (atom 0)
+
+            cache
+            (atom {})
+
+            compute
+            (fn [value]
+              #(do (swap! calls inc)
+                   (if (= :failure value) (throw (ex-info "fixture failure" {})) value)))]
+
+        (doseq [value [nil false]]
+          (dotimes [_ 2]
+            (expect (= value (util/cached cache 4 [value] [] (compute value))))))
+        (expect (= 2 @calls))
+        (dotimes [_ 2]
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(util/cached cache 4 :failure [] (compute :failure)))))
+        (expect (= 4 @calls))))
+  (it "empties the map for a new key at the limit, and replaces a known key in place"
+      (let [cache (atom {})]
+        (util/cached cache 2 :a [] (constantly 1))
+        (util/cached cache 2 :b [] (constantly 2))
+        (util/cached cache 2 :b [:changed] (constantly 3))
+        (expect (= {:a [[] 1] :b [[:changed] 3]} @cache))
+        (util/cached cache 2 :c [] (constantly 4))
+        (expect (= {:c [[] 4]} @cache)))))
+
+(defdescribe memo-scope-test
+             (it "computes each key once inside a scope, and on each call outside one"
+                 (let [calls
+                       (atom 0)
+
+                       db
+                       {:store 1}
+
+                       compute
+                       #(swap! calls inc)]
+
+                   (util/with-memo-scope (dotimes [_ 3]
+                                           (expect (= 1 (util/scope-cached :values [db] compute)))))
+                   (dotimes [_ 2]
+                     (util/scope-cached :values [db] compute))
+                   (expect (= 3 @calls))))
+             (it "keeps the outer scope inside a nested one"
+                 (let [calls
+                       (atom 0)
+
+                       compute
+                       #(swap! calls inc)]
+
+                   (util/with-memo-scope (util/scope-cached :values [] compute)
+                                         (util/with-memo-scope
+                                           (util/scope-cached :values [] compute)))
+                   (expect (= 1 @calls)))))
+
 (defdescribe poll-test
              (it "stops at the first reduced answer"
                  (let [calls (atom 0)]
