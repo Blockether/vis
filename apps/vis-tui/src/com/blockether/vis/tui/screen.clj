@@ -216,13 +216,13 @@
     (log-slow-input! :handle key-type started-ns db)))
 
 (defn- paint-phase-detail
-  "Render the sub-paint phase split as a compact ` [messages n.n, chrome n.n,
-   capture n.n, post n.n]` suffix, or \"\" when the frame carried no phase
+  "Render the sub-paint phase split as a compact ` [regions n.n, messages n.n,
+   chrome n.n, capture n.n, post n.n]` suffix, or \"\" when the frame carried no phase
    breakdown. The full-frame path times each pass so a stutter warning names the
    exact sub-pass that blew up (e.g. `messages` for the copy-region storm in
    issue #24) instead of hiding it in one opaque `paint` number."
   [data]
-  (let [phases (for [[k label] [[:messages-ms "messages"] [:chrome-ms "chrome"]
+  (let [phases (for [[k label] [[:regions-ms "regions"] [:messages-ms "messages"] [:chrome-ms "chrome"]
                                 [:capture-ms "capture"] [:post-ms "post"]]
                      :let [v (get data k)]
                      :when (some? v)]
@@ -3895,7 +3895,12 @@
         ;; the exact painted position of each expanded `vis-image` row here;
         ;; the post-refresh graphics pass drains it below.
         image-sink
-        (atom [])]
+        (atom [])
+
+        ;; Copy regions, selectable ranges and suggestions above are paint work
+        ;; that no sub-phase timed; `:regions-ms` names them in a slow-frame warning.
+        regions-end-ns
+        (System/nanoTime)]
 
     (render/fill-background! g cols rows)
     ;; The remaining paint passes live in ONE `let` so each phase-end timestamp
@@ -4152,6 +4157,7 @@
                :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
                ;; Sub-paint phase split: a regression names its own
                ;; pass instead of hiding in :paint-ms (issue #24).
+               :regions-ms (nanos->ms layout-end-ns regions-end-ns)
                :messages-ms (nanos->ms messages-start-ns messages-end-ns)
                :chrome-ms (nanos->ms messages-end-ns capture-start-ns)
                :capture-ms (nanos->ms capture-start-ns capture-end-ns)
