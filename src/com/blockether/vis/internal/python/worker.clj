@@ -699,6 +699,8 @@
                            :id ::started
                            :data {:pid (.pid process)
                                   :role (worker-role k)
+                                  ;; The session, `::spare` or "shared": which caller holds it.
+                                  :owner (str (if (instance? TrustedExtensionWorker k) (:session k) k))
                                   :start-ms (quot (- (System/nanoTime) start-ns) 1000000)}}
                           (str "python worker pid " (.pid process)))
                 ;; The runtime retains a private sink before interpreter confinement.
