@@ -9982,3 +9982,18 @@ vis.register_extension(vis.Extension(
                         (mapv first (#'pyx/import-root-files (io/file root "vis-x" "current")))))
              (finally (doseq [^java.io.File f (reverse (file-seq root))]
                         (.delete f)))))))
+
+(defdescribe
+  spare-workers-follow-loaded-packages-test
+  ;; Perf pass 2026-10-31: the gateway kept a 48 MB shared-package spare worker that no
+  ;; loaded extension could use, because every loaded extension declared its packages.
+  (it "keeps a shared-package spare only while a loaded extension uses the shared packages"
+      (let [spares-for (fn [loaded]
+                         (let [seen (atom nil)]
+                           (with-redefs-fn {#'pyx/loaded (atom loaded)
+                                            #'worker/keep-spares! (fn [_ packages]
+                                                                    (reset! seen (set packages)))}
+                             #(pyx/keep-spare-workers!))
+                           @seen))]
+        (expect (= #{"/pkgs/a"} (spares-for {"a" {:packages "/pkgs/a"}})))
+        (expect (= #{nil "/pkgs/a"} (spares-for {"a" {:packages "/pkgs/a"} "b" {}}))))))

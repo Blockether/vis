@@ -3701,13 +3701,14 @@
        ")\n"))
 
 (defn keep-spare-workers!
-  "Keep a warm trusted worker ready for the next extension context: one for the shared
-   packages and one for each package directory of a loaded extension (#407). A gateway
-   calls this after its startup load. With `false`, stop the spares."
+  "Keep a warm trusted worker ready for the next extension context: one for each package
+   directory of a loaded extension, nil for the shared packages (#407). A gateway calls
+   this after its startup load. With `false`, stop the spares."
   ([] (keep-spare-workers! true))
   ([keep?]
-   (pyext/keep-spares! (when keep? spare-warmup-python)
-                       (cons nil (keep :packages (vals @loaded))))))
+   ;; Perf pass 2026-10-31: a shared-package spare that no loaded extension used held a
+   ;; 48 MB worker for the life of the gateway. A first such context refills it on use.
+   (pyext/keep-spares! (when keep? spare-warmup-python) (map :packages (vals @loaded)))))
 
 (defonce ^:private registration-manifests?
   ;; True while the loader registers unchanged extensions from their saved manifests.
