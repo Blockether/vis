@@ -34,7 +34,7 @@ const text = (html: string) =>
 
 /** One entry per PAINTED code row — the code block gives every line its own div. */
 const codeRows = (html: string) =>
-  (html.match(/<div class="flex w-fit[^"]*">.*?<\/div>/g) ?? []).map(text);
+  (html.match(/<div class="flex whitespace-pre-wrap[^"]*">.*?<\/div>/g) ?? []).map(text);
 
 /**
  * What a step's row says to a screen reader and not to the eye: the ring on the

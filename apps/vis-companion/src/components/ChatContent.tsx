@@ -506,17 +506,20 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
           <CopyChip value={copyValue ?? source} label="Copy code" />
         </div>
       )}
+      {/* Long lines wrap instead of scrolling sideways. Reported: scrolling a session with long
+          code blocks was slow and painted white boxes. Each sideways scroller is its own compositor
+          layer, and WebKit draws it only once it enters the screen. */}
       <pre
-        className={`${compact ? 'text-meta' : 'text-ui'} ${padded ? (compact ? 'py-2' : 'py-2.5') : ''} m-0 max-w-full overflow-x-auto overscroll-x-contain text-left font-mono text-code-foreground`}
+        className={`${compact ? 'text-meta' : 'text-ui'} ${padded ? (compact ? 'py-2' : 'py-2.5') : ''} m-0 max-w-full text-left font-mono text-code-foreground`}
         role={frameless ? 'group' : 'region'}
         aria-label={language ? `${language} code` : 'Code'}
         tabIndex={0}
       >
-        <code className="block min-w-max [tab-size:2]">
+        <code className="block [tab-size:2]">
           {lines.map((segments, index) => (
             <div
               key={index}
-              className={`flex w-fit min-w-full whitespace-pre ${frameless && !padded ? 'pr-3' : frameless ? 'px-3' : 'px-3 first:pr-16'}`}
+              className={`flex whitespace-pre-wrap ${frameless && !padded ? 'pr-3' : frameless ? 'px-3' : 'px-3 first:pr-16'}`}
             >
               {gutter && (
                 <span
@@ -526,7 +529,7 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
                   {gutter.gutters[index] ?? ''}
                 </span>
               )}
-              <span className="min-w-0">
+              <span className="min-w-0 [overflow-wrap:anywhere]">
                 {segments.length === 0
                   ? ' '
                   : segments.map((segment, segmentIndex) =>

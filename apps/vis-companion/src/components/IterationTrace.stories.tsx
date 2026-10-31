@@ -148,3 +148,45 @@ export const CodeWithResult: Story = {
     await expect(canvas.getByRole('button', { name: 'Expand code' })).toBeVisible();
   },
 };
+
+/**
+ * A CODE BAND WITH LINES WIDER THAN THE COLUMN.
+ *
+ * Reported: scrolling a session with long code blocks was slow and painted white
+ * boxes. A block that scrolls sideways is its own compositor layer, and WebKit draws
+ * it only once it enters the screen. Long lines wrap inside the column instead.
+ */
+export const LongCodeLines: Story = {
+  args: {
+    live: false,
+    showCode: true,
+    iterations: [
+      {
+        id: 'long-lines',
+        position: 1,
+        forms: [
+          {
+            source: [
+              'h = (',
+              '    await shell(',
+              '        "cd ~/vis-python-runtime && git show HEAD:resources/vis-python/vis_runtime.py | grep -n \'SLEEP_SLICE_SECONDS\\\\|^def interruptible_sleep\' ; git log --oneline -5"',
+              '    )',
+              ').wait(30)',
+              'print("resources/prebuilds/darwin-arm64/python/lib/python3.13/site-packages/vis_runtime/threading_compat/__init__.py")',
+            ].join('\n'),
+            duration_ms: 1100,
+          },
+        ],
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    await openStepDigests(canvasElement);
+    await userEvent.click(within(canvasElement).getByRole('button', { name: 'Expand code' }));
+    const blocks = Array.from(canvasElement.querySelectorAll('pre'));
+    await expect(blocks.length).toBeGreaterThan(0);
+    // jsdom lays nothing out, so the width check runs only in a browser Storybook.
+    if (canvasElement.getBoundingClientRect().width === 0) return;
+    for (const block of blocks) await expect(block.scrollWidth).toBeLessThanOrEqual(block.clientWidth);
+  },
+};
