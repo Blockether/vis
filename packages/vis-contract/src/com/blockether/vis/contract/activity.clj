@@ -36,67 +36,77 @@
            (long (get-in schema ["$defs" "handle_id" "x-vis-max-bytes"])))
        (not-any? #(or (< (int %) 32) (contains? #{127 8232 8233} (int %))) value)))
 
+(defn- presentation-bounds?
+  "The limits of a wire `value` that the presentation schema cannot express."
+  [value]
+  (let [sections
+        (cons value (get value "sections"))
+
+        blocks
+        (mapcat #(get % "content") sections)
+
+        bytes
+        #(alength (.getBytes ^String % StandardCharsets/UTF_8))]
+
+    (and (or (not (contains? value "handle_id")) (valid-handle-id? (get value "handle_id")))
+         (every? #(<= (long (bytes %)) (long summary-byte-limit))
+                 (concat (mapcat #(map % ["headline" "summary"]) sections)
+                         (keep value ["outcome" "aside"])))
+         (every? (fn [block]
+                   (case (get block "type")
+                     "progress"
+                     (or (nil? (get block "value"))
+                         (<= (double (get block "value")) (double (get block "total"))))
+
+                     "table"
+                     (and (every? #(= (count %) (count (get block "columns"))) (get block "rows"))
+                          (let [paths (get block "paths")]
+                            (or (nil? paths) (= (count paths) (count (get block "rows"))))))
+
+                     true))
+                 blocks))))
+
 (defn valid-presentation?
   "Admit complete content and non-nested sections with brief headlines and summaries."
   [value]
   (let [value (wire/->wire value)]
-    (and (document/valid-json? "activity" "presentation" value)
-         (let [sections (cons value (get value "sections"))
-               blocks (mapcat #(get % "content") sections)
-               bytes #(alength (.getBytes ^String % StandardCharsets/UTF_8))]
+    (and (document/valid-json? "activity" "presentation" value) (presentation-bounds? value))))
 
-           (and (or (not (contains? value "handle_id")) (valid-handle-id? (get value "handle_id")))
-                (every? #(<= (long (bytes %)) (long summary-byte-limit))
-                        (concat (mapcat #(map % ["headline" "summary"]) sections)
-                                (keep value ["outcome" "aside"])))
-                (every? (fn [block]
-                          (case (get block "type")
-                            "progress"
-                            (or (nil? (get block "value"))
-                                (<= (double (get block "value")) (double (get block "total"))))
+(defn- projection-bounds?
+  "The limits of a wire projection that the projection schema cannot express. The schema
+   already checked every row presentation, so only their bounds run here."
+  [value]
+  (let [children
+        #(get % "children")
 
-                            "table"
-                            (and (every? #(= (count %) (count (get block "columns")))
-                                         (get block "rows"))
-                                 (let [paths (get block "paths")]
-                                   (or (nil? paths) (= (count paths) (count (get block "rows"))))))
+        rows
+        (mapcat #(tree-seq (comp seq children) children %) (get value "rows"))
 
-                            true))
-                        blocks))))))
+        ids
+        (map #(get % "id") rows)]
+
+    (and (= (count ids) (count (set ids)))
+         (every? #(or (not (contains? % "handle_id")) (valid-handle-id? (get % "handle_id"))) rows)
+         (every? #(or (not (contains? % "presentation"))
+                      (presentation-bounds? (get % "presentation")))
+                 rows)
+         (or (nil? (get value "history"))
+             (and (<= (count (filter #(empty? (children %)) rows)) (long page-row-limit))
+                  (or (<= (count (filter #(empty? (children %)) rows)) 1)
+                      (<= (alength (.getBytes ^String (wire/json-str value) StandardCharsets/UTF_8))
+                          (long page-byte-target))))))))
 
 (defn valid-projection?
   "Admit lossless projections; one indivisible invocation may exceed the page byte target."
   [value]
-  (and (document/valid? "activity" "projection" value)
-       (let [value
-             (wire/->wire value)
-
-             children
-             #(get % "children")
-
-             rows
-             (mapcat #(tree-seq (comp seq children) children %) (get value "rows"))
-
-             ids
-             (map #(get % "id") rows)]
-
-         (and (= (count ids) (count (set ids)))
-              (every? #(or (not (contains? % "handle_id")) (valid-handle-id? (get % "handle_id")))
-                      rows)
-              (every? #(or (not (contains? % "presentation"))
-                           (valid-presentation? (get % "presentation")))
-                      rows)
-              (or (nil? (get value "history"))
-                  (and (<= (count (filter #(empty? (children %)) rows)) (long page-row-limit))
-                       (or (<= (count (filter #(empty? (children %)) rows)) 1)
-                           (<= (alength (.getBytes ^String (wire/json-str value)
-                                                   StandardCharsets/UTF_8))
-                               (long page-byte-target)))))))))
+  (and (document/valid? "activity" "projection" value) (projection-bounds? (wire/->wire value))))
 
 (defn from-wire
   "Valid projection in engine spelling, or nil. Never accepts retired owner/view keys."
   [value]
-  (when (and (document/valid-json? "activity" "projection" value) (valid-projection? value))
+  ;; Perf pass 2026-10-31: one schema check, not three. Before, restoring 922 activities
+  ;; of one session spent 760 ms here.
+  (when (and (document/valid-json? "activity" "projection" value) (projection-bounds? value))
     (wire/->engine value)))
 
 (defn- first-invocation-id
