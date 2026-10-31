@@ -21,10 +21,10 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
-            [com.blockether.vis.internal.provider.oauth :as oauth]
-            [taoensso.telemere :as tel])
+            [com.blockether.vis.internal.provider.oauth :as oauth])
   (:import [java.net URLDecoder URLEncoder]
            [java.util Base64]))
 
@@ -228,7 +228,8 @@
   [credentials]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit (auth-file) (oauth/auth-json-str (assoc credentials :saved-at (util/now-ms))))
+    (paths/spit-private! (auth-file)
+                         (oauth/auth-json-str (assoc credentials :saved-at (util/now-ms))))
     (when (:reauth-required credentials) (provider-limits/auth-changed! :openai-codex))
     credentials))
 
@@ -281,13 +282,8 @@
        :saved-at :saved-at
        :refresh-token :refresh-token
        :exchange! refresh-access-token!
-       :persist! (fn [fresh]
-                   (save-auth-file! fresh)
-                   (tel/log! {:level :info
-                              :id ::codex-token-refreshed
-                              :data {:account-id (:account-id fresh)}
-                              :msg "OpenAI Codex token refreshed"})
-                   fresh)
+       :store :openai-codex
+       :persist! save-auth-file!
        :->token token-map
        :no-token!
        #(throw

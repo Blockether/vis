@@ -26,6 +26,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.provider.flow :as auth-flow]
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [com.blockether.vis.internal.util :as util])
@@ -178,12 +179,7 @@
   [server-name m]
   (let [f (token-file server-name)]
     (io/make-parents f)
-    (spit f (pr-str m))
-    (try (.setReadable f false false)
-         (.setReadable f true true)
-         (.setWritable f false false)
-         (.setWritable f true true)
-         (catch Throwable _ nil))
+    (paths/spit-private! f (pr-str m))
     m))
 
 (defn- expired?
@@ -330,7 +326,12 @@
     (when (>= (long status) 400)
       (throw (ex-info (str "MCP " server-name " token refresh failed: " status)
                       {:type :mcp/oauth-refresh :server server-name :status status :body body})))
-    (write-tokens! server-name (->tokens body creds))))
+    (try (write-tokens! server-name (->tokens body creds))
+         (catch Throwable t
+           (throw (ex-info
+                    (str "MCP " server-name " token refresh could not be saved")
+                    {:type :mcp/oauth-refresh :server server-name ::oauth/outcome :persist-failed}
+                    t))))))
 
 ;; Public: a 0/1-arg `bearer-fn` for the HTTP transport
 
@@ -339,13 +340,16 @@
    nothing is persisted yet, or the refresh token stopped working. Callers turn
    this into `sign in`, never into `the server is broken` - and never into a
    five-minute wait."
-  [server-name server-url www-auth cause]
-  (ex-info (str "MCP server '" server-name "' is not authorized - start the OAuth flow to sign in")
-           {:type :mcp/oauth-required
-            :server server-name
-            :server-url server-url
-            :www-authenticate www-auth}
-           cause))
+  ([server-name server-url www-auth cause]
+   (oauth-required server-name server-url www-auth cause nil))
+  ([server-name server-url www-auth cause extra]
+   (ex-info (str "MCP server '" server-name "' is not authorized - start the OAuth flow to sign in")
+            (merge extra
+                   {:type :mcp/oauth-required
+                    :server server-name
+                    :server-url server-url
+                    :www-authenticate www-auth})
+            cause)))
 
 (defn forget!
   "Drop persisted tokens for `server-name` after sign-out or a revoked refresh grant."
@@ -370,6 +374,7 @@
    one."
   [server-name server-url www-auth-atom]
   (oauth/refresher
+    (str "mcp/" server-name)
     (fn [rejected]
       (let [creds (read-tokens server-name)]
         (when (and creds (:token creds) (not (expired? creds)) (not= rejected (:token creds)))
@@ -379,11 +384,23 @@
         (if (:refresh-token creds)
           (try (:token (refresh-token-exchange! server-name creds))
                (catch Throwable t
-                 (when (and (= "invalid_grant" (get-in (ex-data t) [:body "error"]))
-                            (= creds (read-tokens server-name)))
-                   (forget! server-name))
-                 (throw (oauth-required server-name server-url @www-auth-atom t))))
-          (throw (oauth-required server-name server-url @www-auth-atom nil)))))))
+                 (let [rejected? (= "invalid_grant" (get-in (ex-data t) [:body "error"]))
+                       replaced? (not= creds (read-tokens server-name))]
+
+                   (when (and rejected? (not replaced?)) (forget! server-name))
+                   (throw (oauth-required server-name
+                                          server-url
+                                          @www-auth-atom
+                                          t
+                                          (when (and rejected? replaced?)
+                                            {::oauth/outcome :superseded}))))))
+          (throw (oauth-required server-name
+                                 server-url
+                                 @www-auth-atom
+                                 nil
+                                 ;; Nothing on file is a server that nobody signed in
+                                 ;; to, often a public one: no exchange, no record.
+                                 {::oauth/outcome (if creds :no-refresh-token :none)})))))))
 
 (defn token-status
   "Non-secret view of the persisted OAuth tokens for `server-name`. Never returns

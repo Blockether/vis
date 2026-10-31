@@ -1143,6 +1143,10 @@ vis.notify("Rules reloaded", "success")  # info, success, warn, error
 client that shows the session also gets the toast: the terminal and the Companion app. The toast
 is live only, and the transcript does not keep it.
 
+To save a secret file, such as OAuth tokens, use `vis.write_private_file(path, text)`.
+To log one token renewal without its tokens, use `vis.log_token_refresh(store, outcome)`.
+[Provider extensions](provider-extensions.md#store-and-renew-tokens-safely) describes both.
+
 ## Asking the human and showing live work
 
 `vis.ask(title, nodes)` pauses the extension and shows a typed form in the TUI

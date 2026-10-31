@@ -3,9 +3,12 @@
    layer — core, extensions, tests — can normalize without a require cycle."
   (:require [clojure.string :as str])
   (:import [java.io File IOException]
+           [java.nio ByteBuffer]
            [java.nio.channels FileChannel FileLock]
-           [java.nio.file FileAlreadyExistsException Files InvalidPathException LinkOption
-            OpenOption Path Paths StandardOpenOption]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file AccessDeniedException AtomicMoveNotSupportedException CopyOption
+            FileAlreadyExistsException Files InvalidPathException LinkOption OpenOption Path Paths
+            StandardCopyOption StandardOpenOption]
            [java.nio.file.attribute FileAttribute PosixFilePermission PosixFilePermissions]
            [java.time Instant LocalDate ZoneOffset]
            [java.time.format DateTimeFormatter DateTimeParseException]
@@ -292,6 +295,85 @@
   ^String [session-id]
   (str (sandbox-defs-dir) "/" (.replaceAll (str session-id) "[^A-Za-z0-9_.-]" "_") ".spill"))
 
+(defn- windows?
+  "True on Windows. Read at run time: a native image must not bake the build host in."
+  []
+  (str/starts-with? (System/getProperty "os.name" "") "Windows"))
+
+(defn- replace-file!
+  "Move `tmp` onto `target` in one atomic step. On Windows, a reader that holds
+   `target` open makes the move fail for a short time, so retry it a few times.
+   Never fall back to a write in place."
+  [^Path tmp ^Path target]
+  (loop [attempt 1]
+    (let [moved?
+          (try (try (Files/move tmp target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
+                    (catch AtomicMoveNotSupportedException _
+                      (Files/move tmp
+                                  target
+                                  (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+               true
+               (catch AccessDeniedException e
+                 (if (and (windows?) (< attempt 10)) false (throw e))))]
+      (when-not moved? (Thread/sleep (* 20 attempt)) (recur (inc attempt))))))
+
+(defn- force-dir!
+  "Force the entry of a replaced file in `dir` to the disk, so a power loss cannot
+   bring back the old file. POSIX only. A failure is ignored: the content is
+   already safe."
+  [^Path dir]
+  (when-not (windows?)
+    (try (with-open [ch (FileChannel/open dir (into-array OpenOption [StandardOpenOption/READ]))]
+           (.force ch true))
+         (catch Exception _ nil))))
+
+(defn spit-private!
+  "Write `content` to `path` as an owner-only (600) file, ATOMICALLY. The ONE
+   writer for every file that holds a secret: `~/.vis/state.yml` and each OAuth
+   credential store.
+
+     - The bytes are never even briefly world-readable: the temporary file is
+       CREATED with the restrictive mode (create-with-attribute, never
+       write-then-chmod).
+     - No reader ever observes a missing or half-written file, and an interrupted
+       write never destroys the previous one. The content lands in a sibling
+       temporary file, is forced to the disk and is then MOVED onto `path`, so the
+       file that was there survives every failure before the move.
+     - A `path` that is a symbolic link keeps its link: the content replaces the
+       file that the link names.
+
+   Falls back to a creation without the attribute, and to a replacing move, on a
+   filesystem that supports neither. On Windows, the move is retried for a short
+   time while another process holds the file open. Any other failure propagates, and the
+   temporary file is removed. The parent directory must exist."
+  [path ^String content]
+  (let [^Path given
+        (.toPath (File. (str path)))
+
+        ^Path target
+        (if (Files/isSymbolicLink given) (.toRealPath given (make-array LinkOption 0)) given)
+
+        ^Path dir
+        (or (.getParent target) (.toPath (File. ".")))
+
+        ^Path tmp
+        (.resolve dir (str "." (.getFileName target) ".tmp-" (java.util.UUID/randomUUID)))
+
+        attr
+        (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
+
+    (try (try (Files/createFile tmp (into-array FileAttribute [attr]))
+              (catch UnsupportedOperationException _
+                (Files/createFile tmp (make-array FileAttribute 0))))
+         (with-open [ch (FileChannel/open tmp (into-array OpenOption [StandardOpenOption/WRITE]))]
+           (let [buf (ByteBuffer/wrap (.getBytes content StandardCharsets/UTF_8))]
+             (while (.hasRemaining buf) (.write ch buf)))
+           (.force ch true))
+         (replace-file! tmp target)
+         (force-dir! dir)
+         nil
+         (finally (try (Files/deleteIfExists tmp) (catch Throwable _ nil))))))
+
 (defn process-id
   "This JVM's OS process id. Read fresh so native-image never bakes the builder's
    pid into the installed binary."
@@ -429,8 +511,9 @@
     (System/setProperty "vis.log.role" role)
     role))
 
-(defn- current-log-role
-  []
+(defn process-role
+  "This process's role: `gateway`, `tui` or `vis` (short-lived CLI work, the default)."
+  ^String []
   (let [role (System/getProperty "vis.log.role")]
     (if (contains? process-roles role) role "vis")))
 
@@ -443,7 +526,7 @@
    descriptor. Embedded Python belongs to the gateway stream rather than a third
    file. The active `.log` remains tail-able and Telemere gzip-compresses rotated
    parts; housekeeping removes stale generations by age."
-  (^String [] (log-file (current-log-role)))
+  (^String [] (log-file (process-role)))
   (^String [role]
    (let [role (name role)]
      (when-not (contains? log-roles role)

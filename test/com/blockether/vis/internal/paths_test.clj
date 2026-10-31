@@ -2,7 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths]
-            [lazytest.core :refer [defdescribe expect it]])
+            [lazytest.core :refer [defdescribe expect it throws?]])
   (:import (java.io File)
            (java.nio.file Files FileVisitOption Path)
            (java.nio.file.attribute FileAttribute)
@@ -373,3 +373,38 @@
                (expect (str/includes? (str message) reason) (str message))
                (expect (= previous tmpdir))))
            (finally (.delete link) (delete-tree! task))))))
+
+(defdescribe
+  spit-private-test
+  (it "throws and keeps the previous file when the replace cannot happen"
+      ;; Regression: the old fallback rewrote the file in place with plain spit,
+      ;; so an interrupted write could leave a credential file half written.
+      (let [dir
+            (private-task-dir)
+
+            file
+            (io/file dir "auth.json")]
+
+        (try (paths/spit-private! file "previous")
+             (.setWritable dir false)
+             (expect (throws? java.io.IOException #(paths/spit-private! file "next")))
+             (expect (= "previous" (slurp file)))
+             (expect (= ["auth.json"] (vec (.list dir))))
+             (finally (.setWritable dir true) (delete-tree! dir)))))
+  (it "writes through a symbolic link and keeps the link"
+      (let [dir
+            (private-task-dir)
+
+            target
+            (io/file dir "real.json")
+
+            link
+            (io/file dir "link.json")]
+
+        (try (spit target "old")
+             (Files/createSymbolicLink (.toPath link) (.toPath target) (make-array FileAttribute 0))
+             (paths/spit-private! link "new")
+             (expect (Files/isSymbolicLink (.toPath link)))
+             (expect (= "new" (slurp target)))
+             (expect (= #{"real.json" "link.json"} (set (.list dir))))
+             (finally (delete-tree! dir))))))

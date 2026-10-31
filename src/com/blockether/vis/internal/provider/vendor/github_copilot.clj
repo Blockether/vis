@@ -24,6 +24,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [taoensso.telemere :as tel]))
 
@@ -151,7 +152,7 @@
   [auth-state]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit (auth-file) (oauth/auth-json-str auth-state))))
+    (paths/spit-private! (auth-file) (oauth/auth-json-str auth-state))))
 
 (defn- normalize-account-type
   [value]
@@ -467,6 +468,42 @@
        :sku (or (:sku resp) (:access_type_sku resp))
        :oauth-token oauth-token})))
 
+(defn- exchange-and-cache!
+  "Exchange the OAuth token for a new Copilot API token and cache it.
+   `trigger` is :expired or :rejected-token. Every exchange is logged once
+   through `oauth/log-refresh!`, also when no OAuth token is on file."
+  [cached opts trigger]
+  (let [entry
+        {:store :github-copilot :trigger trigger :started-ms (util/now-ms)}
+
+        oauth-token
+        (or (:oauth-token cached) (:oauth-token (detect-oauth-token)))]
+
+    (when-not oauth-token
+      (oauth/log-refresh! (assoc entry :outcome :no-refresh-token))
+      (throw (ex-info (str "No GitHub Copilot OAuth token found. Run `vis-agent providers auth "
+                           (name COPILOT_PROVIDER_ID)
+                           "` to authenticate.")
+                      {:type :vis/copilot-not-authenticated})))
+    (let [fresh (try (exchange-for-copilot-token! oauth-token opts)
+                     (catch Throwable e
+                       (oauth/log-refresh! (assoc entry
+                                             :outcome :failed
+                                             :error e))
+                       (throw e)))]
+      (reset! token-cache (assoc fresh :oauth-token oauth-token))
+      (oauth/log-refresh! (assoc entry :outcome :refreshed))
+      (tel/log! {:level :info
+                 :id ::copilot-token-refreshed
+                 :data {:expires-in-ms (- (long (:expires-at-ms fresh)) (util/now-ms))
+                        :api-url (:api-url fresh)
+                        :account-type (:account-type fresh)}
+                 :msg "Copilot API token refreshed"})
+      {:token (:token fresh)
+       :api-url (:api-url fresh)
+       :account-type (:account-type fresh)
+       :llm-headers COPILOT_HEADERS})))
+
 (defn get-copilot-token!
   "Get a valid Copilot API token, refreshing if needed.
    Uses cached token if still valid, otherwise exchanges the OAuth token.
@@ -493,30 +530,7 @@
                      (copilot-llm-base-url (:token cached) {} nil))
         :account-type (credential-account-type)
         :llm-headers COPILOT_HEADERS}
-       ;; Need to refresh
-       (let [oauth-token
-             (or (:oauth-token cached)
-                 (:oauth-token (detect-oauth-token))
-                 (throw (ex-info
-                          (str "No GitHub Copilot OAuth token found. Run `vis-agent providers auth "
-                               (name COPILOT_PROVIDER_ID)
-                               "` to authenticate.")
-                          {:type :vis/copilot-not-authenticated})))
-
-             fresh
-             (exchange-for-copilot-token! oauth-token opts)]
-
-         (reset! token-cache (assoc fresh :oauth-token oauth-token))
-         (tel/log! {:level :info
-                    :id ::copilot-token-refreshed
-                    :data {:expires-in-ms (- (long (:expires-at-ms fresh)) now)
-                           :api-url (:api-url fresh)
-                           :account-type (:account-type fresh)}
-                    :msg "Copilot API token refreshed"})
-         {:token (:token fresh)
-          :api-url (:api-url fresh)
-          :account-type (:account-type fresh)
-          :llm-headers COPILOT_HEADERS})))))
+       (exchange-and-cache! cached opts :expired)))))
 
 ;; CLI helpers
 
@@ -743,34 +757,32 @@
   []
   ;; Copilot's GitHub OAuth token is STABLE (no rotation, so no
   ;; invalid_grant), but a 401 storm would still stampede the
-  ;; OAuth->Copilot exchange. `oauth/refresher` owns a per-account lock and
-  ;; single-flights it: the first caller exchanges, the rest reuse the now-
-  ;; valid cache. (Cache-backed, not file-backed, so it uses `refresher`,
-  ;; not `make-file-refresher`.)
-  (oauth/refresher
-    ;; REUSE: a concurrent caller may have re-exchanged while this one
-    ;; waited for the lock — if the cache is valid again, return it
-    ;; (get-copilot-token! reads the cache without exchanging). `rejected`
-    ;; is the token the server just 401'd: never reuse it — a still-cached
-    ;; but revoked token would otherwise be handed straight back and 401 again.
-    (fn [rejected]
-      (let [cached
-            @token-cache
+  ;; OAuth->Copilot exchange. One lock single-flights it: the first caller
+  ;; exchanges, the rest reuse the now-valid cache. Not `oauth/refresher`:
+  ;; `exchange-and-cache!` already logs each exchange, and a second record
+  ;; would count one exchange twice.
+  (let [lock
+        (oauth/new-lock)
 
-            now
-            (util/now-ms)]
+        ;; REUSE: a concurrent caller may have re-exchanged while this one
+        ;; waited for the lock — if the cache is valid again, return it
+        ;; (get-copilot-token! reads the cache without exchanging). `rejected`
+        ;; is the token the server just 401'd: never reuse it — a still-cached
+        ;; but revoked token would otherwise be handed straight back and 401 again.
+        reuse
+        (fn [rejected]
+          (let [cached @token-cache]
+            (when (and (cached-token-usable? cached (util/now-ms)) (not= rejected (:token cached)))
+              (get-copilot-token!))))
 
-        (when (and (cached-token-usable? cached now) (not= rejected (:token cached)))
-          (get-copilot-token!))))
-    ;; REFRESH: drop the cache and force one fresh exchange.
-    (fn []
-      (reset! token-cache nil)
-      (let [fresh (get-copilot-token!)]
-        (tel/log! {:level :info
-                   :id ::copilot-token-force-refreshed
-                   :data {:account-type (:account-type fresh)}
-                   :msg "Copilot API token force-refreshed (401 recovery)"})
-        fresh))))
+        ;; REFRESH: drop the cache and force one fresh exchange.
+        refresh!
+        (fn [trigger]
+          (reset! token-cache nil)
+          (exchange-and-cache! nil nil trigger))]
+
+    (fn ([] (oauth/single-flight! lock #(reuse nil) #(refresh! :expired)))
+      ([rejected] (oauth/single-flight! lock #(reuse rejected) #(refresh! :rejected-token))))))
 
 (defn- limits!
   "Quota for the signed-in Copilot account. `dynamic-limits!` already reports

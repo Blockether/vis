@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.oauth :as oauth])
   (:import [java.net URLDecoder URLEncoder]
@@ -205,7 +206,7 @@
   [credentials]
   (let [^java.io.File dir (auth-dir)]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit (auth-file) (wire/json-str (assoc credentials :saved-at-ms (util/now-ms))))
+    (paths/spit-private! (auth-file) (wire/json-str (assoc credentials :saved-at-ms (util/now-ms))))
     (when (:reauth-required credentials) (provider-limits/auth-changed! :anthropic-coding-plan))
     credentials))
 
@@ -240,6 +241,7 @@
        :saved-at :saved-at-ms
        :refresh-token :refresh-token
        :exchange! refresh-access-token!
+       :store :anthropic-coding-plan
        :persist! save-auth-file!
        :->token (fn [auth]
                   {:token (:access-token auth)})

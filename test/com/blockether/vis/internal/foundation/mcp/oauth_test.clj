@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.foundation.mcp.oauth-test
   (:require [babashka.http-client :as http]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]]
+            [taoensso.telemere :as tel]))
 
 (defdescribe
   rejected-refresh-grant-test
@@ -187,3 +188,83 @@
                                                                {:timeout 500})
                                                      false
                                                      (catch Exception _ true)))))))))
+
+(defdescribe
+  missing-refresh-token-test
+  (it "writes no refresh record for a server that nobody signed in to"
+      ;; Audit finding: every request to a public MCP server logged a warning.
+      (let [file (java.io.File. (System/getProperty "java.io.tmpdir")
+                                (str "vis-mcp-oauth-none-" (System/nanoTime) ".edn"))]
+        (with-redefs-fn {#'oauth/token-file (constantly file)}
+          (fn []
+            (let [bearer
+                  (oauth/make-bearer-fn "public" "https://gateway.example.com/mcp" (atom nil))
+                  signals (:signals (tel/with-signals
+                                      (dotimes [_ 2]
+                                        (try (bearer) (catch clojure.lang.ExceptionInfo _ nil)))))]
+
+              (expect (not (.exists file)))
+              (expect (empty? (filter #(= :com.blockether.vis.internal.provider.oauth/token-refresh
+                                          (:id %))
+                                      signals))))))))
+  (it "asks for sign-in and logs no-refresh-token when nothing can be refreshed"
+      ;; Regression: a missing refresh token was logged as a failed exchange.
+      (let [file (java.io.File/createTempFile "vis-mcp-oauth-test-" ".edn")]
+        (try (spit file (pr-str {:token "test-access" :expires-at-ms 0}))
+             (with-redefs-fn {#'oauth/token-file (constantly file)}
+               (fn []
+                 (let [bearer
+                       (oauth/make-bearer-fn "remote" "https://gateway.example.com/mcp" (atom nil))
+                       error (atom nil)
+                       signal (tel/with-signal (try (bearer)
+                                                    (catch clojure.lang.ExceptionInfo e
+                                                      (reset! error e))))]
+
+                   (expect (= :mcp/oauth-required (:type (ex-data @error))))
+                   (expect (= {:store "mcp/remote" :outcome :no-refresh-token}
+                              (select-keys (:data signal) [:store :outcome]))))))
+             (finally (.delete file)))))
+  (it
+    "logs persist-failed and superseded for those MCP refresh results"
+    ;; Regression: both logged as failed or rejected, which hid a lost rotation.
+    (doseq [[outcome post!] [[:persist-failed
+                              (fn [^java.io.File file]
+                                (.setWritable (.getParentFile file) false)
+                                {:status 200 :body {"access_token" "a" "refresh_token" "r2"}})]
+                             [:superseded
+                              (fn [^java.io.File file]
+                                (spit file (pr-str {:token "other" :refresh-token "other-refresh"}))
+                                {:status 400 :body {"error" "invalid_grant"}})]]]
+      (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                           "vis-mcp-oauth-test-"
+                           (make-array java.nio.file.attribute.FileAttribute 0)))
+            file (java.io.File. dir "remote.edn")]
+
+        (try (spit file
+                   (pr-str {:token "test-access" :refresh-token "test-refresh" :expires-at-ms 0}))
+             (with-redefs-fn {#'oauth/token-file (constantly file)
+                              #'oauth/http-post-form (fn [& _]
+                                                       (post! file))}
+               (fn []
+                 (let [bearer
+                       (oauth/make-bearer-fn "remote" "https://gateway.example.com/mcp" (atom nil))
+                       signal (tel/with-signal (bearer))]
+
+                   (expect (= outcome (get-in signal [:data :outcome])) (str outcome)))))
+             (finally (.setWritable dir true)
+                      (doseq [^java.io.File f (reverse (file-seq dir))]
+                        (.delete f)))))))
+  (it "writes no record for a server that nobody signed in to"
+      ;; Audit finding: a public MCP server logged a warning on every request.
+      (let [file (java.io.File. (System/getProperty "java.io.tmpdir")
+                                (str "vis-mcp-oauth-none-" (System/nanoTime) ".edn"))]
+        (with-redefs-fn {#'oauth/token-file (constantly file)}
+          (fn []
+            (let [bearer
+                  (oauth/make-bearer-fn "public" "https://gateway.example.com/mcp" (atom nil))
+                  signals (:signals (tel/with-signals (dotimes [_ 2]
+                                                        (try (bearer) (catch Exception _ nil)))))]
+
+              (expect (empty? (filter #(= :com.blockether.vis.internal.provider.oauth/token-refresh
+                                          (:id %))
+                                      signals)))))))))

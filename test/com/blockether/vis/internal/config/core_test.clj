@@ -7,6 +7,7 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe it expect]]
@@ -349,7 +350,7 @@
           (str (io/file dir "state.yml"))
 
           write!
-          @#'config/spit-private!
+          paths/spit-private!
 
           body
           (fn [id]
@@ -402,7 +403,7 @@
             (str (io/file dir "state.yml"))
 
             write!
-            @#'config/spit-private!]
+            paths/spit-private!]
 
         (try (.mkdirs dir)
              (write! path "providers: []\n")
@@ -424,7 +425,7 @@
             (str (io/file dir "state.yml"))
 
             write!
-            @#'config/spit-private!]
+            paths/spit-private!]
 
         (try (.mkdirs dir)
              (dotimes [i 5]

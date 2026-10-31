@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.provider.oauth-test
   (:require [charred.api :as json]
             [clojure.java.io :as io]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.provider.oauth :as oauth]
-            [lazytest.core :refer [defdescribe expect it throws?]]))
+            [lazytest.core :refer [defdescribe expect it throws?]]
+            [taoensso.telemere :as tel]))
 
 (defdescribe
   oauth-facade-test
@@ -294,15 +296,17 @@
               (let [ran (atom 0)
                     seen (atom [])
                     threads (doall (for [_ (range 25)]
-                                     (doto (Thread. #(try (oauth/call-with-file-lock path
-                                                                                     60000
-                                                                                     (fn []
-                                                                                       (swap! ran inc)))
-                                                          (catch Throwable t
-                                                            (swap! seen conj
-                                                              [(class t)
-                                                               (.isInterrupted (Thread/currentThread))]))))
+                                     (doto (Thread.
+                                             #(try (oauth/call-with-file-lock path
+                                                                              60000
+                                                                              (fn []
+                                                                                (swap! ran inc)))
+                                                   (catch Throwable t
+                                                     (swap! seen conj
+                                                       [(class t)
+                                                        (.isInterrupted (Thread/currentThread))]))))
                                        (.start))))]
+
                 (Thread/sleep 200)
                 (doseq [^Thread t threads]
                   (.interrupt t))
@@ -432,3 +436,132 @@
             (expect (identical? failure (try (refresh!) nil (catch Exception e e)))))
           (expect (nil? (:reauth-required @saved)))
           (expect (= 2 @calls))))))
+
+(defdescribe
+  token-refresh-log-test
+  ;; Regression: an Anthropic sign-in was lost to invalid_grant, and no log line
+  ;; named the process or the result of any refresh exchange.
+  (let [sent
+        "old-secret-refresh-token-0123456789"
+
+        next-token
+        "next-secret-refresh-token-9876543210"
+
+        rejected-grant
+        #(throw (ex-info "HTTP 400" {:status 400 :body "{\"error\":\"invalid_grant\"}"}))
+
+        file-refresher
+        (fn [saved exchange! persist!]
+          (oauth/make-file-refresher {:store :test-store
+                                      :load #(deref saved)
+                                      :saved-at :saved-at-ms
+                                      :refresh-token :refresh-token
+                                      :exchange! exchange!
+                                      :persist! persist!
+                                      :->token #(hash-map :token (:access-token %))
+                                      :no-token! #(throw (ex-info "No credential" {}))}))
+
+        persist-to
+        (fn [saved]
+          #(reset! saved (assoc % :saved-at-ms (System/currentTimeMillis))))
+
+        cases
+        [{:outcome :refreshed
+          :trigger :expired
+          :sha [true true]
+          :run (fn [saved]
+                 ((file-refresher saved
+                                  (fn [_]
+                                    {:access-token "access" :refresh-token next-token})
+                                  (persist-to saved))))}
+         {:outcome :rejected
+          :trigger :rejected-token
+          :sha [true false]
+          :run (fn [saved]
+                 ((file-refresher saved
+                                  (fn [_]
+                                    (rejected-grant))
+                                  (persist-to saved))
+                   "old-access"))}
+         {:outcome :superseded
+          :trigger :expired
+          :sha [true false]
+          :run (fn [saved]
+                 ((file-refresher saved
+                                  (fn [_]
+                                    (reset! saved {:access-token "new" :refresh-token "other"})
+                                    (rejected-grant))
+                                  (persist-to saved))))}
+         {:outcome :failed
+          :trigger :expired
+          :sha [true false]
+          :run (fn [saved]
+                 ((file-refresher saved
+                                  (fn [_]
+                                    (throw (ex-info "HTTP 503" {:status 503 :body sent})))
+                                  (persist-to saved))))}
+         {:outcome :persist-failed
+          :trigger :expired
+          :sha [true true]
+          :run (fn [saved]
+                 ((file-refresher saved
+                                  (fn [_]
+                                    {:access-token "access" :refresh-token next-token})
+                                  (fn [_]
+                                    (throw (java.io.IOException. "disk full"))))))}
+         {:outcome :no-refresh-token
+          :trigger :expired
+          :sha [false false]
+          :run (fn [saved]
+                 (swap! saved dissoc :refresh-token)
+                 ((file-refresher saved
+                                  (fn [_]
+                                    (rejected-grant))
+                                  (persist-to saved))))}
+         {:outcome :no-refresh-token
+          :trigger :rejected-token
+          :sha [false false]
+          :run (fn [_]
+                 ((oauth/refresher :test-store
+                                   (fn [_]
+                                     nil)
+                                   #(throw (ex-info "Nothing to refresh"
+                                                    {::oauth/outcome :no-refresh-token})))
+                   "old-access"))}
+         {:outcome :failed
+          :trigger :expired
+          :sha [false false]
+          :run (fn [_]
+                 ((oauth/refresher :test-store
+                                   (fn [_]
+                                     nil)
+                                   #(throw (ex-info "boom" {})))))}]]
+
+    (doseq [{:keys [outcome trigger sha run]} cases]
+      (it (str "logs " (name outcome) " on " (name trigger) " with the process and no token")
+          (let [saved (atom {:access-token "old-access" :refresh-token sent :saved-at-ms 0})
+                signal (tel/with-signal (run saved))
+                data (:data signal)]
+
+            (expect (= ::oauth/token-refresh (:id signal)))
+            (expect (= {:store "test-store"
+                        :outcome outcome
+                        :trigger trigger
+                        :pid (paths/process-id)
+                        :role (paths/process-role)}
+                       (select-keys data [:store :outcome :trigger :pid :role])))
+            (expect (nat-int? (:duration-ms data)))
+            (expect (= sha
+                       [(contains? data :refresh-token-sha)
+                        (contains? data :next-refresh-token-sha)]))
+            (expect (not (re-find #"secret-refresh-token" (pr-str signal))))))))
+  (it "fingerprints the same token alike so a log can follow one rotation chain"
+      (let [log (fn [token]
+                  (-> (tel/with-signal
+                        (oauth/log-refresh!
+                          {:store "s" :outcome :refreshed :trigger :expired :refresh-token token}))
+                      :data
+                      :refresh-token-sha))]
+        (expect (= (log "token-a") (log "token-a")))
+        (expect (not= (log "token-a") (log "token-b")))
+        (expect (re-matches #"[0-9a-f]{8}" (log "token-a"))))))

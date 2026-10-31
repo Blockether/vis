@@ -11,6 +11,7 @@ import __future__
 import ast
 import base64
 import builtins
+import hashlib
 import inspect
 import io
 import json
@@ -3884,6 +3885,152 @@ def log(level, msg):
 
 def notify(text, level="info"):
     _host.notify(str(text), str(level))
+
+
+def _replace_file(tmp, target):
+    # On Windows a reader that holds `target` open makes the replace fail for a
+    # short time. Retry it, and never fall back to a write in place.
+    for attempt in range(1, 11):
+        try:
+            os.replace(tmp, target)
+            break
+        except PermissionError:
+            if os.name != "nt" or attempt == 10:
+                raise
+            time.sleep(0.02 * attempt)
+    if os.name != "nt":
+        # Force the directory entry to the disk, so a power loss cannot bring
+        # back the old file. The content is already safe, so a failure is ignored.
+        try:
+            fd = os.open(target.parent, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+
+
+def write_private_file(path: str | PathLike[str], text: str) -> None:
+    """Write `text` to `path` as an owner-only file, atomically.
+
+    Use it for each file that holds a secret, for example OAuth tokens. It gives
+    the guarantees of the engine's own credential writer:
+
+    - The text goes to a sibling temporary file that is created with mode 0600.
+      It is never readable by other users, even for a short time.
+    - The temporary file is flushed to the disk and then replaces `path` in one
+      atomic step. A reader sees the previous file or the new file, never a
+      missing or half-written file. On Windows, the replace is retried for a
+      short time while another process holds the file open.
+    - If a step fails, the previous file stays unchanged, the temporary file is
+      removed and the error propagates.
+    - A `path` that is a symbolic link keeps its link. The text replaces the file
+      that the link names. A link to a missing file raises FileNotFoundError.
+
+    The text is encoded as UTF-8. The parent directory must exist.
+    """
+    if not isinstance(text, str):
+        raise TypeError(f"write_private_file takes text, not {type(text).__name__}")
+    given = Path(os.fspath(path))
+    target = given.resolve(strict=True) if given.is_symlink() else given
+    tmp = target.with_name(f".{target.name}.tmp-{os.urandom(16).hex()}")
+    fd = os.open(
+        tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_file(tmp, target)
+    finally:
+        if os.path.lexists(tmp):
+            os.unlink(tmp)
+
+
+_TOKEN_REFRESH_OUTCOMES = {
+    "refreshed": "info",
+    "superseded": "info",
+    "persist-failed": "error",
+    "rejected": "warn",
+    "failed": "warn",
+    "no-refresh-token": "warn",
+}
+
+
+def _token_fingerprint(token):
+    if not token or not str(token).strip():
+        return None
+    return hashlib.sha256(str(token).encode("utf-8")).hexdigest()[:8]
+
+
+def log_token_refresh(
+    store: str,
+    outcome: str,
+    *,
+    trigger: str = "expired",
+    started: float | None = None,
+    status: int | None = None,
+    error: BaseException | None = None,
+    refresh_token: str | None = None,
+    next_refresh_token: str | None = None,
+) -> None:
+    """Log ONE OAuth token refresh exchange of credential store `store`.
+
+    Call it once for each exchange, also for a failed one. The engine logs its
+    own providers with the same fields, so one search finds every refresh.
+
+    `outcome` is one of:
+
+    - `refreshed`: the exchange succeeded and the new credential was saved.
+    - `rejected`: the endpoint refused the refresh grant. A sign-in is needed.
+    - `superseded`: refused, but another writer replaced the credential first.
+    - `failed`: the exchange failed for another reason.
+    - `persist-failed`: the exchange succeeded but the save failed. The rotated
+      refresh token is lost.
+    - `no-refresh-token`: there was nothing to exchange.
+
+    `trigger` is `rejected-token` when a request was just refused, else
+    `expired`. `started` is a `time.monotonic()` value from the start of the
+    exchange. The record never holds a token, a response body or an error
+    message. It holds the process ID, the HTTP `status`, the class of `error` and
+    the first 8 hex digits of the SHA-256 of `refresh_token` (sent) and
+    `next_refresh_token` (received). The fingerprints let a log follow one
+    rotation chain across processes.
+    """
+    if outcome not in _TOKEN_REFRESH_OUTCOMES:
+        raise ValueError(
+            f"outcome must be one of {sorted(_TOKEN_REFRESH_OUTCOMES)}, not {outcome!r}"
+        )
+    if trigger not in ("expired", "rejected-token"):
+        raise ValueError(
+            f"trigger must be 'expired' or 'rejected-token', not {trigger!r}"
+        )
+    record = {
+        "store": str(store),
+        "outcome": outcome,
+        "trigger": trigger,
+        "pid": os.getpid(),
+        "role": "extension",
+    }
+    if started is not None:
+        record["duration-ms"] = max(0, round((time.monotonic() - started) * 1000))
+    if status is not None:
+        record["status"] = int(status)
+    if error is not None:
+        record["error-class"] = f"{type(error).__module__}.{type(error).__qualname__}"
+    sent = _token_fingerprint(refresh_token)
+    if sent:
+        record["refresh-token-sha"] = sent
+    received = _token_fingerprint(next_refresh_token)
+    if received:
+        record["next-refresh-token-sha"] = received
+    _host.log(
+        _TOKEN_REFRESH_OUTCOMES[outcome],
+        f"OAuth token refresh of {record['store']}: {outcome} "
+        + json.dumps(record, sort_keys=True),
+    )
 
 
 def _shell_options(name, opts):

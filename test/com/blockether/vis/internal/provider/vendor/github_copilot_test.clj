@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.provider.vendor.github-copilot-test
   (:require [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.provider.oauth :as oauth]
             [com.blockether.vis.internal.provider.vendor.github-copilot :as sut]
-            [lazytest.core :refer [defdescribe describe expect it]]))
+            [lazytest.core :refer [defdescribe describe expect it]]
+            [taoensso.telemere :as tel]))
 
 ;; Regression, issue #169: Copilot shipped without a network envelope, so the gateway's
 ;; fixed 120-second backstop cancelled long-prefill sol calls before svar's watchdog did.
@@ -346,3 +348,45 @@
               (let [auth! (:provider/auth-fn (registry/provider-by-id :github-copilot))]
                 (expect (= :already-authenticated (auth! (constantly nil))))
                 (expect (= [] @flows)))))))))
+
+(defdescribe
+  copilot-token-refresh-log-test
+  ;; Regression: the routine Copilot exchange wrote no token-refresh record, and a
+  ;; forced exchange must not be counted twice.
+  (it
+    "logs each exchange once with its trigger and outcome"
+    (let [records
+          (fn [f]
+            (->> (:signals (tel/with-signals (try (f) (catch Exception _ nil))))
+                 (filter #(= ::oauth/token-refresh (:id %)))
+                 (mapv #(select-keys (:data %) [:store :trigger :outcome]))))
+
+          token-resp
+          {:token "tid=x;exp=1"
+           :expires_at (+ (quot (System/currentTimeMillis) 1000) 1800)
+           :refresh_in 1500
+           :endpoints {:api "https://api.individual.githubcopilot.com"}}]
+
+      (with-redefs [sut/detect-oauth-token
+                    (constantly {:oauth-token "ghu_test"})
+
+                    sut/credential-account-type
+                    (constantly :individual)
+
+                    sut/get-json
+                    (fn [_ _]
+                      token-resp)]
+
+        (reset! @#'sut/token-cache nil)
+        (expect (= [{:store "github-copilot" :trigger :expired :outcome :refreshed}
+                    {:store "github-copilot" :trigger :rejected-token :outcome :refreshed}]
+                   (records #(do (sut/get-copilot-token!)
+                                 (sut/get-copilot-token!)
+                                 ((@#'sut/force-refresh-fn) "tid=x;exp=1")))))
+        (reset! @#'sut/token-cache nil)
+        (with-redefs [sut/get-json (fn [_ _]
+                                     (throw (ex-info "HTTP 401" {:status 401})))]
+          (expect (= [:failed] (mapv :outcome (records sut/get-copilot-token!)))))
+        (with-redefs [sut/detect-oauth-token (constantly nil)]
+          (expect (= [:no-refresh-token] (mapv :outcome (records sut/get-copilot-token!)))))
+        (reset! @#'sut/token-cache nil)))))

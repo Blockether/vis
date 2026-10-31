@@ -1833,53 +1833,6 @@
     (try (Files/setPosixFilePermissions (.toPath f) (PosixFilePermissions/fromString "rwx------"))
          (catch Throwable _ nil))))
 
-(defn- spit-private!
-  "Write `content` to `path` as an owner-only (600) file, ATOMICALLY.
-
-   Two properties, both load-bearing for `~/.vis/state.yml` — the machine store
-   that carries every provider, the model pick and the learned routing memory:
-
-     - the bytes are never even briefly world-readable, so the temporary file is
-       CREATED with the restrictive mode (create-with-attribute, never
-       write-then-chmod);
-     - no reader ever observes a missing or half-written store, and an
-       interrupted write never destroys the previous one. The content lands in a
-       sibling temp file and is then MOVED onto `path`, so the file that was
-       there survives every failure before the move.
-
-   A delete-then-create-then-write sequence has neither property: for the whole
-   window the store does not exist, and a parallel session, a `/reload` or a
-   crash inside it reads — or leaves behind — a config with no providers in it.
-
-   Falls back to a replacing move, then to plain `spit`, on a filesystem that
-   supports neither the attribute nor an atomic move."
-  [^String path ^String content]
-  (let [^Path target
-        (.toPath (io/file path))
-
-        ^Path dir
-        (or (.getParent target) (.toPath (io/file ".")))
-
-        ^Path tmp
-        (.resolve dir (str "." (.getFileName target) ".tmp-" (java.util.UUID/randomUUID)))
-
-        attr
-        (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
-
-    (try
-      (try (Files/createFile tmp (into-array FileAttribute [attr]))
-           (catch UnsupportedOperationException _
-             (Files/createFile tmp (make-array FileAttribute 0))))
-      (Files/write tmp (util/utf8 content) ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
-      (try (Files/move tmp target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
-           (catch Throwable _
-             (Files/move tmp target (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
-      (catch Throwable _
-        (spit path content)
-        (try (Files/setPosixFilePermissions target (PosixFilePermissions/fromString "rw-------"))
-             (catch Throwable _ nil)))
-      (finally (try (Files/deleteIfExists tmp) (catch Throwable _ nil))))))
-
 (defn- ->yaml-safe
   "Convert an internal domain map to the string-keyed YAML contract.
    Existing string keys remain exact; keyword keys/values become plain strings."
@@ -1917,7 +1870,7 @@
           (runtime-config wire-config)]
 
       (ensure-private-dir! (config-dir))
-      (spit-private! (state-path) (yamlstar/dump wire-config))
+      (paths/spit-private! (state-path) (yamlstar/dump wire-config))
       (invalidate-config-cache!)
       (when (provider-selection-changed? previous-provider selected-provider)
         (emit-provider-selected! {:previous-provider previous-provider
@@ -2264,7 +2217,7 @@
             (config-validation/assert-config! after path)
             (when (not= before after)
               (ensure-private-dir! (str dir))
-              (spit-private! path (yamlstar/dump after))
+              (paths/spit-private! path (yamlstar/dump after))
               (invalidate-config-cache!))
             after))))))
 
