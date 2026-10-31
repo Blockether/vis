@@ -295,6 +295,14 @@
 
 (defn- trusted-worker? [k] (or (= k shared-key) (instance? TrustedExtensionWorker k)))
 
+(defn- worker-role
+  "What a worker with key `k` runs, for logs that count workers and their memory."
+  [k]
+  (cond (= k shared-key) "shared"
+        (and (instance? TrustedExtensionWorker k) (:packages k)) "extension-packages"
+        (instance? TrustedExtensionWorker k) "extension"
+        :else "sandbox"))
+
 (defn- worker-jvm-options
   "Keep runtime flags, not the parent's recording, repository or diagnostic destinations.
    Worker diagnostic files belong to its own writable log directory."
@@ -603,7 +611,8 @@
 
     (with-open [server (ServerSocketChannel/open StandardProtocolFamily/UNIX)]
       (try
-        (let [names (socket-names (.toPath socket) child-dir)
+        (let [start-ns (System/nanoTime)
+              names (socket-names (.toPath socket) child-dir)
               _ (bind-control! server (:bind names) (.toPath socket))
               library (try (python-runtime/ensure-library!)
                            (catch Throwable t
@@ -686,7 +695,12 @@
                                (pr-str (util/json-str runtime-roots))
                                ")\nsys.path[:] = __vis_runtime_roots__ + [p for p in sys.path"
                                " if p not in __vis_runtime_roots__]\n")})
-                (tel/log! {:level :debug :id ::started} (str "python worker pid " (.pid process)))
+                (tel/log! {:level :info
+                           :id ::started
+                           :data {:pid (.pid process)
+                                  :role (worker-role k)
+                                  :start-ms (quot (- (System/nanoTime) start-ns) 1000000)}}
+                          (str "python worker pid " (.pid process)))
                 ;; The runtime retains a private sink before interpreter confinement.
                 ;; No trace is emitted until retirement requests one for this process.
                 (let [path (.getAbsolutePath (io/file dir "python-stacks.log"))
