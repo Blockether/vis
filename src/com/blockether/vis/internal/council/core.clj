@@ -721,6 +721,7 @@
       "- Council is asynchronous message passing between the sessions of one group. A reply means only that a response arrived; verify the acceptance criteria yourself.\n"
       "- Find sessions with `await list_sessions(search=...)` and read one with `await read_session(session_id)`. Reuse saved context before you repeat its research.\n"
       "- Publish with `await council.publish(content, ping=[session_id], reply_required=True)`.\n"
+      "- Write Council content and `council.run` tasks in Markdown. Put one point on each line, with `-` or `1.` for lists. Put code, paths and commands in backticks.\n"
       "- A reply to your request arrives as a Council ping. Do not poll `council.get` or `council.read` for it.\n"
       "- Before ending the turn, answer each item of `session['council']['pending_replies']` once with `council.publish(content, reply_to=entry_id)`. An unknown, a refusal or a blocker is a valid answer; a reply is terminal.\n"
       "- If only the person can decide a subagent question, ask the person in your answer. The subagent waits. After the person answers, reply to the entry.\n"
