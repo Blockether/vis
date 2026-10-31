@@ -69,9 +69,12 @@
    only be slow and litter ~/.rifts."
   [store]
   (let [root
-        (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
-                                      "vis-test-ws"
-                                      (make-array java.nio.file.attribute.FileAttribute 0))))
+        ;; The JVM deletes the empty root at exit. Without that, the suite left
+        ;; about 200,000 directories in the user's temp directory.
+        (.getCanonicalPath (doto (.toFile (java.nio.file.Files/createTempDirectory
+                                            "vis-test-ws"
+                                            (make-array java.nio.file.attribute.FileAttribute 0)))
+                             .deleteOnExit))
 
         id
         (str (java.util.UUID/randomUUID))]
