@@ -675,8 +675,8 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
 const MACHINE_AGE_TICK_MS = 30_000;
 
 /**
- * One tab of the machine switch. Each tab has a quiet grey frame. The age is italic, so it
- * never reads as part of the name. The chosen machine has bold ink and a dark frame,
+ * One tab of the machine switch. Each tab has a quiet grey frame. The age is italic and in
+ * brackets, so it never reads as part of the name. The chosen machine has bold ink and a dark frame,
  * never a fill or a colour. Yellow means news only: a chip counts the
  * conversations with unread answers. The age of the newest activity follows, muted.
  * A machine known down becomes a retry action with no pressed state, count or age.
@@ -760,7 +760,7 @@ export function MachineTab({
       {hasUnread && <span className="sr-only">{unread} unread</span>}
       {/* Muted by the hint ink, not by opacity: a faded hint fell under 3:1 on a tab. */}
       {age && (
-        <span aria-hidden="true" className="font-normal italic text-dialog-hint">
+        <span aria-hidden="true" className="font-normal italic text-dialog-hint before:content-['('] after:content-[')']">
           {age}
         </span>
       )}
