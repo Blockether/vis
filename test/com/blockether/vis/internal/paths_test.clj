@@ -4,8 +4,8 @@
             [com.blockether.vis.internal.paths :as paths]
             [lazytest.core :refer [defdescribe expect it throws?]])
   (:import (java.io File)
-           (java.nio.file Files FileVisitOption Path)
-           (java.nio.file.attribute FileAttribute)
+           (java.nio.file Files FileVisitOption LinkOption Path)
+           (java.nio.file.attribute FileAttribute PosixFilePermissions)
            (java.time Instant)
            (java.util TimeZone)))
 
@@ -407,4 +407,116 @@
              (expect (Files/isSymbolicLink (.toPath link)))
              (expect (= "new" (slurp target)))
              (expect (= #{"real.json" "link.json"} (set (.list dir))))
+             (finally (delete-tree! dir)))))
+  (it "creates missing parent directories owner-only"
+      (let [dir
+            (private-task-dir)
+
+            parent
+            (io/file dir "a" "b")]
+
+        (try (paths/spit-private! (io/file parent "auth.json") "secret")
+             (expect (= "secret" (slurp (io/file parent "auth.json"))))
+             (doseq [d [(io/file dir "a") parent]]
+               (expect (= "rwx------"
+                          (PosixFilePermissions/toString (Files/getPosixFilePermissions
+                                                           (.toPath ^File d)
+                                                           (make-array LinkOption 0))))))
+             (finally (delete-tree! dir)))))
+  ;; `~/.vis/state.yml` holds every provider and is rewritten often. A write must
+  ;; REPLACE the file: a delete-then-create window shows a parallel reader no
+  ;; providers, and a crash inside it leaves nothing on disk.
+  (it
+    "never lets a concurrent reader see the store missing or half-written"
+    (let [tmp
+          (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-" (System/nanoTime))
+
+          dir
+          (io/file tmp)
+
+          path
+          (str (io/file dir "state.yml"))
+
+          write!
+          paths/spit-private!
+
+          body
+          (fn [id]
+            (str "providers:\n" (apply str (repeat 200 (str "  - id: " id "\n")))))
+
+          alpha
+          (body "alpha")
+
+          bravo
+          (body "bravo")]
+
+      (try (.mkdirs dir)
+           (write! path alpha)
+           (let [absent
+                 (atom 0)
+
+                 torn
+                 (atom 0)
+
+                 samples
+                 (atom 0)
+
+                 stop
+                 (atom false)
+
+                 reader
+                 (future (while (not @stop)
+                           (swap! samples inc)
+                           (if-not (.exists (io/file path))
+                             (swap! absent inc)
+                             (let [seen (try (slurp path) (catch Throwable _ ::unreadable))]
+                               (when-not (or (= alpha seen) (= bravo seen)) (swap! torn inc))))))]
+
+             (dotimes [i 60]
+               (write! path (if (even? i) alpha bravo)))
+             (reset! stop true)
+             @reader
+             (expect (pos? @samples))
+             (expect (zero? @absent))
+             (expect (zero? @torn)))
+           (finally (delete-tree! dir)))))
+  (it "keeps the store owner-only across an overwrite"
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-perm-" (System/nanoTime))
+
+            dir
+            (io/file tmp)
+
+            path
+            (str (io/file dir "state.yml"))
+
+            write!
+            paths/spit-private!]
+
+        (try (.mkdirs dir)
+             (write! path "providers: []\n")
+             (write! path "providers:\n  - id: alpha\n")
+             (expect (= "rw-------"
+                        (PosixFilePermissions/toString (Files/getPosixFilePermissions
+                                                         (.toPath (io/file path))
+                                                         (make-array LinkOption 0)))))
+             (expect (= "providers:\n  - id: alpha\n" (slurp path)))
+             (finally (delete-tree! dir)))))
+  (it "leaves no temporary file beside the store"
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-tmp-" (System/nanoTime))
+
+            dir
+            (io/file tmp)
+
+            path
+            (str (io/file dir "state.yml"))
+
+            write!
+            paths/spit-private!]
+
+        (try (.mkdirs dir)
+             (dotimes [i 5]
+               (write! path (str "providers:\n  - id: p" i "\n")))
+             (expect (= ["state.yml"] (sort (mapv #(.getName ^java.io.File %) (.listFiles dir)))))
              (finally (delete-tree! dir))))))

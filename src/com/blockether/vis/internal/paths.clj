@@ -6,9 +6,9 @@
            [java.nio ByteBuffer]
            [java.nio.channels FileChannel FileLock]
            [java.nio.charset StandardCharsets]
-           [java.nio.file AccessDeniedException AtomicMoveNotSupportedException CopyOption
-            FileAlreadyExistsException Files InvalidPathException LinkOption OpenOption Path Paths
-            StandardCopyOption StandardOpenOption]
+           [java.nio.file AtomicMoveNotSupportedException CopyOption FileAlreadyExistsException
+            Files InvalidPathException LinkOption OpenOption Path Paths StandardCopyOption
+            StandardOpenOption]
            [java.nio.file.attribute FileAttribute PosixFilePermission PosixFilePermissions]
            [java.time Instant LocalDate ZoneOffset]
            [java.time.format DateTimeFormatter DateTimeParseException]
@@ -295,57 +295,23 @@
   ^String [session-id]
   (str (sandbox-defs-dir) "/" (.replaceAll (str session-id) "[^A-Za-z0-9_.-]" "_") ".spill"))
 
-(defn- windows?
-  "True on Windows. Read at run time: a native image must not bake the build host in."
-  []
-  (str/starts-with? (System/getProperty "os.name" "") "Windows"))
+(defn- owner-only
+  "A file attribute array that creates a file or directory with POSIX `mode`."
+  [^String mode]
+  (into-array FileAttribute
+              [(PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString mode))]))
 
-(defn- replace-file!
-  "Move `tmp` onto `target` in one atomic step. On Windows, a reader that holds
-   `target` open makes the move fail for a short time, so retry it a few times.
-   Never fall back to a write in place."
-  [^Path tmp ^Path target]
-  (loop [attempt 1]
-    (let [moved?
-          (try (try (Files/move tmp target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
-                    (catch AtomicMoveNotSupportedException _
-                      (Files/move tmp
-                                  target
-                                  (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
-               true
-               (catch AccessDeniedException e
-                 (if (and (windows?) (< attempt 10)) false (throw e))))]
-      (when-not moved? (Thread/sleep (* 20 attempt)) (recur (inc attempt))))))
-
-(defn- force-dir!
-  "Force the entry of a replaced file in `dir` to the disk, so a power loss cannot
-   bring back the old file. POSIX only. A failure is ignored: the content is
-   already safe."
-  [^Path dir]
-  (when-not (windows?)
-    (try (with-open [ch (FileChannel/open dir (into-array OpenOption [StandardOpenOption/READ]))]
-           (.force ch true))
-         (catch Exception _ nil))))
+(defn create-private-dirs!
+  "Create `dir` and its missing parents owner-only (700). An existing directory keeps its mode."
+  ^Path [dir]
+  (Files/createDirectories (.toPath (File. (str dir))) (owner-only "rwx------")))
 
 (defn spit-private!
-  "Write `content` to `path` as an owner-only (600) file, ATOMICALLY. The ONE
-   writer for every file that holds a secret: `~/.vis/state.yml` and each OAuth
-   credential store.
-
-     - The bytes are never even briefly world-readable: the temporary file is
-       CREATED with the restrictive mode (create-with-attribute, never
-       write-then-chmod).
-     - No reader ever observes a missing or half-written file, and an interrupted
-       write never destroys the previous one. The content lands in a sibling
-       temporary file, is forced to the disk and is then MOVED onto `path`, so the
-       file that was there survives every failure before the move.
-     - A `path` that is a symbolic link keeps its link: the content replaces the
-       file that the link names.
-
-   Falls back to a creation without the attribute, and to a replacing move, on a
-   filesystem that supports neither. On Windows, the move is retried for a short
-   time while another process holds the file open. Any other failure propagates, and the
-   temporary file is removed. The parent directory must exist."
+  "Write `content` to `path` atomically as an owner-only (600) file. This is the one
+   writer for files that hold a secret. A failure keeps the previous file and leaves
+   no temporary file. A symbolic link path writes its target. Missing parent
+   directories are created owner-only. A filesystem without atomic moves gets a
+   plain replace, which is not atomic."
   [path ^String content]
   (let [^Path given
         (.toPath (File. (str path)))
@@ -357,20 +323,18 @@
         (or (.getParent target) (.toPath (File. ".")))
 
         ^Path tmp
-        (.resolve dir (str "." (.getFileName target) ".tmp-" (java.util.UUID/randomUUID)))
+        (.resolve dir (str "." (.getFileName target) ".tmp-" (java.util.UUID/randomUUID)))]
 
-        attr
-        (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
-
-    (try (try (Files/createFile tmp (into-array FileAttribute [attr]))
-              (catch UnsupportedOperationException _
-                (Files/createFile tmp (make-array FileAttribute 0))))
+    (create-private-dirs! dir)
+    (try (Files/createFile tmp (owner-only "rw-------"))
          (with-open [ch (FileChannel/open tmp (into-array OpenOption [StandardOpenOption/WRITE]))]
            (let [buf (ByteBuffer/wrap (.getBytes content StandardCharsets/UTF_8))]
              (while (.hasRemaining buf) (.write ch buf)))
            (.force ch true))
-         (replace-file! tmp target)
-         (force-dir! dir)
+         (try
+           (Files/move tmp target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
+           (catch AtomicMoveNotSupportedException _
+             (Files/move tmp target (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
          nil
          (finally (try (Files/deleteIfExists tmp) (catch Throwable _ nil))))))
 

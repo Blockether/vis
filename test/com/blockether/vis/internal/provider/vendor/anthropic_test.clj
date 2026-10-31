@@ -241,7 +241,6 @@
             {:access-token "fixture-access" :refresh-token "fixture-refresh"}]
 
         (try (with-redefs-fn {#'anthropic/auth-file #(.getPath file)
-                              #'anthropic/auth-dir #(.getParentFile file)
                               #'provider-limits/auth-changed! #(swap! notifications conj %)}
                (fn []
                  (#'anthropic/save-auth-file! credentials)

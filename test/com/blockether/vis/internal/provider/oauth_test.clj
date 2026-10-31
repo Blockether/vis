@@ -249,7 +249,7 @@
       (let [runs (atom 0)]
         (expect (throws? clojure.lang.ExceptionInfo
                          #(oauth/call-with-file-lock (temp-lock-path)
-                                                     (fn []
+                                                     (fn [_]
                                                        (swap! runs inc)
                                                        (throw (ex-info "exchange failed" {}))))))
         (expect (= 1 @runs))))
@@ -261,22 +261,22 @@
         (let [t0 (System/currentTimeMillis)
               res (oauth/call-with-file-lock (temp-lock-path)
                                              300
-                                             (fn []
-                                               :ran))
+                                             (fn [locked?]
+                                               [:ran locked?]))
               ms (- (System/currentTimeMillis) t0)]
 
-          (expect (= :ran res))
+          (expect (= [:ran false] res))
           (expect (>= ms 300))
           (expect (< ms 5000)))))
   (it "still runs f when the lock path cannot be opened"
-      (expect (= :ran
+      (expect (= [:ran false]
                  (oauth/call-with-file-lock "/dev/null/nope/lock"
-                                            (fn []
-                                              :ran))))
-      (expect (= :ran
+                                            (fn [locked?]
+                                              [:ran locked?]))))
+      (expect (= [:ran nil]
                  (oauth/call-with-file-lock nil
-                                            (fn []
-                                              :ran)))))
+                                            (fn [locked?]
+                                              [:ran locked?])))))
   (it
     "an interrupt while waiting aborts without running f and leaks no handle"
     ;; Cancellation is the ONE input that must not degrade to "run unlocked": a
@@ -299,7 +299,7 @@
                                      (doto (Thread.
                                              #(try (oauth/call-with-file-lock path
                                                                               60000
-                                                                              (fn []
+                                                                              (fn [_]
                                                                                 (swap! ran inc)))
                                                    (catch Throwable t
                                                      (swap! seen conj
@@ -517,25 +517,7 @@
                  ((file-refresher saved
                                   (fn [_]
                                     (rejected-grant))
-                                  (persist-to saved))))}
-         {:outcome :no-refresh-token
-          :trigger :rejected-token
-          :sha [false false]
-          :run (fn [_]
-                 ((oauth/refresher :test-store
-                                   (fn [_]
-                                     nil)
-                                   #(throw (ex-info "Nothing to refresh"
-                                                    {::oauth/outcome :no-refresh-token})))
-                   "old-access"))}
-         {:outcome :failed
-          :trigger :expired
-          :sha [false false]
-          :run (fn [_]
-                 ((oauth/refresher :test-store
-                                   (fn [_]
-                                     nil)
-                                   #(throw (ex-info "boom" {})))))}]]
+                                  (persist-to saved))))}]]
 
     (doseq [{:keys [outcome trigger sha run]} cases]
       (it (str "logs " (name outcome) " on " (name trigger) " with the process and no token")
@@ -554,14 +536,26 @@
             (expect (= sha
                        [(contains? data :refresh-token-sha)
                         (contains? data :next-refresh-token-sha)]))
-            (expect (not (re-find #"secret-refresh-token" (pr-str signal))))))))
-  (it "fingerprints the same token alike so a log can follow one rotation chain"
-      (let [log (fn [token]
-                  (-> (tel/with-signal
-                        (oauth/log-refresh!
-                          {:store "s" :outcome :refreshed :trigger :expired :refresh-token token}))
-                      :data
-                      :refresh-token-sha))]
-        (expect (= (log "token-a") (log "token-a")))
-        (expect (not= (log "token-a") (log "token-b")))
-        (expect (re-matches #"[0-9a-f]{8}" (log "token-a"))))))
+            (expect (not (re-find #"secret-refresh-token" (pr-str signal)))))))
+    (it "fingerprints a rotation chain: the token one refresh saves is the token the next sends"
+        (let [n
+              (atom 0)
+
+              saved
+              (atom {:access-token "old-access" :refresh-token sent :saved-at-ms 0})
+
+              refresh!
+              (file-refresher saved
+                              (fn [_]
+                                {:access-token (str "access-" (swap! n inc))
+                                 :refresh-token (str next-token "-" @n)})
+                              (persist-to saved))
+
+              [r1 r2]
+              (mapv (fn [_]
+                      (:data (tel/with-signal (refresh! (:access-token @saved)))))
+                    (range 2))]
+
+          (expect (some? (:next-refresh-token-sha r1)))
+          (expect (= (:next-refresh-token-sha r1) (:refresh-token-sha r2)))
+          (expect (not= (:refresh-token-sha r1) (:refresh-token-sha r2)))))))

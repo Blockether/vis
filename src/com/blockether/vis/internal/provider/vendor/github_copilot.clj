@@ -25,8 +25,7 @@
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.provider.oauth :as oauth]
-            [taoensso.telemere :as tel]))
+            [com.blockether.vis.internal.provider.oauth :as oauth]))
 
 ;; Constants
 
@@ -150,9 +149,7 @@
   "Persist auth state to ~/.vis/github-copilot-auth.json through the ONE JSON
    boundary (`oauth/auth-json-str`): snake_case string keys, total encoding."
   [auth-state]
-  (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
-    (when-not (.exists dir) (.mkdirs dir))
-    (paths/spit-private! (auth-file) (oauth/auth-json-str auth-state))))
+  (paths/spit-private! (auth-file) (oauth/auth-json-str auth-state)))
 
 (defn- normalize-account-type
   [value]
@@ -493,12 +490,6 @@
                        (throw e)))]
       (reset! token-cache (assoc fresh :oauth-token oauth-token))
       (oauth/log-refresh! (assoc entry :outcome :refreshed))
-      (tel/log! {:level :info
-                 :id ::copilot-token-refreshed
-                 :data {:expires-in-ms (- (long (:expires-at-ms fresh)) (util/now-ms))
-                        :api-url (:api-url fresh)
-                        :account-type (:account-type fresh)}
-                 :msg "Copilot API token refreshed"})
       {:token (:token fresh)
        :api-url (:api-url fresh)
        :account-type (:account-type fresh)
@@ -758,9 +749,7 @@
   ;; Copilot's GitHub OAuth token is STABLE (no rotation, so no
   ;; invalid_grant), but a 401 storm would still stampede the
   ;; OAuth->Copilot exchange. One lock single-flights it: the first caller
-  ;; exchanges, the rest reuse the now-valid cache. Not `oauth/refresher`:
-  ;; `exchange-and-cache!` already logs each exchange, and a second record
-  ;; would count one exchange twice.
+  ;; exchanges, the rest reuse the now-valid cache.
   (let [lock
         (oauth/new-lock)
 

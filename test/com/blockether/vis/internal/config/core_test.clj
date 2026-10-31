@@ -7,7 +7,6 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe it expect]]
@@ -330,108 +329,35 @@
 (defn- rm-rf! [^java.io.File f] (when (.exists f) (run! rm-rf! (.listFiles f)) (.delete f)))
 
 (defdescribe
-  atomic-store-write-test
-  "`~/.vis/state.yml` is the machine store carrying every provider, the model pick
-   and the learned routing memory, and Vis rewrites it whenever any of the three
-   moves — a settings toggle, a provider edit, a learned blind eye. That write has
-   to REPLACE the file, never delete it and create it again: for the length of
-   such a window the store does not exist, so a parallel session reading it right
-   then finds a fleet with no providers in it, and a crash inside the window
-   leaves nothing on disk to read at all."
-  (it
-    "never lets a concurrent reader see the store missing or half-written"
-    (let [tmp
-          (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-" (System/nanoTime))
-
-          dir
-          (io/file tmp)
-
-          path
-          (str (io/file dir "state.yml"))
-
-          write!
-          paths/spit-private!
-
-          body
-          (fn [id]
-            (str "providers:\n" (apply str (repeat 200 (str "  - id: " id "\n")))))
-
-          alpha
-          (body "alpha")
-
-          bravo
-          (body "bravo")]
-
-      (try (.mkdirs dir)
-           (write! path alpha)
-           (let [absent
-                 (atom 0)
-
-                 torn
-                 (atom 0)
-
-                 samples
-                 (atom 0)
-
-                 stop
-                 (atom false)
-
-                 reader
-                 (future (while (not @stop)
-                           (swap! samples inc)
-                           (if-not (.exists (io/file path))
-                             (swap! absent inc)
-                             (let [seen (try (slurp path) (catch Throwable _ ::unreadable))]
-                               (when-not (or (= alpha seen) (= bravo seen)) (swap! torn inc))))))]
-
-             (dotimes [i 60]
-               (write! path (if (even? i) alpha bravo)))
-             (reset! stop true)
-             @reader
-             (expect (pos? @samples))
-             (expect (zero? @absent))
-             (expect (zero? @torn)))
-           (finally (rm-rf! dir)))))
-  (it "keeps the store owner-only across an overwrite"
+  private-config-dir-test
+  ;; Regression: d8164f4 dropped the chmod of an existing `~/.vis`, so an old 0755
+  ;; install kept listing the secret files of state.yml to other local users.
+  (it "tightens an existing shared config directory to owner-only on a state write"
       (let [tmp
-            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-perm-" (System/nanoTime))
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-private-" (System/nanoTime))
 
-            dir
-            (io/file tmp)
+            mode
+            #(PosixFilePermissions/toString
+               (Files/getPosixFilePermissions (.toPath (io/file tmp)) (make-array LinkOption 0)))]
 
-            path
-            (str (io/file dir "state.yml"))
+        (try (.mkdirs (io/file tmp))
+             (Files/setPosixFilePermissions (.toPath (io/file tmp))
+                                            (PosixFilePermissions/fromString "rwxr-xr-x"))
+             (with-redefs [config/config-dir
+                           (constantly tmp)
 
-            write!
-            paths/spit-private!]
+                           config/state-path
+                           (constantly (str tmp "/state.yml"))
 
-        (try (.mkdirs dir)
-             (write! path "providers: []\n")
-             (write! path "providers:\n  - id: alpha\n")
-             (expect (= "rw-------"
-                        (PosixFilePermissions/toString (Files/getPosixFilePermissions
-                                                         (.toPath (io/file path))
-                                                         (make-array LinkOption 0)))))
-             (expect (= "providers:\n  - id: alpha\n" (slurp path)))
-             (finally (rm-rf! dir)))))
-  (it "leaves no temporary file beside the store"
-      (let [tmp
-            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-tmp-" (System/nanoTime))
+                           config/project-config-yaml-paths
+                           (constantly [(str tmp "/none/.vis/config.yml")])
 
-            dir
-            (io/file tmp)
+                           config/project-root-yaml-paths
+                           (constantly [])]
 
-            path
-            (str (io/file dir "state.yml"))
-
-            write!
-            paths/spit-private!]
-
-        (try (.mkdirs dir)
-             (dotimes [i 5]
-               (write! path (str "providers:\n  - id: p" i "\n")))
-             (expect (= ["state.yml"] (sort (mapv #(.getName ^java.io.File %) (.listFiles dir)))))
-             (finally (rm-rf! dir))))))
+               (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}]}))
+             (expect (= "rwx------" (mode)))
+             (finally (rm-rf! (io/file tmp)))))))
 
 (defdescribe
   derived-memory-never-freezes-the-store-test

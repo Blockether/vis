@@ -226,12 +226,10 @@
   "Persist credentials through the ONE JSON boundary (`oauth/auth-json-str`):
    snake_case string keys, total encoding."
   [credentials]
-  (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
-    (when-not (.exists dir) (.mkdirs dir))
-    (paths/spit-private! (auth-file)
-                         (oauth/auth-json-str (assoc credentials :saved-at (util/now-ms))))
-    (when (:reauth-required credentials) (provider-limits/auth-changed! :openai-codex))
-    credentials))
+  (paths/spit-private! (auth-file)
+                       (oauth/auth-json-str (assoc credentials :saved-at (util/now-ms))))
+  (when (:reauth-required credentials) (provider-limits/auth-changed! :openai-codex))
+  credentials)
 
 (defn- delete-auth-file!
   []

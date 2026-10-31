@@ -307,24 +307,22 @@
         f
         (:provider/refresh-token-fn provider)]
 
-    (boolean
-      (when (and f
-                 (= :auth (:category (perr/svar-classification t)))
-                 (auth-health/refresh-allowed? pid))
-        (let [rejected (config/baked-token pid)]
-          (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
-               (provider-limits/auth-changed! pid)
-               (tel/log! {:level :warn :id ::boot-auth-token-refreshed :data {:provider pid}}
-                         (str "Provider build hit auth error — force-refreshed OAuth token for "
-                              pid
-                              "; retrying build"))
-               true
-               (catch Throwable rt
-                 (tel/log! {:level :warn
-                            :id ::boot-auth-token-refresh-failed
-                            :data {:provider pid :error (ex-message rt)}}
-                           (str "Provider build auth refresh FAILED for " pid "; skipping"))
-                 false)))))))
+    (boolean (when (and f
+                        (= :auth (:category (perr/svar-classification t)))
+                        (auth-health/refresh-allowed? pid))
+               (let [rejected (config/baked-token pid)]
+                 (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+                      (provider-limits/auth-changed! pid)
+                      (tel/log!
+                        {:level :info :id ::boot-auth-retry :data {:provider pid}}
+                        (str "Provider build hit an auth error for " pid "; retrying the build"))
+                      true
+                      (catch Throwable rt
+                        (tel/log! {:level :warn
+                                   :id ::boot-auth-token-refresh-failed
+                                   :data {:provider pid :error-class (.getName (class rt))}}
+                                  (str "Provider build auth refresh FAILED for " pid "; skipping"))
+                        false)))))))
 
 (defn- boot-refresh-credential-command!
   "Command-backed sibling of `boot-refresh-provider-token!`.
@@ -1155,15 +1153,13 @@
                       ;; may still expose only a zero-arity implementation.
                       (try (f rejected) (catch clojure.lang.ArityException _ (f)))
                       (auth-health/note-refreshed! pid)
-                      (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
-                                (str "Auth 401 — force-refreshed OAuth token for "
-                                     pid
-                                     "; retrying with request-bound credential hydration"))
+                      (tel/log! {:level :info :id ::auth-retry :data {:provider pid}}
+                                (str "Auth 401 for " pid "; retrying the request"))
                       true
                       (catch Throwable t
                         (tel/log! {:level :error
                                    :id ::auth-token-refresh-failed
-                                   :data {:provider pid :error (ex-message t)}}
+                                   :data {:provider pid :error-class (.getName (class t))}}
                                   (str "Auth 401 — OAuth token refresh FAILED for "
                                        pid
                                        "; surfacing provider error"))

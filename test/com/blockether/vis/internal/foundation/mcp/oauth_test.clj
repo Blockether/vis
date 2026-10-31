@@ -31,7 +31,7 @@
                      (expect (= authorized? (get (oauth/token-status "remote") "is_authorized")))
                      (expect (= authorized?
                                 (get (oauth/token-status "remote") "has_refresh_token"))))))
-               (finally (.delete file)))))))
+               (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))))
 
 (defn- with-browser-flow
   [f]
@@ -199,10 +199,14 @@
           (fn []
             (let [bearer
                   (oauth/make-bearer-fn "public" "https://gateway.example.com/mcp" (atom nil))
-                  signals (:signals (tel/with-signals
-                                      (dotimes [_ 2]
-                                        (try (bearer) (catch clojure.lang.ExceptionInfo _ nil)))))]
+                  errors (atom [])
+                  signals (:signals (tel/with-signals (dotimes [_ 2]
+                                                        (try (bearer)
+                                                             (catch clojure.lang.ExceptionInfo e
+                                                               (swap! errors conj
+                                                                 (:type (ex-data e))))))))]
 
+              (expect (= [:mcp/oauth-required :mcp/oauth-required] @errors))
               (expect (not (.exists file)))
               (expect (empty? (filter #(= :com.blockether.vis.internal.provider.oauth/token-refresh
                                           (:id %))
@@ -223,7 +227,7 @@
                    (expect (= :mcp/oauth-required (:type (ex-data @error))))
                    (expect (= {:store "mcp/remote" :outcome :no-refresh-token}
                               (select-keys (:data signal) [:store :outcome]))))))
-             (finally (.delete file)))))
+             (finally (.delete file) (.delete (java.io.File. (str file ".lock")))))))
   (it
     "logs persist-failed and superseded for those MCP refresh results"
     ;; Regression: both logged as failed or rejected, which hid a lost rotation.
@@ -253,18 +257,4 @@
                    (expect (= outcome (get-in signal [:data :outcome])) (str outcome)))))
              (finally (.setWritable dir true)
                       (doseq [^java.io.File f (reverse (file-seq dir))]
-                        (.delete f)))))))
-  (it "writes no record for a server that nobody signed in to"
-      ;; Audit finding: a public MCP server logged a warning on every request.
-      (let [file (java.io.File. (System/getProperty "java.io.tmpdir")
-                                (str "vis-mcp-oauth-none-" (System/nanoTime) ".edn"))]
-        (with-redefs-fn {#'oauth/token-file (constantly file)}
-          (fn []
-            (let [bearer
-                  (oauth/make-bearer-fn "public" "https://gateway.example.com/mcp" (atom nil))
-                  signals (:signals (tel/with-signals (dotimes [_ 2]
-                                                        (try (bearer) (catch Exception _ nil)))))]
-
-              (expect (empty? (filter #(= :com.blockether.vis.internal.provider.oauth/token-refresh
-                                          (:id %))
-                                      signals)))))))))
+                        (.delete f))))))))

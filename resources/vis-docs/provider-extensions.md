@@ -225,55 +225,33 @@ browser opens on that machine.
 
 Many token endpoints issue a new refresh token on each renewal and stop
 accepting the old one. If your extension loses the new token, the next renewal
-fails and the person must sign in again. Two SDK functions prevent this and
-make each renewal visible in the Vis log.
+fails and the person must sign in again.
 
-`vis.write_private_file(path, text)` saves a secret file. Only the file's owner
-can read it, at every moment. The text goes to a temporary file first, and then
-replaces the old file in one step. A reader never sees a half-written file. If
-a step fails, the old file stays and the error is raised. The parent directory
-must exist.
+Save each token file with `vis.write_private_file(path, text)`. Only the file's
+owner can read it. The text replaces the old file in one atomic step, so a
+reader never sees a half-written file. If the write fails, the old file stays
+and the error is raised. Missing parent directories are created.
 
-`vis.log_token_refresh(store, outcome, ...)` writes one log record for one
-renewal. Call it once for each exchange, also for a failed one. The record
-holds the process ID, the duration, the HTTP status and short fingerprints of
-the tokens. It never holds a token, a response body or an error message. The
-built-in providers write the same fields, so you find every renewal with one
-search for `OAuth token refresh`.
+Log each renewal with `vis.log`, also a failed one. Never log a token, a
+response body or an error message, because these can hold secrets.
 
 ```python
-import json, time
+import json
 from pathlib import Path
 
 TOKENS = Path.home() / ".example" / "tokens.json"
 
 def refresh(rejected=None):
     saved = json.loads(TOKENS.read_text())
-    started = time.monotonic()
-    trigger = "rejected-token" if rejected else "expired"
     try:
         fresh = exchange(saved["refresh_token"])  # your token endpoint call
     except Exception as error:
-        vis.log_token_refresh("example", "failed", trigger=trigger, started=started,
-                              error=error, refresh_token=saved["refresh_token"])
+        vis.log("warn", f"example token refresh failed: {type(error).__name__}")
         raise
-    try:
-        vis.write_private_file(TOKENS, json.dumps(fresh))
-    except OSError as error:
-        vis.log_token_refresh("example", "persist-failed", trigger=trigger, started=started,
-                              error=error, refresh_token=saved["refresh_token"],
-                              next_refresh_token=fresh["refresh_token"])
-        raise
-    vis.log_token_refresh("example", "refreshed", trigger=trigger, started=started,
-                          refresh_token=saved["refresh_token"],
-                          next_refresh_token=fresh["refresh_token"])
+    vis.write_private_file(TOKENS, json.dumps(fresh))
+    vis.log("info", "example token refreshed")
     return vis.ProviderCredential(fresh["access_token"])
 ```
-
-Use the outcome `rejected` when the endpoint refuses the refresh grant. Use
-`no-refresh-token` when a saved sign-in has no refresh token. Pass `started` as
-a `time.monotonic()` value. The engine stores the record as an extension log
-line, with the fields as JSON in its message.
 
 ## See also
 

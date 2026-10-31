@@ -175,12 +175,7 @@
              (read (java.io.PushbackReader. r)))
            (catch Throwable _ nil)))))
 
-(defn- write-tokens!
-  [server-name m]
-  (let [f (token-file server-name)]
-    (io/make-parents f)
-    (paths/spit-private! f (pr-str m))
-    m))
+(defn- write-tokens! [server-name m] (paths/spit-private! (token-file server-name) (pr-str m)) m)
 
 (defn- expired?
   "Skew the reported expiry by 60s so we refresh proactively, never at the
@@ -314,24 +309,20 @@
                               :authorization-server as-url
                               :resource resource}))))
 
-(defn- refresh-token-exchange!
-  "Refresh an access token via the token endpoint. May rotate the refresh token."
-  [server-name creds]
+(defn- refresh-exchange!
+  "Spend `refresh-token` at the token endpoint of `creds` and return the new
+   tokens. The server may rotate the refresh token."
+  [server-name creds refresh-token]
   (let [{:keys [status body]} (http-post-form (:token-endpoint creds)
                                               (cond-> {"grant_type" "refresh_token"
-                                                       "refresh_token" (:refresh-token creds)
+                                                       "refresh_token" refresh-token
                                                        "client_id" (:client-id creds)}
                                                 (:resource creds)
                                                 (assoc "resource" (:resource creds))))]
     (when (>= (long status) 400)
       (throw (ex-info (str "MCP " server-name " token refresh failed: " status)
                       {:type :mcp/oauth-refresh :server server-name :status status :body body})))
-    (try (write-tokens! server-name (->tokens body creds))
-         (catch Throwable t
-           (throw (ex-info
-                    (str "MCP " server-name " token refresh could not be saved")
-                    {:type :mcp/oauth-refresh :server server-name ::oauth/outcome :persist-failed}
-                    t))))))
+    (->tokens body creds)))
 
 ;; Public: a 0/1-arg `bearer-fn` for the HTTP transport
 
@@ -340,16 +331,13 @@
    nothing is persisted yet, or the refresh token stopped working. Callers turn
    this into `sign in`, never into `the server is broken` - and never into a
    five-minute wait."
-  ([server-name server-url www-auth cause]
-   (oauth-required server-name server-url www-auth cause nil))
-  ([server-name server-url www-auth cause extra]
-   (ex-info (str "MCP server '" server-name "' is not authorized - start the OAuth flow to sign in")
-            (merge extra
-                   {:type :mcp/oauth-required
-                    :server server-name
-                    :server-url server-url
-                    :www-authenticate www-auth})
-            cause)))
+  [server-name server-url www-auth cause]
+  (ex-info (str "MCP server '" server-name "' is not authorized - start the OAuth flow to sign in")
+           {:type :mcp/oauth-required
+            :server server-name
+            :server-url server-url
+            :www-authenticate www-auth}
+           cause))
 
 (defn forget!
   "Drop persisted tokens for `server-name` after sign-out or a revoked refresh grant."
@@ -373,34 +361,38 @@
    explicit headless flow below, which hands back a URL instead of waiting for
    one."
   [server-name server-url www-auth-atom]
-  (oauth/refresher
-    (str "mcp/" server-name)
-    (fn [rejected]
-      (let [creds (read-tokens server-name)]
-        (when (and creds (:token creds) (not (expired? creds)) (not= rejected (:token creds)))
-          (:token creds))))
-    (fn []
-      (let [creds (read-tokens server-name)]
-        (if (:refresh-token creds)
-          (try (:token (refresh-token-exchange! server-name creds))
-               (catch Throwable t
-                 (let [rejected? (= "invalid_grant" (get-in (ex-data t) [:body "error"]))
-                       replaced? (not= creds (read-tokens server-name))]
+  (let [required
+        #(oauth-required server-name server-url @www-auth-atom %)
 
-                   (when (and rejected? (not replaced?)) (forget! server-name))
-                   (throw (oauth-required server-name
-                                          server-url
-                                          @www-auth-atom
-                                          t
-                                          (when (and rejected? replaced?)
-                                            {::oauth/outcome :superseded}))))))
-          (throw (oauth-required server-name
-                                 server-url
-                                 @www-auth-atom
-                                 nil
-                                 ;; Nothing on file is a server that nobody signed in
-                                 ;; to, often a public one: no exchange, no record.
-                                 {::oauth/outcome (if creds :no-refresh-token :none)})))))))
+        usable?
+        #(and (:token %) (not (expired? %)))
+
+        refresh
+        (oauth/make-file-refresher {:store (str "mcp/" server-name)
+                                    :load #(read-tokens server-name)
+                                    :usable? usable?
+                                    :refresh-token :refresh-token
+                                    :exchange!
+                                    #(refresh-exchange! server-name (read-tokens server-name) %)
+                                    :persist! #(write-tokens! server-name %)
+                                    :on-rejected! (fn [_]
+                                                    (forget! server-name))
+                                    :->token #(select-keys % [:token])
+                                    :no-token! #(throw (required nil))
+                                    :lock-path (str (token-file server-name) ".lock")})
+
+        bearer
+        (fn [rejected]
+          ;; Nothing on file is a server that nobody signed in to, often a public
+          ;; one: no exchange and no refresh record.
+          (let [creds (or (read-tokens server-name) (throw (required nil)))]
+            (if (and (usable? creds) (not= rejected (:token creds)))
+              (:token creds)
+              (try (:token (refresh rejected))
+                   (catch Throwable t
+                     (throw (if (= :mcp/oauth-required (:type (ex-data t))) t (required t))))))))]
+
+    (fn ([] (bearer nil)) ([rejected] (bearer rejected)))))
 
 (defn token-status
   "Non-secret view of the persisted OAuth tokens for `server-name`. Never returns

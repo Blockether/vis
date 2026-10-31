@@ -1,30 +1,17 @@
 (ns com.blockether.vis.internal.provider.oauth
-  "Unified OAuth token-refresh facade, shared by every provider.
+  "Single-flight OAuth token refresh, shared by every provider.
 
-   WHY THIS EXISTS — Providers whose token endpoint ROTATES the
-   refresh_token on every exchange (Anthropic, OpenAI Codex) must never run
-   two refresh exchanges at once: the second reuses an already-rotated
-   refresh token and the server answers HTTP 400 `invalid_grant`. Under a
-   401 \"storm\" — the turn loop's per-iteration retry PLUS a usage/limits
-   poll, all sharing one credential — that race killed whole turns (~10 refreshes/min: one lost the
-   rotation race and the turn died). Providers that mint a short-lived token from a STABLE
-   credential (GitHub Copilot) don't 400, but still benefit: concurrent
-   401s otherwise stampede the exchange endpoint with redundant calls.
+   A token endpoint that ROTATES the refresh_token (Anthropic, OpenAI Codex, MCP
+   servers) answers HTTP 400 `invalid_grant` when two exchanges spend one refresh
+   token. A 401 storm (each iteration's retry plus the limits poll) caused exactly
+   that race and killed whole turns. So refresh is serialized PER CREDENTIAL STORE,
+   never globally: each `make-file-refresher` owns its lock, and an optional OS file
+   lock serializes processes. Under the lock, a caller reuses a result that another
+   caller just saved, so a burst of N 401s runs ONE exchange.
 
-   THE MODEL — refresh is serialized PER CREDENTIAL STORE, never globally.
-   Each `make-file-refresher` / `refresher` call mints its OWN lock, so a
-   refresh to Anthropic and a refresh to Codex run fully in parallel; only
-   two refreshes to the SAME store (e.g. two sessions both hitting
-   Anthropic) serialize — which is the whole point. Once the lock is held,
-   a caller REUSES a result another thread just produced (creds persisted
-   within `default-reuse-window-ms`, or an already-valid cache) so a burst
-   of N concurrent 401s collapses into ONE exchange.
-
-   USE — file-backed rotating stores (Anthropic, Codex): `make-file-refresher`.
-   Cache-backed / bespoke stores (Copilot): `refresher` with custom
-   reuse/refresh fns. Both return a 0-arg fn yielding the provider-token
-   map, owning their own lock; drop them straight into
-   `:provider/get-token-fn` / `:provider/refresh-token-fn`."
+   USE: a file-backed rotating store calls `make-file-refresher`. It returns a 0/1-arg
+   fn for `:provider/get-token-fn` / `:provider/refresh-token-fn`. A store with its own
+   cache (GitHub Copilot) calls `single-flight!` and `log-refresh!` itself."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -64,9 +51,7 @@
    first: if it returns a non-nil result, another caller already refreshed
    while this thread waited for the lock, so return that WITHOUT a second
    exchange; otherwise run `refresh!` and return its result. `reuse` and
-   `refresh!` are 0-arg fns; `reuse` returns the reusable token map or nil.
-
-   Low-level core — prefer `make-file-refresher` / `refresher`."
+   `refresh!` are 0-arg fns; `reuse` returns the reusable token map or nil."
   [lock reuse refresh!]
   (locking lock (or (reuse) (refresh!))))
 
@@ -97,35 +82,35 @@
   (when-not (str/blank? token) (subs (util/sha256-hex token) 0 8)))
 
 (defn log-refresh!
-  "Log ONE token refresh exchange of credential store `store`, and return nil.
+  "Log ONE refresh exchange of credential store `store` as `::token-refresh`.
+   `outcome` is :refreshed, :superseded (refused, but another writer replaced the
+   credential), :rejected (a sign-in is needed), :failed, :persist-failed (the
+   rotated token is lost) or :no-refresh-token. `locked` is false when the exchange
+   ran without its file lock. The record holds no token, body or error message:
+   only the HTTP status, the error type and class, and token fingerprints."
+  [{:keys [store outcome trigger started-ms error refresh-token next-refresh-token locked]}]
+  (let [chain
+        (error-chain error)
 
-   `outcome` is one of:
-     :refreshed        the exchange succeeded and the new credential was saved
-     :rejected         the endpoint refused the refresh grant; a sign-in is needed
-     :superseded       refused, but another writer replaced the credential meanwhile
-     :failed           the exchange failed for another reason
-     :persist-failed   the exchange succeeded but saving failed: the rotated
-                       refresh token is lost, so the next refresh is refused
-     :no-refresh-token nothing to exchange
-
-   `trigger` is :rejected-token when a request was just refused, else :expired.
-   The record names this process (pid and role) and the duration since
-   `started-ms`. It never holds a token, a response body or an error message:
-   only the HTTP status, the error type and class of `error`, and the
-   [[token-fingerprint]] of `refresh-token` (sent) and `next-refresh-token`
-   (received; on :persist-failed it names the lost token)."
-  [{:keys [store outcome trigger started-ms error refresh-token next-refresh-token]}]
-  (let [status
-        (some #(:status (ex-data %)) (error-chain error))
-
-        error-type
-        (some #(:type (ex-data %)) (error-chain error))
-
-        sent
-        (token-fingerprint refresh-token)
-
-        saved
-        (token-fingerprint next-refresh-token)]
+        data
+        (into {}
+              (remove (comp nil? val))
+              {:store (some-> store
+                              name)
+               :outcome outcome
+               :trigger trigger
+               :pid (paths/process-id)
+               :role (paths/process-role)
+               :locked locked
+               :duration-ms (some->> started-ms
+                                     (- (util/now-ms)))
+               :status (some (comp :status ex-data) chain)
+               :error-type (some (comp :type ex-data) chain)
+               :error-class (some-> error
+                                    class
+                                    .getName)
+               :refresh-token-sha (token-fingerprint refresh-token)
+               :next-refresh-token-sha (token-fingerprint next-refresh-token)})]
 
     (tel/log! {:level (case outcome
                         (:refreshed :superseded)
@@ -136,68 +121,8 @@
 
                         :warn)
                :id ::token-refresh
-               :data (cond-> {:store (if (keyword? store) (name store) (str store))
-                              :outcome outcome
-                              :trigger trigger
-                              :pid (paths/process-id)
-                              :role (paths/process-role)
-                              :duration-ms (when started-ms (- (util/now-ms) (long started-ms)))}
-                       status
-                       (assoc :status status)
-
-                       error-type
-                       (assoc :error-type error-type)
-
-                       error
-                       (assoc :error-class (.getName (class error)))
-
-                       sent
-                       (assoc :refresh-token-sha sent)
-
-                       saved
-                       (assoc :next-refresh-token-sha saved))}
-              (str "OAuth token refresh of " (if (keyword? store) (name store) store)
-                   ": " (name outcome)))
-    nil))
-
-(defn refresher
-  "Build a single-flight refresh fn that OWNS a fresh lock. `refresh!` is as in
-   `single-flight!`; `reuse` takes ONE arg — the REJECTED token (the access
-   token the server just 401'd, or nil) — and returns the reusable token map or
-   nil. For stores that aren't a plain rotating file — e.g. an in-memory cache
-   (GitHub Copilot). Each `refresh!` run is logged under `store` through
-   [[log-refresh!]]; a reuse is not. To log another outcome for a refusal,
-   `refresh!` throws an `ex-info` whose data (or a cause's data) holds
-   `::outcome`, for example `{::oauth/outcome :no-refresh-token}`. The outcome
-   `:none` logs nothing: use it when no exchange ran because nothing is on file.
-
-   The returned fn is 0/1-arity: call it WITH the rejected token on 401 recovery
-   so `reuse` never hands back the very token that was just rejected; the 0-arity
-   form (nil rejected) keeps plain freshness reuse."
-  [store reuse refresh!]
-  (let [lock
-        (new-lock)
-
-        logged
-        (fn [rejected]
-          (let [entry {:store store
-                       :trigger (if rejected :rejected-token :expired)
-                       :started-ms (util/now-ms)}]
-            (try (let [result (refresh!)]
-                   (log-refresh! (assoc entry :outcome :refreshed))
-                   result)
-                 (catch Throwable e
-                   (let [outcome (or (some #(::outcome (ex-data %)) (error-chain e))
-                                     (if (invalid-grant? e) :rejected :failed))]
-                     (when-not (= :none outcome)
-                       (log-refresh! (assoc entry
-                                       :outcome outcome
-                                       :error e))))
-                   (throw e)))))]
-
-    (fn ([] (single-flight! lock #(reuse nil) #(logged nil))) ([rejected] (single-flight! lock
-                                                                            #(reuse rejected)
-                                                                            #(logged rejected))))))
+               :data data}
+              (str "OAuth token refresh of " (:store data) ": " (name outcome)))))
 
 (def default-file-lock-timeout-ms
   "How long to wait for the CROSS-PROCESS advisory lock before giving up and
@@ -238,30 +163,19 @@
                                                                                      (reduced fl))))
        (catch InterruptedException e (.interrupt (Thread/currentThread)) (throw e))))
 
-(defn- warn-unlocked!
-  "Log that a refresh runs WITHOUT the cross-process lock on `lock-path`, so a
-   lost rotation race can be traced to it. `reason` is :unopenable or :not-acquired."
-  [lock-path reason]
-  (tel/log!
-    {:level :warn
-     :id ::refresh-unlocked
-     :data
-     {:lock-path (str lock-path) :reason reason :pid (paths/process-id) :role (paths/process-role)}}
-    "OAuth token refresh runs without the cross-process lock"))
-
 (defn call-with-file-lock
   "Run `f` while holding an OS advisory lock on `lock-path`, serializing the
    critical section ACROSS processes (e.g. two vis JVMs — a source-runtime client and
    its gateway daemon — sharing one credential file). The caller must already
    hold the in-process monitor, since a single JVM cannot hold two overlapping
-   locks on the same file.
+   locks on the same file. `f` gets true when it holds the lock, false when it
+   runs unlocked, and nil for a blank `lock-path`.
 
    `f` runs EXACTLY ONCE, always, and its exception propagates untouched — a
    retry here would re-run a ROTATING token exchange with an already-spent
-   refresh token. Blank/nil `lock-path`, any locking failure (unsupported
-   filesystem, IO error, overlapping lock), or a peer still holding the lock
-   after `timeout-ms` degrades to running `f` UNLOCKED rather than blocking
-   authentication.
+   refresh token. Any locking failure (unsupported filesystem, IO error,
+   overlapping lock), or a peer still holding the lock after `timeout-ms`,
+   degrades to running `f` UNLOCKED rather than blocking authentication.
 
    The single exception is an INTERRUPT while waiting for a peer: the caller is
    being cancelled, so `f` does NOT run and `InterruptedException` propagates
@@ -271,16 +185,15 @@
   ([lock-path f] (call-with-file-lock lock-path default-file-lock-timeout-ms f))
   ([lock-path timeout-ms f]
    (if (str/blank? lock-path)
-     (f)
+     (f nil)
      (let [ch (try (io/make-parents (io/file lock-path))
                    (.getChannel (java.io.RandomAccessFile. (io/file lock-path) "rw"))
                    (catch Throwable _ nil))]
        (if (nil? ch)
-         (do (warn-unlocked! lock-path :unopenable) (f))
+         (f false)
          (let [fl (try (acquire-file-lock! ch timeout-ms)
                        (catch Throwable t (close-quietly! ch) (throw t)))]
-           (when-not fl (warn-unlocked! lock-path :not-acquired))
-           (try (f)
+           (try (f (some? fl))
                 (finally (when fl
                            (try (.release ^java.nio.channels.FileLock fl) (catch Throwable _ nil)))
                          (close-quietly! ch)))))))))
@@ -309,24 +222,27 @@
 (defn make-file-refresher
   "Build a 0/1-arg single-flight refresh fn for a FILE-backed credential
    store whose token endpoint ROTATES the refresh_token (Anthropic,
-   OpenAI Codex). Owns its own lock; reuses creds persisted within the
-   reuse window instead of running a second (rotating) exchange — UNLESS the
-   reusable token equals the one just rejected (pass that token when calling the
-   returned fn on 401 recovery), so a server-rotated but locally-fresh token is
-   re-exchanged rather than handed back dead. Every exchange is logged under
-   `:store` through [[log-refresh!]]; a reuse is not.
+   OpenAI Codex, MCP servers). Owns its own lock; reuses usable saved creds
+   instead of running a second (rotating) exchange — UNLESS the reusable token
+   equals the one just rejected (pass that token when calling the returned fn on
+   401 recovery), so a server-rotated but locally-fresh token is re-exchanged
+   rather than handed back dead. Every exchange is logged under `:store` through
+   [[log-refresh!]]; a reuse is not.
 
    opts — all required unless noted:
      :store         keyword or string              the store name in the log
      :load          (fn [] -> creds-map|nil)       read persisted creds
-     :saved-at      (fn [creds] -> epoch-ms|nil)   persist timestamp
-                                                   (usually the keyword
-                                                   `:saved-at-ms`/`:saved-at`)
+     :saved-at      (fn [creds] -> epoch-ms|nil)   persist timestamp; required
+                                                   only without `:usable?`
      :refresh-token (fn [creds] -> string|nil)     the rotating refresh token
      :exchange!     (fn [refresh-token] -> creds)  the rotating HTTP call
      :persist!      (fn [creds] -> creds)          save + STAMP saved-at
      :->token       (fn [creds] -> token-map)      runtime provider-token shape
      :no-token!     (fn [] -> throws)              when no refresh token on file
+     :usable?       (optional) (fn [creds] -> bool) reuse test; default: saved
+                    within `:reuse-window-ms`
+     :on-rejected!  (optional) (fn [creds]) after a refused grant, before the
+                    sign-in error; default: persist `:reauth-required true`
      :reuse-window-ms (optional) override the default window
      :lock-path       (optional) file path for an OS advisory lock that
                       serializes the rotating exchange ACROSS processes
@@ -335,10 +251,16 @@
                       still race the rotation into HTTP 400 `invalid_grant`.
 
    Returns the provider-token map produced by `:->token`."
-  [{:keys [store load saved-at refresh-token exchange! persist! ->token no-token! reuse-window-ms
-           lock-path]}]
+  [{:keys [store load saved-at usable? refresh-token exchange! persist! on-rejected! ->token
+           no-token! reuse-window-ms lock-path]}]
   (let [window
         (or reuse-window-ms default-reuse-window-ms)
+
+        usable?
+        (or usable? #(fresh-within? (saved-at %) window))
+
+        on-rejected!
+        (or on-rejected! #(persist! (assoc % :reauth-required true)))
 
         lock
         (new-lock)
@@ -346,7 +268,7 @@
         reuse
         (fn [rejected]
           (let [creds (require-usable-credentials! (load))]
-            (when (and creds (fresh-within? (saved-at creds) window))
+            (when (and creds (usable? creds))
               (let [tok (->token creds)]
                 ;; Never hand back the exact token the server just
                 ;; rejected (401): a locally-fresh but server-rotated
@@ -355,7 +277,7 @@
                 (when-not (= rejected (:token tok)) tok)))))
 
         refresh!
-        (fn [rejected]
+        (fn [rejected locked?]
           (let [creds
                 (require-usable-credentials! (load))
 
@@ -366,38 +288,44 @@
                 {:store store
                  :trigger (if rejected :rejected-token :expired)
                  :started-ms (util/now-ms)
-                 :refresh-token rt}
+                 :refresh-token rt
+                 :locked locked?}
 
                 log!
-                (fn [outcome & {:as more}]
-                  (log-refresh! (merge entry {:outcome outcome} more)))]
+                (fn [outcome extra]
+                  (log-refresh! (merge entry {:outcome outcome} extra)))
 
-            (when (str/blank? rt) (log! :no-refresh-token) (no-token!))
-            (let [exchanged (try {:fresh (exchange! rt)}
-                                 (catch Throwable e
-                                   (if-not (invalid-grant? e)
-                                     (do (log! :failed :error e) (throw e))
-                                     (let [current (load)]
-                                       ;; A sign-in can replace the file while the exchange is pending.
-                                       (if (= rt (refresh-token current))
-                                         (let [rejected (assoc current :reauth-required true)]
-                                           (log! :rejected :error e)
-                                           (persist! rejected)
-                                           (require-usable-credentials! rejected))
-                                         (do (log! :superseded :error e)
-                                             (when (str/blank? (refresh-token current)) (no-token!))
-                                             {:token (->token (require-usable-credentials!
-                                                                current))}))))))]
-              (if (contains? exchanged :token)
-                (:token exchanged)
-                (let [saved (try (persist! (:fresh exchanged))
-                                 (catch Throwable e
-                                   (log! :persist-failed
-                                         :error e
-                                         :next-refresh-token (refresh-token (:fresh exchanged)))
-                                   (throw e)))]
-                  (log! :refreshed :next-refresh-token (refresh-token saved))
-                  (->token saved))))))
+                ;; [:exchanged fresh-creds] or [:superseded current-creds], or throws.
+                exchange-step
+                (fn []
+                  (try [:exchanged (exchange! rt)]
+                       (catch Throwable e
+                         (when-not (invalid-grant? e) (log! :failed {:error e}) (throw e))
+                         (let [current (load)]
+                           ;; A sign-in can replace the file while the exchange is pending.
+                           (when (= rt (refresh-token current))
+                             (log! :rejected {:error e})
+                             (on-rejected! current)
+                             (require-usable-credentials! (assoc current :reauth-required true)))
+                           (log! :superseded {:error e})
+                           [:superseded current]))))]
+
+            (when (str/blank? rt) (log! :no-refresh-token nil) (no-token!))
+            (let [[step fresh] (exchange-step)]
+              (->token (case step
+                         :superseded
+                         (do (when (str/blank? (refresh-token fresh)) (no-token!))
+                             (require-usable-credentials! fresh))
+
+                         :exchanged
+                         (let [saved (try (persist! fresh)
+                                          (catch Throwable e
+                                            (log! :persist-failed
+                                                  {:error e
+                                                   :next-refresh-token (refresh-token fresh)})
+                                            (throw e)))]
+                           (log! :refreshed {:next-refresh-token (refresh-token saved)})
+                           saved))))))
 
         ;; In-process monitor serializes threads in THIS JVM; the file lock
         ;; then serializes across JVMs. Order matters: hold the monitor first
@@ -408,6 +336,6 @@
         run
         (fn [rejected]
           (locking lock
-            (call-with-file-lock lock-path #(or (reuse rejected) (refresh! rejected)))))]
+            (call-with-file-lock lock-path #(or (reuse rejected) (refresh! rejected %)))))]
 
     (fn ([] (run nil)) ([rejected] (run rejected)))))

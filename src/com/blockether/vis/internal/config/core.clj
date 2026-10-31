@@ -1825,12 +1825,10 @@
 (defn- ensure-private-dir!
   "Create `dir` (and parents) if absent, then tighten it to owner-only (700)
    so files written inside — provider API keys in `state.yml` — are not
-   readable by other local users on a shared host. Best-effort: silently a
-   no-op on a non-POSIX filesystem."
+   readable by other local users on a shared host."
   [^String dir]
-  (let [f (io/file dir)]
-    (when-not (.exists f) (.mkdirs f))
-    (try (Files/setPosixFilePermissions (.toPath f) (PosixFilePermissions/fromString "rwx------"))
+  (let [^Path p (paths/create-private-dirs! dir)]
+    (try (Files/setPosixFilePermissions p (PosixFilePermissions/fromString "rwx------"))
          (catch Throwable _ nil))))
 
 (defn- ->yaml-safe

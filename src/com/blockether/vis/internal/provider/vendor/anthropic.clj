@@ -186,8 +186,6 @@
                       {:type :vis/anthropic-token-refresh-failed :status status :body body})))
     (credentials-result json)))
 
-(defn- auth-dir [] (io/file (str (System/getProperty "user.home") "/.vis")))
-
 (defn- auth-json-key
   "JSON key -> engine keyword. What we write is snake_case (`refresh_token`);
    the kebab spelling older builds persisted reads back onto the same key."
@@ -204,11 +202,9 @@
   "Persist credentials through the ONE JSON boundary (`wire/json-str`):
    snake_case string keys, total encoding."
   [credentials]
-  (let [^java.io.File dir (auth-dir)]
-    (when-not (.exists dir) (.mkdirs dir))
-    (paths/spit-private! (auth-file) (wire/json-str (assoc credentials :saved-at-ms (util/now-ms))))
-    (when (:reauth-required credentials) (provider-limits/auth-changed! :anthropic-coding-plan))
-    credentials))
+  (paths/spit-private! (auth-file) (wire/json-str (assoc credentials :saved-at-ms (util/now-ms))))
+  (when (:reauth-required credentials) (provider-limits/auth-changed! :anthropic-coding-plan))
+  credentials)
 
 (defn- delete-auth-file!
   []
