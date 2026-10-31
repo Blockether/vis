@@ -908,6 +908,31 @@
           (expect
             (false?
               (scoped/resource-enabled? env :skills "late_fixture" (scoped/live-values env)))))))
+  ;; Perf pass 2026-11: one context render resolved the session settings 10 times.
+  (it "resolves the session settings once inside one snapshot"
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              sid
+              (h/store-session! db {:title "Snapshot"})
+
+              env
+              {:db-info db :session-id sid}
+
+              calls
+              (atom 0)
+
+              values
+              scoped/values]
+
+          (with-redefs [scoped/values (fn [& args]
+                                        (swap! calls inc)
+                                        (apply values args))]
+            (scoped/with-live-snapshot (scoped/live-values env)
+                                       (scoped/live-values env)
+                                       (scoped/with-live-snapshot (scoped/live-values env))))
+          (expect (= 1 @calls)))))
   (it "resolves no session settings unless a checked extension owns an engine setting"
       (with-empty-config
         (let [db

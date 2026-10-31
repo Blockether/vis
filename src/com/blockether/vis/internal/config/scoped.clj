@@ -12,6 +12,7 @@
             [com.blockether.vis.contract.toggle :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.loop.perf :as perf]
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -507,9 +508,18 @@
           rows)))
 
 (defn values
-  "The session snapshot used by callbacks; does not mutate the global registry."
+  "The session snapshot used by callbacks; does not mutate the global registry.
+   The `:value` of each [[settings]] row, without its inherited and own columns."
   [db session-id]
-  (into {} (map (juxt :id :value)) (settings db (target db "session" session-id))))
+  (perf/timed
+    :config/session-values
+    (let [target
+          (target db "session" session-id)
+
+          specs
+          (with-provider-defaults db target (toggles/target-toggles (:root target)))]
+
+      (into {} (map (juxt :id :value)) (resolve-layers specs (layers db target) "session" {})))))
 
 (defn resource-id
   "Stable collision-resistant toggle id for a named skill, MCP server or extension."
@@ -551,14 +561,40 @@
                                    :owner (:ext/name ext)}))
       id)))
 
+(def ^:dynamic *live-snapshot*
+  "An atom of session id → [[values]] while [[with-live-snapshot]] runs, else nil."
+  nil)
+
+(defmacro with-live-snapshot
+  "Run `body` with one [[live-values]] resolution for each session. Use it for work
+   that reads the settings at one moment, such as one context render. An outer
+   snapshot stays in force."
+  [& body]
+  `(binding [*live-snapshot* (or *live-snapshot* (atom {}))]
+     ~@body))
+
 (defn live-values
   "The session values [[engine-mode]] and [[resource-enabled?]] read for `env`,
    resolved once so a caller checking many extensions, skills or servers pays
    for one resolution. Pass it as a `delay`: only a check that needs a session
-   value forces it. Nil outside a session, where both read the process-wide
-   settings."
+   value forces it. Inside [[with-live-snapshot]], callers share one resolution.
+   Nil outside a session, where both read the process-wide settings."
   [env]
-  (when (and (:db-info env) (:session-id env)) (values (:db-info env) (:session-id env))))
+  (let [db
+        (:db-info env)
+
+        session-id
+        (:session-id env)]
+
+    (when (and db session-id)
+      (if-let [snapshot *live-snapshot*]
+        (let [[cached-db cached] (get @snapshot session-id)]
+          (if (identical? db cached-db)
+            cached
+            (let [v (values db session-id)]
+              (swap! snapshot assoc session-id [db v])
+              v)))
+        (values db session-id)))))
 
 (defn- live-value
   "`id`'s live value from `live`, a map or a delay of one, resolved afresh when
@@ -567,7 +603,8 @@
   (let [live (force live)]
     (if (contains? live id)
       (get live id)
-      (if-let [fresh (live-values env)]
+      (if-let [fresh (binding [*live-snapshot* nil]
+                       (live-values env))]
         (get fresh id)
         (toggles/value-of id)))))
 

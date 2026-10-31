@@ -167,9 +167,10 @@
        (catch Throwable _ nil)))
 
 (defn- extensions-digest
-  [environment]
+  "Count and aliases of `active`, the active extensions."
+  [active]
   (try (let [active
-             (or (prompt/active-extensions environment) [])
+             (or active [])
 
              ;; ext-alias-symbol yields a Clojure SYMBOL — forbidden as a boundary
              ;; value; stringify each alias so the set carries plain strings.
@@ -191,26 +192,31 @@
 (defn base-digest
   "Compose the internal-owned base `:session/env` digest. Extensions
    layer additional slices on top via `:ext/ctx-fn` (`render-block!`
-   deep-merges before render)."
-  [environment]
-  (let [host
-        (host-digest)
+   deep-merges before render). Pass `active`, the active extensions, when
+   the caller has resolved them already."
+  ([environment]
+   (base-digest environment
+                (when environment
+                  (try (prompt/active-extensions environment) (catch Throwable _ nil)))))
+  ([environment active]
+   (let [host
+         (host-digest)
 
-        project
-        (project-digest)
+         project
+         (project-digest)
 
-        exts
-        (when environment (extensions-digest environment))]
+         exts
+         (when environment (extensions-digest active))]
 
-    (cond-> {}
-      host
-      (assoc "host" host)
+     (cond-> {}
+       host
+       (assoc "host" host)
 
-      project
-      (assoc "project" project)
+       project
+       (assoc "project" project)
 
-      exts
-      (assoc "extensions" exts))))
+       exts
+       (assoc "extensions" exts)))))
 
 (defn extension-contributions
   "Collect `\"session_env\"` slices from every active extension's `:ext/ctx-fn`
