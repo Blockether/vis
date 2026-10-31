@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.config.validation-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.config :as contract-config]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -15,6 +16,28 @@
                                 {"workspace" {"filesystem" [{"id" "library"
                                                              "path" "/projects/library"
                                                              "python_name" alias}]}}))))))
+
+;; User request 2026-10-31 (performance pass): each context render validated the
+;; cached `~/.vis/state.yml` map again, about 50 ms per render in the native image.
+(defdescribe valid-verdict-reuse-test
+             (it "validates one map object once and a changed map again"
+                 (let [calls
+                       (atom 0)
+
+                       real
+                       contract-config/config-valid?
+
+                       config
+                       {"agent_name" "Ada"}]
+
+                   (with-redefs [contract-config/config-valid? (fn [c]
+                                                                 (swap! calls inc)
+                                                                 (real c))]
+                     (expect (true? (config-validation/valid? config)))
+                     (expect (true? (config-validation/valid? config)))
+                     (expect (= 1 @calls))
+                     (expect (false? (config-validation/valid? (assoc config "agent_name" ""))))
+                     (expect (= 2 @calls))))))
 
 (def full-config
   {"default_provider" "anthropic"
