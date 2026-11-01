@@ -142,9 +142,10 @@ jobs:
           enable-cache: false
       # The project-runner regression shells real pytest, not embedded Python.
       # Use a disposable environment rather than the runner's global packages.
+      # A self-hosted runner keeps $RUNNER_TEMP between jobs. Replace a leftover environment.
       - name: Provision pytest for project-runner tests
         run: |
-          uv venv "$RUNNER_TEMP/vis-project-pytest" --python python3
+          uv venv --clear "$RUNNER_TEMP/vis-project-pytest" --python python3
           uv pip install --python "$RUNNER_TEMP/vis-project-pytest/bin/python" pytest
           "$RUNNER_TEMP/vis-project-pytest/bin/python" -m pytest --version
           echo "$RUNNER_TEMP/vis-project-pytest/bin" >> "$GITHUB_PATH"
