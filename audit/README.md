@@ -150,7 +150,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/imaging` | `0.1.12` | MIT | 23 KB | Blockether (in-house) |
 | `com.blockether/parinferish` | `0.2.4` | MIT | 70 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.218` | Apache-2.0 | 860 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.219` | Apache-2.0 | 866 KB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:7e8e3fcb303d4f61a93f2252db659e4e95dee662` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.042` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.2` | Apache-2.0 | 580 KB | 3rd-party |
@@ -197,7 +197,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.58` | LGPL-3.0 | 671 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.59` | LGPL-3.0 | 671 KB | Blockether (in-house) |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
 ### `vis-contract` module
@@ -227,7 +227,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 Dependencies use several licenses, listed above. Vis first-party code uses
 Apache-2.0. Review dependency terms for the intended distribution method — **with the copyleft exception(s) below that need legal sign-off:**
 
-> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.58`) uses LGPL-3.0.** Review source, notice and relinking
+> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.59`) uses LGPL-3.0.** Review source, notice and relinking
 > obligations before distribution, particularly for static native-image builds.
 > Keeping an optional dependency separate may affect those obligations (§4.3).
 
