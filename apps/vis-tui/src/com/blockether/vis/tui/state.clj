@@ -228,7 +228,20 @@
       {:text "◉ Voice conversation" :level :info :updated-at-ms (System/currentTimeMillis)})
     (update db :channel-status dissoc :voice/conversation)))
 
-(defn- tab-snapshot [db] (merge (empty-tab-state) (select-keys db tab-state-keys)))
+(def ^:private empty-tab-template
+  "The `empty-tab-state` value, built once: `tab-snapshot` runs on every dispatch."
+  (empty-tab-state))
+
+(defn- tab-snapshot
+  "The tab's own keys of `db` over the empty tab state. A key present with a nil
+   value is copied as nil, like `select-keys`."
+  [db]
+  (persistent! (reduce (fn [m k]
+                         (if-let [e (find db k)]
+                           (assoc! m k (val e))
+                           m))
+                       (transient empty-tab-template)
+                       tab-state-keys)))
 
 (defn- current-tab-id
   [db]
