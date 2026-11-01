@@ -371,6 +371,19 @@
   ^String [x]
   (bytes->hex (sha256 (if (bytes? x) x (utf8 (str x))))))
 
+(defn content-str
+  "`pr-str` of `x` with every element and level, for digests and stored text.
+   Each process caps `*print-length*` and `*print-level*` for its logs. Under these
+   caps, two collections that differ after the cap print the same text."
+  ^String [x]
+  (binding [*print-length*
+            nil
+
+            *print-level*
+            nil]
+
+    (pr-str x)))
+
 (defn hmac-sha256
   "HMAC-SHA256 of `data` with `key` — the one MAC that webhook signatures and
    Web Push key derivation share."

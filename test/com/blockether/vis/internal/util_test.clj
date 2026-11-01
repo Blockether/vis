@@ -184,6 +184,16 @@
                  (expect (= "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                             (util/sha256-hex "")))))
 
+(defdescribe content-str-test
+             ;; User request 2026-11-01: init! caps the print vars for logs, and digests and
+             ;; stored EDN printed only the first hundred elements.
+             (it "prints every element and level under the process print caps"
+                 (let [value {:items (vec (range 150)) :deep [[[[[[[[[[[[1]]]]]]]]]]]]}]
+                   (binding [*print-length* 100
+                             *print-level* 10]
+
+                     (expect (= value (read-string (util/content-str value))))))))
+
 (defdescribe secret-bytes-test
              (it "matches the RFC 4231 HMAC-SHA256 test vector"
                  (expect (= "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"

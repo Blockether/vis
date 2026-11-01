@@ -1140,7 +1140,7 @@
                                           [(PosixFilePermissions/asFileAttribute
                                              (PosixFilePermissions/fromString "rw-------"))]))]
 
-    (try (spit (.toFile staged) (str (pr-str report) "\n"))
+    (try (spit (.toFile staged) (str (util/content-str report) "\n"))
          (Files/move staged
                      (.toPath file)
                      (into-array CopyOption

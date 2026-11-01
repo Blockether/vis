@@ -169,7 +169,7 @@
       db
       (fn []
         (let [tmp (java.io.File/createTempFile (str (registry-key db) ".") ".tmp" (registry-dir))]
-          (try (spit tmp (pr-str entry))
+          (try (spit tmp (util/content-str entry))
                (try (Files/move (.toPath tmp)
                                 (.toPath f)
                                 (into-array StandardCopyOption

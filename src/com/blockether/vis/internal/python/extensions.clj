@@ -3394,7 +3394,7 @@
 
                     (.getCanonicalFile root)))]
 
-    (util/sha256-hex (pr-str [(vec (for [^File f
+    (util/sha256-hex (util/content-str [(vec (for [^File f
                                          entries
 
                                          :when (str/ends-with? (.getName f) ".dist-info")]
@@ -3734,9 +3734,9 @@
   ^File [project-root path]
   (io/file (.getParentFile (io/file (runtime/packages-dir)))
            "registrations"
-           (str (util/sha256-hex (pr-str [project-root path])) ".json")))
+           (str (util/sha256-hex (util/content-str [project-root path])) ".json")))
 
-(defn- manifest-digest [inputs] (util/sha256-hex (pr-str [@manifest-host inputs])))
+(defn- manifest-digest [inputs] (util/sha256-hex (util/content-str [@manifest-host inputs])))
 
 (defn- read-manifest
   "`{:file :registration}` for the saved registration of `path`, when `inputs-for` gives
@@ -4119,7 +4119,7 @@
                              (try (shared-environment? project-root project)
                                   (catch Throwable _ ::unknown-environment)))
               :packages (package-digest packages)
-              :env (util/sha256-hex (pr-str (into (sorted-map)
+              :env (util/sha256-hex (util/content-str (into (sorted-map)
                                                   (resolve-declared-env (map :name declared)
                                                                         env-value))))}))
 
@@ -4275,7 +4275,7 @@
                                                          (pr-str (select-keys previous
                                                                               [:sha :code-sha]))))
                                  :requested-fingerprint
-                                 (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))}))))))))
+                                 (util/sha256-hex (util/content-str {:sha sha :code-sha source-sha}))}))))))))
            ;; A package that could not install has no entrypoint to scan.
            (swap! failures into (remove #(scanned (:file %)) preparation-failures))
            ;; Files that vanished from disk since the last scan (deleted / renamed)

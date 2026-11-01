@@ -376,7 +376,7 @@
         (keyword? value) (name value)
         :else value))
 
-(defn- sha256 [value] (str "sha256:" (util/sha256-hex (pr-str (stable-value value)))))
+(defn- sha256 [value] (str "sha256:" (util/sha256-hex (util/content-str (stable-value value)))))
 
 (defn- project-path-name
   [entry resolved-path]

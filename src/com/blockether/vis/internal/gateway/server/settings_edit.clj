@@ -31,7 +31,7 @@
 (defn revision
   "Content revision includes ancestors and explicit values, not volatile service state."
   [db target]
-  (util/sha256-hex (pr-str (walk/postwalk
+  (util/sha256-hex (util/content-str (walk/postwalk
                              #(if (map? %) (into (sorted-map) %) %)
                              {:target target
                               :toggles (mapv digest-secrets (scoped/settings db target))

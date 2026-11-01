@@ -95,7 +95,7 @@
           (or (some-> (ps/db-get-project-by-root db owner-id origin)
                       :id
                       str)
-              (str "workspace:" (util/sha256-hex (pr-str [(or owner-id "local") origin]))))))))
+              (str "workspace:" (util/sha256-hex (util/content-str [(or owner-id "local") origin]))))))))
 
 (defn default-group
   "The persisted project or repository group, shared by trunk and isolated workspaces."
@@ -291,7 +291,7 @@
         (text! (or (:idempotency_key opts) (str (random-uuid))) idempotency-key-bytes)
 
         fingerprint
-        (util/sha256-hex (pr-str [gid activation-id content thread title selector required?
+        (util/sha256-hex (util/content-str [gid activation-id content thread title selector required?
                                   reply-to]))]
 
     (or

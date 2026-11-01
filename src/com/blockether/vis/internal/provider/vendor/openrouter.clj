@@ -235,15 +235,7 @@
                tmp
                (File/createTempFile "models-" ".tmp" dir)]
 
-           ;; The process prints collections short for its logs; a cut file never reads back.
-           (try (spit tmp
-                      (binding [*print-length*
-                                nil
-
-                                *print-level*
-                                nil]
-
-                        (pr-str catalog)))
+           (try (spit tmp (util/content-str catalog))
                 (Files/move (.toPath tmp)
                             (.toPath f)
                             (into-array CopyOption

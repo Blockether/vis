@@ -15,7 +15,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.speech.assets :as assets]
-            [com.blockether.vis.internal.speech.transcode :as transcode])
+            [com.blockether.vis.internal.speech.transcode :as transcode]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.nio ByteBuffer ByteOrder)
            (java.nio.charset StandardCharsets)
@@ -335,7 +336,7 @@
                     (.toPath (clip-file id))
                     ^"[Ljava.nio.file.CopyOption;"
                     (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-        (spit (meta-file id) (pr-str voice))
+        (spit (meta-file id) (util/content-str voice))
         (assoc voice
           :clip (str (clip-file id))
           :is-imported true)))))
@@ -361,7 +362,7 @@
                       (update :label #(or (not-empty %) id))
                       (assoc :updated-at (str (java.time.Instant/now))))]
 
-      (spit (meta-file id) (pr-str updated))
+      (spit (meta-file id) (util/content-str updated))
       (assoc updated
         :clip (str (clip-file id))
         :is-imported true))))

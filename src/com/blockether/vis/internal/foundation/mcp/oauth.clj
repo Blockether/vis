@@ -175,7 +175,7 @@
              (read (java.io.PushbackReader. r)))
            (catch Throwable _ nil)))))
 
-(defn- write-tokens! [server-name m] (paths/spit-private! (token-file server-name) (pr-str m)) m)
+(defn- write-tokens! [server-name m] (paths/spit-private! (token-file server-name) (util/content-str m)) m)
 
 (defn- expired?
   "Skew the reported expiry by 60s so we refresh proactively, never at the

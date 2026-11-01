@@ -15,7 +15,8 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.workspace.core :as workspace]
-            [com.blockether.vis.internal.workspace.git :as git])
+            [com.blockether.vis.internal.workspace.git :as git]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.io File]))
 
 (def ^:private git-timeout {:timeout-secs 120})
@@ -679,7 +680,7 @@
                        :target sha
                        :remaining (vec (next remaining))
                        :message message}
-                _ (spit marker (pr-str state) :encoding "UTF-8")
+                _ (spit marker (util/content-str state) :encoding "UTF-8")
                 args ["merge" "--no-commit" "--no-ff" "--no-autostash" "--no-overwrite-ignore" sha]
                 {:keys [exit] :as result} (git/run-git root args git-timeout)
                 conflicts (conflict-paths root)]
@@ -687,7 +688,7 @@
             (cond
               (seq conflicts)
               (do
-                (spit marker (pr-str (assoc state :conflicts conflicts)) :encoding "UTF-8")
+                (spit marker (util/content-str (assoc state :conflicts conflicts)) :encoding "UTF-8")
                 {:status :conflicts
                  :conflicts conflicts
                  :hint

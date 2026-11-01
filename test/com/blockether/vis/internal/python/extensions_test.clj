@@ -6197,6 +6197,27 @@ vis.register_extension(vis.Extension(
                  (.mkdirs (io/file packages "other-2.0.dist-info"))
                  (expect (not= listed-edit (digest))))))
            (finally (#'pyx/delete-tree! dir)))))
+  (it "changes when packages beyond the first hundred change under the process print caps"
+      ;; User request 2026-11-01: init! caps *print-length* at 100 for logs, and the
+      ;; digest printed only the first hundred distributions of a package directory.
+      (let [dir
+            (temp-dir)
+
+            packages
+            (doto (io/file dir "packages") .mkdirs)]
+
+        (try (doseq [i (range 101)]
+               (.mkdirs (io/file packages (format "pkg%03d-1.0.dist-info" i))))
+             (binding [*print-length*
+                       100
+
+                       *print-level*
+                       10]
+
+               (let [initial (#'pyx/package-sources packages)]
+                 (.mkdirs (io/file packages "zzz-1.0.dist-info"))
+                 (expect (not= initial (#'pyx/package-sources packages)))))
+             (finally (#'pyx/delete-tree! dir)))))
   (it "skips an editable project root when its path line names a source inside it — #398"
       ;; #398: a src-layout editable install read every scratch tree and venv of its project.
       (let [dir

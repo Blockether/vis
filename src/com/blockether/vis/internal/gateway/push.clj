@@ -209,7 +209,7 @@
 (defn- write-devices!
   [m]
   (try (io/make-parents (devices-file))
-       (spit (devices-file) (pr-str m))
+       (spit (devices-file) (util/content-str m))
        (catch Throwable t
          (tel/log! {:level :warn :id ::devices-write-failed :data {:error (ex-message t)}}))))
 

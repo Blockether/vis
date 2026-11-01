@@ -6886,7 +6886,7 @@
           (persistance/db-agent-list db sid)
 
           fingerprint
-          (util/sha256-hex (pr-str (into (sorted-map) opts)))
+          (util/sha256-hex (util/content-str (into (sorted-map) opts)))
 
           ;; Without a key, a retry in the same parent turn finds the same child. A caller key
           ;; names one delegation of this parent for that caller, across turns and restarts.
