@@ -911,7 +911,48 @@
                (expect (= extra (:clone (by-trunk extra))))
                (expect (not-any? #{old-copy new-copy draft} (map :clone entries)))
                (expect (not (:denied? (by-trunk secret)))))
-             (finally (delete-tree! base))))))
+             (finally (delete-tree! base)))))
+  (it "resolves a moved root again after the workspace changes"
+      ;; The roots cache must not keep the old target of a symlinked root.
+      (let [base
+            (temp-dir "vis-moved-root")
+
+            old-target
+            (doto (io/file base "old") .mkdirs)
+
+            new-target
+            (doto (io/file base "new") .mkdirs)
+
+            link
+            (.toPath (io/file base "link"))
+
+            point!
+            (fn [^java.io.File target]
+              (java.nio.file.Files/deleteIfExists link)
+              (java.nio.file.Files/createSymbolicLink
+                link
+                (.toPath target)
+                (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            live
+            (atom nil)
+
+            env
+            {:workspace-atom live
+             :security/filesystem-roots [(str link)]
+             :security-policy {:jail-enabled true}}]
+
+        (try (point! old-target)
+             (reset! live {:repo-root (str link) :root (str link)})
+             (expect (= [(.getCanonicalPath ^java.io.File old-target)]
+                        (map :trunk (ws/env-filesystem-roots env))))
+             (expect (= (.getCanonicalPath ^java.io.File old-target) (ws/workspace-root env)))
+             (point! new-target)
+             (reset! live {:repo-root (str link) :root (str link)})
+             (expect (= [(.getCanonicalPath ^java.io.File new-target)]
+                        (map :trunk (ws/env-filesystem-roots env))))
+             (expect (= (.getCanonicalPath ^java.io.File new-target) (ws/workspace-root env)))
+             (finally (java.nio.file.Files/deleteIfExists link) (delete-tree! base))))))
 
 (defdescribe
   draft-isolation-test

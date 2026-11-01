@@ -110,18 +110,29 @@
                     :else s)]
         (.getCanonicalPath (io/file s))))))
 
+(defonce ^:private canonical-roots
+  ;; Raw root value -> `[[raw owner] canonical path]` for [[canonical-root]].
+  (atom {}))
+
+(defn- canonical-root
+  "[[normalize-root]] of `raw`, reused while `raw` and `owner`, the value that holds it,
+   stay the same objects. A workspace change brings a new owner, so it resolves again."
+  [raw owner]
+  (util/cached canonical-roots 256 raw [raw owner] #(normalize-root raw)))
+
 (defn workspace-root
   "Extract a canonical workspace root from an env map or raw root value.
 
    For an env map, the live `:workspace-atom` wins over the static `:workspace/root`:
    it always holds the session's saved workspace (#364)."
   [env-or-root]
-  (normalize-root (if (map? env-or-root)
-                    (or (some-> (:workspace-atom env-or-root)
-                                deref
-                                :root)
-                        (:workspace/root env-or-root))
-                    env-or-root)))
+  (if (map? env-or-root)
+    (let [ws (some-> (:workspace-atom env-or-root)
+                     deref)]
+      (if-let [root (:root ws)]
+        (canonical-root root ws)
+        (canonical-root (:workspace/root env-or-root) env-or-root)))
+    (canonical-root env-or-root nil)))
 
 (defn ancestor-roots
   "Canonical workspace root followed by each parent through the nearest ancestor
@@ -250,23 +261,9 @@
         (when (seq under) (val (apply max-key (comp count key) under))))
       :shared))
 
-(defn env-filesystem-roots
-  "Canonical `[{:trunk :clone :draft}]` entries available to the current tool
-   call. Includes the session's OWN draft pair, the per-root clones minted for
-   that draft, configured workspace catalog entries, and immutable read/write
-   roots from the environment security snapshot. Live workspace state takes
-   precedence over the original environment snapshot. Catalog `search: false` roots
-   are marked no-search with the jail on or off. With the jail disabled, host
-   filesystem roots are also granted and marked no-search so explicit paths are
-   unrestricted without making default searches crawl the machine.
-
-   `:draft` carries the root's `workspace.filesystem` isolation policy. In a
-   DRAFTED session a root is marked `:denied?` when the policy withholds it
-   (`:not-allowed`) or when a copy policy has NO clone minted for this draft —
-   writing through would silently break the promise, so it fails CLOSED. The
-   session's own trunk↔clone pair is FIRST so an absolute trunk path remaps into
-   the clone before a broad host root (jail disabled) can accept it verbatim."
-  [env-or-roots]
+(defn- resolve-filesystem-roots
+  "The entries of [[env-filesystem-roots]] for `env-or-roots`, with `ws` its live workspace."
+  [env-or-roots ws]
   (let [environment?
         (map? env-or-roots)
 
@@ -283,9 +280,6 @@
 
         workspace-atom
         (when environment? (:workspace-atom env-or-roots))
-
-        ws
-        (when environment? (if workspace-atom @workspace-atom (:workspace env-or-roots)))
 
         primary-trunk
         (normalize-root (:repo-root ws))
@@ -377,6 +371,51 @@
                    (if (some #(= (:trunk %) (:trunk e)) acc) acc (conj acc e)))
                  []))))
 
+(defonce ^:private filesystem-roots-cache
+  ;; Raw root strings -> `[input objects entries]` for [[env-filesystem-roots]].
+  (atom {}))
+
+(defn env-filesystem-roots
+  "Canonical `[{:trunk :clone :draft}]` entries available to the current tool
+   call. Includes the session's OWN draft pair, the per-root clones minted for
+   that draft, configured workspace catalog entries, and immutable read/write
+   roots from the environment security snapshot. Live workspace state takes
+   precedence over the original environment snapshot. Catalog `search: false` roots
+   are marked no-search with the jail on or off. With the jail disabled, host
+   filesystem roots are also granted and marked no-search so explicit paths are
+   unrestricted without making default searches crawl the machine.
+
+   `:draft` carries the root's `workspace.filesystem` isolation policy. In a
+   DRAFTED session a root is marked `:denied?` when the policy withholds it
+   (`:not-allowed`) or when a copy policy has NO clone minted for this draft —
+   writing through would silently break the promise, so it fails CLOSED. The
+   session's own trunk↔clone pair is FIRST so an absolute trunk path remaps into
+   the clone before a broad host root (jail disabled) can accept it verbatim.
+
+   Reuse the entries while each input stays the same object. A workspace change
+   swaps the workspace value, so its roots resolve again on the next call."
+  [env-or-roots]
+  (if (map? env-or-roots)
+    (let [workspace-atom
+          (:workspace-atom env-or-roots)
+
+          ws
+          (if workspace-atom @workspace-atom (:workspace env-or-roots))]
+
+      (util/cached filesystem-roots-cache
+                   256
+                   [(:workspace/root env-or-roots) (:repo-root ws) (:root ws)]
+                   [ws workspace-atom (:workspace/root env-or-roots)
+                    (:workspace/filesystem-roots env-or-roots) (:security-policy env-or-roots)
+                    (:security/filesystem-roots env-or-roots)
+                    (:security/no-search-roots env-or-roots)]
+                   #(resolve-filesystem-roots env-or-roots ws)))
+    (util/cached filesystem-roots-cache
+                 256
+                 ::roots
+                 [env-or-roots]
+                 #(resolve-filesystem-roots env-or-roots nil))))
+
 (defn cwd
   "Resolve the current workspace cwd. In production the channel
    wrapper binds `*workspace-root*` per turn, so the process-cwd
@@ -388,7 +427,7 @@
 (defn cwd-root
   "Canonical path of `cwd`: the key of the current project's scoped state."
   ^String []
-  (normalize-root (cwd)))
+  (canonical-root (.getPath (cwd)) nil))
 
 (defn allowed-roots
   "Canonical absolute CLONE/working-copy paths the current tool call may
