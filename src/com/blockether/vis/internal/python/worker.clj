@@ -811,20 +811,20 @@
   "The namespace in which a spare worker warms up. It is closed before the first context."
   "__vis_spare__")
 
+(defn- warm-up!
+  "Import the runtime of `peer` in a throwaway namespace and run `code` there, so the
+   first real context only binds a session (#407)."
+  [peer code]
+  (try (child/request! peer {"op" "install-runtime" "session" spare-session})
+       (when code (child/request! peer {"op" "exec" "session" spare-session "code" code}))
+       (finally (child/request! peer {"op" "close" "session" spare-session}))))
+
 (defn- start-spare!
   "Start and warm a trusted worker for `packages` in the background: it imports the
    runtime and runs the warm-up, so its first context only binds a session (#407)."
   [packages]
-  (future (let [state
-                (start! (->TrustedExtensionWorker ::spare packages))
-
-                peer
-                (:peer state)]
-
-            (try (child/request! peer {"op" "install-runtime" "session" spare-session})
-                 (when-let [code @spare-warmup]
-                   (child/request! peer {"op" "exec" "session" spare-session "code" code}))
-                 (child/request! peer {"op" "close" "session" spare-session})
+  (future (let [state (start! (->TrustedExtensionWorker ::spare packages))]
+            (try (warm-up! (:peer state) @spare-warmup)
                  state
                  (catch Throwable t (stop-state! state) (throw t))))))
 
@@ -952,6 +952,15 @@
    workers can start in parallel. Never replaces a dead or retired worker."
   [k]
   (live k)
+  nil)
+
+(defn prestart-worker!
+  "Start the worker for `k` before anything asks for it, and run `warmup` Python in a
+   throwaway namespace of it. Its first context then skips those imports and compiles.
+   The worker has the same single owner as a lazy start: a caller that asks for `k`
+   meanwhile waits for this start. Never replaces a dead or retired worker."
+  [k warmup]
+  (warm-up! (:peer (live k)) warmup)
   nil)
 
 (def ^:private INTERRUPT_REPLY_MS

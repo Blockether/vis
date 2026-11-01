@@ -1399,18 +1399,28 @@
               (release-context! ctx))
       (release-context! ctx))))
 
+(defn- cached-exec-python
+  "Python that executes `source` in the current globals. `vis_code` compiles the
+   source once for each worker and keeps the code in the bytecode cache (#407).
+   The source crosses as JSON text: a Python string literal reads an escaped
+   surrogate pair as two characters, while `json.loads` rejoins it. `flags` is a
+   Python expression for the compiler flags."
+  [source filename flags]
+  (str "exec(__import__('vis_code').code(__import__('json').loads("
+       (python-string-literal (json/write-json-str source))
+       "), "
+       (python-string-literal filename)
+       ", "
+       flags
+       "), globals())"))
+
 (defn- postponed-annotations-python
   "Python that executes extension `source` as if the file began with
    `from __future__ import annotations`. Python 3.14 otherwise defers annotations
    into functions that the SDK does not evaluate, so `doc()` lost every type.
-   The source crosses as JSON text: a Python string literal reads an escaped
-   surrogate pair as two characters, while `json.loads` rejoins it. `<string>` is
-   the file name the interpreter gives code it executes directly. `vis_code` compiles
-   the source once for each worker and keeps the code in the bytecode cache (#407)."
+   `<string>` is the file name the interpreter gives code it executes directly."
   [source]
-  (str "exec(__import__('vis_code').code(__import__('json').loads("
-       (python-string-literal (json/write-json-str source))
-       "), '<string>', __import__('__future__').annotations.compiler_flag), globals())"))
+  (cached-exec-python source "<string>" "__import__('__future__').annotations.compiler_flag"))
 
 (defn- context-worker-key
   "The trusted worker that holds the context of an extension frozen at `snap`.
@@ -2969,13 +2979,18 @@
   "A volatile with the `extension-package` context of one scan, or nil outside a scan."
   nil)
 
+(def ^:private package-python
+  "Python that executes `extension_package.py`. A scan context compiled its 1500
+   lines again each time (5-14 ms); `vis_code` now compiles them once per worker."
+  (delay (cached-exec-python (classpath-src "blockether/vis/extension_package.py")
+                             "blockether/vis/extension_package.py"
+                             "0")))
+
 (defn- package-context
   "Open a context with `extension_package.py` loaded."
   []
   (let [ctx (build-context "extension-package")]
-    (try (exec-in! ctx (classpath-src "blockether/vis/extension_package.py"))
-         ctx
-         (catch Throwable t (discard-context! ctx) (throw t)))))
+    (try (exec-in! ctx @package-python) ctx (catch Throwable t (discard-context! ctx) (throw t)))))
 
 (defn- package-call
   "Run `expression` in an `extension-package` context. Inside `with-package-context`,
@@ -3711,6 +3726,23 @@
    ;; Perf pass 2026-10-31: a shared-package spare that no loaded extension used held a
    ;; 48 MB worker for the life of the gateway. A first such context refills it on use.
    (pyext/keep-spares! (when keep? spare-warmup-python) (map :packages (vals @loaded)))))
+
+(defn prestart-shared-worker!
+  "Start the shared trusted worker in the background and warm it: the runtime, the
+   SDK body and `extension_package.py`. A gateway calls this before it opens its
+   database, so the spawn is off the path of the first session. A global catalog
+   without entries starts nothing, as before. Returns a future. A failure is logged,
+   and the first extension load then starts the worker itself."
+  []
+  (future (try (let [scope {:dirs [(config/global-extensions-dir)] :global true}]
+                 (when (seq (scan (:dirs scope) (:files (scope-glob-entries scope))))
+                   (pyext/prestart-worker! pyext/shared-key
+                                           (str spare-warmup-python @package-python))))
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::prestart-failed
+                            :data {:error (or (ex-message t) (str t))}
+                            :msg "Could not start the shared Python worker early"})))))
 
 (defonce ^:private registration-manifests?
   ;; True while the loader registers unchanged extensions from their saved manifests.

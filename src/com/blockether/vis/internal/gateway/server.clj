@@ -1545,9 +1545,15 @@
    body counts only until the handler returns it, so an open event stream is cheap."
   [handler]
   (fn [request]
-    (let [start (System/nanoTime)
-          response (handler request)
-          ms (/ (double (- (System/nanoTime) start)) 1e6)]
+    (let [start
+          (System/nanoTime)
+
+          response
+          (handler request)
+
+          ms
+          (/ (double (- (System/nanoTime) start)) 1e6)]
+
       (when (>= ms (double slow-request-ms))
         (tel/log! {:level :warn
                    :id ::slow-request
@@ -2476,6 +2482,11 @@
 
         _
         (reset! extension-startup {:stage "initializing"})
+
+        ;; The shared Python worker starts while the database opens and Jetty binds.
+        ;; The startup load below then finds it warm, and so does the first session.
+        _
+        (python-extensions/prestart-shared-worker!)
 
         {:keys [port host token-file require-token?]}
         (start! {:port (some-> port
