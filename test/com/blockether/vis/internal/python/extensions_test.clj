@@ -10033,3 +10033,23 @@ vis.register_extension(vis.Extension(
                            @seen))]
         (expect (= #{"/pkgs/a"} (spares-for {"a" {:packages "/pkgs/a"}})))
         (expect (= #{nil "/pkgs/a"} (spares-for {"a" {:packages "/pkgs/a"} "b" {}}))))))
+
+(defdescribe slim-env-session-root-test
+             ;; Defect: a ctx callback that took `workspace_root` as the session root scanned the
+             ;; process cwd in a session without a workspace, where `vis.workspace_root()` fails.
+             (let [slim-env
+                   #'pyx/slim-env
+
+                   env-root
+                   #'pyx/env-root
+
+                   root
+                   (workspace/normalize-root (System/getProperty "user.dir"))]
+
+               (it "gives the vis.workspace_root() value of a session workspace"
+                   (let [env {:session-id "s1" :workspace-atom (atom {:root root})}]
+                     (expect (= (env-root env) (get (slim-env env nil) "session_root")))))
+               (it "leaves session_root out where vis.workspace_root() fails"
+                   (expect (not (contains? (slim-env {:session-id "s1"} nil) "session_root")))
+                   (expect (not (contains? (slim-env {:workspace/root root} nil)
+                                           "session_root"))))))

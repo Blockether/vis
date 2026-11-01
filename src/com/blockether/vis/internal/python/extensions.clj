@@ -838,12 +838,17 @@
              (catch Exception _ nil))
         (str "The host answered status " status))))
 
+(defn- env-raw-root
+  "The workspace root of extension context `env` as the env holds it, or nil."
+  [env]
+  (if-let [live (:workspace-atom env)]
+    (:root @live)
+    (or (get-in env [:workspace :root]) (:workspace/root env))))
+
 (defn- env-root
   "The normalized workspace root of extension context `env`, or nil."
   [env]
-  (workspace/normalize-root (if-let [live (:workspace-atom env)]
-                              (:root @live)
-                              (or (get-in env [:workspace :root]) (:workspace/root env)))))
+  (workspace/normalize-root (env-raw-root env)))
 
 (defn- host-request
   "Serve one SDK `frame` for extension `ext-name` through the installed gateway exchange.
@@ -1713,16 +1718,27 @@
    Deliberately small and documented — never the raw host env map (which
    carries atoms, contexts and other host-only handles). STRING keys —
    it crosses the strings-only boundary. `cwd` and `workspace_root` name the
-   session root; `project_root` names the extension's project in it (#399)."
+   session root; `project_root` names the extension's project in it (#399).
+   `session_root` is the value of `vis.workspace_root()` in this env. It is absent
+   where that call fails: without a session or without a session workspace."
   [env ctx]
-  (let [root (or (workspace/workspace-root env) (workspace/cwd-root))]
-    {"cwd" root
-     "workspace_root" root
-     "project_root" (project-root-in root (:project-path (get @context-lifecycle ctx)))
-     "session_id" (some-> (:session-id env)
-                          str)
-     "channel" (some-> (:channel env)
-                       str)}))
+  (let [root
+        (or (workspace/workspace-root env) (workspace/cwd-root))
+
+        session-root
+        (when (:session-id env)
+          (some-> (env-raw-root env)
+                  workspace/workspace-root))]
+
+    (cond-> {"cwd" root
+             "workspace_root" root
+             "project_root" (project-root-in root (:project-path (get @context-lifecycle ctx)))
+             "session_id" (some-> (:session-id env)
+                                  str)
+             "channel" (some-> (:channel env)
+                               str)}
+      session-root
+      (assoc "session_root" session-root))))
 
 (defn- call-py-ext
   "Lease a session-owned context through the complete call, including host cleanup."
