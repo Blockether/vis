@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.4.10] - 2026-11-01
+
+### Changed
+- Performance: the gateway reuses whole-store session reads until the store commits. `GET /v1/sessions` takes 11 ms instead of 68 ms on an unchanged store, and its head window 7 ms instead of 72.5 ms.
+- Performance: the session list reads the newest state of each turn once. Turn stats take 47 ms instead of 74 ms.
+- Performance: the replay ring finds replaced frames from its tail. A journal replay takes 3.9-6.9 ms instead of 40-75 ms.
+- Performance: the environment digest checks 18 marker names, not a full listing of the workspace root. An iteration in a workspace with 60,000 files takes 16 ms instead of 228 ms.
+- Performance: the TUI paints clean lines from cached cells, and it keeps unchanged layout heights, selection rows and footer layouts. A steady 300-turn frame takes 0.41 ms instead of 0.70 ms.
+- Memory: the context and Svar no longer keep weak or identity caches. Live gateway heap grows about 5 MB less over 100 turns. Svar is pinned at 0.7.218 again.
+
+### Fixed
+- Contract: the schema registry resolves every document that a `$ref` names. `council.publish` with `files` no longer fails with `cannot resolve $ref "agents.json#/$defs/files"`.
+
 ## [v0.4.9] - 2026-11-01
 
 ### Changed
