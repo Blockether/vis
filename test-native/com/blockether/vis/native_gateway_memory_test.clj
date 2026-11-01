@@ -217,9 +217,9 @@
                                                                             (.getName file)))
                                                                  (str/split-lines (slurp file))))
                                                              (file-seq dir)))))))
-                (expect (some #(and (= tid (:turn_id %)) (= request (:request %))) archives))
-                (expect (some #(and (= tid (get % "turn_id")) (= "turn.completed" (get % "type")))
-                              archives)))
+                ;; Small event frames stay frozen in memory, so only the turn needs a file.
+                ;; The replay below proves the stored events.
+                (expect (some #(and (= tid (:turn_id %)) (= request (:request %))) archives)))
               (let [events
                     (replay-through-terminal! sid tid)
 
