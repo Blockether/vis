@@ -1,0 +1,12 @@
+;; Terminal rendering passes for the Vis TUI that run for each character of a painted line,
+;; plain Java without dependencies. The classes compile into `target/classes` when a
+;; consumer runs `clojure -X:deps prep`.
+;;
+;; The :ensure marker is named after a digest of `src/java`. Changed sources name a
+;; marker that does not exist yet, so the next prep compiles them again instead of
+;; keeping stale classes. The TUI render test reports the digest to write here.
+{:paths ["target/classes"]
+ :deps {}
+ :deps/prep-lib {:alias :build :ensure "target/prepared/cea5c12dd145aa0b" :fn javac}
+ :aliases {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}}
+                   :ns-default build}}}

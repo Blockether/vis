@@ -13,7 +13,9 @@
 (def ^:private resource-dirs ["resources" "../../packages/vis-contract/resources"])
 
 ;; Java classes `clojure -X:deps prep` compiled; the image takes them as they are.
-(def ^:private class-dirs ["../../packages/vis-python-presentation/target/classes"])
+(def ^:private class-dirs
+  ["../../packages/vis-python-presentation/target/classes"
+   "../../packages/vis-tui-render/target/classes"])
 
 (defn clean [_] (b/delete {:path "target"}))
 

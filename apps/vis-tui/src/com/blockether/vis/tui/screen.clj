@@ -3715,6 +3715,65 @@
     (let [undo? (state/queue-undo-open? db (System/currentTimeMillis))]
       (when (or undo? (seq (:pending-sends db))) (assoc focus :undo? undo?)))))
 
+(defn- paint-side-areas!
+  "Paint the live side panel and the project rail, then fade the areas without the keyboard.
+   Record each pass end in `post-marks`."
+  [^TerminalScreen screen db live-panel cols rows screen-cols messages-top messages-bottom now-ms
+   post-marks]
+  (let [panel-box
+        (when-let [{:keys [left width is-docked panes]} live-panel]
+          (let [left (if is-docked cols left)
+                top (if is-docked 0 messages-top)
+                height (if is-docked rows (- (long messages-bottom) (long messages-top)))
+                geom (lv/paint-panel!
+                       (frame/surface-graphics screen (+ (long left) (long width)) rows)
+                       left
+                       top
+                       width
+                       height
+                       panes
+                       (:live-panel db)
+                       now-ms)]
+
+            (when (not= (:selected geom) (get-in db [:live-panel :selected]))
+              (state/dispatch [:live-panel-select (:selected geom)]))
+            {:col (frame/screen-column left) :row top :width width :height height}))]
+    (vswap! post-marks assoc :panel (System/nanoTime))
+    (let [rail-db (if (project-sidebar-locked? db screen-cols)
+                    (assoc-in db [:project-sidebar :open?] false)
+                    db)
+          rail-cursor (binding [frame/*column-offset* 0]
+                        (projects/paint! (frame/surface-graphics screen screen-cols rows)
+                                         rail-db
+                                         screen-cols
+                                         rows))]
+
+      (reset! painted-rail (projects/paint-inputs rail-db screen-cols rows now-ms))
+      (when-not (project-sidebar-locked? db screen-cols)
+        (when-let [{:keys [width]} (projects/geometry db screen-cols rows)]
+          ;; The rail's inline add field owns the caret while it is open; otherwise
+          ;; the rail hides a chat cursor it would paint over.
+          (if rail-cursor
+            (binding [frame/*column-offset* 0]
+              (frame/set-cursor! screen rail-cursor))
+            (when-let [^TerminalPosition cursor (.getCursorPosition screen)]
+              (when (or (get-in db [:project-sidebar :focused?])
+                        (< (.getColumn cursor) (long width)))
+                (.setCursorPosition screen nil)))))))
+    (vswap! post-marks assoc :rail (System/nanoTime))
+    ;; The areas without the keyboard fade, so the focused area stands out. A modal
+    ;; card owns the screen and keeps its colours.
+    (when-not (overlay-locked? db)
+      (fade-unfocused-areas! screen
+                             db
+                             screen-cols
+                             rows
+                             (if (project-sidebar-locked? db screen-cols)
+                               0
+                               (long (or (:width (projects/geometry db screen-cols rows)) 0)))
+                             panel-box))
+    (vswap! post-marks assoc :fade (System/nanoTime))))
+
 (defn- render-frame-content!
   "Draw one frame: background, messages area (bubbles), input box,
    echo-area row, and two unboxed footer rows.
@@ -4144,59 +4203,7 @@
       (vswap! post-marks assoc :overlays (System/nanoTime))
       ;; The side panel spans the whole height when docked; an overlay covers only
       ;; the transcript rows, so the composer stays usable.
-      (let [panel-box
-            (when-let [{:keys [left width is-docked panes]} live-panel]
-              (let [left (if is-docked cols left)
-                    top (if is-docked 0 messages-top)
-                    height (if is-docked rows (- (long messages-bottom) (long messages-top)))
-                    geom (lv/paint-panel!
-                           (frame/surface-graphics screen (+ (long left) (long width)) rows)
-                           left
-                           top
-                           width
-                           height
-                           panes
-                           (:live-panel db)
-                           now-ms)]
-
-                (when (not= (:selected geom) (get-in db [:live-panel :selected]))
-                  (state/dispatch [:live-panel-select (:selected geom)]))
-                {:col (frame/screen-column left) :row top :width width :height height}))]
-        (vswap! post-marks assoc :panel (System/nanoTime))
-        (let [rail-db (if (project-sidebar-locked? db screen-cols)
-                        (assoc-in db [:project-sidebar :open?] false)
-                        db)
-              rail-cursor (binding [frame/*column-offset* 0]
-                            (projects/paint! (frame/surface-graphics screen screen-cols rows)
-                                             rail-db
-                                             screen-cols
-                                             rows))]
-
-          (reset! painted-rail (projects/paint-inputs rail-db screen-cols rows now-ms))
-          (when-not (project-sidebar-locked? db screen-cols)
-            (when-let [{:keys [width]} (projects/geometry db screen-cols rows)]
-              ;; The rail's inline add field owns the caret while it is open; otherwise
-              ;; the rail hides a chat cursor it would paint over.
-              (if rail-cursor
-                (binding [frame/*column-offset* 0]
-                  (frame/set-cursor! screen rail-cursor))
-                (when-let [^TerminalPosition cursor (.getCursorPosition screen)]
-                  (when (or (get-in db [:project-sidebar :focused?])
-                            (< (.getColumn cursor) (long width)))
-                    (.setCursorPosition screen nil)))))))
-        (vswap! post-marks assoc :rail (System/nanoTime))
-        ;; The areas without the keyboard fade, so the focused area stands out. A modal
-        ;; card owns the screen and keeps its colours.
-        (when-not (overlay-locked? db)
-          (fade-unfocused-areas! screen
-                                 db
-                                 screen-cols
-                                 rows
-                                 (if (project-sidebar-locked? db screen-cols)
-                                   0
-                                   (long (or (:width (projects/geometry db screen-cols rows)) 0)))
-                                 panel-box))
-        (vswap! post-marks assoc :fade (System/nanoTime)))
+      (paint-side-areas! screen db live-panel cols rows screen-cols messages-top messages-bottom now-ms post-marks)
       (.commitFrame interactions/hit-map)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
       ;; the commit so `interactions/hit-map` holds this frame's fresh toggle regions and
@@ -8366,13 +8373,27 @@
 
                                       ;; Keep completion on the input thread memory-only.
                                       workspace
-                                      (try (session-workspace id) (catch Throwable _ nil))
+                                      (try (session-workspace id)
+                                           (catch Throwable e
+                                             (tel/log! {:level :warn
+                                                        :id ::startup-workspace-failed
+                                                        :data {:session-id id}
+                                                        :error e}
+                                                       "Startup could not read the session workspace.")
+                                             nil))
 
                                       _
                                       (mark-startup! :workspace)
 
                                       title
-                                      (try (session-db-title id) (catch Throwable _ nil))]
+                                      (try (session-db-title id)
+                                           (catch Throwable e
+                                             (tel/log! {:level :warn
+                                                        :id ::startup-title-failed
+                                                        :data {:session-id id}
+                                                        :error e}
+                                                       "Startup could not read the session title.")
+                                             nil))]
 
                                   (mark-startup! :title)
                                   {:session startup-session :workspace workspace :title title})

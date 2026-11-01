@@ -8,10 +8,7 @@
                          :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}}
                          :extra-paths ["build" "test"]
                          :main-opts ["-m" "vis-tui.review"]}
-           ;; `render/draw-chat-bubble!` compiles to more bytecode than HotSpot's
-           ;; 8000-byte limit, so the JVM never compiles it without this flag.
-           :run {:jvm-opts ["-XX:-DontCompileHugeMethods"]
-                 :main-opts ["-m" "com.blockether.vis.tui.main"]}
+           :run {:main-opts ["-m" "com.blockether.vis.tui.main"]}
            :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}
                                org.jcodec/jcodec {:mvn/version "0.2.5"}}
                   :extra-paths ["test"]
@@ -21,6 +18,9 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         com.blockether/vis-contract {:local/root "../../packages/vis-contract"}
         com.blockether/vis-python-presentation {:local/root "../../packages/vis-python-presentation"}
+        ;; Per-character render passes in plain Java; a fresh checkout needs
+        ;; `clojure -X:deps prep` to compile them.
+        com.blockether/vis-tui-render {:local/root "../../packages/vis-tui-render"}
         org.babashka/http-client {:mvn/version "0.4.26"}
         com.cnuernber/charred {:mvn/version "1.041"}
         io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
