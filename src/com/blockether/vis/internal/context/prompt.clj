@@ -1031,7 +1031,11 @@
                                             :id ::token-encoding-warm
                                             :data {:ms (/ (double (- (System/nanoTime) start))
                                                           1000000.0)}})
-                                 (catch Throwable _ nil))))
+                                 (catch Throwable t
+                                   (tel/log! {:level :warn
+                                              :id ::token-encoding-warm-failed
+                                              :data {:error (ex-message t)}
+                                              :error t})))))
                         "vis-token-encoding-warmup")
            (.setDaemon true)
            (.start))))
@@ -1052,7 +1056,13 @@
   (let [content
         (:content message)]
 
-    (if (or (string? content) (not (contains? message :content)))
+    (if (or (string? content)
+            (not (contains? message :content))
+            ;; Most blocks carry no mark. Keep such a message as it is, without a copy.
+            (and (sequential? content)
+                 (not (and (vector? content) (= 1 (count content))))
+                 (not-any? #(and (map? %) (or (contains? % :svar/cache) (contains? % :svar/cache-ttl)))
+                           content)))
       message
       (let [content
             (if (sequential? content)
@@ -1135,19 +1145,20 @@
                 (let [total
                       (- (long (count-messages model [message])) priming)
 
+                      ;; Only labelled parts need the framing count.
                       overhead
-                      (- (long (count-messages model [(assoc message :content "")])) priming)
+                      (delay (- (long (count-messages model [(assoc message :content "")])) priming))
 
                       [known remainder]
                       (reduce (fn [[rows left] part]
                                 (let [content-tokens
                                       (if (= (:content message) (:content part))
-                                        (- total overhead)
+                                        (- total (long @overhead))
                                         (- (long (count-messages model
                                                                  [(assoc message
                                                                     :content (:content part))]))
                                            priming
-                                           overhead))
+                                           (long @overhead)))
 
                                       tokens
                                       (min (long left) (max 0 content-tokens))]
