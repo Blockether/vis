@@ -46,9 +46,11 @@
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.format :as fmt])
-  (:import [java.time Instant ZoneId]
+  (:import [com.blockether.vis.render BoundedCache]
+           [java.time Instant ZoneId]
            [java.time.format DateTimeFormatter]
-           [java.util Locale]))
+           [java.util Locale]
+           [java.util.concurrent ConcurrentHashMap]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
@@ -770,7 +772,7 @@
 
     t/footer-fg))
 
-(defn- ast->footer-text
+(defn- ast->footer-text*
   "Walk IR to a single PLAIN-text string for the footer packer.
 
    Footer rows are painted by `draw-spans!` via `p/put-str!`, which
@@ -797,6 +799,15 @@
               lines)]
 
     (str/join " " (remove str/blank? line-strs))))
+
+(defonce ^:private ^BoundedCache footer-text-cache (BoundedCache. 64))
+
+(defn- ast->footer-text
+  "Memoized `ast->footer-text*`. A model chip keeps one IR across frames, so the
+   footer walks it once, not on every frame."
+  ^String [ir]
+  (or (.get ^BoundedCache footer-text-cache ir)
+      (.put ^BoundedCache footer-text-cache ir (ast->footer-text* ir))))
 
 (defn- seg->packed
   "Convert one extension seg-map into the internal segment shape.
@@ -826,10 +837,9 @@
          :kind (:kind seg)}))))
 
 (defn- model-segments
-  [db now-ms ^long row]
-  (->> (model-footer/segments db now-ms)
-       (keep #(seg->packed % row))
-       vec))
+  "Packed segments of footer row `row`, from the raw `model-segs` of one frame."
+  [model-segs ^long row]
+  (into [] (keep #(seg->packed % row)) model-segs))
 
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 (def ^:private sep "  /  ")
@@ -983,16 +993,12 @@
           start-col
           (map-indexed vector spans)))
 
-(defn- draw-footer-row!
-  [g db row cols now-ms build-fn row-idx]
-  (let [built-in
-        (build-fn db now-ms)
-
-        all-segs
-        (into (model-segments db now-ms (long row-idx)) built-in)
-
-        [segs separator]
-        (shrink-to-fit all-segs cols)
+(defn- row-layout
+  "Fit `segs` into `cols` and place each region. Returns `[separator placed]`, where
+   `placed` holds `[col spans]` for each non-empty region, left to right."
+  [segs cols]
+  (let [[segs separator]
+        (shrink-to-fit segs cols)
 
         l
         (region-spans segs :left)
@@ -1029,9 +1035,41 @@
         (max (+ (long l-end) (if (seq l) 2 0))
              (- (quot (+ (long l-end) (long r-col)) 2) (quot (long c-w) 2)))]
 
-    (when (seq l) (draw-spans! g l-col row l separator))
-    (when (seq c) (draw-spans! g c-col row c separator))
-    (when (seq r) (draw-spans! g r-col row r separator))))
+    [separator
+     (cond-> []
+       (seq l)
+       (conj [l-col l])
+
+       (seq c)
+       (conj [c-col c])
+
+       (seq r)
+       (conj [r-col r]))]))
+
+;; Last layout of each footer row, as `[cols segs layout]`. A steady frame builds equal
+;; segments, so it reuses the fitted layout instead of measuring every span again.
+(defonce ^:private ^ConcurrentHashMap row-layouts (ConcurrentHashMap.))
+
+(defn- cached-row-layout
+  "`row-layout` of `segs` at `cols`, reused while row `row-idx` keeps equal input."
+  [row-idx segs cols]
+  (let [[prev-cols prev-segs layout] (.get ^ConcurrentHashMap row-layouts row-idx)]
+    (if (and layout (= prev-cols cols) (= prev-segs segs))
+      layout
+      (let [layout (row-layout segs cols)]
+        (.put ^ConcurrentHashMap row-layouts row-idx [cols segs layout])
+        layout))))
+
+(defn- draw-footer-row!
+  [g db row cols now-ms build-fn model-segs row-idx]
+  (let [all-segs
+        (into (model-segments model-segs (long row-idx)) (build-fn db now-ms))
+
+        [separator placed]
+        (cached-row-layout row-idx all-segs cols)]
+
+    (doseq [[col spans] placed]
+      (draw-spans! g col row spans separator))))
 
 (defn- echo-segments
   "Content for the Emacs echo-area row under the agent dock, directly above the input box.
@@ -1104,8 +1142,17 @@
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 footer-row cols height)
-    (draw-footer-row! g db footer-row cols now-ms build-segments 0)
-    (draw-footer-row! g db (inc (long footer-row)) cols now-ms build-limits-segments 1)
+    ;; One model-footer read serves both rows; each row keeps its own `:row` segments.
+    (let [model-segs (model-footer/segments db now-ms)]
+      (draw-footer-row! g db footer-row cols now-ms build-segments model-segs 0)
+      (draw-footer-row! g
+                        db
+                        (inc (long footer-row))
+                        cols
+                        now-ms
+                        build-limits-segments
+                        model-segs
+                        1))
     ;; Restore neutral state for whatever paints next.
     (p/clear-styles! g)
     (p/set-colors! g t/text-fg t/terminal-bg)))

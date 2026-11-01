@@ -61,6 +61,7 @@
            [java.nio.charset Charset]
            [java.util IdentityHashMap]
            [java.util.concurrent TimeUnit]
+           [java.util.concurrent.atomic AtomicReference]
            [java.util.concurrent.locks ReentrantLock]
            [sun.misc Signal SignalHandler]))
 
@@ -1796,15 +1797,25 @@
     (some #(str/starts-with? line (str % selection-output-indent))
           selection-output-indent-markers)))
 
+(defn- padded-bubble?
+  "True when the rows of `message` start after the bubble content padding."
+  [message]
+  (boolean (or (= :user (:role message)) (error-card-row-geometry? message))))
+
+(defn- line-text-col
+  "Screen column where the text of one transcript row starts."
+  [bubble-left padded? code-row? indented?]
+  (cond padded? (+ (long bubble-left) (long bubble-content-h-pad))
+        code-row?
+        (+ (long bubble-left) 1 (if indented? (long (p/display-width selection-output-indent)) 0))
+        :else bubble-left))
+
 (defn- bubble-line-text-col
   [message bubble-left line]
-  (cond (or (= :user (:role message)) (error-card-row-geometry? message))
-        (+ (long bubble-left) (long bubble-content-h-pad))
-        (assistant-code-text-row? line)
-        (+ (long bubble-left)
-           1
-           (if (output-indented-row? line) (p/display-width selection-output-indent) 0))
-        :else bubble-left))
+  (line-text-col bubble-left
+                 (padded-bubble? message)
+                 (assistant-code-text-row? line)
+                 (output-indented-row? line)))
 
 (def ^:private transcript-copy-skip-markers
   "Line markers that paint TUI chrome rather than message content.
@@ -1833,25 +1844,6 @@
       (subs visible (count selection-output-indent))
       visible)))
 
-;; Identity memo for `selectable-line-visible-text*`. Each frame cleans every row in
-;; the viewport with several regular expressions. A bubble keeps its row strings, so
-;; a scroll tick cleans only the rows that are new. Cleared on overflow.
-(defonce ^:private ^IdentityHashMap selectable-text-memo (IdentityHashMap. 1024))
-
-(defn- selectable-line-visible-text
-  "Visible on-screen text of a transcript row, with structural markers and any
-   tool-output indent stripped, so its width matches what the wrap step saw."
-  [line]
-  (if (string? line)
-    (or (locking selectable-text-memo (.get ^IdentityHashMap selectable-text-memo line))
-        (let [visible (selectable-line-visible-text* line)]
-          (locking selectable-text-memo
-            (when (> (.size ^IdentityHashMap selectable-text-memo) 16384)
-              (.clear ^IdentityHashMap selectable-text-memo))
-            (.put ^IdentityHashMap selectable-text-memo line visible))
-          visible))
-    (selectable-line-visible-text* line)))
-
 (defn- viewport-indexes
   "Indexes of a bubble's rows that fall in `[top-limit, bottom-limit)`.
    `content-top` is the screen row of index 0 and `n` is the row count."
@@ -1870,45 +1862,81 @@
 
     (p/display-width (if i (subs s 0 i) s))))
 
+;; Facts of one transcript row that selection needs on every frame. A bubble keeps its
+;; row strings across frames, so each row is cleaned and measured once, not per frame.
+(deftype ^:private SelectableLine [text copyable? code-row? indented? ^long text-w
+                                   ^long first-token-w])
+
+(defn- selectable-line-facts*
+  ^SelectableLine [line]
+  (let [text (selectable-line-visible-text* line)]
+    (SelectableLine. text
+                     (boolean (copyable-transcript-line? line))
+                     (boolean (assistant-code-text-row? line))
+                     (boolean (output-indented-row? line))
+                     (p/display-width text)
+                     (line-first-token-width text))))
+
+;; Identity memo for `selectable-line-facts*`. Each frame cleans every row in the
+;; viewport with several regular expressions. A bubble keeps its row strings, so a
+;; scroll tick cleans only the rows that are new. Cleared on overflow.
+;; A `def`, not a `defonce`: a reload redefines `SelectableLine`, so old entries must go.
+(def ^:private ^IdentityHashMap selectable-line-memo (IdentityHashMap. 1024))
+
+(defn- selectable-line-facts
+  "Memoized `selectable-line-facts*` for a string row, keyed by row identity."
+  ^SelectableLine [line]
+  (if (string? line)
+    (or (locking selectable-line-memo (.get ^IdentityHashMap selectable-line-memo line))
+        (let [facts (selectable-line-facts* line)]
+          (locking selectable-line-memo
+            (when (> (.size ^IdentityHashMap selectable-line-memo) 16384)
+              (.clear ^IdentityHashMap selectable-line-memo))
+            (.put ^IdentityHashMap selectable-line-memo line facts))
+          facts))
+    (selectable-line-facts* line)))
+
 (defn- selectable-line-continuation?
   "True when `cur` is a soft-wrap continuation of the preceding `prev` selectable
    range: vertically adjacent, same left column, and `cur`'s first token could
    not have fit at the end of `prev` under greedy word-wrap. Reconstructs the
-   wrap grouping the projection discarded so a wrapped line shares one `:line-id`."
+   wrap grouping the projection discarded so a wrapped line shares one `:line-id`.
+   Each range carries its row facts as `:facts`."
   [prev cur]
   (boolean (and prev
                 (= (long (:row cur)) (inc (long (:row prev))))
                 (= (:col prev) (:col cur))
-                (> (+ (p/display-width (:text prev)) 1 (long (line-first-token-width (:text cur))))
+                (> (+ (.-text-w ^SelectableLine (:facts prev))
+                      1
+                      (.-first-token-w ^SelectableLine (:facts cur)))
                    (long (:wrap-w prev))))))
 
 (defn- assign-selectable-line-ids
-  "Tag each raw selectable range (carrying `:text` + `:wrap-w`) with a `:line-id`
+  "Tag each raw selectable range (carrying `:facts` + `:wrap-w`) with a `:line-id`
    shared across the soft-wrap fragments of one logical line, then drop the
    reconstruction-only keys so downstream range consumers are unaffected."
   [ranges]
-  (:out (reduce (fn [{:keys [out prev id]} cur]
-                  (let [id (long (if (selectable-line-continuation? prev cur) id (inc (long id))))]
-                    {:out (conj out
-                                (-> cur
-                                    (assoc :line-id id)
-                                    (dissoc :text :wrap-w)))
-                     :prev cur
-                     :id id}))
-                {:out [] :prev nil :id -1}
-                ranges)))
+  (loop [ranges
+         (seq ranges)
 
-(defn- bubble-selectable-ranges
-  "Return absolute screen-cell ranges for visible transcript message content.
+         out
+         (transient [])
 
-   Selection deliberately excludes the header, input box, footer, scrollbar
-   gutter, message-area margins, role/timestamp row, final inter-bubble gap,
-   assistant provider/model footer, and structural separator/padding rows.
-   Dragging across those cells may continue a gesture, but highlight/copy is
-   clipped back to user/model-authored text rows.
+         prev
+         nil
 
-   Each range also carries a `:line-id` shared by the soft-wrap fragments of one
-   logical source line, so a double-click can expand to the whole wrapped line."
+         id
+         -1]
+
+    (if-let [cur (first ranges)]
+      (let [id (if (selectable-line-continuation? prev cur) id (inc id))]
+        (recur (next ranges)
+               (conj! out {:row (:row cur) :col (:col cur) :width (:width cur) :line-id id})
+               cur
+               id))
+      (persistent! out))))
+
+(defn- bubble-selectable-ranges*
   [layout text-top inner-h cols]
   (let [bubble-left
         (long render/MESSAGE_MARGIN_LEFT)
@@ -1938,26 +1966,79 @@
                     (or projected {})
 
                     content-top
-                    (bubble-content-top message top-limit top)]
-              :let [lines
-                    (vec (projected-content-lines message content-w))]
+                    (bubble-content-top message top-limit top)
+
+                    padded?
+                    (padded-bubble? message)
+
+                    lines
+                    (projected-content-lines message content-w)
+
+                    lines
+                    (if (vector? lines) lines (vec lines))]
               ;; Walk only the rows in the viewport, not the whole bubble.
               idx
               (viewport-indexes content-top top-limit bottom-limit (count lines))
 
-              :let [line
-                    (nth lines idx)
+              :let [^SelectableLine facts
+                    (selectable-line-facts (nth lines idx))
 
                     row
                     (+ content-top (long idx))]
-              :when (and (<= top-limit row) (< row bottom-limit) (copyable-transcript-line? line))]
+              :when (and (<= top-limit row) (< row bottom-limit) (.-copyable? facts))]
 
           {:row row
-           :col (bubble-line-text-col message bubble-left line)
+           :col (line-text-col bubble-left padded? (.-code-row? facts) (.-indented? facts))
            :width content-w
-           :text (selectable-line-visible-text line)
-           :wrap-w
-           (if (output-indented-row? line) (max 1 (- content-w indent-cols)) content-w)})))))
+           :facts facts
+           :wrap-w (if (.-indented? facts) (max 1 (- content-w indent-cols)) content-w)})))))
+
+;; One-slot memo of the last frame's ranges. A steady frame shows the same projected
+;; messages at the same rows, so it reuses the ranges instead of walking the rows again.
+(defonce ^:private ^AtomicReference last-selectable-ranges (AtomicReference. nil))
+
+(defn- same-visible-bubbles?
+  "True when two `(:visible layout)` vectors place identical projections at equal rows."
+  [a b]
+  (let [n (count a)]
+    (and (= n (count b))
+         (loop [i 0]
+           (or (= i n)
+               (let [x (nth a i)
+                     y (nth b i)]
+
+                 (and (= (:top x) (:top y))
+                      (identical? (:projected x) (:projected y))
+                      (recur (inc i)))))))))
+
+(defn- bubble-selectable-ranges
+  "Return absolute screen-cell ranges for visible transcript message content.
+
+   Selection deliberately excludes the header, input box, footer, scrollbar
+   gutter, message-area margins, role/timestamp row, final inter-bubble gap,
+   assistant provider/model footer, and structural separator/padding rows.
+   Dragging across those cells may continue a gesture, but highlight/copy is
+   clipped back to user/model-authored text rows.
+
+   Each range also carries a `:line-id` shared by the soft-wrap fragments of one
+   logical source line, so a double-click can expand to the whole wrapped line."
+  [layout text-top inner-h cols]
+  (let [visible
+        (:visible layout)
+
+        ^objects prev
+        (.get ^AtomicReference last-selectable-ranges)]
+
+    (if (and prev
+             (= text-top (aget prev 0))
+             (= inner-h (aget prev 1))
+             (= cols (aget prev 2))
+             (same-visible-bubbles? visible (aget prev 3)))
+      (aget prev 4)
+      (let [ranges (bubble-selectable-ranges* layout text-top inner-h cols)]
+        (.set ^AtomicReference last-selectable-ranges
+              (object-array [text-top inner-h cols visible ranges]))
+        ranges))))
 
 (defn- transcript-document-copy-lines
   "Return selectable transcript rows in document coordinates.

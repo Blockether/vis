@@ -27,7 +27,7 @@
   footer-edge-alignment-test
   (it
     "aligns limits and Git without painting below the two status rows"
-    (with-redefs-fn {#'footer/model-segments (fn [_ _ ^long _row]
+    (with-redefs-fn {#'footer/model-segments (fn [_ ^long _row]
                                                [])
                      #'footer/session-model-info (constantly {:reasoning-effort? false})}
       (fn []
