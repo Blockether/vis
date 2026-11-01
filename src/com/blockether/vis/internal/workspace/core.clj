@@ -427,7 +427,7 @@
 (defn cwd-root
   "Canonical path of `cwd`: the key of the current project's scoped state."
   ^String []
-  (canonical-root (.getPath (cwd)) nil))
+  (canonical-root (str (cwd)) nil))
 
 (defn allowed-roots
   "Canonical absolute CLONE/working-copy paths the current tool call may
