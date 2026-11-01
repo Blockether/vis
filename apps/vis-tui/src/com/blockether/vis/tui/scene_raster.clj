@@ -9,7 +9,8 @@
 
    [[raster]] is pure. It returns `{:width :height :pixels}`; `:pixels` holds
    one `0xRRGGBB` int for each pixel, row by row from the top."
-  (:require [com.blockether.vis.contract.view :as spec]))
+  (:require [com.blockether.vis.contract.view :as spec])
+  (:import (com.blockether.vis.scene SceneRaster)))
 
 (set! *warn-on-reflection* true)
 
@@ -355,44 +356,18 @@
                     (if (pos? len) (max 0.0 (/ (+ (* nx lx) (* ny ly) (* nz lz)) len)) 0.0)
 
                     ink
-                    (if emissive? base (shade base (+ ambient (* diffuse lit))))
+                    (if emissive? base (shade base (+ ambient (* diffuse lit))))]
 
-                    z0
-                    (aget pa 2)
-
-                    z1
-                    (aget pb 2)
-
-                    z2
-                    (aget pc 2)
-
-                    left
-                    (max 0 (long (Math/floor (min x0 x1 x2))))
-
-                    right
-                    (min (dec pw) (long (Math/ceil (max x0 x1 x2))))
-
-                    top
-                    (max 0 (long (Math/floor (min y0 y1 y2))))
-
-                    bottom
-                    (min (dec ph) (long (Math/ceil (max y0 y1 y2))))]
-
-                (loop [py top]
-                  (when (<= py bottom)
-                    (let [cy (+ (double py) 0.5)]
-                      (loop [px left]
-                        (when (<= px right)
-                          (let [cx (+ (double px) 0.5)
-                                l0 (/ (- (* (- x2 x1) (- cy y1)) (* (- y2 y1) (- cx x1))) area)
-                                l1 (/ (- (* (- x0 x2) (- cy y2)) (* (- y0 y2) (- cx x2))) area)
-                                l2 (- 1.0 l0 l1)]
-
-                            (when (and (>= l0 0.0) (>= l1 0.0) (>= l2 0.0))
-                              (when (plot! (+ px (* py pw)) (+ (* l0 z0) (* l1 z1) (* l2 z2)) ink)
-                                (vreset! drawn true))))
-                          (recur (inc px)))))
-                    (recur (inc py))))))))
+                (when (SceneRaster/fillTriangle pixels
+                                                zbuf
+                                                (int pw)
+                                                (int ph)
+                                                pa
+                                                pb
+                                                pc
+                                                area
+                                                (unchecked-int ink))
+                  (vreset! drawn true))))))
         (when (and @facing (not @drawn) (project ox oy oz pa))
           (let [px
                 (long (Math/floor (aget pa 0)))
