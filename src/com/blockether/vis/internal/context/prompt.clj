@@ -606,26 +606,26 @@
                           deref
                           seq)]
     (let [live (delay (scoped/live-values environment))]
-      (vec (filter (fn [ext]
-                     (try (case (scoped/engine-mode environment ext live)
-                            "off"
-                            false
+      (vec
+        (filter (fn [ext]
+                  (try (case (scoped/engine-mode environment ext live)
+                         "off"
+                         false
 
-                            "on"
-                            true
+                         "on"
+                         true
 
-                            (boolean
-                              (perf/timed (keyword "activation" (str (:ext/name ext)))
-                                          (call-extension-callback ext
-                                                                   (:ext/activation-fn ext)
-                                                                   environment))))
-                          (catch Throwable t
-                            (tel/log! {:level :error
-                                       :id ::ext-activation-error
-                                       :data {:ext (:ext/name ext) :error (ex-message t)}}
-                                      (str "Extension '" (:ext/name ext) "' activation-fn threw"))
-                            false)))
-                   exts)))))
+                         (boolean (perf/timed (keyword "activation" (str (:ext/name ext)))
+                                              (call-extension-callback ext
+                                                                       (:ext/activation-fn ext)
+                                                                       environment))))
+                       (catch Throwable t
+                         (tel/log! {:level :error
+                                    :id ::ext-activation-error
+                                    :data {:ext (:ext/name ext) :error (ex-message t)}}
+                                   (str "Extension '" (:ext/name ext) "' activation-fn threw"))
+                         false)))
+                exts)))))
 
 (defn extensions-snapshot
   "Build the active extension summary placed under `(:extensions ctx)` from a
@@ -1053,29 +1053,26 @@
    every request, so a fingerprint or a count key must not see them. Svar counts a
    message with and without its marks the same."
   [message]
-  (let [content
-        (:content message)]
-
+  (let [content (:content message)]
     (if (or (string? content)
             (not (contains? message :content))
             ;; Most blocks carry no mark. Keep such a message as it is, without a copy.
             (and (sequential? content)
                  (not (and (vector? content) (= 1 (count content))))
-                 (not-any? #(and (map? %) (or (contains? % :svar/cache) (contains? % :svar/cache-ttl)))
+                 (not-any? #(and (map? %)
+                                 (or (contains? % :svar/cache) (contains? % :svar/cache-ttl)))
                            content)))
       message
-      (let [content
-            (if (sequential? content)
-              (mapv #(if (map? %) (dissoc % :svar/cache :svar/cache-ttl) %) content)
-              content)
-
-            lone
-            (when (and (vector? content) (= 1 (count content))) (first content))]
+      (let [content (if (sequential? content)
+                      (mapv #(if (map? %) (dissoc % :svar/cache :svar/cache-ttl) %) content)
+                      content)
+            lone (when (and (vector? content) (= 1 (count content))) (first content))]
 
         (assoc message
-          :content (if (and (map? lone) (= #{:type :text} (set (keys lone))) (= "text" (:type lone)))
-                     (:text lone)
-                     content))))))
+          :content
+          (if (and (map? lone) (= #{:type :text} (set (keys lone))) (= "text" (:type lone)))
+            (:text lone)
+            content))))))
 
 (def ^:private cached-message-tokens
   (util/bounded-memoize (fn [model message opts]
@@ -1147,7 +1144,8 @@
 
                       ;; Only labelled parts need the framing count.
                       overhead
-                      (delay (- (long (count-messages model [(assoc message :content "")])) priming))
+                      (delay (- (long (count-messages model [(assoc message :content "")]))
+                                priming))
 
                       [known remainder]
                       (reduce (fn [[rows left] part]

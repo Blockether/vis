@@ -417,20 +417,17 @@
     (let [flat (select-keys s ["through" "from" "to" "since"])]
       (into (if (seq flat) [flat] []) (filter map?) (get s "ranges")))))
 
-(def ^:private expansion-selectors
-  #{"scopes" "through" "from" "to" "since" "ranges"})
+(def ^:private expansion-selectors #{"scopes" "through" "from" "to" "since" "ranges"})
 
 (defn expansion-index
   "Index `universe` and the persisted `turns` for [[expand-summary]] once. Reuse the
    index for every summary resolved against the same universe."
   [universe turns]
-  (let [ukeys
-        (into []
-              (keep (fn [u]
-                      (when-let [k (scope-key u)]
-                        [u k]))
-                    universe))]
-
+  (let [ukeys (into []
+                    (keep (fn [u]
+                            (when-let [k (scope-key u)]
+                              [u k]))
+                          universe))]
     {:ukeys ukeys
      ;; Index once: a scan per summary and turn grew with every fold.
      :scopes-by-turn (reduce (fn [m [u k]]
@@ -605,7 +602,8 @@
         ;; compare each entry at most once (#207).
         [survivors covered-by]
         (reduce (fn [[survivors covered-by holders] i]
-                  (let [si (nth coverage i)
+                  (let [si
+                        (nth coverage i)
 
                         candidates
                         (when (seq si)
@@ -616,10 +614,14 @@
                                             :else best)))
                                   nil
                                   si))]
-                    (if-let [j (some (fn [j] (when (every? (nth coverage j) si) j)) candidates)]
+
+                    (if-let [j (some (fn [j]
+                                       (when (every? (nth coverage j) si) j))
+                                     candidates)]
                       [survivors (assoc covered-by i j) holders]
                       [(conj survivors i) covered-by
-                       (reduce (fn [m scope] (update m scope (fnil conj (sorted-set)) i))
+                       (reduce (fn [m scope]
+                                 (update m scope (fnil conj (sorted-set)) i))
                                holders
                                si)])))
                 [(sorted-set) {} {}]

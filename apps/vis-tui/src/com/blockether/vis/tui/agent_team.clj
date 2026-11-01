@@ -137,9 +137,7 @@
     (swap! snapshots assoc sid (assoc result :checked-at (System/currentTimeMillis)))
     result))
 
-(def ^:private ^:const stale-ms
-  "The age after which the header calls a team snapshot stale."
-  10000)
+(def ^:private ^:const stale-ms "The age after which the header calls a team snapshot stale." 10000)
 
 (defn header-label
   "Make unknown, failed and cached observations explicit in the header."
@@ -1198,42 +1196,41 @@
         (atom true)
 
         worker
-        (Thread. ^Runnable
-                 (fn []
-                   (try (loop [previous-id
-                               nil
+        (Thread.
+          ^Runnable
+          (fn []
+            (try
+              (loop [previous-id
+                     nil
 
-                               next-at
-                               0]
+                     next-at
+                     0]
 
-                          (when @running?
-                            (let [sid
-                                  (session-id)
+                (when @running?
+                  (let [sid
+                        (session-id)
 
-                                  now
-                                  (System/currentTimeMillis)
+                        now
+                        (System/currentTimeMillis)
 
-                                  refresh?
-                                  (and sid (or (not= sid previous-id) (>= now (long next-at))))]
+                        refresh?
+                        (and sid (or (not= sid previous-id) (>= now (long next-at))))]
 
-                              (when refresh?
-                                (let [before
-                                      (summary sid)
+                    (when refresh?
+                      (let [before
+                            (summary sid)
 
-                                      after
-                                      (fetch! sid)]
+                            after
+                            (fetch! sid)]
 
-                                  ;; A slow response for an old tab must not repaint the new tab.
-                                  ;; An unchanged idle team must not force a full frame.
-                                  (when (and @running?
-                                             (= sid (session-id))
-                                             (shown-change? before after now))
-                                    (changed!))))
-                              (Thread/sleep 250)
-                              (recur sid
-                                     (if refresh? (+ (System/currentTimeMillis) 5000) next-at)))))
-                        (catch InterruptedException _ nil)))
-                 "vis-tui-agent-team-refresh")]
+                        ;; A slow response for an old tab must not repaint the new tab.
+                        ;; An unchanged idle team must not force a full frame.
+                        (when (and @running? (= sid (session-id)) (shown-change? before after now))
+                          (changed!))))
+                    (Thread/sleep 250)
+                    (recur sid (if refresh? (+ (System/currentTimeMillis) 5000) next-at)))))
+              (catch InterruptedException _ nil)))
+          "vis-tui-agent-team-refresh")]
 
     (.setDaemon worker true)
     (.start worker)

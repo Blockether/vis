@@ -80,72 +80,72 @@
                  (expect (every? (set (map :id keymap/prefix-groups))
                                  (keep :group keymap/prefix-commands)))))
 
-(defdescribe prefix-hydra-test
-             ;; C-x is a TRANSIENT band (an Emacs hydra / doom leader), not a dead prefix
-             ;; waiting in the echo area: the spec is what the band paints, and it may never
-             ;; offer a key the chord itself does not resolve.
-             (let [full {:messages [{:role :user}]
-                         :codex-session? true
-                         :has-agents? true
-                         :has-images? true
-                         :graphical-terminal? true
-                         :session {:group-id "g1" :agent {:parent-id "p1"}}
-                         :tabs [{:id :a} {:id :b}]}]
-               (it "every band is a legal transient the band can paint"
-                   (expect (nil? (tr/check (keymap/prefix-spec {}))))
-                   (doseq [{:keys [id key]} keymap/prefix-groups
-                           :when (keymap/prefix-group-for key)]
+(defdescribe
+  prefix-hydra-test
+  ;; C-x is a TRANSIENT band (an Emacs hydra / doom leader), not a dead prefix
+  ;; waiting in the echo area: the spec is what the band paints, and it may never
+  ;; offer a key the chord itself does not resolve.
+  (let [full {:messages [{:role :user}]
+              :codex-session? true
+              :has-agents? true
+              :has-images? true
+              :graphical-terminal? true
+              :session {:group-id "g1" :agent {:parent-id "p1"}}
+              :tabs [{:id :a} {:id :b}]}]
+    (it "every band is a legal transient the band can paint"
+        (expect (nil? (tr/check (keymap/prefix-spec {}))))
+        (doseq [{:keys [id key]} keymap/prefix-groups
+                :when (keymap/prefix-group-for key)]
 
-                     (expect (nil? (tr/check (keymap/prefix-spec full id))) (str id))))
-               (it "every top row opens its group or runs its verb"
-                   (doseq [{:keys [key id]} (mapcat :items (:groups (keymap/prefix-spec full)))]
-                     (let [r (press (first key))]
-                       (expect (= id (or (get-in r [:state :prefix-group]) (:action r))) key))))
-               ;; User report 2026-10-30: C-x had no keys for groups.
-               (it "offers the verbs of the session's group only while the session is in one"
-                   (expect (= [:group-new :group-rename :group-recolour :group-settings
-                               :group-archive :group-delete]
-                              (mapv :action (keymap/available-prefix-commands full :group))))
-                   (expect (= [:group-new]
-                              (mapv :action (keymap/available-prefix-commands {} :group))))
-                   (expect (= :group-rename (:action (press \g \r)))))
-               ;; User report 2026-10-31: the TUI had no keys to open a subagent or to go back to the leader.
-               (it "offers the agent keys only where they can act"
-                   (expect (= [:agent-team :agent-parent]
-                              (mapv :action (keymap/available-prefix-commands full :agents))))
-                   (expect (= [:agent-team]
-                              (mapv :action (keymap/available-prefix-commands {:has-agents? true} :agents))))
-                   (expect (empty? (keymap/available-prefix-commands {} :agents)))
-                   (expect (= {:action :agent-open-nth :agent-index 3}
-                              (select-keys (press \t \3) [:action :agent-index]))))
-               (it "every group row runs its verb, and every reachable verb has a row"
-                   (doseq [{group :id gkey :key} keymap/prefix-groups
-                           :when (not= :extensions group)]
+          (expect (nil? (tr/check (keymap/prefix-spec full id))) (str id))))
+    (it "every top row opens its group or runs its verb"
+        (doseq [{:keys [key id]} (mapcat :items (:groups (keymap/prefix-spec full)))]
+          (let [r (press (first key))]
+            (expect (= id (or (get-in r [:state :prefix-group]) (:action r))) key))))
+    ;; User report 2026-10-30: C-x had no keys for groups.
+    (it "offers the verbs of the session's group only while the session is in one"
+        (expect (= [:group-new :group-rename :group-recolour :group-settings :group-archive
+                    :group-delete]
+                   (mapv :action (keymap/available-prefix-commands full :group))))
+        (expect (= [:group-new] (mapv :action (keymap/available-prefix-commands {} :group))))
+        (expect (= :group-rename (:action (press \g \r)))))
+    ;; User report 2026-10-31: the TUI had no keys to open a subagent or to go back to the leader.
+    (it "offers the agent keys only where they can act"
+        (expect (= [:agent-team :agent-parent]
+                   (mapv :action (keymap/available-prefix-commands full :agents))))
+        (expect (= [:agent-team]
+                   (mapv :action (keymap/available-prefix-commands {:has-agents? true} :agents))))
+        (expect (empty? (keymap/available-prefix-commands {} :agents)))
+        (expect (= {:action :agent-open-nth :agent-index 3}
+                   (select-keys (press \t \3) [:action :agent-index]))))
+    (it "every group row runs its verb, and every reachable verb has a row"
+        (doseq [{group :id gkey :key} keymap/prefix-groups
+                :when (not= :extensions group)]
 
-                     (let [items (mapcat :items (:groups (keymap/prefix-spec full group)))]
-                       (doseq [{:keys [key id]} items]
-                         (expect (= id (:action (press gkey (first key)))) (str gkey key)))
-                       (expect (= (set (map :action (keymap/available-prefix-commands full group)))
-                                  (disj (set (map :id items)) :queue-send-nth :agent-open-nth))))))
-               ;; Regression, issue: the palette used to buy a whole "Everything else"
-               ;; heading of its own. It is the first top-level command, never a group.
-               (it "the palette is a top-level command, not a group"
-                   (let [items (mapcat :items (:groups (keymap/prefix-spec {})))
-                         group-ids (set (map :id keymap/prefix-groups))
-                         palette (first (remove #(group-ids (:id %)) items))]
+          (let [items (mapcat :items (:groups (keymap/prefix-spec full group)))]
+            (doseq [{:keys [key id]} items]
+              (expect (= id (:action (press gkey (first key)))) (str gkey key)))
+            (expect (= (set (map :action (keymap/available-prefix-commands full group)))
+                       (disj (set (map :id items)) :queue-send-nth :agent-open-nth))))))
+    ;; Regression, issue: the palette used to buy a whole "Everything else"
+    ;; heading of its own. It is the first top-level command, never a group.
+    (it "the palette is a top-level command, not a group"
+        (let [items (mapcat :items (:groups (keymap/prefix-spec {})))
+              group-ids (set (map :id keymap/prefix-groups))
+              palette (first (remove #(group-ids (:id %)) items))]
 
-                     (expect (= :show-palette (:id palette)))
-                     (expect (= (str keymap/prefix-palette-key) (:key palette)))))
-               (it "the top band lists Extensions only when an extension binds a key"
-                   (expect (not (contains? (ids {} nil) :extensions)))
-                   (expect (nil? (keymap/prefix-group-for \e))))
-               (it "full-session and at-turn forks are distinct, shown only with turns"
-                   (expect (not (contains? (ids {} :session) :fork-session)))
-                   (expect (not (contains? (ids {} :session) :fork-at-turn)))
-                   (expect (contains? (ids full :session) :fork-session))
-                   (expect (contains? (ids full :session) :fork-at-turn))
-                   (expect (= :fork-session (:action (press \s \f))))
-                   (expect (= :fork-at-turn (:action (press \s \t)))))))
+          (expect (= :show-palette (:id palette)))
+          (expect (= (str keymap/prefix-palette-key) (:key palette)))))
+    (it "the top band lists Extensions only when an extension binds a key"
+        (expect (not (contains? (ids {} nil) :extensions)))
+        (expect (nil? (keymap/prefix-group-for \e))))
+    (it "full-session and at-turn forks are distinct, shown only with turns"
+        (expect (not (contains? (ids {} :session) :fork-session)))
+        (expect (not (contains? (ids {} :session) :fork-at-turn)))
+        (expect (contains? (ids full :session) :fork-session))
+        (expect (contains? (ids full :session) :fork-at-turn))
+        (expect (= :fork-session (:action (press \s \f))))
+        (expect (= :fork-at-turn (:action (press \s \t)))))))
 
 ;; User report: C-x had no key to delete a session, and the band's Session pane did
 ;; not show one. Backspace and Delete are aliases, because the Mac delete key sends

@@ -473,9 +473,7 @@
   "Call `f` as extension `label` when no callback bound an extension. A thread that
    the extension created has no callback, and its state is still its own."
   [label f]
-  (if (extension/current-extension-id)
-    (f)
-    (extension/with-context {:ext {:ext/name label}} (f))))
+  (if (extension/current-extension-id) (f) (extension/with-context {:ext {:ext/name label}} (f))))
 
 (defn- state-env
   "State handle for `vis.state`: the session's OWN env when the current context
@@ -1193,7 +1191,8 @@
           ;; human event runs it as an extension callback with the view session bound.
           (fn [envelope & [listener]]
             (when (and python-host/*guest-thread?*
-                       (= "open" (get (try (json/read-json (str envelope)) (catch Throwable _ nil)) "op")))
+                       (= "open"
+                          (get (try (json/read-json (str envelope)) (catch Throwable _ nil)) "op")))
               (throw (ex-info (str "A thread that the extension created cannot open a live view;"
                                    " use an extension callback")
                               {:type :vis/forbidden-route})))
@@ -1600,7 +1599,8 @@
         (do (perf/timed :pyext/context-wait @value) (recur))
 
         :build
-        (try (let [row (try (assoc (perf/timed :pyext/context-build (build!)) :source-context source-ctx)
+        (try (let [row (try (assoc (perf/timed :pyext/context-build (build!))
+                              :source-context source-ctx)
                             (catch Throwable t
                               (locking session-contexts (swap! context-builds dissoc cache-key))
                               (throw t)))]
@@ -1740,10 +1740,9 @@
             (or leased (recur (inc attempt)))))]
 
     ;; A hook belongs to its Python extension, not the tool it observes.
-    (try (extension/with-context {:ext {:ext/name ext-name} :env effective-env}
-                                 (python-host/conveying call-ctx
-                                                         (perf/timed :pyext/call
-                                                                     (call-py call-ctx call-f args))))
+    (try (extension/with-context
+           {:ext {:ext/name ext-name} :env effective-env}
+           (python-host/conveying call-ctx (perf/timed :pyext/call (call-py call-ctx call-f args))))
          (catch Throwable t
            ;; A reload must not replay an operation which already ran and failed.
            (throw (ex-info (ex-message t) (assoc (ex-data t) ::call-started true) t)))
@@ -3394,21 +3393,22 @@
 
                     (.getCanonicalFile root)))]
 
-    (util/sha256-hex (util/content-str [(vec (for [^File f
-                                         entries
+    (util/sha256-hex (util/content-str
+                       [(vec (for [^File f
+                                   entries
 
-                                         :when (str/ends-with? (.getName f) ".dist-info")]
+                                   :when (str/ends-with? (.getName f) ".dist-info")]
 
-                                     (.getName f)))
-                              (vec (for [^File root
-                                         roots
+                               (.getName f)))
+                        (vec (for [^File root
+                                   roots
 
-                                         ^File f
-                                         (if (.isDirectory root) (walk root) [root])]
+                                   ^File f
+                                   (if (.isDirectory root) (walk root) [root])]
 
-                                     [(.getPath f)
-                                      (try (util/sha256-hex (slurp f))
-                                           (catch Throwable _ ::unreadable-source))]))]))))
+                               [(.getPath f)
+                                (try (util/sha256-hex (slurp f))
+                                     (catch Throwable _ ::unreadable-source))]))]))))
 
 (defn- import-root-files
   "Every regular file under an extension's import root as `[rel-path file]`,
@@ -4120,8 +4120,9 @@
                                   (catch Throwable _ ::unknown-environment)))
               :packages (package-digest packages)
               :env (util/sha256-hex (util/content-str (into (sorted-map)
-                                                  (resolve-declared-env (map :name declared)
-                                                                        env-value))))}))
+                                                            (resolve-declared-env (map :name
+                                                                                       declared)
+                                                                                  env-value))))}))
 
          failed-before
          (into #{}
@@ -4270,12 +4271,13 @@
                                  :error (ex-message t)
                                  :extension (or (:extension (ex-data t)) (:ext-name previous))
                                  :stale? (boolean previous)
-                                 :loaded-fingerprint (when previous
-                                                       (util/sha256-hex
-                                                         (util/content-str (select-keys previous
-                                                                              [:sha :code-sha]))))
+                                 :loaded-fingerprint
+                                 (when previous
+                                   (util/sha256-hex (util/content-str
+                                                      (select-keys previous [:sha :code-sha]))))
                                  :requested-fingerprint
-                                 (util/sha256-hex (util/content-str {:sha sha :code-sha source-sha}))}))))))))
+                                 (util/sha256-hex (util/content-str
+                                                    {:sha sha :code-sha source-sha}))}))))))))
            ;; A package that could not install has no entrypoint to scan.
            (swap! failures into (remove #(scanned (:file %)) preparation-failures))
            ;; Files that vanished from disk since the last scan (deleted / renamed)
@@ -4361,14 +4363,13 @@
   "[[with-load-lock]] inside one phase record, logged once by the outermost call.
    A wait for another thread's load is the `:lock-wait` phase."
   [f]
-  (with-reload-phases
-    (fn []
-      (if (.isHeldByCurrentThread ensure-load-lock)
-        (f)
-        (let [requested (System/nanoTime)]
-          (with-load-lock (fn []
-                            (record-phase! :lock-wait nil requested)
-                            (f))))))))
+  (with-reload-phases (fn []
+                        (if (.isHeldByCurrentThread ensure-load-lock)
+                          (f)
+                          (let [requested (System/nanoTime)]
+                            (with-load-lock (fn []
+                                              (record-phase! :lock-wait nil requested)
+                                              (f))))))))
 
 ;; Scopes (nil = global) whose declared packages this process prepared. A project
 ;; first loaded through the process-directory fallback is prepared once a session

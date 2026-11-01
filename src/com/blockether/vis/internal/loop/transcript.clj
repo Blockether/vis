@@ -391,19 +391,19 @@
 (def ^:private cached-messages-wire-tokens
   ;; Each request prices every visible iteration again, and earlier groups do not
   ;; change. Without this, a long session tokenized its whole history on every step.
-  (util/bounded-memoize
-    (fn [model messages]
-      ;; Runs only on a miss, so the stage count is the number of misses.
-      ;; Per-message counts are shared with the request count, so a new message is
-      ;; tokenized once for its group price and its request.
-      (perf/timed :context/iter-universe-miss
-        (max 0
-             (- (long (prompt/count-request-messages model messages {}))
-                (long (svar/count-messages model []))))))
-    4096
-    (* 32 1024 1024)
-    (fn [[_ messages] _]
-      (+ 256 (* 2 (util/string-chars messages))))))
+  (util/bounded-memoize (fn [model messages]
+                          ;; Runs only on a miss, so the stage count is the number of misses.
+                          ;; Per-message counts are shared with the request count, so a new message is
+                          ;; tokenized once for its group price and its request.
+                          (perf/timed :context/iter-universe-miss
+                                      (max 0
+                                           (- (long
+                                                (prompt/count-request-messages model messages {}))
+                                              (long (svar/count-messages model []))))))
+                        4096
+                        (* 32 1024 1024)
+                        (fn [[_ messages] _]
+                          (+ 256 (* 2 (util/string-chars messages))))))
 
 (defn- messages-wire-tokens
   "Svar's tokenized marginal cost for a group of canonical messages inside a larger
@@ -947,17 +947,19 @@
         covered?
         (fn [scopes turns i]
           (let [[turn scope] (nth entry-keys i)]
-            (if turn
-              (contains? turns turn)
-              (contains? scopes scope))))
+            (if turn (contains? turns turn) (contains? scopes scope))))
 
         ;; Earliest trailer index of each scope and boundary turn, found in one pass.
         [first-scope-index first-turn-index]
         (reduce (fn [[by-scope by-turn] [i [turn scope]]]
                   (if turn
-                    [by-scope (cond-> by-turn (not (contains? by-turn turn)) (assoc turn i))]
-                    [(cond-> by-scope (not (contains? by-scope scope)) (assoc scope i))
-                     by-turn]))
+                    [by-scope
+                     (cond-> by-turn
+                       (not (contains? by-turn turn))
+                       (assoc turn i))]
+                    [(cond-> by-scope
+                       (not (contains? by-scope scope))
+                       (assoc scope i)) by-turn]))
                 [{} {}]
                 (map-indexed vector entry-keys))]
 
@@ -1044,9 +1046,7 @@
    the gist or a dropped marker. Pure and deterministic; persisted iteration
    records are untouched. Real compaction, not presentation."
   [trailer-iters summaries]
-  (if (empty? summaries)
-    (vec trailer-iters)
-    ((summary-applier trailer-iters) summaries)))
+  (if (empty? summaries) (vec trailer-iters) ((summary-applier trailer-iters) summaries)))
 
 (defn- turn-boundary-messages
   "Request and closing messages of prior turns, keyed by turn id. `turns` is a
@@ -1058,56 +1058,72 @@
    closes with what the model had said by then and an explicit notice."
   [db session-id turns]
   (when (seq turns)
-    (let [attached (group-by (comp str :turn-soul-id)
-                             ;; A message sent into the turn names its files on its own step.
-                             (filter #(and (nil? (:iteration-id %)) (nil? (:queued-turn-id %)))
-                                     (persistance/db-list-session-attachments-meta db session-id)))
-          rows (persistance/db-read-session-turns db session-id (map first turns))]
-      (into {}
-            (map
-              (fn [[turn-id position]]
-                (let [turn (get rows (str turn-id))
-                      status (:status turn)
-                      unfinished? (terminal-incomplete-turn-status? status)
-                      ;; A fork notice ends the copy of a turn that still ran in the source.
-                      ;; It is not prose the model said, so it never counts as an answer.
-                      {notices true blocks false} (group-by content/fork-notice? (:content turn))
-                      answer (answer-markdown (vec blocks))
-                      {recordings true files false}
-                      (group-by #(boolean (attachments/audio-media-type? (:media-type %)))
-                                (get attached (str turn-id)))]
+    (let [attached
+          (group-by (comp str :turn-soul-id)
+                    ;; A message sent into the turn names its files on its own step.
+                    (filter #(and (nil? (:iteration-id %)) (nil? (:queued-turn-id %)))
+                            (persistance/db-list-session-attachments-meta db session-id)))
 
-                  [(str turn-id)
-                   (prompt/prior-turn-messages
-                     {:turn position
-                      :request (str (:user-request turn)
-                                    (apply str
-                                      (for [recording recordings
-                                            :when (not (str/blank? (:transcription recording)))]
+          rows
+          (persistance/db-read-session-turns db session-id (map first turns))]
 
-                                        (str "\n\nAttached recording: " (:filename recording)
-                                             " (attachment id: " (:id recording)
-                                             ")" (prompt/recording-transcript (:transcription
-                                                                                recording)
-                                                                              nil))))
-                                    (apply str
-                                      (for [file files]
-                                        (str "\n\nAttached file: "
-                                             (:filename file)
-                                             " (attachment id: "
-                                             (:id file)
-                                             ")"))))
-                      :answer (when-not unfinished? answer)
-                      ;; An ERROR turn files the failure itself as its content. That is
-                      ;; not prose the model offered the user, so it never counts as a
-                      ;; partial answer.
-                      :partial-answer
-                      (when (and unfinished? (not-any? #(= "error" (get % "type")) (:content turn)))
-                        answer)
-                      :interrupted? (interrupted-turn-status? status)
-                      :forked? (boolean (seq notices))
-                      :cancelled? (= :cancelled status)})])))
-            turns))))
+      (into
+        {}
+        (map
+          (fn [[turn-id position]]
+            (let [turn
+                  (get rows (str turn-id))
+
+                  status
+                  (:status turn)
+
+                  unfinished?
+                  (terminal-incomplete-turn-status? status)
+
+                  ;; A fork notice ends the copy of a turn that still ran in the source.
+                  ;; It is not prose the model said, so it never counts as an answer.
+                  {notices true blocks false}
+                  (group-by content/fork-notice? (:content turn))
+
+                  answer
+                  (answer-markdown (vec blocks))
+
+                  {recordings true files false}
+                  (group-by #(boolean (attachments/audio-media-type? (:media-type %)))
+                            (get attached (str turn-id)))]
+
+              [(str turn-id)
+               (prompt/prior-turn-messages
+                 {:turn position
+                  :request (str (:user-request turn)
+                                (apply str
+                                  (for [recording
+                                        recordings
+
+                                        :when (not (str/blank? (:transcription recording)))]
+
+                                    (str "\n\nAttached recording: " (:filename recording)
+                                         " (attachment id: " (:id recording)
+                                         ")" (prompt/recording-transcript (:transcription recording)
+                                                                          nil))))
+                                (apply str
+                                  (for [file files]
+                                    (str "\n\nAttached file: "
+                                         (:filename file)
+                                         " (attachment id: "
+                                         (:id file)
+                                         ")"))))
+                  :answer (when-not unfinished? answer)
+                  ;; An ERROR turn files the failure itself as its content. That is
+                  ;; not prose the model offered the user, so it never counts as a
+                  ;; partial answer.
+                  :partial-answer (when (and unfinished?
+                                             (not-any? #(= "error" (get % "type")) (:content turn)))
+                                    answer)
+                  :interrupted? (interrupted-turn-status? status)
+                  :forked? (boolean (seq notices))
+                  :cancelled? (= :cancelled status)})])))
+        turns))))
 
 (defn- replay-tool-call-id
   "Wire-safe tool-call id for call `k` of the stored iteration `scope`. A stored id
@@ -1966,8 +1982,7 @@
 
     (if (identical? ::none hit)
       (let [messages (render)]
-        (locking cache
-          (.put cache iter-rec (assoc (.get cache iter-rec) k messages)))
+        (locking cache (.put cache iter-rec (assoc (.get cache iter-rec) k messages)))
         messages)
       hit)))
 
@@ -2114,13 +2129,12 @@
                          [])))))]
 
      (mapv (fn [[pos iter-rec :as entry]]
-             (let [render
-                   #(vec (concat (when (and (not (:collapsed? iter-rec)) (:council-input iter-rec))
-                                   [(council/input-message (:council-input iter-rec))])
-                                 (when-not (:collapsed? iter-rec)
-                                   (user-input-messages (:user-input iter-rec) vision?))
-                                 (group-of entry)))]
-
+             (let [render #(vec (concat (when (and (not (:collapsed? iter-rec))
+                                                   (:council-input iter-rec))
+                                          [(council/input-message (:council-input iter-rec))])
+                                        (when-not (:collapsed? iter-rec)
+                                          (user-input-messages (:user-input iter-rec) vision?))
+                                        (group-of entry)))]
                [pos
                 (if (and (map? iter-rec) (not (contains? image-plan pos)))
                   (rendered-group iter-rec [(contains? compatible pos) vision?] render)
@@ -2182,7 +2196,8 @@
   (into {}
         (map (fn [[pos msgs]]
                [pos (messages-wire-tokens model msgs)]))
-        (perf/timed :context/iter-universe-render (conversation-suffix-groups wire-iters replay-target))))
+        (perf/timed :context/iter-universe-render
+                    (conversation-suffix-groups wire-iters replay-target))))
 
 (defn- estimated-boundary-tokens
   "Tokenizer-backed fallback for a turn boundary before its model is resolved."

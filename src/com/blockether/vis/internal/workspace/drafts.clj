@@ -688,7 +688,10 @@
             (cond
               (seq conflicts)
               (do
-                (spit marker (util/content-str (assoc state :conflicts conflicts)) :encoding "UTF-8")
+                (spit marker
+                      (util/content-str (assoc state :conflicts conflicts))
+                      :encoding
+                      "UTF-8")
                 {:status :conflicts
                  :conflicts conflicts
                  :hint

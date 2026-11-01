@@ -779,7 +779,8 @@
             800
 
             summaries
-            (mapv (fn [i] {"scopes" [(str "t" i "/i1") (str "t" i "/i2")] "gist" (str i)})
+            (mapv (fn [i]
+                    {"scopes" [(str "t" i "/i1") (str "t" i "/i2")] "gist" (str i)})
                   (range 1 (inc n)))
 
             comparisons

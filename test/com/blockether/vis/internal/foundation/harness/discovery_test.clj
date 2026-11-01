@@ -293,9 +293,8 @@
              (binding [workspace/*workspace-root* (.getPath root)]
                (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
                  (expect (some #{"web-skill"} (map :name (d/discover-skills))))))
-             (let [entries
-                   (filterv #(= (.getPath root) (first (:pool-key %)))
-                            (:entries (fff-index/pool-stats)))]
+             (let [entries (filterv #(= (.getPath root) (first (:pool-key %)))
+                             (:entries (fff-index/pool-stats)))]
                (expect (seq entries))
                (expect (every? #(empty? (last (nth (:pool-key %) 2))) entries)))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))

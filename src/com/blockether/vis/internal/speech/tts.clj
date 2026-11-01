@@ -390,9 +390,7 @@
 
     (tel/log! {:level :info
                :id ::model-cache
-               :data {:synthesis-id synthesis-id
-                      :family family
-                      :hit (= cache-key (:key current))}})
+               :data {:synthesis-id synthesis-id :family family :hit (= cache-key (:key current))}})
     (try @(:tts slot)
          (catch Throwable t
            ;; a failed load must not stay cached: the next request tries again

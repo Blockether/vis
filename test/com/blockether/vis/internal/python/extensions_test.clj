@@ -6472,12 +6472,13 @@ vis.register_extension(vis.Extension(
   ;; A new session's first catalog load spent ~120 ms in snapshot, fingerprint and
   ;; registration with no log line, so a slow first session had no explanation.
   (it "logs the phases of a first load"
-      (let [dir
-            (temp-dir)]
-
+      (let [dir (temp-dir)]
         (write-ext! dir "first.py" "import blockether.vis.extension as vis\n")
-        (try (let [{:keys [signals]} (tel/with-signals (pyx/load-python-extensions! {:dirs [(str dir)]}))
-                   phases (some #(when (= ::pyx/reload-phases (:id %)) (:phases (:data %))) signals)]
+        (try (let [{:keys [signals]} (tel/with-signals (pyx/load-python-extensions! {:dirs
+                                                                                     [(str dir)]}))
+                   phases (some #(when (= ::pyx/reload-phases (:id %)) (:phases (:data %)))
+                                signals)]
+
                ;; A load behind another thread's load showed a total with no phase for the wait.
                (expect (= :lock-wait (:phase (first phases))))
                (expect (some #(= {:phase :register :detail "first"} (dissoc % :ms)) phases)))

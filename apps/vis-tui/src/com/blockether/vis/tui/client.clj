@@ -1462,8 +1462,7 @@
   ([sid archived?]
    (vec (get (send-json! "GET"
                          (str "/v1/sessions/" (enc sid)
-                              "/views/live?placement=attachment"
-                              (when archived? "&archived=true")))
+                              "/views/live?placement=attachment" (when archived? "&archived=true")))
              "views"))))
 
 (defn live-view-state
@@ -1481,7 +1480,10 @@
   (try (let [response
              (request! :post
                        (str "/v1/sessions/" (enc sid) "/views/" (enc view-id) "/actions")
-                       {:body (update action :action #(some-> % name))})
+                       {:body (update action
+                                      :action
+                                      #(some-> %
+                                               name))})
 
              body
              (wire/->engine (parse-json-body (:body response)))]
@@ -1745,7 +1747,9 @@
   ([] (router nil))
   ([{:keys [probe]}]
    (let [path
-         (cond-> "/v1/router" (= :changed probe) (str "?probe=changed"))
+         (cond-> "/v1/router"
+           (= :changed probe)
+           (str "?probe=changed"))
 
          entry
          (ensure-gateway-serving! path)]

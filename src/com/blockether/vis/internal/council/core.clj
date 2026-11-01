@@ -44,8 +44,7 @@
 
 (toggles/register-toggle! {:id "council"
                            :label "Council"
-                           :description
-                           "Exchange messages between the sessions of one project."
+                           :description "Exchange messages between the sessions of one project."
                            :default true
                            :owner :vis
                            :persist? true
@@ -95,7 +94,8 @@
           (or (some-> (ps/db-get-project-by-root db owner-id origin)
                       :id
                       str)
-              (str "workspace:" (util/sha256-hex (util/content-str [(or owner-id "local") origin]))))))))
+              (str "workspace:"
+                   (util/sha256-hex (util/content-str [(or owner-id "local") origin]))))))))
 
 (defn default-group
   "The persisted project or repository group, shared by trunk and isolated workspaces."
@@ -291,8 +291,8 @@
         (text! (or (:idempotency_key opts) (str (random-uuid))) idempotency-key-bytes)
 
         fingerprint
-        (util/sha256-hex (util/content-str [gid activation-id content thread title selector required?
-                                  reply-to]))]
+        (util/sha256-hex (util/content-str [gid activation-id content thread title selector
+                                            required? reply-to]))]
 
     (or
       (replay! fingerprint (ps/db-council-replay db session-id key))
@@ -521,8 +521,7 @@
    ping of such a question stays an obligation after the turn that received it ends."
   [db sid]
   (into #{}
-        (comp (map :entry_id)
-              (remove #(some :reply_entry_id (:replies (ps/db-council-get db %)))))
+        (comp (map :entry_id) (remove #(some :reply_entry_id (:replies (ps/db-council-get db %)))))
         (agents/open-questions db sid)))
 
 (defn pending-replies
@@ -546,17 +545,20 @@
   [input-state db sid gid iteration-key]
   (if (:children-carried? input-state)
     input-state
-    (let [open (open-child-questions db sid)
-          carried (into {}
-                        (keep (fn [{:keys [session_id entry_id]}]
-                                (when (contains? open entry_id)
-                                  [entry_id
-                                   {:entry_id entry_id
-                                    :thread_id (or (:thread_id (ps/db-council-get db entry_id))
-                                                   entry_id)
-                                    :author_session_id session_id
-                                    :due_iteration (inc (long (second iteration-key)))}])))
-                        (agents/open-questions db sid))]
+    (let [open
+          (open-child-questions db sid)
+
+          carried
+          (into {}
+                (keep (fn [{:keys [session_id entry_id]}]
+                        (when (contains? open entry_id)
+                          [entry_id
+                           {:entry_id entry_id
+                            :thread_id (or (:thread_id (ps/db-council-get db entry_id)) entry_id)
+                            :author_session_id session_id
+                            :due_iteration (inc (long (second iteration-key)))}])))
+                (agents/open-questions db sid))]
+
       (cond-> (assoc input-state :children-carried? true)
         (seq carried)
         (update-in [:required gid] #(merge carried %))))))
@@ -704,8 +706,12 @@
   "An outstanding delivered request vetoes final completion, not intermediate tool work. In an
    interactive session, an open child question does not: the model can ask the person first."
   [env]
-  (let [pending (session-pending-replies env)
-        asked (person-questions env pending)]
+  (let [pending
+        (session-pending-replies env)
+
+        asked
+        (person-questions env pending)]
+
     (when-let [due (seq (remove #(contains? asked (:entry_id %)) pending))]
       (str
         "Council reply required before ending this turn. Publish one answer for each entry using "

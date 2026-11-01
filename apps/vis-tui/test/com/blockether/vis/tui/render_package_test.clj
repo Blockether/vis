@@ -34,18 +34,17 @@
     (subs (format "%064x" (BigInteger. 1 (.digest digest))) 0 16)))
 
 (defdescribe prep-marker-test
-  (it "names the prep marker after the Java sources, so a changed source compiles again"
-      (let [expected
-            (str "target/prepared/" (source-digest))
+             (it "names the prep marker after the Java sources, so a changed source compiles again"
+                 (let [expected
+                       (str "target/prepared/" (source-digest))
 
-            ensure
-            (-> (io/file package-dir "deps.edn")
-                slurp
-                edn/read-string
-                :deps/prep-lib
-                :ensure)]
+                       ensure
+                       (-> (io/file package-dir "deps.edn")
+                           slurp
+                           edn/read-string
+                           :deps/prep-lib
+                           :ensure)]
 
-        (expect (= expected ensure)
-                (str "Set :ensure in packages/vis-tui-render/deps.edn to \""
-                     expected
-                     "\"")))))
+                   (expect
+                     (= expected ensure)
+                     (str "Set :ensure in packages/vis-tui-render/deps.edn to \"" expected "\"")))))

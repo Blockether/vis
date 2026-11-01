@@ -355,7 +355,9 @@
              :content [{:type "text" :text (str "First " nonce)} {:type "text" :text "Second"}]}
 
             mark
-            #(assoc % :svar/cache true :svar/cache-ttl :1h)
+            #(assoc %
+               :svar/cache true
+               :svar/cache-ttl :1h)
 
             marked-plain
             (assoc plain :content [(mark {:type "text" :text (:content plain)})])
@@ -369,10 +371,9 @@
             calls
             (atom 0)]
 
-        (with-redefs [svar/count-messages
-                      (fn ^long [model messages opts]
-                        (when (seq messages) (swap! calls inc))
-                        (count-messages model messages opts))]
+        (with-redefs [svar/count-messages (fn ^long [model messages opts]
+                                            (when (seq messages) (swap! calls inc))
+                                            (count-messages model messages opts))]
           (let [unmarked (prompt/count-request-messages "gpt-4o" [plain blocks] {})]
             (expect (= unmarked
                        (prompt/count-request-messages "gpt-4o" [marked-plain marked-blocks] {})))

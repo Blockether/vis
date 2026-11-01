@@ -199,7 +199,9 @@
         ;; namespace from such a thread, and each door limits what the call does.
         ;; Model workers and every other host op still refuse.
         guest-thread?
-        (and (= "" caller) (true? (:trusted? peer)) (contains? guest-thread-doors (get message "tool")))
+        (and (= "" caller)
+             (true? (:trusted? peer))
+             (contains? guest-thread-doors (get message "tool")))
 
         caller
         (if guest-thread?
@@ -708,7 +710,8 @@
                            :data {:pid (.pid process)
                                   :role (worker-role k)
                                   ;; The session, `::spare` or "shared": which caller holds it.
-                                  :owner (str (if (instance? TrustedExtensionWorker k) (:session k) k))
+                                  :owner (str
+                                           (if (instance? TrustedExtensionWorker k) (:session k) k))
                                   :start-ms (quot (- (System/nanoTime) start-ns) 1000000)}}
                           (str "python worker pid " (.pid process)))
                 ;; The runtime retains a private sink before interpreter confinement.
@@ -795,6 +798,7 @@
           ;; A process that left the group with `setsid` gets no group signal.
           (end-processes! tree 200)))
     (try (prune-empty-run-dir! process (:log state)) (catch Throwable _ nil))))
+
 (defonce ^:private spare-warmup
   ;; Python that a spare trusted worker runs before its first context. Nil keeps no spares.
   (atom nil))

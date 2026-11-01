@@ -418,12 +418,12 @@ print(worker_value)"))))
             generation
             (io/file store
                      (.getName (io/file (#'worker/materialize-guest-sources!
-                                          (.toFile (java.nio.file.Files/createTempDirectory
-                                                     (.toPath (io/file "target"))
-                                                     "worker-guest-seed-"
-                                                     (make-array java.nio.file.attribute.FileAttribute
-                                                                 0)))
-                                          sources))))
+                                         (.toFile
+                                           (java.nio.file.Files/createTempDirectory
+                                             (.toPath (io/file "target"))
+                                             "worker-guest-seed-"
+                                             (make-array java.nio.file.attribute.FileAttribute 0)))
+                                         sources))))
 
             _
             (do (.mkdirs generation)
@@ -436,14 +436,10 @@ print(worker_value)"))))
             (.start (ProcessBuilder.
                       ^java.util.List
                       ["python3" "-c"
-                       (str "import fcntl, shutil, sys, time\n"
-                            "f = open(sys.argv[1], 'a+')\n"
-                            "fcntl.lockf(f, fcntl.LOCK_EX)\n"
-                            "print('locked', flush=True)\n"
-                            "time.sleep(0.5)\n"
-                            "shutil.rmtree(sys.argv[2])\n")
-                       (str (io/file store ".vis-claims.lock"))
-                       (str generation)]))]
+                       (str "import fcntl, shutil, sys, time\n" "f = open(sys.argv[1], 'a+')\n"
+                            "fcntl.lockf(f, fcntl.LOCK_EX)\n" "print('locked', flush=True)\n"
+                            "time.sleep(0.5)\n" "shutil.rmtree(sys.argv[2])\n")
+                       (str (io/file store ".vis-claims.lock")) (str generation)]))]
 
         (try (expect (= "locked" (.readLine (io/reader (.getInputStream sweeper)))))
              (#'worker/materialize-guest-sources! store sources)
@@ -817,43 +813,44 @@ print(worker_value)"))))
   background-wake-authorization-test
   ;; #202: connection ownership survives a trusted thread's missing activation;
   ;; it never grants an unbound sandbox thread access to host tools.
-  (it "admits only the thread doors from a trusted worker's assigned namespace"
-      (doseq [[trusted? caller tool payload assigned? allowed?]
-              [[true "" "__vis_host_request__" "{\"session\":\"owned\"}" true true]
-               [false "" "__vis_host_request__" "{\"session\":\"owned\"}" true false]
-               [true "" "__vis_host_shell__" "{\"session\":\"owned\"}" true false]
-               ;; A worker thread of an extension drives its board and its state.
-               [true "" "__vis_host_live__" "{\"session\":\"owned\"}" true true]
-               [true "" "__vis_host_state_put__" "{\"session\":\"owned\"}" true true]
-               [true "" "__vis_host_call_tool__" "{\"session\":\"owned\"}" true false]
-               [false "" "__vis_host_live__" "{\"session\":\"owned\"}" true false]
-               [true "" "__vis_host_request__" "{\"session\":\"other\"}" true false]
-               [true "" "__vis_host_request__" "{\"session\":\"owned\"}" false false]
-               [true "other" "__vis_host_request__" "{\"session\":\"owned\"}" true false]
-               [true nil "__vis_host_request__" "{\"session\":\"owned\"}" true false]
-               [true "" "__vis_host_request__" "invalid" true false]
-               [true "" "__vis_host_request__" "{}" true false]]]
-        (let [peer {:serving (atom {})
-                    :host-sessions (atom (if assigned? #{"owned"} #{}))
-                    :trusted? trusted?}
-              calls (atom [])
-              replies (atom [])]
+  (it
+    "admits only the thread doors from a trusted worker's assigned namespace"
+    (doseq [[trusted? caller tool payload assigned? allowed?]
+            [[true "" "__vis_host_request__" "{\"session\":\"owned\"}" true true]
+             [false "" "__vis_host_request__" "{\"session\":\"owned\"}" true false]
+             [true "" "__vis_host_shell__" "{\"session\":\"owned\"}" true false]
+             ;; A worker thread of an extension drives its board and its state.
+             [true "" "__vis_host_live__" "{\"session\":\"owned\"}" true true]
+             [true "" "__vis_host_state_put__" "{\"session\":\"owned\"}" true true]
+             [true "" "__vis_host_call_tool__" "{\"session\":\"owned\"}" true false]
+             [false "" "__vis_host_live__" "{\"session\":\"owned\"}" true false]
+             [true "" "__vis_host_request__" "{\"session\":\"other\"}" true false]
+             [true "" "__vis_host_request__" "{\"session\":\"owned\"}" false false]
+             [true "other" "__vis_host_request__" "{\"session\":\"owned\"}" true false]
+             [true nil "__vis_host_request__" "{\"session\":\"owned\"}" true false]
+             [true "" "__vis_host_request__" "invalid" true false]
+             [true "" "__vis_host_request__" "{}" true false]]]
+      (let [peer {:serving (atom {})
+                  :host-sessions (atom (if assigned? #{"owned"} #{}))
+                  :trusted? trusted?}
+            calls (atom [])
+            replies (atom [])]
 
-          (with-redefs [python-host/dispatch (fn [caller tool payload]
-                                               (swap! calls conj
-                                                 [caller tool payload python-host/*guest-thread?*])
-                                               "ok")
-                        worker-peer/send-line! (fn [_ reply]
-                                                 (swap! replies conj reply))]
+        (with-redefs [python-host/dispatch (fn [caller tool payload]
+                                             (swap! calls conj
+                                               [caller tool payload python-host/*guest-thread?*])
+                                             "ok")
+                      worker-peer/send-line! (fn [_ reply]
+                                               (swap! replies conj reply))]
 
-            (#'worker/serve-host-call! peer {"id" 1 "session" caller "tool" tool "payload" payload})
-            (expect (= allowed? (boolean (seq @calls))))
-            (when allowed? (expect (= [["owned" tool payload true]] @calls)))
-            (expect (= (if allowed?
-                         {"id" 1 "value" "ok"}
-                         {"id" 1 "error" "Worker is not authorized for this host session"})
-                       (first @replies)))
-            (expect (empty? @(:serving peer)))))))
+          (#'worker/serve-host-call! peer {"id" 1 "session" caller "tool" tool "payload" payload})
+          (expect (= allowed? (boolean (seq @calls))))
+          (when allowed? (expect (= [["owned" tool payload true]] @calls)))
+          (expect (= (if allowed?
+                       {"id" 1 "value" "ok"}
+                       {"id" 1 "error" "Worker is not authorized for this host session"})
+                     (first @replies)))
+          (expect (empty? @(:serving peer)))))))
   (it "keeps an activated call outside the guest-thread limits"
       (let [peer
             {:serving (atom {}) :host-sessions (atom #{"owned"}) :trusted? true}

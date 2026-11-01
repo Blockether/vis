@@ -16,8 +16,14 @@
                            (Thread. ^Runnable
                                     (fn []
                                       (doseq [root pending]
-                                        ;; delete-tree does not follow symbolic links.
-                                        (try (fs/delete-tree root) (catch Exception _ nil))))))))
+                                        ;; delete-tree does not follow symbolic links. Logging may be
+                                        ;; down in a shutdown hook, so report to stderr.
+                                        (try (fs/delete-tree root)
+                                             (catch Exception e
+                                               (binding [*out* *err*]
+                                                 (println "test-temp: could not delete"
+                                                          root
+                                                          (ex-message e)))))))))))
 
 (defn delete-at-exit!
   "Delete `root` and its content when the JVM exits. Returns `root`."

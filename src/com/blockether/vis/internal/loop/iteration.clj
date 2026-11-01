@@ -1232,16 +1232,15 @@
              :assistant-prose (when goal-continuation answer-md)
              :goal-continuation goal-continuation
              :blocks blocks
-             :final-result
-             (when-not goal-continuation
-               {:final? true
-                :answer (finalize-answer!
-                          environment
-                          ;; A subagent question waits for the person: the turn ends suspended.
-                          (if (and (not (str/blank? answer-md))
-                                   (council/awaits-person? environment))
-                            {:vis/answer-mode :needs-input :answer/text answer-md}
-                            value))})
+             :final-result (when-not goal-continuation
+                             {:final? true
+                              :answer (finalize-answer!
+                                        environment
+                                        ;; A subagent question waits for the person: the turn ends suspended.
+                                        (if (and (not (str/blank? answer-md))
+                                                 (council/awaits-person? environment))
+                                          {:vis/answer-mode :needs-input :answer/text answer-md}
+                                          value))})
              :request-health request-health
              :api-usage api-usage
              :prompt-cache (:prompt-cache ask-result)
@@ -1902,7 +1901,8 @@
 (defn- with-trace-store
   "Keep trace bodies on disk until the terminal response needs its transient snapshot."
   [f]
-  (let [path (java.nio.file.Files/createTempFile (.toPath (paths/temp-dir)) "vis-turn-trace-"
+  (let [path (java.nio.file.Files/createTempFile (.toPath (paths/temp-dir))
+                                                 "vis-turn-trace-"
                                                  ".bin"
                                                  (make-array java.nio.file.attribute.FileAttribute
                                                              0))]

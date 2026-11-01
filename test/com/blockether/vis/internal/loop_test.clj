@@ -13285,34 +13285,33 @@
     "Projectless sessions: real Python publication reaches the next model input and history"
     (if-not (clojure.java.io/resource "com/blockether/vis/internal/council/core.clj")
       (expect false "Council has not been implemented")
-      (let
-        [router
-         ;; This history fixture needs space for the full system prompt plus Council input.
-         (assoc-in (helper-router :lmstudio nil) [:providers 0 :models 0 :context] 200000)
+      (let [router
+            ;; This history fixture needs space for the full system prompt plus Council input.
+            (assoc-in (helper-router :lmstudio nil) [:providers 0 :models 0 :context] 200000)
 
-         a
-         (loop-env/create-environment router {:db :memory})
+            a
+            (loop-env/create-environment router {:db :memory})
 
-         db
-         (:db-info a)
+            db
+            (:db-info a)
 
-         b
-         (loop-env/create-environment router {:db db})
+            b
+            (loop-env/create-environment router {:db db})
 
-         aid
-         (str (:session-id a))
+            aid
+            (str (:session-id a))
 
-         bid
-         (str (:session-id b))
+            bid
+            (str (:session-id b))
 
-         update!
-         (requiring-resolve 'com.blockether.vis.internal.gateway.state/update-session!)
+            update!
+            (requiring-resolve 'com.blockether.vis.internal.gateway.state/update-session!)
 
-         drop!
-         (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+            drop!
+            (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
 
-         requests
-         (atom [])
+            requests
+            (atom [])
 
             source
             (str

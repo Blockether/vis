@@ -712,7 +712,11 @@
   (let [sid (str sid)]
     (into []
           (keep (fn [[child {:keys [entry_id]}]]
-                  (when (and entry_id (= sid (some-> (info db child) :parent_id str)))
+                  (when (and entry_id
+                             (= sid
+                                (some-> (info db child)
+                                        :parent_id
+                                        str)))
                     {:session_id child :entry_id entry_id})))
           @questions)))
 

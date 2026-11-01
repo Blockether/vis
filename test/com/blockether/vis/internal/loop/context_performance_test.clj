@@ -372,7 +372,6 @@
             (expect (.startsWith ^String actual-a "HEAD 😀 中 "))
             (expect (.endsWith ^String actual-a "Aa😀TAIL")))))))
 
-
 (defdescribe
   iteration-and-request-share-message-counts-test
   ;; Regression: each new message was tokenized twice, once to price its iteration
@@ -392,14 +391,12 @@
             (atom 0)]
 
         (with-redefs [svar/count-messages
-                      (fn
-                        (^long [m msgs]
-                         (when (seq msgs) (swap! calls inc))
-                         (count-messages m msgs))
-                        (^long [m msgs opts]
-                         (when (seq msgs) (swap! calls inc))
-                         (count-messages m msgs opts)))]
+                      (fn (^long [m msgs] (when (seq msgs) (swap! calls inc)) (count-messages m
+                                                                                msgs))
+                        (^long [m msgs opts] (when (seq msgs) (swap! calls inc)) (count-messages m
+                                                                                   msgs opts)))]
           (let [group (#'transcript/messages-wire-tokens model messages)
                 request (prompt/count-request-messages model messages {})]
+
             (expect (= request (+ group (count-messages model []))))
             (expect (= 2 @calls)))))))

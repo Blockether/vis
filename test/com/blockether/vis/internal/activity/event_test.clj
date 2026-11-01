@@ -434,35 +434,41 @@
         (expect (not= identity (key-of [{:query ["needle"] :paths ["test" "src"]}])))
         (expect (= (key-of []) (key-of [])))
         (expect (= 5 (count (set (map key-of [[1] ["1"] [1.0] [true] [nil]])))))))
-  (it "distinguishes arguments beyond their visible preview and keeps private values off the wire"
-      (let [ctx
-            (event/context)
+  (it
+    "distinguishes arguments beyond their visible preview and keeps private values off the wire"
+    (let [ctx
+          (event/context)
 
-            prefix
-            (apply str (repeat (inc event/max-summary-bytes) "x"))
+          prefix
+          (apply str (repeat (inc event/max-summary-bytes) "x"))
 
-            a
-            (argument-start ctx [{:query (str prefix "a") :password "fixture-first"}])
+          a
+          (argument-start ctx [{:query (str prefix "a") :password "fixture-first"}])
 
-            b
-            (argument-start ctx [{:query (str prefix "b") :password "fixture-first"}])
+          b
+          (argument-start ctx [{:query (str prefix "b") :password "fixture-first"}])
 
-            c
-            (argument-start ctx [{:query (str prefix "a") :password "fixture-second"}])]
+          c
+          (argument-start ctx [{:query (str prefix "a") :password "fixture-second"}])]
 
-        (expect (every? :argument-key [a b c]))
-        (expect (= 3 (count (set (map :argument-key [a b c])))))
-        ;; The gateway caps printing at 10 levels and 100 items for its logs. The
-        ;; Companion grouped two council.run calls as one when they differed only there.
-        (binding [*print-level* 10 *print-length* 100]
-          (let [key-of #(:argument-key (argument-start ctx %))]
-            (expect (not= (key-of [{"a" {"b" {"c" 1}}}]) (key-of [{"a" {"b" {"c" 2}}}])))
-            (expect (not= (key-of [(conj (vec (range 110)) 1)])
-                          (key-of [(conj (vec (range 110)) 2)])))))
-        (doseq [public [a b c]]
-          (expect (nil? (event/event-error public)))
-          (expect (not (string/includes? (wire/json-str public) "fixture-first")))
-          (expect (not (string/includes? (wire/json-str public) "fixture-second"))))))
+      (expect (every? :argument-key [a b c]))
+      (expect (= 3 (count (set (map :argument-key [a b c])))))
+      ;; The gateway caps printing at 10 levels and 100 items for its logs. The
+      ;; Companion grouped two council.run calls as one when they differed only there.
+      (binding [*print-level*
+                10
+
+                *print-length*
+                100]
+
+        (let [key-of #(:argument-key (argument-start ctx %))]
+          (expect (not= (key-of [{"a" {"b" {"c" 1}}}]) (key-of [{"a" {"b" {"c" 2}}}])))
+          (expect (not= (key-of [(conj (vec (range 110)) 1)])
+                        (key-of [(conj (vec (range 110)) 2)])))))
+      (doseq [public [a b c]]
+        (expect (nil? (event/event-error public)))
+        (expect (not (string/includes? (wire/json-str public) "fixture-first")))
+        (expect (not (string/includes? (wire/json-str public) "fixture-second"))))))
   (it "scopes identities to one block and refuses incomplete or opaque arguments"
       (let [a
             (argument-start (event/context) [{:query "needle"}])

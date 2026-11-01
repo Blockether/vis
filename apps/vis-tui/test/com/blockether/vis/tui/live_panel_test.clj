@@ -353,12 +353,13 @@
                           (doto (TerminalScreen. terminal) (.startScreen))]
 
                 (.putString (.newTextGraphics ts) 0 0 "chat text")
-                (#'screen/fade-unfocused-areas! ts
-                                                (frame-db)
-                                                20
-                                                4
-                                                0
-                                                {:col 12 :row 0 :width 8 :height 4})
+                (#'screen/fade-unfocused-areas!
+                 ts
+                 (frame-db)
+                 20
+                 4
+                 0
+                 {:col 12 :row 0 :width 8 :height 4})
                 (.getForegroundColor (.getBackCharacter ts 0 0))))]
 
         (try (expect (not= (faded-ink :vis-light) (faded-ink :vis-dark)))

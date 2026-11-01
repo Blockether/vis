@@ -329,20 +329,17 @@
                                        {:status 200 :body "{\"providers\":[]}"})}
     f))
 
-(defdescribe
-  provider-reads-send-one-request
-  ;; A probe GET went before each provider read. `GET /v1/router` asks every provider live,
-  ;; so a TUI start after an idle gateway waited ~0.8 s for that probe and its twin.
-  (it
-    "sends one request for a router read"
-    (let [sent (atom [])]
-      (with-recorded-requests sent #(client/router))
-      (expect (= [["GET" "/v1/router"]] @sent))))
-  (it
-    "asks only the changed providers when startup loads the config"
-    (let [sent (atom [])]
-      (with-recorded-requests sent #(client/load-config {:probe :changed}))
-      (expect (= [["GET" "/v1/router?probe=changed"]] @sent)))))
+(defdescribe provider-reads-send-one-request
+             ;; A probe GET went before each provider read. `GET /v1/router` asks every provider live,
+             ;; so a TUI start after an idle gateway waited ~0.8 s for that probe and its twin.
+             (it "sends one request for a router read"
+                 (let [sent (atom [])]
+                   (with-recorded-requests sent #(client/router))
+                   (expect (= [["GET" "/v1/router"]] @sent))))
+             (it "asks only the changed providers when startup loads the config"
+                 (let [sent (atom [])]
+                   (with-recorded-requests sent #(client/load-config {:probe :changed}))
+                   (expect (= [["GET" "/v1/router?probe=changed"]] @sent)))))
 
 (defn- with-router-cache
   "Run a cache scenario with a controllable clock and queued background work."

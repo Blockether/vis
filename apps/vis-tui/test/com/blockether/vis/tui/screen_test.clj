@@ -2898,9 +2898,8 @@ therapy line 2"
             type-into
             (fn [db text]
               (let [handler (:fn (get @@#'state/event-registry :update-input))]
-                (#'state/finalize-db (handler db
-                                              [:update-input
-                                               (input/paste-text (input/empty-input) text)]))))
+                (#'state/finalize-db
+                 (handler db [:update-input (input/paste-text (input/empty-input) text)]))))
 
             base
             (type-into {:active-tab-id :tab-1

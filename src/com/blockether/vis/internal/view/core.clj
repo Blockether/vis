@@ -843,12 +843,17 @@
   (let [given (reduce (fn [acc k]
                         (if-some [value (get item k)]
                           (assoc acc
-                            k
-                            (case k
-                              :mesh (live-text fail! ":mesh" value)
-                              :color (scene-color fail! ":color" value)
-                              :is-emissive (bool-value fail! ":is-emissive" value false)
-                              (scene-number fail! (str k) value)))
+                            k (case k
+                                :mesh
+                                (live-text fail! ":mesh" value)
+
+                                :color
+                                (scene-color fail! ":color" value)
+
+                                :is-emissive
+                                (bool-value fail! ":is-emissive" value false)
+
+                                (scene-number fail! (str k) value)))
                           acc))
                       {}
                       scene-object-keys)]
@@ -860,7 +865,8 @@
 (defn- scene-mesh
   [fail! {:keys [vertices faces]}]
   (letfn [(triples [what value]
-            (when-not (and (sequential? value) (every? #(and (sequential? %) (= 3 (count %))) value))
+            (when-not (and (sequential? value)
+                           (every? #(and (sequential? %) (= 3 (count %))) value))
               (fail! (str what " must be a list of three-number lists")))
             value)]
     {:vertices (mapv (fn [vertex]
@@ -1327,9 +1333,11 @@
                  (assoc base
                    :width (scene-number node-fail! ":width" (:width node))
                    :height (scene-number node-fail! ":height" (:height node))
-                   :background (scene-color node-fail! ":background" (or (:background node) background))
+                   :background
+                   (scene-color node-fail! ":background" (or (:background node) background))
                    :fov (scene-number node-fail! ":fov" (or (:fov node) fov))
-                   :is-wrapping (bool-value node-fail! ":is-wrapping" (:is-wrapping node) is-wrapping)
+                   :is-wrapping
+                   (bool-value node-fail! ":is-wrapping" (:is-wrapping node) is-wrapping)
                    :tick-ms (live-long node-fail! ":tick-ms" (or (:tick-ms node) tick-ms))
                    :meshes (items :meshes)
                    :objects (items :objects)))
