@@ -1445,6 +1445,34 @@
           (long (* (double local-tokens) (double cut)))
           :else nil)))
 
+(defn- smallest-fitting-prefix
+  "Return `(project n)` for the smallest `n` in 1..`unit-count` that `fits?`.
+   Return `(project unit-count)` when no prefix fits. Folding more only shrinks the
+   projection, so double `n` until it fits and binary search the last step. A budget
+   fold usually needs one or two units: this costs O(log k) projections, not O(log n)."
+  [project fits? unit-count]
+  (let [unit-count (long unit-count)]
+    (loop [prev 0
+           n 1]
+
+      (let [n (min n unit-count)
+            candidate (project n)]
+
+        (cond (fits? candidate) (loop [lo (inc prev)
+                                       hi (dec n)
+                                       best candidate]
+
+                                  (if (> lo hi)
+                                    best
+                                    (let [mid (quot (+ lo hi) 2)
+                                          candidate (project mid)]
+
+                                      (if (fits? candidate)
+                                        (recur lo (dec mid) candidate)
+                                        (recur (inc mid) hi best)))))
+              (= n unit-count) candidate
+              :else (recur n (* 2 n)))))))
+
 (defn- emergency-fold-projection
   "Build a provider projection with settled trailer iterations collapsed through the
    same `apply-summaries` path as `fold_session`.
@@ -1606,29 +1634,8 @@
                (and (< (long after-tokens) (long before-tokens))
                     (or (nil? budget) (<= (long after-tokens) (long budget)))))
 
-             ;; Folding more can only shrink the projection, so the smallest fitting
-             ;; prefix is a binary search — O(log n) estimator passes, not O(n).
              chosen
-             (loop [lo
-                    1
-
-                    hi
-                    (count foldable)
-
-                    best
-                    nil]
-
-               (if (> (long lo) (long hi))
-                 (or best (project (count foldable)))
-                 (let [mid
-                       (quot (+ (long lo) (long hi)) 2)
-
-                       candidate
-                       (project mid)]
-
-                   (if (fits? candidate)
-                     (recur lo (dec mid) candidate)
-                     (recur (inc mid) hi best)))))]
+             (smallest-fitting-prefix project fits? (count foldable))]
 
          (when (fits? chosen)
            {:messages (:messages chosen)
