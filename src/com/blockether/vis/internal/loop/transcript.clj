@@ -405,21 +405,13 @@
                         (fn [[_ messages] _]
                           (+ 256 (* 2 (util/string-chars messages))))))
 
-(defonce ^:private group-wire-tokens
-  ;; Group -> {model count}. Each stamp prices every visible group again, and an
-  ;; unchanged render is the same object, so its count needs no walk of the group.
-  (util/weak-cache))
-
 (defn- messages-wire-tokens
   "Svar's tokenized marginal cost for a group of canonical messages inside a larger
    request. `count-messages` includes the array's one reply-priming charge, so remove
    the empty-array baseline before per-iteration groups are summed. Equal groups reuse
    their count."
   ^long [model messages]
-  (long (util/weak-cached group-wire-tokens
-                          messages
-                          model
-                          #(cached-messages-wire-tokens model messages))))
+  (long (cached-messages-wire-tokens model messages)))
 
 (defn runtime-turn-prefix
   [environment]
@@ -878,11 +870,7 @@
    replay flag to keep hiding the entry."
   [:preserved-thinking/replay? :turn/boundary :turn/position :turn/current?])
 
-(def ^:private summary-gist-forms
-  "Synthetic gist forms by resolved summary value."
-  (util/weak-cache))
-
-(defn- gist-form-of
+(defn- summary-gist-form
   "The synthetic form that carries the gist of one resolved summary, or its drop marker."
   [s]
   (let [gist (get s "gist")]
@@ -892,15 +880,6 @@
      :summary-drop? (nil? gist)
      :summary-iters (vec (sort (set (get s "scopes"))))
      :summary-turns (vec (sort (set (get s "turns"))))}))
-
-(defn- summary-gist-form
-  "[[gist-form-of]] one summary, kept for the next fold pass."
-  [s]
-  (util/weak-cached summary-gist-forms s nil #(gist-form-of s)))
-
-(def ^:private universe-free-resolutions
-  "Resolutions of summaries that read no universe, by summary value, nil included."
-  (util/weak-cache))
 
 (defn summary-applier
   "Return [[apply-summaries]] for one `trailer-iters`, as a function of `summaries`.
@@ -959,17 +938,14 @@
         resolved
         (atom {})
 
-        ;; A summary that reads no universe resolves the same for every trailer.
         resolve-once
         (fn [summary]
-          (if (ctx-engine/universe-free? summary)
-            (util/weak-cached universe-free-resolutions summary nil #(resolve summary))
-            (let [hit (get @resolved summary ::none)]
-              (if (identical? ::none hit)
-                (let [r (resolve summary)]
-                  (swap! resolved assoc summary r)
-                  r)
-                hit))))
+          (let [hit (get @resolved summary ::none)]
+            (if (identical? ::none hit)
+              (let [r (resolve summary)]
+                (swap! resolved assoc summary r)
+                r)
+              hit)))
 
         ;; The boundary turn or the iteration scope of each entry, read once.
         entry-keys
@@ -1977,16 +1953,19 @@
 
 ;; Every request renders the whole trailer again, and the fold search and the price
 ;; render it more times. A settled record renders the same messages each time.
-(def ^:private rendered-groups
-  "Rendered replay messages by iteration record and render inputs. The record value is
-   the key, so equal records share an entry; a collected record drops its entry."
-  (util/weak-cache))
-
-(defn- rendered-group
-  "The messages that `render` returns for `iter-rec` with the other inputs `k`.
-   Use only for a render that reads nothing beside the record and `k`."
-  [iter-rec k render]
-  (util/weak-cached rendered-groups iter-rec k render))
+(def ^:private rendered-group
+  "The messages that `render` returns for `iter-rec` with the other inputs `k`, kept
+   by record value and `k`. Use only for a render that reads nothing beside the record
+   and `k`."
+  (util/bounded-memoize (fn [_ _ render]
+                          (render))
+                        4096
+                        (* 16 1024 1024)
+                        (fn [[iter-rec] messages]
+                          (+ 256
+                             (* 2 (+ (util/string-chars iter-rec) (util/string-chars messages)))))
+                        (fn [[iter-rec k]]
+                          [iter-rec k])))
 
 (defn- conversation-suffix-groups
   "Append-only conversation suffix for the current turn, kept as `[pos messages]`
@@ -2207,39 +2186,6 @@
   (long (svar/count-tokens "unknown"
                            (str/join "\n" (map (comp str :content) (:turn/messages rec))))))
 
-(defonce ^:private stamped-scopes
-  ;; ctx-atom -> `[records scopes]` of its last stamp. Each stamp repeats the records
-  ;; of the last one, so only a new record needs its scope.
-  (util/weak-cache))
-
-(defn- trailer-scopes
-  "[[iteration-record-scope]] of each record in `trailer-iters`. Reuse the scope of a
-   record that the last stamp of `ctx-atom` saw at the same position."
-  [ctx-atom trailer-iters]
-  (let [^java.util.Map cache
-        stamped-scopes
-
-        [prior-records prior-scopes]
-        (.get cache ctx-atom)
-
-        prior-count
-        (count prior-records)
-
-        records
-        (mapv second trailer-iters)
-
-        scopes
-        (into []
-              (map-indexed (fn [i rec]
-                             (if (and (< (long i) prior-count)
-                                      (identical? rec (nth prior-records i)))
-                               (nth prior-scopes i)
-                               (iteration-record-scope rec))))
-              records)]
-
-    (.put cache ctx-atom [records scopes])
-    scopes))
-
 (defn stamp-iter-universe!
   "Record the raw iteration universe while pricing only `wire-iters` — the current
    provider-visible projection. A resolved model tokenizes each entry's rendered
@@ -2251,7 +2197,7 @@
   ([ctx-atom trailer-iters wire-iters pricing]
    (when ctx-atom
      (let [scopes
-           (trailer-scopes ctx-atom trailer-iters)
+           (mapv (comp iteration-record-scope second) trailer-iters)
 
            uni
            (into [] (comp (keep identity) (distinct)) scopes)

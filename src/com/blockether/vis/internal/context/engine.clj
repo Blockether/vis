@@ -4,8 +4,7 @@
    The mutable session state lives outside this namespace; these functions advance
    the turn/iteration cursor and compute utilization metadata."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.channel.form :as form]
-            [com.blockether.vis.internal.util :as util]))
+            [com.blockether.vis.internal.channel.form :as form]))
 
 (def DEFAULT_PROMPT_BUDGET_TOKENS
   "Soft per-call operating budget surfaced to the model as
@@ -583,20 +582,13 @@
           (seq whole-turns)
           (update "turns" (fnil into #{}) whole-turns))))))
 
-;; A fold pass resolves the same few hundred plain scope folds against every new
-;; universe. Their expansion reads only the summary, so it is kept per summary value.
-(def ^:private universe-free-expansions
-  "Expansions of [[universe-free?]] summaries, by summary value."
-  (util/weak-cache))
-
 (defn expand-summary
   "Resolve the selectors of one summary as [[expand-through]] does. `index` is an
    [[expansion-index]] or a delay of one; a summary that reads no universe never
    forces the delay."
   [index s]
   (cond (not (some #(contains? s %) expansion-selectors)) s
-        (universe-free? s)
-        (util/weak-cached universe-free-expansions s nil #(expand-with-index {} s))
+        (universe-free? s) (expand-with-index {} s)
         :else (expand-with-index (force index) s)))
 
 (defn expand-through
@@ -632,11 +624,7 @@
   (let [index (delay (expansion-index universe turns))]
     (mapv #(expand-summary index %) summaries)))
 
-(def ^:private summary-coverages
-  "Coverage sets of resolved summaries, by summary value."
-  (util/weak-cache))
-
-(defn- coverage-of
+(defn- summary-coverage
   "The scopes that one resolved summary covers, with each whole turn without a
    scope as `tN`."
   [summary]
@@ -647,12 +635,6 @@
         (into #{} (keep (comp first scope-key)) scopes)]
 
     (into scopes (comp (remove scoped-turns) (map #(str "t" %))) (get summary "turns"))))
-
-(defn- summary-coverage
-  "[[coverage-of]] one summary. A fold pass checks the same summaries again, so
-   keep each set."
-  [summary]
-  (util/weak-cached summary-coverages summary nil #(coverage-of summary)))
 
 (defn supersede-summaries
   "Collapse 'summary of summary': drop any summary whose scope set is fully

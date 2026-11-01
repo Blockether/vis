@@ -1088,19 +1088,10 @@
                         (fn [[model message opts]]
                           [model (cache-neutral message) opts])))
 
-(defonce ^:private message-token-counts
-  ;; Message -> {[model opts] count}. A request repeats the message objects of the
-  ;; last one, and the same object answers from its cached hash without a walk.
-  ;; Weak keys keep a count only while its message lives.
-  (util/weak-cache))
-
 (defn- message-tokens
-  "[[cached-message-tokens]] of `message`, first looked up by the message itself."
+  "[[cached-message-tokens]] of `message`."
   ^long [model message opts]
-  (long (util/weak-cached message-token-counts
-                          message
-                          [model opts]
-                          #(cached-message-tokens model message opts))))
+  (long (cached-message-tokens model message opts)))
 
 (defn- sum-message-tokens
   "`baseline` is the count of no messages. Add each cached message count above it."
