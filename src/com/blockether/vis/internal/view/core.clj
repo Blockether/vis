@@ -2297,11 +2297,13 @@
             :when (and (string? (:id view)) (owned-key view) (not (open-keys (owned-key view))))]
 
       (if why
-        ;; An old picture, such as a removed placement, does not come back.
-        (tel/log! {:level :warn
-                   :id ::owned-restore-dropped
-                   :data {:view-id (:id view) :extension (:extension view) :error why}
-                   :msg "Vis dropped a saved owned live view that is no longer valid"})
+        ;; An old picture, such as a removed placement, does not come back. The save
+        ;; removes it, so the next start does not drop it again.
+        (do (tel/log! {:level :warn
+                       :id ::owned-restore-dropped
+                       :data {:view-id (:id view) :extension (:extension view) :error why}
+                       :msg "Vis dropped a saved owned live view that is no longer valid"})
+            (save-owned-soon!))
         (swap! stale-views assoc (:id view) view)))
     (count @stale-views)))
 

@@ -2983,7 +2983,30 @@
                  (expect (not-any? #(= view-id (:id %)) (hi/live-views)))
                  (hi/flush-owned!)
                  (expect (empty? (live-sink/load-owned))
-                         "the closed stale view is not saved again"))))))
+                         "the closed stale view is not saved again")))))
+  ;; Each gateway start logged the same dropped pictures again: a drop never saved.
+  (it "saves the pictures again without the ones that are no longer valid"
+      (owned
+        (fn []
+          (let [owner
+                {:extension "forge" :context (Object.)}
+
+                view-id
+                (get (owned-open! owner (panel-view "build")) "view_id")
+
+                picture
+                (hi/live-view view-id)]
+
+            (live-sink/save-owned! [picture
+                                    (assoc picture
+                                      :id (str view-id "-old")
+                                      :placement "sidebar")])
+            (hi/close-live! view-id)
+            (reset! @#'hi/save-due false)
+            (expect (= 1 (hi/restore-owned!)))
+            (hi/flush-owned!)
+            (expect (= [view-id] (mapv #(get % "id") (live-sink/load-owned))))
+            (hi/dismiss-stale! view-id))))))
 
 (defn- app-seam!
   "Cross one envelope through the sandbox app seam, inside session `sid`."
