@@ -8220,8 +8220,9 @@
      ;; A completed async footer refresh must repaint even while the user is idle.
      (vis/watch-router! :tui-screen #(state/dispatch [:bump-render-version]))
      (vis/add-channel-event-listener! :tui :tui-screen handle-channel-event!)
-     ;; Load persisted config
-     (let [c (vis/load-config)]
+     ;; Load persisted config. Ask live only providers without a current verdict:
+     ;; a full router read probes every provider and held the first frame ~0.4-0.8 s.
+     (let [c (vis/load-config {:probe :changed})]
        (state/dispatch [:set-config c]))
      ;; Hydrate toggles before first paint, persist later changes, and wake render on
      ;; each update.

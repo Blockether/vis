@@ -944,7 +944,7 @@
                           {"content" []})
            #'timg/images-protocol (fn []
                                     nil)
-           #'vis/load-config (fn []
+           #'vis/load-config (fn [& _]
                                config)
            #'vis/load-config-raw (fn []
                                    {})

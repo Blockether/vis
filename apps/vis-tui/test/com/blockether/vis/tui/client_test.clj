@@ -315,6 +315,35 @@
           (client/provider-status :acme)
           (expect (= [["GET" "/v1/providers/acme/status"]] @sent)))))))
 
+(defn- with-recorded-requests
+  "Run `f` against a gateway stub that records each request and answers an empty fleet."
+  [sent f]
+  (with-redefs-fn {#'client/context-session* (atom nil)
+                   #'client/router-cache* (atom {:at 1 :rows []})
+                   #'client/target! (fn []
+                                      {})
+                   #'client/ensure-client! (fn [_]
+                                             nil)
+                   #'client/gw-send! (fn [_ verb path _]
+                                       (swap! sent conj [verb path])
+                                       {:status 200 :body "{\"providers\":[]}"})}
+    f))
+
+(defdescribe
+  provider-reads-send-one-request
+  ;; A probe GET went before each provider read. `GET /v1/router` asks every provider live,
+  ;; so a TUI start after an idle gateway waited ~0.8 s for that probe and its twin.
+  (it
+    "sends one request for a router read"
+    (let [sent (atom [])]
+      (with-recorded-requests sent #(client/router))
+      (expect (= [["GET" "/v1/router"]] @sent))))
+  (it
+    "asks only the changed providers when startup loads the config"
+    (let [sent (atom [])]
+      (with-recorded-requests sent #(client/load-config {:probe :changed}))
+      (expect (= [["GET" "/v1/router?probe=changed"]] @sent)))))
+
 (defn- with-router-cache
   "Run a cache scenario with a controllable clock and queued background work."
   [cached f]
@@ -336,7 +365,7 @@
     (with-redefs-fn {#'client/router-cache* cache
                      #'client/now-ms (fn ^long []
                                        (long @now))
-                     #'client/router (fn []
+                     #'client/router (fn [& _]
                                        (swap! calls inc)
                                        (let [value @response]
                                          (if (instance? Throwable value) (throw value) value)))

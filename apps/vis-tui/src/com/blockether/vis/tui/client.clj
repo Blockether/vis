@@ -1562,30 +1562,14 @@
   []
   nil)
 
-(defn- probe-route
-  "Probe whether the daemon actually SERVES `path`, distinguishing three cases so
-   the caller only ever force-restarts on a genuine missing-route 404:
-     :served      — the daemon answered (any status other than 404).
-     :absent      — a real 404: the daemon's classpath lacks the extension that
-                    owns `path` (e.g. a gateway auto-started without the web
-                    channel never mounts /ui).
-     :unreachable — the probe request itself failed (connection reset, timeout).
-                    NOT a 404, so NEVER treated as license to force-kill; the
-                    caller retreats to leaving the daemon alone."
-  [entry path]
-  (try (let [response (gw-send! entry "GET" path {})]
-         (if (= 404 (:status response)) :absent :served))
-       (catch Throwable _ :unreachable)))
-
 (defn ensure-gateway-serving!
-  "Return the configured gateway when it serves `path`; never starts or replaces it."
+  "Return the configured gateway; never starts or replaces it.
+
+   The request itself reports a missing route as its HTTP status. A probe before
+   each request sent every provider read twice, and `GET /v1/router` asks each
+   provider live, so a startup or a PATCH paid that probe again."
   ([path] (ensure-gateway-serving! path nil))
-  ([path _opts]
-   (let [entry (target!)]
-     (when-not (= :served (probe-route entry path))
-       (throw (ex-info (str "gateway is not serving " path)
-                       {:type :gateway/route-missing :path path :vis/user-error true})))
-     entry)))
+  ([_path _opts] (target!)))
 
 (defn provider-status
   [provider-id]
@@ -1755,16 +1739,19 @@
    `{\"providers\" [{\"id\" … \"label\" … \"base_url\" … \"models\" [...]
    \"status\" {\"is_authenticated\" …} \"limits\" {…}} …]}`. Returned VERBATIM with
    snake_case STRING keys — NO keyword restoration. Consumers read the string
-   keys directly (`(get status \"is_authenticated\")`)."
-  []
-  (let [path
-        "/v1/router"
+   keys directly (`(get status \"is_authenticated\")`).
 
-        entry
-        (ensure-gateway-serving! path)]
+   `{:probe :changed}` asks live only the providers whose verdict is not current (#393)."
+  ([] (router nil))
+  ([{:keys [probe]}]
+   (let [path
+         (cond-> "/v1/router" (= :changed probe) (str "?probe=changed"))
 
-    (ensure-client! entry)
-    (get (send-json-with-entry! entry "GET" (with-context-session path)) "providers")))
+         entry
+         (ensure-gateway-serving! path)]
+
+     (ensure-client! entry)
+     (get (send-json-with-entry! entry "GET" (with-context-session path)) "providers"))))
 
 (defn router-diagnostics
   "The WHOLE provider dialog in ONE gateway call.
@@ -2859,10 +2846,11 @@
 
 (defn configured-providers
   "Explicit startup/dialog fetch. Seed the renderer's snapshot with the response."
-  []
-  (let [rows (vec (router))]
-    (swap! router-cache* assoc :at (now-ms) :rows rows)
-    (mapv provider-entry rows)))
+  ([] (configured-providers nil))
+  ([opts]
+   (let [rows (vec (router opts))]
+     (swap! router-cache* assoc :at (now-ms) :rows rows)
+     (mapv provider-entry rows))))
 
 (defn configured-providers-cached [] (mapv provider-entry (router-cached)))
 
@@ -3027,29 +3015,31 @@
 (defn save-config! [value] (config/update! (constantly value)))
 
 (defn load-config
-  []
-  (let [providers
-        (configured-providers)
+  "The router fleet and both tags. `opts` passes to [[router]]."
+  ([] (load-config nil))
+  ([opts]
+   (let [providers
+         (configured-providers opts)
 
-        primary
-        (or (some #(when (:is-default %) %) providers) (first providers))
+         primary
+         (or (some #(when (:is-default %) %) providers) (first providers))
 
-        fallback
-        (some #(when (:is-fallback %) %) providers)]
+         fallback
+         (some #(when (:is-fallback %) %) providers)]
 
-    {:providers providers
-     :default-provider (some-> primary
-                               :id
-                               name)
-     :default-model (or (:default-model primary)
-                        (some-> primary
-                                :models
-                                first
-                                model-name))
-     :fallback-provider (some-> fallback
+     {:providers providers
+      :default-provider (some-> primary
                                 :id
                                 name)
-     :fallback-model (:fallback-model fallback)}))
+      :default-model (or (:default-model primary)
+                         (some-> primary
+                                 :models
+                                 first
+                                 model-name))
+      :fallback-provider (some-> fallback
+                                 :id
+                                 name)
+      :fallback-model (:fallback-model fallback)})))
 
 (defn resolve-default-selection
   [_config fleet]
