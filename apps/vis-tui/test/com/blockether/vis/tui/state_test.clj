@@ -737,6 +737,8 @@
                  (get-in @state/app-db [:session-settings "s1"]))))
   (it "reads the global simplified thinking modes row for a session"
       (reset! state/app-db {:session {:id "s1"} :render-version 0})
+      ;; Drain a refresh that an earlier test queued, or it reads during the redef.
+      @((var-get #'state/gateway-queue-io!) (fn []))
       (let [reads (atom [])]
         (with-redefs [vis/gateway-settings (fn [_ target]
                                              (expect (= "session" (:scope target)))
