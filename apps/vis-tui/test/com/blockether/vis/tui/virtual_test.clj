@@ -603,6 +603,31 @@
                                                 (expect (seq (:visible layout))))))
                (expect (zero? @calls))
                (finally (virtual/invalidate-heights!)))))
+    (it "uses the warmed heights in the next layout of the same messages"
+        ;; A steady frame reuses its pass-1 heights. A height pinned off the render
+        ;; thread must still reach the next frame, or total-h and the scrollbar stay
+        ;; on the old estimates.
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [msgs
+              (mapv #(trace-assistant-msg 6 3 (str "warm " %)) (range 6))
+
+              before
+              (:heights (virtual/layout msgs bubble-w settings nil 3 {}))
+
+              _
+              (virtual/pre-warm-recent! msgs bubble-w settings {:count 6 :budget-ms -1})
+
+              after
+              (:heights (virtual/layout msgs bubble-w settings nil 3 {}))
+
+              warmed
+              (mapv #(@#'virtual/height-cache-get % bubble-w settings nil nil) msgs)]
+
+          (try (expect (not= before warmed)
+                       "the fixture needs estimates that differ from real heights")
+               (expect (= warmed after))
+               (finally (virtual/invalidate-heights!)))))
     (it "warms the cache so a subsequent layout call is cheap"
         ;; The whole point: after pre-warm finishes, calling
         ;; format-answer-with-thinking on the warmed assistants must

@@ -205,13 +205,30 @@
                      (height-key message bubble-w settings detail-expansions session-id))]
     (+ (long h) (card-rows message bubble-w))))
 
+;; Bumped whenever a sticky height changes or the cache is cleared. The pass-1
+;; memo in `layout` reuses its heights only while this stays put. An LRU eviction
+;; does not bump it, so the memo keeps that measured height instead of an estimate.
+(defonce ^:private ^AtomicLong height-cache-gen (AtomicLong.))
+
 (defn- height-cache-put!
   "Pin `h` as the real height for `message` at `bubble-w` under `settings`
-   + its current expansion state. Returns `h` so callers can chain."
+   + its current expansion state. Returns `h` so callers can chain.
+   Pass 2 re-pins every visible bubble each frame; an unchanged value keeps
+   `height-cache-gen`, so the steady frame keeps its pass-1 memo."
   [message bubble-w settings detail-expansions session-id h]
-  (.put ^BoundedCache height-cache
+  (let [k
         (height-key message bubble-w settings detail-expansions session-id)
-        (- (long h) (card-rows message bubble-w)))
+
+        v
+        (- (long h) (card-rows message bubble-w))
+
+        cache
+        ^BoundedCache height-cache]
+
+    (locking cache
+      (when-not (= v (.get cache k))
+        (.put cache k v)
+        (.incrementAndGet ^AtomicLong height-cache-gen))))
   h)
 
 ;; Estimate memo — same key axes as the sticky height cache. `layout`
@@ -248,6 +265,7 @@
    busts (registry-toggle resync) call this."
   []
   (.clear ^BoundedCache height-cache)
+  (.incrementAndGet ^AtomicLong height-cache-gen)
   (render/clear-cache! estimate-cache estimate-cache-gen)
   (render/clear-cache! projection-cache projection-cache-gen))
 
@@ -804,6 +822,20 @@
 
                   (recur (conj! acc merged) run-end))))))))))
 
+;; One-slot identity memo: a steady frame passes the same raw `messages` vector, and
+;; the squash rebuilt an equal vector on every frame (~9 us for 600 messages).
+(defonce ^:private squash-memo (volatile! nil))
+
+(defn- squash-cross-message-errors-cached
+  "`squash-cross-message-errors`, reused while `messages` is the same object."
+  [messages]
+  (let [[raw squashed] @squash-memo]
+    (if (and squashed (identical? raw messages))
+      squashed
+      (let [squashed (squash-cross-message-errors messages)]
+        (vreset! squash-memo [messages squashed])
+        squashed))))
+
 ;;; ── Per-message projection ─────────────────────────────────────────────────
 
 (defn- turn-identity
@@ -1228,6 +1260,129 @@
                                   (subvec rows (first-row-at rows (- (long corrected) start)))))))
             messages))))
 
+;; One-slot memo for pass 1 of `layout`. A steady frame (same messages, width,
+;; settings and expansions, no new sticky height) rebuilt the same `est` vector and
+;; its offsets on every frame: one `height-key` and cache lookup per message, ~70 us
+;; of a 0.33 ms frame for 600 messages. A streaming frame changes only the tail, so
+;; the memo keeps the longest prefix of identical messages and recomputes the rest.
+;; A message's pass-1 height depends only on that message and the context below.
+;; `height-cache-gen` moves with every changed sticky height; estimates are pure, so
+;; the memo can only miss, never go stale.
+(defonce ^:private pass-1-memo (volatile! nil))
+
+(defn- shared-prefix
+  "Count of leading positions where vectors `a` and `b` hold the same object."
+  ^long [a b]
+  (let [n (min (long (count a)) (long (count b)))]
+    (loop [i 0]
+      (if (and (< i n) (identical? (nth a i) (nth b i))) (recur (unchecked-inc i)) i))))
+
+(defn- truncate!
+  "Pop transient vector `tv` down to `n` items."
+  [tv ^long n]
+  (loop [tv tv]
+    (if (> (long (count tv)) n) (recur (pop! tv)) tv)))
+
+(defn- pass-1-heights*
+  "Sticky real height, else the memoized estimate, for each message from index
+   `from`, appended to the first `from` items of `prev`. Returns
+   `{:est heights :est-off cumulative-offsets}`."
+  [messages bubble-w settings detail-expansions session-id hidden prev from]
+  (let [from
+        (long from)
+
+        n
+        (long (count messages))
+
+        ;; Primitive-indexed loop into a transient, not `(mapv f (range n)
+        ;; messages)`: the two-collection mapv builds a chunked `(range n)`
+        ;; seq and boxes each index every tick. `nth` on the vector is O(1).
+        est
+        (loop [i
+               from
+
+               acc
+               (if prev (truncate! (transient (:est prev)) from) (transient []))]
+
+          (if (< i n)
+            (let [m
+                  (nth messages i)
+
+                  h
+                  (if (contains? hidden i)
+                    0
+                    (or (height-cache-get m bubble-w settings detail-expansions session-id)
+                        (estimated-height-cached messages
+                                                 settings
+                                                 bubble-w
+                                                 i
+                                                 m
+                                                 detail-expansions
+                                                 session-id)))]
+
+              (recur (unchecked-inc i) (conj! acc h)))
+            (persistent! acc)))
+
+        est-off
+        (if prev
+          (let [off (:est-off prev)]
+            (loop [i from
+                   acc (long (nth off from))
+                   out (truncate! (transient off) (inc from))]
+
+              (if (< i n)
+                (let [acc (+ acc (long (nth est i)))]
+                  (recur (unchecked-inc i) acc (conj! out acc)))
+                (persistent! out))))
+          (cumulative-offsets est))]
+
+    {:est est :est-off est-off}))
+
+(defn- pass-1-heights
+  "`pass-1-heights*`, reusing the previous frame's heights for the leading
+   messages that did not change, while the context and every sticky height
+   stay the same."
+  [messages bubble-w settings detail-expansions session-id hidden]
+  (let [gen
+        (.get ^AtomicLong height-cache-gen)
+
+        memo
+        @pass-1-memo
+
+        reusable?
+        (and memo
+             (== gen (long (:gen memo)))
+             (== (long bubble-w) (long (:bubble-w memo)))
+             (identical? settings (:settings memo))
+             (identical? detail-expansions (:detail-expansions memo))
+             (= session-id (:session-id memo))
+             (= hidden (:hidden memo)))
+
+        from
+        (if reusable? (shared-prefix messages (:messages memo)) 0)]
+
+    (if (and reusable? (== from (long (count messages))) (== from (long (count (:messages memo)))))
+      (:result memo)
+      (let [result (pass-1-heights* messages
+                                    bubble-w
+                                    settings
+                                    detail-expansions
+                                    session-id
+                                    hidden
+                                    (when reusable? (:result memo))
+                                    from)]
+        ;; `gen` was read first: a height pinned meanwhile makes the next frame miss.
+        (vreset! pass-1-memo
+                 {:gen gen
+                  :bubble-w bubble-w
+                  :settings settings
+                  :detail-expansions detail-expansions
+                  :session-id session-id
+                  :hidden hidden
+                  :messages messages
+                  :result result})
+        result))))
+
 (defn layout
   "Plan a paint of `messages` into a vertical viewport of `inner-h`
    rows at width `bubble-w`. Returns:
@@ -1295,7 +1450,7 @@
         ;; merged bubble as one `ERROR x N` row instead of N separate
         ;; identical bubbles.
         messages
-        (squash-cross-message-errors messages)
+        (squash-cross-message-errors-cached messages)
 
         ;; The turn that started a team carries its team card from the cached snapshot.
         messages
@@ -1321,40 +1476,8 @@
         ;; touched by `pre-warm!`) we keep its real height forever
         ;; - no more `total-h` jitter on scroll, no more
         ;; click-to-position landing in the wrong row.
-        est
-        ;; Primitive-indexed loop into a transient, not `(mapv f (range n)
-        ;; messages)`: the two-collection mapv builds a chunked `(range n)`
-        ;; seq and boxes each index every tick — ~14KB of pure iteration
-        ;; garbage per 60-message layout that the transient loop avoids. This
-        ;; runs on EVERY layout (live + scroll), so it scales with session
-        ;; length. `nth` on the messages vector is O(1).
-        (loop [i
-               0
-
-               acc
-               (transient [])]
-
-          (if (< i n)
-            (let [m
-                  (nth messages i)
-
-                  h
-                  (if (contains? hidden i)
-                    0
-                    (or (height-cache-get m bubble-w settings detail-expansions session-id)
-                        (estimated-height-cached messages
-                                                 settings
-                                                 bubble-w
-                                                 i
-                                                 m
-                                                 detail-expansions
-                                                 session-id)))]
-
-              (recur (unchecked-inc i) (conj! acc h)))
-            (persistent! acc)))
-
-        est-off
-        (cumulative-offsets est)
+        {:keys [est est-off]}
+        (pass-1-heights messages bubble-w settings detail-expansions session-id hidden)
 
         est-tot
         (long (peek est-off))
