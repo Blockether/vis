@@ -5439,9 +5439,7 @@
                     (assoc :where [:= :leader_id (str leader-id)]))))
     []))
 
-(def ^:private page-facts-batch-size
-  "Session ids that one page-facts SQL read binds."
-  500)
+(def ^:private page-facts-batch-size "Session ids that one page-facts SQL read binds." 500)
 
 (defn- by-column
   "`rows` keyed by the string value of `column`. The first row wins."
@@ -5487,15 +5485,13 @@
 
         agents
         (by-column :session_id
-                   (query! db-info
-                           {:select agent-columns
-                            :from :session_agent
-                            :where [:in :session_id ids]}))
+                   (query!
+                     db-info
+                     {:select agent-columns :from :session_agent :where [:in :session_id ids]}))
 
         locked
         (into #{}
-              (comp (filter #(= 1 (:locked %)))
-                    (map (comp ->ref :session_id)))
+              (comp (filter #(= 1 (:locked %))) (map (comp ->ref :session_id)))
               (query! db-info
                       {:select [:session_id :locked]
                        :from :session_routing_policy
@@ -5503,16 +5499,20 @@
 
     (into {}
           (map (fn [soul]
-                 (let [k (->ref (:id soul))
-                       state (get states k)]
+                 (let [k
+                       (->ref (:id soul))
+
+                       state
+                       (get states k)]
+
                    [k
-                    {:session (session-row->session soul
-                                                    state
-                                                    (get project-names (:project_id soul)))
+                    {:session
+                     (session-row->session soul state (get project-names (:project_id soul)))
                      :state-id (some-> (:id state)
                                        ->uuid)
-                     :workspace (row->workspace (get workspaces (some-> (:workspace_id state)
-                                                                        ->ref)))
+                     :workspace (row->workspace (get workspaces
+                                                     (some-> (:workspace_id state)
+                                                             ->ref)))
                      :agent (agent-row (get agents k))
                      :routing-locked? (contains? locked k)}])))
           souls)))
@@ -6578,56 +6578,63 @@
 
   Nil IDs are ignored and duplicates are read once. Missing or empty turns map
   to empty vectors. Iteration order and routing match the single-turn reader;
-  at most two SQL reads are needed regardless of the number of requested turns."
-  [db-info session-turn-ids]
-  (let [ids (into [] (comp (keep ->ref) (distinct)) session-turn-ids)]
-    (if (and (ds db-info) (seq ids))
-      (let [where-sql (str " WHERE s.session_turn_soul_id IN ("
-                           (str/join "," (repeat (count ids) "?"))
-                           ") AND s.version = (SELECT MAX(latest.version) "
-                           "FROM session_turn_state latest "
-                           "WHERE latest.session_turn_soul_id = s.session_turn_soul_id)")
-            rows (query-sql! db-info
-                             (into [(str
-                                      "SELECT i.*, s.session_turn_soul_id AS turn_id "
-                                      "FROM session_turn_iteration i "
-                                      "JOIN session_turn_state s ON s.id = i.session_turn_state_id"
-                                      where-sql
-                                      " ORDER BY i.position ASC")]
-                                   ids))
-            traces
-            (when (seq rows)
-              (try (reduce
-                     (fn [events row]
-                       (update events
-                               (:session_turn_iteration_id row)
-                               (fnil conj [])
-                               (row->routing-event row)))
-                     {}
-                     (query-sql!
-                       db-info
-                       (into
-                         [(str
-                            "SELECT e.* FROM llm_routing_event e "
-                            "JOIN session_turn_iteration i ON i.id = e.session_turn_iteration_id "
-                            "JOIN session_turn_state s ON s.id = i.session_turn_state_id"
-                            where-sql
-                            " ORDER BY e.position ASC")]
-                         ids)))
-                   (catch SQLException _ {})))]
+  at most two SQL reads are needed regardless of the number of requested turns.
 
-        (reduce (fn [result [row iteration]]
-                  (update result (:turn_id row) conj iteration))
-                (zipmap ids (repeat []))
-                (map vector
-                     rows
-                     (with-activity-rows
-                       db-info
-                       (mapv (fn [row]
-                               (attach-routing (row->iteration row)
-                                               (row-routing-summary row (get traces (:id row) []))))
-                             rows)))))
-      {})))
+  `opts` `:request-health? false` leaves out `:request-health`. A transcript does not
+  show it, and its decode was half the cost of mapping the rows."
+  ([db-info session-turn-ids] (db-list-session-turns-iterations db-info session-turn-ids nil))
+  ([db-info session-turn-ids {:keys [request-health?] :or {request-health? true}}]
+   (let [ids (into [] (comp (keep ->ref) (distinct)) session-turn-ids)]
+     (if (and (ds db-info) (seq ids))
+       (let [where-sql (str " WHERE s.session_turn_soul_id IN ("
+                            (str/join "," (repeat (count ids) "?"))
+                            ") AND s.version = (SELECT MAX(latest.version) "
+                            "FROM session_turn_state latest "
+                            "WHERE latest.session_turn_soul_id = s.session_turn_soul_id)")
+             rows (query-sql! db-info
+                              (into [(str
+                                       "SELECT i.*, s.session_turn_soul_id AS turn_id "
+                                       "FROM session_turn_iteration i "
+                                       "JOIN session_turn_state s ON s.id = i.session_turn_state_id"
+                                       where-sql
+                                       " ORDER BY i.position ASC")]
+                                    ids))
+             traces
+             (when (seq rows)
+               (try (reduce
+                      (fn [events row]
+                        (update events
+                                (:session_turn_iteration_id row)
+                                (fnil conj [])
+                                (row->routing-event row)))
+                      {}
+                      (query-sql!
+                        db-info
+                        (into
+                          [(str
+                             "SELECT e.* FROM llm_routing_event e "
+                             "JOIN session_turn_iteration i ON i.id = e.session_turn_iteration_id "
+                             "JOIN session_turn_state s ON s.id = i.session_turn_state_id"
+                             where-sql
+                             " ORDER BY e.position ASC")]
+                          ids)))
+                    (catch SQLException _ {})))]
+
+         (reduce (fn [result [row iteration]]
+                   (update result (:turn_id row) conj iteration))
+                 (zipmap ids (repeat []))
+                 (map vector
+                      rows
+                      (with-activity-rows
+                        db-info
+                        (mapv (fn [row]
+                                (attach-routing (row->iteration (cond-> row
+                                                                  (not request-health?)
+                                                                  (dissoc :request_health)))
+                                                (row-routing-summary row
+                                                                     (get traces (:id row) []))))
+                              rows)))))
+       {}))))
 
 (def ^:private iteration-read-batch-size
   "Bound SQL parameters while selecting history before materializing payloads."

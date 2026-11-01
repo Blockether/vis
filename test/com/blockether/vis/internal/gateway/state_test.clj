@@ -829,7 +829,7 @@
                       [{:id sid :user-request "hello" :status :success}])
 
                     persistance/db-list-session-turns-iterations
-                    (fn [_ ids]
+                    (fn [_ ids & _]
                       (zipmap (map str ids) (repeat [{:thinking " alpha.\n\n beta.  \n"}])))]
 
         (let [turn (first (state/transcript "session-1"))]
@@ -852,7 +852,7 @@
                                    :duration-ms 2300}])
 
                                persistance/db-list-session-turns-iterations
-                               (fn [_ ids]
+                               (fn [_ ids & _]
                                  (zipmap (map str ids)
                                          (repeat [{:output-tokens 20 :llm-full-duration-ms 2000}
                                                   {:output-tokens 30 :llm-full-duration-ms 3000}
@@ -3397,44 +3397,70 @@
                                       (get row "agent_name")))))))))))
 
 ;; Regression: a whole-transcript read (the TUI's) read the iterations of each turn
-;; on its own: 20 ms of a 40-turn transcript went to those reads.
-(defdescribe
-  transcript-reads-iterations-once-test
-  (it
-    "reads the iterations of every turn in one batch"
-    (let [singles
-          (atom 0)
+;; on its own: 20 ms of a 40-turn transcript went to those reads. A windowed page
+;; (the open of every session in the TUI and the Companion) did the same.
+(defn- iteration-reads
+  "Call `read` over three stored turns. Answer the batch reads, single reads,
+   attachment reads and the result."
+  [read]
+  (let [singles
+        (atom 0)
 
-          batches
-          (atom [])
+        batches
+        (atom [])
 
-          rows
-          (mapv (fn [n]
-                  {:id (str "turn-" n) :position n :status :success})
-                (range 3))]
+        attachment-reads
+        (atom 0)
 
-      (with-redefs-fn {#'lp/db-info (constantly ::db)
-                       #'persistance/db-list-session-turns (fn [_ _]
-                                                             rows)
-                       #'persistance/db-list-turns-attachments (fn [_ ids]
-                                                                 (zipmap ids (repeat [])))
-                       #'persistance/db-list-iterations-attachments-meta (constantly {})
-                       #'persistance/db-list-session-turns-iterations
-                       (fn [_ ids]
-                         (swap! batches conj (vec ids))
-                         (into {}
-                               (map (fn [id]
-                                      [(str id) [{:id (str id "-it") :position 0}]]))
-                               ids))
-                       #'persistance/db-list-session-turn-iterations (fn [_ _]
-                                                                       (swap! singles inc)
-                                                                       [])}
-        (fn []
-          (let [turns (state/transcript "sid")]
-            (expect (= [["turn-0" "turn-1" "turn-2"]] @batches))
-            (expect (= 0 @singles))
-            (expect (= ["turn-0-it" "turn-1-it" "turn-2-it"]
-                       (mapv #(get-in % ["iterations" 0 "id"]) turns)))))))))
+        rows
+        (mapv (fn [n]
+                {:id (str "turn-" n) :position n :status :success})
+              (range 3))]
+
+    (with-redefs-fn {#'lp/db-info (constantly ::db)
+                     #'persistance/db-list-session-turns (fn [_ _]
+                                                           rows)
+                     #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                               (zipmap ids (repeat [])))
+                     #'persistance/db-list-iterations-attachments-meta (fn [_ _]
+                                                                         (swap! attachment-reads
+                                                                           inc)
+                                                                         {})
+                     #'persistance/db-list-session-turns-iterations
+                     (fn [_ ids & _]
+                       (swap! batches conj (vec ids))
+                       (into {}
+                             (map (fn [id]
+                                    [(str id) [{:id (str id "-it") :position 0}]]))
+                             ids))
+                     #'persistance/db-list-session-turn-iterations (fn [_ _]
+                                                                     (swap! singles inc)
+                                                                     [])}
+      (fn []
+        (let [result (read)]
+          {:batches @batches
+           :singles @singles
+           :attachment-reads @attachment-reads
+           :result result})))))
+
+(defdescribe transcript-reads-iterations-once-test
+             (it "reads the iterations of every turn in one batch"
+                 (let [{:keys [batches singles attachment-reads result]}
+                       (iteration-reads #(state/transcript "sid"))]
+                   (expect (= [["turn-0" "turn-1" "turn-2"]] batches))
+                   (expect (= 0 singles))
+                   (expect (= 1 attachment-reads))
+                   (expect (= ["turn-0-it" "turn-1-it" "turn-2-it"]
+                              (mapv #(get-in % ["iterations" 0 "id"]) result)))))
+             (it "reads the iterations of a windowed page in one batch"
+                 (let [{:keys [batches singles attachment-reads result]}
+                       (iteration-reads #(state/transcript-page "sid"
+                                                                {:limit 3 :iteration-limit 8}))]
+                   (expect (= [["turn-0" "turn-1" "turn-2"]] batches))
+                   (expect (= 0 singles))
+                   (expect (= 1 attachment-reads))
+                   (expect (= ["turn-0-it" "turn-1-it" "turn-2-it"]
+                              (mapv #(get-in % ["iterations" 0 "id"]) (:turns result)))))))
 
 (defdescribe
   session-page-reads-turn-stats-once-test

@@ -12,6 +12,12 @@
   ([status body]
    {:status status :headers {"Content-Type" "application/json"} :body (wire/json-str body)}))
 
+(defn canonical-json-response
+  "A 200 JSON response for a `body` that is already in the canonical wire shape, such as
+   string keys around rows from `wire/canonical`. It skips the second walk of `json-str`."
+  [body]
+  {:status 200 :headers {"Content-Type" "application/json"} :body (wire/canonical-json-str body)})
+
 (defn error-response
   [status type message & {:as extra}]
   (json-response status (gateway-contract/error-body type message extra)))

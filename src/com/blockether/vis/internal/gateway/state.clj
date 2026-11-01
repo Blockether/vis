@@ -2685,6 +2685,16 @@
    one batch read; nil when each turn reads its own."
   nil)
 
+(def ^:dynamic ^:private *iteration-attachments*
+  "Request-local attachment metadata of a whole-transcript read, by string iteration
+   id, from one batch read; nil when each turn reads its own."
+  nil)
+
+(def ^:private display-iterations-opts
+  "Store read options for iterations that a transcript shows. It leaves out request
+   health, which [[with-display-iteration]] drops."
+  {:request-health? false})
+
 (defn- turn-iterations
   "The iterations of `turn`: the batch of the request when it holds the turn, else one read."
   [db turn]
@@ -2693,15 +2703,78 @@
       (get *turn-iterations* k)
       (persistance/db-list-session-turn-iterations db (:id turn)))))
 
+(defn- iterations-attachments
+  "Attachment metadata rows of `iteration-ids`, by string iteration id: the batch of the
+   request when it holds them, else one read."
+  [db iteration-ids]
+  (if-let [batch *iteration-attachments*]
+    (select-keys batch (map str iteration-ids))
+    (persistance/db-list-iterations-attachments-meta db iteration-ids)))
+
+(defn- turn-batch
+  "The iterations of `turns` and their attachment metadata, read in one batch each, as
+   `[by-turn attachments]`. A failed read answers nil in its place, so each turn reads its own."
+  [db turns]
+  (let [by-turn
+        (read-or {:read :turns-iterations}
+                 nil
+                 #(persistance/db-list-session-turns-iterations db
+                                                                (map :id turns)
+                                                                display-iterations-opts))
+
+        attachments
+        (when by-turn
+          (read-or {:read :iterations-attachments}
+                   nil
+                   #(persistance/db-list-iterations-attachments-meta
+                      db
+                      (into [] (comp (mapcat val) (keep :id)) by-turn))))]
+
+    [by-turn attachments]))
+
 (defn- with-turn-iterations
-  "Call `f` with the iterations of every turn in `turns` read in one batch. A failed
-   batch leaves each turn to its own read."
+  "Call `f` with the iterations of every turn in `turns`, and their attachment metadata,
+   read in one batch each. A failed batch leaves each turn to its own read."
   [db turns f]
-  (binding [*turn-iterations* (read-or
-                                {:read :turns-iterations}
-                                nil
-                                #(persistance/db-list-session-turns-iterations db (map :id turns)))]
-    (f)))
+  (let [[by-turn attachments] (turn-batch db turns)]
+    (binding [*turn-iterations* by-turn
+              *iteration-attachments* attachments]
+
+      (f))))
+
+(def ^:private page-batch-turns
+  "The turns that one batch read of a windowed page covers. A page with step limits
+   usually stops after about eight turns."
+  8)
+
+(defn- prefetching-hydrate
+  "Wrap `hydrate` for a `window` that is read newest first. A turn with no batch yet reads
+   itself and the older turns of its batch in one read each, so eight turns cost two reads
+   instead of twenty-four."
+  [db window hydrate]
+  (let [index
+        (zipmap (map (comp str :id) window) (range))
+
+        batch
+        (atom [{} {}])]
+
+    (fn [turn]
+      (let [k (str (:id turn))]
+        (when-not (contains? (first @batch) k)
+          (let [i (long (get index k 0))
+                [by-turn attachments]
+                (turn-batch db (subvec window (max 0 (- i (dec (long page-batch-turns)))) (inc i)))]
+
+            (when by-turn
+              (swap! batch (fn [[held-turns held-attachments]]
+                             [(merge held-turns by-turn)
+                              (when (and held-attachments attachments)
+                                (merge held-attachments attachments))])))))
+        (let [[held-turns held-attachments] @batch]
+          (binding [*turn-iterations* held-turns
+                    *iteration-attachments* held-attachments]
+
+            (hydrate turn)))))))
 
 (defn- transcript-turn
   "Hydrate one persisted turn in the canonical remote-channel shape and attach
@@ -2766,7 +2839,7 @@
                             ;; a model-only artifact is absent from history too and
                             ;; index N names the same picture on every surface.
                             [(str iter-id) (into [] (remove attachments/hidden-from-user?) rows)]))
-                     (persistance/db-list-iterations-attachments-meta db (keep :id iteration-rows)))
+                     (iterations-attachments db (keep :id iteration-rows)))
                (catch Throwable _ {}))
           {})
 
@@ -2956,7 +3029,7 @@
 
             bytes'
             (+ (long bytes)
-               (long (alength (.getBytes ^String (wire/json-str row)
+               (long (alength (.getBytes (wire/canonical-json-str row)
                                          java.nio.charset.StandardCharsets/UTF_8))))]
 
         ;; The busting row is KEPT, not deferred. Deferring it silently ate the
@@ -3028,7 +3101,7 @@
 
           [rows dropped]
           (if limit
-            (budgeted-page-turns hydrate
+            (budgeted-page-turns (prefetching-hydrate db window hydrate)
                                  window
                                  (if iteration-limit
                                    (min (long @TRANSCRIPT_PAGE_MAX_BYTES) (* 256 1024))

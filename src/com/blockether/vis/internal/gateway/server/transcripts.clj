@@ -46,10 +46,10 @@
                                           (cond-> {:limit limit :offset offset}
                                             iteration-limit
                                             (assoc :iteration-limit iteration-limit)))]
-          (http/json-response {:turns (:turns page)
-                               :total (:total page)
-                               :offset (:offset page)
-                               :has-more (:has-more page)}))))
+          (http/canonical-json-response {"turns" (:turns page)
+                                         "total" (:total page)
+                                         "offset" (:offset page)
+                                         "has_more" (:has-more page)}))))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 (defn- session-artifacts-handler
