@@ -26,6 +26,7 @@
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.workspace.core :as workspace])
   (:import [java.io File]
+           [java.nio.file Files LinkOption]
            [java.time ZoneId ZonedDateTime]
            [java.time.format DateTimeFormatter]))
 
@@ -101,50 +102,61 @@
    focused project-shape helpers cover that."
   {:polylith #{"bases" "components"} :monorepo #{"packages" "apps" "modules" "crates"}})
 
-(defn- project-kind
-  "Detect project shape from top-level directory listing."
-  [cwd]
-  (try (let [root
-             (File. (str cwd))
-
-             names
-             (when (.isDirectory root)
-               (into #{}
-                     (map (fn [^File f]
-                            (.getName f)))
-                     (.listFiles root)))]
-
-         (cond (every? names (:polylith monorepo-markers)) :polylith
-               (some names (:monorepo monorepo-markers)) :monorepo
-               :else :single))
-       (catch Throwable _ :single)))
-
 (def ^:private clojure-lang-files #{"deps.edn" "project.clj" "shadow-cljs.edn"})
 
-(defn- primary-language-guess
-  "Cheap primary-language heuristic: peek at top-level files for the
-   one universally-diagnostic build artifact per language. Internal
-   never byte-counts files; focused project-shape helpers own that."
+(def ^:private language-markers
+  "Diagnostic build files in check order: the first language with a present file wins."
+  [[:clojure clojure-lang-files] [:typescript #{"package.json"}] [:go #{"go.mod"}]
+   [:rust #{"Cargo.toml"}] [:python #{"pyproject.toml" "setup.py" "requirements.txt"}]
+   [:ruby #{"Gemfile"}] [:java #{"pom.xml" "build.gradle"}]])
+
+(def ^:private marker-names
+  (into (reduce into #{} (vals monorepo-markers)) (mapcat second) language-markers))
+
+(def ^:private ^"[Ljava.nio.file.LinkOption;" no-follow
+  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+
+(defn- exact-entry?
+  "True when directory `root` has an entry named exactly `entry-name`, as its
+   listing shows it. A case-insensitive file system also finds another case, so
+   the real name decides. A link, also a broken one, counts by its own name:
+   only then is the listing read, through the `listing` delay."
+  [^File root listing ^String entry-name]
+  (let [f
+        (File. root entry-name)
+
+        path
+        (.toPath f)]
+
+    (cond (not (Files/exists path no-follow)) false
+          (Files/isSymbolicLink path) (contains? @listing entry-name)
+          :else (= entry-name (.getName (.getCanonicalFile f))))))
+
+(defn- present-markers
+  "The names of `marker-names` that are top-level entries of `cwd`, or nil when
+   `cwd` is not a directory. Checks each name, so a large directory without
+   linked markers is never listed."
   [cwd]
-  (try (let [root
-             (File. (str cwd))
+  (let [root (File. (str cwd))]
+    (when (.isDirectory root)
+      (let [listing (delay (set (.list root)))]
+        (into #{} (filter #(exact-entry? root listing %)) marker-names)))))
 
-             names
-             (when (.isDirectory root)
-               (into #{}
-                     (map (fn [^File f]
-                            (.getName f)))
-                     (.listFiles root)))]
+(defn- project-kind
+  "Detect project shape from the top-level marker names in `names`."
+  [names]
+  (cond (every? names (:polylith monorepo-markers)) :polylith
+        (some names (:monorepo monorepo-markers)) :monorepo
+        :else :single))
 
-         (cond (some names clojure-lang-files) :clojure
-               (some names ["package.json"]) :typescript
-               (some names ["go.mod"]) :go
-               (some names ["Cargo.toml"]) :rust
-               (some names ["pyproject.toml" "setup.py" "requirements.txt"]) :python
-               (some names ["Gemfile"]) :ruby
-               (some names ["pom.xml" "build.gradle"]) :java
-               :else nil))
-       (catch Throwable _ nil)))
+(defn- primary-language-guess
+  "Cheap primary-language heuristic: the first language with one of its
+   diagnostic build files in `names`. Internal never byte-counts files;
+   focused project-shape helpers own that."
+  [names]
+  (some (fn [[language files]]
+          (when (some names files) language))
+        language-markers))
 
 (defn- project-digest
   []
@@ -155,11 +167,14 @@
   (try (let [cwd
              (.getPath (workspace/cwd))
 
+             names
+             (or (try (present-markers cwd) (catch Throwable _ nil)) #{})
+
              kind
-             (project-kind cwd)
+             (project-kind names)
 
              primary
-             (primary-language-guess cwd)]
+             (primary-language-guess names)]
 
          (cond-> {"kind" (name kind)}
            primary

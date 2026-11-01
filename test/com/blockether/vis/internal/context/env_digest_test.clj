@@ -85,7 +85,27 @@
                           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
                             (expect (= "clojure"
                                        (get-in (env-digest/base-digest nil)
-                                               ["project" "primary_language"])))))))))
+                                               ["project" "primary_language"]))))))))
+  ;; The digest checks marker names one by one instead of listing the workspace,
+  ;; which cost 150-400 ms per render in a 69 000-entry directory. A name must
+  ;; still match the listing exactly, and a linked marker still counts.
+  (it "matches marker names exactly, links included, without listing the root"
+      (with-redefs [agents/instructions
+                    (constantly {:found? false})
+
+                    prompt/active-extensions
+                    (constantly [])]
+
+        (with-tmp-root* (fn [^java.io.File root]
+                          (.mkdir (java.io.File. root "PACKAGES"))
+                          (spit (java.io.File. root "Gemfile.lock") "")
+                          (java.nio.file.Files/createSymbolicLink
+                            (.toPath (java.io.File. root "go.mod"))
+                            (.toPath (java.io.File. root "missing"))
+                            (make-array java.nio.file.attribute.FileAttribute 0))
+                          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+                            (expect (= {"kind" "single" "primary_language" "go"}
+                                       (get (env-digest/base-digest nil) "project")))))))))
 
 (defdescribe
   session-env-merges-extension-contributions-test
