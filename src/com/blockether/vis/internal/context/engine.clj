@@ -4,7 +4,8 @@
    The mutable session state lives outside this namespace; these functions advance
    the turn/iteration cursor and compute utilization metadata."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.channel.form :as form]))
+            [com.blockether.vis.internal.channel.form :as form]
+            [com.blockether.vis.internal.util :as util]))
 
 (def DEFAULT_PROMPT_BUDGET_TOKENS
   "Soft per-call operating budget surfaced to the model as
@@ -480,9 +481,19 @@
                                   (first k)))
                            ukeys)}))
 
-(defn expand-summary
-  "Resolve the selectors of one summary against an [[expansion-index]], as
-   [[expand-through]] does."
+(defn universe-free?
+  "True when the expansion of summary `s` reads nothing from the universe: it has no
+   range window and no bare `tN` scope. Pure."
+  [s]
+  (not (or (contains? s "through")
+           (contains? s "from")
+           (contains? s "to")
+           (contains? s "since")
+           (some map? (get s "ranges"))
+           (some turn-key (get s "scopes")))))
+
+(defn- expand-with-index
+  "Resolve the selectors of one summary against an [[expansion-index]] map."
   [{:keys [ukeys scopes-by-turn universe-turns]} s]
   (let [pick
         (fn [pred]
@@ -572,6 +583,22 @@
           (seq whole-turns)
           (update "turns" (fnil into #{}) whole-turns))))))
 
+;; A fold pass resolves the same few hundred plain scope folds against every new
+;; universe. Their expansion reads only the summary, so it is kept per summary value.
+(def ^:private universe-free-expansions
+  "Expansions of [[universe-free?]] summaries, by summary value."
+  (util/weak-cache))
+
+(defn expand-summary
+  "Resolve the selectors of one summary as [[expand-through]] does. `index` is an
+   [[expansion-index]] or a delay of one; a summary that reads no universe never
+   forces the delay."
+  [index s]
+  (cond (not (some #(contains? s %) expansion-selectors)) s
+        (universe-free? s)
+        (util/weak-cached universe-free-expansions s nil #(expand-with-index {} s))
+        :else (expand-with-index (force index) s)))
+
 (defn expand-through
   "Resolve every fold SELECTOR on each summary against `universe` (the caller's
    own live iteration scopes) into a concrete `\"scopes\"` set, so ONE intent
@@ -602,8 +629,30 @@
    Intents with none of these keys pass through untouched. Pure — same inputs →
    same output."
   [summaries universe & [turns]]
-  (let [index (expansion-index universe turns)]
+  (let [index (delay (expansion-index universe turns))]
     (mapv #(expand-summary index %) summaries)))
+
+(def ^:private summary-coverages
+  "Coverage sets of resolved summaries, by summary value."
+  (util/weak-cache))
+
+(defn- coverage-of
+  "The scopes that one resolved summary covers, with each whole turn without a
+   scope as `tN`."
+  [summary]
+  (let [scopes
+        (set (get summary "scopes"))
+
+        scoped-turns
+        (into #{} (keep (comp first scope-key)) scopes)]
+
+    (into scopes (comp (remove scoped-turns) (map #(str "t" %))) (get summary "turns"))))
+
+(defn- summary-coverage
+  "[[coverage-of]] one summary. A fold pass checks the same summaries again, so
+   keep each set."
+  [summary]
+  (util/weak-cached summary-coverages summary nil #(coverage-of summary)))
 
 (defn supersede-summaries
   "Collapse 'summary of summary': drop any summary whose scope set is fully
@@ -622,17 +671,7 @@
         (vec summaries)
 
         coverage
-        (mapv (fn [summary]
-                (let [scopes
-                      (set (get summary "scopes"))
-
-                      scoped-turns
-                      (into #{} (keep (comp first scope-key)) scopes)]
-
-                  (into scopes
-                        (comp (remove scoped-turns) (map #(str "t" %)))
-                        (get summary "turns"))))
-              v)
+        (mapv summary-coverage v)
 
         ;; Largest first, newest first on ties: every possible surviving coverer
         ;; is already known when an entry is visited. Dropped entries never need

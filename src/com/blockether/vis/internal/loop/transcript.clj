@@ -878,6 +878,30 @@
    replay flag to keep hiding the entry."
   [:preserved-thinking/replay? :turn/boundary :turn/position :turn/current?])
 
+(def ^:private summary-gist-forms
+  "Synthetic gist forms by resolved summary value."
+  (util/weak-cache))
+
+(defn- gist-form-of
+  "The synthetic form that carries the gist of one resolved summary, or its drop marker."
+  [s]
+  (let [gist (get s "gist")]
+    {:scope :summary
+     :summary? true
+     :summary-gist gist
+     :summary-drop? (nil? gist)
+     :summary-iters (vec (sort (set (get s "scopes"))))
+     :summary-turns (vec (sort (set (get s "turns"))))}))
+
+(defn- summary-gist-form
+  "[[gist-form-of]] one summary, kept for the next fold pass."
+  [s]
+  (util/weak-cached summary-gist-forms s nil #(gist-form-of s)))
+
+(def ^:private universe-free-resolutions
+  "Resolutions of summaries that read no universe, by summary value, nil included."
+  (util/weak-cache))
+
 (defn summary-applier
   "Return [[apply-summaries]] for one `trailer-iters`, as a function of `summaries`.
    Index the trailer once, and resolve each summary once over all calls. A fold
@@ -895,8 +919,8 @@
           (when (:turn/boundary rec) (:turn/position rec)))
 
         index
-        (ctx-engine/expansion-index (keep (comp iter-scope-of second) trailer)
-                                    (distinct (keep (comp boundary-turn second) trailer)))
+        (delay (ctx-engine/expansion-index (keep (comp iter-scope-of second) trailer)
+                                           (distinct (keep (comp boundary-turn second) trailer))))
 
         ;; Resolve ranges against this trailer, then keep only what the intent's
         ;; canonical at_turn owns. A turn may fold its own settled work and every
@@ -935,14 +959,17 @@
         resolved
         (atom {})
 
+        ;; A summary that reads no universe resolves the same for every trailer.
         resolve-once
         (fn [summary]
-          (let [hit (get @resolved summary ::none)]
-            (if (identical? ::none hit)
-              (let [r (resolve summary)]
-                (swap! resolved assoc summary r)
-                r)
-              hit)))
+          (if (ctx-engine/universe-free? summary)
+            (util/weak-cached universe-free-resolutions summary nil #(resolve summary))
+            (let [hit (get @resolved summary ::none)]
+              (if (identical? ::none hit)
+                (let [r (resolve summary)]
+                  (swap! resolved assoc summary r)
+                  r)
+                hit))))
 
         ;; The boundary turn or the iteration scope of each entry, read once.
         entry-keys
@@ -986,25 +1013,13 @@
               ;; summary → earliest trailer index it covers
               anchors
               (reduce (fn [m s]
-                        (let [scopes
-                              (set (get s "scopes"))
-
-                              turns
-                              (set (get s "turns"))]
-
-                          (if-let [idx (reduce (fn [found i]
-                                                 (if found (min (long found) (long i)) i))
-                                               nil
-                                               (concat (keep first-scope-index scopes)
-                                                       (keep first-turn-index turns)))]
-                            (update m
-                                    idx
-                                    (fnil conj [])
-                                    {:gist (get s "gist")
-                                     :drop? (nil? (get s "gist"))
-                                     :summary-iters (vec (sort scopes))
-                                     :summary-turns (vec (sort turns))})
-                            m)))
+                        (if-let [idx (reduce (fn [found i]
+                                               (if found (min (long found) (long i)) i))
+                                             nil
+                                             (concat (keep first-scope-index (get s "scopes"))
+                                                     (keep first-turn-index (get s "turns"))))]
+                          (update m idx (fnil conj []) (summary-gist-form s))
+                          m))
                       {}
                       summaries)]
 
@@ -1013,19 +1028,8 @@
                            (let [collapsed?
                                  (covered? summarized folded-turns i)
 
-                                 gists
-                                 (get anchors i)
-
                                  gist-forms
-                                 (when gists
-                                   (mapv (fn [g]
-                                           {:scope :summary
-                                            :summary? true
-                                            :summary-gist (:gist g)
-                                            :summary-drop? (:drop? g)
-                                            :summary-iters (:summary-iters g)
-                                            :summary-turns (:summary-turns g)})
-                                         gists))]
+                                 (get anchors i)]
 
                              [pos
                               (cond-> (if collapsed?
