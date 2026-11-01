@@ -21,7 +21,8 @@
             [charred.api :as json]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.provider.key-store :as key-store])
+            [com.blockether.vis.internal.provider.key-store :as key-store]
+            [taoensso.telemere :as tel])
   (:import (java.io File)
            (java.nio.file CopyOption Files StandardCopyOption)))
 
@@ -215,12 +216,16 @@
 (defn- saved-catalog
   "The cache entry of the catalog that an earlier fetch saved, or nil. Never throws."
   []
-  (try (let [f (catalog-file)]
-         (when (.isFile f)
-           (let [catalog (edn/read-string (slurp f))]
-             (when (and (map? catalog) (seq catalog))
-               {:at (.lastModified f) :catalog (delay catalog)}))))
-       (catch Throwable _ nil)))
+  (try
+    (let [f (catalog-file)]
+      (when (.isFile f)
+        (let [catalog (edn/read-string (slurp f))]
+          (when (and (map? catalog) (seq catalog))
+            {:at (.lastModified f) :catalog (delay catalog)}))))
+    (catch Throwable e
+      (tel/log!
+        {:level :warn :id ::saved-catalog-unreadable :data {:path (str (catalog-file))} :error e})
+      nil)))
 
 (defn- save-catalog!
   "Write a non-empty `catalog` through a temp file in the same directory. Never throws."
@@ -242,7 +247,10 @@
                                         [StandardCopyOption/ATOMIC_MOVE
                                          StandardCopyOption/REPLACE_EXISTING]))
                 (finally (Files/deleteIfExists (.toPath tmp)))))
-         (catch Throwable _ nil))))
+         (catch Throwable e
+           (tel/log!
+             {:level :warn :id ::catalog-not-saved :data {:path (str (catalog-file))} :error e})
+           nil))))
 
 (defonce ^:private catalog-cache
   ;; `{:at ms :catalog delay}` of the last fetch, and `:refresh` while a background

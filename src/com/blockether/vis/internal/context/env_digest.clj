@@ -195,9 +195,7 @@
    deep-merges before render). Pass `active`, the active extensions, when
    the caller has resolved them already."
   ([environment]
-   (base-digest environment
-                (when environment
-                  (try (prompt/active-extensions environment) (catch Throwable _ nil)))))
+   (base-digest environment (when environment (prompt/active-extensions environment))))
   ([environment active]
    (let [host
          (host-digest)

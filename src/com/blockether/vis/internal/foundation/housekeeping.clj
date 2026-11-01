@@ -45,7 +45,8 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace.core :as workspace])
+            [com.blockether.vis.internal.workspace.core :as workspace]
+            [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]))
@@ -474,10 +475,13 @@
   [^File stamp ^long now ^long interval-ms]
   (let [age (- now (.lastModified stamp))]
     (when (or (neg? age) (>= age interval-ms))
-      (try (.mkdirs (.getParentFile stamp))
-           (.createNewFile stamp)
-           (.setLastModified stamp now)
-           (catch Throwable _ nil))
+      (try
+        (.mkdirs (.getParentFile stamp))
+        (.createNewFile stamp)
+        (.setLastModified stamp now)
+        (catch Throwable e
+          (tel/log!
+            {:level :warn :id ::sweep-stamp-not-written :data {:stamp (.getPath stamp)} :error e})))
       true)))
 
 (defn- sweep-pycache!
@@ -514,7 +518,12 @@
                      (let [child (File. dir entry-name)
                            ^BasicFileAttributes attrs
                            (try (Files/readAttributes (.toPath child) BasicFileAttributes no-follow)
-                                (catch java.io.IOException _ nil))]
+                                (catch java.io.IOException e
+                                  (tel/log! {:level :debug
+                                             :id ::pycache-entry-unreadable
+                                             :data {:path (.getPath child)}
+                                             :error e})
+                                  nil))]
 
                        (cond (or (nil? attrs) (.isSymbolicLink attrs)) acc
                              (.isDirectory attrs) (let [child-source (File. source-dir entry-name)]

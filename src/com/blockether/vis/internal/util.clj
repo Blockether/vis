@@ -20,7 +20,8 @@
    A name earns a place here when a THIRD namespace needs it. A helper with one
    caller belongs beside its caller, not in this file."
   (:require [charred.api :as json]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [taoensso.telemere :as tel])
   (:import (charred JSONWriter)
            (java.io StringWriter)
            (java.nio.charset StandardCharsets)
@@ -286,7 +287,9 @@
   (let [slot [cache k]]
     (when-not (contains? (first (swap-vals! refreshing conj slot)) slot)
       (future (try (store! cache ttl-ms k (f))
-                   (catch Throwable _ nil)
+                   (catch Throwable t
+                     (tel/log!
+                       {:level :warn :id ::cache-refresh-failed :data {:key (pr-str k)} :error t}))
                    (finally (swap! refreshing disj slot)))))
     nil))
 

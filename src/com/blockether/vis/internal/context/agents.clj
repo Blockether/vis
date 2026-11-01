@@ -149,8 +149,7 @@
    inclusive — outermost first, so render order = precedence order
    (nearer files land later and positionally override)."
   [^java.io.File root]
-  (vec (reverse (paths/ancestor-chain (try (.getCanonicalFile root)
-                                           (catch Throwable _ (.getAbsoluteFile root)))))))
+  (vec (reverse (paths/ancestor-chain (paths/canonical-file root)))))
 
 (defn- read-guidance-entry
   "Read one candidate into a stacked-file entry, or a warning on I/O

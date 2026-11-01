@@ -291,6 +291,15 @@
          (catch Throwable _ svar-provider))
     svar-provider))
 
+(defn- call-refresh-token-fn
+  "Call a provider's `refresh-token-fn` with the `rejected` token. Older and third-party
+   hooks expose only a zero-arity implementation, so retry with no argument."
+  [pid f rejected]
+  (try (f rejected)
+       (catch clojure.lang.ArityException e
+         (tel/log! {:level :debug :id ::zero-arity-refresh-token-fn :data {:provider pid} :error e})
+         (f))))
+
 (defn- boot-refresh-provider-token!
   "Build-time sibling of `try-refresh-provider-token!`.
 
@@ -311,7 +320,7 @@
                         (= :auth (:category (perr/svar-classification t)))
                         (auth-health/refresh-allowed? pid))
                (let [rejected (config/baked-token pid)]
-                 (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+                 (try (call-refresh-token-fn pid f rejected)
                       (provider-limits/auth-changed! pid)
                       (tel/log!
                         {:level :info :id ::boot-auth-retry :data {:provider pid}}
@@ -1149,9 +1158,8 @@
                                  " re-authenticate this provider"))
                   false)
               :else (try
-                      ;; Pass exactly what this attempt sent. Older/third-party hooks
-                      ;; may still expose only a zero-arity implementation.
-                      (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+                      ;; Pass exactly what this attempt sent.
+                      (call-refresh-token-fn pid f rejected)
                       (auth-health/note-refreshed! pid)
                       (tel/log! {:level :info :id ::auth-retry :data {:provider pid}}
                                 (str "Auth 401 for " pid "; retrying the request"))

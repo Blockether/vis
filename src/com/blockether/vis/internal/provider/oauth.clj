@@ -71,7 +71,12 @@
                              (cond (map? body) (or (get body "error") (get body :error))
                                    (string? body) (try (:error
                                                          (json/read-json body :key-fn keyword))
-                                                       (catch Exception _ nil)))))))
+                                                       (catch Exception parse-error
+                                                         (tel/log! {:level :debug
+                                                                    :id ::token-error-body-not-json
+                                                                    :data {:status status}
+                                                                    :error parse-error})
+                                                         nil)))))))
                  (error-chain error))))
 
 (defn- token-fingerprint

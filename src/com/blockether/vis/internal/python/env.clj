@@ -1460,7 +1460,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
     ;; discovery so a block may shadow it locally but can never replace it for the session.
     (exec! session "globals().setdefault('println', print)")
     (perf/timed :sandbox/auto-imports
-                (try (py-install-module! session "auto_imports") (catch Throwable _ nil)))
+                (try (py-install-module! session "auto_imports")
+                     (catch Throwable e
+                       (tel/log! {:level :warn :id ::auto-imports-failed :error e}))))
     ;; SDK declarations are shared source; no extension host callbacks enter the sandbox.
     (perf/timed :sandbox/sdk (py-exec! session sandbox-sdk-python))
     (install-protected-names! session custom-bindings)
@@ -1506,7 +1508,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                    (str (get PROCESS_SURFACE "off") " " (get PROCESS_SURFACE "extension"))}))
     (perf/timed :sandbox/shims (install-shims! session))
     (perf/timed :sandbox/introspection (install-introspection! session))
-    (perf/timed :sandbox/results (py-exec! session "import vis_results\nvis_results.install(globals())"))
+    (perf/timed :sandbox/results
+                (py-exec! session "import vis_results\nvis_results.install(globals())"))
     (exec! session "__vis_stamp_tools__()")
     (set-python-binding-contracts! session
                                    (into {}

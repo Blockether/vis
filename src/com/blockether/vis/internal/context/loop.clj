@@ -181,7 +181,7 @@
   [env ctx]
   (util/with-memo-scope
     (let [active-exts
-          (perf/timed :ctx/active-exts (try (prompt/active-extensions env) (catch Throwable _ nil)))
+          (perf/timed :ctx/active-exts (prompt/active-extensions env))
 
           ext-ctx
           (try (perf/timed :ctx/contributions (extension/ctx-contributions env active-exts))

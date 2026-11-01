@@ -706,8 +706,7 @@
         on-chunk*
         (when on-chunk
           (fn [chunk]
-            (when (:iteration chunk)
-              (on-chunk chunk))))
+            (when (:iteration chunk) (on-chunk chunk))))
 
         q-opts
         (cond-> {}
@@ -2984,14 +2983,17 @@
     (tel/set-min-level! :slf4j "org.eclipse.jetty.*" :info)
     ;; File handler ALWAYS on, so post-mortem reads always have data.
     (try (tel/add-handler! :file (config/diagnostic-file-handler {:path path}) {:min-level :debug})
-         (catch Throwable _ nil))
+         (catch Throwable e
+           (tel/log!
+             {:level :warn :id ::file-log-handler-failed :data {:path (str path)} :error e})))
     ;; Console handler: re-add only when the user asked for verbosity.
     ;; Boot-time noise is already gone (registry.clj removed it during
     ;; namespace load). It writes to stderr: stdout carries a one-shot answer,
     ;; `--json-schema` output or the `--full-trace-json-stream` events.
     (when (and debug? (not= "stdio" (first args)))
       (try (tel/add-handler! :default/console (tel/handler:console {:stream *err*}))
-           (catch Throwable _ nil)))))
+           (catch Throwable e
+             (tel/log! {:level :warn :id ::console-log-handler-failed :error e}))))))
 
 (defn- initialize-clojure-extensions! [] (manifest/initialize!) nil)
 

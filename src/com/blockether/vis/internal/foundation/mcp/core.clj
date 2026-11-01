@@ -314,7 +314,12 @@
                         ;; List the tools before publication, on this connecting thread. A
                         ;; render that met a fresh conn paid the `tools/list` round trip
                         ;; (perf pass 2026-11: 420 ms in one context render).
-                        _ (try (mcp/list-tools conn) (catch Throwable _ nil))
+                        _ (try (mcp/list-tools conn)
+                               (catch Throwable e
+                                 (tel/log! {:level :warn
+                                            :id ::tools-prelist-failed
+                                            :data {:server server}
+                                            :error e})))
                         [accepted stale]
                         (locking pool
                           (let [winner (get @pool k)]

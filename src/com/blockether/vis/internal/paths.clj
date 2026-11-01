@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.paths
   "Cross-platform path helpers. A LEAF namespace (no project deps) so any
    layer — core, extensions, tests — can normalize without a require cycle."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [taoensso.telemere :as tel])
   (:import [java.io File IOException]
            [java.nio ByteBuffer]
            [java.nio.channels FileChannel FileLock]
@@ -326,17 +327,22 @@
         (.resolve dir (str "." (.getFileName target) ".tmp-" (java.util.UUID/randomUUID)))]
 
     (create-private-dirs! dir)
-    (try (Files/createFile tmp (owner-only "rw-------"))
-         (with-open [ch (FileChannel/open tmp (into-array OpenOption [StandardOpenOption/WRITE]))]
-           (let [buf (ByteBuffer/wrap (.getBytes content StandardCharsets/UTF_8))]
-             (while (.hasRemaining buf) (.write ch buf)))
-           (.force ch true))
-         (try
-           (Files/move tmp target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
-           (catch AtomicMoveNotSupportedException _
+    (try
+      (Files/createFile tmp (owner-only "rw-------"))
+      (with-open [ch (FileChannel/open tmp (into-array OpenOption [StandardOpenOption/WRITE]))]
+        (let [buf (ByteBuffer/wrap (.getBytes content StandardCharsets/UTF_8))]
+          (while (.hasRemaining buf) (.write ch buf)))
+        (.force ch true))
+      (try (Files/move tmp target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
+           (catch AtomicMoveNotSupportedException e
+             (tel/log!
+               {:level :debug :id ::atomic-move-unsupported :data {:dir (str dir)} :error e})
              (Files/move tmp target (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
-         nil
-         (finally (try (Files/deleteIfExists tmp) (catch Throwable _ nil))))))
+      nil
+      (finally (try (Files/deleteIfExists tmp)
+                    (catch Throwable e
+                      (tel/log!
+                        {:level :warn :id ::temp-file-left :data {:path (str tmp)} :error e})))))))
 
 (defn process-id
   "This JVM's OS process id. Read fresh so native-image never bakes the builder's
@@ -349,12 +355,19 @@
   ;; canonical path strings. See `held-file?` for why they are off limits.
   (atom {}))
 
+(defn canonical-file
+  "Canonical form of `f`. When the file system cannot canonicalize it, log that and
+   return its absolute form."
+  ^File [^File f]
+  (try (.getCanonicalFile f)
+       (catch IOException e
+         (tel/log! {:level :debug :id ::canonical-path-failed :data {:path (.getPath f)} :error e})
+         (.getAbsoluteFile f))))
+
 (defn- canonical-path
-  "Canonical path string of `f` (a `File`, `Path` or string); its absolute path when
-   the file system cannot canonicalize it."
+  "Canonical path string of `f` (a `File`, `Path` or string), as [[canonical-file]] finds it."
   ^String [f]
-  (let [file (if (instance? File f) ^File f (File. (str f)))]
-    (try (.getCanonicalPath file) (catch java.io.IOException _ (.getAbsolutePath file)))))
+  (.getPath (canonical-file (if (instance? File f) ^File f (File. (str f))))))
 
 (defn hold-files!
   "Record that `owner` holds OS locks on `files` (they need not exist yet), so the
@@ -423,12 +436,15 @@
   ([^File root f]
    (locking claim-lock
      (.mkdirs root)
-     (with-open [channel (FileChannel/open (.toPath (File. root ^String store-lock-name))
-                                           (into-array OpenOption
-                                                       [StandardOpenOption/CREATE
-                                                        StandardOpenOption/READ
-                                                        StandardOpenOption/WRITE]))
-                 _lock (.lock channel)]
+     (with-open [channel
+                 (FileChannel/open (.toPath (File. root ^String store-lock-name))
+                                   (into-array OpenOption
+                                               [StandardOpenOption/CREATE StandardOpenOption/READ
+                                                StandardOpenOption/WRITE]))
+
+                 _lock
+                 (.lock channel)]
+
        (f)))))
 
 (defn claim-dir!

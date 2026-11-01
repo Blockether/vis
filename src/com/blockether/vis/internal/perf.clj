@@ -116,18 +116,20 @@
       rss
       (assoc :rss-mb rss))))
 
+(defn- log-ledger!
+  "Log one ledger line with signal `id` and `data` at info level. When its summary fails,
+   log that failure instead: a ledger line must not stop a turn."
+  [id data wall-ms phases stages]
+  (try (tel/log! {:level :info :id id :data (merge data (summary wall-ms phases stages) (memory))})
+       (catch Throwable e
+         (tel/log! {:level :warn :id ::ledger-line-failed :data {:line id} :error e}))))
+
 (defn log-iteration!
   "Log one iteration line at info level. Never throws."
   [iteration wall-ms phases stages]
-  (try (tel/log! {:level :info
-                  :id ::iteration
-                  :data (merge {:iteration iteration} (summary wall-ms phases stages) (memory))})
-       (catch Throwable _ nil)))
+  (log-ledger! ::iteration {:iteration iteration} wall-ms phases stages))
 
 (defn log-turn!
   "Log one turn line at info level. Never throws."
   [iterations wall-ms phases stages]
-  (try (tel/log! {:level :info
-                  :id ::turn
-                  :data (merge {:iterations iterations} (summary wall-ms phases stages) (memory))})
-       (catch Throwable _ nil)))
+  (log-ledger! ::turn {:iterations iterations} wall-ms phases stages))
