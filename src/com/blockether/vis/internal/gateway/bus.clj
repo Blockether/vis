@@ -493,6 +493,29 @@
 
 (def ^:private TERMINAL_TYPES #{"turn.completed" "turn.failed" "turn.cancelled"})
 
+(def ^:private terminal-markers
+  "Each terminal type as it stands quoted in a journal line. A line without one
+   of these cannot be a terminal, so only lines that hold one are parsed."
+  (mapv #(str "\"" % "\"") TERMINAL_TYPES))
+
+(defn- terminal-line?
+  "True when a line of the journal text `s` holds a terminal marker AND parses as
+   a terminal event. Equal to parsing every line and asking each for its type, but
+   it parses only the few lines that hold a marker: a 64 KiB tail full of other
+   sessions' renames cost a parse of every line on each subscribe."
+  [^String s]
+  (boolean
+    (some (fn [^String marker]
+            (loop [from 0]
+              (let [i (.indexOf s marker (int from))]
+                (when-not (neg? i)
+                  (let [start (inc (.lastIndexOf s "\n" i))
+                        end (let [e (.indexOf s "\n" i)] (if (neg? e) (.length s) e))]
+                    (if (contains? TERMINAL_TYPES (get (wire/parse-json (subs s start end)) "type"))
+                      true
+                      (recur end)))))))
+          terminal-markers)))
+
 (defn- terminal-tail?
   "True when a COMPLETE line in the last `TAIL_SCAN_BYTES` of `f` is a terminal
    event - the cheap answer to the question [[hydrate!]] asks first.
@@ -513,13 +536,14 @@
                buf (byte-array n)
                got (read-at! raf (- len n) buf n)
                whole (whole-bytes (if (== got n) buf (java.util.Arrays/copyOf buf (int got))))
-               lines (str/split-lines (String. buf 0 (int whole) StandardCharsets/UTF_8))
+               text (String. buf 0 (int whole) StandardCharsets/UTF_8)
                ;; The window's first line is whole only when the window is the whole file.
-               lines (if (< n len) (rest lines) lines)]
+               text (if (< n len) (subs text (inc (.indexOf text "\n"))) text)]
 
-           (boolean (some #(contains? TERMINAL_TYPES (get % "type"))
-                          (keep wire/parse-json (remove str/blank? lines))))))
-       (catch Throwable _ false)))
+           (terminal-line? text)))
+       (catch Throwable t
+         (tel/log! :debug ["gateway-bus: terminal tail scan failed" (str f) (ex-message t)])
+         false)))
 
 (defn- journal-head
   "[[read-head!]] for a file the caller has not opened. nil when unreadable."
@@ -1047,18 +1071,18 @@
                 ;; head: re-opening the file for the head would fingerprint a
                 ;; LATER generation than the bytes we actually handed over.
                 whole (whole-bytes raw)
-                events (->> (str/split-lines
-                              (String. ^bytes raw 0 (int whole) StandardCharsets/UTF_8))
-                            (remove str/blank?)
-                            (keep wire/parse-json))
-                foreign (remove #(= (gateway-contract/journal-producer %) (producer-id)) events)
+                text (String. ^bytes raw 0 (int whole) StandardCharsets/UTF_8)
                 ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
-                ;; THIS process) means the turn is done — don't re-stream it.
-                terminal? (some #(contains? #{"turn.completed" "turn.failed" "turn.cancelled"}
-                                            (get % "type"))
-                                events)]
+                ;; THIS process) means the turn is done — don't re-stream it. Asked
+                ;; first, so a finished turn never parses the whole journal.
+                terminal? (terminal-line? text)
+                foreign (when-not terminal?
+                          (->> (str/split-lines text)
+                               (remove str/blank?)
+                               (keep wire/parse-json)
+                               (remove #(= (gateway-contract/journal-producer %) (producer-id)))))]
 
-            (when (and (seq foreign) (not terminal?))
+            (when (and (not terminal?) (seq foreign))
               ;; Claim the COMPLETE lines we just read, pinned to their
               ;; generation, so neither the tailer nor a later hydrate
               ;; re-delivers them.

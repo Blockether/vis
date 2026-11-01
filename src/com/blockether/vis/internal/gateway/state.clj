@@ -2601,6 +2601,16 @@
                                      :duration-ms llm-full-duration-ms}))
                                 iterations)))
 
+(defn- read-or
+  "Call `f` for a store or bus read. When it throws, log a warning with the read name in
+   `data` and the error, then answer `fallback`, so a page shows less but still opens."
+  [data fallback f]
+  (try (f)
+       (catch Throwable t
+         (tel/log! {:level :warn :id ::read-failed :data (assoc data :error (ex-message t)) :error t}
+                   "gateway: a store read failed; the answer uses its fallback")
+         fallback)))
+
 (def ^:dynamic ^:private *turn-iterations*
   "Request-local iterations of a whole-transcript read, by string turn id, from
    one batch read; nil when each turn reads its own."
@@ -2618,8 +2628,9 @@
   "Call `f` with the iterations of every turn in `turns` read in one batch. A failed
    batch leaves each turn to its own read."
   [db turns f]
-  (binding [*turn-iterations* (try (persistance/db-list-session-turns-iterations db (map :id turns))
-                                   (catch Throwable _ nil))]
+  (binding [*turn-iterations* (read-or {:read :turns-iterations}
+                                       nil
+                                       #(persistance/db-list-session-turns-iterations db (map :id turns)))]
     (f)))
 
 (defn- transcript-turn
@@ -6387,6 +6398,12 @@
   (some-> *page-facts*
           (get (str sid))))
 
+(defn session-exists?
+  "True when the store holds session `sid`: the same answer as a non-nil [[soul]],
+   without building the soul. A stream open asked a whole soul only to learn this."
+  [sid]
+  (some? (lp/by-id sid)))
+
 (defn soul
   "Canonical (string-keyed) wire soul for one session: persisted record + live
    gateway status. Running sessions include their request, start timestamp, and
@@ -6430,9 +6447,10 @@
           ;; query; a query per row doubled the page cost.
           stats (if (some? *turn-stats*)
                   (get *turn-stats* (str sid))
-                  (with-sent-turn (try (some-> (lp/db-info)
-                                               (persistance/db-session-turn-stats sid))
-                                       (catch Throwable _ nil))
+                  (with-sent-turn (read-or {:read :session-turn-stats :session-id (str sid)}
+                                           nil
+                                           #(some-> (lp/db-info)
+                                                    (persistance/db-session-turn-stats sid)))
                                   (sent-turn-ms entry)))
           ;; EVERY payload a session reaches a client in carries its path, so no
           ;; answer can produce a row a client cannot key to its project
@@ -6440,7 +6458,9 @@
           ;; rows no longer resolve it a second time in `session-summary-extras`.
           ;; One read serves both the path and the agent name of the row.
           ws (or (:workspace (page-fact sid))
-                 (try (some-> (lp/db-info) (resolve-workspace sid)) (catch Throwable _ nil)))
+                 (read-or {:read :workspace :session-id (str sid)}
+                          nil
+                          #(some-> (lp/db-info) (resolve-workspace sid))))
           lean-ws (lean-workspace ws)
           ;; The session's MODEL PIN, from the same `session_soul` row `by-id` just
           ;; read — no extra query, so every list row carries it and a client never
@@ -7688,7 +7708,7 @@
          ;; ONE grouped query serves BOTH the ordering and the page's decorations.
          stats
          (with-sent-turns
-           (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {}))
+           (if db (read-or {:read :turn-stats} {} #(persistance/db-session-turn-stats db)) {}))
 
          reader-id
          (or (not-empty (str reader)) default-reader-id)
@@ -7697,12 +7717,12 @@
          ;; window, the parked rows beside it and every group shelf are decorated
          ;; out of this one indexed read.
          marks
-         (if db (try (lp/session-read-marks reader-id) (catch Throwable _ {})) {})
+         (if db (read-or {:read :read-marks} {} #(lp/session-read-marks reader-id)) {})
 
          ;; A running session is never empty, so liveness decides whether a
          ;; title-less row is in the list at all. Cached per `bus/live-turns`.
          live
-         (try (bus/live-turns) (catch Throwable _ {}))
+         (read-or {:read :live-turns} {} bus/live-turns)
 
          unsent
          (into #{} (comp (map str) (remove str/blank?)) dirty)
@@ -7800,11 +7820,12 @@
          ;; read per row cost six queries each: 125 queries for a page of 20.
          page-facts
          (when db
-           (try (persistance/db-session-page-facts db
-                                                   (concat (map :id window)
-                                                           (when-not cursor (map :id filed))
-                                                           (keys (bus/waiting-requests))))
-                (catch Throwable _ nil)))
+           (read-or {:read :page-facts}
+                    nil
+                    #(persistance/db-session-page-facts db
+                                                        (concat (map :id window)
+                                                                (when-not cursor (map :id filed))
+                                                                (keys (bus/waiting-requests))))))
 
          page-soul
          (fn [sid]
@@ -7979,10 +8000,10 @@
          stats
          (or (:stats facts)
              (with-sent-turns
-               (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})))
+               (if db (read-or {:read :turn-stats} {} #(persistance/db-session-turn-stats db)) {})))
 
          live
-         (or (:live facts) (try (bus/live-turns) (catch Throwable _ {})))
+         (or (:live facts) (read-or {:read :live-turns} {} bus/live-turns))
 
          ranked
          (or (:ranking facts) (session-ranking channel stats live unsent))
@@ -7997,7 +8018,7 @@
          marks
          (if (and facts (= default-reader-id (:reader-id facts)))
            (:marks facts)
-           (if db (try (lp/session-read-marks default-reader-id) (catch Throwable _ {})) {}))
+           (if db (read-or {:read :read-marks} {} #(lp/session-read-marks default-reader-id)) {}))
 
          unread?
          (fn [sid]

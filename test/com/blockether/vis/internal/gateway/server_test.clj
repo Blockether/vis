@@ -2492,6 +2492,7 @@
       (with-server-state! {}
                           (fn []
                             (with-redefs-fn {#'state/soul #(when (= live %) {"id" (str live)})
+                                             #'state/session-exists? #(= live %)
                                              #'state/current-turn-id (constantly nil)
                                              #'state/subscribe! (fn [sid _ _ _ _]
                                                                   (swap! subscribed conj sid)
@@ -2529,6 +2530,7 @@
                      {}
                      (fn []
                        (with-redefs-fn {#'state/soul #(when @present? {"id" (str %)})
+                                        #'state/session-exists? (fn [_] @present?)
                                         #'state/subscribe! (fn [& _]
                                                              (reset! present? false)
                                                              [])
@@ -2548,7 +2550,8 @@
     "every listed session's events ride ONE connection, tagged by :session_id, deduped per session"
     (with-redefs-fn {#'server/stop! (fn []
                                       nil)
-                     #'state/soul (constantly {"id" "exists"})}
+                     #'state/soul (constantly {"id" "exists"})
+                     #'state/session-exists? (constantly true)}
       (fn []
         (with-server-state!
           {}
@@ -2715,6 +2718,7 @@
             (with-redefs-fn {#'server/stop! (constantly nil)
                              #'state/soul (fn [id]
                                             (when (= sid id) {"id" (str sid)}))
+                             #'state/session-exists? #(= sid %)
                              #'state/current-turn-id (constantly nil)
                              #'state/current-seq (constantly 4)
                              #'state/replay-floor (constantly 0)
@@ -2811,7 +2815,8 @@
     "the ready frame names the running turn, and says so for an idle session"
     (with-redefs-fn {#'server/stop! (fn []
                                       nil)
-                     #'state/soul (constantly {"id" "exists"})}
+                     #'state/soul (constantly {"id" "exists"})
+                     #'state/session-exists? (constantly true)}
       (fn []
         (with-server-state!
           {}
@@ -2885,7 +2890,8 @@
     "the current position arrives before the journal frames it summarizes"
     (with-redefs-fn {#'server/stop! (fn []
                                       nil)
-                     #'state/soul (constantly {"id" "exists"})}
+                     #'state/soul (constantly {"id" "exists"})
+                     #'state/session-exists? (constantly true)}
       (fn []
         (with-server-state!
           {}
@@ -7093,7 +7099,8 @@
     "live close canonical shape reaches every socket"
     (with-redefs-fn {#'server/stop! (fn []
                                       nil)
-                     #'state/soul (constantly {"id" "exists"})}
+                     #'state/soul (constantly {"id" "exists"})
+                     #'state/session-exists? (constantly true)}
       (fn []
         (with-server-state!
           {}
@@ -7147,7 +7154,8 @@
     "a socket gets each form's receipt whole once, then only changed rows"
     (with-redefs-fn {#'server/stop! (fn []
                                       nil)
-                     #'state/soul (constantly {"id" "exists"})}
+                     #'state/soul (constantly {"id" "exists"})
+                     #'state/session-exists? (constantly true)}
       (fn []
         (with-server-state!
           {}
@@ -8101,7 +8109,8 @@
         {}
         (fn []
           (with-redefs-fn {#'server/stop! (constantly nil)
-                           #'state/soul (constantly {"id" "exists"})}
+                           #'state/soul (constantly {"id" "exists"})
+                     #'state/session-exists? (constantly true)}
             (fn []
               (let [handler
                     (rv 'multi-events-handler)

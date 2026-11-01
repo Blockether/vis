@@ -3536,7 +3536,41 @@
                        (expect (= "/repo/b" (get-in rows ["b" "workspace" "root"])))
                        (expect (true? (get-in rows ["b" "agent" "routing_locked"])))
                        (expect (= "subagent" (get-in rows ["a" "agent" "role"])))
-                       (expect (false? (get-in rows ["a" "agent" "routing_locked"])))))))))
+                       (expect (false? (get-in rows ["a" "agent" "routing_locked"]))))))))
+
+             ;; Regression: a page whose batch store read failed opened with each row
+             ;; read alone and left no trace of the failure in the gateway log.
+             (it
+               "logs a failed page read and still answers every row"
+               (let [records
+                     (mapv (fn [sid]
+                             {:id sid :title sid :channel :api :created-at 1000})
+                           ["a" "b"])
+
+                     {:keys [value signals]}
+                     (tel/with-signals
+                       (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                        #'lp/by-channel (constantly records)
+                                        #'lp/by-id (into {} (map (juxt :id identity)) records)
+                                        #'persistance/db-session-turn-stats (constantly {})
+                                        #'persistance/db-session-page-facts
+                                        (fn [_ _] (throw (ex-info "store locked" {})))
+                                        #'bus/live-turns (constantly {})
+                                        #'bus/live-turn-id (constantly nil)
+                                        #'bus/session-waiting? (constantly false)
+                                        #'bus/waiting-requests (constantly {})
+                                        #'state/resolve-workspace (constantly {:root "/repo"})
+                                        #'config/agent-name (constantly "vis")}
+                         #(state/list-sessions-page :all {:limit 2})))
+
+                     failure
+                     (first (filter #(= :com.blockether.vis.internal.gateway.state/read-failed (:id %))
+                                    signals))]
+
+                 (expect (= ["a" "b"] (sort (map #(get % "id") (:sessions value)))))
+                 (expect (= :warn (:level failure)))
+                 (expect (= :page-facts (get-in failure [:data :read])))
+                 (expect (= "store locked" (get-in failure [:data :error]))))))
 
 ;; Regression: a navigator must follow liveness and content recency before paging.
 (defdescribe

@@ -954,7 +954,8 @@
                                                        {:pid owner-pid :close! close!}))))
           (try (when proxied? (sse-proxy-pad! out gzip?))
                (doseq [[sid requested-cursor] sid+cursors]
-                 (let [cursor (when (state/soul sid) (resolve-sse-cursor sid requested-cursor))
+                 (let [cursor (when (state/session-exists? sid)
+                                (resolve-sse-cursor sid requested-cursor))
                        replay (when (some? cursor)
                                 ;; Seed the guard before atomic registration.
                                 (swap! last-seqs assoc (str sid) cursor)
