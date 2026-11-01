@@ -75,6 +75,12 @@ function scheduleFromNative(): void {
   schedule(true);
 }
 
+// The first `pageshow` of a document is its load, not a return: the screens that
+// just mounted read everything already. Only a page that went away comes back.
+function onPageShow(event: Event): void {
+  if (sleptAt !== null || (event as PageTransitionEvent).persisted) scheduleFromDom();
+}
+
 function onVisibility(): void {
   if (document.visibilityState === 'visible') {
     // Focus while already foreground is not a resume. A late DOM-visible signal
@@ -87,7 +93,7 @@ function install(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;
   document.addEventListener('visibilitychange', onVisibility);
-  window.addEventListener('pageshow', scheduleFromDom);
+  window.addEventListener('pageshow', onPageShow);
   window.addEventListener('pagehide', markAway);
   window.addEventListener('focus', onVisibility);
   window.addEventListener('online', scheduleFromDom);
@@ -126,7 +132,7 @@ function uninstall(): void {
   if (!installed) return;
   installed = false;
   document.removeEventListener('visibilitychange', onVisibility);
-  window.removeEventListener('pageshow', scheduleFromDom);
+  window.removeEventListener('pageshow', onPageShow);
   window.removeEventListener('pagehide', markAway);
   window.removeEventListener('focus', onVisibility);
   window.removeEventListener('online', scheduleFromDom);

@@ -49,6 +49,20 @@ describe('foreground wake signals', () => {
     expect(away).not.toHaveBeenCalled();
   });
 
+  // Regression, session e2a68329-6a26-4cc7-a9f2-8b91a318a65d: the load's own `pageshow`
+  // woke every screen 250 ms after open, so a session read all its data twice.
+  it('does not wake on the pageshow of a page load, only on a return', async () => {
+    const { wake } = await subscribe();
+    window.dispatchEvent(new Event('pageshow'));
+    vi.advanceTimersByTime(800);
+    expect(wake).not.toHaveBeenCalled();
+    const restored = new Event('pageshow') as PageTransitionEvent;
+    Object.defineProperty(restored, 'persisted', { value: true });
+    window.dispatchEvent(restored);
+    vi.advanceTimersByTime(250);
+    expect(wake).toHaveBeenCalledExactlyOnceWith({ awayMs: 0 });
+  });
+
   it('does not treat a duplicate visible notification as another resume', async () => {
     const { wake } = await subscribe();
     document.dispatchEvent(new Event('visibilitychange'));
