@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.4.8] - 2026-11-01
+
+### Changed
+- Performance: the gateway counts its replay ring once per append and keeps small replay frames in their descriptors. An append takes 0.43 ms instead of 2.36 ms at 1950 frames.
+- Performance: a transcript page reads its rows in one batch and encodes canonical rows once. Only the window rows are read. A 200-turn transcript takes 41 ms of handler time instead of 55 ms.
+- Performance: the gateway starts the shared Python worker with the daemon. The first session request takes 328-512 ms instead of 459-1129 ms.
+- Performance: Svar 0.7.219 caches the wire form of each message. A request body of 1000 messages takes 1.4 ms instead of 16 ms.
+- Performance: a budget fold searches from the oldest unit up, and fold scopes parse without a regex. The pre-fold stage of a long session takes 6.5-14.5 ms instead of 20-38 ms per iteration.
+- Performance: the context counts a repeated message or an unchanged group by its identity. Iteration records reuse their scopes.
+- Performance: the store reuses the formatted SQL of a repeated read, and YAML configuration reads skip path resolution. A read takes 4.8 us instead of 37 us, and a YAML read 11 us instead of 43 us.
+- Performance: operation hooks resolve once per call. Workspace roots resolve once per workspace value.
+- Performance: Python extension callbacks get the session root in their env. The syntax guards of vis-lang-python and vis-lang-clojure save one host call per context call.
+- Performance: the TUI uses Lanterna 3.1.5-vis.60. A screen fill takes 4 us instead of 54 us, and a frame takes 15-25% less time.
+- Performance: TUI render caches share one bounded Java LRU cache, and a block layout is kept. A stream frame takes 3.4 ms instead of 4.8-6.3 ms.
+- Performance: scene triangles fill in Java, router rows convert once per response, and the tab snapshot uses a constant template. A TUI key reaches the terminal at p90 1.2 ms instead of 3.4 ms.
+- TUI: Java render passes moved from vis-tui-render to vis-presentation and Lanterna.
+
+### Fixed
+- Extensions: after hooks run once for each tool call, not twice.
+- Settings: a secret row omits a null inherited value, so the settings catalog fits the gateway schema.
+- Workspace: cwd-root accepts a string cwd.
+- TUI: Clojure code blocks in REPL activity have colour. A scroll ease parks only for the rest of its tick.
+
 ## [v0.4.7] - 2026-11-01
 
 ### Added
