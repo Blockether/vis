@@ -76,7 +76,6 @@
     [com.blockether.vis.internal.persistance.core :as persistance]
     [com.blockether.vis.internal.paths :as paths]
     [com.blockether.vis.internal.python.project :as pyproj]
-    [com.blockether.vis.internal.session.progress :as progress]
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.system-trust :as system-trust]
     [com.blockether.vis.internal.config.toggles :as toggles]
@@ -701,13 +700,14 @@
         prompt-s
         (if (string? prompt) prompt (pr-str prompt))
 
-        tracker
-        (when on-chunk
-          (progress/make-progress-tracker {:on-update (fn [_timeline chunk]
-                                                        (on-chunk chunk))}))
-
+        ;; Forward only chunks with an iteration position, as the progress
+        ;; tracker did. Nothing here reads a timeline, so none is built: the
+        ;; tracker canonicalized the whole turn again for every chunk.
         on-chunk*
-        (when tracker (:on-chunk tracker))
+        (when on-chunk
+          (fn [chunk]
+            (when (:iteration chunk)
+              (on-chunk chunk))))
 
         q-opts
         (cond-> {}
