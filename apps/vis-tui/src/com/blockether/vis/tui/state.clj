@@ -951,11 +951,25 @@
                  (keep #(model-entry provider %) (:models provider))))
        vec))
 
+;; The footer asks for the cycle position in every frame. The fleet snapshot is
+;; identity-stable until a router read lands, so derive the entries once for it.
+(defonce ^:private cycle-entries* (atom nil))
+
 (defn- model-cycle-entries-cached
   "Model choices from the renderer's nonblocking fleet snapshot.
    Keyboard actions must not wait for provider HTTP either."
   []
-  (entries-from-providers (try (vis/configured-providers-cached) (catch Throwable _ nil))))
+  (let [providers
+        (try (vis/configured-providers-cached) (catch Throwable _ nil))
+
+        cached
+        @cycle-entries*]
+
+    (if (and cached (identical? providers (:providers cached)))
+      (:entries cached)
+      (let [entries (entries-from-providers providers)]
+        (reset! cycle-entries* {:providers providers :entries entries})
+        entries))))
 
 (defn- entry-index
   "Index (0-based) of the model-cycle ENTRY matching `provider`+`model`
@@ -966,6 +980,8 @@
           (when (and (= (:model e) model) (= (name (:provider-id e)) provider)) i))
         (map-indexed vector entries)))
 
+(defonce ^:private cycle-position* (atom nil))
+
 (defn model-cycle-position
   "Live `[position total]` (1-based) of `provider`/`model` within the model
    cycle, or nil when the current model isn't one of the cycle entries. The
@@ -975,9 +991,22 @@
    ones the C-x m handler steps through, so the count the button shows is
    exactly the count the cycle walks (issue #29)."
   [provider model]
-  (let [entries (model-cycle-entries-cached)]
-    (when-let [idx (entry-index entries provider model)]
-      [(inc (long idx)) (count entries)])))
+  (let [entries
+        (model-cycle-entries-cached)
+
+        cached
+        @cycle-position*]
+
+    (if (and cached
+             (identical? entries (:entries cached))
+             (= provider (:provider cached))
+             (= model (:model cached)))
+      (:position cached)
+      (let [position (when-let [idx (entry-index entries provider model)]
+                       [(inc (long idx)) (count entries)])]
+        (reset! cycle-position*
+          {:entries entries :provider provider :model model :position position})
+        position))))
 
 (defn- current-model-info
   []
