@@ -1928,6 +1928,47 @@ print(worker_value)"))))
                  (finally (worker/keep-spares! nil nil) (worker/stop-worker! key))))))))
 
 (defdescribe
+  prestart-worker-test
+  ;; Regression, v0.4.8 release run 41321545703: the native gateway loaded extensions
+  ;; in the prestarted shared worker while its warm-up still ran, and the loads failed.
+  (it
+    "publishes a prestarted worker only after its warm-up"
+    (with-worker-context
+      (fn [session]
+        (let [key
+              (worker/extension-worker-key session)
+
+              caller
+              (str session "-extension")
+
+              start
+              (System/nanoTime)
+
+              _
+              (worker/keep-spares! nil nil)
+
+              prestart
+              (future (worker/prestart-worker!
+                        key
+                        "import json, time\ntime.sleep(2)\njson.__vis_prestart_warm__ = True\n"))]
+
+          (try (loop [n 0]
+                 (when (and (< n 1000) (not (worker/worker-live? key)))
+                   (Thread/sleep 10)
+                   (recur (inc n))))
+               (expect (<= 2000 (quot (- (System/nanoTime) start) 1000000)))
+               @prestart
+               (worker/trust! key caller true)
+               (worker/install-runtime! key caller)
+               (expect (= "True"
+                          (str
+                            (worker/eval-str
+                              key
+                              caller
+                              "str(getattr(__import__('json'), '__vis_prestart_warm__', False))"))))
+               (finally (worker/stop-worker! key))))))))
+
+(defdescribe
   stop-all-workers-test
   ;; Regression: a gateway stop left the children of a trusted extension worker
   ;; running. The worker exited on EOF alone, so nothing killed its process group.

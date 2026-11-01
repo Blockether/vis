@@ -957,10 +957,20 @@
 (defn prestart-worker!
   "Start the worker for `k` before anything asks for it, and run `warmup` Python in a
    throwaway namespace of it. Its first context then skips those imports and compiles.
-   The worker has the same single owner as a lazy start: a caller that asks for `k`
-   meanwhile waits for this start. Never replaces a dead or retired worker."
+   The start and the warm-up hold the lock of `k`, and the worker is published only
+   after its warm-up. A caller that asks for `k` meanwhile waits, because a warm-up
+   that runs next to an extension load breaks that load. An existing worker, also a
+   dead or retired one, is left as it is."
   [k warmup]
-  (warm-up! (:peer (live k)) warmup)
+  (with-worker-lock
+    k
+    true
+    (fn []
+      (when-not (or (get @workers k) (get @retired-workers k))
+        (let [started (or (take-spare! k) (start! k))]
+          (try (warm-up! (:peer started) warmup)
+               (catch Throwable t (stop-state! started) (throw t)))
+          (swap! workers assoc k started)))))
   nil)
 
 (def ^:private INTERRUPT_REPLY_MS
