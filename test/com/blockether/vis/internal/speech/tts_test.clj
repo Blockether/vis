@@ -6,6 +6,7 @@
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.speech.tts :as tts]
             [com.blockether.vis.internal.speech.voices :as voices]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe it expect]]
             [taoensso.telemere :as tel])
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
@@ -471,6 +472,39 @@
             (expect (= {:is-preparable true} (tts/pocket-sample "alba")))
             (expect (not= first-sample (tts/prepare-pocket-sample! "alba")))
             (expect (= 2 (count @spoken)))))))
+  (it "reads a reference clip once for repeated sample questions"
+      ;; Each GET /v1/capabilities asked for every pocket voice's sample and hashed
+      ;; every reference clip again: 22 ms of each Companion page open (perf goal).
+      (let [root
+            (temp-models-root)
+
+            clip
+            (io/file root "mine" "carol.wav")
+
+            digests
+            (atom 0)
+
+            real-digest
+            util/sha256-digest]
+
+        (spit (doto clip io/make-parents) "first recording")
+        (with-redefs [assets/models-root
+                      (constantly (str root))
+
+                      voices/imported
+                      (constantly [{:id "carol" :clip (str clip) :is-imported true}])
+
+                      util/sha256-digest
+                      (fn []
+                        (swap! digests inc)
+                        (real-digest))]
+
+          (dotimes [_ 3]
+            (tts/pocket-sample "carol"))
+          (expect (= 1 @digests))
+          (spit clip "second recording")
+          (tts/pocket-sample "carol")
+          (expect (= 2 @digests)))))
   (it "refuses to speak an imported pocket sample without the model"
       (let [root
             (temp-models-root)

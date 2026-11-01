@@ -698,11 +698,34 @@
 
 (defn pocket-samples-asset [] (assets/entry pocket-samples-asset-id))
 
+(defonce ^:private clip-digests
+  ;; Path -> [length modified digest]. The capabilities read asks for every pocket
+  ;; voice's sample, so it must not read and hash each reference clip each time.
+  ;; One entry per clip path; an import again changes the length or the time.
+  (atom {}))
+
 (defn- clip-digest
   "The first 12 hex digits of the SHA-256 of `clip`."
   ^String [^File clip]
-  (let [^java.security.MessageDigest digest (util/sha256-digest)]
-    (subs (util/bytes->hex (.digest digest (Files/readAllBytes (.toPath clip)))) 0 12)))
+  (let [path
+        (.getPath clip)
+
+        stamp
+        [(.length clip) (.lastModified clip)]
+
+        [length modified digest]
+        (get @clip-digests path)]
+
+    (if (and digest (= stamp [length modified]))
+      digest
+      (let [^java.security.MessageDigest md
+            (util/sha256-digest)
+
+            digest
+            (subs (util/bytes->hex (.digest md (Files/readAllBytes (.toPath clip)))) 0 12)]
+
+        (swap! clip-digests assoc path (conj stamp digest))
+        digest))))
 
 (defn- pocket-packed-sample
   "The packed sample of `voice`, or nil when the pack does not speak for it. An
