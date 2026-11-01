@@ -938,6 +938,17 @@
           folded-turns
           (into #{} (mapcat #(get % "turns")) summaries)
 
+          ;; Earliest trailer index of each scope and boundary turn, found in one pass.
+          [first-scope-index first-turn-index]
+          (reduce (fn [[by-scope by-turn] [i [_ rec]]]
+                    (if-let [turn (boundary-turn rec)]
+                      [by-scope (cond-> by-turn (not (contains? by-turn turn)) (assoc turn i))]
+                      (let [scope (iter-scope-of rec)]
+                        [(cond-> by-scope (not (contains? by-scope scope)) (assoc scope i))
+                         by-turn])))
+                  [{} {}]
+                  (map-indexed vector trailer-iters))
+
           ;; summary → earliest trailer index it covers
           anchors
           (reduce (fn [m s]
@@ -947,9 +958,11 @@
                           turns
                           (set (get s "turns"))]
 
-                      (if-let [idx (some (fn [[i [_ rec]]]
-                                           (when (covered? scopes turns rec) i))
-                                         (map-indexed vector trailer-iters))]
+                      (if-let [idx (reduce (fn [found i]
+                                             (if found (min (long found) (long i)) i))
+                                           nil
+                                           (concat (keep first-scope-index scopes)
+                                                   (keep first-turn-index turns)))]
                         (update m
                                 idx
                                 (fnil conj [])

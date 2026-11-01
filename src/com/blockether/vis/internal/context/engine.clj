@@ -462,13 +462,16 @@
                       (map first))
                 ukeys))
 
+        ;; Index once: a scan per summary and turn grew with every fold.
+        scopes-by-turn
+        (reduce (fn [m [u k]]
+                  (update m (first k) (fnil conj #{}) u))
+                {}
+                ukeys)
+
         turn-scopes
         (fn [tn]
-          (into #{}
-                (comp (filter (fn [[_ k]]
-                                (= tn (first k))))
-                      (map first))
-                ukeys))
+          (get scopes-by-turn tn #{}))
 
         universe-turns
         (into (set turns)
