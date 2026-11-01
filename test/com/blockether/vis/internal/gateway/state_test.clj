@@ -36,6 +36,16 @@
 
 (wiring/install!)
 
+(defn- rows-by-id
+  "Stub `persistance/db-read-session-turns` over the stubbed turn `rows`."
+  [rows]
+  (fn [_ _ ids]
+    (let [by-id (into {} (map (juxt (comp str :id) identity)) rows)]
+      (into {}
+            (keep #(some->> (get by-id (str %))
+                            (vector (str %))))
+            ids))))
+
 ;; #245: enforce draft isolation at the session-creation boundary, not only in the UI.
 (defdescribe
   create-session-from-draft-root-test
@@ -1740,6 +1750,12 @@
                        #'persistance/db-list-session-turns
                        (fn [_ _]
                          [{:id tid :status "done" :content [{:type "prose" :markdown "Ready"}]}])
+                       #'persistance/db-list-session-turns-meta
+                       (fn [_ _]
+                         [{:id tid :status "done" :content [{:type "prose" :markdown "Ready"}]}])
+                       #'persistance/db-read-session-turns
+                       (rows-by-id
+                         [{:id tid :status "done" :content [{:type "prose" :markdown "Ready"}]}])
                        #'persistance/db-list-turns-attachments (fn [_ _]
                                                                  {})
                        #'persistance/db-list-session-turn-iterations (fn [_ _]
@@ -1776,17 +1792,21 @@
                 (expect (= "Ready" (get-in row ["content" 0 "markdown"])))
                 (expect (< (count (wire/json-str row)) 20000)))))
           ;; Recent-step pages must not fill the old multi-megabyte page budget.
-          (with-redefs [persistance/db-list-session-turns
-                        (fn [_ _]
-                          (mapv (fn [_]
-                                  {:id (random-uuid)
-                                   :status "done"
-                                   :content [{:type "prose" :markdown "Ready"}]})
-                                (range 10)))]
-            (let [page (state/transcript-page sid {:limit 24 :iteration-limit 8})]
-              (expect (= 4 (count (:turns page))))
-              (expect (= 6 (:offset page)))
-              (expect (:has-more page))))
+          (let [rows (mapv (fn [_]
+                             {:id (random-uuid)
+                              :status "done"
+                              :content [{:type "prose" :markdown "Ready"}]})
+                           (range 10))]
+            (with-redefs [persistance/db-list-session-turns (fn [_ _]
+                                                              rows)
+                          persistance/db-list-session-turns-meta (fn [_ _]
+                                                                   rows)
+                          persistance/db-read-session-turns (rows-by-id rows)]
+
+              (let [page (state/transcript-page sid {:limit 24 :iteration-limit 8})]
+                (expect (= 4 (count (:turns page))))
+                (expect (= 6 (:offset page)))
+                (expect (:has-more page)))))
           ;; A malformed trace must not hide a persisted answer.
           (with-redefs-fn {#'state/with-display-iteration (fn [_]
                                                             (throw (ex-info "Invalid trace" {})))}
@@ -1821,6 +1841,9 @@
       (with-redefs-fn {#'lp/db-info (constantly ::db)
                        #'persistance/db-list-session-turns (fn [_ _]
                                                              rows)
+                       #'persistance/db-list-session-turns-meta (fn [_ _]
+                                                                  rows)
+                       #'persistance/db-read-session-turns (rows-by-id rows)
                        #'persistance/db-list-turns-attachments (fn [_ ids]
                                                                  (zipmap ids (repeat [])))
                        #'state/transcript-turn (fn [_db _att row]
@@ -1871,6 +1894,9 @@
         (with-redefs-fn {#'lp/db-info (constantly ::db)
                          #'persistance/db-list-session-turns (fn [_ _]
                                                                rows)
+                         #'persistance/db-list-session-turns-meta (fn [_ _]
+                                                                    rows)
+                         #'persistance/db-read-session-turns (rows-by-id rows)
                          #'persistance/db-list-turns-attachments (fn [_ ids]
                                                                    (zipmap ids (repeat [])))
                          (ns-resolve 'com.blockether.vis.internal.gateway.state
@@ -1902,37 +1928,41 @@
               (expect (= 10 (count (:turns page))))
               (expect (= 0 (:offset page)))
               (expect (not (:has-more page))))))))
-  (it "keeps one row even when that row alone busts the budget, so paging always advances"
-      (let [sid
-            (java.util.UUID/randomUUID)
+  (it
+    "keeps one row even when that row alone busts the budget, so paging always advances"
+    (let [sid
+          (java.util.UUID/randomUUID)
 
-            rows
-            (mapv (fn [n]
-                    {:id (str "turn-" n) :position 1})
-                  (range 10))]
+          rows
+          (mapv (fn [n]
+                  {:id (str "turn-" n) :position 1})
+                (range 10))]
 
-        (with-redefs-fn {#'lp/db-info (constantly ::db)
-                         #'persistance/db-list-session-turns (fn [_ _]
-                                                               rows)
-                         #'persistance/db-list-turns-attachments (fn [_ ids]
-                                                                   (zipmap ids (repeat [])))
-                         (ns-resolve 'com.blockether.vis.internal.gateway.state
-                                     'TRANSCRIPT_PAGE_MAX_BYTES)
-                         (delay 100)
-                         #'state/transcript-turn (fn [_db _att row]
-                                                   {:turn_id (:id row)
-                                                    :text (apply str (repeat 900 "x"))})}
-          (fn []
-            ;; An empty page would strand the client: it would fetch forever and
-            ;; paint nothing.
-            (let [page (state/transcript-page sid {:limit 5})]
-              (expect (= ["turn-9"] (mapv #(get % "turn_id") (:turns page))))
-              (expect (= 9 (:offset page)))
-              (expect (:has-more page)))
-            ;; And the page BEFORE it advances by one too, so a walk terminates.
-            (let [page (state/transcript-page sid {:offset 4 :limit 5})]
-              (expect (= ["turn-8"] (mapv #(get % "turn_id") (:turns page))))
-              (expect (= 8 (:offset page)))))))))
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'persistance/db-list-session-turns (fn [_ _]
+                                                             rows)
+                       #'persistance/db-list-session-turns-meta (fn [_ _]
+                                                                  rows)
+                       #'persistance/db-read-session-turns (rows-by-id rows)
+                       #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                                 (zipmap ids (repeat [])))
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                   'TRANSCRIPT_PAGE_MAX_BYTES)
+                       (delay 100)
+                       #'state/transcript-turn (fn [_db _att row]
+                                                 {:turn_id (:id row)
+                                                  :text (apply str (repeat 900 "x"))})}
+        (fn []
+          ;; An empty page would strand the client: it would fetch forever and
+          ;; paint nothing.
+          (let [page (state/transcript-page sid {:limit 5})]
+            (expect (= ["turn-9"] (mapv #(get % "turn_id") (:turns page))))
+            (expect (= 9 (:offset page)))
+            (expect (:has-more page)))
+          ;; And the page BEFORE it advances by one too, so a walk terminates.
+          (let [page (state/transcript-page sid {:offset 4 :limit 5})]
+            (expect (= ["turn-8"] (mapv #(get % "turn_id") (:turns page))))
+            (expect (= 8 (:offset page)))))))))
 
 (defdescribe
   newest-answer-text-test
@@ -1953,6 +1983,9 @@
               (with-redefs-fn {#'lp/db-info (constantly ::db)
                                #'persistance/db-list-session-turns (fn [_ _]
                                                                      rows)
+                               #'persistance/db-list-session-turns-meta (fn [_ _]
+                                                                          rows)
+                               #'persistance/db-read-session-turns (rows-by-id rows)
                                #'persistance/db-list-turns-attachments (fn [_ ids]
                                                                          (zipmap ids (repeat [])))
                                #'state/transcript-turn
@@ -3401,7 +3434,7 @@
 ;; (the open of every session in the TUI and the Companion) did the same.
 (defn- iteration-reads
   "Call `read` over three stored turns. Answer the batch reads, single reads,
-   attachment reads and the result."
+   attachment reads, full turn lists and the result."
   [read]
   (let [singles
         (atom 0)
@@ -3412,6 +3445,9 @@
         attachment-reads
         (atom 0)
 
+        full-lists
+        (atom 0)
+
         rows
         (mapv (fn [n]
                 {:id (str "turn-" n) :position n :status :success})
@@ -3419,7 +3455,11 @@
 
     (with-redefs-fn {#'lp/db-info (constantly ::db)
                      #'persistance/db-list-session-turns (fn [_ _]
+                                                           (swap! full-lists inc)
                                                            rows)
+                     #'persistance/db-list-session-turns-meta (fn [_ _]
+                                                                rows)
+                     #'persistance/db-read-session-turns (rows-by-id rows)
                      #'persistance/db-list-turns-attachments (fn [_ ids]
                                                                (zipmap ids (repeat [])))
                      #'persistance/db-list-iterations-attachments-meta (fn [_ _]
@@ -3441,6 +3481,7 @@
           {:batches @batches
            :singles @singles
            :attachment-reads @attachment-reads
+           :full-lists @full-lists
            :result result})))))
 
 (defdescribe transcript-reads-iterations-once-test
@@ -3452,13 +3493,16 @@
                    (expect (= 1 attachment-reads))
                    (expect (= ["turn-0-it" "turn-1-it" "turn-2-it"]
                               (mapv #(get-in % ["iterations" 0 "id"]) result)))))
+             ;; A windowed page listed the payload of every turn to cut its window:
+             ;; 1.7 ms of a 200-turn page, against 0.9 ms for metadata and the window.
              (it "reads the iterations of a windowed page in one batch"
-                 (let [{:keys [batches singles attachment-reads result]}
+                 (let [{:keys [batches singles attachment-reads full-lists result]}
                        (iteration-reads #(state/transcript-page "sid"
                                                                 {:limit 3 :iteration-limit 8}))]
                    (expect (= [["turn-0" "turn-1" "turn-2"]] batches))
                    (expect (= 0 singles))
                    (expect (= 1 attachment-reads))
+                   (expect (= 0 full-lists))
                    (expect (= ["turn-0-it" "turn-1-it" "turn-2-it"]
                               (mapv #(get-in % ["iterations" 0 "id"]) (:turns result)))))))
 
@@ -6102,6 +6146,9 @@
                  (with-redefs-fn {#'lp/db-info (constantly ::db)
                                   #'persistance/db-list-session-turns (fn [_ _]
                                                                         rows)
+                                  #'persistance/db-list-session-turns-meta (fn [_ _]
+                                                                             rows)
+                                  #'persistance/db-read-session-turns (rows-by-id rows)
                                   #'persistance/db-list-turns-attachments (fn [_ ids]
                                                                             (zipmap ids
                                                                                     (repeat [])))

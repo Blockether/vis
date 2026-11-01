@@ -3004,6 +3004,14 @@
                                   parse-long)]
            (if (pos? (long (or configured 0))) (long configured) (* 2 1024 1024)))))
 
+(defn- window-turns
+  "Read the full rows of the metadata rows in `window`, in window order.
+   A page lists metadata only, so it reads payloads for its window and not for the whole session.
+   A row that the read does not return keeps its metadata."
+  [db sid window]
+  (let [by-id (persistance/db-read-session-turns db sid (map :id window))]
+    (mapv #(get by-id (str (:id %)) %) window)))
+
 (defn- budgeted-page-turns
   "Hydrate `window` (oldest-first rows) from its NEWEST row BACKWARDS, stopping
    AT the row that first exceeds `byte-limit` — that row is still
@@ -3074,7 +3082,9 @@
           (lp/db-info)
 
           all
-          (vec (persistance/db-list-session-turns db sid))
+          (vec (if limit
+                 (persistance/db-list-session-turns-meta db sid)
+                 (persistance/db-list-session-turns db sid)))
 
           total
           (long (count all))
@@ -3089,7 +3099,7 @@
           (long (min total (+ start lim)))
 
           window
-          (subvec all start end)
+          (if limit (window-turns db sid (subvec all start end)) (subvec all start end))
 
           att-by-soul
           (try (persistance/db-list-turns-attachments db (map :id window)) (catch Throwable _ {}))
