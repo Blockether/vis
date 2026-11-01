@@ -419,6 +419,8 @@ jobs:
         run: |
           # Apple tools need the runner's keychain preferences, not the smoke-test home.
           echo "VIS_MACOS_SIGNING_HOME=$HOME" >> "$GITHUB_ENV"
+          # The runner keeps empty directories of an earlier home; they import as namespace packages.
+          rm -rf "$RUNNER_TEMP/vis-native-home"
           mkdir -p "$RUNNER_TEMP/vis-native-home"
           echo "HOME=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
           echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
