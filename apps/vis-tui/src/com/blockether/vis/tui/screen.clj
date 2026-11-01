@@ -8171,6 +8171,14 @@
                             chat/resume-session)
                     (chat/make-session config)))))
 
+(defn- process-start-ms
+  "Epoch milliseconds when the OS started this process, or now when the OS does not say."
+  ^long []
+  (let [^java.util.Optional start (.startInstant (.info (java.lang.ProcessHandle/current)))]
+    (if (.isPresent start)
+      (.toEpochMilli ^java.time.Instant (.get start))
+      (System/currentTimeMillis))))
+
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
@@ -8186,8 +8194,20 @@
          (assoc opts :html? (some? (:html-terminal opts)))
 
          resolve-requested-session
-         #(pre-resolve-session-id! opts)]
+         #(pre-resolve-session-id! opts)
 
+         ;; Each startup phase as milliseconds after the OS started this process.
+         startup-origin
+         (process-start-ms)
+
+         startup-marks
+         (atom [])
+
+         mark-startup!
+         (fn [phase]
+           (swap! startup-marks conj [phase (- (System/currentTimeMillis) startup-origin)]))]
+
+     (mark-startup! :run-chat)
      (state/init!)
      ;; Subscribe to host notifications so any (vis/notify! ...) push
      ;; - from anywhere: this channel's click handler, an extension,
@@ -8218,6 +8238,7 @@
           (catch Throwable t
             (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                       "Toggle hydration from config failed; defaults stand.")))
+     (mark-startup! :config)
      (let [terminal
            (create-terminal! opts)
 
@@ -8285,17 +8306,30 @@
                             (fn []
                               (try
                                 (let [{:keys [id] :as startup-session}
-                                      (make-startup-session opts resolve-requested-session config)]
-                                  {:session startup-session
-                                   ;; Keep completion on the input thread memory-only.
-                                   :workspace (try (session-workspace id) (catch Throwable _ nil))
-                                   :title (try (session-db-title id) (catch Throwable _ nil))})
+                                      (make-startup-session opts resolve-requested-session config)
+
+                                      _
+                                      (mark-startup! :session)
+
+                                      ;; Keep completion on the input thread memory-only.
+                                      workspace
+                                      (try (session-workspace id) (catch Throwable _ nil))
+
+                                      _
+                                      (mark-startup! :workspace)
+
+                                      title
+                                      (try (session-db-title id) (catch Throwable _ nil))]
+
+                                  (mark-startup! :title)
+                                  {:session startup-session :workspace workspace :title title})
                                 (catch Throwable e {:error e}))))))))
 
            gateway-slash-load
            (volatile! nil)]
 
        (.startScreen screen)
+       (mark-startup! :screen)
        (vreset! toggle-listener-dispose
                 (vis/toggle-add-listener!
                   (fn [event]
@@ -8408,6 +8442,7 @@
                     (start-render-thread!
                       screen
                       (fn []
+                        (mark-startup! :first-frame)
                         (start-startup!)
                         ;; These pollers can touch the gateway/router, so they share
                         ;; the same strict AFTER-FIRST-FRAME boundary.
@@ -8945,6 +8980,15 @@
                                               (state/tab-id-for-session @state/app-db id)
                                               startup-session])
                              (warm-session-render! startup-session)
+                             (mark-startup! :bound)
+                             (tel/log! {:level :info
+                                        :id ::startup-phases
+                                        :data {:phases @startup-marks
+                                               :session-id (str id)
+                                               :history (count history)}}
+                                       (str "TUI startup bound its session at "
+                                            (second (peek @startup-marks))
+                                            " ms"))
                              ;; The UI is fully bound now. All follow-up work is either
                              ;; local or already asynchronous.
                              (vreset! startup-task ::settled)
