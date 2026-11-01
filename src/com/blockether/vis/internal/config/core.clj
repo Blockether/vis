@@ -1213,15 +1213,20 @@
   (doto (interpolate-env raw) warn-unresolved-env-refs!))
 
 (defn- yaml-file-stamp
-  "Path, nanosecond mtime and size; absent files retain their path in the stamp."
+  "Path, nanosecond mtime, size and file key; absent files retain their path in the stamp.
+   The file key names the file that a link resolves to, so a moved link reads again."
   [path]
   (let [f (io/file path)]
     (if (.isFile f)
-      (let [^java.nio.file.attribute.FileTime ft
-            (try (Files/getLastModifiedTime (.toPath f) (make-array java.nio.file.LinkOption 0))
-                 (catch java.io.IOException _ nil))]
-        [path (if ft (.to ft java.util.concurrent.TimeUnit/NANOSECONDS) (.lastModified f))
-         (.length f)])
+      (if-let [^java.nio.file.attribute.BasicFileAttributes attrs
+               (try (Files/readAttributes (.toPath f)
+                                          java.nio.file.attribute.BasicFileAttributes
+                                          ^"[Ljava.nio.file.LinkOption;"
+                                          (make-array java.nio.file.LinkOption 0))
+                    (catch java.io.IOException _ nil))]
+        [path (.to (.lastModifiedTime attrs) java.util.concurrent.TimeUnit/NANOSECONDS)
+         (.size attrs) (.fileKey attrs)]
+        [path (.lastModified f) (.length f)])
       [path nil nil])))
 
 (def ^:private yaml-config-cache-limit 256)
@@ -1255,7 +1260,7 @@
   "Parse one YAML file to its string-keyed representation WITHOUT spec
    validation. nil when absent / malformed / not a map. Shared by the strict
    `read-yaml-config-map` and the lenient machine-store fallback. Reuses raw
-   parses by canonical path, nanosecond mtime and size, including nil results;
+   parses by absolute path, nanosecond mtime, size and file key, including nil results;
    validation and environment interpolation remain outside the cache.
 
    NOTHING is rewritten on the way in: `jail:` is the ONE confinement block, so
@@ -1263,8 +1268,10 @@
    closed schema refuses the key by name instead of an operator believing a word
    Vis stopped reading."
   [path]
-  (let [path
-        (.getCanonicalPath (io/file path))
+  (let [;; The stamp, not a resolved path, tells a changed file apart. Resolving the
+        ;; path cost most of each read, and every turn reads these files many times.
+        path
+        (.getAbsolutePath (io/file path))
 
         stamp
         (yaml-file-stamp path)

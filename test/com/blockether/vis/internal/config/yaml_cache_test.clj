@@ -286,3 +286,31 @@
                      (expect (= "Ada" (get (deref old-read 5000 nil) "agent_name")))
                      (expect (= "Eve" (get (#'config/parse-yaml-config-map file) "agent_name")))
                      (finally (deliver release true))))))))))
+
+(defdescribe
+  yaml-cache-follows-a-moved-link
+  (it "reads the new file when a link moves to a file with the same time and size"
+      ;; The cache keys a path without resolving links, so the stamp must name the file.
+      (with-config-files
+        (fn [dir]
+          (let [a
+                (io/file dir "a.yml")
+
+                b
+                (io/file dir "b.yml")
+
+                link
+                (.toPath (io/file dir "vis.yml"))
+
+                same-time
+                (FileTime/from 1700000000000000000 TimeUnit/NANOSECONDS)]
+
+            (spit a "agent_name: Ada\n")
+            (spit b "agent_name: Bob\n")
+            (doseq [file [a b]]
+              (Files/setLastModifiedTime (.toPath ^java.io.File file) same-time))
+            (Files/createSymbolicLink link (.toPath a) (make-array FileAttribute 0))
+            (expect (= "Ada" (get (#'config/parse-yaml-config-map (str link)) "agent_name")))
+            (Files/delete link)
+            (Files/createSymbolicLink link (.toPath b) (make-array FileAttribute 0))
+            (expect (= "Bob" (get (#'config/parse-yaml-config-map (str link)) "agent_name"))))))))
