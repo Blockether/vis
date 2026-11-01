@@ -1908,6 +1908,30 @@
     describe-images
     (assoc :describe-images vision-describe/recall-descriptions)))
 
+;; Every request renders the whole trailer again, and the fold search and the price
+;; render it more times. A settled record renders the same messages each time.
+(def ^:private rendered-groups
+  "Rendered replay messages by iteration record and render inputs. The record value is
+   the key, so equal records share an entry; a collected record drops its entry."
+  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+
+(defn- rendered-group
+  "The messages that `render` returns for `iter-rec` with the other inputs `k`.
+   Use only for a render that reads nothing beside the record and `k`."
+  [iter-rec k render]
+  (let [^java.util.Map cache
+        rendered-groups
+
+        hit
+        (get (.get cache iter-rec) k ::none)]
+
+    (if (identical? ::none hit)
+      (let [messages (render)]
+        (locking cache
+          (.put cache iter-rec (assoc (.get cache iter-rec) k messages)))
+        messages)
+      hit)))
+
 (defn- conversation-suffix-groups
   "Append-only conversation suffix for the current turn, kept as `[pos messages]`
    GROUPS so a caller can price ONE iteration: each prior iteration
@@ -2051,12 +2075,17 @@
                          [])))))]
 
      (mapv (fn [[pos iter-rec :as entry]]
-             [pos
-              (vec (concat (when (and (not (:collapsed? iter-rec)) (:council-input iter-rec))
-                             [(council/input-message (:council-input iter-rec))])
-                           (when-not (:collapsed? iter-rec)
-                             (user-input-messages (:user-input iter-rec) vision?))
-                           (group-of entry)))])
+             (let [render
+                   #(vec (concat (when (and (not (:collapsed? iter-rec)) (:council-input iter-rec))
+                                   [(council/input-message (:council-input iter-rec))])
+                                 (when-not (:collapsed? iter-rec)
+                                   (user-input-messages (:user-input iter-rec) vision?))
+                                 (group-of entry)))]
+
+               [pos
+                (if (and (map? iter-rec) (not (contains? image-plan pos)))
+                  (rendered-group iter-rec [(contains? compatible pos) vision?] render)
+                  (render))]))
            iters))))
 
 (defn conversation-suffix
