@@ -592,20 +592,31 @@
 
         ;; Largest first, newest first on ties: every possible surviving coverer
         ;; is already known when an entry is visited. Dropped entries never need
-        ;; another comparison. The sorted set chooses the earliest ORIGINAL
-        ;; survivor when several incomparable supersets can inherit turn intent.
-        ;; O(n*m*s + n log n), m = survivors, s = subset-comparison cost;
-        ;; nested/equal folds have m=1, rather than the former cubic scan (#207).
+        ;; another comparison. A coverer holds every scope of the entry, so only
+        ;; the survivors that hold its rarest scope are candidates. The sorted
+        ;; sets choose the earliest ORIGINAL survivor when several incomparable
+        ;; supersets can inherit turn intent. Nested, equal and disjoint folds
+        ;; compare each entry at most once (#207).
         [survivors covered-by]
-        (reduce (fn [[survivors covered-by] i]
-                  (let [si (nth coverage i)]
-                    (if-let [j (when (seq si)
-                                 (some (fn [j]
-                                         (when (every? (nth coverage j) si) j))
-                                       survivors))]
-                      [survivors (assoc covered-by i j)]
-                      [(conj survivors i) covered-by])))
-                [(sorted-set) {}]
+        (reduce (fn [[survivors covered-by holders] i]
+                  (let [si (nth coverage i)
+
+                        candidates
+                        (when (seq si)
+                          (reduce (fn [best scope]
+                                    (let [held (get holders scope)]
+                                      (cond (nil? held) (reduced nil)
+                                            (or (nil? best) (< (count held) (count best))) held
+                                            :else best)))
+                                  nil
+                                  si))]
+                    (if-let [j (some (fn [j] (when (every? (nth coverage j) si) j)) candidates)]
+                      [survivors (assoc covered-by i j) holders]
+                      [(conj survivors i) covered-by
+                       (reduce (fn [m scope] (update m scope (fnil conj (sorted-set)) i))
+                               holders
+                               si)])))
+                [(sorted-set) {} {}]
                 (sort-by #(count (nth coverage %)) > (reverse (range (count v)))))
 
         ;; Merge in input order, using the ORIGINAL coverage above. Transferred

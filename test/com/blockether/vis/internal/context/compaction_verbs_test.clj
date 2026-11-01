@@ -772,6 +772,30 @@
           (expect (= (str n) (get (first out) "gist")))
           (expect (= (set (range 1 (inc n))) (set (get (first out) "turns"))))
           (expect (<= @comparisons n)))))
+  ;; A session that folds a new disjoint region on every iteration compared each
+  ;; fold with every earlier survivor: the pre-fold stage grew quadratically.
+  (it "compares disjoint folds with no other survivor"
+      (let [n
+            800
+
+            summaries
+            (mapv (fn [i] {"scopes" [(str "t" i "/i1") (str "t" i "/i2")] "gist" (str i)})
+                  (range 1 (inc n)))
+
+            comparisons
+            (atom 0)
+
+            every*
+            every?
+
+            out
+            (with-redefs [every? (fn [pred xs]
+                                   (when (and (set? pred) (set? xs)) (swap! comparisons inc))
+                                   (every* pred xs))]
+              (supersede-summaries summaries))]
+
+        (expect (= summaries out))
+        (expect (<= @comparisons n))))
   (it "sends whole-turn intent to the earliest surviving coverer, not the largest"
       (let [summaries [{"scopes" #{"t1/i1" "t2/i1"} "gist" "first"}
                        {"scopes" #{"t1/i1"} "turns" [1] "gist" "covered"}
