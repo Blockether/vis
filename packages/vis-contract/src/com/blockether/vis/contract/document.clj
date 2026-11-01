@@ -21,6 +21,8 @@
 
 (def ^:private schemas (atom {}))
 
+(def ^:private documents (atom {}))
+
 (def ^:private validators (atom {}))
 
 (defn schema-document
@@ -31,24 +33,34 @@
         (swap! schemas assoc document-name value)
         value)))
 
+(defn- compiled-document
+  "The compiled root of `document-name`. Each document compiles once; its definitions reuse it."
+  [document-name]
+  (or (get @documents document-name)
+      (let [source
+            (schema-document document-name)
+
+            dependencies
+            (map schema-document ["toggle" "council" "automations" "evals"])
+
+            compiled
+            (skjema/compile-schema source
+                                   {:base (get source "$id")
+                                    :registry (into {(get @common-schema "$id") @common-schema}
+                                                    (map (juxt #(get % "$id") identity))
+                                                    dependencies)
+                                    :format-assertion true})]
+
+        (swap! documents assoc document-name compiled)
+        compiled)))
+
 (defn- compiled-schema
   [document-name definition]
   (let [cache-key [document-name definition]]
     (or (get @validators cache-key)
-        (let [source (schema-document document-name)
-              schema-id (get source "$id")
-              dependencies (map schema-document ["toggle" "council" "automations" "evals"])
-              target (if definition
-                       (-> (select-keys source ["$schema" "$id" "$defs"])
-                           (assoc "$ref" (str "#/$defs/" definition)))
-                       source)
-              compiled (skjema/compile-schema target
-                                              {:base schema-id
-                                               :registry (into {(get @common-schema "$id")
-                                                                @common-schema}
-                                                               (map (juxt #(get % "$id") identity))
-                                                               dependencies)
-                                               :format-assertion true})]
+        (let [document (compiled-document document-name)
+              compiled
+              (if definition (skjema/compile-ref document (str "#/$defs/" definition)) document)]
 
           (swap! validators assoc cache-key compiled)
           compiled))))

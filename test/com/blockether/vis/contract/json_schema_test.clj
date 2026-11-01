@@ -2,6 +2,7 @@
   "JSON Schemas are the sole portable structural contracts."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.skjema.core :as skjema]
             [com.blockether.vis.contract.document :as document]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -22,15 +23,32 @@
                 (str/replace (.getName ^java.io.File file) #"\.json$" "")))
          set)))
 
-(defdescribe json-schema-only-contract-test
-             (it "ships no separate JSON catalogs beside the schemas"
-                 (expect (empty? (json-names contract-root))))
-             (it "loads and compiles every schema without a paired catalog"
-                 (let [names (json-names (io/file contract-root "schema"))]
-                   (expect (seq names))
-                   (doseq [schema-name names]
-                     (let [schema (document/schema-document schema-name)]
-                       (expect (= "https://json-schema.org/draft/2020-12/schema"
-                                  (get schema "$schema")))
-                       (expect (seq (get schema "$defs")))
-                       (expect (boolean? (document/valid? schema-name nil))))))))
+(defdescribe
+  json-schema-only-contract-test
+  (it "ships no separate JSON catalogs beside the schemas"
+      (expect (empty? (json-names contract-root))))
+  (it "loads and compiles every schema without a paired catalog"
+      (let [names (json-names (io/file contract-root "schema"))]
+        (expect (seq names))
+        (doseq [schema-name names]
+          (let [schema (document/schema-document schema-name)]
+            (expect (= "https://json-schema.org/draft/2020-12/schema" (get schema "$schema")))
+            (expect (seq (get schema "$defs")))
+            (expect (boolean? (document/valid? schema-name nil)))))))
+  ;; Regression: each definition compiled its whole document again. The 54
+  ;; view definitions cost 400 ms at gateway start.
+  (it "compiles a document once for all of its definitions"
+      (let [compiles
+            (atom [])
+
+            compile-schema
+            skjema/compile-schema]
+
+        (reset! @#'document/documents {})
+        (reset! @#'document/validators {})
+        (with-redefs [skjema/compile-schema (fn [schema opts]
+                                              (swap! compiles conj (:base opts))
+                                              (compile-schema schema opts))]
+          (doseq [definition (take 3 (keys (get (document/schema-document "view") "$defs")))]
+            (document/explain "view" definition {}))
+          (expect (= 1 (count @compiles)))))))
