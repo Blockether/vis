@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.4.6] - 2026-11-01
+## [v0.4.7] - 2026-11-01
 
 ### Added
 - Diagnostics: the TUI logs its startup phases. A first extension load logs its phases and its wait behind another load.
@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Performance: a whole transcript reads the iterations of all turns in one batch. A short transcript takes 4 ms instead of 15 ms.
 - Performance: a session stream opens without a parse of the whole journal. It takes 0.8 ms instead of 2.5 ms.
 - Performance: a TUI scroll moves the transcript rows with a terminal scroll region. A page scroll sends 17 KB instead of 57 KB.
+- Performance: the loop renders each settled prior iteration once and reuses it. The history suffix of 3000 iterations takes 2.6 ms instead of 33 ms.
+- Performance: request health counts message framing only for labelled parts. 2000 messages take 1.9 ms instead of 4.9 ms.
 
 ### Fixed
 - Activity: argument groups and message keys ignore the log print caps. Long or deep arguments no longer merge.
@@ -37,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - OpenRouter: the saved catalog keeps every model.
 - View: a restore that drops an owned picture saves the list again.
 - Python: a store sweep of another process no longer deletes guest modules while this process stages them.
+- Logging: every error that the engine catches and handles is now logged with its context.
 - Gateway: a failed session list read logs a warning with the read name and the error.
 
 ## [v0.4.3] - 2026-10-31
