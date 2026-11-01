@@ -22,6 +22,7 @@
     ;; A loaded CI runner can take longer than the 500 ms production capture budget.
     (try (with-redefs [paths/logs-dir #(.getAbsolutePath dir)
                        diagnostics/CAPTURE_MS 30000]
+
            (f dir))
          (finally (doseq [^File file (reverse (file-seq dir))]
                     (io/delete-file file true))))))
@@ -187,6 +188,21 @@
                                                                 (.getParent file)
                                                                 (make-array LinkOption 0)))))))))
             (finally (.countDown gate) (.join thread 2000)))))))
+  ;; Release runs of v0.4.10 and v0.4.11 failed the parked-worker case: the helper
+  ;; delivered its result before it freed the slot, so the next capture got :busy.
+  (it "frees the capture slot before the caller gets the result"
+      (let [bounded!
+            @#'diagnostics/bounded!
+
+            busy?
+            (atom false)]
+
+        (expect (= {:ok 5000}
+                   (frequencies (repeatedly 5000
+                                            #(:status (bounded! busy?
+                                                                30000
+                                                                (fn []
+                                                                  {:status :ok})))))))))
   (it
     "lists a parked virtual worker in the JVM thread dump and in the fallback"
     (with-logs

@@ -53,10 +53,12 @@
           helper
           (Thread. ^Runnable
                    (fn []
-                     (try (deliver result (f))
-                          (catch Throwable error
-                            (deliver result {:status :failed :error-type (.getName (class error))}))
-                          (finally (reset! busy? false))))
+                     ;; Free the slot first, so a caller that captures again at once is not busy.
+                     (deliver result
+                              (try (f)
+                                   (catch Throwable error
+                                     {:status :failed :error-type (.getName (class error))})
+                                   (finally (reset! busy? false)))))
                    "vis-gateway-hang-diagnostic")]
 
       (try (.setDaemon helper true)
