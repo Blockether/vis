@@ -836,3 +836,31 @@
                        nil)
                      nil)
                    (expect (= events @seen)))))
+
+(defdescribe provider-entries-cache-test
+             ;; Footer painters read the providers five times in each full frame. Each read converted
+             ;; every router row and model again: 73 us a read with a 450-model catalog.
+             (it "converts the router rows once until new rows land"
+                 (let [calls
+                       (atom 0)
+
+                       entry
+                       @#'client/provider-entry
+
+                       cache
+                       (atom {:at 1 :rows [{"id" "a" "models" ["m"]}]})]
+
+                   (with-redefs-fn {#'client/router-cache* cache
+                                    #'client/provider-entries* (atom nil)
+                                    #'client/now-ms (fn ^long []
+                                                      1)
+                                    #'client/provider-entry (fn [row]
+                                                              (swap! calls inc)
+                                                              (entry row))}
+                     (fn []
+                       (expect (= [:a] (mapv :id (client/configured-providers-cached))))
+                       (expect (= [:a] (mapv :id (:providers (client/get-router)))))
+                       (expect (= 1 @calls) "A second read reuses the converted rows")
+                       (swap! cache assoc :rows [{"id" "b"}])
+                       (expect (= [:b] (mapv :id (client/configured-providers-cached))))
+                       (expect (= 2 @calls) "New rows are converted once"))))))

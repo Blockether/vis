@@ -2856,7 +2856,23 @@
      (swap! router-cache* assoc :at (now-ms) :rows rows)
      (mapv provider-entry rows))))
 
-(defn configured-providers-cached [] (mapv provider-entry (router-cached)))
+;; The footer reads the providers several times in every full frame. The rows change only when a
+;; router read lands, so the entries are converted once for each rows value.
+(defonce ^:private provider-entries* (atom nil))
+
+(defn configured-providers-cached
+  []
+  (let [rows
+        (router-cached)
+
+        cached
+        @provider-entries*]
+
+    (if (and cached (identical? rows (:rows cached)))
+      (:entries cached)
+      (let [entries (mapv provider-entry rows)]
+        (reset! provider-entries* {:rows rows :entries entries})
+        entries))))
 
 (defn authenticated-preset-providers [] [])
 
