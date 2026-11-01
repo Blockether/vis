@@ -6342,6 +6342,11 @@
              stats
              @registry))
 
+(def ^:dynamic ^:private *turn-stats*
+  "Request-local store-wide turn stats of a listing, by session id, with the
+   registry sends applied; nil outside listings."
+  nil)
+
 (defn soul
   "Canonical (string-keyed) wire soul for one session: persisted record + live
    gateway status. Running sessions include their request, start timestamp, and
@@ -6379,10 +6384,14 @@
                              peek
                              (get (:turns entry)))
           server-time-ms (util/now-ms)
-          stats (with-sent-turn (try (some-> (lp/db-info)
-                                             (persistance/db-session-turn-stats sid))
-                                     (catch Throwable _ nil))
-                                (sent-turn-ms entry))
+          ;; A listing already read the stats of every session in one grouped
+          ;; query; a query per row doubled the page cost.
+          stats (if (some? *turn-stats*)
+                  (get *turn-stats* (str sid))
+                  (with-sent-turn (try (some-> (lp/db-info)
+                                               (persistance/db-session-turn-stats sid))
+                                       (catch Throwable _ nil))
+                                  (sent-turn-ms entry)))
           ;; EVERY payload a session reaches a client in carries its path, so no
           ;; answer can produce a row a client cannot key to its project
           ;; (`lean-workspace`). Resolved once here, which is also why the list
@@ -7739,7 +7748,8 @@
 
          page-soul
          (fn [sid]
-           (binding [*agent-name-for-root* name-for-root]
+           (binding [*agent-name-for-root* name-for-root
+                     *turn-stats* stats]
              (soul sid)))
 
          rows

@@ -3395,6 +3395,40 @@
                            (expect (= (str prefix ":" (get roots (get row "id")))
                                       (get row "agent_name")))))))))))
 
+(defdescribe session-page-reads-turn-stats-once-test
+             ;; Regression: every row of a `GET /v1/sessions` page queried its own turn
+             ;; stats, beside the store-wide query the page had already read
+             ;; (52 of 84 native samples of a 100-row page).
+             (it
+               "decorates every row from the store-wide stats of the page"
+               (let [per-session
+                     (atom 0)
+
+                     records
+                     (mapv (fn [sid]
+                             {:id sid :title sid :channel :api :created-at 1000})
+                           ["a" "b" "c"])]
+
+                 (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                  #'lp/by-channel (constantly records)
+                                  #'lp/by-id (into {} (map (juxt :id identity)) records)
+                                  #'persistance/db-session-turn-stats
+                                  (fn
+                                    ([_] {"a" {:turn-count 3 :answer-count 2}})
+                                    ([_ _] (swap! per-session inc) nil))
+                                  #'bus/live-turns (constantly {})
+                                  #'bus/live-turn-id (constantly nil)
+                                  #'bus/session-waiting? (constantly false)
+                                  #'bus/waiting-requests (constantly {"b" []})
+                                  #'state/resolve-workspace (constantly {:root "/repo"})
+                                  #'config/agent-name (constantly "vis")}
+                   (fn []
+                     (let [page (state/list-sessions-page :all {:limit 3})]
+                       (expect (= {"a" 3 "b" 0 "c" 0}
+                                  (into {} (map (juxt #(get % "id") #(get % "turn_count"))) (:sessions page))))
+                       (expect (= ["b"] (mapv #(get % "id") (:awaiting page))))
+                       (expect (= 0 @per-session))))))))
+
 ;; Regression: a navigator must follow liveness and content recency before paging.
 (defdescribe
   gateway-session-live-order-test
