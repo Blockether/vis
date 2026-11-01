@@ -1550,27 +1550,30 @@
    A DRAFT is a per-session clone under ~/.vis/drafts/<repo>/<label>; without
    `is_draft` a client cannot tell its `root` from a real project root and groups
    every draft as its own project. Clients group by `repo_root`, badge on
-   `is_draft`."
-  [sid]
-  (try (when-let [db (lp/db-info)]
-         (when-let [w (resolve-workspace db sid)]
-           (wire/canonical {:root (:root w)
-                            :repo-root (:repo-root w)
-                            :label (:label w)
-                            :fork-ms (:fork-ms w)
-                            :is-draft (boolean (workspace/draft? w))})))
+   `is_draft`. `w` is the record of `resolve-workspace`."
+  [w]
+  (try (when w
+         (wire/canonical {:root (:root w)
+                          :repo-root (:repo-root w)
+                          :label (:label w)
+                          :fork-ms (:fork-ms w)
+                          :is-draft (boolean (workspace/draft? w))}))
        (catch Throwable _ nil)))
 
 (def ^:dynamic ^:private *agent-name-for-root*
   "Request-local resolver, shared by page and awaiting rows; nil outside listings."
   nil)
 
+(defn- root-agent-name
+  "The agent name configured for workspace `root`, or the global name for nil."
+  [root]
+  ((or *agent-name-for-root* config/agent-name) root))
+
 (defn session-agent-name
   "Resolve identity on the gateway from this session's workspace, never a client's cwd."
   [sid]
-  ((or *agent-name-for-root* config/agent-name)
-    (when-let [db (lp/db-info)]
-      (:root (resolve-workspace db sid)))))
+  (root-agent-name (when-let [db (lp/db-info)]
+                     (:root (resolve-workspace db sid)))))
 
 (defn set-agent-name!
   "Save the gateway identity before notifying every open session. Reconnects read
@@ -6396,7 +6399,9 @@
           ;; answer can produce a row a client cannot key to its project
           ;; (`lean-workspace`). Resolved once here, which is also why the list
           ;; rows no longer resolve it a second time in `session-summary-extras`.
-          lean-ws (lean-workspace sid)
+          ;; One read serves both the path and the agent name of the row.
+          ws (try (some-> (lp/db-info) (resolve-workspace sid)) (catch Throwable _ nil))
+          lean-ws (lean-workspace ws)
           ;; The session's MODEL PIN, from the same `session_soul` row `by-id` just
           ;; read — no extra query, so every list row carries it and a client never
           ;; has to follow up with `GET /v1/sessions/:sid/model` to name the model it
@@ -6408,7 +6413,7 @@
         (cond-> {:id (str (:id session))
                  :channel (some-> (:channel session)
                                   name)
-                 :agent-name (session-agent-name sid)
+                 :agent-name (root-agent-name (:root ws))
                  :title (:title session)
                  :goal (:goal session)
                  :model (:model session) ; the state's ROOT model, NOT the pin below

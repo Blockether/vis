@@ -3398,10 +3398,14 @@
 (defdescribe session-page-reads-turn-stats-once-test
              ;; Regression: every row of a `GET /v1/sessions` page queried its own turn
              ;; stats, beside the store-wide query the page had already read
-             ;; (52 of 84 native samples of a 100-row page).
+             ;; (52 of 84 native samples of a 100-row page), and resolved its
+             ;; workspace twice: once for the path and once for the agent name.
              (it
                "decorates every row from the store-wide stats of the page"
                (let [per-session
+                     (atom 0)
+
+                     resolutions
                      (atom 0)
 
                      records
@@ -3420,14 +3424,18 @@
                                   #'bus/live-turn-id (constantly nil)
                                   #'bus/session-waiting? (constantly false)
                                   #'bus/waiting-requests (constantly {"b" []})
-                                  #'state/resolve-workspace (constantly {:root "/repo"})
+                                  #'state/resolve-workspace (fn [_ _]
+                                                              (swap! resolutions inc)
+                                                              {:root "/repo"})
                                   #'config/agent-name (constantly "vis")}
                    (fn []
                      (let [page (state/list-sessions-page :all {:limit 3})]
                        (expect (= {"a" 3 "b" 0 "c" 0}
                                   (into {} (map (juxt #(get % "id") #(get % "turn_count"))) (:sessions page))))
                        (expect (= ["b"] (mapv #(get % "id") (:awaiting page))))
-                       (expect (= 0 @per-session))))))))
+                       (expect (= 0 @per-session))
+                       ;; One workspace read per soul: three rows and one parked row.
+                       (expect (= 4 @resolutions))))))))
 
 ;; Regression: a navigator must follow liveness and content recency before paging.
 (defdescribe
