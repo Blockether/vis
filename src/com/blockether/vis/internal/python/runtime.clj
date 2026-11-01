@@ -32,6 +32,7 @@
            [java.io File]
            [java.lang ProcessBuilder$Redirect ProcessHandle]
            [java.nio.file CopyOption Files StandardCopyOption]
+           [java.security MessageDigest]
            [java.util.concurrent TimeUnit]))
 
 (set! *warn-on-reflection* true)
@@ -620,6 +621,26 @@
                     ["pyproject.toml" "setup.cfg" "setup.py"])]
              [path (.lastModified source)])))))
 
+(defn- update-digest!
+  "Add `part` to `digest` with a kind and length prefix, so two values never share input.
+   A sequential part adds its items. A string adds its UTF-8 bytes, other values `pr-str`."
+  [^MessageDigest digest part]
+  (if (sequential? part)
+    (do (.update digest (util/utf8 (str "[" (count part) ":")))
+        (doseq [item part]
+          (update-digest! digest item)))
+    (let [^bytes data (util/utf8 (if (string? part) part (pr-str part)))]
+      (.update digest (util/utf8 (str (if (string? part) "s" "v") (alength data) ":")))
+      (.update digest data))))
+
+(defn- digest-parts
+  "Lowercase-hex SHA-256 of `parts`. A string is hashed as it is: `pr-str` escaped a
+   500 KB `uv.lock` one character at a time on every extension load."
+  ^String [parts]
+  (let [digest (util/sha256-digest)]
+    (update-digest! digest parts)
+    (util/bytes->hex (.digest digest))))
+
 (defn- prepared-inputs
   "Digest what uv's offline check reads, without uv: project and lock files, local path
    sources, the environment and the embedded tools. The bytecode cache is an input too:
@@ -635,10 +656,10 @@
         (text "uv.lock")]
 
     (when (and (.isFile config) (.isDirectory packages))
-      (util/sha256-hex (pr-str [(.getCanonicalPath project) (text "pyproject.toml") lock
-                                (path-sources project lock) (slurp config) (.lastModified packages)
-                                (Interpreter/pythonExecutable) (runtime/uv-executable)
-                                (pycache-prefix)])))))
+      (digest-parts [(.getCanonicalPath project) (text "pyproject.toml") lock
+                     (path-sources project lock) (slurp config) (.lastModified packages)
+                     (str (Interpreter/pythonExecutable)) (str (runtime/uv-executable))
+                     (pycache-prefix)]))))
 
 (defn- stamped-packages
   "The site-packages of the project's last verified preparation, while its inputs are unchanged."
@@ -1200,9 +1221,9 @@
                [(.getPath dir) pyproject lock (when lock (path-sources dir lock))]))]
 
     (when (and (some #(nth % 2) files) (.isDirectory packages))
-      (util/sha256-hex (pr-str [(.getPath project) files (.lastModified packages)
-                                (sort (.list packages)) (Interpreter/pythonExecutable)
-                                (runtime/uv-executable) @shared-check-source])))))
+      (digest-parts [(.getPath project) files (.lastModified packages) (vec (sort (.list packages)))
+                     (Interpreter/pythonExecutable) (runtime/uv-executable)
+                     @shared-check-source]))))
 
 (defn- shared-prepared?
   "True when `inputs` are those of the project's last passed shared check or installation."

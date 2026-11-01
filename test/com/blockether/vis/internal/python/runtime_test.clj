@@ -558,6 +558,13 @@
                                 (prepare!)))
                          "a successful vis-agent python uv sync stamps the project"))))
            (finally (#'python-runtime/delete-tree! project)))))
+  ;; A shared stamp would skip uv after text moved between two input files.
+  (it "keeps the inputs of a stamp apart"
+      (let [digest #'python-runtime/digest-parts]
+        (expect (not= (digest ["ab" "c"]) (digest ["a" "bc"])))
+        (expect (not= (digest [["a"] "b"]) (digest ["a" ["b"]])))
+        (expect (not= (digest ["1"]) (digest [1])))
+        (expect (= (digest ["a" 1 nil]) (digest ["a" 1 nil])))))
   ;; A container image holds a prepared, read-only environment; a failed stamp must not fail it.
   (it "prepares a read-only environment with the uv check alone"
       (python-runtime/ensure-library!)
