@@ -2205,6 +2205,39 @@
   (long (svar/count-tokens "unknown"
                            (str/join "\n" (map (comp str :content) (:turn/messages rec))))))
 
+(defonce ^:private stamped-scopes
+  ;; ctx-atom -> `[records scopes]` of its last stamp. Each stamp repeats the records
+  ;; of the last one, so only a new record needs its scope.
+  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+
+(defn- trailer-scopes
+  "[[iteration-record-scope]] of each record in `trailer-iters`. Reuse the scope of a
+   record that the last stamp of `ctx-atom` saw at the same position."
+  [ctx-atom trailer-iters]
+  (let [^java.util.Map cache
+        stamped-scopes
+
+        [prior-records prior-scopes]
+        (.get cache ctx-atom)
+
+        prior-count
+        (count prior-records)
+
+        records
+        (mapv second trailer-iters)
+
+        scopes
+        (into []
+              (map-indexed (fn [i rec]
+                             (if (and (< (long i) prior-count)
+                                      (identical? rec (nth prior-records i)))
+                               (nth prior-scopes i)
+                               (iteration-record-scope rec))))
+              records)]
+
+    (.put cache ctx-atom [records scopes])
+    scopes))
+
 (defn stamp-iter-universe!
   "Record the raw iteration universe while pricing only `wire-iters` — the current
    provider-visible projection. A resolved model tokenizes each entry's rendered
@@ -2215,15 +2248,11 @@
   ([ctx-atom trailer-iters wire-iters] (stamp-iter-universe! ctx-atom trailer-iters wire-iters nil))
   ([ctx-atom trailer-iters wire-iters pricing]
    (when ctx-atom
-     (let [scope-of
-           iteration-record-scope
+     (let [scopes
+           (trailer-scopes ctx-atom trailer-iters)
 
            uni
-           (into []
-                 (comp (keep (fn [[_ rec]]
-                               (scope-of rec)))
-                       (distinct))
-                 trailer-iters)
+           (into [] (comp (keep identity) (distinct)) scopes)
 
            visible
            (or wire-iters trailer-iters)
@@ -2244,14 +2273,9 @@
                    :else (long (estimate wire-rec))))
 
            [weights turn-weights]
-           (reduce (fn [[weights turn-weights] [[_ raw-rec] [pos wire-rec]]]
-                     (let [sc
-                           (scope-of raw-rec)
-
-                           turn
-                           (when (and (:turn/boundary raw-rec) (not (:turn/current? raw-rec)))
-                             (:turn/position raw-rec))]
-
+           (reduce (fn [[weights turn-weights] [sc [_ raw-rec] [pos wire-rec]]]
+                     (let [turn (when (and (:turn/boundary raw-rec) (not (:turn/current? raw-rec)))
+                                  (:turn/position raw-rec))]
                        (cond sc [(assoc! weights
                                          sc
                                          (+ (long (get weights sc 0))
@@ -2265,7 +2289,7 @@
                                                 (weigh pos wire-rec estimated-boundary-tokens))))]
                              :else [weights turn-weights])))
                    [(transient {}) (transient {})]
-                   (map vector trailer-iters visible))]
+                   (map vector scopes trailer-iters visible))]
 
        (swap! ctx-atom assoc
          "engine_iter_universe" uni
