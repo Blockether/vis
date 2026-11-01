@@ -2247,11 +2247,20 @@
 (defn- paint-trace-row!
   "Paint a trace row: an attachment card, an iteration header, a recap, a hint or the queue header."
   [^TextGraphics g {:keys [bg-color fbx fill-iw iw line meta viewport-top x y]}]
-  (let [fbx (long fbx)
-        fill-iw (long fill-iw)
-        iw (long iw)
-        x (long x)
-        y (long y)]
+  (let [fbx
+        (long fbx)
+
+        fill-iw
+        (long fill-iw)
+
+        iw
+        (long iw)
+
+        x
+        (long x)
+
+        y
+        (long y)]
 
     (cond
       ;; Attachment card rows paint their own frame and card paper.
@@ -2266,8 +2275,11 @@
           (p/put-str! g x y (subs line 1))
           ;; The block header toggles its code and operation rows.
           (when (= :toggle-details (:kind meta))
-            (let [abs-row (+ (long viewport-top) (long y))
-                  click-width (long (or (:click-width meta) iw))]
+            (let [abs-row
+                  (+ (long viewport-top) (long y))
+
+                  click-width
+                  (long (or (:click-width meta) iw))]
 
               (.register interactions/hit-map
                          {:bounds {:row abs-row :col x :width click-width}
@@ -2278,33 +2290,48 @@
       ;; Recap metadata selects the badge and accent; unknown kinds use
       ;; the neutral fallback.
       (str/starts-with? line recap-marker)
-      (let [raw (subs line 1)
-            recap-kind (:recap-kind meta)
-            kind-fg (case recap-kind
-                      :task
-                      t/warning-fg
+      (let [raw
+            (subs line 1)
 
-                      :spec
-                      t/md-h2-fg
+            recap-kind
+            (:recap-kind meta)
 
-                      :fact
-                      t/code-syntax-number-fg
+            kind-fg
+            (case recap-kind
+              :task
+              t/warning-fg
 
-                      :title
-                      t/md-h1-fg
+              :spec
+              t/md-h2-fg
 
-                      :recap
-                      t/dialog-hint-key
+              :fact
+              t/code-syntax-number-fg
 
-                      :consult
-                      t/link-chrome-fg
+              :title
+              t/md-h1-fg
 
-                      t/dialog-hint)
-            trimmed (str/triml raw)
-            parts (str/split trimmed #"\s+" 2)
-            badge-token (first parts)
-            rest-text (or (second parts) "")
-            badge? (and recap-kind (contains? recap-kinds badge-token))]
+              :recap
+              t/dialog-hint-key
+
+              :consult
+              t/link-chrome-fg
+
+              t/dialog-hint)
+
+            trimmed
+            (str/triml raw)
+
+            parts
+            (str/split trimmed #"\s+" 2)
+
+            badge-token
+            (first parts)
+
+            rest-text
+            (or (second parts) "")
+
+            badge?
+            (and recap-kind (contains? recap-kinds badge-token))]
 
         (if-not badge?
           ;; Untagged or first-wrap continuation row — same legacy paint.
@@ -2320,9 +2347,16 @@
                                               t/code-block-fg
                                               t/code-block-bg)))
           ;; Tagged head row — paint gutter + badge + body.
-          (let [gutter-x (inc (long x))       ; col after leading pad
-                badge-x (+ (long gutter-x) 2) ; ┃ + space
-                body-x (+ (long badge-x) (count badge-token) 2)]
+          (let [gutter-x
+                (inc (long x))
+
+                ; col after leading pad
+                badge-x
+                (+ (long gutter-x) 2)
+
+                ; ┃ + space
+                body-x
+                (+ (long badge-x) (count badge-token) 2)]
 
             ;; Leading pad space first — keeps the band
             ;; aligned with the surrounding chrome.
@@ -2359,11 +2393,10 @@
       ;; REGULAR bubble bg, italic. Deliberately NOT the dim queue
       ;; band, so the hint reads as an actionable control, not as
       ;; another queued message.
-      (str/starts-with? line hint-marker)
-      (let [raw (subs line 1)]
-        (p/set-colors! g t/header-active-tab-accent bg-color)
-        (p/fill-rect! g fbx y fill-iw 1)
-        (p/styled g [p/ITALIC] (p/put-str! g x y raw)))
+      (str/starts-with? line hint-marker) (let [raw (subs line 1)]
+                                            (p/set-colors! g t/header-active-tab-accent bg-color)
+                                            (p/fill-rect! g fbx y fill-iw 1)
+                                            (p/styled g [p/ITALIC] (p/put-str! g x y raw)))
       ;; ── Queued section header — a top-left corner glyph `┌` plus a
       ;; bold accent label ("Queued · N") on the regular bubble
       ;; bg. The rail runs down the WHOLE queue block (header,
@@ -2391,16 +2424,26 @@
                                 viewport-top))))))
 
 (def ^:private queue-row-markers
-  #{queue-border-marker queue-item-marker step-digest-marker user-input-hdr-marker user-input-marker})
+  #{queue-border-marker queue-item-marker step-digest-marker user-input-hdr-marker
+    user-input-marker})
 
 (defn- paint-queue-row!
   "Paint a queue row, a step digest or a delivered message row."
   [^TextGraphics g {:keys [bg-color fbx fill-iw iw line meta viewport-top x y]}]
-  (let [fbx (long fbx)
-        fill-iw (long fill-iw)
-        iw (long iw)
-        x (long x)
-        y (long y)]
+  (let [fbx
+        (long fbx)
+
+        fill-iw
+        (long fill-iw)
+
+        iw
+        (long iw)
+
+        x
+        (long x)
+
+        y
+        (long y)]
 
     (cond
       ;; ── Queued message row — left rail `│`, then the ordinal
@@ -2411,24 +2454,43 @@
       ;; the rail. `:queue-gutter` in meta is the ordinal column
       ;; width (0 for the spacer rows, which paint the rail only).
       (str/starts-with? line queue-item-marker)
-      (let [raw (subs line 1)
+      (let [raw
+            (subs line 1)
+
             ;; C-x e focus: the selected row takes the shared list selection, bold
             ;; and reversed (`p/selection-styles`): row ink as the fill, every span
             ;; in the row paper. The accent fill hid accent and hint text (light).
-            selected? (:queue-selected? meta)
-            ink (fn [color]
-                  (if selected? bg-color color))
-            bg-color (if selected? t/dialog-fg bg-color)
-            gutter-n (long (or (:queue-gutter meta) 0))
-            cut (min gutter-n (count raw))
-            ord (subs raw 0 cut)
-            suffix (str (:queue-suffix meta))
-            msg (subs raw cut)
+            selected?
+            (:queue-selected? meta)
+
+            ink
+            (fn [color]
+              (if selected? bg-color color))
+
+            bg-color
+            (if selected? t/dialog-fg bg-color)
+
+            gutter-n
+            (long (or (:queue-gutter meta) 0))
+
+            cut
+            (min gutter-n (count raw))
+
+            ord
+            (subs raw 0 cut)
+
+            suffix
+            (str (:queue-suffix meta))
+
+            msg
+            (subs raw cut)
+
             ;; A marked row ends in ` · next iter`, painted in accent
             ;; after the dim preview.
-            body (if (and (seq suffix) (str/ends-with? msg suffix))
-                   (subs msg 0 (- (count msg) (count suffix)))
-                   msg)]
+            body
+            (if (and (seq suffix) (str/ends-with? msg suffix))
+              (subs msg 0 (- (count msg) (count suffix)))
+              msg)]
 
         (p/set-bg! g bg-color)
         (p/fill-rect! g fbx y fill-iw 1)
@@ -2453,10 +2515,7 @@
                                         (if selected? bg-color t/code-block-bg)))
         (when (not= body msg)
           (p/set-colors! g (ink t/header-active-tab-accent) bg-color)
-          (p/put-str! g
-                      (+ (long x) 2 gutter-n (long (p/display-width body)))
-                      y
-                      suffix))
+          (p/put-str! g (+ (long x) 2 gutter-n (long (p/display-width body))) y suffix))
         ;; `Send it now  C-x N` ends the row while a turn runs. The preview
         ;; already left room for it.
         (when-let [send (:queue-send meta)]
@@ -2471,16 +2530,21 @@
           (p/put-str! g x y (str "└" (repeat-str "─" (max 0 (dec (long iw)))))))
       ;; A step digest stays on transcript paper; only its state colors it.
       (str/starts-with? line step-digest-marker)
-      (let [raw (subs line 1)
-            tone-fg (case (:status-tone meta)
-                      :running
-                      t/warning-fg
+      (let [raw
+            (subs line 1)
 
-                      :error
-                      t/status-bad
+            tone-fg
+            (case (:status-tone meta)
+              :running
+              t/warning-fg
 
-                      t/text-fg)
-            abs-row (+ (long viewport-top) (long y))]
+              :error
+              t/status-bad
+
+              t/text-fg)
+
+            abs-row
+            (+ (long viewport-top) (long y))]
 
         (p/set-colors! g tone-fg bg-color)
         (p/fill-rect! g fbx y fill-iw 1)
@@ -2493,20 +2557,21 @@
                     :collapsed? (:collapsed? meta)})
         ;; The live word of the row wins its own cells.
         (when-let [live (:digest-live meta)]
-          (draw-digest-live! g
-                             (assoc live :session-id (:session-id meta))
-                             x
-                             y
-                             iw
-                             viewport-top)))
+          (draw-digest-live! g (assoc live :session-id (:session-id meta)) x y iw viewport-top)))
       ;; ── Delivered message — a queued message the running turn received at
       ;; this step (`→ Send now`). It paints like a normal user message: one
       ;; header row `You · Queued · sent now · iter N`, then the words on the user
       ;; bubble paper with the bubble's 2-column padding and its left rail.
       (str/starts-with? line user-input-hdr-marker)
-      (let [raw (subs line 1)
-            [role label meta-text] (str/split raw #" · " 3)
-            sep " · "
+      (let [raw
+            (subs line 1)
+
+            [role label meta-text]
+            (str/split raw #" · " 3)
+
+            sep
+            " · "
+
             label-x
             (+ (long x) (long (p/display-width role)) (long (p/display-width sep)))]
 
@@ -2521,10 +2586,7 @@
           (p/styled g [p/BOLD] (p/put-str! g label-x y label)))
         (when meta-text
           (p/set-colors! g t/dialog-hint bg-color)
-          (p/put-str! g
-                      (+ label-x (long (p/display-width label)))
-                      y
-                      (str sep meta-text))))
+          (p/put-str! g (+ label-x (long (p/display-width label))) y (str sep meta-text))))
       (str/starts-with? line user-input-marker)
       (let [raw (subs line 1)]
         (p/set-bg! g t/user-bubble-bg)
@@ -2546,17 +2608,25 @@
         ;; A paste in the message folds; its summary row is the toggle.
         (register-toggle-region! meta viewport-top y x iw)))))
 
-(def ^:private activity-row-markers
-  #{activity-marker})
+(def ^:private activity-row-markers #{activity-marker})
 
 (defn- paint-activity-kind!
   "Paint the part of an activity row that its kind owns."
   [^TextGraphics g meta x y iw right-inset viewport-top band-fg band-bg tone-fg fbx]
-  (let [x (long x)
-        y (long y)
-        iw (long iw)
-        right-inset (long right-inset)
-        fbx (long fbx)]
+  (let [x
+        (long x)
+
+        y
+        (long y)
+
+        iw
+        (long iw)
+
+        right-inset
+        (long right-inset)
+
+        fbx
+        (long fbx)]
 
     (case (:kind meta)
       :activity-live-entry
@@ -2565,19 +2635,16 @@
       (:activity-row :activity-header)
       (do (p/set-colors! g
                          (cond (= :activity-header (:kind meta)) band-fg
-                               (contains? #{:error :running} (:status-tone meta))
-                               tone-fg
+                               (contains? #{:error :running} (:status-tone meta)) tone-fg
                                :else t/result-highlight-fg)
                          band-bg)
           (p/styled g
                     [p/BOLD]
-                    (p/put-str!
-                      g
-                      (+ (long x) (long (:operation-col meta)))
-                      y
-                      (p/ellipsize
-                        (str (:operation-label meta))
-                        (max 0 (- (long iw) (long (:operation-col meta)))))))
+                    (p/put-str! g
+                                (+ (long x) (long (:operation-col meta)))
+                                y
+                                (p/ellipsize (str (:operation-label meta))
+                                             (max 0 (- (long iw) (long (:operation-col meta)))))))
           ;; An Activity row IS a disclosure: pressing it opens that
           ;; invocation's bounded evidence through the one detail
           ;; expansion store, so bulk fold and `C-x t` reach it too.
@@ -2597,8 +2664,11 @@
       ;; only where the file lives, the filename wears the darker ink
       ;; because it is the answer.
       :activity-file
-      (let [path-col (+ (long x) (long (:path-col meta)))
-            directory (str (:dir meta))]
+      (let [path-col
+            (+ (long x) (long (:path-col meta)))
+
+            directory
+            (str (:dir meta))]
 
         (p/set-colors! g t/code-duration-fg band-bg)
         (p/put-str! g (+ (long x) (long (:mark-col meta))) y (str (:mark meta)))
@@ -2606,14 +2676,10 @@
           (p/set-colors! g t/dialog-hint band-bg)
           (p/put-str! g path-col y directory))
         (p/set-colors! g band-fg band-bg)
-        (p/put-str! g
-                    (+ path-col (long (p/display-width directory)))
-                    y
-                    (str (:file-name meta)))
+        (p/put-str! g (+ path-col (long (p/display-width directory))) y (str (:file-name meta)))
         (when (:node-id meta)
           (.register interactions/hit-map
-                     {:bounds
-                      {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                     {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                       :kind :toggle-details
                       :session-id (:session-id meta)
                       :node-id (:node-id meta)
@@ -2626,9 +2692,7 @@
                       (+ (long x) (long (:mark-col meta)))
                       y
                       (let [mark (str (:mark meta))]
-                        (if (str/blank? mark)
-                          (str (:label meta))
-                          (str mark " " (:label meta)))))
+                        (if (str/blank? mark) (str (:label meta)) (str mark " " (:label meta)))))
           ;; A paging rule is pressed for its RECORD, not for a
           ;; disclosure: it carries the history it pages, the cursor
           ;; the next window starts at, the revision that window has
@@ -2636,8 +2700,7 @@
           (case (:kind meta)
             :activity-page
             (.register interactions/hit-map
-                       {:bounds
-                        {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                       {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                         :kind :activity-page
                         :session-id (:session-id meta)
                         :history-id (:history-id meta)
@@ -2647,8 +2710,7 @@
 
             :activity-search
             (.register interactions/hit-map
-                       {:bounds
-                        {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                       {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                         :kind :activity-search
                         :session-id (:session-id meta)
                         :history-id (:history-id meta)
@@ -2656,8 +2718,7 @@
 
             (when (:node-id meta)
               (.register interactions/hit-map
-                         {:bounds
-                          {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                         {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                           :kind :toggle-details
                           :session-id (:session-id meta)
                           :node-id (:node-id meta)
@@ -2670,31 +2731,40 @@
       ;; turn's own paper, because a slab of error colour under four
       ;; lines of prose is decoration, not meaning.
       :activity-diff
-      (let [diff-kind (:diff-kind meta)
-            diff-bg (case diff-kind
-                      :add
-                      t/code-ok-bg
+      (let [diff-kind
+            (:diff-kind meta)
 
-                      :del
-                      t/code-err-bg
+            diff-bg
+            (case diff-kind
+              :add
+              t/code-ok-bg
 
-                      band-bg)
-            diff-fg (case diff-kind
-                      :add
-                      t/code-success-fg
+              :del
+              t/code-err-bg
 
-                      :del
-                      t/code-error-fg
+              band-bg)
 
-                      :meta
-                      t/code-syntax-keyword-fg
+            diff-fg
+            (case diff-kind
+              :add
+              t/code-success-fg
 
-                      :error
-                      t/dialog-hint
+              :del
+              t/code-error-fg
 
-                      t/code-block-fg)
-            band-col (+ (long x) (long (:band-col meta)))
-            band-w (max 0 (- (+ (long fbx) (long iw)) band-col))]
+              :meta
+              t/code-syntax-keyword-fg
+
+              :error
+              t/dialog-hint
+
+              t/code-block-fg)
+
+            band-col
+            (+ (long x) (long (:band-col meta)))
+
+            band-w
+            (max 0 (- (+ (long fbx) (long iw)) band-col))]
 
         (p/set-colors! g diff-fg diff-bg)
         (p/fill-rect! g band-col y band-w 1)
@@ -2704,8 +2774,11 @@
       ;; the first command bold, each operator in the accent, stderr in the
       ;; error ink and notes muted.
       :activity-terminal
-      (let [band-col (+ (long x) (long (:band-col meta)))
-            band-w (max 0 (- (+ (long fbx) (long iw)) band-col))]
+      (let [band-col
+            (+ (long x) (long (:band-col meta)))
+
+            band-w
+            (max 0 (- (+ (long fbx) (long iw)) band-col))]
 
         (p/set-colors! g t/code-block-fg t/code-block-bg)
         (p/fill-rect! g band-col y band-w 1)
@@ -2735,57 +2808,90 @@
 (defn- paint-activity-row!
   "Paint an activity row inside the Code surface."
   [^TextGraphics g {:keys [fbx fill-iw iw line meta right-inset viewport-top x y]}]
-  (let [fbx (long fbx)
-        fill-iw (long fill-iw)
-        iw (long iw)
-        right-inset (long right-inset)
-        x (long x)
-        y (long y)]
+  (let [fbx
+        (long fbx)
+
+        fill-iw
+        (long fill-iw)
+
+        iw
+        (long iw)
+
+        right-inset
+        (long right-inset)
+
+        x
+        (long x)
+
+        y
+        (long y)]
 
     (cond
       ;; Activity continues the Code surface, with independent disclosure.
       (str/starts-with? line activity-marker)
-      (let [raw (subs line 1)
-            band-bg t/code-block-bg
-            band-fg t/code-block-fg
-            tone-fg (case (:status-tone meta)
-                      :running
-                      t/warning-fg
+      (let [raw
+            (subs line 1)
 
-                      :error
-                      t/status-bad
+            band-bg
+            t/code-block-bg
 
-                      :ok
-                      t/status-ok
+            band-fg
+            t/code-block-fg
 
-                      t/code-duration-fg)]
+            tone-fg
+            (case (:status-tone meta)
+              :running
+              t/warning-fg
+
+              :error
+              t/status-bad
+
+              :ok
+              t/status-ok
+
+              t/code-duration-fg)]
 
         (p/set-colors! g band-fg band-bg)
         (p/fill-rect! g fbx y fill-iw 1)
         (when-not (= :activity-live-entry (:kind meta))
-          (p/paint-styled-line! g
-                                x
-                                y
-                                raw
-                                band-fg
-                                band-bg
-                                t/code-block-fg
-                                t/code-block-bg))
+          (p/paint-styled-line! g x y raw band-fg band-bg t/code-block-fg t/code-block-bg))
         (register-toggle-region! meta viewport-top y x iw)
-        (paint-activity-kind! g meta x y iw right-inset viewport-top band-fg band-bg tone-fg fbx)))))
+        (paint-activity-kind! g
+                              meta
+                              x
+                              y
+                              iw
+                              right-inset
+                              viewport-top
+                              band-fg
+                              band-bg
+                              tone-fg
+                              fbx)))))
 
 (def ^:private code-row-markers
-  #{code-err-marker code-err-pad-marker code-marker code-ok-marker code-ok-pad-marker code-pad-marker err-result-marker iteration-pad-marker result-marker thinking-marker})
+  #{code-err-marker code-err-pad-marker code-marker code-ok-marker code-ok-pad-marker
+    code-pad-marker err-result-marker iteration-pad-marker result-marker thinking-marker})
 
 (defn- paint-code-row!
   "Paint a thinking, code, result or code padding row."
   [^TextGraphics g {:keys [bg-color fbx fill-iw iw line meta right-inset viewport-top x y]}]
-  (let [fbx (long fbx)
-        fill-iw (long fill-iw)
-        iw (long iw)
-        right-inset (long right-inset)
-        x (long x)
-        y (long y)]
+  (let [fbx
+        (long fbx)
+
+        fill-iw
+        (long fill-iw)
+
+        iw
+        (long iw)
+
+        right-inset
+        (long right-inset)
+
+        x
+        (long x)
+
+        y
+        (long y)]
 
     (cond
       (str/starts-with? line thinking-marker)
@@ -2819,13 +2925,21 @@
                         :collapsed? (:collapsed? meta)}))))
       ;; ── Code (success) - light green bg ──
       (str/starts-with? line code-ok-marker)
-      (let [raw (subs line 1)
-            abs-row (+ (long viewport-top) (long y))
-            hovered? (and (= :toggle-details (:kind meta))
-                          (= abs-row
-                             (:row (:bounds (.hovered interactions/hit-map)))))
-            row-bg (code-row-bg meta hovered? t/code-ok-bg)
-            row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
+      (let [raw
+            (subs line 1)
+
+            abs-row
+            (+ (long viewport-top) (long y))
+
+            hovered?
+            (and (= :toggle-details (:kind meta))
+                 (= abs-row (:row (:bounds (.hovered interactions/hit-map)))))
+
+            row-bg
+            (code-row-bg meta hovered? t/code-ok-bg)
+
+            row-fg
+            (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
         (p/set-colors! g row-fg row-bg)
         (p/fill-rect! g fbx y fill-iw 1)
@@ -2837,13 +2951,21 @@
         (register-toggle-region! meta viewport-top y x iw))
       ;; ── Code (error) - light red bg ──
       (str/starts-with? line code-err-marker)
-      (let [raw (subs line 1)
-            abs-row (+ (long viewport-top) (long y))
-            hovered? (and (= :toggle-details (:kind meta))
-                          (= abs-row
-                             (:row (:bounds (.hovered interactions/hit-map)))))
-            row-bg (code-row-bg meta hovered? t/code-err-bg)
-            row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
+      (let [raw
+            (subs line 1)
+
+            abs-row
+            (+ (long viewport-top) (long y))
+
+            hovered?
+            (and (= :toggle-details (:kind meta))
+                 (= abs-row (:row (:bounds (.hovered interactions/hit-map)))))
+
+            row-bg
+            (code-row-bg meta hovered? t/code-err-bg)
+
+            row-fg
+            (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
         (p/set-colors! g row-fg row-bg)
         (p/fill-rect! g fbx y fill-iw 1)
@@ -2851,13 +2973,19 @@
         (register-toggle-region! meta viewport-top y x iw))
       ;; ── Code (running, no status yet) - neutral bg ──
       (str/starts-with? line code-marker)
-      (let [abs-row (+ (long viewport-top) (long y))
-            hovered? (and (= :toggle-details (:kind (.hovered interactions/hit-map)))
-                          (= :toggle-details (:kind meta))
-                          (= abs-row
-                             (:row (:bounds (.hovered interactions/hit-map)))))
-            row-bg (code-row-bg meta hovered? t/code-block-bg)
-            row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
+      (let [abs-row
+            (+ (long viewport-top) (long y))
+
+            hovered?
+            (and (= :toggle-details (:kind (.hovered interactions/hit-map)))
+                 (= :toggle-details (:kind meta))
+                 (= abs-row (:row (:bounds (.hovered interactions/hit-map)))))
+
+            row-bg
+            (code-row-bg meta hovered? t/code-block-bg)
+
+            row-fg
+            (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
         (p/set-colors! g row-fg row-bg)
         (p/fill-rect! g fbx y fill-iw 1)
@@ -2868,25 +2996,24 @@
       (str/starts-with? line result-marker)
       ;; Nested results continue the Code paper through the body and padding.
       ;; Inline path chips retain their own contrasting background.
-      (let [abs-row (+ (long viewport-top) (long y))
-            hovered? (and (= :toggle-details (:kind meta))
-                          (= abs-row
-                             (:row (:bounds (.hovered interactions/hit-map)))))
-            row-bg (result-row-bg meta hovered?)
-            res-fg (if hovered? t/link-chrome-hover-fg t/code-result-fg)]
+      (let [abs-row
+            (+ (long viewport-top) (long y))
+
+            hovered?
+            (and (= :toggle-details (:kind meta))
+                 (= abs-row (:row (:bounds (.hovered interactions/hit-map)))))
+
+            row-bg
+            (result-row-bg meta hovered?)
+
+            res-fg
+            (if hovered? t/link-chrome-hover-fg t/code-result-fg)]
 
         (p/set-colors! g res-fg row-bg)
         (p/fill-rect! g fbx y fill-iw 1)
         ;; Inline code (paths, search needles, moved targets) gets its
         ;; own high-contrast chip instead of dissolving into the headline.
-        (paint-ansi-line! g
-                          x
-                          y
-                          (subs line 1)
-                          res-fg
-                          row-bg
-                          t/result-path-fg
-                          t/result-path-bg)
+        (paint-ansi-line! g x y (subs line 1) res-fg row-bg t/result-path-fg t/result-path-bg)
         (paint-turn-stamp! g x y (subs line 1) row-bg)
         (when (= :toggle-details (:kind meta))
           (let [click-width (long (or (:click-width meta) iw))]
@@ -2918,8 +3045,11 @@
       ;; but the per-form footer deliberately rides the same
       ;; marker. Paint optional payload instead of swallowing it.
       (str/starts-with? line code-pad-marker)
-      (let [raw (subs line 1)
-            bg t/code-block-bg]
+      (let [raw
+            (subs line 1)
+
+            bg
+            t/code-block-bg]
 
         (p/set-colors! g t/code-block-fg bg)
         (p/fill-rect! g fbx y fill-iw 1)
@@ -2937,21 +3067,31 @@
         (p/fill-rect! g fbx y fill-iw 1)
         (paint-code-pad-payload! g x y raw t/code-block-fg t/code-err-bg))
       ;; ── Iteration zone padding (margin between blocks) ──
-      (str/starts-with? line iteration-pad-marker)
-      (do (p/set-bg! g bg-color) (p/fill-rect! g fbx y fill-iw 1)))))
+      (str/starts-with? line iteration-pad-marker) (do (p/set-bg! g bg-color)
+                                                       (p/fill-rect! g fbx y fill-iw 1)))))
 
 (def ^:private answer-md-row-markers
-  #{answer-hdr-marker answer-sep-marker md-bold-marker md-h1-marker md-h2-marker md-h3-marker md-summary-marker})
+  #{answer-hdr-marker answer-sep-marker md-bold-marker md-h1-marker md-h2-marker md-h3-marker
+    md-summary-marker})
 
 (defn- paint-answer-md-row!
   "Paint an answer separator, an answer header, a heading, a bold line or a summary label."
-  [^TextGraphics g {:keys [bg-color fbx fg-color fill-iw in-answer? iw line meta viewport-top x y
-                          zone-bg]}]
-  (let [fbx (long fbx)
-        fill-iw (long fill-iw)
-        iw (long iw)
-        x (long x)
-        y (long y)]
+  [^TextGraphics g
+   {:keys [bg-color fbx fg-color fill-iw in-answer? iw line meta viewport-top x y zone-bg]}]
+  (let [fbx
+        (long fbx)
+
+        fill-iw
+        (long fill-iw)
+
+        iw
+        (long iw)
+
+        x
+        (long x)
+
+        y
+        (long y)]
 
     (cond
       ;; ── Answer separator - bold horizontal rule between iterations and answer
@@ -2960,9 +3100,8 @@
       (do (p/set-colors! g t/answer-sep-fg bg-color)
           (p/styled g [p/BOLD] (p/put-str! g fbx y (repeat-str \u2500 iw))))
       ;; ── Answer header - right-aligned superscript on bubble bg ──
-      (str/starts-with? line answer-hdr-marker)
-      (do (p/set-colors! g t/iteration-header-fg bg-color)
-          (p/put-str! g x y (subs line 1)))
+      (str/starts-with? line answer-hdr-marker) (do (p/set-colors! g t/iteration-header-fg bg-color)
+                                                    (p/put-str! g x y (subs line 1)))
       ;; Answer headings keep their gold base style while the styled
       ;; painter consumes nested inline markers.
       (str/starts-with? line md-h1-marker) (let [lbg (if in-answer? zone-bg bg-color)]
@@ -2970,57 +3109,48 @@
                                              (p/fill-rect! g fbx y fill-iw 1)
                                              (p/styled g
                                                        [p/BOLD]
-                                                       (p/paint-styled-line!
-                                                         g
-                                                         x
-                                                         y
-                                                         (subs line 1)
-                                                         t/md-h1-fg
-                                                         lbg
-                                                         t/code-block-fg
-                                                         t/code-block-bg)))
+                                                       (p/paint-styled-line! g
+                                                                             x
+                                                                             y
+                                                                             (subs line 1)
+                                                                             t/md-h1-fg
+                                                                             lbg
+                                                                             t/code-block-fg
+                                                                             t/code-block-bg)))
       (str/starts-with? line md-h2-marker) (let [lbg (if in-answer? zone-bg bg-color)]
                                              (p/set-colors! g t/md-h2-fg lbg)
                                              (p/fill-rect! g fbx y fill-iw 1)
                                              (p/styled g
                                                        [p/BOLD]
-                                                       (p/paint-styled-line!
-                                                         g
-                                                         x
-                                                         y
-                                                         (subs line 1)
-                                                         t/md-h2-fg
-                                                         lbg
-                                                         t/code-block-fg
-                                                         t/code-block-bg)))
+                                                       (p/paint-styled-line! g
+                                                                             x
+                                                                             y
+                                                                             (subs line 1)
+                                                                             t/md-h2-fg
+                                                                             lbg
+                                                                             t/code-block-fg
+                                                                             t/code-block-bg)))
       (str/starts-with? line md-h3-marker) (let [lbg (if in-answer? zone-bg bg-color)]
                                              (p/set-colors! g t/md-h3-fg lbg)
                                              (p/fill-rect! g fbx y fill-iw 1)
                                              (p/styled g
                                                        [p/BOLD]
-                                                       (p/paint-styled-line!
-                                                         g
-                                                         x
-                                                         y
-                                                         (subs line 1)
-                                                         t/md-h3-fg
-                                                         lbg
-                                                         t/code-block-fg
-                                                         t/code-block-bg)))
+                                                       (p/paint-styled-line! g
+                                                                             x
+                                                                             y
+                                                                             (subs line 1)
+                                                                             t/md-h3-fg
+                                                                             lbg
+                                                                             t/code-block-fg
+                                                                             t/code-block-bg)))
       (str/starts-with? line md-bold-marker)
       (let [lbg (if in-answer? zone-bg bg-color)]
         (p/set-colors! g fg-color lbg)
         (p/fill-rect! g fbx y fill-iw 1)
-        (p/styled g
-                  [p/BOLD]
-                  (p/paint-styled-line! g
-                                        x
-                                        y
-                                        (subs line 1)
-                                        fg-color
-                                        lbg
-                                        t/code-block-fg
-                                        t/code-block-bg)))
+        (p/styled
+          g
+          [p/BOLD]
+          (p/paint-styled-line! g x y (subs line 1) fg-color lbg t/code-block-fg t/code-block-bg)))
       ;; <summary> disclosure label - lavender band that
       ;; spans the full bubble inner-width. Bold + violet
       ;; foreground reads as a section heading; the bg
@@ -3031,25 +3161,24 @@
       ;; covers `iw` so the band extends to the bubble's
       ;; right edge, not just the text width.
       (str/starts-with? line md-summary-marker)
-      (let [abs-row (+ (long viewport-top) (long y))
-            hovered? (and (= :toggle-details (:kind meta))
-                          (= abs-row
-                             (:row (:bounds (.hovered interactions/hit-map)))))
-            bg (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
-            fg (if hovered? t/link-chrome-hover-fg t/md-summary-fg)]
+      (let [abs-row
+            (+ (long viewport-top) (long y))
+
+            hovered?
+            (and (= :toggle-details (:kind meta))
+                 (= abs-row (:row (:bounds (.hovered interactions/hit-map)))))
+
+            bg
+            (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
+
+            fg
+            (if hovered? t/link-chrome-hover-fg t/md-summary-fg)]
 
         (p/set-colors! g fg bg)
         (p/fill-rect! g fbx y fill-iw 1)
         (p/styled g
                   [p/BOLD]
-                  (p/paint-styled-line! g
-                                        x
-                                        y
-                                        (subs line 1)
-                                        fg
-                                        bg
-                                        t/code-block-fg
-                                        t/code-block-bg))
+                  (p/paint-styled-line! g x y (subs line 1) fg bg t/code-block-fg t/code-block-bg))
         (case (:kind meta)
           :toggle-details
           (let [click-width (long (or (:click-width meta) iw))]
@@ -3063,17 +3192,27 @@
           nil)))))
 
 (def ^:private md-block-row-markers
-  #{md-bullet-marker md-code-marker md-hr-marker md-quote-marker md-table-head-marker md-table-row-marker md-table-sep-marker})
+  #{md-bullet-marker md-code-marker md-hr-marker md-quote-marker md-table-head-marker
+    md-table-row-marker md-table-sep-marker})
 
 (defn- paint-md-block-row!
   "Paint an answer table card, a code fence, a bullet, a quote, a rule or a markdown table row."
-  [^TextGraphics g {:keys [bg-color fbx fg-color fill-iw in-answer? iw line meta x y zone-bg
-                          zone-fg]}]
-  (let [fbx (long fbx)
-        fill-iw (long fill-iw)
-        iw (long iw)
-        x (long x)
-        y (long y)]
+  [^TextGraphics g
+   {:keys [bg-color fbx fg-color fill-iw in-answer? iw line meta x y zone-bg zone-fg]}]
+  (let [fbx
+        (long fbx)
+
+        fill-iw
+        (long fill-iw)
+
+        iw
+        (long iw)
+
+        x
+        (long x)
+
+        y
+        (long y)]
 
     (cond
       ;; ── `vis-table` card ── a sheet, not a source listing
@@ -3087,27 +3226,46 @@
       ;; tinted band, a zebra stripe under every other data row and
       ;; a dimmed `… N more rows` footer.
       (and (:table-line meta) (str/starts-with? line md-code-marker))
-      (let [kind (:table-line meta)
-            stripped (subs line 1)
-            tx (+ (long x) (long code-block-h-pad))
-            head? (= :head kind)
-            banded? (contains? #{:head :row-alt} kind)
+      (let [kind
+            (:table-line meta)
+
+            stripped
+            (subs line 1)
+
+            tx
+            (+ (long x) (long code-block-h-pad))
+
+            head?
+            (= :head kind)
+
+            banded?
+            (contains? #{:head :row-alt} kind)
+
             ;; The header is NOT one more zebra stripe. It is the
             ;; sheet's label row, so it takes the band all the way to
             ;; the theme's ink and flips its own text to the far side:
             ;; dark strip / light letters on a light theme, the exact
             ;; inverse on a dark one. Both come from the card's own
             ;; background, so no palette token to keep in sync.
-            rbg (cond head? (t/table-head-bg t/code-block-bg)
-                      banded? (t/zebra-bg t/code-block-bg)
-                      :else t/code-block-bg)
-            head-ink (t/contrast-ink rbg)
+            rbg
+            (cond head? (t/table-head-bg t/code-block-bg)
+                  banded? (t/zebra-bg t/code-block-bg)
+                  :else t/code-block-bg)
+
+            head-ink
+            (t/contrast-ink rbg)
+
             ;; Column dividers inside the header sit half-way between
             ;; the band and its ink - still chrome, still legible on
             ;; the strip instead of vanishing into it.
-            cell-fg (if head? head-ink t/code-block-fg)
-            rule-fg (if head? (t/mix-color rbg head-ink 0.55) t/code-border-fg)
-            w (long (p/display-width stripped))]
+            cell-fg
+            (if head? head-ink t/code-block-fg)
+
+            rule-fg
+            (if head? (t/mix-color rbg head-ink 0.55) t/code-border-fg)
+
+            w
+            (long (p/display-width stripped))]
 
         (p/clear-styles! g)
         (p/set-colors! g t/code-border-fg t/code-block-bg)
@@ -3119,9 +3277,7 @@
         ;; a little tab sticking out on both edges of every other
         ;; row. Fill BETWEEN the frame, then redraw its two edge
         ;; columns on the card's own background.
-        (when banded?
-          (p/set-colors! g rule-fg rbg)
-          (p/fill-rect! g (inc tx) y (max 0 (- w 2)) 1))
+        (when banded? (p/set-colors! g rule-fg rbg) (p/fill-rect! g (inc tx) y (max 0 (- w 2)) 1))
         (case kind
           :title
           (do (p/set-colors! g t/code-block-fg rbg)
@@ -3130,47 +3286,51 @@
           (:border :hint)
           (do (p/set-colors! g t/code-border-fg rbg) (p/put-str! g tx y stripped))
 
-          (paint-table-data-line! g
-                                  tx
-                                  y
-                                  stripped
-                                  cell-fg
-                                  rule-fg
-                                  rbg
-                                  (when head? [p/BOLD])))
+          (paint-table-data-line! g tx y stripped cell-fg rule-fg rbg (when head? [p/BOLD])))
         (when banded?
           (p/clear-styles! g)
           (p/set-colors! g t/code-border-fg t/code-block-bg)
           (p/put-str! g tx y (subs stripped 0 1))
           (p/put-str! g (+ tx w -1) y (subs stripped (dec (count stripped))))))
       (str/starts-with? line md-code-marker)
-      (let [nested-code? (and in-answer? (:list-nested-code? meta))
+      (let [nested-code?
+            (and in-answer? (:list-nested-code? meta))
+
             ;; Nested-in-list code: shift the band right by the
             ;; list indent and run it full-width to the right edge
             ;; (band starts AT the indent, not the bubble edge).
-            nlx (if nested-code? (long (get meta :list-indent 0)) 0)
-            band-w (if nested-code? (max 0 (- (long iw) nlx)) iw)
+            nlx
+            (if nested-code? (long (get meta :list-indent 0)) 0)
+
+            band-w
+            (if nested-code? (max 0 (- (long iw) nlx)) iw)
+
             ;; A diff fence tints each add/del row with a subtle
             ;; green/red BACKGROUND band, not just the ANSI foreground. The
             ;; kind rides in the line meta from `code-block->lines`;
             ;; hunk/meta/ctx rows keep the neutral code-block bg.
-            dk (:diff-kind meta)
-            cbg (case dk
-                  :add
-                  t/code-ok-bg
+            dk
+            (:diff-kind meta)
 
-                  :del
-                  t/code-err-bg
+            cbg
+            (case dk
+              :add
+              t/code-ok-bg
 
-                  t/code-block-bg)
-            cfg (case dk
-                  :add
-                  t/code-success-fg
+              :del
+              t/code-err-bg
 
-                  :del
-                  t/code-error-fg
+              t/code-block-bg)
 
-                  t/code-block-fg)]
+            cfg
+            (case dk
+              :add
+              t/code-success-fg
+
+              :del
+              t/code-error-fg
+
+              t/code-block-fg)]
 
         (p/set-colors! g cfg cbg)
         (p/fill-rect! g (+ (long fbx) nlx) y band-w 1)
@@ -3186,34 +3346,26 @@
       (let [lbg (if in-answer? zone-bg bg-color)]
         (p/set-colors! g fg-color lbg)
         (p/fill-rect! g fbx y fill-iw 1)
-        (p/paint-styled-line! g
-                              x
-                              y
-                              (subs line 1)
-                              fg-color
-                              lbg
-                              t/code-block-fg
-                              t/code-block-bg))
+        (p/paint-styled-line! g x y (subs line 1) fg-color lbg t/code-block-fg t/code-block-bg))
       ;; Blockquote: italic + dim base, inline spans honoured
       ;; on top. Was the user-visible bug - `> **Lacznie:**`
       ;; rendered with literal asterisks because the previous
       ;; quote painter used raw put-str! and the quote branch
       ;; in markdown->lines didn't run markdown->inline. Both
       ;; halves now fixed; this is the painter half.
-      (str/starts-with? line md-quote-marker)
-      (let [lbg (if in-answer? zone-bg bg-color)]
-        (p/set-colors! g t/dialog-hint lbg)
-        (p/fill-rect! g fbx y fill-iw 1)
-        (p/styled g
-                  [p/ITALIC]
-                  (p/paint-styled-line! g
-                                        x
-                                        y
-                                        (subs line 1)
-                                        t/dialog-hint
-                                        lbg
-                                        t/code-block-fg
-                                        t/code-block-bg)))
+      (str/starts-with? line md-quote-marker) (let [lbg (if in-answer? zone-bg bg-color)]
+                                                (p/set-colors! g t/dialog-hint lbg)
+                                                (p/fill-rect! g fbx y fill-iw 1)
+                                                (p/styled g
+                                                          [p/ITALIC]
+                                                          (p/paint-styled-line! g
+                                                                                x
+                                                                                y
+                                                                                (subs line 1)
+                                                                                t/dialog-hint
+                                                                                lbg
+                                                                                t/code-block-fg
+                                                                                t/code-block-bg)))
       (str/starts-with? line md-hr-marker) (let [lbg (if in-answer? zone-bg bg-color)]
                                              (p/set-colors! g t/answer-sep-fg lbg)
                                              (p/fill-rect! g fbx y fill-iw 1)
@@ -3222,11 +3374,20 @@
       (or (str/starts-with? line md-table-head-marker)
           (str/starts-with? line md-table-sep-marker)
           (str/starts-with? line md-table-row-marker))
-      (let [stripped (subs line 1)
-            head? (str/starts-with? line md-table-head-marker)
-            border? (str/starts-with? line md-table-sep-marker)
-            tbg (if in-answer? zone-bg t/code-block-bg)
-            tfg (if in-answer? zone-fg t/code-block-fg)]
+      (let [stripped
+            (subs line 1)
+
+            head?
+            (str/starts-with? line md-table-head-marker)
+
+            border?
+            (str/starts-with? line md-table-sep-marker)
+
+            tbg
+            (if in-answer? zone-bg t/code-block-bg)
+
+            tfg
+            (if in-answer? zone-fg t/code-block-fg)]
 
         (p/clear-styles! g)
         (p/set-colors! g t/code-border-fg tbg)
@@ -3245,16 +3406,27 @@
                                   (when head? [p/BOLD])))))))
 
 (def ^:private thinking-md-row-markers
-  #{th-md-bold-marker th-md-bullet-marker th-md-code-marker th-md-h1-marker th-md-h2-marker th-md-h3-marker th-md-hr-marker th-md-quote-marker th-md-summary-marker th-md-table-head-marker th-md-table-row-marker th-md-table-sep-marker})
+  #{th-md-bold-marker th-md-bullet-marker th-md-code-marker th-md-h1-marker th-md-h2-marker
+    th-md-h3-marker th-md-hr-marker th-md-quote-marker th-md-summary-marker th-md-table-head-marker
+    th-md-table-row-marker th-md-table-sep-marker})
 
 (defn- paint-thinking-md-row!
   "Paint a markdown row inside the thinking zone."
   [^TextGraphics g {:keys [fbx fill-iw iw line meta viewport-top x y]}]
-  (let [fbx (long fbx)
-        fill-iw (long fill-iw)
-        iw (long iw)
-        x (long x)
-        y (long y)]
+  (let [fbx
+        (long fbx)
+
+        fill-iw
+        (long fill-iw)
+
+        iw
+        (long iw)
+
+        x
+        (long x)
+
+        y
+        (long y)]
 
     (cond
       ;; Thinking prose uses the styled painter because it may contain
@@ -3319,25 +3491,24 @@
       ;; matches every other thinking-mode marker so the
       ;; whole reasoning block reads as one cohesive zone.
       (str/starts-with? line th-md-summary-marker)
-      (let [abs-row (+ (long viewport-top) (long y))
-            hovered? (and (= :toggle-details (:kind meta))
-                          (= abs-row
-                             (:row (:bounds (.hovered interactions/hit-map)))))
-            bg (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
-            fg (if hovered? t/link-chrome-hover-fg t/th-md-summary-fg)]
+      (let [abs-row
+            (+ (long viewport-top) (long y))
+
+            hovered?
+            (and (= :toggle-details (:kind meta))
+                 (= abs-row (:row (:bounds (.hovered interactions/hit-map)))))
+
+            bg
+            (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
+
+            fg
+            (if hovered? t/link-chrome-hover-fg t/th-md-summary-fg)]
 
         (p/set-colors! g fg bg)
         (p/fill-rect! g fbx y fill-iw 1)
         (p/styled g
                   [p/BOLD p/ITALIC]
-                  (p/paint-styled-line! g
-                                        x
-                                        y
-                                        (subs line 1)
-                                        fg
-                                        bg
-                                        t/code-result-fg
-                                        t/code-block-bg))
+                  (p/paint-styled-line! g x y (subs line 1) fg bg t/code-result-fg t/code-block-bg))
         (case (:kind meta)
           :toggle-details
           (let [click-width (long (or (:click-width meta) iw))]
@@ -3355,10 +3526,9 @@
       (str/starts-with? line th-md-code-marker)
       (do (p/set-colors! g t/code-result-fg t/code-block-bg)
           (p/fill-rect! g fbx y fill-iw 1)
-          (p/styled
-            g
-            [p/ITALIC]
-            (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
+          (p/styled g
+                    [p/ITALIC]
+                    (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
       (str/starts-with? line th-md-bullet-marker)
       (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
           (p/fill-rect! g fbx y fill-iw 1)
@@ -3401,10 +3571,17 @@
       (or (str/starts-with? line th-md-table-head-marker)
           (str/starts-with? line th-md-table-sep-marker)
           (str/starts-with? line th-md-table-row-marker))
-      (let [stripped (subs line 1)
-            head? (str/starts-with? line th-md-table-head-marker)
-            border? (str/starts-with? line th-md-table-sep-marker)
-            tbg t/iteration-header-bg]
+      (let [stripped
+            (subs line 1)
+
+            head?
+            (str/starts-with? line th-md-table-head-marker)
+
+            border?
+            (str/starts-with? line th-md-table-sep-marker)
+
+            tbg
+            t/iteration-header-bg]
 
         (p/clear-styles! g)
         (p/set-colors! g t/code-border-fg tbg)
@@ -3423,13 +3600,23 @@
 
 (defn- paint-plain-row!
   "Paint a separator, answer text, answer padding or plain prose."
-  [^TextGraphics g {:keys [bg-color cancelled? fbx fg-color fill-iw in-answer? iw line meta
-                          queued? viewport-top x y zone-bg zone-fg]}]
-  (let [fbx (long fbx)
-        fill-iw (long fill-iw)
-        iw (long iw)
-        x (long x)
-        y (long y)]
+  [^TextGraphics g
+   {:keys [bg-color cancelled? fbx fg-color fill-iw in-answer? iw line meta queued? viewport-top x y
+           zone-bg zone-fg]}]
+  (let [fbx
+        (long fbx)
+
+        fill-iw
+        (long fill-iw)
+
+        iw
+        (long iw)
+
+        x
+        (long x)
+
+        y
+        (long y)]
 
     (cond
       ;; ── Legacy separator - dim ──
@@ -3439,17 +3626,11 @@
       ;; contain inline sentinels from IR spans, e.g. `[:c "/command"]` becomes
       ;; INLINE_CODE_ON/OFF around the body text. Consume those
       ;; here instead of writing raw PUA glyphs to the terminal.
-      (str/starts-with? line answer-txt-marker) (do (p/set-colors! g zone-fg zone-bg)
-                                                    (p/fill-rect! g fbx y fill-iw 1)
-                                                    (p/paint-styled-line!
-                                                      g
-                                                      x
-                                                      y
-                                                      (subs line 1)
-                                                      zone-fg
-                                                      zone-bg
-                                                      t/code-block-fg
-                                                      t/code-block-bg))
+      (str/starts-with? line answer-txt-marker)
+      (do
+        (p/set-colors! g zone-fg zone-bg)
+        (p/fill-rect! g fbx y fill-iw 1)
+        (p/paint-styled-line! g x y (subs line 1) zone-fg zone-bg t/code-block-fg t/code-block-bg))
       ;; ── Answer padding ──
       (str/starts-with? line answer-pad-marker) (do (p/set-bg! g zone-bg)
                                                     (p/fill-rect! g fbx y fill-iw 1))
@@ -3462,9 +3643,14 @@
       ;; status footer ("Cancelled by user.") renders flat on
       ;; terminal-bg, no answer-bg fill underneath, even if a
       ;; structural answer marker sits earlier in the trailer.
-      (let [in-answer-zone? (and in-answer? (not cancelled?))
-            line-bg (if in-answer-zone? zone-bg bg-color)
-            line-fg (if in-answer-zone? zone-fg fg-color)]
+      (let [in-answer-zone?
+            (and in-answer? (not cancelled?))
+
+            line-bg
+            (if in-answer-zone? zone-bg bg-color)
+
+            line-fg
+            (if in-answer-zone? zone-fg fg-color)]
 
         (when in-answer-zone? (p/set-bg! g line-bg) (p/fill-rect! g fbx y fill-iw 1))
         (p/set-colors! g line-fg line-bg)
@@ -3494,30 +3680,32 @@
 (defn- register-row-regions!
   "Register the image, table, document and artifact regions of a bubble row."
   [meta viewport-top x y iw]
-  (let [x (long x)
-        y (long y)
-        iw (long iw)]
+  (let [x
+        (long x)
+
+        y
+        (long y)
+
+        iw
+        (long iw)]
 
     (doseq [{:keys [img img-idx image-col-offset view]} (image-row-cells meta)]
       (let [row (+ (long viewport-top) (long y))
             col (+ (long x) (long (or image-col-offset 0)))]
 
         (when *image-placements*
-          (swap! *image-placements* conj
-            {:row row :col col :img img :img-idx img-idx}))
+          (swap! *image-placements* conj {:row row :col col :img img :img-idx img-idx}))
         (.register interactions/hit-map
-                   (merge {:bounds {:row row
-                                    :col col
-                                    :width (long (max 1 (long (or (:cols img) 1))))}
+                   (merge {:bounds
+                           {:row row :col col :width (long (max 1 (long (or (:cols img) 1))))}
                            :kind :image
                            :url (:path img)}
                           view))))
     ;; Table preview rows open the complete data set.
     (when-let [tbl (:table meta)]
-      (.register interactions/hit-map
-                 {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
-                  :kind :table
-                  :table tbl}))
+      (.register
+        interactions/hit-map
+        {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw} :kind :table :table tbl}))
     ;; Document and picture link rows open their host file.
     (when-let [doc (:doc meta)]
       (.register interactions/hit-map
@@ -3535,10 +3723,17 @@
 (defn- paint-row-link-regions!
   "Register the link and file spans of a bubble row and underline the hovered span."
   [^TextGraphics g meta line viewport-top x y iw right-inset]
-  (let [x (long x)
-        y (long y)
-        iw (long iw)
-        right-inset (long right-inset)]
+  (let [x
+        (long x)
+
+        y
+        (long y)
+
+        iw
+        (long iw)
+
+        right-inset
+        (long right-inset)]
 
     (when-let [links (:links meta)]
       (let [abs-row (+ (long viewport-top) (long y))
@@ -3552,44 +3747,36 @@
             ;; chrome the sentinels give a prose link.
             table-row? (boolean (some #(str/starts-with? line %)
                                       [md-table-head-marker md-table-row-marker
-                                       th-md-table-head-marker
-                                       th-md-table-row-marker]))]
+                                       th-md-table-head-marker th-md-table-row-marker]))]
 
         (doseq [{:keys [col width url]} links
                 :let [room (if-let [prefix (:summary-prefix meta)]
                              (let [limit (if (not-empty (:right-suffix meta))
-                                           (max
-                                             0
-                                             (- (long iw)
-                                                right-inset
-                                                (p/display-width (:right-suffix meta))
-                                                (p/display-width
-                                                  (or (:inline-disclosure meta) ""))
-                                                1))
-                                           (min (long iw)
-                                                (long (or (:summary-width meta) iw))))
+                                           (max 0
+                                                (- (long iw)
+                                                   right-inset
+                                                   (p/display-width (:right-suffix meta))
+                                                   (p/display-width (or (:inline-disclosure meta)
+                                                                        ""))
+                                                   1))
+                                           (min (long iw) (long (or (:summary-width meta) iw))))
                                    visible (p/ellipsize prefix limit)]
 
                                (- (p/display-width visible)
-                                  (if (< (p/display-width visible)
-                                         (p/display-width prefix))
-                                    1
-                                    0)))
+                                  (if (< (p/display-width visible) (p/display-width prefix)) 1 0)))
                              (long iw))
                       width (min (long width)
                                  (max 0
                                       (- (if (:summary-prefix meta)
-                                           (min (long room)
-                                                (p/display-width (subs line 1)))
+                                           (min (long room) (p/display-width (subs line 1)))
                                            (long room))
                                          (long col))))]
                 :when (pos? width)]
 
           (let [abs-col (+ (long x) (long col))]
-            (.register interactions/hit-map
-                       {:bounds {:row abs-row :col abs-col :width (long width)}
-                        :kind :url
-                        :url url})
+            (.register
+              interactions/hit-map
+              {:bounds {:row abs-row :col abs-col :width (long width)} :kind :url :url url})
             ;; Hover affordance: when the pointer is over this
             ;; link span, brighten its already-underlined cells
             ;; to the link-chrome hover fg so the link lights up
@@ -3606,11 +3793,20 @@
     ;; A cell that NAMES A FILE presses like a file row does: the span
     ;; its words occupy opens that file, and the rest of the row keeps
     ;; whatever press it already had.
-    (doseq [{:keys [col width path]} (:paths meta)
-            :let [abs-row (+ (long viewport-top) (long y))
-                  abs-col (+ (long x) (long col))
-                  span (min (long width) (long (max 0 (- (long iw) (long col)))))
-                  hovered (.hovered interactions/hit-map)]
+    (doseq [{:keys [col width path]}
+            (:paths meta)
+
+            :let [abs-row
+                  (+ (long viewport-top) (long y))
+
+                  abs-col
+                  (+ (long x) (long col))
+
+                  span
+                  (min (long width) (long (max 0 (- (long iw) (long col)))))
+
+                  hovered
+                  (.hovered interactions/hit-map)]
             :when (pos? span)]
 
       (.register interactions/hit-map
@@ -3626,74 +3822,115 @@
 
 ;; The values that the painter of one bubble row reads. One record for each row costs one
 ;; allocation; an assoc onto the bubble map copied its hash map once for each key.
-(defrecord BubbleRow
-  [bg-color fbx fg-color fill-iw in-answer? iw line meta right-inset x y viewport-top zone-bg
-   zone-fg cancelled? queued?])
+(defrecord BubbleRow [bg-color fbx fg-color fill-iw in-answer? iw line meta right-inset x y
+                      viewport-top zone-bg zone-fg cancelled? queued?])
 
 (defn- draw-bubble-row!
   "Paint row `i` of a chat bubble: its fills, pointer regions, marker painter and left rail.
    Answer true after a painted row and nil for a row outside the lines window."
-  [^TextGraphics g {:keys [answer-start bg-color btop bubble-w bx cancelled? error? fg-color h-pad
-                           line-meta lines lines-offset queued? role-fg user? viewport-top zone-bg
-                           zone-fg]}
-   ^long i]
-  (let [btop (long btop)
-        h-pad (long h-pad)
-        lines-offset (long lines-offset)
-        lines-idx (- i lines-offset)
-        noop-row? (or (neg? lines-idx) (>= lines-idx (count lines)))
-        line (when-not noop-row? (nth lines lines-idx))
-        meta (when-not noop-row? (nth line-meta lines-idx nil))]
+  [^TextGraphics g
+   {:keys [answer-start bg-color btop bubble-w bx cancelled? error? fg-color h-pad line-meta lines
+           lines-offset queued? role-fg user? viewport-top zone-bg zone-fg]} ^long i]
+  (let [btop
+        (long btop)
+
+        h-pad
+        (long h-pad)
+
+        lines-offset
+        (long lines-offset)
+
+        lines-idx
+        (- i lines-offset)
+
+        noop-row?
+        (or (neg? lines-idx) (>= lines-idx (count lines)))
+
+        line
+        (when-not noop-row? (nth lines lines-idx))
+
+        meta
+        (when-not noop-row? (nth line-meta lines-idx nil))]
 
     (when-not noop-row?
       (p/clear-styles! g)
-      (let [in-answer? (> i (long answer-start))
+      (let [in-answer?
+            (> i (long answer-start))
+
             ;; Text may be inset while marker-zone fills span the full message
             ;; column. An iteration's prose sits flush with the answer and the
             ;; bubble's name, not padded like a user bubble: one left edge for
             ;; everything Vis says, whether it lands before a call or after it.
-            bg-color (if (:activity-content? meta) t/code-block-bg bg-color)
-            fg-color (if (:activity-content? meta) t/code-block-fg fg-color)
-            trace-inset (if (:trace-inset? meta) 2 0)
-            content-col (long (or (:activity-content-col meta) 0))
-            x (+ (long bx)
-                 trace-inset
-                 (long (if (:activity-content? meta)
-                         content-col
-                         (if (or user? error?) h-pad 0))))
-            y (+ (long btop) (long i))
-            iw (max 0
-                    (- (long bubble-w)
-                       trace-inset
-                       (if (:activity-content? meta) content-col 0)))
-            fbx (+ (long bx) (if (:activity-content? meta) content-col 0))
-            right-inset (long (or (:right-inset meta) 1))
-            meta (if (:copy-width meta)
-                   (assoc meta
-                     :click-width
-                     (max 0 (- (long iw) right-inset (long (:copy-width meta)))))
-                   meta)
-            line (if-let [suffix (not-empty (:right-suffix meta))]
-                   (let [room (max 0 (- (long iw) right-inset (p/display-width suffix)))
-                         prefix (inline-disclosure-prefix (:headline-prefix meta)
-                                                          (:inline-disclosure meta)
-                                                          (max 0 (dec room)))
-                         padding (max 0 (- room (p/display-width prefix)))]
+            bg-color
+            (if (:activity-content? meta) t/code-block-bg bg-color)
 
-                     (str (subs line 0 1) prefix (apply str (repeat padding " ")) suffix))
-                   line)
-            marker (when (pos? (count line)) (subs line 0 1))
-            body (when marker (subs line 1))
-            output-indented? (and (contains? output-indentable-markers marker)
-                                  (str/starts-with? body tool-output-indent))
+            fg-color
+            (if (:activity-content? meta) t/code-block-fg fg-color)
+
+            trace-inset
+            (if (:trace-inset? meta) 2 0)
+
+            content-col
+            (long (or (:activity-content-col meta) 0))
+
+            x
+            (+ (long bx)
+               trace-inset
+               (long (if (:activity-content? meta) content-col (if (or user? error?) h-pad 0))))
+
+            y
+            (+ (long btop) (long i))
+
+            iw
+            (max 0 (- (long bubble-w) trace-inset (if (:activity-content? meta) content-col 0)))
+
+            fbx
+            (+ (long bx) (if (:activity-content? meta) content-col 0))
+
+            right-inset
+            (long (or (:right-inset meta) 1))
+
+            meta
+            (if (:copy-width meta)
+              (assoc meta :click-width (max 0 (- (long iw) right-inset (long (:copy-width meta)))))
+              meta)
+
+            line
+            (if-let [suffix (not-empty (:right-suffix meta))]
+              (let [room (max 0 (- (long iw) right-inset (p/display-width suffix)))
+                    prefix (inline-disclosure-prefix (:headline-prefix meta)
+                                                     (:inline-disclosure meta)
+                                                     (max 0 (dec room)))
+                    padding (max 0 (- room (p/display-width prefix)))]
+
+                (str (subs line 0 1) prefix (apply str (repeat padding " ")) suffix))
+              line)
+
+            marker
+            (when (pos? (count line)) (subs line 0 1))
+
+            body
+            (when marker (subs line 1))
+
+            output-indented?
+            (and (contains? output-indentable-markers marker)
+                 (str/starts-with? body tool-output-indent))
+
             line
             (if output-indented? (str marker (subs body (count tool-output-indent))) line)
+
             ;; Trace bands retain their inset without a left rail.
-            x (if output-indented? (+ x (long tool-output-indent-cols)) x)
+            x
+            (if output-indented? (+ x (long tool-output-indent-cols)) x)
+
             iw
             (if output-indented? (max 0 (- (long iw) (long tool-output-indent-cols))) iw)
-            fbx (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)
-            fill-iw (+ iw trace-inset)]
+
+            fbx
+            (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)
+
+            fill-iw
+            (+ iw trace-inset)]
 
         ;; Pre-fill the answer zone for every line type.
         (when in-answer? (p/set-bg! g zone-bg) (p/fill-rect! g fbx y fill-iw 1))
@@ -3705,20 +3942,31 @@
         (register-row-regions! meta viewport-top x y iw)
         ;; Recorded receipts keep the running Live View title's emphasis.
         (when (:live-button? meta) (p/enable! g p/BOLD))
-        (let [row (->BubbleRow bg-color fbx fg-color fill-iw in-answer? iw line meta right-inset x y
-                               viewport-top zone-bg zone-fg cancelled? queued?)]
-
-          (cond
-            (contains? trace-row-markers marker) (paint-trace-row! g row)
-            (contains? queue-row-markers marker) (paint-queue-row! g row)
-            (contains? activity-row-markers marker) (paint-activity-row! g row)
-            (contains? code-row-markers marker) (paint-code-row! g row)
-            (contains? answer-md-row-markers marker) (paint-answer-md-row! g row)
-            (contains? md-block-row-markers marker) (paint-md-block-row! g row)
-            (contains? thinking-md-row-markers marker) (paint-thinking-md-row! g row)
-            :else (paint-plain-row! g row)))
-        (when (:live-button? meta)
-          (draw-live-button! g meta x y iw right-inset viewport-top))
+        (let [row (->BubbleRow bg-color
+                               fbx
+                               fg-color
+                               fill-iw
+                               in-answer?
+                               iw
+                               line
+                               meta
+                               right-inset
+                               x
+                               y
+                               viewport-top
+                               zone-bg
+                               zone-fg
+                               cancelled?
+                               queued?)]
+          (cond (contains? trace-row-markers marker) (paint-trace-row! g row)
+                (contains? queue-row-markers marker) (paint-queue-row! g row)
+                (contains? activity-row-markers marker) (paint-activity-row! g row)
+                (contains? code-row-markers marker) (paint-code-row! g row)
+                (contains? answer-md-row-markers marker) (paint-answer-md-row! g row)
+                (contains? md-block-row-markers marker) (paint-md-block-row! g row)
+                (contains? thinking-md-row-markers marker) (paint-thinking-md-row! g row)
+                :else (paint-plain-row! g row)))
+        (when (:live-button? meta) (draw-live-button! g meta x y iw right-inset viewport-top))
         ;; Inline markdown links: register a `:url` click region per
         ;; link span so a click hands the href to the OS opener (the
         ;; MOVE/CLICK_DOWN mouse handler looks these up). `:col` is a
@@ -3736,67 +3984,40 @@
 
 (defn- draw-bubble-header!
   "Paint a chat bubble's role label, turn number, time and fork action."
-  [^TextGraphics g {:keys [bubble-w bx label message role role-fg start-row status time-str
-                          top-sep-h turn-str viewport-h viewport-top]}]
+  [^TextGraphics g
+   {:keys [bubble-w bx label message role role-fg start-row status time-str top-sep-h turn-str
+           viewport-h viewport-top]}]
   (let [top-sep-h (long top-sep-h)]
-
     ;; Role label (bold, role-colored) + timestamp.
     (when (pos? top-sep-h)
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-border t/terminal-bg)
       (p/put-str! g bx start-row (p/horiz-line bubble-w)))
-    (let [label-row
-          (+ (long start-row) (long top-sep-h))
-
-          time-w
-          (if time-str (p/display-width time-str) 0)
-
-          turn-id
-          (:session-turn-id message)
-
-          session-id
-          (:session-id message)
-
-          forkable?
-          (and (= :assistant role)
-               session-id
-               turn-id
-               (not (:pending? message))
-               (not (#{:running :queued} status)))
-
-          separator-w
-          (if (or time-str turn-str) 3 0)
-
-          turn-w
-          (if turn-str (p/display-width turn-str) 0)
-
-          action-space
-          (- (long bubble-w)
-             time-w
-             separator-w
-             (if turn-str (+ turn-w (if time-str 3 0)) 0)
-             (min 8 (p/display-width label))
-             1)
-
-          fork-label
-          (when forkable?
-            (cond (>= action-space 21) " Fork from this turn "
-                  (>= action-space 6) " Fork "))
-
-          fork-w
-          (if fork-label (p/display-width fork-label) 0)
-
-          fork-x
-          (- (+ (long bx) (long bubble-w)) fork-w)
-
-          turn-x
-          (- fork-x turn-w (if (and turn-str fork-label) 3 0))
-
-          time-x
-          (- turn-x time-w (if (and time-str (or turn-str fork-label)) 3 0))
-
-          label-w
-          (max 0 (- time-x (long bx) (if (or turn-str fork-label time-str) 1 0)))]
+    (let [label-row (+ (long start-row) (long top-sep-h))
+          time-w (if time-str (p/display-width time-str) 0)
+          turn-id (:session-turn-id message)
+          session-id (:session-id message)
+          forkable? (and (= :assistant role)
+                         session-id
+                         turn-id
+                         (not (:pending? message))
+                         (not (#{:running :queued} status)))
+          separator-w (if (or time-str turn-str) 3 0)
+          turn-w (if turn-str (p/display-width turn-str) 0)
+          action-space (- (long bubble-w)
+                          time-w
+                          separator-w
+                          (if turn-str (+ turn-w (if time-str 3 0)) 0)
+                          (min 8 (p/display-width label))
+                          1)
+          fork-label (when forkable?
+                       (cond (>= action-space 21) " Fork from this turn "
+                             (>= action-space 6) " Fork "))
+          fork-w (if fork-label (p/display-width fork-label) 0)
+          fork-x (- (+ (long bx) (long bubble-w)) fork-w)
+          turn-x (- fork-x turn-w (if (and turn-str fork-label) 3 0))
+          time-x (- turn-x time-w (if (and time-str (or turn-str fork-label)) 3 0))
+          label-w (max 0 (- time-x (long bx) (if (or turn-str fork-label time-str) 1 0)))]
 
       (p/clear-styles! g)
       (p/set-colors! g role-fg t/terminal-bg)
@@ -3808,13 +4029,10 @@
         (p/set-colors! g t/dialog-hint t/terminal-bg)
         (p/put-str! g time-x label-row (str time-str (when (or turn-str fork-label) " / "))))
       (when fork-label
-        (let [hovered
-              (.hovered interactions/hit-map)
-
-              hovered?
-              (and (= :fork-at-turn (:kind hovered))
-                   (= session-id (:session-id hovered))
-                   (= turn-id (:turn-id hovered)))]
+        (let [hovered (.hovered interactions/hit-map)
+              hovered? (and (= :fork-at-turn (:kind hovered))
+                            (= session-id (:session-id hovered))
+                            (= turn-id (:turn-id hovered)))]
 
           (p/set-colors! g
                          (if hovered? t/header-active-tab-fg t/button-fg)
@@ -4112,8 +4330,7 @@
              :zone-fg zone-fg}]
 
         (loop [i i-start]
-          (when (and (< i i-end) (draw-bubble-row! g row-ctx i))
-            (recur (inc i))))
+          (when (and (< i i-end) (draw-bubble-row! g row-ctx i)) (recur (inc i))))
         ;; Below-content footer row: optional right-aligned meta, with
         ;; one breathing row between answer body and footer.
         ;;
@@ -11216,6 +11433,7 @@
                                    :node-id node-id}))]
 
     (entries->payload (into body control))))
+
 ;;; Messages area
 ;; `screen.clj` derives width from these public constants so formatting and paint agree.
 (def ^:const MESSAGE_MARGIN_TOP 1)
