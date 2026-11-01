@@ -137,6 +137,10 @@
     (swap! snapshots assoc sid (assoc result :checked-at (System/currentTimeMillis)))
     result))
 
+(def ^:private ^:const stale-ms
+  "The age after which the header calls a team snapshot stale."
+  10000)
+
 (defn header-label
   "Make unknown, failed and cached observations explicit in the header."
   [sid child?]
@@ -148,7 +152,7 @@
 
     (cond error (str label " !")
           (nil? checked-at) (str label " ?")
-          (> (- (System/currentTimeMillis) (long checked-at)) 10000) (str label " stale")
+          (> (- (System/currentTimeMillis) (long checked-at)) (long stale-ms)) (str label " stale")
           :else (str label
                      " "
                      (count (filter #(contains? #{"queued" "running"} (get % "status")) agents))
@@ -1177,6 +1181,15 @@
                       " → "
                       (name-of pair))})))))
 
+(defn- shown-change?
+  "Whether a refresh from `before`, the last snapshot, to `after` can change the screen at
+   `now-ms`. A stale header turns fresh, and an active agent shows an elapsed time."
+  [before after now-ms]
+  (or (nil? before)
+      (not= (dissoc before :checked-at) after)
+      (> (- (long now-ms) (long (:checked-at before 0))) (long stale-ms))
+      (boolean (some active? (:agents after)))))
+
 (defn start-refresh!
   "One screen-owned worker refreshes only the active session, at most every 5s.
    Call the returned cleanup on screen teardown. No network work runs in paint."
@@ -1204,9 +1217,18 @@
                                   (and sid (or (not= sid previous-id) (>= now (long next-at))))]
 
                               (when refresh?
-                                (fetch! sid)
-                                ;; A slow response for an old tab must not repaint the new tab.
-                                (when (and @running? (= sid (session-id))) (changed!)))
+                                (let [before
+                                      (summary sid)
+
+                                      after
+                                      (fetch! sid)]
+
+                                  ;; A slow response for an old tab must not repaint the new tab.
+                                  ;; An unchanged idle team must not force a full frame.
+                                  (when (and @running?
+                                             (= sid (session-id))
+                                             (shown-change? before after now))
+                                    (changed!))))
                               (Thread/sleep 250)
                               (recur sid
                                      (if refresh? (+ (System/currentTimeMillis) 5000) next-at)))))

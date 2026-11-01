@@ -321,6 +321,29 @@
              (finally (.stopScreen vs) (.stopScreen hs) (.close vt) (.close ht)))))))
 
 (defdescribe
+  refresh-repaint-test
+  ;; Report: an idle TUI drew a full frame every 5 s, after each unchanged team refresh.
+  (let [shown-change?
+        @(ns-resolve 'com.blockether.vis.tui.agent-team 'shown-change?)
+
+        idle
+        {:agents [{"session_id" "c" "task" "Work" "status" "completed"}] :enabled? true}
+
+        fresh
+        (assoc idle :checked-at 1000)]
+
+    (it "repaints after the first refresh" (expect (true? (shown-change? nil idle 2000))))
+    (it "draws nothing for an unchanged idle team"
+        (expect (false? (shown-change? fresh idle 2000))))
+    (it "repaints when the team changes"
+        (expect (true? (shown-change? fresh (assoc idle :agents []) 2000))))
+    (it "repaints a stale header that the refresh makes fresh"
+        (expect (true? (shown-change? fresh idle 20000))))
+    (it "repaints an active agent for its elapsed time"
+        (let [active {:agents [{"session_id" "c" "task" "Work" "status" "running"}] :enabled? true}]
+          (expect (true? (shown-change? (assoc active :checked-at 1000) active 2000)))))))
+
+(defdescribe
   active-header-refresh-without-inspector-test
   (it "active header refresh without inspector"
       ;; The header used to remain unknown until the inspector was opened.
