@@ -3264,7 +3264,8 @@
      :project-files (when project
                       (mapv (fn [file-name]
                               (let [file (io/file project file-name)]
-                                (when (.isFile file) (util/sha256-hex (slurp file)))))
+                                (when (.isFile file)
+                                  (util/sha256-hex (Files/readAllBytes (.toPath file))))))
                             ["pyproject.toml" "uv.lock"]))}))
 
 (defn- package-sources
@@ -3474,11 +3475,12 @@
    `helper.py` at CALL time, so entry-only identity let a module edited after the
    load execute in the trusted context with no `/reload` behind it."
   [root]
-  (util/sha256-hex (str/join "\n"
-                             (keep (fn [[^String rel ^File f]]
-                                     (when (str/ends-with? rel ".py")
-                                       (str rel " " (util/sha256-hex (slurp f)))))
-                                   (source-files root)))))
+  (util/sha256-hex (str/join
+                     "\n"
+                     (keep (fn [[^String rel ^File f]]
+                             (when (str/ends-with? rel ".py")
+                               (str rel " " (util/sha256-hex (Files/readAllBytes (.toPath f))))))
+                           (source-files root)))))
 
 (defonce ^:private snapshot-home
   ;; ONE temp tree per process for every frozen import root, removed at exit.
