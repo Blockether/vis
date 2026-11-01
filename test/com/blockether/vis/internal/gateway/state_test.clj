@@ -4477,8 +4477,42 @@
   {:records [{:id "a" :title "A" :created-at 300} {:id "b" :title "B" :created-at 200}]
    :roots {"a" "/repo/a" "b" "/repo/b"}})
 
+(defn- overview-stats-reads
+  "Store-wide stats queries that one `projects-overview` paid for when handed `facts`."
+  [dirty facts-of]
+  (let [reads (atom 0)
+        {:keys [records roots]} two-project-fleet]
+    (reset! @#'state/projects-overview-cache nil)
+    (with-redefs-fn {#'lp/db-info (constantly ::db)
+                     #'lp/projects (constantly [])
+                     #'persistance/db-session-turn-stats (fn [& _] (swap! reads inc) {})
+                     #'lp/by-channel (constantly records)
+                     #'lp/session-read-marks (constantly {})
+                     #'bus/live-turns (constantly {})
+                     #'bus/waiting-requests (constantly {})
+                     #'state/resolve-workspace (fn [_db sid] {:root (get roots sid) :repo-root (get roots sid)})}
+      (fn []
+        (try (let [facts (facts-of)
+                   answer (state/projects-overview :all dirty facts)]
+               [(:session_count answer) @reads])
+             (finally (reset! @#'state/projects-overview-cache nil)))))))
+
 (defdescribe
   gateway-caches-the-projects-overview-test
+  ;; A head read of `GET /v1/sessions` ran the store-wide stats query and the ranking
+  ;; twice: once for its page and once for the overview it embeds.
+  (it "reuses the facts of the page it rides beside"
+      (let [facts (fn []
+                    {:channel :all
+                     :unsent #{}
+                     :reader-id @#'state/default-reader-id
+                     :stats {}
+                     :live {}
+                     :ranking (@#'state/session-ranking :all {} {} #{})
+                     :marks {}})]
+        (expect (= [2 0] (overview-stats-reads nil facts)))
+        (expect (= [2 1] (overview-stats-reads ["a"] facts)))
+        (expect (= [2 1] (overview-stats-reads nil (constantly nil))))))
   (it "answers the same counts twice and resolves no workspace the second time"
       (let [[first-answer first-resolutions]
             (counted-overview two-project-fleet)

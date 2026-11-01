@@ -464,7 +464,7 @@
               ;; One request owns the first paint. Recomputing this for every tail
               ;; window would add work while conveying the same fleet-wide fact.
               (nil? after)
-              (assoc :overview (state/projects-overview :all dirty)))
+              (assoc :overview (state/projects-overview :all dirty (:facts page))))
 
             etag
             (sessions-etag payload)

@@ -7669,9 +7669,12 @@
          shown-groups
          (when (some? group-ids) (into #{} (comp (map str) (remove str/blank?)) group-ids))
 
+         ranking
+         (session-ranking channel stats live unsent)
+
          ranked
          (cond->> (session-scope-rows db
-                                      (session-ranking channel stats live unsent)
+                                      ranking
                                       {:root root
                                        :project-id project-id
                                        :group-ids (when-not aside-groups? group-ids)})
@@ -7783,7 +7786,17 @@
               ;; next. Absent when there is nothing left, so a walk ends on the
               ;; answer itself.
               :next-cursor (when (< (count window) (count tail)) (->session-cursor (peek window)))
-              :has-more (< (count window) (count tail))}
+              :has-more (< (count window) (count tail))
+              ;; The facts this answer was cut from. `projects-overview` reads the same
+              ;; facts for the head answer, so it reuses them instead of a second
+              ;; store-wide stats query and ranking. Handlers never put them on the wire.
+              :facts {:channel channel
+                      :unsent unsent
+                      :reader-id reader-id
+                      :stats stats
+                      :live live
+                      :ranking ranking
+                      :marks marks}}
        ;; OMITTED on a tail window, never an empty vector: the shelves belong to the
        ;; head answer, and a reader that cannot tell "not shipped here" from "this
        ;; project has no bands" wipes the shelves it already painted on page two.
@@ -7878,22 +7891,30 @@
    misses the cache instead of being answered stale."
   ([] (projects-overview :all nil))
   ([channel] (projects-overview channel nil))
-  ([channel dirty]
+  ([channel dirty] (projects-overview channel dirty nil))
+  ([channel dirty facts]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
-
-         stats
-         (with-sent-turns
-           (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {}))
-
-         live
-         (try (bus/live-turns) (catch Throwable _ {}))
 
          unsent
          (into #{} (comp (map str) (remove str/blank?)) dirty)
 
+         ;; The `:facts` of a `list-sessions-page` answer for the same channel and
+         ;; `dirty` set: the head read embeds this answer, and reading them twice
+         ;; doubled its store-wide stats query and ranking.
+         facts
+         (when (and (= channel (:channel facts)) (= unsent (:unsent facts))) facts)
+
+         stats
+         (or (:stats facts)
+             (with-sent-turns
+               (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})))
+
+         live
+         (or (:live facts) (try (bus/live-turns) (catch Throwable _ {})))
+
          ranked
-         (session-ranking channel stats live unsent)
+         (or (:ranking facts) (session-ranking channel stats live unsent))
 
          waiting
          (into #{} (map str) (keys (bus/waiting-requests)))
@@ -7903,7 +7924,9 @@
          ;; reader's mark. A session never shown to this reader has no mark and
          ;; reads as READ, so a header counts news, not backlog.
          marks
-         (if db (try (lp/session-read-marks default-reader-id) (catch Throwable _ {})) {})
+         (if (and facts (= default-reader-id (:reader-id facts)))
+           (:marks facts)
+           (if db (try (lp/session-read-marks default-reader-id) (catch Throwable _ {})) {}))
 
          unread?
          (fn [sid]
