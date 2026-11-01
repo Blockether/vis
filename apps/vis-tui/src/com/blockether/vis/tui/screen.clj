@@ -3700,10 +3700,18 @@
   "Project active views only when their receipt has not landed on an earlier turn. Held
    apps join too: their rows land only when the block ends (#429)."
   [db]
-  (let [earlier-view-ids (into #{} (mapcat #(map :view-id (:runs %))) (butlast (:messages db)))]
+  ;; The receipt scan walks every message, so it runs only when a live view exists.
+  (let [live-views
+        (:live-views db)
+
+        earlier-view-ids
+        (if (seq live-views)
+          (into #{} (mapcat #(map :view-id (:runs %))) (butlast (:messages db)))
+          #{})]
+
     (into (mapv lv/transcript-run
                 (remove #(or (lv/dormant? %) (contains? earlier-view-ids (lv/view-id %)))
-                  (:live-views db)))
+                  live-views))
           (keep render/app-run)
           (vals (:app-views db)))))
 

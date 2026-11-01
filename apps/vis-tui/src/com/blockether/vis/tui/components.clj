@@ -370,8 +370,7 @@
   ([g row cols fg]
    (p/clear-styles! g)
    (p/set-colors! g fg t/terminal-bg)
-   (dotimes [c (long cols)]
-     (p/set-char! g c row p/BOX_H))
+   (when (pos? (long cols)) (p/put-str! g 0 row (p/horiz-line cols)))
    (p/clear-styles! g)))
 
 (defn level->fg

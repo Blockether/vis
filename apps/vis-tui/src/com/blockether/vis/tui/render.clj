@@ -490,14 +490,14 @@
        (do
          ;; Top: ┌── top-hint ──┐
          (.setCharacter g 0 (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
-         (.putString g (int 1) (int box-top) ^String (embed-in-bar bar top-hint))
+         (p/put-str! g 1 box-top (embed-in-bar bar top-hint))
          (.setCharacter g
                         (int (dec (long cols)))
                         (int box-top)
                         Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
          ;; Bottom: └──────┘ (plain rule - status moved to footer row).
          (.setCharacter g 0 (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
-         (.putString g (int 1) (int box-bottom) ^String bar)
+         (p/put-str! g 1 box-bottom bar)
          (.setCharacter g
                         (int (dec (long cols)))
                         (int box-bottom)
@@ -519,8 +519,8 @@
              padded-bar
              (repeat-str Symbols/SINGLE_LINE_HORIZONTAL rule-w)]
 
-         (.putString g (int pad) (int box-top) ^String (embed-in-bar padded-bar top-hint))
-         (.putString g (int pad) (int box-bottom) ^String padded-bar))))))
+         (p/put-str! g pad box-top (embed-in-bar padded-bar top-hint))
+         (p/put-str! g pad box-bottom padded-bar))))))
 
 (defn- fill-box-interior!
   "Fill the full width between the sideless input rules with the box background."
@@ -773,8 +773,8 @@
 
         (.setForegroundColor g t/code-border-fg)
         (.setBackgroundColor g t/terminal-bg)
-        (.putString g (int pad) (int box-top) ^String (embed-in-bar bar pill))
-        (.putString g (int pad) (int box-bottom) ^String bar)))
+        (p/put-str! g pad box-top (embed-in-bar bar pill))
+        (p/put-str! g pad box-bottom bar)))
     (when more-hint
       (.setForegroundColor g t/border-fg)
       (.setBackgroundColor g t/terminal-bg)
@@ -1590,6 +1590,10 @@
   (let [blocks (:content message)]
     (boolean (and (seq blocks) (every? #(= "error" (get % "type")) blocks)))))
 
+(def ^:private ^java.util.EnumSet table-segment-mods
+  "No modifiers: table rows are segmented in the default style, like `fromString`."
+  (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+
 (defn- paint-table-data-line!
   "Two-pass paint for a table header or body row.
 
@@ -1626,7 +1630,10 @@
   ;; the chrome `┃` separators and overwriting them with cell
   ;; content. THAT was the visible 'skin-tone emoji row eats its separators' bug.
   (let [cells
-        (com.googlecode.lanterna.TextCharacter/fromString line)
+        (p/line-cells line
+                      com.googlecode.lanterna.TextColor$ANSI/DEFAULT
+                      com.googlecode.lanterna.TextColor$ANSI/DEFAULT
+                      table-segment-mods)
 
         n
         (alength cells)

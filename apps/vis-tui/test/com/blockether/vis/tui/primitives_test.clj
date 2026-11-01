@@ -111,6 +111,43 @@
                      (expect (not (str/includes? painted p/INLINE_CODE_ON)))
                      (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
+(defn- painted-cells
+  "Cells of row 0 after `paint!` draws on a fresh 24x2 screen."
+  [paint!]
+  (let [screen
+        (doto (com.googlecode.lanterna.screen.TerminalScreen.
+                (com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal.
+                  (com.googlecode.lanterna.TerminalSize. 24 2)))
+          (.startScreen))
+
+        g
+        (.newTextGraphics screen)]
+
+    (paint! g)
+    (mapv #(.getBackCharacter screen (int %) 0) (range 24))))
+
+(defdescribe put-str-cached-cells-test
+             ;; put-str! paints cached cells; a wrong cell or a stale style is visible text.
+             (it "paints the cells of Lanterna putString"
+                 (doseq [text
+                         ["plain ascii" (str CJK " wide") "tab\tstop" "☕ cup"]
+
+                         bold?
+                         [false true]]
+
+                   (let [style! (fn [^com.googlecode.lanterna.graphics.TextGraphics g]
+                                  (.setForegroundColor g com.googlecode.lanterna.TextColor$ANSI/RED)
+                                  (when bold? (p/enable! g p/BOLD)))]
+                     (expect (= (painted-cells #(.putString (doto % style!) 1 0 ^String text))
+                                (painted-cells #(p/put-str! (doto % style!) 1 0 text)))
+                             (pr-str [text bold?])))))
+             (it "paints the current style when the same text was painted in another"
+                 (let [cells (painted-cells (fn [^com.googlecode.lanterna.graphics.TextGraphics g]
+                                              (p/put-str! g 0 0 "same")
+                                              (p/enable! g p/BOLD)
+                                              (p/put-str! g 0 0 "same")))]
+                   (expect (.isBold ^com.googlecode.lanterna.TextCharacter (first cells))))))
+
 (defdescribe col-prefix-end-test
              (describe "col-prefix-end returns the longest grapheme-safe prefix length"
                        (it "CJK stops at the last whole glyph that fits"

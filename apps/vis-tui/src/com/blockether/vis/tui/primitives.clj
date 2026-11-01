@@ -19,7 +19,8 @@
   (:import [com.blockether.vis.render BoundedCache]
            [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TerminalTextUtils
             TextCharacter TextColor]
-           [com.googlecode.lanterna.graphics TextGraphics]))
+           [com.googlecode.lanterna.graphics AbstractTextGraphics TextGraphics]
+           [com.googlecode.lanterna.gui2 DefaultTextGUIGraphics]))
 
 ;;; ── Numeric ─────────────────────────────────────────────────────────────────
 
@@ -99,10 +100,35 @@
   ^String [^String s]
   (TerminalTextUtils/sanitizeForPaint s))
 
+(declare blit-line!)
+
+(defn- cell-cached-put?
+  "True when `s` can paint from the cached `TextCharacter[]` of `blit-line!`.
+   Lanterna's own graphics give the array overload the same cells as
+   `putString(String)`. A proxy or other `TextGraphics` keeps the String call.
+   Tab, line feed and carriage return need `putString`'s own preparation."
+  [g ^String s]
+  (and (or (instance? DefaultTextGUIGraphics g) (instance? AbstractTextGraphics g))
+       (pos? (.length s))
+       (neg? (.indexOf s (int 9)))
+       (neg? (.indexOf s (int 10)))
+       (neg? (.indexOf s (int 13)))))
+
 (defn put-str!
-  "Draw a string at (col, row). Control characters are sanitized."
+  "Draw a string at (col, row). Control characters are sanitized.
+   A clean line paints its cached cells: `putString(String)` made new
+   `TextCharacter`s, and interned each glyph, for every call on every frame."
   [^TextGraphics g col row text]
-  (.putString g (int col) (int row) (sanitize-for-lanterna (str text)))
+  (let [s (sanitize-for-lanterna (str text))]
+    (if (cell-cached-put? g s)
+      (blit-line! g
+                  col
+                  row
+                  s
+                  (.getForegroundColor g)
+                  (.getBackgroundColor g)
+                  (.getActiveModifiers g))
+      (.putString g (int col) (int row) s)))
   g)
 
 ;;; ── Cached line blitting ─────────────────────────────────────────────────────
@@ -128,18 +154,15 @@
 
 (def ^:private ^java.util.EnumSet no-mods (java.util.EnumSet/noneOf SGR))
 
-(defn blit-line!
-  "Paint `line` at (x,y) in fg/bg with SGR `mods`, caching the segmented
-   `TextCharacter[]` across frames and painting it via the fork's pre-segmented
-   `putString` overload (0 alloc on a cache hit).
+(defn line-cells
+  "The cached `TextCharacter[]` for `line` in fg/bg with SGR `mods`.
+   The array is the same as `TextCharacter/fromString` gives. Do not change it:
+   every caller shares it, and a cache hit makes no new cell.
 
    CONTRACT: `line` must already be sanitized + tab-expanded (no raw C0 controls,
-   tabs, or newlines) — the same guarantee the markdown projector and `put-str!`s
-   `sanitize-for-lanterna` provide — because the array path does NOT run
-   lanterna's `prepareStringForPut` (tab expansion / newline truncation). For
-   already-clean single lines it is byte-identical to `.putString(String)`,
-   including double-width CJK/emoji column advance."
-  [^TextGraphics g x y ^String line ^TextColor fg ^TextColor bg ^java.util.EnumSet mods]
+   tabs, or newlines)."
+  ^"[Lcom.googlecode.lanterna.TextCharacter;"
+  [^String line ^TextColor fg ^TextColor bg ^java.util.EnumSet mods]
   (let [mempty?
         (.isEmpty mods)
 
@@ -153,27 +176,49 @@
         ^"[Lcom.googlecode.lanterna.TextCharacter;" cached
         (.get ^BoundedCache line-cell-cache k)]
 
-    (if cached
-      (.putString g (int x) (int y) cached)
-      (let [^java.util.EnumSet effective-mods
-            (if mempty? no-mods mods)
+    (or cached
+        (let [^java.util.EnumSet effective-mods
+              (if mempty? no-mods mods)
 
-            ^"[Lcom.googlecode.lanterna.TextCharacter;" arr
-            (TextCharacter/fromString line fg bg effective-mods)]
+              ^"[Lcom.googlecode.lanterna.TextCharacter;" arr
+              (TextCharacter/fromString line fg bg effective-mods)]
 
-        ;; The stored key must own an IMMUTABLE mods snapshot: a later
-        ;; enable/disableModifiers on the caller's live set must not mutate our
-        ;; key out from under the map.
-        (.put ^BoundedCache line-cell-cache
-              (if mempty? k [line fg bg (java.util.EnumSet/copyOf mods)])
-              arr)
-        (.putString g (int x) (int y) arr)))
-    g))
+          ;; The stored key must own an IMMUTABLE mods snapshot: a later
+          ;; enable/disableModifiers on the caller's live set must not mutate our
+          ;; key out from under the map.
+          (.put ^BoundedCache line-cell-cache
+                (if mempty? k [line fg bg (java.util.EnumSet/copyOf mods)])
+                arr)
+          arr))))
+
+(defn blit-line!
+  "Paint `line` at (x,y) in fg/bg with SGR `mods`, caching the segmented
+   `TextCharacter[]` across frames and painting it via the fork's pre-segmented
+   `putString` overload (0 alloc on a cache hit).
+
+   CONTRACT: `line` must already be sanitized + tab-expanded (no raw C0 controls,
+   tabs, or newlines) — the same guarantee the markdown projector and `put-str!`s
+   `sanitize-for-lanterna` provide — because the array path does NOT run
+   lanterna's `prepareStringForPut` (tab expansion / newline truncation). For
+   already-clean single lines it is byte-identical to `.putString(String)`,
+   including double-width CJK/emoji column advance."
+  [^TextGraphics g x y ^String line ^TextColor fg ^TextColor bg ^java.util.EnumSet mods]
+  (.putString g (int x) (int y) (line-cells line fg bg mods))
+  g)
 
 (defn set-char!
-  "Draw a single character at (col, row)."
+  "Draw a single character at (col, row), from the cached cell when it can."
   [^TextGraphics g col row ch]
-  (.setCharacter g (int col) (int row) (char ch))
+  (let [s (String/valueOf (char ch))]
+    (if (cell-cached-put? g s)
+      (blit-line! g
+                  col
+                  row
+                  s
+                  (.getForegroundColor g)
+                  (.getBackgroundColor g)
+                  (.getActiveModifiers g))
+      (.setCharacter g (int col) (int row) (char ch))))
   g)
 
 (defn underline-cell!
