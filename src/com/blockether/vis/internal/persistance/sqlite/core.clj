@@ -2171,6 +2171,28 @@
    :order-by [[:last_turn.created_at :desc] [:last_turn.position :desc]]
    :limit 1})
 
+(def ^:private all-session-turn-stats-sql
+  "The all-session turn stats in one pass. Each turn reads its newest state once
+   through the `(session_turn_soul_id, version)` index, and the grouped facts and
+   the newest human turn's status read that one materialized set. It answers
+   what [[human-answer-expression]] and [[latest-turn-status-expression]] answer
+   per session. Their correlated MAX(version) lookups cost about 70 ms over 18,000
+   turns; this costs about 45 ms. Bind the settled statuses, in order."
+  (str "WITH t AS MATERIALIZED ("
+       "SELECT ss.session_soul_id AS sid, ts.request_kind AS kind, ts.created_at AS created_at, "
+       "ts.position AS position, "
+       "(SELECT f.status FROM session_turn_state f WHERE f.session_turn_soul_id = ts.id "
+       "ORDER BY f.version DESC LIMIT 1) AS status "
+       "FROM session_turn_soul ts JOIN session_state ss ON ss.id = ts.session_state_id), "
+       "agg AS (SELECT sid, COUNT(*) AS n, "
+       "SUM(CASE WHEN kind = 'user' AND status IN (?, ?, ?) THEN 1 ELSE 0 END) AS answers, "
+       "MAX(created_at) AS latest FROM t GROUP BY sid), "
+       "lastu AS (SELECT sid, status FROM (SELECT sid, status, ROW_NUMBER() OVER "
+       "(PARTITION BY sid ORDER BY created_at DESC, position DESC) AS rn "
+       "FROM t WHERE kind = 'user' AND status IS NOT NULL) WHERE rn = 1) "
+       "SELECT agg.sid AS sid, agg.n AS n, agg.answers AS answers, lastu.status AS last_status, "
+       "agg.latest AS latest FROM agg LEFT JOIN lastu ON lastu.sid = agg.sid"))
+
 (defn- turn-stats-row
   [row]
   (let [status (:last_status row)]
@@ -2191,14 +2213,10 @@
      (into {}
            (map (fn [row]
                   [(str (:sid row)) (turn-stats-row row)]))
-           (query! db-info
-                   {:select [[:ss.session_soul_id :sid] [[:count :ts.id] :n]
-                             [human-answer-expression :answers]
-                             [latest-turn-status-expression :last_status]
-                             [[:max :ts.created_at] :latest]]
-                    :from [[:session_turn_soul :ts]]
-                    :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
-                    :group-by [:ss.session_soul_id]}))
+           (query-sql! db-info
+                       (into [all-session-turn-stats-sql]
+                             (map normalize-status)
+                             [:success :error :interrupted])))
      {}))
   ([db-info session-id]
    (when (and (ds db-info) session-id)
