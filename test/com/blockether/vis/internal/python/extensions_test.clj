@@ -6478,6 +6478,8 @@ vis.register_extension(vis.Extension(
         (write-ext! dir "first.py" "import blockether.vis.extension as vis\n")
         (try (let [{:keys [signals]} (tel/with-signals (pyx/load-python-extensions! {:dirs [(str dir)]}))
                    phases (some #(when (= ::pyx/reload-phases (:id %)) (:phases (:data %))) signals)]
+               ;; A load behind another thread's load showed a total with no phase for the wait.
+               (expect (= :lock-wait (:phase (first phases))))
                (expect (some #(= {:phase :register :detail "first"} (dissoc % :ms)) phases)))
              (finally (reset! live-load nil) (pyx/reload-python-extensions! {:dirs []}))))))
 

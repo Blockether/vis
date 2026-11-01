@@ -4358,9 +4358,17 @@
         (try (f) (finally (.unlock ensure-load-lock))))))
 
 (defn- with-phased-load-lock
-  "[[with-load-lock]] inside one phase record, logged once by the outermost call."
+  "[[with-load-lock]] inside one phase record, logged once by the outermost call.
+   A wait for another thread's load is the `:lock-wait` phase."
   [f]
-  (with-reload-phases #(with-load-lock f)))
+  (with-reload-phases
+    (fn []
+      (if (.isHeldByCurrentThread ensure-load-lock)
+        (f)
+        (let [requested (System/nanoTime)]
+          (with-load-lock (fn []
+                            (record-phase! :lock-wait nil requested)
+                            (f))))))))
 
 ;; Scopes (nil = global) whose declared packages this process prepared. A project
 ;; first loaded through the process-directory fallback is prepared once a session
