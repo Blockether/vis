@@ -25,45 +25,65 @@
              (it "reads disk and deletes rotated files"
                  (with-replay
                    (fn [sid registry]
-                     (state/append-event! sid "block.output" {:output "original"})
-                     (let [descriptor
-                           (first (get-in @registry [sid :events]))
+                     (binding [store/*inline-max-bytes* 0]
+                       (state/append-event! sid "block.output" {:output "original"})
+                       (let [descriptor (first (get-in @registry [sid :events]))
+                             file (::store/file descriptor)
+                             altered (assoc (store/read-event descriptor) "output" "disk value")]
 
-                           file
-                           (::store/file descriptor)
-
-                           altered
-                           (assoc (store/read-event descriptor) "output" "disk value")]
-
-                       (with-open [out (java.io.FileOutputStream. ^String file)]
-                         (.write out ^bytes (nippy/freeze altered)))
-                       (expect (= "disk value" (get (first (state/events-since sid 0)) "output")))
-                       (state/append-event! sid "block.output" {:output "second"})
-                       (state/append-event! sid "block.output" {:output "third"})
-                       (expect (not (.exists (java.io.File. ^String file))))
-                       (expect (= 1 (state/replay-floor sid)))
-                       (expect (= [2 3] (mapv #(get % "seq") (state/events-since sid 1)))))))))
+                         (with-open [out (java.io.FileOutputStream. ^String file)]
+                           (.write out ^bytes (nippy/freeze altered)))
+                         (expect (= "disk value" (get (first (state/events-since sid 0)) "output")))
+                         (state/append-event! sid "block.output" {:output "second"})
+                         (state/append-event! sid "block.output" {:output "third"})
+                         (expect (not (.exists (java.io.File. ^String file))))
+                         (expect (= 1 (state/replay-floor sid)))
+                         (expect (= [2 3] (mapv #(get % "seq") (state/events-since sid 1))))))))))
 
 (defdescribe failures-declare-gaps-test
              (it "failures declare gaps"
                  (with-replay
                    (fn [sid registry]
-                     (state/append-event! sid "block.output" {:output "first"})
-                     (with-redefs [archive/write! (fn [_]
-                                                    (throw (java.io.IOException. "disk full")))]
-                       (state/append-event! sid "block.output" {:output "lost"}))
-                     (expect (= 2 (state/replay-floor sid)))
-                     (expect (empty? (state/events-since sid 0)))
-                     (state/append-event! sid "block.output" {:output "third"})
-                     (let [file (::store/file (first (get-in @registry [sid :events])))]
-                       ;; A partial file must never turn into a silently shortened replay.
-                       (spit file "partial")
-                       (expect (try (state/events-since sid 2)
-                                    false
-                                    (catch clojure.lang.ExceptionInfo e
-                                      (= ::state/replay-unavailable (:type (ex-data e))))))
-                       (expect (= 3 (state/replay-floor sid)))
-                       (expect (not (.exists (java.io.File. ^String file)))))))))
+                     (binding [store/*inline-max-bytes* 0]
+                       (state/append-event! sid "block.output" {:output "first"})
+                       (with-redefs [archive/write! (fn [_]
+                                                      (throw (java.io.IOException. "disk full")))]
+                         (state/append-event! sid "block.output" {:output "lost"}))
+                       (expect (= 2 (state/replay-floor sid)))
+                       (expect (empty? (state/events-since sid 0)))
+                       (state/append-event! sid "block.output" {:output "third"})
+                       (let [file (::store/file (first (get-in @registry [sid :events])))]
+                         ;; A partial file must never turn into a silently shortened replay.
+                         (spit file "partial")
+                         (expect (try (state/events-since sid 2)
+                                      false
+                                      (catch clojure.lang.ExceptionInfo e
+                                        (= ::state/replay-unavailable (:type (ex-data e))))))
+                         (expect (= 3 (state/replay-floor sid)))
+                         (expect (not (.exists (java.io.File. ^String file))))))))))
+
+(defdescribe
+  inline-frames-test
+  (it "replays a small frame without a file and releases its bytes when it rotates"
+      (with-replay (fn [sid _]
+                     (let [start (store/inline-total)]
+                       (with-redefs [archive/write! (fn [_]
+                                                      (throw (java.io.IOException. "no file")))]
+                         (state/append-event! sid "block.output" {:output "first"}))
+                       (expect (= ["first"] (mapv #(get % "output") (state/events-since sid 0))))
+                       (expect (< start (store/inline-total)))
+                       (state/append-event! sid "block.output" {:output "second"})
+                       (state/append-event! sid "block.output" {:output "third"})
+                       (#'state/drop-session! sid)
+                       (expect (= start (store/inline-total)))))))
+  (it "writes a file when the inline budget is full"
+      (with-replay (fn [sid registry]
+                     (binding [store/*inline-budget-bytes* 0]
+                       (state/append-event! sid "block.output" {:output "first"}))
+                     (let [descriptor (first (get-in @registry [sid :events]))]
+                       (expect (some? (::store/file descriptor)))
+                       (expect (nil? (::store/frozen descriptor)))
+                       (expect (= "first" (get (store/read-event descriptor) "output"))))))))
 
 (defdescribe byte-budget-and-live-handoff-test
              (it "byte budget and live handoff"
