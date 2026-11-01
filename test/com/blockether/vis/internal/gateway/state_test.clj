@@ -3398,179 +3398,179 @@
 
 ;; Regression: a whole-transcript read (the TUI's) read the iterations of each turn
 ;; on its own: 20 ms of a 40-turn transcript went to those reads.
-(defdescribe transcript-reads-iterations-once-test
-             (it "reads the iterations of every turn in one batch"
-                 (let [singles
-                       (atom 0)
+(defdescribe
+  transcript-reads-iterations-once-test
+  (it
+    "reads the iterations of every turn in one batch"
+    (let [singles
+          (atom 0)
 
-                       batches
-                       (atom [])
+          batches
+          (atom [])
 
-                       rows
-                       (mapv (fn [n]
-                               {:id (str "turn-" n) :position n :status :success})
-                             (range 3))]
+          rows
+          (mapv (fn [n]
+                  {:id (str "turn-" n) :position n :status :success})
+                (range 3))]
 
-                   (with-redefs-fn {#'lp/db-info (constantly ::db)
-                                    #'persistance/db-list-session-turns (fn [_ _] rows)
-                                    #'persistance/db-list-turns-attachments (fn [_ ids]
-                                                                             (zipmap ids
-                                                                                     (repeat [])))
-                                    #'persistance/db-list-iterations-attachments-meta
-                                    (constantly {})
-                                    #'persistance/db-list-session-turns-iterations
-                                    (fn [_ ids]
-                                      (swap! batches conj (vec ids))
-                                      (into {}
-                                            (map (fn [id]
-                                                   [(str id) [{:id (str id "-it") :position 0}]]))
-                                            ids))
-                                    #'persistance/db-list-session-turn-iterations
-                                    (fn [_ _]
-                                      (swap! singles inc)
-                                      [])}
-                     (fn []
-                       (let [turns (state/transcript "sid")]
-                         (expect (= [["turn-0" "turn-1" "turn-2"]] @batches))
-                         (expect (= 0 @singles))
-                         (expect (= ["turn-0-it" "turn-1-it" "turn-2-it"]
-                                    (mapv #(get-in % ["iterations" 0 "id"]) turns)))))))))
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'persistance/db-list-session-turns (fn [_ _]
+                                                             rows)
+                       #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                                 (zipmap ids (repeat [])))
+                       #'persistance/db-list-iterations-attachments-meta (constantly {})
+                       #'persistance/db-list-session-turns-iterations
+                       (fn [_ ids]
+                         (swap! batches conj (vec ids))
+                         (into {}
+                               (map (fn [id]
+                                      [(str id) [{:id (str id "-it") :position 0}]]))
+                               ids))
+                       #'persistance/db-list-session-turn-iterations (fn [_ _]
+                                                                       (swap! singles inc)
+                                                                       [])}
+        (fn []
+          (let [turns (state/transcript "sid")]
+            (expect (= [["turn-0" "turn-1" "turn-2"]] @batches))
+            (expect (= 0 @singles))
+            (expect (= ["turn-0-it" "turn-1-it" "turn-2-it"]
+                       (mapv #(get-in % ["iterations" 0 "id"]) turns)))))))))
 
-(defdescribe session-page-reads-turn-stats-once-test
-             ;; Regression: every row of a `GET /v1/sessions` page queried its own turn
-             ;; stats, beside the store-wide query the page had already read
-             ;; (52 of 84 native samples of a 100-row page), and resolved its
-             ;; workspace twice: once for the path and once for the agent name.
-             (it
-               "decorates every row from the store-wide stats of the page"
-               (let [per-session
-                     (atom 0)
+(defdescribe
+  session-page-reads-turn-stats-once-test
+  ;; Regression: every row of a `GET /v1/sessions` page queried its own turn
+  ;; stats, beside the store-wide query the page had already read
+  ;; (52 of 84 native samples of a 100-row page), and resolved its
+  ;; workspace twice: once for the path and once for the agent name.
+  (it
+    "decorates every row from the store-wide stats of the page"
+    (let [per-session
+          (atom 0)
 
-                     resolutions
-                     (atom 0)
+          resolutions
+          (atom 0)
 
-                     records
-                     (mapv (fn [sid]
-                             {:id sid :title sid :channel :api :created-at 1000})
-                           ["a" "b" "c"])]
+          records
+          (mapv (fn [sid]
+                  {:id sid :title sid :channel :api :created-at 1000})
+                ["a" "b" "c"])]
 
-                 (with-redefs-fn {#'lp/db-info (constantly ::db)
-                                  #'lp/by-channel (constantly records)
-                                  #'lp/by-id (into {} (map (juxt :id identity)) records)
-                                  #'persistance/db-session-turn-stats
-                                  (fn
-                                    ([_] {"a" {:turn-count 3 :answer-count 2}})
-                                    ([_ _] (swap! per-session inc) nil))
-                                  #'bus/live-turns (constantly {})
-                                  #'bus/live-turn-id (constantly nil)
-                                  #'bus/session-waiting? (constantly false)
-                                  #'bus/waiting-requests (constantly {"b" []})
-                                  #'state/resolve-workspace (fn [_ _]
-                                                              (swap! resolutions inc)
-                                                              {:root "/repo"})
-                                  #'config/agent-name (constantly "vis")}
-                   (fn []
-                     (let [page (state/list-sessions-page :all {:limit 3})]
-                       (expect (= {"a" 3 "b" 0 "c" 0}
-                                  (into {} (map (juxt #(get % "id") #(get % "turn_count"))) (:sessions page))))
-                       (expect (= ["b"] (mapv #(get % "id") (:awaiting page))))
-                       (expect (= 0 @per-session))
-                       ;; One workspace read per soul: three rows and one parked row.
-                       (expect (= 4 @resolutions)))))))
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'lp/by-channel (constantly records)
+                       #'lp/by-id (into {} (map (juxt :id identity)) records)
+                       #'persistance/db-session-turn-stats (fn ([_] {"a" {:turn-count 3
+                                                                          :answer-count 2}})
+                                                             ([_ _] (swap! per-session inc) nil))
+                       #'bus/live-turns (constantly {})
+                       #'bus/live-turn-id (constantly nil)
+                       #'bus/session-waiting? (constantly false)
+                       #'bus/waiting-requests (constantly {"b" []})
+                       #'state/resolve-workspace (fn [_ _]
+                                                   (swap! resolutions inc)
+                                                   {:root "/repo"})
+                       #'config/agent-name (constantly "vis")}
+        (fn []
+          (let [page (state/list-sessions-page :all {:limit 3})]
+            (expect (= {"a" 3 "b" 0 "c" 0}
+                       (into {} (map (juxt #(get % "id") #(get % "turn_count"))) (:sessions page))))
+            (expect (= ["b"] (mapv #(get % "id") (:awaiting page))))
+            (expect (= 0 @per-session))
+            ;; One workspace read per soul: three rows and one parked row.
+            (expect (= 4 @resolutions)))))))
+  ;; Regression: each row of a page read its session, workspace, agent and
+  ;; routing lock on its own: 125 queries for a page of 20 rows.
+  (it
+    "decorates every row from the store facts read once for the page"
+    (let [single-reads
+          (atom 0)
 
-             ;; Regression: each row of a page read its session, workspace, agent and
-             ;; routing lock on its own: 125 queries for a page of 20 rows.
-             (it
-               "decorates every row from the store facts read once for the page"
-               (let [single-reads
-                     (atom 0)
+          batches
+          (atom [])
 
-                     batches
-                     (atom [])
+          single!
+          (fn [& _]
+            (swap! single-reads inc)
+            nil)
 
-                     single!
-                     (fn [& _]
-                       (swap! single-reads inc)
-                       nil)
+          records
+          (mapv (fn [sid]
+                  {:id sid :title sid :channel :api :created-at 1000})
+                ["a" "b" "c"])
 
-                     records
-                     (mapv (fn [sid]
-                             {:id sid :title sid :channel :api :created-at 1000})
-                           ["a" "b" "c"])
+          facts
+          (into {}
+                (map (fn [sid]
+                       [sid
+                        {:session {:id sid :title (str "stored " sid) :channel :api}
+                         :workspace {:root (str "/repo/" sid)}
+                         :agent (when (= "a" sid) {:parent_id "p" :leader_id "p" :status "running"})
+                         :routing-locked? (= "b" sid)}]))
+                ["a" "b" "c"])]
 
-                     facts
-                     (into {}
-                           (map (fn [sid]
-                                  [sid
-                                   {:session {:id sid :title (str "stored " sid) :channel :api}
-                                    :workspace {:root (str "/repo/" sid)}
-                                    :agent (when (= "a" sid)
-                                             {:parent_id "p" :leader_id "p" :status "running"})
-                                    :routing-locked? (= "b" sid)}]))
-                           ["a" "b" "c"])]
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'lp/by-channel (constantly records)
+                       #'lp/by-id single!
+                       #'persistance/db-session-turn-stats (constantly {})
+                       #'persistance/db-session-page-facts (fn [_ ids]
+                                                             (swap! batches conj (set ids))
+                                                             (select-keys facts (map str ids)))
+                       #'persistance/db-agent-info single!
+                       #'persistance/db-routing-locked? single!
+                       #'bus/live-turns (constantly {})
+                       #'bus/live-turn-id (constantly nil)
+                       #'bus/session-waiting? (constantly false)
+                       #'bus/waiting-requests (constantly {"b" []})
+                       #'state/resolve-workspace single!
+                       #'config/agent-name (constantly "vis")}
+        (fn []
+          (let [page
+                (state/list-sessions-page :all {:limit 2})
 
-                 (with-redefs-fn {#'lp/db-info (constantly ::db)
-                                  #'lp/by-channel (constantly records)
-                                  #'lp/by-id single!
-                                  #'persistance/db-session-turn-stats (constantly {})
-                                  #'persistance/db-session-page-facts
-                                  (fn [_ ids]
-                                    (swap! batches conj (set ids))
-                                    (select-keys facts (map str ids)))
-                                  #'persistance/db-agent-info single!
-                                  #'persistance/db-routing-locked? single!
-                                  #'bus/live-turns (constantly {})
-                                  #'bus/live-turn-id (constantly nil)
-                                  #'bus/session-waiting? (constantly false)
-                                  #'bus/waiting-requests (constantly {"b" []})
-                                  #'state/resolve-workspace single!
-                                  #'config/agent-name (constantly "vis")}
-                   (fn []
-                     (let [page (state/list-sessions-page :all {:limit 2})
-                           rows (into {}
-                                      (map (juxt #(get % "id") identity))
-                                      (concat (:sessions page) (:awaiting page)))]
-                       (expect (= [#{"a" "b"}] @batches))
-                       (expect (= 0 @single-reads))
-                       (expect (= "stored a" (get-in rows ["a" "title"])))
-                       (expect (= "/repo/b" (get-in rows ["b" "workspace" "root"])))
-                       (expect (true? (get-in rows ["b" "agent" "routing_locked"])))
-                       (expect (= "subagent" (get-in rows ["a" "agent" "role"])))
-                       (expect (false? (get-in rows ["a" "agent" "routing_locked"]))))))))
+                rows
+                (into {}
+                      (map (juxt #(get % "id") identity))
+                      (concat (:sessions page) (:awaiting page)))]
 
-             ;; Regression: a page whose batch store read failed opened with each row
-             ;; read alone and left no trace of the failure in the gateway log.
-             (it
-               "logs a failed page read and still answers every row"
-               (let [records
-                     (mapv (fn [sid]
-                             {:id sid :title sid :channel :api :created-at 1000})
-                           ["a" "b"])
+            (expect (= [#{"a" "b"}] @batches))
+            (expect (= 0 @single-reads))
+            (expect (= "stored a" (get-in rows ["a" "title"])))
+            (expect (= "/repo/b" (get-in rows ["b" "workspace" "root"])))
+            (expect (true? (get-in rows ["b" "agent" "routing_locked"])))
+            (expect (= "subagent" (get-in rows ["a" "agent" "role"])))
+            (expect (false? (get-in rows ["a" "agent" "routing_locked"]))))))))
+  ;; Regression: a page whose batch store read failed opened with each row
+  ;; read alone and left no trace of the failure in the gateway log.
+  (it "logs a failed page read and still answers every row"
+      (let [records
+            (mapv (fn [sid]
+                    {:id sid :title sid :channel :api :created-at 1000})
+                  ["a" "b"])
 
-                     {:keys [value signals]}
-                     (tel/with-signals
-                       (with-redefs-fn {#'lp/db-info (constantly ::db)
-                                        #'lp/by-channel (constantly records)
-                                        #'lp/by-id (into {} (map (juxt :id identity)) records)
-                                        #'persistance/db-session-turn-stats (constantly {})
-                                        #'persistance/db-session-page-facts
-                                        (fn [_ _] (throw (ex-info "store locked" {})))
-                                        #'bus/live-turns (constantly {})
-                                        #'bus/live-turn-id (constantly nil)
-                                        #'bus/session-waiting? (constantly false)
-                                        #'bus/waiting-requests (constantly {})
-                                        #'state/resolve-workspace (constantly {:root "/repo"})
-                                        #'config/agent-name (constantly "vis")}
-                         #(state/list-sessions-page :all {:limit 2})))
+            {:keys [value signals]}
+            (tel/with-signals
+              (with-redefs-fn {#'lp/db-info (constantly ::db)
+                               #'lp/by-channel (constantly records)
+                               #'lp/by-id (into {} (map (juxt :id identity)) records)
+                               #'persistance/db-session-turn-stats (constantly {})
+                               #'persistance/db-session-page-facts (fn [_ _]
+                                                                     (throw (ex-info "store locked"
+                                                                                     {})))
+                               #'bus/live-turns (constantly {})
+                               #'bus/live-turn-id (constantly nil)
+                               #'bus/session-waiting? (constantly false)
+                               #'bus/waiting-requests (constantly {})
+                               #'state/resolve-workspace (constantly {:root "/repo"})
+                               #'config/agent-name (constantly "vis")}
+                #(state/list-sessions-page :all {:limit 2})))
 
-                     failure
-                     (first (filter #(= :com.blockether.vis.internal.gateway.state/read-failed (:id %))
-                                    signals))]
+            failure
+            (first (filter #(= :com.blockether.vis.internal.gateway.state/read-failed (:id %))
+                           signals))]
 
-                 (expect (= ["a" "b"] (sort (map #(get % "id") (:sessions value)))))
-                 (expect (= :warn (:level failure)))
-                 (expect (= :page-facts (get-in failure [:data :read])))
-                 (expect (= "store locked" (get-in failure [:data :error]))))))
+        (expect (= ["a" "b"] (sort (map #(get % "id") (:sessions value)))))
+        (expect (= :warn (:level failure)))
+        (expect (= :page-facts (get-in failure [:data :read])))
+        (expect (= "store locked" (get-in failure [:data :error]))))))
 
 ;; Regression: a navigator must follow liveness and content recency before paging.
 (defdescribe
@@ -4657,20 +4657,32 @@
 (defn- overview-stats-reads
   "Store-wide stats queries that one `projects-overview` paid for when handed `facts`."
   [dirty facts-of]
-  (let [reads (atom 0)
-        {:keys [records roots]} two-project-fleet]
+  (let [reads
+        (atom 0)
+
+        {:keys [records roots]}
+        two-project-fleet]
+
     (reset! @#'state/projects-overview-cache nil)
     (with-redefs-fn {#'lp/db-info (constantly ::db)
                      #'lp/projects (constantly [])
-                     #'persistance/db-session-turn-stats (fn [& _] (swap! reads inc) {})
+                     #'persistance/db-session-turn-stats (fn [& _]
+                                                           (swap! reads inc)
+                                                           {})
                      #'lp/by-channel (constantly records)
                      #'lp/session-read-marks (constantly {})
                      #'bus/live-turns (constantly {})
                      #'bus/waiting-requests (constantly {})
-                     #'state/resolve-workspace (fn [_db sid] {:root (get roots sid) :repo-root (get roots sid)})}
+                     #'state/resolve-workspace (fn [_db sid]
+                                                 {:root (get roots sid)
+                                                  :repo-root (get roots sid)})}
       (fn []
-        (try (let [facts (facts-of)
-                   answer (state/projects-overview :all dirty facts)]
+        (try (let [facts
+                   (facts-of)
+
+                   answer
+                   (state/projects-overview :all dirty facts)]
+
                [(:session_count answer) @reads])
              (finally (reset! @#'state/projects-overview-cache nil)))))))
 

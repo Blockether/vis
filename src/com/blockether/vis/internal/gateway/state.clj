@@ -611,20 +611,34 @@
                second
                parse-long))))
 
-(defn- running-iteration-frame
-  "Predicate for the stored frames that paint the newest iteration of `entry`'s
-   running turn, or nil when no turn runs. These frames are the only replay source
-   for that iteration: the transcript persists an iteration only when it ends."
-  [entry ring]
-  (when-let [tid (some-> (:current-turn entry)
-                         str)]
-    (let [own? #(and (= tid
-                        (some-> (get % "turn_id")
-                                str))
-                     (contains? gateway-contract/turn-stream-event-types (get % "type")))
-          newest (transduce (comp (filter own?) (keep frame-iteration)) max 0 ring)]
+(defn- own-stream-frame?
+  "True for a stored stream frame of the running turn `tid`."
+  [tid descriptor]
+  (and (= tid
+          (some-> (get descriptor "turn_id")
+                  str))
+       (contains? gateway-contract/turn-stream-event-types (get descriptor "type"))))
 
-      (when (pos? newest) #(and (own? %) (= newest (frame-iteration %)))))))
+(defn- frame-bytes ^long [descriptor] (long (::event-store/bytes descriptor 0)))
+
+(defn- ring-stats
+  "The byte total of `ring` and the newest iteration that the stream frames of turn
+   `tid` paint in it. `stats` is reused when it describes this exact ring and turn,
+   so an append pays for its own frame only. A ring that another path rebuilt is a
+   new object and is counted once again."
+  [stats ring tid]
+  (if (and (identical? ring (:ring stats)) (= tid (:tid stats)))
+    stats
+    {:ring ring
+     :tid tid
+     :bytes (reduce (fn [^long total descriptor]
+                      (+ total (frame-bytes descriptor)))
+                    0
+                    ring)
+     :newest
+     (if tid
+       (transduce (comp (filter #(own-stream-frame? tid %)) (keep frame-iteration)) max 0 ring)
+       0)}))
 
 (defn- conj-ring
   "Append `event` to `entry`'s bounded replay ring, remembering the highest
@@ -642,11 +656,15 @@
    hole. `replay-floor` is what turns that into a decision.
 
    The bound evicts the oldest frame, except the frames of the running turn's
-   newest iteration (`running-iteration-frame`). A long form can stream frames
-   for hours, for example `view.patch` from a live view. Oldest-first eviction
-   then dropped that iteration's prose and code, and a resumed client painted
-   the previous iteration's prose as the latest. Only when every frame is kept
-   does the oldest one go, so the bound still holds."
+   newest iteration. A long form can stream frames for hours, for example
+   `view.patch` from a live view. Oldest-first eviction then dropped that
+   iteration's prose and code, and a resumed client painted the previous
+   iteration's prose as the latest. Only when every frame is kept does the oldest
+   one go, so the bound still holds.
+
+   The byte total and the newest iteration ride the entry as `::ring-stats`
+   (see [[ring-stats]]). Each append counted them over the whole ring: about 1 ms
+   and 1.4 MB per stored event once a long session filled the ring."
   [entry event]
   (let [events
         (:events entry)
@@ -654,25 +672,35 @@
         max-events
         (long @EVENT_RING_MAX)
 
-        ring
-        (conj (if (instance? clojure.lang.PersistentQueue events)
-                events
-                (into clojure.lang.PersistentQueue/EMPTY (or events [])))
-              event)
+        tid
+        (some-> (:current-turn entry)
+                str)
+
+        queue
+        (if (instance? clojure.lang.PersistentQueue events)
+          events
+          (into clojure.lang.PersistentQueue/EMPTY (or events [])))
+
+        stats
+        (ring-stats (::ring-stats entry) queue tid)
+
+        newest
+        (let [iteration (when (and tid (own-stream-frame? tid event)) (frame-iteration event))]
+          (max (long (:newest stats)) (long (or iteration 0))))
 
         kept?
-        (running-iteration-frame entry ring)]
+        (when (pos? newest) #(and (own-stream-frame? tid %) (= newest (frame-iteration %))))]
 
     (loop [ring
-           ring
+           (conj queue event)
+
+           bytes
+           (+ (long (:bytes stats)) (frame-bytes event))
 
            floor
            (long (:evicted-through entry 0))]
 
-      (if (and (seq ring)
-               (or (> (count ring) max-events)
-                   (> (reduce + 0 (map #(long (::event-store/bytes % 0)) ring))
-                      event-store/*max-bytes*)))
+      (if (and (seq ring) (or (> (count ring) max-events) (> bytes (long event-store/*max-bytes*))))
         (let [oldest
               (peek ring)
 
@@ -682,10 +710,12 @@
           (recur (if (identical? victim oldest)
                    (pop ring)
                    (into clojure.lang.PersistentQueue/EMPTY (remove #(identical? victim %)) ring))
+                 (- bytes (frame-bytes victim))
                  (max floor (long (or (get victim "seq") 0)))))
         (assoc entry
           :events ring
-          :evicted-through floor)))))
+          :evicted-through floor
+          ::ring-stats {:ring ring :tid tid :bytes bytes :newest (if (seq ring) newest 0)})))))
 
 (defn- form-coordinate
   "The transport coordinate shared by one form's running and terminal frames."
@@ -702,6 +732,51 @@
     (when (and (some? turn-id) (some? iteration) (some? form-index))
       [turn-id iteration form-index])))
 
+(defn- replace-in-ring
+  "Drop the frames of `entry`'s ring that `same?` matches, then append `event`.
+   A ring without such a frame takes the plain append. The byte total of the kept
+   ring is carried over, so the append does not count the whole ring again. The
+   newest iteration is carried over only when the drop cannot lower it."
+  [entry event same?]
+  (let [ring
+        (:events entry)
+
+        removed
+        (filterv same? ring)]
+
+    (if (empty? removed)
+      (conj-ring entry event)
+      (let [kept
+            (into clojure.lang.PersistentQueue/EMPTY (remove same?) ring)
+
+            tid
+            (some-> (:current-turn entry)
+                    str)
+
+            stats
+            (::ring-stats entry)
+
+            newest
+            (long (:newest stats 0))
+
+            reusable?
+            (and (identical? ring (:ring stats))
+                 (= tid (:tid stats))
+                 (or (and tid
+                          (own-stream-frame? tid event)
+                          (>= (long (or (frame-iteration event) 0)) newest))
+                     (not-any? #(and tid (own-stream-frame? tid %) (= newest (frame-iteration %)))
+                               removed)))]
+
+        (conj-ring (cond-> (assoc entry :events kept)
+                     reusable?
+                     (assoc ::ring-stats
+                       (assoc stats
+                         :ring kept
+                         :bytes (- (long (:bytes stats))
+                                   (long (reduce + 0 (map frame-bytes removed)))))))
+                   event)))))
+
 (defn- materialize-form-activity
   "Keep exactly the latest Activity snapshot per form in the replay ring. Running
    revisions are transient but replace the materialized value; the settled revision
@@ -714,14 +789,10 @@
         (form-coordinate event)]
 
     (if (and coordinate (= "block.activity" type))
-      (let [events
-            (remove #(and (= "block.activity" (get % "type")) (= coordinate (form-coordinate %)))
-              (:events entry))
-
-            events
-            (into clojure.lang.PersistentQueue/EMPTY events)]
-
-        (conj-ring (assoc entry :events events) event))
+      (replace-in-ring entry
+                       event
+                       #(and (= "block.activity" (get % "type"))
+                             (= coordinate (form-coordinate %))))
       entry)))
 
 (defn- materialize-turn-progress
@@ -730,10 +801,7 @@
    phase, not a generic fallback until the next notice."
   [entry event]
   (if (= "turn.progress" (get event "type"))
-    (let [events (into clojure.lang.PersistentQueue/EMPTY
-                       (remove #(= "turn.progress" (get % "type")))
-                       (:events entry))]
-      (conj-ring (assoc entry :events events) event))
+    (replace-in-ring entry event #(= "turn.progress" (get % "type")))
     entry))
 
 (defn- countdown-progress?
@@ -2607,8 +2675,9 @@
   [data fallback f]
   (try (f)
        (catch Throwable t
-         (tel/log! {:level :warn :id ::read-failed :data (assoc data :error (ex-message t)) :error t}
-                   "gateway: a store read failed; the answer uses its fallback")
+         (tel/log!
+           {:level :warn :id ::read-failed :data (assoc data :error (ex-message t)) :error t}
+           "gateway: a store read failed; the answer uses its fallback")
          fallback)))
 
 (def ^:dynamic ^:private *turn-iterations*
@@ -2628,9 +2697,10 @@
   "Call `f` with the iterations of every turn in `turns` read in one batch. A failed
    batch leaves each turn to its own read."
   [db turns f]
-  (binding [*turn-iterations* (read-or {:read :turns-iterations}
-                                       nil
-                                       #(persistance/db-list-session-turns-iterations db (map :id turns)))]
+  (binding [*turn-iterations* (read-or
+                                {:read :turns-iterations}
+                                nil
+                                #(persistance/db-list-session-turns-iterations db (map :id turns)))]
     (f)))
 
 (defn- transcript-turn
@@ -6460,7 +6530,8 @@
           ws (or (:workspace (page-fact sid))
                  (read-or {:read :workspace :session-id (str sid)}
                           nil
-                          #(some-> (lp/db-info) (resolve-workspace sid))))
+                          #(some-> (lp/db-info)
+                                   (resolve-workspace sid))))
           lean-ws (lean-workspace ws)
           ;; The session's MODEL PIN, from the same `session_soul` row `by-id` just
           ;; read — no extra query, so every list row carries it and a client never
@@ -7829,9 +7900,15 @@
 
          page-soul
          (fn [sid]
-           (binding [*agent-name-for-root* name-for-root
-                     *turn-stats* stats
-                     *page-facts* page-facts]
+           (binding [*agent-name-for-root*
+                     name-for-root
+
+                     *turn-stats*
+                     stats
+
+                     *page-facts*
+                     page-facts]
+
              (soul sid)))
 
          rows

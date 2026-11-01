@@ -2530,7 +2530,8 @@
                      {}
                      (fn []
                        (with-redefs-fn {#'state/soul #(when @present? {"id" (str %)})
-                                        #'state/session-exists? (fn [_] @present?)
+                                        #'state/session-exists? (fn [_]
+                                                                  @present?)
                                         #'state/subscribe! (fn [& _]
                                                              (reset! present? false)
                                                              [])
@@ -8110,7 +8111,7 @@
         (fn []
           (with-redefs-fn {#'server/stop! (constantly nil)
                            #'state/soul (constantly {"id" "exists"})
-                     #'state/session-exists? (constantly true)}
+                           #'state/session-exists? (constantly true)}
             (fn []
               (let [handler
                     (rv 'multi-events-handler)
