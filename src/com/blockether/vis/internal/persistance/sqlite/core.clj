@@ -764,11 +764,68 @@
   [^String file]
   (mapv #(str file %) ["" "-wal" "-shm" "-journal"]))
 
+(def ^:private ^java.util.concurrent.ConcurrentHashMap data-version-probes
+  ;; pool -> the one connection that only ever reads `PRAGMA data_version`.
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(def ^:private ^java.util.concurrent.ConcurrentHashMap version-reads
+  ;; [pool read-key] -> [data_version answer], see `read-at-version`.
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- drop-data-version-probe!
+  "Close the probe of `pool` and forget every answer cached against it."
+  [pool]
+  (when-let [^java.sql.Connection probe
+             (.remove ^java.util.concurrent.ConcurrentHashMap data-version-probes ^Object pool)]
+    (try (.close probe) (catch Throwable _ nil)))
+  (.removeIf (.keySet version-reads)
+             (reify
+               java.util.function.Predicate
+                 (test [_ k] (identical? pool (first k))))))
+
+(defn- data-version
+  "`PRAGMA data_version` of `pool`'s file, read on a connection that never writes,
+   or nil when the probe cannot be opened. The value moves whenever any other
+   connection, in this process or another one, commits to the file."
+  [^HikariDataSource pool]
+  (try (let [^java.sql.Connection probe
+             (or (.get data-version-probes pool)
+                 (let [fresh (.getConnection (.getDataSource pool))]
+                   (if-let [prior (.putIfAbsent data-version-probes pool fresh)]
+                     (do (.close fresh) prior)
+                     fresh)))]
+         (locking probe
+           (with-open [st (.createStatement probe)
+                       rs (.executeQuery st "PRAGMA data_version")]
+
+             (when (.next rs) (.getLong rs 1)))))
+       (catch Throwable _ nil)))
+
+(defn- read-at-version
+  "Answer `(f)` from the last answer for `read-key` while the file is unchanged.
+   Only whole-store reads of a pooled disk file are cached; every other store
+   runs `f`. The version is read BEFORE `f`, so a commit racing `f` makes the
+   next call run `f` again instead of serving an older answer."
+  [db-info read-key f]
+  (let [pool (ds db-info)]
+    (if-let [version (when (and (instance? HikariDataSource pool) (= :persistent (:mode db-info)))
+                       (data-version pool))]
+      (let [k [pool read-key]
+            [seen answer] (.get version-reads k)]
+
+        (if (= version seen)
+          answer
+          (let [answer (f)]
+            (when (.containsKey data-version-probes pool) (.put version-reads k [version answer]))
+            answer)))
+      (f))))
+
 (defn- retire-disk-pool!
   "Close one pool generation, then drop its hold on the database files: they stay
    held (`paths/held-file?`) until its last connection is gone."
   [{:keys [pool holder]}]
   (close-pool! pool)
+  (drop-data-version-probe! pool)
   (when holder (paths/release-held-files! holder)))
 
 (defn- open-disk-pool!
@@ -1604,56 +1661,59 @@
           all?
           (or (nil? ch) (= "all" ch))]
 
-      (mapv
-        (fn [row]
-          {:id (->uuid (:id row))
-           :channel (->kw-back (:channel row))
-           :external-id (:external_id row)
-           :title (:state_title row)
-           :goal (some-> (:goal row)
-                         json/read-json)
-           :version (:version row)
-           :fork-count (or (:fork_count row) 0)
-           :created-at (->date (:created_at row))
-           ;; When the session became a conversation here: a restore or a fork sets it.
-           :claimed-at (->date (:claimed_at row))
-           :owner-id (:owner_id row)
-           :project-id (->uuid (:project_id row))
-           :project-position (:project_position row)
-           :project-name (:project_name row)
-           ;; The group is named by ID ONLY. A group's name and its palette token
-           ;; belong to the GROUP (`db-get-session-group`), never to a row: a copy
-           ;; stamped here goes stale the moment the group is renamed or recoloured,
-           ;; while the rows carrying it sit in a window nobody read again.
-           :group-id (->uuid (:group_id row))
-           :favorite-rank (:favorite_rank row)
-           :archived-at (->date (:archived_at row))})
-        (query! db-info
-                {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.claimed_at
-                          :cs.owner_id :cs.project_id :cs.project_position :cs.group_id
-                          :cs.favorite_rank :cs.archived_at :cs.goal [:p.name :project_name]
-                          [:s.title :state_title] :s.version
-                          [{:select [[[:count :*]]]
-                            :from [[:session_state :child]]
-                            :where [:and [:= :child.session_soul_id :cs.id]
-                                    [:not= :child.parent_state_id nil]]} :fork_count]]
-                 :from [[:session_soul :cs]]
-                 :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
-                 :left-join [[:project :p] [:= :p.id :cs.project_id]]
-                 :where (into [:and
-                               ;; TOP-LEVEL only — child souls (parent_state_id set)
-                               ;; hang off their parent's sub-tree, never the session list.
-                               [:= :cs.parent_state_id nil]
-                               ;; ADOPTION filter: hide unclaimed warm-pool
-                               ;; scaffolding (NULL claimed_at) - only real
-                               ;; conversations reach the cross-channel list.
-                               [:not= :cs.claimed_at nil]
-                               [:= :s.version
-                                {:select [[[:max :s2.version]]]
-                                 :from [[:session_state :s2]]
-                                 :where [:= :s2.session_soul_id :cs.id]}]]
-                              (when-not all? [[:= :cs.channel ch]]))
-                 :order-by [[:cs.project_position :asc] [:cs.created_at :desc]]})))))
+      (read-at-version
+        db-info
+        [::list-sessions (if all? "all" ch)]
+        #(mapv
+           (fn [row]
+             {:id (->uuid (:id row))
+              :channel (->kw-back (:channel row))
+              :external-id (:external_id row)
+              :title (:state_title row)
+              :goal (some-> (:goal row)
+                            json/read-json)
+              :version (:version row)
+              :fork-count (or (:fork_count row) 0)
+              :created-at (->date (:created_at row))
+              ;; When the session became a conversation here: a restore or a fork sets it.
+              :claimed-at (->date (:claimed_at row))
+              :owner-id (:owner_id row)
+              :project-id (->uuid (:project_id row))
+              :project-position (:project_position row)
+              :project-name (:project_name row)
+              ;; The group is named by ID ONLY. A group's name and its palette token
+              ;; belong to the GROUP (`db-get-session-group`), never to a row: a copy
+              ;; stamped here goes stale the moment the group is renamed or recoloured,
+              ;; while the rows carrying it sit in a window nobody read again.
+              :group-id (->uuid (:group_id row))
+              :favorite-rank (:favorite_rank row)
+              :archived-at (->date (:archived_at row))})
+           (query! db-info
+                   {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.claimed_at
+                             :cs.owner_id :cs.project_id :cs.project_position :cs.group_id
+                             :cs.favorite_rank :cs.archived_at :cs.goal [:p.name :project_name]
+                             [:s.title :state_title] :s.version
+                             [{:select [[[:count :*]]]
+                               :from [[:session_state :child]]
+                               :where [:and [:= :child.session_soul_id :cs.id]
+                                       [:not= :child.parent_state_id nil]]} :fork_count]]
+                    :from [[:session_soul :cs]]
+                    :join [[:session_state :s] [:= :s.session_soul_id :cs.id]]
+                    :left-join [[:project :p] [:= :p.id :cs.project_id]]
+                    :where (into [:and
+                                  ;; TOP-LEVEL only — child souls (parent_state_id set)
+                                  ;; hang off their parent's sub-tree, never the session list.
+                                  [:= :cs.parent_state_id nil]
+                                  ;; ADOPTION filter: hide unclaimed warm-pool
+                                  ;; scaffolding (NULL claimed_at) - only real
+                                  ;; conversations reach the cross-channel list.
+                                  [:not= :cs.claimed_at nil]
+                                  [:= :s.version
+                                   {:select [[[:max :s2.version]]]
+                                    :from [[:session_state :s2]]
+                                    :where [:= :s2.session_soul_id :cs.id]}]]
+                                 (when-not all? [[:= :cs.channel ch]]))
+                    :order-by [[:cs.project_position :asc] [:cs.created_at :desc]]}))))))
 
 (def ^:private transcript-hits-per-session
   "Snippets kept per matching session. The old shape collapsed a session to ONE
@@ -2210,13 +2270,15 @@
    uses one grouped query, never N+1 transcript reads."
   ([db-info]
    (if (ds db-info)
-     (into {}
-           (map (fn [row]
-                  [(str (:sid row)) (turn-stats-row row)]))
-           (query-sql! db-info
-                       (into [all-session-turn-stats-sql]
-                             (map normalize-status)
-                             [:success :error :interrupted])))
+     (read-at-version db-info
+                      ::session-turn-stats
+                      #(into {}
+                             (map (fn [row]
+                                    [(str (:sid row)) (turn-stats-row row)]))
+                             (query-sql! db-info
+                                         (into [all-session-turn-stats-sql]
+                                               (map normalize-status)
+                                               [:success :error :interrupted]))))
      {}))
   ([db-info session-id]
    (when (and (ds db-info) session-id)

@@ -5959,6 +5959,40 @@
            (finally (persistance/db-dispose-connection! s) (fs/delete-tree root))))))
 
 (defdescribe
+  whole-store-read-cache-test
+  ;; The session list and its turn stats answer from the last read while the file is
+  ;; unchanged. A missed commit would show a stale list: a new turn not counted, or
+  ;; a rename from another process never shown.
+  (it
+    "answers every commit, from this pool or from another connection"
+    (let [root
+          (fs/create-temp-dir {:prefix "vis-version-read-"})
+
+          dir
+          (str (fs/path root "store"))
+
+          s
+          (persistance/db-create-connection! dir)]
+
+      (try (let [sid (h/store-session! s {:channel :api})]
+             (expect (= 0 (get-in (persistance/db-session-turn-stats s) [(str sid) :turn-count] 0)))
+             (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "one"})
+             (expect (= 1 (get-in (persistance/db-session-turn-stats s) [(str sid) :turn-count])))
+             (persistance/db-list-sessions s :all)
+             (with-open [other (java.sql.DriverManager/getConnection (str "jdbc:sqlite:" dir "/vis.db"))]
+               (jdbc/execute! other
+                              ["UPDATE session_soul SET claimed_at = 1 WHERE id = ?" (str sid)])
+               (jdbc/execute! other ["UPDATE session_state SET title = 'renamed elsewhere'"])
+               (jdbc/execute! other ["DELETE FROM session_turn_soul"]))
+             (expect (= ["renamed elsewhere"]
+                        (mapv :title (persistance/db-list-sessions s :all))))
+             (expect (= 0
+                        (get-in (persistance/db-session-turn-stats s)
+                                [(str sid) :turn-count]
+                                0))))
+           (finally (persistance/db-dispose-connection! s) (fs/delete-tree root))))))
+
+(defdescribe
   swept-turn-session-stats-test
   ;; Regression, user report (paraphrased: a dying gateway is restarted and the
   ;; sessions it killed mid-answer show nothing at all in the companion list).
