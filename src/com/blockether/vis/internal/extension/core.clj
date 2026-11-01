@@ -1832,44 +1832,49 @@
     (get @op-hooks op-kw)))
 
 (defn- run-op-before-hooks
-  "Thread `args` through every :before hook registered for `op-kw`."
-  [op-kw env args]
-  (reduce (fn [as {:keys [phase owner] hook-fn :fn}]
-            (if (= :before phase)
-              (try (let [r (hook-fn env op-kw as)]
-                     (if (sequential? r) (vec r) as))
-                   (catch Throwable e
-                     (log-hook! :warn
-                                ::op-hook-threw
-                                nil
-                                op-kw
-                                :before-op-hook
-                                nil
-                                (str (or owner "?") ": " (ex-message e)))
-                     as))
-              as))
-          (vec args)
-          (environment-op-hooks op-kw env)))
+  "Thread `args` through every :before hook registered for `op-kw`, or through
+   the `hooks` that the operation resolved when it was invoked."
+  ([op-kw env args] (run-op-before-hooks op-kw env args (environment-op-hooks op-kw env)))
+  ([op-kw env args hooks]
+   (reduce (fn [as {:keys [phase owner] hook-fn :fn}]
+             (if (= :before phase)
+               (try (let [r (hook-fn env op-kw as)]
+                      (if (sequential? r) (vec r) as))
+                    (catch Throwable e
+                      (log-hook! :warn
+                                 ::op-hook-threw
+                                 nil
+                                 op-kw
+                                 :before-op-hook
+                                 nil
+                                 (str (or owner "?") ": " (ex-message e)))
+                      as))
+               as))
+           (vec args)
+           hooks)))
 
 (defn- run-op-after-hooks
-  "Thread `result` through every :after hook registered for `op-kw`."
-  [op-kw env args result]
-  (reduce (fn [res {:keys [phase owner] hook-fn :fn}]
-            (if (= :after phase)
-              (try (let [r (hook-fn env op-kw args res)]
-                     (if (tool-result? r) r res))
-                   (catch Throwable e
-                     (log-hook! :warn
-                                ::op-hook-threw
-                                nil
-                                op-kw
-                                :after-op-hook
-                                nil
-                                (str (or owner "?") ": " (ex-message e)))
-                     res))
-              res))
-          result
-          (environment-op-hooks op-kw env)))
+  "Thread `result` through every :after hook registered for `op-kw`, or through
+   the `hooks` that the operation resolved when it was invoked."
+  ([op-kw env args result]
+   (run-op-after-hooks op-kw env args result (environment-op-hooks op-kw env)))
+  ([op-kw env args result hooks]
+   (reduce (fn [res {:keys [phase owner] hook-fn :fn}]
+             (if (= :after phase)
+               (try (let [r (hook-fn env op-kw args res)]
+                      (if (tool-result? r) r res))
+                    (catch Throwable e
+                      (log-hook! :warn
+                                 ::op-hook-threw
+                                 nil
+                                 op-kw
+                                 :after-op-hook
+                                 nil
+                                 (str (or owner "?") ": " (ex-message e)))
+                      res))
+               res))
+           result
+           hooks)))
 
 (defn- run-op-around
   "MIDDLEWARE: wrap the actual op fn with every :around hook for `op-kw`. Each
@@ -1878,10 +1883,11 @@
    retry with rewritten args), catch its throw and recover, or substitute a
    result outright — this is how an extension makes an op it doesn't own NOT fail
    (e.g. the Clojure pack paren-repairs + retries a `patch`). Hooks compose;
-   with none registered this is just `(apply f args)`."
-  [op-kw env f args]
+   with none registered this is just `(apply f args)`. `hooks` are the hooks that
+   the operation resolved when it was invoked."
+  [op-kw env f args hooks]
   (let [arounds
-        (filter #(= :around (:phase %)) (environment-op-hooks op-kw env))
+        (filter #(= :around (:phase %)) hooks)
 
         base
         (fn [as]
@@ -1947,9 +1953,14 @@
         (keyword op-kw)
 
         args
-        (vec args)]
+        (vec args)
 
-    (run-op-after-hooks op env args (run-op-around op env f args))))
+        ;; Settings decide the hooks when the operation is invoked. A settings edit
+        ;; never changes a running call, so both phases share one resolution.
+        hooks
+        (vec (environment-op-hooks op env))]
+
+    (run-op-after-hooks op env args (run-op-around op env f args hooks) hooks)))
 
 (defn- folded-kwargs->positional
   "Re-expand folded kwargs for the DIRECT-python surface. When the agent calls a
@@ -2108,12 +2119,17 @@
               call-args
               (if (:ext.symbol/inject-env? sym-entry) (into [call-env] call-args) call-args)
 
+              ;; One resolution serves every phase of this call. The :after hooks
+              ;; run once, below, after the symbol's own after-fn.
+              hooks
+              (vec (environment-op-hooks op-kw call-env))
+
               call-args
-              (run-op-before-hooks op-kw call-env call-args)
+              (run-op-before-hooks op-kw call-env call-args hooks)
 
               call-result
               (let [ct0 (System/nanoTime)]
-                (try (let [r (invoke-operation op-kw call-env f call-args)
+                (try (let [r (run-op-around op-kw call-env f call-args hooks)
                            ms (elapsed-ms ct0)]
 
                        (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
@@ -2133,7 +2149,7 @@
               (run-after ext-ns sym-entry call-env f call-args (:result call-result))
 
               result
-              (run-op-after-hooks op-kw call-env call-args result)
+              (run-op-after-hooks op-kw call-env call-args result hooks)
 
               result
               (->> result

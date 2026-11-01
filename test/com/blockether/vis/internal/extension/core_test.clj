@@ -3,6 +3,7 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.activity.event :as activity-event]
@@ -527,6 +528,63 @@
                     (if (= a :fixed) :ok (throw (ex-info "nope" {}))))]
             (expect (= :ok (extension/invoke-operation :ophtest6 {} f [:bad])))
             (expect (= 2 @attempts)))))
+    ;; Performance report: each phase of one operation read the session settings
+    ;; again, a store read per phase on every Python extension call.
+    (it "reads the session settings once for all phases of one operation"
+        (let [reads
+              (atom 0)
+
+              ext
+              {:ext/name "test.op-settings"
+               :ext/engine {:ext.engine/symbols ['probe]}
+               :ext/op-hooks [{:op :ophtest-settings
+                               :phase :around
+                               :fn (fn [_ _ args nxt]
+                                     (nxt args))}
+                              {:op :ophtest-settings
+                               :phase :after
+                               :fn (fn [_ _ _ r]
+                                     (assoc-in r [:result :after] true))}]}
+
+              env
+              {:extensions (atom [ext]) :db-info ::db :session-id "s1"}
+
+              id
+              (scoped/resource-id :engines "test.op-settings")]
+
+          (with-redefs [scoped/values (fn [_ _]
+                                        (swap! reads inc)
+                                        {id "on"})]
+            (expect (true? (get-in (extension/invoke-operation :ophtest-settings
+                                                               env
+                                                               (fn [& _]
+                                                                 (extension/success {:result {}}))
+                                                               [])
+                                   [:result :after]))))
+          (expect (= 1 @reads))))
+    ;; Regression: `invoke-operation` and the tool wrapper both ran the :after
+    ;; hooks, so a guard re-parsed every patched file twice.
+    (it "runs each after hook once for a tool call"
+        (let [calls
+              (atom 0)
+
+              ext
+              {:ext/name "test.after-once"}
+
+              entry
+              {:ext.symbol/symbol 'probe
+               :ext.symbol/tag :observation
+               :ext.symbol/fn (fn []
+                                (extension/success {:result :done}))}]
+
+          (extension/register-op-hook! {:op (keyword (#'extension/tool-call-name ext 'probe))
+                                        :owner :after-once
+                                        :fn (fn [_ _ _ r]
+                                              (swap! calls inc)
+                                              r)})
+          (try (expect (= :done (extension/invoke-symbol-wrapper ext entry [] {})))
+               (finally (extension/unregister-op-hooks-for-owner! :after-once)))
+          (expect (= 1 @calls))))
     (it "declarative :ext/op-hooks install on register and tear down on deregister"
         (try (extension/register-extension! {:ext/name "test.ophooks-ext"
                                              :ext/description "declarative op-hooks lifecycle"
