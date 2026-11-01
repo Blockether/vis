@@ -195,18 +195,40 @@
                  (field (json/read-json (:body response) :key-fn keyword) :data))))
        (catch Throwable _ {})))
 
+(def ^:private catalog-ttl-ms (* 60 60 1000))
+
+(def ^:private catalog-retry-ms 60000)
+
+(defonce ^:private catalog-cache
+  ;; `{:at ms :catalog delay}` of the last fetch. Each config reload rebuilt the
+  ;; router of each project, and each build fetched the catalog again.
+  (atom nil))
+
+(defn- cached-catalog!
+  "The catalog of [[fetch-catalog!]], fetched at most once an hour. Concurrent
+   callers share one fetch. An empty answer is fetched again after one minute."
+  [^long now]
+  (let [fresh? (fn [{:keys [at catalog]}]
+                 (or (not (realized? catalog))
+                     (< (- now (long at))
+                        (long (if (empty? @catalog) catalog-retry-ms catalog-ttl-ms)))))]
+    @(:catalog (swap! catalog-cache (fn [entry]
+                                      (if (and entry (fresh? entry))
+                                        entry
+                                        {:at now :catalog (delay (fetch-catalog!))}))))))
+
 (defn- enrich-models
   "`:provider/enrich-models-fn` - resolve each CONFIGURED model's real context
    window, output limit and tool/reasoning support from the live catalog. So
    adding a model is just writing its `vendor/model` slug in config (or picking
    it in the TUI): no per-model constants here, no vendored 300-entry catalog.
    Explicit config values still win per key; unknown slugs and an unreachable
-   catalog leave the models untouched. Runs once per router build, not per turn."
+   catalog leave the models untouched. Router builds share one catalog an hour."
   [svar-provider _router-opts]
   (let [models (:models svar-provider)]
     (if (empty? models)
       models
-      (let [by-slug (fetch-catalog!)]
+      (let [by-slug (cached-catalog! (util/now-ms))]
         (if (empty? by-slug)
           models
           (mapv (fn [m]

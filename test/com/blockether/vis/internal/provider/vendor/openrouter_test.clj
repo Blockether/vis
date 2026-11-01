@@ -78,3 +78,36 @@
             (expect (= :openrouter (:provider-id report)))
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits]))))))))
+
+(defdescribe catalog-cache-test
+             ;; Each config reload rebuilt every project router, and each build fetched the
+             ;; catalog over the network inside the request that caused it.
+             (it "shares one catalog fetch between router builds and retries an empty one"
+                 (let [fetches
+                       (atom 0)
+
+                       answer
+                       (atom {})
+
+                       catalog
+                       #(#'openrouter/cached-catalog! %)]
+
+                   (reset! @#'openrouter/catalog-cache nil)
+                   (with-redefs-fn {#'openrouter/fetch-catalog! (fn []
+                                                                  (swap! fetches inc)
+                                                                  @answer)}
+                     (fn []
+                       (expect (= [{:name "a/m"}]
+                                  (#'openrouter/enrich-models {:models [{:name "a/m"}]} {}))
+                               "an unreachable catalog leaves the models")
+                       (reset! @#'openrouter/catalog-cache nil)
+                       (reset! fetches 0)
+                       (catalog 0)
+                       (catalog 1000)
+                       (expect (= 1 @fetches) "an empty catalog waits before the next fetch")
+                       (reset! answer {"a/m" {:context 64000}})
+                       (expect (= {"a/m" {:context 64000}} (catalog 61000)))
+                       (catalog 91000)
+                       (expect (= 2 @fetches) "a fetched catalog serves later builds")
+                       (catalog 3700000)
+                       (expect (= 3 @fetches) "an hour old catalog is fetched again"))))))
