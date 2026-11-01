@@ -1470,6 +1470,59 @@
   [db-info soul-id-s]
   (:id (first (query-sql! db-info [latest-state-id-sql soul-id-s soul-id-s]))))
 
+(defn- session-row->session
+  "The canonical session map of one `session_soul` row, its latest `state` and its
+   project name. [[db-get-session]] and [[db-session-page-facts]] build it alike."
+  [soul state project-name]
+  (cond-> {:id (->uuid (:id soul))
+           :type :session
+           :channel (->kw-back (:channel soul))
+           :external-id (:external_id soul)
+           :title (:title state)
+           :goal (some-> (:goal soul)
+                         json/read-json)
+           :system-prompt (:system_prompt state)
+           :model (:llm_root_model state)
+           :version (or (:version state) 0)
+           :created-at (->date (:created_at soul))
+           :owner-id (:owner_id soul)
+           :project-id (->uuid (:project_id soul))
+           :project-position (:project_position soul)
+           :group-id (->uuid (:group_id soul))
+           ;; The human's STAR, off the `:*` soul row already read: every list
+           ;; row carries it without a second query per session (nil =
+           ;; unstarred). Backend-owned, so two clients cannot disagree.
+           :favorite-rank (:favorite_rank soul)
+           ;; The human's ARCHIVE stamp, off the same `:*` soul row the
+           ;; star came from: nil means active, a date means the session
+           ;; is out of sight and read-only until it comes back.
+           :archived-at (->date (:archived_at soul))
+           ;; The program that created the session, or nil for a person or a client.
+           :origin (some-> (:origin soul)
+                           json/read-json)
+           ;; The snapshot that a restore made this session from, or nil.
+           :imported-from (some-> (:imported_from soul)
+                                  json/read-json)}
+    (:llm_root_provider state)
+    (assoc :provider (->kw-back (:llm_root_provider state)))
+
+    ;; The per-session model PIN lives on this same `session_soul` row
+    ;; (`db-get-session-model-pref` reads exactly these two columns), and
+    ;; the row is already selected with `:*`. Carrying it here is free and
+    ;; lets a session list answer "which model does this run on?" without
+    ;; an extra per-session round-trip.
+    (not-empty (:llm_pref_model soul))
+    (assoc :model-pref {:provider (:llm_pref_provider soul) :model (:llm_pref_model soul)})
+
+    ;; Where a fork came from: the source session and the turn it copied last.
+    (:forked_from_session_id soul)
+    (assoc :forked-from
+      {:session-id (->uuid (:forked_from_session_id soul))
+       :turn-id (->uuid (:forked_from_turn_id soul))})
+
+    project-name
+    (assoc :project-name project-name)))
+
 (defn db-get-session
   [db-info session-id]
   (when (and (ds db-info) session-id)
@@ -1481,54 +1534,7 @@
                           db-info
                           {:select [:name] :from :project :where [:= :id (:project_id soul)]}))]
 
-          (cond-> {:id (->uuid (:id soul))
-                   :type :session
-                   :channel (->kw-back (:channel soul))
-                   :external-id (:external_id soul)
-                   :title (:title state)
-                   :goal (some-> (:goal soul)
-                                 json/read-json)
-                   :system-prompt (:system_prompt state)
-                   :model (:llm_root_model state)
-                   :version (or (:version state) 0)
-                   :created-at (->date (:created_at soul))
-                   :owner-id (:owner_id soul)
-                   :project-id (->uuid (:project_id soul))
-                   :project-position (:project_position soul)
-                   :group-id (->uuid (:group_id soul))
-                   ;; The human's STAR, off the `:*` soul row already read: every list
-                   ;; row carries it without a second query per session (nil =
-                   ;; unstarred). Backend-owned, so two clients cannot disagree.
-                   :favorite-rank (:favorite_rank soul)
-                   ;; The human's ARCHIVE stamp, off the same `:*` soul row the
-                   ;; star came from: nil means active, a date means the session
-                   ;; is out of sight and read-only until it comes back.
-                   :archived-at (->date (:archived_at soul))
-                   ;; The program that created the session, or nil for a person or a client.
-                   :origin (some-> (:origin soul)
-                                   json/read-json)
-                   ;; The snapshot that a restore made this session from, or nil.
-                   :imported-from (some-> (:imported_from soul)
-                                          json/read-json)}
-            (:llm_root_provider state)
-            (assoc :provider (->kw-back (:llm_root_provider state)))
-
-            ;; The per-session model PIN lives on this same `session_soul` row
-            ;; (`db-get-session-model-pref` reads exactly these two columns), and
-            ;; the row is already selected with `:*`. Carrying it here is free and
-            ;; lets a session list answer "which model does this run on?" without
-            ;; an extra per-session round-trip.
-            (not-empty (:llm_pref_model soul))
-            (assoc :model-pref {:provider (:llm_pref_provider soul) :model (:llm_pref_model soul)})
-
-            ;; Where a fork came from: the source session and the turn it copied last.
-            (:forked_from_session_id soul)
-            (assoc :forked-from
-              {:session-id (->uuid (:forked_from_session_id soul))
-               :turn-id (->uuid (:forked_from_turn_id soul))})
-
-            project
-            (assoc :project-name (:name project))))))))
+          (session-row->session soul state (:name project)))))))
 
 (defn db-get-session-prompt-cache-state
   "Return the latest exact provider-prefix checkpoint stored on one session state."
@@ -5432,6 +5438,98 @@
                     leader-id
                     (assoc :where [:= :leader_id (str leader-id)]))))
     []))
+
+(def ^:private page-facts-batch-size
+  "Session ids that one page-facts SQL read binds."
+  500)
+
+(defn- by-column
+  "`rows` keyed by the string value of `column`. The first row wins."
+  [column rows]
+  (reduce (fn [m row]
+            (let [k (some-> (get row column)
+                            ->ref)]
+              (if (or (nil? k) (contains? m k)) m (assoc m k row))))
+          {}
+          rows))
+
+(defn- page-facts-chunk
+  "[[db-session-page-facts]] for at most [[page-facts-batch-size]] string ids."
+  [db-info ids]
+  (let [souls
+        (query! db-info {:select [:*] :from :session_soul :where [:in :id ids]})
+
+        states
+        (by-column :session_soul_id
+                   (query! db-info
+                           {:select [:s.id :s.session_soul_id :s.title :s.version :s.system_prompt
+                                     :s.llm_root_model :s.llm_root_provider :s.workspace_id]
+                            :from [[:session_state :s]]
+                            :where [:and [:in :s.session_soul_id ids]
+                                    [:= :s.version
+                                     {:select [[[:max :s2.version]]]
+                                      :from [[:session_state :s2]]
+                                      :where [:= :s2.session_soul_id :s.session_soul_id]}]]}))
+
+        project-names
+        (let [pids (into [] (comp (keep :project_id) (distinct)) souls)]
+          (if (seq pids)
+            (into {}
+                  (map (juxt :id :name))
+                  (query! db-info {:select [:id :name] :from :project :where [:in :id pids]}))
+            {}))
+
+        workspaces
+        (let [wids (into [] (comp (keep :workspace_id) (distinct)) (vals states))]
+          (if (seq wids)
+            (by-column :id (query! db-info {:select [:*] :from :workspace :where [:in :id wids]}))
+            {}))
+
+        agents
+        (by-column :session_id
+                   (query! db-info
+                           {:select agent-columns
+                            :from :session_agent
+                            :where [:in :session_id ids]}))
+
+        locked
+        (into #{}
+              (comp (filter #(= 1 (:locked %)))
+                    (map (comp ->ref :session_id)))
+              (query! db-info
+                      {:select [:session_id :locked]
+                       :from :session_routing_policy
+                       :where [:in :session_id ids]}))]
+
+    (into {}
+          (map (fn [soul]
+                 (let [k (->ref (:id soul))
+                       state (get states k)]
+                   [k
+                    {:session (session-row->session soul
+                                                    state
+                                                    (get project-names (:project_id soul)))
+                     :state-id (some-> (:id state)
+                                       ->uuid)
+                     :workspace (row->workspace (get workspaces (some-> (:workspace_id state)
+                                                                        ->ref)))
+                     :agent (agent-row (get agents k))
+                     :routing-locked? (contains? locked k)}])))
+          souls)))
+
+(defn db-session-page-facts
+  "The per-row facts of a session list page, keyed by string session id:
+   `{:session :state-id :workspace :agent :routing-locked?}`. Each value equals the
+   single reads `db-get-session`, `db-latest-session-state-id`, the state's workspace,
+   `db-agent-info` and `db-routing-locked?`. Six SQL reads serve each 500 ids, so a
+   page costs no read per row. An unknown session has no key."
+  [db-info session-ids]
+  (let [ids (into [] (comp (keep ->ref) (distinct)) session-ids)]
+    (if (and (ds db-info) (seq ids))
+      (into {}
+            (mapcat #(page-facts-chunk db-info (vec %)))
+            (partition-all page-facts-batch-size ids))
+      {})))
 
 (defn db-agent-checkpoint
   [db sid]

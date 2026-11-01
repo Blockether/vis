@@ -70,10 +70,10 @@
       :workspace-id (:workspace/id env)
       :origin origin})))
 
-(defn by-id
-  "Return the session record (UUID `:id`) or nil."
-  [id]
-  (when-let [session (persistance/db-get-session (db-info) id)]
+(defn session-record
+  "The session record (UUID `:id`) of the store session `session`, or nil."
+  [session]
+  (when session
     {:id (:id session) ; UUID
      :channel (:channel session)
      :external-id (:external-id session)
@@ -91,6 +91,11 @@
      :favorite-rank (:favorite-rank session)
      :archived-at (:archived-at session)
      :origin (:origin session)}))
+
+(defn by-id
+  "Return the session record (UUID `:id`) or nil."
+  [id]
+  (session-record (persistance/db-get-session (db-info) id)))
 
 (defn by-channel
   [channel]

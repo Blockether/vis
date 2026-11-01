@@ -204,24 +204,27 @@
   (not= :cli (:channel env)))
 
 (defn context
-  [env]
-  (let [sid
-        (str (:session-id env))
-
-        child
-        (info (:db-info env) sid)]
-
-    (wire/->wire (cond-> (merge {:role (if child "subagent" "leader")
-                                 :session_id sid
-                                 :leader_id sid
-                                 :interactive (interactive? env)}
-                                (select-keys child
-                                             [:parent_id :leader_id :team_id :task :iteration_budget
-                                              :iterations_used :status :allowed_models])
-                                (when (:files child) {:files (shown-files env (:files child))})
-                                {:routing_locked (ps/db-routing-locked? (:db-info env) sid)})
-                   (budget-notice child)
-                   (assoc :budget_notice (budget-notice child))))))
+  "The agent context of the session of `env`. `facts` holds `:child` and
+   `:routing-locked?` when a caller has already read them; else they come from the store."
+  ([env]
+   (let [sid (str (:session-id env))]
+     (context env
+              {:child (info (:db-info env) sid)
+               :routing-locked? (ps/db-routing-locked? (:db-info env) sid)})))
+  ([env {:keys [child routing-locked?]}]
+   (let [sid (str (:session-id env))]
+     (wire/->wire (cond-> (merge {:role (if child "subagent" "leader")
+                                  :session_id sid
+                                  :leader_id sid
+                                  :interactive (interactive? env)}
+                                 (select-keys child
+                                              [:parent_id :leader_id :team_id :task
+                                               :iteration_budget :iterations_used :status
+                                               :allowed_models])
+                                 (when (:files child) {:files (shown-files env (:files child))})
+                                 {:routing_locked (boolean routing-locked?)})
+                    (budget-notice child)
+                    (assoc :budget_notice (budget-notice child)))))))
 
 (defn checkpoint!
   "Capture the last complete model input, before its in-flight tool call. Never copy runtime handles."

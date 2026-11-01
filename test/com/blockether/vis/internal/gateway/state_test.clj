@@ -3435,7 +3435,67 @@
                        (expect (= ["b"] (mapv #(get % "id") (:awaiting page))))
                        (expect (= 0 @per-session))
                        ;; One workspace read per soul: three rows and one parked row.
-                       (expect (= 4 @resolutions))))))))
+                       (expect (= 4 @resolutions)))))))
+
+             ;; Regression: each row of a page read its session, workspace, agent and
+             ;; routing lock on its own: 125 queries for a page of 20 rows.
+             (it
+               "decorates every row from the store facts read once for the page"
+               (let [single-reads
+                     (atom 0)
+
+                     batches
+                     (atom [])
+
+                     single!
+                     (fn [& _]
+                       (swap! single-reads inc)
+                       nil)
+
+                     records
+                     (mapv (fn [sid]
+                             {:id sid :title sid :channel :api :created-at 1000})
+                           ["a" "b" "c"])
+
+                     facts
+                     (into {}
+                           (map (fn [sid]
+                                  [sid
+                                   {:session {:id sid :title (str "stored " sid) :channel :api}
+                                    :workspace {:root (str "/repo/" sid)}
+                                    :agent (when (= "a" sid)
+                                             {:parent_id "p" :leader_id "p" :status "running"})
+                                    :routing-locked? (= "b" sid)}]))
+                           ["a" "b" "c"])]
+
+                 (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                  #'lp/by-channel (constantly records)
+                                  #'lp/by-id single!
+                                  #'persistance/db-session-turn-stats (constantly {})
+                                  #'persistance/db-session-page-facts
+                                  (fn [_ ids]
+                                    (swap! batches conj (set ids))
+                                    (select-keys facts (map str ids)))
+                                  #'persistance/db-agent-info single!
+                                  #'persistance/db-routing-locked? single!
+                                  #'bus/live-turns (constantly {})
+                                  #'bus/live-turn-id (constantly nil)
+                                  #'bus/session-waiting? (constantly false)
+                                  #'bus/waiting-requests (constantly {"b" []})
+                                  #'state/resolve-workspace single!
+                                  #'config/agent-name (constantly "vis")}
+                   (fn []
+                     (let [page (state/list-sessions-page :all {:limit 2})
+                           rows (into {}
+                                      (map (juxt #(get % "id") identity))
+                                      (concat (:sessions page) (:awaiting page)))]
+                       (expect (= [#{"a" "b"}] @batches))
+                       (expect (= 0 @single-reads))
+                       (expect (= "stored a" (get-in rows ["a" "title"])))
+                       (expect (= "/repo/b" (get-in rows ["b" "workspace" "root"])))
+                       (expect (true? (get-in rows ["b" "agent" "routing_locked"])))
+                       (expect (= "subagent" (get-in rows ["a" "agent" "role"])))
+                       (expect (false? (get-in rows ["a" "agent" "routing_locked"])))))))))
 
 ;; Regression: a navigator must follow liveness and content recency before paging.
 (defdescribe

@@ -95,6 +95,62 @@
         (expect (= {} (persistance/db-list-iterations-attachments-meta s ["missing"]))))
       (expect (zero? @formats)))))
 
+(defdescribe session-page-facts-test
+             ;; A session list page read its session, workspace, agent and routing lock
+             ;; for each row: 125 queries for 20 rows. The batch must answer what the
+             ;; single reads answer, or a row shows a wrong title, path or lock.
+             (it "reads the facts of many sessions the same as one read for each"
+                 (let [s
+                       (h/store)
+
+                       project
+                       (persistance/db-create-project! s {:name "facts"})
+
+                       leader
+                       (h/store-session! s {:channel :api :title "leader"})
+
+                       child
+                       (h/store-session! s {:channel :tui :title "child"})
+
+                       other
+                       (h/store-session! s {:channel :api})]
+
+                   (persistance/db-set-session-project! s leader (:id project))
+                   (persistance/db-lock-routing! s child true)
+                   (persistance/db-lock-routing! s other false)
+                   (sqlite-core/execute! s
+                                         {:insert-into :session_agent
+                                          :values [{:session_id (str child)
+                                                    :parent_id (str leader)
+                                                    :leader_id (str leader)
+                                                    :team_id "team"
+                                                    :task "check"
+                                                    :depth 1
+                                                    :inherited_turns 0
+                                                    :files "{\"write\":[\"src/**\"]}"
+                                                    :spawn_key "k"
+                                                    :spawn_fingerprint "f"
+                                                    :checkpoint (byte-array 0)
+                                                    :created_at 1}]})
+                   (let [facts (persistance/db-session-page-facts s
+                                                                  [leader child (str leader)
+                                                                   "missing"])
+                         single (fn [sid]
+                                  (let [state-id (persistance/db-latest-session-state-id s sid)]
+                                    {:session (persistance/db-get-session s sid)
+                                     :state-id state-id
+                                     :workspace (persistance/db-workspace-for-session s state-id)
+                                     :agent (persistance/db-agent-info s sid)
+                                     :routing-locked? (persistance/db-routing-locked? s sid)}))]
+                     (expect (= #{(str leader) (str child)} (set (keys facts))))
+                     (expect (= {(str leader) (single leader) (str child) (single child)} facts))
+                     (expect (= "facts" (get-in facts [(str leader) :session :project-name])))
+                     (expect (true? (get-in facts [(str child) :routing-locked?])))
+                     (expect (= ["src/**"] (get-in facts [(str child) :agent :files :write])))
+                     (expect (some? (get-in facts [(str child) :workspace :root]))))
+                   (expect (= {} (persistance/db-session-page-facts s [])))
+                   (expect (= {} (persistance/db-session-page-facts nil [leader]))))))
+
 (defdescribe routing-lock-query-test
              (it "reads current routing locks with bound ids and no SQL recompilation"
                  ;; SDK profiling found repeated HoneySQL formatting in routing-lock reads.

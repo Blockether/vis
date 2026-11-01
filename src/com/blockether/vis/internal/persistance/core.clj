@@ -95,6 +95,8 @@
   (db-fork-session-at-turn! [db-info session-id opts])
   (db-agent-info [db-info session-id])
   (db-agent-list [db-info leader-id])
+  (db-session-page-facts [db-info session-ids]
+    "Per-row facts of a session list page in one batch, keyed by string session id.")
   (db-agent-checkpoint [db-info session-id])
   (db-agent-update! [db-info session-id changes])
   (db-agent-claim-iteration! [db-info session-id])
