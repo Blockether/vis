@@ -216,17 +216,53 @@
    "session_routing" "session_symbols" "session_council" "session_goal" "session_apps"
    "session_agent" "session_extension_context"])
 
+(defn- digits-end
+  "Index after the ASCII digits of `s` that start at `start`, before `end`."
+  ^long [^String s ^long start ^long end]
+  (loop [i start]
+    (if (and (< i end)
+             (let [c (int (.charAt s i))]
+               (and (>= c (int \0)) (<= c (int \9)))))
+      (recur (inc i))
+      i)))
+
+(defn- tagged-number-end
+  "Index after `<tag><digits>` at `start` of `s`, or -1 when there are no digits."
+  ^long [^String s ^long start ^long end tag]
+  (if (and (< start end) (= (char tag) (.charAt s start)))
+    (let [stop (digits-end s (inc start) end)]
+      (if (> stop (inc start)) stop -1))
+    -1))
+
 (defn scope-key
   "Ordered key for a scope so ranges can compare scopes: `\"t1/i2\"` or
    `\"t1/i2/f3\"` → `[1 2]` (the form index is dropped — ranges cover WHOLE
    iterations). nil when the scope can't be parsed, so callers skip it rather
    than mis-order it. Lives here (below `apply-summaries` in loop) so BOTH the
    wire (`apply-summaries`) and the render-time ledger (`folds-view`) resolve fold
-   selectors through the SAME function."
+   selectors through the SAME function.
+   Scan the characters, not a regex: a fold pass parses tens of thousands of scopes."
   [scope]
   (when (string? scope)
-    (when-let [m (re-matches #"t(\d+)/i(\d+)(?:/f\d+)?" (str/trim scope))]
-      [(parse-long (nth m 1)) (parse-long (nth m 2))])))
+    (let [s
+          (str/trim scope)
+
+          n
+          (.length s)
+
+          turn-end
+          (tagged-number-end s 0 n \t)
+
+          iter-end
+          (if (and (pos? turn-end) (< turn-end n) (= \/ (.charAt s turn-end)))
+            (tagged-number-end s (inc turn-end) n \i)
+            -1)]
+
+      (when (and (pos? iter-end)
+                 (or (= iter-end n)
+                     (and (= \/ (.charAt s iter-end))
+                          (= n (tagged-number-end s (inc iter-end) n \f)))))
+        [(parse-long (subs s 1 turn-end)) (parse-long (subs s (+ turn-end 2) iter-end))]))))
 
 (defn turn-key
   "Turn number of a bare WHOLE-TURN scope `\"tN\"` (no `/iN`); nil otherwise, so
@@ -234,8 +270,13 @@
    `\"t1/i2\"` stays a single iteration."
   [scope]
   (when (string? scope)
-    (when-let [m (re-matches #"t(\d+)" (str/trim scope))]
-      (parse-long (nth m 1)))))
+    (let [s
+          (str/trim scope)
+
+          n
+          (.length s)]
+
+      (when (= n (tagged-number-end s 0 n \t)) (parse-long (subs s 1))))))
 
 (def fold-key-grammar
   "The fold KEY grammar in ONE line, said verbatim by every refusal so the
