@@ -160,3 +160,24 @@
                    (expect (every? #(<= (p/display-width (strip-ansi %)) width) rows))
                    (expect (= src (apply str (map strip-ansi rows))))
                    (expect (every? #(str/includes? % "\u001b[31m") rows)))))
+
+;; --- Clojure fences ----------------------------------------------------------
+;; Regression for the report that REPL code and values in the TUI lost their color:
+;; a Clojure fence is colored by `ClojureHighlighter` (plain Java, see
+;; packages/vis-tui-render); the text itself never changes.
+
+(defdescribe tui-clojure-code-block-test
+             (it "colors a Clojure fence, folds a wide row and keeps its color on every row"
+                 (let [src
+                       (str "(defn greet [n]\n  (str \"" (apply str (repeat 60 "ab")) "\" n))")
+
+                       width
+                       40
+
+                       rows
+                       (content-rows (code-block->lines [:code {:lang "clojure"} src] width {}))]
+
+                   (expect (str/includes? (first rows) "\u001b[36mdefn"))
+                   (expect (every? #(<= (p/display-width (strip-ansi %)) width) rows))
+                   (expect (= (str/replace src "\n" "") (apply str (map strip-ansi rows))))
+                   (expect (every? #(str/includes? % "\u001b[31m") (rest rows))))))

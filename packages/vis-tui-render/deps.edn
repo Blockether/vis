@@ -7,6 +7,6 @@
 ;; keeping stale classes. The TUI render test reports the digest to write here.
 {:paths ["target/classes"]
  :deps {}
- :deps/prep-lib {:alias :build :ensure "target/prepared/cea5c12dd145aa0b" :fn javac}
+ :deps/prep-lib {:alias :build :ensure "target/prepared/65dd46d45c533b78" :fn javac}
  :aliases {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}}
                    :ns-default build}}}

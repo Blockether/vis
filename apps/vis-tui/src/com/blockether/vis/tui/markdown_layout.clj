@@ -38,6 +38,7 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.presentation :as ir])
   (:import [com.blockether.vis.python PythonHighlighter]
+           [com.blockether.vis.tui.render ClojureHighlighter]
            [com.googlecode.lanterna.terminal.image TerminalImage]
            [com.googlecode.lanterna ParagraphLayout ParagraphLayout$Prepared ParagraphLayout$Line
             ParagraphLayout$Options]))
@@ -577,15 +578,36 @@
           (.put ^java.util.Map folded-code-cache key lines)
           lines))))
 
-(defn- python-code-lines
-  "Rows of Python `content` colored by `PythonHighlighter`, then folded and cached
-   like `folded-code-lines`."
-  [^String content ^long budget]
-  (let [key [content budget :python]]
+(defn- highlight-source
+  "`content` colored for the fence language `lang` (`:python` or `:clojure`)."
+  ^String [lang ^String content]
+  (case lang
+    :python
+    (PythonHighlighter/highlight content)
+
+    :clojure
+    (ClojureHighlighter/highlight content)))
+
+(defn- highlighted-code-lines
+  "Rows of `content` colored for `lang` (see `highlight-source`), then folded and
+   cached like `folded-code-lines`."
+  [lang ^String content ^long budget]
+  (let [key [content budget lang]]
     (or (.get ^java.util.Map folded-code-cache key)
-        (let [lines (compute-folded-code-lines (PythonHighlighter/highlight content) budget)]
+        (let [lines (compute-folded-code-lines (highlight-source lang content) budget)]
           (.put ^java.util.Map folded-code-cache key lines)
           lines))))
+
+(def ^:private highlighted-langs
+  "Fence `:lang` values, lower-cased, that get color from a highlighter."
+  {"python" :python
+   "py" :python
+   "python3" :python
+   "clojure" :clojure
+   "clj" :clojure
+   "cljs" :clojure
+   "cljc" :clojure
+   "edn" :clojure})
 
 (def ^:private ^java.util.Map mermaid-cache
   "Bounded access-order cache for rendered mermaid diagrams. A diagram costs a
@@ -708,18 +730,16 @@
         ansi?
         (and (not fold?) (not diff?) (str/includes? content "\u001b["))
 
-        ;; A Python fence without color of its own gets `PythonHighlighter`'s and
-        ;; then folds like source a producer already colored.
-        python?
-        (and (not fold?)
-             (not ansi?)
-             (contains? #{"python" "py" "python3"}
-                        (some-> lang
-                                str/lower-case)))
+        ;; A Python or Clojure fence without color of its own gets its
+        ;; highlighter's and then folds like source a producer already colored.
+        highlighted
+        (when (and (not fold?) (not ansi?))
+          (highlighted-langs (some-> lang
+                                     str/lower-case)))
 
         ansi-lines
         (cond ansi? (folded-code-lines content budget)
-              python? (python-code-lines content budget))
+              highlighted (highlighted-code-lines highlighted content budget))
 
         ;; A `diff` fence (patch / write / format evidence) is colored by
         ;; wrapping each row in ANSI SGR: the `md-code` paint branch runs the row
