@@ -1217,186 +1217,12 @@
   [block-id offset delta]
   (:text (get (swap! stream-blocks update block-id apply-block-delta offset delta) block-id)))
 
-(defn- gateway-event->chunk
-  "Project canonical gateway wire events back into the progress chunk shape the
-  existing TUI renderer consumes. This is intentionally a client projection: the
-  gateway remains the only producer of live turn events. Preserve gateway op
-  summaries/displays as synthetic channel sink entries so live TUI renders the
-  same LABEL rows and expandable tool cards that restored sessions render."
-  [event]
-  (let [type
-        (event-get event :type)
-
-        iteration
-        (event-get event :iteration)
-
-        block-id
-        (event-get event :block-id)
-
-        form-index
-        (event-get event :form-index)
-
-        code
-        (event-get event :code)
-
-        stdout
-        (event-get event :stdout)
-
-        error
-        (event-get event :error)
-
-        silent
-        (event-get event :silent)
-
-        done
-        (event-get event :done)
-
-        thinking
-        (event-get event :thinking)]
-
+(defn- gateway-lifecycle-event->chunk
+  "Project a queue, turn, session or view gateway event into its chunk.
+  Answer nil for an unknown event."
+  [event locals]
+  (let [{:keys [type iteration]} locals]
     (case type
-      ;; Canonical typed-block delta projected into the TUI's transient progress shape.
-      ;; The frame carries only new text and its offset; the progress reducer repaints
-      ;; from the block's full live text.
-      "content.block.delta"
-      (let [full (block-delta-text! block-id (event-get event :offset) (event-get event :text))]
-        (cond (= "text" (event-get event :field))
-              {:phase :reasoning :iteration iteration :thinking full}
-              (str/includes? (str block-id) ":assistant-prose:")
-              {:phase :assistant-prose :iteration iteration :text full}
-              :else {:phase :content :iteration iteration :content full}))
-
-      "content.block.started"
-      nil
-
-      ;; The settled text arrives on `iteration.completed`; the live span is done.
-      "content.block.completed"
-      (do (swap! stream-blocks dissoc block-id) nil)
-
-      "block.preview"
-      (merge {:phase :tool-preview :iteration iteration :position form-index :code code}
-             (vis/form<-wire event))
-
-      "block.started"
-      (merge {:phase :form-start :iteration iteration :position form-index :code code}
-             ;; Read back the display fields the block already carries while it
-             ;; RUNS (its formatted source, its pending headline), so the live
-             ;; bubble paints the same card it will keep once the block lands.
-             (vis/form<-wire event))
-
-      "block.activity"
-      (when-let [activity (activity-contract/from-wire (event-get event :activity))]
-        {:phase :form-activity :iteration iteration :position form-index :activity activity})
-
-      "block.output"
-      (merge {:phase :form-result
-              :iteration iteration
-              :position form-index
-              ;; Gateway-computed / renamed fields the wire owns:
-              ;; bounded stdout + error, the derived silent flag.
-              :stdout stdout
-              :error error
-              :silent? (boolean silent)}
-             (when (event-get event :duration-ms) {:duration-ms (event-get event :duration-ms)})
-             ;; Read the whole canonical display set back tolerantly, mirroring the
-             ;; gateway's `->display`, so a new display field flows live unchanged.
-             (vis/form<-wire event))
-
-      "iteration.completed"
-      {:phase :iteration-final
-       :iteration iteration
-       :thinking thinking
-       :assistant-prose (event-get event :assistant-prose)
-       :done? (boolean done)}
-
-      "iteration.error"
-      {:phase :iteration-error
-       :iteration iteration
-       :thinking thinking
-       :error (hydrate-error (or (wire-error-map (event-get event :error-data)) error)
-                             (event-get event :provider-error-data))}
-
-      "provider.retry"
-      (provider-retry-event->chunk event)
-
-      ;; Coarse live-progress ticker projected back to the spinner's phase.
-      "turn.progress"
-      (let [progress
-            (event-get event :progress)
-
-            cmd
-            (event-get event :cmd)
-
-            op
-            (event-get event :op)
-
-            label
-            (event-get event :label)]
-
-        (case (str progress)
-          "attachment-transcription"
-          {:phase :attachment-transcription :iteration iteration}
-
-          "provider-call"
-          (cond-> {:phase :provider-call :iteration iteration}
-            (event-get event :reason)
-            (assoc :reason (wire-keyword (event-get event :reason)))
-
-            (event-get event :model)
-            (assoc :model (str (event-get event :model))))
-
-          ;; The model of the live provider attempt is silent. `:received-ms` lets the
-          ;; spinner move both of its clocks between two notices.
-          "provider-wait"
-          (cond-> {:phase :provider-wait
-                   :iteration iteration
-                   :silent-ms (event-get event :silent-ms)
-                   :awaiting-output? (boolean (event-get event :awaiting-output))
-                   :received-ms (System/currentTimeMillis)}
-            (event-get event :model)
-            (assoc :model (str (event-get event :model)))
-
-            (event-get event :connection)
-            (assoc :connection (wire-keyword (event-get event :connection)))
-
-            (event-get event :deadline-in-ms)
-            (merge {:deadline-in-ms (event-get event :deadline-in-ms)
-                    :deadline-action (wire-keyword (event-get event :deadline-action))}))
-
-          ;; A Python block runs without a tool call. The notice names the busy time, the
-          ;; CPU use and the time to the block stop. Without `busy_ms` it ends the notice.
-          "python"
-          (cond-> {:phase :python :iteration iteration}
-            (event-get event :busy-ms)
-            (assoc :busy-ms
-              (event-get event :busy-ms) :deadline-in-ms
-              (event-get event :deadline-in-ms) :received-ms
-              (System/currentTimeMillis))
-
-            (event-get event :cpu-percent)
-            (assoc :cpu-percent (event-get event :cpu-percent)))
-
-          "response-parse"
-          {:phase :response-parse :iteration iteration}
-
-          "shell-run"
-          {:phase :shell-run :iteration iteration :cmd (or cmd op)}
-
-          "shell-bg"
-          {:phase :shell-bg :iteration iteration :cmd (or cmd op)}
-
-          "tool"
-          {:phase :tool-start
-           :iteration iteration
-           :tool-event (cond-> {:op op}
-                         label
-                         (assoc :label label)
-
-                         (event-get event :phrase)
-                         (assoc :phrase (str (event-get event :phrase))))}
-
-          nil))
-
       ;; Queue lifecycle for a DIFFERENT (queued) turn on this session — the
       ;; gateway sync/attach subscriptions forward these so every attached TUI
       ;; mirrors the queued backlog live (see state/:sync-queued-turn).
@@ -1632,6 +1458,188 @@
         (assoc :goal (event-get event :goal)))
 
       nil)))
+
+(defn- gateway-event->chunk
+  "Project canonical gateway wire events back into the progress chunk shape the
+  existing TUI renderer consumes. This is intentionally a client projection: the
+  gateway remains the only producer of live turn events. Preserve gateway op
+  summaries/displays as synthetic channel sink entries so live TUI renders the
+  same LABEL rows and expandable tool cards that restored sessions render."
+  [event]
+  (let [type
+        (event-get event :type)
+
+        iteration
+        (event-get event :iteration)
+
+        block-id
+        (event-get event :block-id)
+
+        form-index
+        (event-get event :form-index)
+
+        code
+        (event-get event :code)
+
+        stdout
+        (event-get event :stdout)
+
+        error
+        (event-get event :error)
+
+        silent
+        (event-get event :silent)
+
+        done
+        (event-get event :done)
+
+        thinking
+        (event-get event :thinking)]
+
+    (case type
+      ;; Canonical typed-block delta projected into the TUI's transient progress shape.
+      ;; The frame carries only new text and its offset; the progress reducer repaints
+      ;; from the block's full live text.
+      "content.block.delta"
+      (let [full (block-delta-text! block-id (event-get event :offset) (event-get event :text))]
+        (cond (= "text" (event-get event :field))
+              {:phase :reasoning :iteration iteration :thinking full}
+              (str/includes? (str block-id) ":assistant-prose:")
+              {:phase :assistant-prose :iteration iteration :text full}
+              :else {:phase :content :iteration iteration :content full}))
+
+      "content.block.started"
+      nil
+
+      ;; The settled text arrives on `iteration.completed`; the live span is done.
+      "content.block.completed"
+      (do (swap! stream-blocks dissoc block-id) nil)
+
+      "block.preview"
+      (merge {:phase :tool-preview :iteration iteration :position form-index :code code}
+             (vis/form<-wire event))
+
+      "block.started"
+      (merge {:phase :form-start :iteration iteration :position form-index :code code}
+             ;; Read back the display fields the block already carries while it
+             ;; RUNS (its formatted source, its pending headline), so the live
+             ;; bubble paints the same card it will keep once the block lands.
+             (vis/form<-wire event))
+
+      "block.activity"
+      (when-let [activity (activity-contract/from-wire (event-get event :activity))]
+        {:phase :form-activity :iteration iteration :position form-index :activity activity})
+
+      "block.output"
+      (merge {:phase :form-result
+              :iteration iteration
+              :position form-index
+              ;; Gateway-computed / renamed fields the wire owns:
+              ;; bounded stdout + error, the derived silent flag.
+              :stdout stdout
+              :error error
+              :silent? (boolean silent)}
+             (when (event-get event :duration-ms) {:duration-ms (event-get event :duration-ms)})
+             ;; Read the whole canonical display set back tolerantly, mirroring the
+             ;; gateway's `->display`, so a new display field flows live unchanged.
+             (vis/form<-wire event))
+
+      "iteration.completed"
+      {:phase :iteration-final
+       :iteration iteration
+       :thinking thinking
+       :assistant-prose (event-get event :assistant-prose)
+       :done? (boolean done)}
+
+      "iteration.error"
+      {:phase :iteration-error
+       :iteration iteration
+       :thinking thinking
+       :error (hydrate-error (or (wire-error-map (event-get event :error-data)) error)
+                             (event-get event :provider-error-data))}
+
+      "provider.retry"
+      (provider-retry-event->chunk event)
+
+      ;; Coarse live-progress ticker projected back to the spinner's phase.
+      "turn.progress"
+      (let [progress
+            (event-get event :progress)
+
+            cmd
+            (event-get event :cmd)
+
+            op
+            (event-get event :op)
+
+            label
+            (event-get event :label)]
+
+        (case (str progress)
+          "attachment-transcription"
+          {:phase :attachment-transcription :iteration iteration}
+
+          "provider-call"
+          (cond-> {:phase :provider-call :iteration iteration}
+            (event-get event :reason)
+            (assoc :reason (wire-keyword (event-get event :reason)))
+
+            (event-get event :model)
+            (assoc :model (str (event-get event :model))))
+
+          ;; The model of the live provider attempt is silent. `:received-ms` lets the
+          ;; spinner move both of its clocks between two notices.
+          "provider-wait"
+          (cond-> {:phase :provider-wait
+                   :iteration iteration
+                   :silent-ms (event-get event :silent-ms)
+                   :awaiting-output? (boolean (event-get event :awaiting-output))
+                   :received-ms (System/currentTimeMillis)}
+            (event-get event :model)
+            (assoc :model (str (event-get event :model)))
+
+            (event-get event :connection)
+            (assoc :connection (wire-keyword (event-get event :connection)))
+
+            (event-get event :deadline-in-ms)
+            (merge {:deadline-in-ms (event-get event :deadline-in-ms)
+                    :deadline-action (wire-keyword (event-get event :deadline-action))}))
+
+          ;; A Python block runs without a tool call. The notice names the busy time, the
+          ;; CPU use and the time to the block stop. Without `busy_ms` it ends the notice.
+          "python"
+          (cond-> {:phase :python :iteration iteration}
+            (event-get event :busy-ms)
+            (assoc :busy-ms
+              (event-get event :busy-ms) :deadline-in-ms
+              (event-get event :deadline-in-ms) :received-ms
+              (System/currentTimeMillis))
+
+            (event-get event :cpu-percent)
+            (assoc :cpu-percent (event-get event :cpu-percent)))
+
+          "response-parse"
+          {:phase :response-parse :iteration iteration}
+
+          "shell-run"
+          {:phase :shell-run :iteration iteration :cmd (or cmd op)}
+
+          "shell-bg"
+          {:phase :shell-bg :iteration iteration :cmd (or cmd op)}
+
+          "tool"
+          {:phase :tool-start
+           :iteration iteration
+           :tool-event (cond-> {:op op}
+                         label
+                         (assoc :label label)
+
+                         (event-get event :phrase)
+                         (assoc :phrase (str (event-get event :phrase))))}
+
+          nil))
+
+      (gateway-lifecycle-event->chunk event {:type type :iteration iteration}))))
 
 (defn- deliver-gateway-event!
   "Deliver turn header metadata independently of an event's visible progress."
