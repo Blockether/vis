@@ -870,6 +870,165 @@
    replay flag to keep hiding the entry."
   [:preserved-thinking/replay? :turn/boundary :turn/position :turn/current?])
 
+(defn summary-applier
+  "Return [[apply-summaries]] for one `trailer-iters`, as a function of `summaries`.
+   Index the trailer once, and resolve each summary once over all calls. A fold
+   search applies about ten summary sets to one trailer, and each set differs only
+   in its last intent."
+  [trailer-iters]
+  (let [trailer
+        (vec trailer-iters)
+
+        iter-scope-of
+        iteration-record-scope
+
+        boundary-turn
+        (fn [rec]
+          (when (:turn/boundary rec) (:turn/position rec)))
+
+        index
+        (ctx-engine/expansion-index (keep (comp iter-scope-of second) trailer)
+                                    (distinct (keep (comp boundary-turn second) trailer)))
+
+        ;; Resolve ranges against this trailer, then keep only what the intent's
+        ;; canonical at_turn owns. A turn may fold its own settled work and every
+        ;; prior turn, never a future turn; unstamped intents own nothing. Whole
+        ;; turns are owned strictly before at_turn.
+        scope-turn
+        (fn [scope]
+          (or (first (ctx-engine/scope-key scope)) (ctx-engine/turn-key scope)))
+
+        resolve
+        (fn [summary]
+          (let [summary
+                (ctx-engine/expand-summary index summary)
+
+                owner
+                (get summary "at_turn")
+
+                scopes
+                (when (integer? owner)
+                  (into #{}
+                        (filter (fn [scope]
+                                  (when-let [turn (scope-turn scope)]
+                                    (<= (long turn) (long owner)))))
+                        (get summary "scopes")))
+
+                turns
+                (when (integer? owner)
+                  (into #{} (filter #(< (long %) (long owner))) (get summary "turns")))]
+
+            (when (or (seq scopes) (seq turns))
+              (assoc summary
+                "scopes" scopes
+                "turns" turns))))
+
+        ;; Summary value -> its resolution, nil included.
+        resolved
+        (atom {})
+
+        resolve-once
+        (fn [summary]
+          (let [hit (get @resolved summary ::none)]
+            (if (identical? ::none hit)
+              (let [r (resolve summary)]
+                (swap! resolved assoc summary r)
+                r)
+              hit)))
+
+        ;; The boundary turn or the iteration scope of each entry, read once.
+        entry-keys
+        (mapv (fn [[_ rec]]
+                (if-let [turn (boundary-turn rec)]
+                  [turn nil]
+                  [nil (iter-scope-of rec)]))
+              trailer)
+
+        covered?
+        (fn [scopes turns i]
+          (let [[turn scope] (nth entry-keys i)]
+            (if turn
+              (contains? turns turn)
+              (contains? scopes scope))))
+
+        ;; Earliest trailer index of each scope and boundary turn, found in one pass.
+        [first-scope-index first-turn-index]
+        (reduce (fn [[by-scope by-turn] [i [turn scope]]]
+                  (if turn
+                    [by-scope (cond-> by-turn (not (contains? by-turn turn)) (assoc turn i))]
+                    [(cond-> by-scope (not (contains? by-scope scope)) (assoc scope i))
+                     by-turn]))
+                [{} {}]
+                (map-indexed vector entry-keys))]
+
+    (fn [summaries]
+      (if (empty? summaries)
+        trailer
+        (let [summaries
+              (ctx-engine/supersede-summaries (keep resolve-once summaries))
+
+              summarized
+              (into #{} (mapcat #(get % "scopes")) summaries)
+
+              folded-turns
+              (into #{} (mapcat #(get % "turns")) summaries)
+
+              ;; summary → earliest trailer index it covers
+              anchors
+              (reduce (fn [m s]
+                        (let [scopes
+                              (set (get s "scopes"))
+
+                              turns
+                              (set (get s "turns"))]
+
+                          (if-let [idx (reduce (fn [found i]
+                                                 (if found (min (long found) (long i)) i))
+                                               nil
+                                               (concat (keep first-scope-index scopes)
+                                                       (keep first-turn-index turns)))]
+                            (update m
+                                    idx
+                                    (fnil conj [])
+                                    {:gist (get s "gist")
+                                     :drop? (nil? (get s "gist"))
+                                     :summary-iters (vec (sort scopes))
+                                     :summary-turns (vec (sort turns))})
+                            m)))
+                      {}
+                      summaries)]
+
+          (vec
+            (map-indexed (fn [i [pos rec]]
+                           (let [collapsed?
+                                 (covered? summarized folded-turns i)
+
+                                 gists
+                                 (get anchors i)
+
+                                 gist-forms
+                                 (when gists
+                                   (mapv (fn [g]
+                                           {:scope :summary
+                                            :summary? true
+                                            :summary-gist (:gist g)
+                                            :summary-drop? (:drop? g)
+                                            :summary-iters (:summary-iters g)
+                                            :summary-turns (:summary-turns g)})
+                                         gists))]
+
+                             [pos
+                              (cond-> (if collapsed?
+                                        (cond-> (assoc (select-keys rec collapsed-provenance-keys)
+                                                  :collapsed? true
+                                                  :forms-vec [])
+                                          (iter-scope-of rec)
+                                          (assoc :iteration-scope (iter-scope-of rec)))
+                                        rec)
+                                gist-forms
+                                (assoc :forms-vec gist-forms))]))
+                         trailer)))))))
+
 (defn apply-summaries
   "Compact `trailer-iters` using `fold_session` intents, releasing covered payloads at
    iteration granularity. A summary carries concrete `scopes`, an optional
@@ -887,127 +1046,7 @@
   [trailer-iters summaries]
   (if (empty? summaries)
     (vec trailer-iters)
-    (let [iter-scope-of
-          iteration-record-scope
-
-          boundary-turn
-          (fn [rec]
-            (when (:turn/boundary rec) (:turn/position rec)))
-
-          ;; Resolve ranges against this trailer, then keep only what the intent's
-          ;; canonical at_turn owns. A turn may fold its own settled work and every
-          ;; prior turn, never a future turn; unstamped intents own nothing. Whole
-          ;; turns are owned strictly before at_turn.
-          scope-turn
-          (fn [scope]
-            (or (first (ctx-engine/scope-key scope)) (ctx-engine/turn-key scope)))
-
-          summaries
-          (->> (ctx-engine/expand-through summaries
-                                          (keep (comp iter-scope-of second) trailer-iters)
-                                          (distinct (keep (comp boundary-turn second)
-                                                          trailer-iters)))
-               (keep
-                 (fn [summary]
-                   (let [owner
-                         (get summary "at_turn")
-
-                         scopes
-                         (when (integer? owner)
-                           (into #{}
-                                 (filter (fn [scope]
-                                           (when-let [turn (scope-turn scope)]
-                                             (<= (long turn) (long owner)))))
-                                 (get summary "scopes")))
-
-                         turns
-                         (when (integer? owner)
-                           (into #{} (filter #(< (long %) (long owner))) (get summary "turns")))]
-
-                     (when (or (seq scopes) (seq turns))
-                       (assoc summary
-                         "scopes" scopes
-                         "turns" turns)))))
-               (ctx-engine/supersede-summaries))
-
-          covered?
-          (fn [scopes turns rec]
-            (if-let [turn (boundary-turn rec)]
-              (contains? turns turn)
-              (contains? scopes (iter-scope-of rec))))
-
-          summarized
-          (into #{} (mapcat #(get % "scopes")) summaries)
-
-          folded-turns
-          (into #{} (mapcat #(get % "turns")) summaries)
-
-          ;; Earliest trailer index of each scope and boundary turn, found in one pass.
-          [first-scope-index first-turn-index]
-          (reduce (fn [[by-scope by-turn] [i [_ rec]]]
-                    (if-let [turn (boundary-turn rec)]
-                      [by-scope (cond-> by-turn (not (contains? by-turn turn)) (assoc turn i))]
-                      (let [scope (iter-scope-of rec)]
-                        [(cond-> by-scope (not (contains? by-scope scope)) (assoc scope i))
-                         by-turn])))
-                  [{} {}]
-                  (map-indexed vector trailer-iters))
-
-          ;; summary → earliest trailer index it covers
-          anchors
-          (reduce (fn [m s]
-                    (let [scopes
-                          (set (get s "scopes"))
-
-                          turns
-                          (set (get s "turns"))]
-
-                      (if-let [idx (reduce (fn [found i]
-                                             (if found (min (long found) (long i)) i))
-                                           nil
-                                           (concat (keep first-scope-index scopes)
-                                                   (keep first-turn-index turns)))]
-                        (update m
-                                idx
-                                (fnil conj [])
-                                {:gist (get s "gist")
-                                 :drop? (nil? (get s "gist"))
-                                 :summary-iters (vec (sort scopes))
-                                 :summary-turns (vec (sort turns))})
-                        m)))
-                  {}
-                  summaries)]
-
-      (vec
-        (map-indexed (fn [i [pos rec]]
-                       (let [collapsed?
-                             (covered? summarized folded-turns rec)
-
-                             gists
-                             (get anchors i)
-
-                             gist-forms
-                             (when gists
-                               (mapv (fn [g]
-                                       {:scope :summary
-                                        :summary? true
-                                        :summary-gist (:gist g)
-                                        :summary-drop? (:drop? g)
-                                        :summary-iters (:summary-iters g)
-                                        :summary-turns (:summary-turns g)})
-                                     gists))]
-
-                         [pos
-                          (cond-> (if collapsed?
-                                    (cond-> (assoc (select-keys rec collapsed-provenance-keys)
-                                              :collapsed? true
-                                              :forms-vec [])
-                                      (iter-scope-of rec)
-                                      (assoc :iteration-scope (iter-scope-of rec)))
-                                    rec)
-                            gist-forms
-                            (assoc :forms-vec gist-forms))]))
-                     trailer-iters)))))
+    ((summary-applier trailer-iters) summaries)))
 
 (defn- turn-boundary-messages
   "Request and closing messages of prior turns, keyed by turn id. `turns` is a

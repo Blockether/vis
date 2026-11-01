@@ -1397,19 +1397,24 @@
   "Mechanical activity count for the omitted iterations, derived only from the
    tool calls they recorded. `python_execution` is the only call there is, so the
    COUNT is the whole shape — no tool family is left to name."
-  [trailer-iters scopes]
-  (let [calls
-        (into []
-              (comp (filter (fn [[_ rec]]
-                              (contains? scopes (transcript/iteration-record-scope rec))))
-                    (mapcat (fn [[_ rec]]
-                              (keep :name (:tool-calls rec)))))
-              trailer-iters)
-
-        n
-        (long (count calls))]
-
+  [call-counts scopes]
+  (let [n (long (reduce + 0 (keep call-counts scopes)))]
     (when (pos? n) (str n " tool call" (when (not= n 1) "s")))))
+
+(defn- scope-call-counts
+  "Named tool calls of each iteration scope in `trailer-iters`, for
+   `emergency-fold-activity`. A fold search reads it for every probe."
+  [trailer-iters]
+  (reduce (fn [counts [_ rec]]
+            (let [scope
+                  (transcript/iteration-record-scope rec)
+
+                  n
+                  (count (keep :name (:tool-calls rec)))]
+
+              (if (and scope (pos? n)) (update counts scope (fnil + 0) n) counts)))
+          {}
+          trailer-iters))
 
 (def ^:private CONTEXT_OVERFLOW_MARGINS
   "Headroom each rescue leaves under the reported input limit after translating
@@ -1537,6 +1542,14 @@
              budget
              (budget-fn before-tokens)
 
+             ;; Every probe folds the same trailer with the same summaries and one new
+             ;; intent. Index the trailer and resolve the summaries once for the search.
+             apply-fold
+             (transcript/summary-applier trailer-iters)
+
+             call-counts
+             (scope-call-counts trailer-iters)
+
              project
              (fn [n]
                (let [units
@@ -1551,7 +1564,7 @@
                            universe)
 
                      activity
-                     (emergency-fold-activity trailer-iters scopes)
+                     (emergency-fold-activity call-counts scopes)
 
                      intent
                      (cond-> {"scopes" scopes
@@ -1575,7 +1588,7 @@
                        (assoc "at_turn" live-turn))
 
                      folded-trailer
-                     (transcript/apply-summaries trailer-iters (conj (vec summaries) intent))
+                     (apply-fold (conj (vec summaries) intent))
 
                      messages
                      (into (vec base-messages)

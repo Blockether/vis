@@ -417,6 +417,123 @@
     (let [flat (select-keys s ["through" "from" "to" "since"])]
       (into (if (seq flat) [flat] []) (filter map?) (get s "ranges")))))
 
+(def ^:private expansion-selectors
+  #{"scopes" "through" "from" "to" "since" "ranges"})
+
+(defn expansion-index
+  "Index `universe` and the persisted `turns` for [[expand-summary]] once. Reuse the
+   index for every summary resolved against the same universe."
+  [universe turns]
+  (let [ukeys
+        (into []
+              (keep (fn [u]
+                      (when-let [k (scope-key u)]
+                        [u k]))
+                    universe))]
+
+    {:ukeys ukeys
+     ;; Index once: a scan per summary and turn grew with every fold.
+     :scopes-by-turn (reduce (fn [m [u k]]
+                               (update m (first k) (fnil conj #{}) u))
+                             {}
+                             ukeys)
+     :universe-turns (into (set turns)
+                           (map (fn [[_ k]]
+                                  (first k)))
+                           ukeys)}))
+
+(defn expand-summary
+  "Resolve the selectors of one summary against an [[expansion-index]], as
+   [[expand-through]] does."
+  [{:keys [ukeys scopes-by-turn universe-turns]} s]
+  (let [pick
+        (fn [pred]
+          (into #{}
+                (comp (filter (fn [[_ k]]
+                                (pred k)))
+                      (map first))
+                ukeys))
+
+        turn-scopes
+        (fn [tn]
+          (get scopes-by-turn tn #{}))]
+
+    (if-not (some #(contains? s %) expansion-selectors)
+      s
+      (let [cursor-key
+            (fn [raw upper?]
+              (or (scope-key raw)
+                  ;; A bare `tN` cursor is a WHOLE-TURN boundary: as an UPPER
+                  ;; bound it sits after that turn's last iteration, as a LOWER
+                  ;; bound before its first. So `through`/`to tN` cover all of
+                  ;; turn N (and earlier), `from`/`since tN` start at its first
+                  ;; iteration — instead of silently resolving to nothing.
+                  (when-let [tn (turn-key raw)]
+                    [tn (if upper? Long/MAX_VALUE Long/MIN_VALUE)])))
+
+            ;; Resolve each window independently so disjoint ranges cannot
+            ;; select the turns between them. The same predicate checks scopes
+            ;; and both boundaries of a persisted turn without iterations.
+            window
+            (fn [r]
+              (let [thr
+                    (when-let [c (get r "through")]
+                      (cursor-key c true))
+
+                    frm
+                    (when-let [c (get r "from")]
+                      (cursor-key c false))
+
+                    to
+                    (when-let [c (get r "to")]
+                      (cursor-key c true))
+
+                    snc
+                    (when-let [c (get r "since")]
+                      (cursor-key c false))]
+
+                (fn [k]
+                  (or (and thr (<= (compare k thr) 0))
+                      (and (or frm to)
+                           (or (nil? frm) (>= (compare k frm) 0))
+                           (or (nil? to) (<= (compare k to) 0)))
+                      (and snc (>= (compare k snc) 0))))))
+
+            expl
+            (into #{}
+                  (mapcat (fn [sc]
+                            (cond (scope-key sc) [sc]
+                                  (turn-key sc) (turn-scopes (turn-key sc))
+                                  :else [sc])))
+                  (get s "scopes"))
+
+            ;; Scopes selected by RANGE selectors only — bulk intent, kept
+            ;; separate so whole-turn coverage is derived from the RANGE, never
+            ;; from an enumerated iteration list. Every window UNIONS.
+            windows
+            (mapv window (intent-ranges s))
+
+            range-sel
+            (into #{} (mapcat pick) windows)
+
+            whole-turns
+            (into (into #{} (keep turn-key) (get s "scopes"))
+                  (filter (fn [tn]
+                            (let [ts (turn-scopes tn)]
+                              (if (seq ts)
+                                (every? range-sel ts)
+                                (some (fn [within?]
+                                        (and (within? [tn Long/MIN_VALUE])
+                                             (within? [tn Long/MAX_VALUE])))
+                                      windows))))
+                          universe-turns))]
+
+        (cond-> (-> s
+                    (dissoc "through" "from" "to" "since" "ranges")
+                    (assoc "scopes" (into expl range-sel)))
+          (seq whole-turns)
+          (update "turns" (fnil into #{}) whole-turns))))))
+
 (defn expand-through
   "Resolve every fold SELECTOR on each summary against `universe` (the caller's
    own live iteration scopes) into a concrete `\"scopes\"` set, so ONE intent
@@ -447,119 +564,8 @@
    Intents with none of these keys pass through untouched. Pure — same inputs →
    same output."
   [summaries universe & [turns]]
-  (let [ukeys
-        (into []
-              (keep (fn [u]
-                      (when-let [k (scope-key u)]
-                        [u k]))
-                    universe))
-
-        pick
-        (fn [pred]
-          (into #{}
-                (comp (filter (fn [[_ k]]
-                                (pred k)))
-                      (map first))
-                ukeys))
-
-        ;; Index once: a scan per summary and turn grew with every fold.
-        scopes-by-turn
-        (reduce (fn [m [u k]]
-                  (update m (first k) (fnil conj #{}) u))
-                {}
-                ukeys)
-
-        turn-scopes
-        (fn [tn]
-          (get scopes-by-turn tn #{}))
-
-        universe-turns
-        (into (set turns)
-              (map (fn [[_ k]]
-                     (first k)))
-              ukeys)
-
-        selector?
-        #{"scopes" "through" "from" "to" "since" "ranges"}]
-
-    (mapv
-      (fn [s]
-        (if-not (some #(contains? s %) selector?)
-          s
-          (let [cursor-key
-                (fn [raw upper?]
-                  (or (scope-key raw)
-                      ;; A bare `tN` cursor is a WHOLE-TURN boundary: as an UPPER
-                      ;; bound it sits after that turn's last iteration, as a LOWER
-                      ;; bound before its first. So `through`/`to tN` cover all of
-                      ;; turn N (and earlier), `from`/`since tN` start at its first
-                      ;; iteration — instead of silently resolving to nothing.
-                      (when-let [tn (turn-key raw)]
-                        [tn (if upper? Long/MAX_VALUE Long/MIN_VALUE)])))
-
-                ;; Resolve each window independently so disjoint ranges cannot
-                ;; select the turns between them. The same predicate checks scopes
-                ;; and both boundaries of a persisted turn without iterations.
-                window
-                (fn [r]
-                  (let [thr
-                        (when-let [c (get r "through")]
-                          (cursor-key c true))
-
-                        frm
-                        (when-let [c (get r "from")]
-                          (cursor-key c false))
-
-                        to
-                        (when-let [c (get r "to")]
-                          (cursor-key c true))
-
-                        snc
-                        (when-let [c (get r "since")]
-                          (cursor-key c false))]
-
-                    (fn [k]
-                      (or (and thr (<= (compare k thr) 0))
-                          (and (or frm to)
-                               (or (nil? frm) (>= (compare k frm) 0))
-                               (or (nil? to) (<= (compare k to) 0)))
-                          (and snc (>= (compare k snc) 0))))))
-
-                expl
-                (into #{}
-                      (mapcat (fn [sc]
-                                (cond (scope-key sc) [sc]
-                                      (turn-key sc) (turn-scopes (turn-key sc))
-                                      :else [sc])))
-                      (get s "scopes"))
-
-                ;; Scopes selected by RANGE selectors only — bulk intent, kept
-                ;; separate so whole-turn coverage is derived from the RANGE, never
-                ;; from an enumerated iteration list. Every window UNIONS.
-                windows
-                (mapv window (intent-ranges s))
-
-                range-sel
-                (into #{} (mapcat pick) windows)
-
-                whole-turns
-                (into (into #{} (keep turn-key) (get s "scopes"))
-                      (filter (fn [tn]
-                                (let [ts (turn-scopes tn)]
-                                  (if (seq ts)
-                                    (every? range-sel ts)
-                                    (some (fn [within?]
-                                            (and (within? [tn Long/MIN_VALUE])
-                                                 (within? [tn Long/MAX_VALUE])))
-                                          windows))))
-                              universe-turns))]
-
-            (cond-> (-> s
-                        (dissoc "through" "from" "to" "since" "ranges")
-                        (assoc "scopes" (into expl range-sel)))
-              (seq whole-turns)
-              (update "turns" (fnil into #{}) whole-turns)))))
-      summaries)))
+  (let [index (expansion-index universe turns)]
+    (mapv #(expand-summary index %) summaries)))
 
 (defn supersede-summaries
   "Collapse 'summary of summary': drop any summary whose scope set is fully
