@@ -1005,11 +1005,12 @@
     (let [attached (group-by (comp str :turn-soul-id)
                              ;; A message sent into the turn names its files on its own step.
                              (filter #(and (nil? (:iteration-id %)) (nil? (:queued-turn-id %)))
-                                     (persistance/db-list-session-attachments-meta db session-id)))]
+                                     (persistance/db-list-session-attachments-meta db session-id)))
+          rows (persistance/db-read-session-turns db session-id (map first turns))]
       (into {}
             (map
               (fn [[turn-id position]]
-                (let [turn (persistance/db-read-session-turn db session-id turn-id)
+                (let [turn (get rows (str turn-id))
                       status (:status turn)
                       unfinished? (terminal-incomplete-turn-status? status)
                       ;; A fork notice ends the copy of a turn that still ran in the source.

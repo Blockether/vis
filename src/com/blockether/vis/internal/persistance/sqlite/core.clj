@@ -5268,6 +5268,31 @@
                                  (update :select conj :qst.prior_outcome)))
                  ((attach-prior-outcome row->turn)))))))
 
+(defn db-read-session-turns
+  "Read the latest canonical turns of `turn-ids` in the session's state chain, keyed by
+   string turn ID. Like `db-read-session-turn`, but one chain read and one SQL read
+   for each 500 IDs. A missing turn has no key."
+  [db-info session-id turn-ids]
+  (let [ids (into [] (comp (keep ->ref) (distinct)) turn-ids)]
+    (if (and (ds db-info) session-id (seq ids))
+      (let [state-ids (session-state-chain db-info session-id)
+            ->turn (attach-prior-outcome row->turn)]
+
+        (if (seq state-ids)
+          (reduce (fn [m row]
+                    (let [k (->ref (:id row))]
+                      (if (contains? m k) m (assoc m k (->turn row)))))
+                  {}
+                  (mapcat (fn [chunk]
+                            (query! db-info
+                                    (-> (session-turn-soul+state-query
+                                          [:and [:in :qs.id (vec chunk)]
+                                           [:in :qs.session_state_id state-ids]])
+                                        (update :select conj :qst.prior_outcome))))
+                          (partition-all 500 ids)))
+          {}))
+      {})))
+
 (defn- fork-activity-histories!
   "Copy the durable Activity histories that `forms` (one copied iteration's stored
    form vector) reference, under `new-soul-id`, with fresh history ids. Returns

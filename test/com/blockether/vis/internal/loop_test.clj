@@ -61,6 +61,16 @@
            [java.net InetSocketAddress]
            [java.util.concurrent Executors]))
 
+(defn- by-turn-id
+  "A `db-read-session-turns` stub built from a stub that reads one turn."
+  [read-one]
+  (fn [db session-id turn-ids]
+    (into {}
+          (keep (fn [id]
+                  (when-some [turn (read-one db session-id id)]
+                    [(str id) turn])))
+          turn-ids)))
+
 (wiring/install!)
 
 ;; The turn loop reads routing policy from the provider catalog; every test routes
@@ -4184,10 +4194,10 @@
                                         (get iterations (str id)))]))
                           ids))
 
-                  persistance/db-read-session-turn
-                  (fn [_db session-id turn-id]
-                    (expect (= "s1" session-id))
-                    (get turns-by-id (str turn-id)))
+                  persistance/db-read-session-turns
+                  (by-turn-id (fn [_db session-id turn-id]
+                                (expect (= "s1" session-id))
+                                (get turns-by-id (str turn-id))))
 
                   persistance/db-list-iterations
                   (fn [_db ids]
@@ -4471,9 +4481,9 @@
                 (atom 0)
 
                 trailer
-                (with-redefs [persistance/db-read-session-turn (fn [& _]
-                                                                 (swap! reads inc)
-                                                                 nil)]
+                (with-redefs [persistance/db-read-session-turns (by-turn-id (fn [& _]
+                                                                              (swap! reads inc)
+                                                                              nil))]
                   (prior-trailer "t2" 2 [{"scopes" #{"t1"} "at_turn" 2}]))]
 
             (expect (= ["t1/request" "t1/closing"] (mapv first trailer)))

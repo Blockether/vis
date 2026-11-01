@@ -10,6 +10,16 @@
             [com.blockether.vis.internal.attachment.core :as attachments]
             [lazytest.core :refer [defdescribe it expect]]))
 
+(defn- by-turn-id
+  "A `db-read-session-turns` stub built from a stub that reads one turn."
+  [read-one]
+  (fn [db session-id turn-ids]
+    (into {}
+          (keep (fn [id]
+                  (when-some [turn (read-one db session-id id)]
+                    [(str id) turn])))
+          turn-ids)))
+
 (defdescribe folded-carry-retention-test
              (it "releases folded payloads rather than only hiding their forms from the wire"
                  (let [payload
@@ -156,10 +166,10 @@
                     (fn [& _]
                       [])
 
-                    db/db-read-session-turn
-                    (fn [_ _ id]
-                      (swap! turn-reads conj id)
-                      {:id id :status :error :user-request "question" :content []})
+                    db/db-read-session-turns
+                    (by-turn-id (fn [_ _ id]
+                                  (swap! turn-reads conj id)
+                                  {:id id :status :error :user-request "question" :content []}))
 
                     db/db-list-session-turns-iterations
                     (fn [& _]
@@ -209,11 +219,12 @@
                                                                {})
                       db/db-list-session-attachments-meta (fn [& _]
                                                             [])
-                      db/db-read-session-turn (fn [_ _ id]
-                                                {:id id
-                                                 :status :done
-                                                 :user-request "question"
-                                                 :content [(content/prose "answer")]})]
+                      db/db-read-session-turns (by-turn-id (fn [_ _ id]
+                                                             {:id id
+                                                              :status :done
+                                                              :user-request "question"
+                                                              :content [(content/prose
+                                                                          "answer")]}))]
 
           (expect (nil? (transcript/prior-turn-trailer {} nil nil [])))
           (expect (= ["t1/request" "a" "t1/closing"]
@@ -407,13 +418,13 @@
                     (fn [& _]
                       [])
 
-                    db/db-read-session-turn
-                    (fn [_ _ id]
-                      (swap! reads conj id)
-                      (expect (not= "folded" id))
-                      (assoc (first (filter #(= id (:id %)) turns))
-                        :user-request "question"
-                        :content (if (= "visible" id) [(content/prose "answer")] [])))]
+                    db/db-read-session-turns
+                    (by-turn-id (fn [_ _ id]
+                                  (swap! reads conj id)
+                                  (expect (not= "folded" id))
+                                  (assoc (first (filter #(= id (:id %)) turns))
+                                    :user-request "question"
+                                    :content (if (= "visible" id) [(content/prose "answer")] []))))]
 
         (let [entries
               (transcript/prior-turn-trailer {:session-id "session" :db-info :fixture}
@@ -476,12 +487,12 @@
                     (fn [& _]
                       [])
 
-                    db/db-read-session-turn
-                    (fn [_ _ id]
-                      {:id id
-                       :status :done
-                       :user-request "question"
-                       :content [(content/prose "answer")]})]
+                    db/db-read-session-turns
+                    (by-turn-id (fn [_ _ id]
+                                  {:id id
+                                   :status :done
+                                   :user-request "question"
+                                   :content [(content/prose "answer")]}))]
 
         (let [entries (transcript/prior-turn-trailer {:session-id "s"} nil nil [])]
           (expect (= [["local"] ["remote"]] @reads))
@@ -497,12 +508,12 @@
                     (fn [& _]
                       [])
 
-                    db/db-read-session-turn
-                    (fn [_ _ id]
-                      {:id id
-                       :status :cancelled
-                       :user-request "question"
-                       :content [(content/fork-notice "n1")]})]
+                    db/db-read-session-turns
+                    (by-turn-id (fn [_ _ id]
+                                  {:id id
+                                   :status :cancelled
+                                   :user-request "question"
+                                   :content [(content/fork-notice "n1")]}))]
 
         (let [closing (get-in (#'transcript/turn-boundary-messages :db "s" [["forked" 1]])
                               ["forked" :closing])]

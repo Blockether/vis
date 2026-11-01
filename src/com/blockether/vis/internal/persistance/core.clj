@@ -157,6 +157,8 @@
   (db-list-session-turns [db-info session-ref])
   (db-list-session-turns-meta [db-info session-ref])
   (db-read-session-turn [db-info session-ref turn-ref])
+  (db-read-session-turns [db-info session-ref turn-refs]
+    "Read many turns like `db-read-session-turn`, keyed by string turn ID.")
   (db-session-turn-stats [db-info]
                          [db-info session-id]
     "Per-session turn aggregates. 1-arity: the whole store, `{soul-id-str
