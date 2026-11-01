@@ -2336,13 +2336,21 @@
                            (inc misses)))))))
         (finally (release-client!)))))
 
+(defn- provider-gateway!
+  "The gateway for a provider or router request.
+
+   The gateway core owns these routes, and [[ensure-gateway!]] already replaces a
+   daemon of another build. A probe GET before each request asked providers live twice."
+  []
+  (ensure-gateway!))
+
 (defn provider-status
   [provider-id]
   (let [path
         (str "/v1/providers/" (enc (name provider-id)) "/status")
 
         entry
-        (ensure-gateway-serving! path)]
+        (provider-gateway!)]
 
     (ensure-client! entry)
     ;; Canonical wire shape: the status map keeps its snake_case STRING keys
@@ -2475,7 +2483,7 @@
         (str "/v1/providers/" (enc (name provider-id)) "/limits")
 
         entry
-        (ensure-gateway-serving! path)]
+        (provider-gateway!)]
 
     (ensure-client! entry)
     (provider-limits<-wire (get (send-json-with-entry! entry "GET" path) "report"))))
@@ -2491,7 +2499,7 @@
         (str "/v1/providers/" (enc (name provider-id)) "/models" (when show-all? "?show_all=true"))
 
         entry
-        (ensure-gateway-serving! path)
+        (provider-gateway!)
 
         resp
         (do (ensure-client! entry) (send-json-with-entry! entry "GET" path))]
@@ -2509,7 +2517,7 @@
         "/v1/router"
 
         entry
-        (ensure-gateway-serving! path)]
+        (provider-gateway!)]
 
     (ensure-client! entry)
     (get (send-json-with-entry! entry "GET" path) "providers")))
@@ -2540,7 +2548,7 @@
         "/v1/router"
 
         entry
-        (ensure-gateway-serving! path)]
+        (provider-gateway!)]
 
     (ensure-client! entry)
     (send-json-with-entry! entry "PATCH" path body)))

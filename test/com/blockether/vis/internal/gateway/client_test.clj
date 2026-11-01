@@ -1253,14 +1253,12 @@
   provider-limits-restores-engine-shape-from-gateway-wire
   (it "provider limits restores engine shape from gateway wire"
       (let [request (atom nil)]
-        (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
-                                                         (reset! request path)
-                                                         fake-entry)
+        (with-redefs-fn {(rv 'ensure-gateway!) (constantly fake-entry)
                          (rv 'ensure-client!) (constantly "client-id")
                          (rv 'send-json-with-entry!)
                          (fn [_ method path]
                            (expect (= "GET" method))
-                           (expect (= @request path))
+                           (reset! request path)
                            {"report" {"provider_id" "openai-codex"
                                       "status" "ok"
                                       "dynamic" {"limits" [{"id" "codex-5h"
@@ -1289,14 +1287,12 @@
                  ;; returns the canonical STRING-keyed status map verbatim — no keyword
                  ;; restoration — so consumers read `(get status "is_authenticated")`.
                  (let [request (atom nil)]
-                   (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
-                                                                    (reset! request path)
-                                                                    fake-entry)
+                   (with-redefs-fn {(rv 'ensure-gateway!) (constantly fake-entry)
                                     (rv 'ensure-client!) (constantly "client-id")
                                     (rv 'send-json-with-entry!)
                                     (fn [_ method path]
                                       (expect (= "GET" method))
-                                      (expect (= @request path))
+                                      (reset! request path)
                                       {"status" {"is_authenticated" true
                                                  "source" "auth-file"
                                                  "oauth_token_preview" "sk-ant-o..."
@@ -1309,6 +1305,32 @@
                          (expect (= "auth-file" (get status "source")))
                          (expect (= "sk-ant-o..." (get status "oauth_token_preview")))
                          (expect (= 10859960 (get status "expires_in_ms")))))))))
+
+(defdescribe
+  provider-reads-send-one-request
+  ;; Each provider read sent a probe GET of its own path first. Status and router reads
+  ;; ask providers live, so `vis-agent providers` paid every live check twice.
+  (it
+    "sends one request for each provider read and router change"
+    (let [sent (atom [])]
+      (with-redefs-fn {(rv 'ensure-gateway!) (fn [& _]
+                                               fake-entry)
+                       (rv 'ensure-client!) (constantly "client-id")
+                       (rv 'gw-send!) (fn [_ method path _]
+                                        (swap! sent conj [method path])
+                                        {:status 200 :body "{}"})}
+        (fn []
+          (client/provider-status :acme)
+          (client/provider-limits :acme)
+          (client/provider-models :acme false)
+          (client/router)
+          (client/set-router-fallback!)
+          (expect (= [["GET" "/v1/providers/acme/status"]
+                      ["GET" "/v1/providers/acme/limits"]
+                      ["GET" "/v1/providers/acme/models"]
+                      ["GET" "/v1/router"]
+                      ["PATCH" "/v1/router"]]
+                     @sent)))))))
 
 (defn- run-serving!
   "Drive ensure-gateway-serving! with a scripted `probe-route` (a seq of results,
@@ -1993,13 +2015,11 @@
   (it
     "provider-models asks the DAEMON for the catalog instead of building a token-resolving router client-side"
     (let [request (atom nil)]
-      (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
-                                                       (reset! request path)
-                                                       fake-entry)
+      (with-redefs-fn {(rv 'ensure-gateway!) (constantly fake-entry)
                        (rv 'ensure-client!) (constantly "client-id")
                        (rv 'send-json-with-entry!) (fn [_ method path]
                                                      (expect (= "GET" method))
-                                                     (expect (= @request path))
+                                                     (reset! request path)
                                                      {"models" ["claude-opus-4-8" "claude-sonnet-5"]
                                                       "hidden_count" 3})}
         (fn []
@@ -2014,7 +2034,7 @@
   set-router-default-proxies-and-decodes-the-explicit-pair
   (it "set router default proxies and decodes the explicit pair"
       (let [request (atom nil)]
-        (with-redefs-fn {(rv 'ensure-gateway-serving!) (constantly fake-entry)
+        (with-redefs-fn {(rv 'ensure-gateway!) (constantly fake-entry)
                          (rv 'ensure-client!) (constantly "client-id")
                          (rv 'send-json-with-entry!) (fn [_ method path body]
                                                        (reset! request [method path body])
@@ -2033,7 +2053,7 @@
   set-router-fallback-tags-and-clears-the-second-root
   (it "a fallback tag rides the SAME route under role=fallback and decodes the fallback_* pair"
       (let [request (atom nil)]
-        (with-redefs-fn {(rv 'ensure-gateway-serving!) (constantly fake-entry)
+        (with-redefs-fn {(rv 'ensure-gateway!) (constantly fake-entry)
                          (rv 'ensure-client!) (constantly "client-id")
                          (rv 'send-json-with-entry!) (fn [_ method path body]
                                                        (reset! request [method path body])
@@ -2050,7 +2070,7 @@
                        @request))))))
   (it "the zero-arity clear sends role=fallback with NO pair and decodes nil"
       (let [request (atom nil)]
-        (with-redefs-fn {(rv 'ensure-gateway-serving!) (constantly fake-entry)
+        (with-redefs-fn {(rv 'ensure-gateway!) (constantly fake-entry)
                          (rv 'ensure-client!) (constantly "client-id")
                          (rv 'send-json-with-entry!) (fn [_ method path body]
                                                        (reset! request [method path body])
