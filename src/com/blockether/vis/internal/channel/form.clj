@@ -217,11 +217,16 @@
   (util/bounded-memoize
     (fn [^WeakStdout k s model scope call-id max-output-tokens max-preview-chars]
       (.digest k)
-      (clip-stdout s model scope call-id max-output-tokens max-preview-chars))
-    128
+      (let [result (clip-stdout s model scope call-id max-output-tokens max-preview-chars)]
+        ;; Most results fit. Keep only this mark, so many fit in the weight limit.
+        (if (= result (str/trimr s)) ::fits result)))
+    4096
     (* 8 1024 1024)
     (fn [[_ _ model scope call-id] result]
-      (+ 1024 (* 2 (+ (count model) (count scope) (count call-id) (count result)))))
+      (+ 1024
+         (*
+           2
+           (+ (count model) (count scope) (count call-id) (if (string? result) (count result) 0)))))
     stdout-key))
 
 (defn clip-to-wire
@@ -230,7 +235,8 @@
    Normalize live scopes from `tN/iM/fN` to `tN/iM` for saved-block recovery.
 
    Pass text within the ceiling by UTF-8 size without a count.
-   Count the excerpt and recovery marker with Svar's tokenizer. Reuse up to 128 projections.
+   Count the excerpt and recovery marker with Svar's tokenizer. Reuse up to 4096 projections.
+   Keep only a mark for text that fits, and the excerpt for text that does not.
    Hold source text weakly. Match equal text by SHA-256 after a reload collects the original.
    Limit retained results and metadata to an estimated 8 MiB."
   ([s] (clip-to-wire s {}))
@@ -251,7 +257,8 @@
      ;; size cannot exceed it in tokens, so it needs no count and no cache slot.
      (cond (str/blank? trimmed) nil
            (<= (utf8-length trimmed) (long MAX_FORM_OUTPUT_TOKENS)) trimmed
-           :else (cached-stdout (stdout-source s)
+           :else (let [result (cached-stdout
+                                (stdout-source s)
                                 s
                                 (or (:llm-model form) "unknown")
                                 (when (and scope (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)) scope)
@@ -260,7 +267,8 @@
                                            (re-matches #"[A-Za-z0-9_|-]+" call-id))
                                   call-id)
                                 MAX_FORM_OUTPUT_TOKENS
-                                MAX_FORM_PREVIEW_CHARS)))))
+                                MAX_FORM_PREVIEW_CHARS)]
+                   (if (identical? ::fits result) trimmed result))))))
 
 (defn stdout-display
   "Project a form's printed stdout into a human card. Artifact fences are passed

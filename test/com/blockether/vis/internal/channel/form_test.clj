@@ -162,7 +162,32 @@
           (expect (zero? @calls))
           (let [over (str ascii "b")]
             (expect (= over (form/clip-to-wire over f)))
-            (expect (pos? @calls)))))))
+            (expect (pos? @calls))))))
+  (it "reuses the counts of more fitting results than one long context shows"
+      ;; Regression (120-turn bench): each result over 4096 bytes kept its full text in
+      ;; a 128-entry cache. With more visible results, every request counted them again.
+      (let [f
+            {:scope "t1/i2" :svar/tool-call-id "call_many" :llm-model "glm-5.3"}
+
+            outputs
+            (mapv (fn [i]
+                    (str "result " i
+                         " " (random-uuid)
+                         "\n" (apply str (repeat 400 "row of output\n"))))
+                  (range 300))
+
+            calls
+            (atom 0)
+
+            count-tokens
+            svar/count-tokens]
+
+        (run! #(form/clip-to-wire % f) outputs)
+        (with-redefs [svar/count-tokens (fn [& args]
+                                          (swap! calls inc)
+                                          (apply count-tokens args))]
+          (expect (= (mapv str/trimr outputs) (mapv #(form/clip-to-wire % f) outputs))))
+        (expect (zero? @calls)))))
 
 (defdescribe
   form-gateway-roundtrip-test
