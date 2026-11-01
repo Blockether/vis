@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.4.11] - 2026-11-01
+
+### Fixed
+- Release: the dependency audit lists Svar 0.7.218. v0.4.10 failed its release checks and was not published; v0.4.11 carries its changes.
+
 ## [v0.4.10] - 2026-11-01
 
 ### Changed
