@@ -389,3 +389,31 @@
     (it "logs no-refresh-token when no OAuth token is on file"
         (with-redefs [sut/detect-oauth-token (constantly nil)]
           (expect (= [:no-refresh-token] (mapv :outcome (records sut/get-copilot-token!))))))))
+
+(defdescribe keychain-token-cache-test
+             ;; Perf report: GET /v1/sessions/:id/model spent 33 of 38 stack samples in
+             ;; `security find-generic-password`. Pickers detect Copilot credentials on every
+             ;; read, so each read started a Keychain process when no auth file existed.
+             (it "reads the Keychain once per minute and again after a logout"
+                 (let [reads
+                       (atom 0)
+
+                       token
+                       (fn [now]
+                         (@#'sut/keychain-token now))]
+
+                   (reset! @#'sut/keychain-cache nil)
+                   (with-redefs-fn {#'sut/read-keychain-token (fn []
+                                                                (swap! reads inc)
+                                                                nil)
+                                    #'sut/delete-auth-file! (constantly nil)}
+                     (fn []
+                       (token 1000)
+                       (token 30000)
+                       (expect (= 1 @reads))
+                       (token 61000)
+                       (expect (= 2 @reads))
+                       (sut/logout!)
+                       (token 61001)
+                       (expect (= 3 @reads))))
+                   (reset! @#'sut/keychain-cache nil))))

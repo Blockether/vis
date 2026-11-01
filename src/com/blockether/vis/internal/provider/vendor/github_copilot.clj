@@ -203,8 +203,8 @@
       (System/getenv "GH_TOKEN")
       (System/getenv "GITHUB_TOKEN")))
 
-(defn- keychain-token
-  "Try to read OAuth token from macOS Keychain (copilot-cli service).
+(defn- read-keychain-token
+  "Read the OAuth token from macOS Keychain (copilot-cli service).
    Returns token string or nil. Silent on non-macOS or missing entry."
   []
   (when (= "Mac OS X" (System/getProperty "os.name"))
@@ -222,6 +222,25 @@
 
            (when (and ok (zero? (.exitValue proc)) (not (str/blank? out))) out))
          (catch Exception e (cancellation/preserve-interrupt! e) nil))))
+
+(def ^:private keychain-ttl-ms "How long one Keychain answer, a token or none, stays valid." 60000)
+
+(def ^:private keychain-cache
+  "`{:at-ms read-time :token token-or-nil}` of the last Keychain read."
+  (atom nil))
+
+(defn- keychain-token
+  "The copilot-cli Keychain token, read again at most once per [[keychain-ttl-ms]].
+   Model pickers detect credentials on every read, and each Keychain read starts
+   a `security` process."
+  ([] (keychain-token (util/now-ms)))
+  ([now-ms]
+   (let [{:keys [at-ms token]} @keychain-cache]
+     (if (and at-ms (< (- (long now-ms) (long at-ms)) (long keychain-ttl-ms)))
+       token
+       (let [token (read-keychain-token)]
+         (reset! keychain-cache {:at-ms now-ms :token token})
+         token)))))
 
 (defn detect-oauth-token
   "Detect an existing OAuth token from all known sources.
@@ -565,6 +584,7 @@
   "Clear all cached and persisted tokens."
   []
   (reset! token-cache nil)
+  (reset! keychain-cache nil)
   (delete-auth-file!)
   :logged-out)
 
