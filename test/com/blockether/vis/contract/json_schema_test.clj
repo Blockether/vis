@@ -52,3 +52,31 @@
           (doseq [definition (take 3 (keys (get (document/schema-document "view") "$defs")))]
             (document/explain "view" definition {}))
           (expect (= 1 (count @compiles)))))))
+
+(defn- cross-document-refs
+  "The `$ref` strings of `schema` that name another schema document."
+  [schema]
+  (->> (tree-seq coll? seq schema)
+       (keep #(when (and (map-entry? %) (= "$ref" (key %))) (val %)))
+       (filter document/ref-document)
+       distinct))
+
+(defdescribe
+  cross-document-ref-test
+  ;; Regression: council.publish with `files` threw `cannot resolve $ref
+  ;; "agents.json#/$defs/files"`. A hand-kept list chose the documents that a
+  ;; schema could reference, and it did not have agents.json.
+  (it "resolves every cross-document $ref of every schema"
+      (doseq [schema-name
+              (json-names (io/file contract-root "schema"))
+
+              ref
+              (cross-document-refs (document/schema-document schema-name))]
+
+        (let [compiled
+              (skjema/compile-ref (#'document/compiled-document schema-name) ref)
+
+              outcome
+              (try (skjema/explain compiled {}) :resolved (catch Throwable t (ex-message t)))]
+
+          (expect (= :resolved outcome) (str schema-name " " ref))))))

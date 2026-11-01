@@ -33,6 +33,46 @@
         (swap! schemas assoc document-name value)
         value)))
 
+(def ^:private schema-base
+  "The URI prefix of the contract schemas: the `$id` of `common.json` without its file name."
+  (delay (let [id (str (get @common-schema "$id"))]
+           (subs id 0 (- (count id) (count "common.json"))))))
+
+(defn ref-document
+  "The schema document that `$ref` value `ref` names, or nil for a local or foreign ref.
+   A ref names a document by its file name or by its full `$id`."
+  [ref]
+  (let [ref
+        (str ref)
+
+        ref
+        (if (.startsWith ref ^String @schema-base) (subs ref (count @schema-base)) ref)]
+
+    (second (re-matches #"([a-z_-]+)\.json#.*" ref))))
+
+(defn- referenced-documents
+  "The names of the other schema documents that `schema` names in a `$ref`."
+  [schema]
+  (into #{}
+        (keep (fn [node]
+                (when (and (map-entry? node) (= "$ref" (key node))) (ref-document (val node)))))
+        (tree-seq coll? seq schema)))
+
+(defn- dependency-documents
+  "The schema documents that `document-name` reaches through `$ref`, directly or
+   through another document. The registry follows the schemas, never a list."
+  [document-name]
+  (loop [pending
+         (referenced-documents (schema-document document-name))
+
+         seen
+         #{document-name}]
+
+    (if-let [next-name (first (remove seen pending))]
+      (recur (into (disj pending next-name) (referenced-documents (schema-document next-name)))
+             (conj seen next-name))
+      (map schema-document (disj seen document-name)))))
+
 (defn- compiled-document
   "The compiled root of `document-name`. Each document compiles once; its definitions reuse it."
   [document-name]
@@ -41,7 +81,7 @@
             (schema-document document-name)
 
             dependencies
-            (map schema-document ["toggle" "council" "automations" "evals"])
+            (dependency-documents document-name)
 
             compiled
             (skjema/compile-schema source
