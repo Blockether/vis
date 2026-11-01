@@ -394,8 +394,12 @@
   (util/bounded-memoize
     (fn [model messages]
       ;; Runs only on a miss, so the stage count is the number of misses.
+      ;; Per-message counts are shared with the request count, so a new message is
+      ;; tokenized once for its group price and its request.
       (perf/timed :context/iter-universe-miss
-        (max 0 (- (long (svar/count-messages model messages)) (long (svar/count-messages model []))))))
+        (max 0
+             (- (long (prompt/count-request-messages model messages {}))
+                (long (svar/count-messages model []))))))
     4096
     (* 32 1024 1024)
     (fn [[_ messages] _]

@@ -154,12 +154,12 @@
             svar/count-messages]
 
         (with-redefs [svar/count-messages (fn [& args]
-                                            (swap! calls inc)
+                                            (when (seq (second args)) (swap! calls inc))
                                             (apply count-messages args))]
           (transcript/stamp-iter-universe! context (pop entries) (pop entries) pricing)
           (reset! calls 0)
           (transcript/stamp-iter-universe! context entries entries pricing)
-          ;; One new group: its own count and the empty-array baseline.
+          ;; One new group: each of its two messages once.
           (expect (= 2 @calls))
           (let [before (get-in @context ["engine_iter_weights" "t1/i4"])]
             (transcript/stamp-iter-universe! context changed changed pricing)
@@ -371,3 +371,35 @@
             (expect (= after-misses @calls))
             (expect (.startsWith ^String actual-a "HEAD 😀 中 "))
             (expect (.endsWith ^String actual-a "Aa😀TAIL")))))))
+
+
+(defdescribe
+  iteration-and-request-share-message-counts-test
+  ;; Regression: each new message was tokenized twice, once to price its iteration
+  ;; group and once more to count the request that carries it.
+  (it "tokenizes each message once for the group price and the request count"
+      (let [nonce
+            (random-uuid)
+
+            messages
+            [{:role "assistant" :content [{:type "text" :text (str "Running " nonce)}]}
+             {:role "user" :content (str "Output " nonce "\n" (apply str (repeat 50 "line\n")))}]
+
+            count-messages
+            svar/count-messages
+
+            calls
+            (atom 0)]
+
+        (with-redefs [svar/count-messages
+                      (fn
+                        (^long [m msgs]
+                         (when (seq msgs) (swap! calls inc))
+                         (count-messages m msgs))
+                        (^long [m msgs opts]
+                         (when (seq msgs) (swap! calls inc))
+                         (count-messages m msgs opts)))]
+          (let [group (#'transcript/messages-wire-tokens model messages)
+                request (prompt/count-request-messages model messages {})]
+            (expect (= request (+ group (count-messages model []))))
+            (expect (= 2 @calls)))))))
