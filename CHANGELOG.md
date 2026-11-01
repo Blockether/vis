@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.4.12] - 2026-11-01
+
+### Fixed
+- Gateway: a hang capture frees its slot before it returns the report. A second capture right after the first no longer returns busy without a report. v0.4.10 and v0.4.11 failed their release checks on this and were not published; v0.4.12 carries their changes.
+
 ## [v0.4.11] - 2026-11-01
 
 ### Fixed
-- Release: the dependency audit lists Svar 0.7.218. v0.4.10 failed its release checks and was not published; v0.4.11 carries its changes.
+- Release: the dependency audit lists Svar 0.7.218.
 
 ## [v0.4.10] - 2026-11-01
 
