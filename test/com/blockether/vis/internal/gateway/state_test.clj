@@ -828,9 +828,9 @@
                     (fn [_ sid]
                       [{:id sid :user-request "hello" :status :success}])
 
-                    persistance/db-list-session-turn-iterations
-                    (fn [_ _]
-                      [{:thinking " alpha.\n\n beta.  \n"}])]
+                    persistance/db-list-session-turns-iterations
+                    (fn [_ ids]
+                      (zipmap (map str ids) (repeat [{:thinking " alpha.\n\n beta.  \n"}])))]
 
         (let [turn (first (state/transcript "session-1"))]
           (expect (= "session-1" (get turn "turn_id")))
@@ -851,12 +851,13 @@
                                    :output-tokens 50
                                    :duration-ms 2300}])
 
-                               persistance/db-list-session-turn-iterations
-                               (fn [_ _]
-                                 [{:output-tokens 20 :llm-full-duration-ms 2000}
-                                  {:output-tokens 30 :llm-full-duration-ms 3000}
-                                  ;; A failed iteration stores no model time.
-                                  {:output-tokens 0 :llm-full-duration-ms 0}])]
+                               persistance/db-list-session-turns-iterations
+                               (fn [_ ids]
+                                 (zipmap (map str ids)
+                                         (repeat [{:output-tokens 20 :llm-full-duration-ms 2000}
+                                                  {:output-tokens 30 :llm-full-duration-ms 3000}
+                                                  ;; A failed iteration stores no model time.
+                                                  {:output-tokens 0 :llm-full-duration-ms 0}])))]
 
                    (let [turn (first (state/transcript :session-1))]
                      (expect (= 10.0 (get turn "tokens_per_second")))))))
@@ -3394,6 +3395,46 @@
                          (doseq [row (concat (:sessions page) (:awaiting page))]
                            (expect (= (str prefix ":" (get roots (get row "id")))
                                       (get row "agent_name")))))))))))
+
+;; Regression: a whole-transcript read (the TUI's) read the iterations of each turn
+;; on its own: 20 ms of a 40-turn transcript went to those reads.
+(defdescribe transcript-reads-iterations-once-test
+             (it "reads the iterations of every turn in one batch"
+                 (let [singles
+                       (atom 0)
+
+                       batches
+                       (atom [])
+
+                       rows
+                       (mapv (fn [n]
+                               {:id (str "turn-" n) :position n :status :success})
+                             (range 3))]
+
+                   (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                    #'persistance/db-list-session-turns (fn [_ _] rows)
+                                    #'persistance/db-list-turns-attachments (fn [_ ids]
+                                                                             (zipmap ids
+                                                                                     (repeat [])))
+                                    #'persistance/db-list-iterations-attachments-meta
+                                    (constantly {})
+                                    #'persistance/db-list-session-turns-iterations
+                                    (fn [_ ids]
+                                      (swap! batches conj (vec ids))
+                                      (into {}
+                                            (map (fn [id]
+                                                   [(str id) [{:id (str id "-it") :position 0}]]))
+                                            ids))
+                                    #'persistance/db-list-session-turn-iterations
+                                    (fn [_ _]
+                                      (swap! singles inc)
+                                      [])}
+                     (fn []
+                       (let [turns (state/transcript "sid")]
+                         (expect (= [["turn-0" "turn-1" "turn-2"]] @batches))
+                         (expect (= 0 @singles))
+                         (expect (= ["turn-0-it" "turn-1-it" "turn-2-it"]
+                                    (mapv #(get-in % ["iterations" 0 "id"]) turns)))))))))
 
 (defdescribe session-page-reads-turn-stats-once-test
              ;; Regression: every row of a `GET /v1/sessions` page queried its own turn
