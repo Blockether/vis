@@ -394,10 +394,12 @@
 (defn- reclaim-unused!
   "Delete `dir` when nobody keeps it, and answer `{:deleted :bytes}`, or nil when
    the directory stays. The judgement and the delete hold the claim lock, so a
-   publisher of this process cannot claim the directory between them."
-  [^File dir ^long cutoff ^String canon]
-  (paths/with-claim-lock (fn []
-                           (when (reclaimable? dir cutoff) (reclaim-dir! dir canon)))))
+   publisher cannot claim the directory between them. With `lock-root`, that
+   holds for publishers in other processes that lock the same store root too."
+  [^File lock-root ^File dir ^long cutoff ^String canon]
+  (let [reclaim (fn []
+                  (when (reclaimable? dir cutoff) (reclaim-dir! dir canon)))]
+    (if lock-root (paths/with-claim-lock lock-root reclaim) (paths/with-claim-lock reclaim))))
 
 (defn- add-counts
   [a b]
@@ -426,12 +428,12 @@
               (if (delete-quietly! (.toPath child)) (add-counts acc {:deleted 1 :bytes size}) acc))
             acc)
           (or dot? (not (.isDirectory child))) acc
-          :else (if-let [counts (reclaim-unused! child cutoff canon)]
+          :else (if-let [counts (reclaim-unused! root child cutoff canon)]
                   (add-counts acc counts)
                   (reduce (fn [acc ^File snapshot]
                             (if-let [counts (and (.isDirectory snapshot)
                                                  (.startsWith (.getName snapshot) "vis-ext-code")
-                                                 (reclaim-unused! snapshot cutoff canon))]
+                                                 (reclaim-unused! root snapshot cutoff canon))]
                               (add-counts acc counts)
                               acc))
                           acc
@@ -548,7 +550,7 @@
                 (reduce (fn [acc candidate]
                           (let [^File dir (io/file (:root candidate))]
                             (if-let [counts (and (.isDirectory dir)
-                                                 (reclaim-unused! dir cutoff canon))]
+                                                 (reclaim-unused! nil dir cutoff canon))]
                               (add-counts acc counts)
                               acc)))
                         {:deleted 0 :bytes 0}

@@ -93,7 +93,8 @@
         dir
         (io/file root (str release "-" (subs digest 0 12)))]
 
-    (paths/with-claim-lock (fn []
+    (paths/with-claim-lock root
+                           (fn []
                              (.mkdirs dir)
                              (paths/claim-dir! dir)))
     (doseq [[name source] sources]

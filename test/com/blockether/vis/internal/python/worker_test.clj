@@ -399,6 +399,60 @@ print(worker_value)"))))
              (finally (deliver resume true)
                       (doseq [^java.io.File file (concat (reverse (file-seq store))
                                                          (reverse (file-seq seed)))]
+                        (java.nio.file.Files/deleteIfExists (.toPath file)))))))
+  (it "keeps the modules that a sweep in another process deletes while this one stages"
+      ;; CI run 41287386844 failed live-primitives-test: `cannot import name
+      ;; '_contracts' from 'blockether.vis'`. Test JVMs share one HOME. One process
+      ;; swept a generation that a dead JVM left with a free claim, while another
+      ;; found its modules complete and then imported them after the delete.
+      (let [store
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       (.toPath (io/file "target"))
+                       "worker-guest-store-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            sources
+            {"vis_results.py" "RESULTS = 1\n" "vis_sdk.py" "SDK = 1\n"}
+
+            ;; Name the generation from a seed so that this process holds no claim on it.
+            generation
+            (io/file store
+                     (.getName (io/file (#'worker/materialize-guest-sources!
+                                          (.toFile (java.nio.file.Files/createTempDirectory
+                                                     (.toPath (io/file "target"))
+                                                     "worker-guest-seed-"
+                                                     (make-array java.nio.file.attribute.FileAttribute
+                                                                 0)))
+                                          sources))))
+
+            _
+            (do (.mkdirs generation)
+                (doseq [[name source] sources]
+                  (spit (io/file generation name) source))
+                (spit (io/file generation ".vis-live") ""))
+
+            ;; The other process: lock the store, report it, delete the generation late.
+            sweeper
+            (.start (ProcessBuilder.
+                      ^java.util.List
+                      ["python3" "-c"
+                       (str "import fcntl, shutil, sys, time\n"
+                            "f = open(sys.argv[1], 'a+')\n"
+                            "fcntl.lockf(f, fcntl.LOCK_EX)\n"
+                            "print('locked', flush=True)\n"
+                            "time.sleep(0.5)\n"
+                            "shutil.rmtree(sys.argv[2])\n")
+                       (str (io/file store ".vis-claims.lock"))
+                       (str generation)]))]
+
+        (try (expect (= "locked" (.readLine (io/reader (.getInputStream sweeper)))))
+             (#'worker/materialize-guest-sources! store sources)
+             (expect (.waitFor sweeper 10 java.util.concurrent.TimeUnit/SECONDS))
+             (doseq [[name source] sources]
+               (let [file (io/file generation name)]
+                 (expect (= source (when (.isFile file) (slurp file))))))
+             (finally (.destroyForcibly sweeper)
+                      (doseq [^java.io.File file (reverse (file-seq store))]
                         (java.nio.file.Files/deleteIfExists (.toPath file))))))))
 
 (defdescribe

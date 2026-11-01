@@ -406,14 +406,30 @@
   ;; ONE monitor for the claim decisions of this process. See `with-claim-lock`.
   (Object.))
 
+(def ^:private store-lock-name
+  "Lock file in a store root. Its OS lock keeps the claim decisions of all processes apart."
+  ".vis-claims.lock")
+
 (defn with-claim-lock
   "Call `f` while this process holds its claim lock, and answer what `f` answers.
    A sweep holds the lock while it judges and deletes a directory. A publisher
    holds it while it creates and claims a directory, before it fills it. So a
-   sweep of this process deletes a directory before the claim or not at all. A
-   sweep in another process can still judge a directory free before the claim."
-  [f]
-  (locking claim-lock (f)))
+   sweep deletes a directory before the claim or not at all.
+
+   With `root`, also hold an exclusive OS lock on the store lock file in `root`.
+   This keeps a sweep and a publisher in two processes apart as well. Without
+   `root`, a sweep in another process can judge a directory free before the claim."
+  ([f] (locking claim-lock (f)))
+  ([^File root f]
+   (locking claim-lock
+     (.mkdirs root)
+     (with-open [channel (FileChannel/open (.toPath (File. root ^String store-lock-name))
+                                           (into-array OpenOption
+                                                       [StandardOpenOption/CREATE
+                                                        StandardOpenOption/READ
+                                                        StandardOpenOption/WRITE]))
+                 _lock (.lock channel)]
+       (f)))))
 
 (defn claim-dir!
   "Claim `dir` as in use by this process for as long as it runs, so cleanup in

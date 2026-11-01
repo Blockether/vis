@@ -66,14 +66,17 @@
     (.delete x)))
 
 (defn- prune-free!
-  "Delete sibling stamps of `keep` that no live process claims."
+  "Delete sibling stamps of `keep` that no live process claims. Each judgement and
+   delete holds the store lock of `root`, which a stager in any process takes too."
   [^File root ^File keep]
   (doseq [^File d
           (.listFiles root)
 
-          :when (and (.isDirectory d) (not= keep d) (= :free (paths/claim-state d)))]
+          :when (and (.isDirectory d) (not= keep d))]
 
-    (delete-tree! d)))
+    (paths/with-claim-lock root
+                           (fn []
+                             (when (= :free (paths/claim-state d)) (delete-tree! d))))))
 
 (defn stage!
   "Stage classpath `resource` as `file-name` for library `id` and answer its File.
@@ -87,6 +90,7 @@
                    dir (io/file root (stamp-key url stamp))
                    target (io/file dir (str file-name))
                    fresh? (paths/with-claim-lock
+                            root
                             (fn []
                               (.mkdirs dir)
                               (paths/claim-dir! dir)
