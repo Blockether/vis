@@ -74,10 +74,23 @@
     db-info
     #(jdbc/execute! (ds db-info) statement {:builder-fn rs/as-unqualified-lower-maps})))
 
+(defn- statement-weight
+  "Retained size of a formatted read for [[read-statement]]. A blob or a long text
+   parameter weighs more than the cache holds, so it is never kept."
+  ^long [_ statement]
+  (if (some #(or (bytes? %) (and (string? %) (< 4096 (count ^String %)))) (rest statement))
+    Long/MAX_VALUE
+    (+ 256 (* 2 (util/string-chars statement)))))
+
+(def ^:private read-statement
+  ;; The store reads a few dozen distinct queries again and again. Formatting one
+  ;; cost more than running it, and an equal query formats to the same statement.
+  (util/bounded-memoize sql/format 1024 (* 4 1024 1024) statement-weight))
+
 (defn query!
   "Run a HoneySQL map and return rows with unqualified lower-case keys."
   [db-info q]
-  (query-sql! db-info (sql/format q)))
+  (query-sql! db-info (read-statement q)))
 
 (defn query-one! [db-info q] (first (query! db-info q)))
 
