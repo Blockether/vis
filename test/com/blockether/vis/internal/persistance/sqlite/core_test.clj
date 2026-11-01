@@ -1194,6 +1194,31 @@
              (expect (true? (boolean (sqlite-core/db-store-stale? s dir))))
              (fs/create-file (fs/path dir "vis.db"))
              (expect (true? (boolean (sqlite-core/db-store-stale? s dir))))
+             (finally (persistance/db-dispose-connection! s) (fs/delete-tree root)))))
+  ;; Every `db-info` call asks with the opened path. Two canonical-path syscalls
+  ;; on each call were a quarter of a native `GET /v1/sessions` read.
+  (it "resolves no path when asked with the path that opened the store"
+      (let [root
+            (fs/create-temp-dir)
+
+            dir
+            (str (fs/path root "store"))
+
+            s
+            (persistance/db-create-connection! dir)
+
+            resolved
+            (atom 0)
+
+            canonical
+            @#'sqlite-core/canonical-path]
+
+        (try (with-redefs [sqlite-core/canonical-path (fn [p] (swap! resolved inc) (canonical p))]
+               (expect (false? (boolean (sqlite-core/db-store-stale? s dir))))
+               (expect (false? (boolean (sqlite-core/db-store-stale? s {:path dir}))))
+               (expect (zero? @resolved))
+               (expect (false? (boolean (sqlite-core/db-store-stale? s (str dir "/.")))))
+               (expect (pos? @resolved)))
              (finally (persistance/db-dispose-connection! s) (fs/delete-tree root))))))
 
 (defdescribe db-pool-sharing-and-drain-test

@@ -950,7 +950,8 @@
           ;; pool leaks daemon threads and connection handles.
           (string? db-spec) (with-file-key-snapshot (assoc (open-sqlite-at-dir db-spec)
                                                       :owned? true
-                                                      :mode :persistent))
+                                                      :mode :persistent
+                                                      :opened-path db-spec))
           (map? db-spec)
           (cond (or (:datasource db-spec) (:conn db-spec))
                 (let [ds (or (:datasource db-spec) (:conn db-spec))]
@@ -966,7 +967,8 @@
                    :mode (if (= :memory (:mode db-spec)) :memory :external)})
                 (:path db-spec) (with-file-key-snapshot (assoc (open-sqlite-at-dir (:path db-spec))
                                                           :owned? true
-                                                          :mode :persistent))
+                                                          :mode :persistent
+                                                          :opened-path (:path db-spec)))
                 :else (throw (ex-info "Invalid db-spec map"
                                       {:type :vis/invalid-db-spec :db-spec db-spec})))
           :else (throw (ex-info "Invalid db-spec" {:type :vis/invalid-db-spec :db-spec db-spec})))
@@ -1027,13 +1029,15 @@
    the close lands on connections other threads are querying.
 
    Paths compare CANONICALIZED on both sides; the file compares by
-   filesystem identity only (see `stable-db-file-key`)."
+   filesystem identity only (see `stable-db-file-key`). The path the store was
+   opened with skips both canonicalizations: every `db-info` call asks with that
+   same path, and two path syscalls on each call were a quarter of a session list read."
   [store db-spec]
   (when (= :persistent (:mode store))
-    (or (and (string? db-spec) (not= (canonical-path db-spec) (canonical-path (:path store))))
-        (and (map? db-spec)
-             (:path db-spec)
-             (not= (canonical-path (:path db-spec)) (canonical-path (:path store))))
+    (or (when-let [path (cond (string? db-spec) db-spec
+                              (map? db-spec) (:path db-spec))]
+          (and (not= path (:opened-path store))
+               (not= (canonical-path path) (canonical-path (:path store)))))
         (and (:file-key-snapshot store)
              (not= (stable-db-file-key store) (:file-key-snapshot store))))))
 
