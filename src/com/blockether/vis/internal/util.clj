@@ -140,6 +140,25 @@
                          k [parts value])))
         value))))
 
+(defn weak-cache
+  "An empty cache for [[weak-cached]]. A key that no other object holds drops its entry."
+  ^java.util.Map []
+  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+
+(defn weak-cached
+  "The value of `(f)` for the object `obj` and the other inputs `k`, kept in `cache`.
+   Make `cache` with [[weak-cache]]. The same object answers from its cached hash and
+   an identity compare, so a large value is not walked again. An equal object shares the
+   entry. Nil and false are kept too; a failure is not. Concurrent misses can compute
+   more than once."
+  [^java.util.Map cache obj k f]
+  (let [hit (get (.get cache obj) k ::none)]
+    (if (identical? ::none hit)
+      (let [value (f)]
+        (locking cache (.put cache obj (assoc (.get cache obj) k value)))
+        value)
+      hit)))
+
 (def ^:dynamic *memo-scope*
   "An atom of key -> `[parts value]` while [[with-memo-scope]] runs, else nil."
   nil)

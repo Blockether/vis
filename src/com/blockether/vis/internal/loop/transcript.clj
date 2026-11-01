@@ -405,13 +405,21 @@
                         (fn [[_ messages] _]
                           (+ 256 (* 2 (util/string-chars messages))))))
 
+(defonce ^:private group-wire-tokens
+  ;; Group -> {model count}. Each stamp prices every visible group again, and an
+  ;; unchanged render is the same object, so its count needs no walk of the group.
+  (util/weak-cache))
+
 (defn- messages-wire-tokens
   "Svar's tokenized marginal cost for a group of canonical messages inside a larger
    request. `count-messages` includes the array's one reply-priming charge, so remove
    the empty-array baseline before per-iteration groups are summed. Equal groups reuse
    their count."
   ^long [model messages]
-  (long (cached-messages-wire-tokens model messages)))
+  (long (util/weak-cached group-wire-tokens
+                          messages
+                          model
+                          #(cached-messages-wire-tokens model messages))))
 
 (defn runtime-turn-prefix
   [environment]
@@ -1968,23 +1976,13 @@
 (def ^:private rendered-groups
   "Rendered replay messages by iteration record and render inputs. The record value is
    the key, so equal records share an entry; a collected record drops its entry."
-  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+  (util/weak-cache))
 
 (defn- rendered-group
   "The messages that `render` returns for `iter-rec` with the other inputs `k`.
    Use only for a render that reads nothing beside the record and `k`."
   [iter-rec k render]
-  (let [^java.util.Map cache
-        rendered-groups
-
-        hit
-        (get (.get cache iter-rec) k ::none)]
-
-    (if (identical? ::none hit)
-      (let [messages (render)]
-        (locking cache (.put cache iter-rec (assoc (.get cache iter-rec) k messages)))
-        messages)
-      hit)))
+  (util/weak-cached rendered-groups iter-rec k render))
 
 (defn- conversation-suffix-groups
   "Append-only conversation suffix for the current turn, kept as `[pos messages]`
@@ -2208,7 +2206,7 @@
 (defonce ^:private stamped-scopes
   ;; ctx-atom -> `[records scopes]` of its last stamp. Each stamp repeats the records
   ;; of the last one, so only a new record needs its scope.
-  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+  (util/weak-cache))
 
 (defn- trailer-scopes
   "[[iteration-record-scope]] of each record in `trailer-iters`. Reuse the scope of a
