@@ -299,7 +299,10 @@
                 [nil [] [(first messages)] messages (conj messages (first messages))
                  (reverse messages)]]
 
-          (expect (= (svar/count-messages model selected) (counter model selected))))))
+          (expect (= (svar/count-messages model selected) (counter model selected)))
+          ;; Svar's preflight uses this count in place of its own.
+          (expect (= (svar/count-messages model selected {:tokenizer "cl100k_base"})
+                     (prompt/count-request-messages model selected {:tokenizer "cl100k_base"}))))))
   (it "reuses complete content across counters and separates model changes"
       ;; The message cache is process-wide, so content that other tests count must not hit it.
       (let [nonce

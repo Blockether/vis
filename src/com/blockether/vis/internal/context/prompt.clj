@@ -1053,6 +1053,14 @@
                         (fn [[_ message] _]
                           (+ 256 (* 2 (util/string-chars message))))))
 
+(defn- sum-message-tokens
+  "`baseline` is the count of no messages. Add each cached message count above it."
+  ^long [model messages opts ^long baseline]
+  (long (reduce (fn [^long total message]
+                  (+ total (- (long (cached-message-tokens model message opts)) baseline)))
+                baseline
+                messages)))
+
 (defn request-token-counter
   "Count messages with bounded reuse by model, tokenizer options and complete content.
    Retain at most 8192 messages within a 32 MiB weight limit across requests.
@@ -1061,11 +1069,14 @@
   ([opts]
    (let [priming (memoize #(svar/count-messages % [] opts))]
      (fn ^long [model messages]
-       (let [baseline (long (priming model))]
-         (long (reduce (fn [^long total message]
-                         (+ total (- (long (cached-message-tokens model message opts)) baseline)))
-                       baseline
-                       messages)))))))
+       (sum-message-tokens model messages opts (long (priming model)))))))
+
+(defn count-request-messages
+  "Return what `svar/count-messages` returns, with the message reuse of
+   `request-token-counter`. Svar's preflight calls it as `:message-token-counter`."
+  ^long [model messages {:keys [tokenizer]}]
+  (let [opts (if tokenizer {:tokenizer tokenizer} {})]
+    (sum-message-tokens model messages opts (long (svar/count-messages model [] opts)))))
 
 (defn request-health
   "Content-free provenance for one request. Prefer Svar's final :request-accounting

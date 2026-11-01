@@ -678,6 +678,8 @@
                                 :refresh-credentials (loop-router/credential-refresher environment))
                      :check-context? true
                      :input-token-estimator input-token-estimator
+                     ;; Without a measured anchor, preflight reuses each message's count.
+                     :message-token-counter prompt/count-request-messages
                      :preserved-thinking? true
                      ;; svar sets `thinking.display` only on adaptive Claude
                      ;; thinking, so a fallback to such a model also keeps the
