@@ -3027,8 +3027,15 @@ therapy line 2"
       (expect (= :scroll (choose-frame-path {:scroll-frame? true :input-only? true})))
       (expect (= :input (choose-frame-path {:input-only? true}))))
   (it "park-wait-ms drops to the spinner cadence while loading, idle cap otherwise"
-      (expect (= spinner-tick-ms (park-wait-ms {} true)))
-      (expect (= 250 (park-wait-ms {} false))))
+      (expect (= spinner-tick-ms (park-wait-ms {} true 0)))
+      (expect (= 250 (park-wait-ms {} false 0))))
+  (it "park-wait-ms sleeps only the rest of the scroll ease tick"
+      ;; User report: Evaluate Clojure rows scrolled slowly. A full 16 ms park
+      ;; after each painted ease frame cut the ease from 60 to about 24 fps.
+      (let [easing {:layout {:total-h 100 :inner-h 10} :scroll {:mode :at :offset 10 :pos 40}}]
+        (expect (= 4 (park-wait-ms easing false 12)))
+        ;; `.wait` with 0 never wakes, so an overdue tick parks for 1 ms.
+        (expect (= 1 (park-wait-ms easing false 40)))))
   (it "frame-change-flags takes NO cheap path while recovering from a dialog block"
       (let [flags (frame-change-flags {:last-db {}
                                        :db {}

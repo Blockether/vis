@@ -5551,10 +5551,13 @@
 
 (defn- park-wait-ms
   "How long the render thread should sleep before re-checking for work:
-   the fast tick while a scroll ease is in flight, the spinner tick while a
-   turn streams, else a defensive ~250ms idle cap on lost wakeups."
-  [db loading?]
-  (cond (scroll-anim-active? db) scroll-anim-tick-ms
+   the rest of the scroll tick while an ease is in flight, the spinner tick
+   while a turn streams, else a defensive ~250ms idle cap on lost wakeups.
+
+   `since-ease-ms` is the time since the last ease step. The painted frame has
+   already used that part of the tick, so a full tick here cuts the ease rate."
+  [db loading? since-ease-ms]
+  (cond (scroll-anim-active? db) (max 1 (- (long scroll-anim-tick-ms) (long since-ease-ms)))
         loading? spinner-tick-ms
         :else 250))
 
@@ -5780,7 +5783,10 @@
 
                 (when (= v-now version)
                   (try (.wait ^Object state/render-monitor
-                              (long (park-wait-ms @state/app-db loading?)))
+                              (long (park-wait-ms @state/app-db
+                                                  loading?
+                                                  (- (System/currentTimeMillis)
+                                                     (long new-ease-ms)))))
                        (catch InterruptedException _ nil))))))
           (recur (if rendered? version last-v)
                  (long (or new-cols last-cols))
