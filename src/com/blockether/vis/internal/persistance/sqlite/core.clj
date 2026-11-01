@@ -6658,7 +6658,7 @@
 
 ;; Extension aggregate sidecars
 
-(defn- ->edn-text [v] (pr-str v))
+(defn- ->edn-text [v] (util/content-str v))
 
 (defn- <-edn-text [s] (when s (try (edn/read-string s) (catch Throwable _ s))))
 

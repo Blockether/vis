@@ -2513,7 +2513,7 @@
   ;; Each estimate renders the whole conversation as new but equal messages, so weak
   ;; identity hints miss. A value lookup walks a message once and allocates nothing.
   (util/bounded-memoize (fn [message]
-                          (let [rendered (pr-str (cache-neutral message))]
+                          (let [rendered (util/content-str (cache-neutral message))]
                             [(util/sha256-hex rendered) (count rendered)]))
                         8192
                         (* 32 1024 1024)
@@ -2780,7 +2780,7 @@
       :messages (vec messages)
       :weights (if (= (count messages) (count (:weights entry)))
                  (:weights entry)
-                 (mapv #(count (pr-str %)) messages))
+                 (mapv #(count (util/content-str %)) messages))
       :completed-turn {:turn-position (long turn-position)
                        :summaries summaries
                        :stable-message-count (long stable-message-count)

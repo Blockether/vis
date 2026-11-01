@@ -284,14 +284,14 @@
                  (map? value) (let [entries (collect value)]
                                 (if (identical? unsupported entries)
                                   unsupported
-                                  ["map" (vec (sort-by pr-str entries))]))
+                                  ["map" (vec (sort-by util/content-str entries))]))
                  (sequential? value)
                  (let [items (collect value)]
                    (if (identical? unsupported items) unsupported ["sequence" items]))
                  :else unsupported))]
         (let [value (visit (or args []))]
           (when-not (identical? unsupported value)
-            (util/sha256-hex (str salt "\u0000" (pr-str value)))))))))
+            (util/sha256-hex (str salt "\u0000" (util/content-str value)))))))))
 
 (defn- read-key
   "Identify a complete cat path within this block, independently of the requested range."

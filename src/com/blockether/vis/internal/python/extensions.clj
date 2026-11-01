@@ -4272,7 +4272,7 @@
                                  :stale? (boolean previous)
                                  :loaded-fingerprint (when previous
                                                        (util/sha256-hex
-                                                         (pr-str (select-keys previous
+                                                         (util/content-str (select-keys previous
                                                                               [:sha :code-sha]))))
                                  :requested-fingerprint
                                  (util/sha256-hex (util/content-str {:sha sha :code-sha source-sha}))}))))))))
