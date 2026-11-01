@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.4.4] - 2026-11-01
+
+### Added
+- Diagnostics: the TUI logs its startup phases. A first extension load logs its phases and its wait behind another load.
+
+### Changed
+- Performance: the loop keeps its request token estimate across prompt-cache marks. Svar preflight reuses the message token counts of Vis.
+- Performance: stdout that fits the ceiling by its UTF-8 size needs no token count. Fitting results keep only a mark in the clip cache.
+- Performance: the context reads all prior turns in one query, instead of two queries for each turn.
+- Performance: fold checks index scopes once per request and compare only folds that share a scope. A long folded session takes about 120 ms instead of about 310 ms per fold.
+- Performance: each schema document compiles once (skjema 0.3.4). The view root takes 13 ms instead of 411 ms.
+- Performance: extension stamps and files are hashed as bytes. The OpenRouter catalog is shared and saved to disk, so the first router build takes 5 ms instead of 265 ms.
+- Performance: the GitHub Copilot Keychain token is read once each minute. A session model read takes 2.6 ms instead of 20 ms.
+- Performance: the session list reads turn stats and workspaces once for each page. 20 rows take 13 ms instead of 25 ms.
+- Performance: gateway clients send one request for each provider read. The TUI startup after an idle gateway takes 91 ms instead of 492 ms.
+- Performance: a TUI keystroke repaints only the input. It reaches the terminal in 3.5 ms instead of 11.5 ms. An unchanged team refresh does not repaint.
+- Performance: the Companion reads session controls again only after a dropped connection. A page load does not wake every subscriber. A session opens with 31 requests instead of 47.
+- Performance: capability reads hash each voice reference clip once. A machine store write that changes nothing is skipped.
+- Performance: in debug mode, Jetty logs at INFO. Svar 0.7.218 arms its watchdog only while requests run.
+
+### Fixed
+- Activity: argument groups and message keys ignore the log print caps. Long or deep arguments no longer merge.
+- Digests and stored EDN ignore the log print caps. A change past the first 100 packages now refreshes extensions.
+- OpenRouter: the saved catalog keeps every model.
+- View: a restore that drops an owned picture saves the list again.
+
 ## [v0.4.3] - 2026-10-31
 
 ### Added
