@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.4.4] - 2026-11-01
+## [v0.4.5] - 2026-11-01
 
 ### Added
 - Diagnostics: the TUI logs its startup phases. A first extension load logs its phases and its wait behind another load.
