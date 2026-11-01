@@ -5257,7 +5257,7 @@
                 (reduce conj-ring {} (mapv #(hash-map "seq" %) [1 2 3 4 5]))]
 
             (expect (= [3 4 5] (mapv #(get % "seq") (:events entry))))
-            (expect (instance? clojure.lang.PersistentQueue (:events entry)))
+            (expect (instance? com.blockether.vis.internal.gateway.replay_ring.Ring (:events entry)))
             ;; Seqs 1 and 2 left the ring: a resume at or below 2 cannot be
             ;; served from it, and only this high-water says so.
             (expect (= 2 (:evicted-through entry)))))))

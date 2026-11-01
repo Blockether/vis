@@ -34,6 +34,7 @@
     [com.blockether.vis.internal.gateway.bus :as bus]
     [com.blockether.vis.internal.gateway.turn-archive :as turn-archive]
     [com.blockether.vis.internal.gateway.event-store :as event-store]
+    [com.blockether.vis.internal.gateway.replay-ring :as replay-ring]
     [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.loop :as lp]
@@ -621,6 +622,28 @@
 
 (defn- frame-bytes ^long [descriptor] (long (::event-store/bytes descriptor 0)))
 
+(declare form-coordinate)
+
+(defn- ring-key
+  "The replace key of a stored frame: one per form for an Activity snapshot with a
+   coordinate, one per session for a progress ticker, else nil. The ring keeps one
+   materialized frame for each key (see [[replace-in-ring]])."
+  [descriptor]
+  (case (get descriptor "type")
+    "block.activity"
+    (some->> (form-coordinate descriptor)
+             (vector :activity))
+
+    "turn.progress"
+    :progress
+
+    nil))
+
+(defn- as-ring
+  "`events` as a replay ring keyed by [[ring-key]]."
+  [events]
+  (replay-ring/ring events ring-key))
+
 (defn- ring-stats
   "The byte total of `ring` and the newest iteration that the stream frames of turn
    `tid` paint in it. `stats` is reused when it describes this exact ring and turn,
@@ -677,9 +700,7 @@
                 str)
 
         queue
-        (if (instance? clojure.lang.PersistentQueue events)
-          events
-          (into clojure.lang.PersistentQueue/EMPTY (or events [])))
+        (as-ring events)
 
         stats
         (ring-stats (::ring-stats entry) queue tid)
@@ -709,7 +730,7 @@
 
           (recur (if (identical? victim oldest)
                    (pop ring)
-                   (into clojure.lang.PersistentQueue/EMPTY (remove #(identical? victim %)) ring))
+                   (replay-ring/remove-frame ring victim))
                  (- bytes (frame-bytes victim))
                  (max floor (long (or (get victim "seq") 0)))))
         (assoc entry
@@ -733,23 +754,23 @@
       [turn-id iteration form-index])))
 
 (defn- replace-in-ring
-  "Drop the frames of `entry`'s ring that `same?` matches, then append `event`.
-   A ring without such a frame takes the plain append. The byte total of the kept
-   ring is carried over, so the append does not count the whole ring again. The
-   newest iteration is carried over only when the drop cannot lower it."
-  [entry event same?]
-  (let [ring
-        (:events entry)
+  "Drop the frames of `entry`'s ring with the [[ring-key]] of `event`, then append
+   `event`. A ring without such a frame takes the plain append. The byte total of
+   the kept ring is carried over, so the append does not count the whole ring again.
+   The newest iteration is carried over only when the drop cannot lower it.
 
-        removed
-        (filterv same? ring)]
+   The ring finds those frames from its tail. A filter and a rebuild of the whole
+   queue took about 100 us for each replaced frame once a session filled the ring."
+  [entry event]
+  (let [ring
+        (as-ring (:events entry))
+
+        [kept removed]
+        (replay-ring/remove-key ring (ring-key event))]
 
     (if (empty? removed)
       (conj-ring entry event)
-      (let [kept
-            (into clojure.lang.PersistentQueue/EMPTY (remove same?) ring)
-
-            tid
+      (let [tid
             (some-> (:current-turn entry)
                     str)
 
@@ -789,10 +810,7 @@
         (form-coordinate event)]
 
     (if (and coordinate (= "block.activity" type))
-      (replace-in-ring entry
-                       event
-                       #(and (= "block.activity" (get % "type"))
-                             (= coordinate (form-coordinate %))))
+      (replace-in-ring entry event)
       entry)))
 
 (defn- materialize-turn-progress
@@ -801,7 +819,7 @@
    phase, not a generic fallback until the next notice."
   [entry event]
   (if (= "turn.progress" (get event "type"))
-    (replace-in-ring entry event #(= "turn.progress" (get % "type")))
+    (replace-in-ring entry event)
     entry))
 
 (defn- countdown-progress?
