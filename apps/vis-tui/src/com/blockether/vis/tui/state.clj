@@ -3709,11 +3709,19 @@
                 (let [text
                       (input/input->text new-input)
 
-                      attachments
+                      kept
                       (filterv (fn [{:keys [image-number]}]
                                  (or (nil? image-number)
                                      (str/includes? text (input/image-reference image-number))))
-                        (:attachments db))]
+                        (:attachments db))
+
+                      ;; An unchanged vector stays identical, so a keystroke keeps the
+                      ;; cheap input-only frame.
+                      attachments
+                      (if (and (vector? (:attachments db))
+                               (= (count kept) (count (:attachments db))))
+                        (:attachments db)
+                        kept)]
 
                   (cond-> (assoc db
                             :input new-input

@@ -2889,6 +2889,36 @@ therapy line 2"
 
 (defdescribe
   input-only-fast-path-test
+  (it "keeps a keystroke in a session view on the input-only frame"
+      ;; Perf report: each chat keystroke painted a full frame (about 10 ms). The input
+      ;; reducer rebuilt `:attachments`, and the draft mirror changed `:session-drafts`.
+      (let [cols
+            80
+
+            type-into
+            (fn [db text]
+              (let [handler (:fn (get @@#'state/event-registry :update-input))]
+                (#'state/finalize-db (handler db
+                                              [:update-input
+                                               (input/paste-text (input/empty-input) text)]))))
+
+            base
+            (type-into {:active-tab-id :tab-1
+                        :tabs [{:id :tab-1 :session-id "s" :active? true}]
+                        :session {:id "s"}
+                        :attachments []
+                        :messages []
+                        :loading? false}
+                       "hel")
+
+            typed
+            (type-into base "hell")]
+
+        (expect (= "hell" (get-in typed [:session-drafts "s" :input :lines 0])))
+        (expect (true? (boolean (input-only-change? base typed cols))))
+        (expect (false? (boolean (input-only-change? base
+                                                     (assoc-in typed [:session-drafts "t"] {})
+                                                     cols))))))
   (it "classifies a same-height input edit as an input-only frame"
       (let [cols
             80

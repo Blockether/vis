@@ -4553,6 +4553,24 @@
                       (not (str/starts-with? s "//"))
                       (not (boolean (re-find #"\s" (subs s 1)))))))))
 
+(defn- active-draft-mirror-only?
+  "True when `:session-drafts` changed at most in the entry of the active session.
+   That entry mirrors the composer itself, so typing changes it on every key."
+  [prev-db db]
+  (let [before
+        (:session-drafts prev-db)
+
+        after
+        (:session-drafts db)
+
+        sid
+        (some-> db
+                :session
+                :id
+                str)]
+
+    (or (identical? before after) (and sid (= (dissoc before sid) (dissoc after sid))))))
+
 (defn- input-only-change?
   "True when the ONLY thing that changed vs the last painted frame is the input
    TEXT, AND the input box's rendered height is unchanged. The transcript
@@ -4569,8 +4587,8 @@
    active inline suggestion token, or a keystroke that WRAPS/UNWRAPS the input
    to a different number of visual rows (which resizes the transcript band) —
    fails the test and falls through to the full painter. The `:input` value
-   itself is diffed out; every other db key must be equal (same churn keys
-   excluded as `scroll-only-change?`)."
+   itself is diffed out, and so is the active session's draft mirror; every other
+   db key must be equal (same churn keys excluded as `scroll-only-change?`)."
   [prev-db db cols]
   (and prev-db
        (not= (:input prev-db) (:input db))
@@ -4586,7 +4604,8 @@
        ;; that grows/shrinks the box moves `messages-bottom` and MUST take the
        ;; full painter so the transcript re-lays-out against the new `inner-h`.
        (= (input-text-rows (:input prev-db) cols) (input-text-rows (:input db) cols))
-       (differ-only-in? prev-db db (conj view-churn-keys :input))))
+       (active-draft-mirror-only? prev-db db)
+       (differ-only-in? prev-db db (conj view-churn-keys :input :session-drafts))))
 
 (defn- active-view-unchanged?
   "True when two app-db snapshots paint the SAME active view — they differ only
