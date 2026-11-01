@@ -2499,34 +2499,11 @@
 
 (def ^:private PROMPT_CACHE_MESSAGE_LIMIT 4096)
 
-(defn- cache-neutral
-  "One message without Svar's prompt-cache marks. A marked string becomes one text
-   block, so a lone plain text block prints as that string again. Breakpoints move
-   every request, so a fingerprint must not see them."
-  [message]
-  (let [content
-        (:content message)
-
-        content
-        (if (sequential? content)
-          (mapv #(if (map? %) (dissoc % :svar/cache :svar/cache-ttl) %) content)
-          content)
-
-        lone
-        (when (and (vector? content) (= 1 (count content))) (first content))]
-
-    (if-not (contains? message :content)
-      message
-      (assoc message
-        :content (if (and (map? lone) (= #{:type :text} (set (keys lone))) (= "text" (:type lone)))
-                   (:text lone)
-                   content)))))
-
 (def ^:private message-fingerprint
   ;; Each estimate renders the whole conversation as new but equal messages, so weak
   ;; identity hints miss. A value lookup walks a message once and allocates nothing.
   (util/bounded-memoize (fn [message]
-                          (let [rendered (util/content-str (cache-neutral message))]
+                          (let [rendered (util/content-str (prompt/cache-neutral message))]
                             [(util/sha256-hex rendered) (count rendered)]))
                         8192
                         (* 32 1024 1024)

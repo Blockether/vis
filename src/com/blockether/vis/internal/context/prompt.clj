@@ -1043,6 +1043,30 @@
   @token-encoding-warmup
   nil)
 
+(defn cache-neutral
+  "One message without Svar's prompt-cache marks. A marked string becomes one text
+   block, so a lone plain text block prints as that string again. Breakpoints move
+   every request, so a fingerprint or a count key must not see them. Svar counts a
+   message with and without its marks the same."
+  [message]
+  (let [content
+        (:content message)]
+
+    (if (or (string? content) (not (contains? message :content)))
+      message
+      (let [content
+            (if (sequential? content)
+              (mapv #(if (map? %) (dissoc % :svar/cache :svar/cache-ttl) %) content)
+              content)
+
+            lone
+            (when (and (vector? content) (= 1 (count content))) (first content))]
+
+        (assoc message
+          :content (if (and (map? lone) (= #{:type :text} (set (keys lone))) (= "text" (:type lone)))
+                     (:text lone)
+                     content))))))
+
 (def ^:private cached-message-tokens
   (util/bounded-memoize (fn [model message opts]
                           (svar/count-messages model [message] opts))
@@ -1051,7 +1075,11 @@
                         ;; A long session sends more than 512 messages or 4 MiB. The scan
                         ;; then evicted each entry before its reuse and re-tokenized it all.
                         (fn [[_ message] _]
-                          (+ 256 (* 2 (util/string-chars message))))))
+                          (+ 256 (* 2 (util/string-chars message))))
+                        ;; Svar's preflight counts the marked request, and its marks move
+                        ;; every request.
+                        (fn [[model message opts]]
+                          [model (cache-neutral message) opts])))
 
 (defn- sum-message-tokens
   "`baseline` is the count of no messages. Add each cached message count above it."

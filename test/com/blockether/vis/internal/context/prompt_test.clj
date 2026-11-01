@@ -340,7 +340,43 @@
                        (frequencies @calls)))
             ((prompt/request-token-counter) "gpt-4o" [message])
             (expect (= 1 (get (frequencies @calls) ["gpt-4o" [message]])))
-            (expect (= 2 (get (frequencies @calls) ["gpt-4o" []]))))))))
+            (expect (= 2 (get (frequencies @calls) ["gpt-4o" []])))))))
+  (it "counts a message once wherever the moving prompt-cache breakpoints mark it"
+      ;; Regression: Svar's preflight counts the marked request. Breakpoints move every
+      ;; request, so each message was tokenized again when its mark came or went.
+      (let [nonce
+            (random-uuid)
+
+            plain
+            {:role "user" :content (str "Tool output " nonce)}
+
+            blocks
+            {:role "assistant"
+             :content [{:type "text" :text (str "First " nonce)} {:type "text" :text "Second"}]}
+
+            mark
+            #(assoc % :svar/cache true :svar/cache-ttl :1h)
+
+            marked-plain
+            (assoc plain :content [(mark {:type "text" :text (:content plain)})])
+
+            marked-blocks
+            (update-in blocks [:content 1] mark)
+
+            count-messages
+            svar/count-messages
+
+            calls
+            (atom 0)]
+
+        (with-redefs [svar/count-messages
+                      (fn ^long [model messages opts]
+                        (when (seq messages) (swap! calls inc))
+                        (count-messages model messages opts))]
+          (let [unmarked (prompt/count-request-messages "gpt-4o" [plain blocks] {})]
+            (expect (= unmarked
+                       (prompt/count-request-messages "gpt-4o" [marked-plain marked-blocks] {})))
+            (expect (= 2 @calls)))))))
 
 (defdescribe
   linked-guidance-estimates-test
