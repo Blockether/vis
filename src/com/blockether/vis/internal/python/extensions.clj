@@ -4357,6 +4357,11 @@
                    (finally (.decrementAndGet ^AtomicLong foreground-loads)))))
         (try (f) (finally (.unlock ensure-load-lock))))))
 
+(defn- with-phased-load-lock
+  "[[with-load-lock]] inside one phase record, logged once by the outermost call."
+  [f]
+  (with-reload-phases #(with-load-lock f)))
+
 ;; Scopes (nil = global) whose declared packages this process prepared. A project
 ;; first loaded through the process-directory fallback is prepared once a session
 ;; opens it.
@@ -4446,7 +4451,9 @@
         results
         (if (and ready (every? some? ready))
           ready
-          (with-load-lock
+          ;; A first load logs its phases as a reload does: without it the snapshot and
+          ;; package checks of a new session's catalog leave a silent gap (#422).
+          (with-phased-load-lock
             (fn []
               ;; A multi-scope reload cannot expose a partially updated report.
               (when force?

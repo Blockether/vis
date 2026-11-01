@@ -8,6 +8,7 @@
     [com.blockether.svar.core :as svar]
     [clojure.java.io :as io]
     [clojure.string :as str]
+    [taoensso.telemere :as tel]
     [com.blockether.vis.internal.channel.events :as channel-events]
     [com.blockether.vis.contract.activity :as activity-contract]
     [com.blockether.vis.internal.activity.core :as activity]
@@ -6467,6 +6468,17 @@ vis.register_extension(vis.Extension(
              (expect (every? (set (map :phase @phases)) [:fingerprint :snapshot :register]))
              (expect (every? (comp nat-int? :ms) @phases))
              (expect (some #(= {:phase :register :detail "timed"} (dissoc % :ms)) @phases))
+             (finally (reset! live-load nil) (pyx/reload-python-extensions! {:dirs []})))))
+  ;; A new session's first catalog load spent ~120 ms in snapshot, fingerprint and
+  ;; registration with no log line, so a slow first session had no explanation.
+  (it "logs the phases of a first load"
+      (let [dir
+            (temp-dir)]
+
+        (write-ext! dir "first.py" "import blockether.vis.extension as vis\n")
+        (try (let [{:keys [signals]} (tel/with-signals (pyx/load-python-extensions! {:dirs [(str dir)]}))
+                   phases (some #(when (= ::pyx/reload-phases (:id %)) (:phases (:data %))) signals)]
+               (expect (some #(= {:phase :register :detail "first"} (dissoc % :ms)) phases)))
              (finally (reset! live-load nil) (pyx/reload-python-extensions! {:dirs []}))))))
 
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
