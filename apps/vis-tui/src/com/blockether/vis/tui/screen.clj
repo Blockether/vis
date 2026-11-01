@@ -4681,6 +4681,38 @@
                   t/dialog-hint-key
                   t/terminal-bg))
 
+(defn- shift-transcript-rows!
+  "Move the rows of the last painted transcript by the scroll change, so the
+   delta refresh sends only the rows that came into view. Lanterna moves its
+   back buffer now, and its front buffer and the terminal (a scroll region) in
+   the next refresh. Use it only when this frame paints every cell of these rows
+   again: a moved cell that nobody paints stays moved on the terminal. Skip it
+   for a narrowed pane (rail or Zen margins), for inline images, for other
+   geometry and for a jump of a whole viewport."
+  [^TerminalScreen screen previous-layout layout cols text-top inner-h]
+  (let [text-top
+        (long text-top)
+
+        inner-h
+        (long inner-h)
+
+        before
+        (:eff-scroll previous-layout)
+
+        after
+        (:eff-scroll layout)]
+
+    (when (and (some? before)
+               (some? after)
+               (zero? (long frame/*column-offset*))
+               (= (long cols) (.getColumns (.getTerminalSize screen)))
+               (= inner-h (:inner-h previous-layout))
+               (= text-top (:text-top previous-layout))
+               (not (:has-images? previous-layout)))
+      (let [shift (- (long after) (long before))]
+        (when (< 0 (Math/abs shift) inner-h)
+          (.scrollLines screen (int text-top) (int (+ text-top inner-h -1)) (int shift)))))))
+
 (defn- render-live-bubble-frame!
   "Fast path for 80ms live ticks. Recompute virtual layout, but only
    repaint the live assistant bubble + the chrome bands that the user
@@ -5133,6 +5165,7 @@
                (not= anchored-scroll messages-scroll))
       (state/dispatch [:reanchor-scroll anchored-scroll
                        (- (long anchored-scroll) (long messages-scroll))]))
+    (shift-transcript-rows! screen previous-layout layout cols text-top inner-h)
     (binding [render/*image-placements* image-sink]
       (render/draw-messages-area! g
                                   layout

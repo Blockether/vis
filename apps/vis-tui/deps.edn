@@ -8,7 +8,10 @@
                          :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}}
                          :extra-paths ["build" "test"]
                          :main-opts ["-m" "vis-tui.review"]}
-           :run {:main-opts ["-m" "com.blockether.vis.tui.main"]}
+           ;; `render/draw-chat-bubble!` compiles to more bytecode than HotSpot's
+           ;; 8000-byte limit, so the JVM never compiles it without this flag.
+           :run {:jvm-opts ["-XX:-DontCompileHugeMethods"]
+                 :main-opts ["-m" "com.blockether.vis.tui.main"]}
            :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}
                                org.jcodec/jcodec {:mvn/version "0.2.5"}}
                   :extra-paths ["test"]
