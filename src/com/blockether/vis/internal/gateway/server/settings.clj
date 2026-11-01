@@ -40,9 +40,12 @@
                      "select")
            ;; A secret row says only whether a value is saved, never the value.
            :own-value (when-not secret? own-value)
-           :inherited-value (when-not secret? inherited-value)
            :inherited-source inherited-source
            :applies (if (#{:skills :mcp :engines} group) "next_call" "next_turn")}
+    ;; The contract has no null setting value, so a row without one omits the key.
+    (and (not secret?) (some? inherited-value))
+    (assoc :inherited-value inherited-value)
+
     parent
     (assoc :parent parent)
 

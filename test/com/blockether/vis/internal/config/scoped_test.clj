@@ -1194,6 +1194,36 @@
                           "toggles" []}
                          (dissoc (get groups "extension:broken.py") "id")))))
           (finally (toggles/unregister-owner! "state-fixture"))))))
+  (it "lists a secret row that the gateway contract accepts"
+      ;; Regression: a secret row sent "inherited_value": null, and the settings schema refused
+      ;; the whole catalog once an installed extension (vis-graphify) had a secret toggle.
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              id
+              "catalog_secret"]
+
+          (toggles/register-toggle! {:id id :label "Token" :type :string :default "" :secret? true})
+          (try (with-redefs [lp/db-info
+                             (constantly db)
+
+                             discovery/all-skills
+                             (constantly [])]
+
+                 (let [catalog
+                       (-> (#'settings-api/list-settings-handler {:query-params {}})
+                           :body
+                           json/read-json)
+
+                       row
+                       (first (filter #(= id (get % "id"))
+                                      (mapcat #(get % "toggles") (get catalog "groups"))))]
+
+                   (expect (= "secret" (get row "editor")))
+                   (expect (not (contains? row "inherited_value")))
+                   (expect (document/valid-json? "gateway" "settings" catalog))))
+               (finally (toggles/unregister-toggle! id))))))
   (it
     "reloads extension code only on request, where the target runs"
     (with-empty-config
