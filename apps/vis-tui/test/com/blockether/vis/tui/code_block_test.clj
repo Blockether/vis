@@ -97,7 +97,7 @@
                        fold-calls
                        (atom 0)]
 
-                   (.clear ^java.util.Map folded-code-cache)
+                   (.clear ^com.blockether.vis.render.BoundedCache folded-code-cache)
                    (with-redefs [p/ansi-fold-cols (fn [line ^long _budget]
                                                     (swap! fold-calls inc)
                                                     [line])]

@@ -20,25 +20,21 @@
            [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
-           [java.util IdentityHashMap LinkedHashMap]
+           [com.blockether.vis.render BoundedCache]
+           [java.util IdentityHashMap]
            [java.util.concurrent.atomic AtomicLong]))
 
 ;;; Render caches
 ;; Formatting is cached by immutable message identity in a bounded access-order LRU.
 (def ^:private ^:const fmt-cache-cap 4096)
 
-(defn- make-fmt-cache
-  ^LinkedHashMap []
-  (proxy [LinkedHashMap] [64 0.75 true] ;; true = access-order (LRU)
-    (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) (long fmt-cache-cap)))))
-
-(defonce ^:private ^LinkedHashMap fmt-cache (make-fmt-cache))
+(defonce ^:private ^com.blockether.vis.render.BoundedCache fmt-cache (BoundedCache. fmt-cache-cap))
 
 (defonce ^:private ^AtomicLong fmt-cache-gen (AtomicLong.))
 
 (defmacro with-cache
   "Generation-guarded double-checked read/compute/put on an access-order
-   `LinkedHashMap` `m` (LRU), keyed by `k`. `gen` is the `AtomicLong` that
+   `BoundedCache` `m` (LRU), keyed by `k`. `gen` is the `AtomicLong` that
    `clear-cache!` bumps under `m`'s monitor. On a HIT the body is never touched
    and nothing is allocated (one locked `.get`). On a MISS `body` runs OUTSIDE
    the lock; the value is stored only if no `.clear` bumped `gen` since the miss -
@@ -57,7 +53,7 @@
          ~k
 
          hit#
-         (locking m# (.get ^LinkedHashMap m# k#))]
+         (locking m# (.get ^BoundedCache m# k#))]
 
      (if (some? hit#)
        hit#
@@ -69,7 +65,7 @@
 
          (locking m#
            (if (== g0# (.get ^AtomicLong gen#))
-             (or (.get ^LinkedHashMap m# k#) (do (.put ^LinkedHashMap m# k# v#) v#))
+             (or (.get ^BoundedCache m# k#) (.put ^BoundedCache m# k# v#))
              v#))))))
 
 (defn clear-cache!
@@ -77,7 +73,7 @@
    its miss is refused at put time instead of resurrecting a now-stale entry
    (see `with-cache`). Bumping under the SAME monitor the `with-cache` put phase
    reads under is what makes the guard race-free."
-  [^LinkedHashMap m ^AtomicLong gen]
+  [^BoundedCache m ^AtomicLong gen]
   (locking m (.clear m) (.incrementAndGet gen)))
 
 (defn- cached*
@@ -95,7 +91,7 @@
 (defn cache-size
   "Current number of entries (handy for tests/diagnostics)."
   ^long []
-  (locking fmt-cache (.size ^LinkedHashMap fmt-cache)))
+  (.size ^BoundedCache fmt-cache))
 
 (def ^:private live-body-throttle-ms
   "Minimum wall-clock gap (ms) between full re-projections of the LIVE

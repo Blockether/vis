@@ -866,7 +866,7 @@
       (let [prepare
             #'layout/prepared-prose
 
-            ^java.util.Map cache
+            ^com.blockether.vis.render.BoundedCache cache
             @#'layout/prepared-prose-cache]
 
         (expect (identical? (prepare justice-prose []) (prepare justice-prose [])))

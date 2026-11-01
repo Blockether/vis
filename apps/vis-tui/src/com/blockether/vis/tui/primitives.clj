@@ -16,7 +16,8 @@
    contain non-ASCII. Plain `count`/`subs` are still allowed for ASCII
    internals (box-drawing strings we authored, single-glyph keystroke
    labels, etc.) where the answer is identical and the call is a hot path."
-  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TerminalTextUtils
+  (:import [com.blockether.vis.render BoundedCache]
+           [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TerminalTextUtils
             TextCharacter TextColor]
            [com.googlecode.lanterna.graphics TextGraphics]))
 
@@ -118,14 +119,12 @@
 ;; be RECOMPUTED to an equal value. No generation guard is needed here — unlike
 ;; the render/virtual caches whose keys under-approximate content and can serve
 ;; stale VALUES; this key IS the content. Bounded access-order LRU caps memory;
-;; the only structural mutation (access-order `.get`) is guarded by the
-;; synchronized-map wrapper.
+;; `BoundedCache` synchronizes every access, including the access-order `.get`.
+;; Every thread that paints shares it.
 (def ^:private ^:const line-cell-cap 4096)
 
-(def ^:private ^java.util.Map line-cell-cache
-  (java.util.Collections/synchronizedMap
-    (proxy [java.util.LinkedHashMap] [1024 0.75 true]
-      (removeEldestEntry [_] (> (.size ^java.util.LinkedHashMap this) (long line-cell-cap))))))
+(def ^:private ^com.blockether.vis.render.BoundedCache line-cell-cache
+  (BoundedCache. line-cell-cap))
 
 (def ^:private ^java.util.EnumSet no-mods (java.util.EnumSet/noneOf SGR))
 
@@ -152,7 +151,7 @@
         (if mempty? [line fg bg :none] [line fg bg mods])
 
         ^"[Lcom.googlecode.lanterna.TextCharacter;" cached
-        (.get ^java.util.Map line-cell-cache k)]
+        (.get ^BoundedCache line-cell-cache k)]
 
     (if cached
       (.putString g (int x) (int y) cached)
@@ -165,7 +164,7 @@
         ;; The stored key must own an IMMUTABLE mods snapshot: a later
         ;; enable/disableModifiers on the caller's live set must not mutate our
         ;; key out from under the map.
-        (.put ^java.util.Map line-cell-cache
+        (.put ^BoundedCache line-cell-cache
               (if mempty? k [line fg bg (java.util.EnumSet/copyOf mods)])
               arr)
         (.putString g (int x) (int y) arr)))
@@ -655,12 +654,12 @@
           [:sty line base-fg base-bg code-fg code-bg err-fg inherited])
 
         ^"[Lcom.googlecode.lanterna.TextCharacter;" cached
-        (.get ^java.util.Map line-cell-cache k)]
+        (.get ^BoundedCache line-cell-cache k)]
 
     (if cached
       (.putString g (int x) (int y) cached)
       (let [arr (build-styled-cells line base-fg base-bg code-fg code-bg err-fg inherited)]
-        (.put ^java.util.Map line-cell-cache
+        (.put ^BoundedCache line-cell-cache
               (if iempty?
                 k
                 [:sty line base-fg base-bg code-fg code-bg err-fg

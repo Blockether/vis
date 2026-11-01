@@ -39,9 +39,10 @@
             [com.blockether.vis.tui.presentation :as ir])
   (:import [com.blockether.vis.clojure ClojureHighlighter]
            [com.blockether.vis.python PythonHighlighter]
+           [com.blockether.vis.render BoundedCache]
            [com.googlecode.lanterna.terminal.image TerminalImage]
            [com.googlecode.lanterna ParagraphLayout ParagraphLayout$Prepared ParagraphLayout$Line
-            ParagraphLayout$Options]))
+            ParagraphLayout$Options UnicodeWidth]))
 
 ;; Helpers
 
@@ -308,21 +309,18 @@
    a smaller bound measures each one again on every projection."
   4096)
 
-(defonce ^:private ^java.util.LinkedHashMap prepared-prose-cache
-  (java.util.LinkedHashMap. 256 (float 0.75) true))
+(defonce ^:private ^com.blockether.vis.render.BoundedCache prepared-prose-cache
+  (BoundedCache. prepared-prose-limit))
 
 (defn- prepared-prose
   "Cache bounded, immutable cell measurements across viewport widths, never styled runs.
    A miss measures outside the lock, so layout on two threads does not wait."
   ^ParagraphLayout$Prepared [^String text breaks]
   (let [k [text breaks]]
-    (or (locking prepared-prose-cache (.get prepared-prose-cache k))
-        (let [prepared (ParagraphLayout/prepare text (int-array breaks))]
-          (locking prepared-prose-cache
-            (.put prepared-prose-cache k prepared)
-            (when (> (.size prepared-prose-cache) (long prepared-prose-limit))
-              (.remove prepared-prose-cache (.next (.iterator (.keySet prepared-prose-cache))))))
-          prepared))))
+    (or (.get ^BoundedCache prepared-prose-cache k)
+        (.put ^BoundedCache prepared-prose-cache
+              k
+              (ParagraphLayout/prepare text (int-array breaks))))))
 
 (def ^:private terminal-prose-options (ParagraphLayout$Options/terminal))
 
@@ -511,6 +509,19 @@
 ;; (markdown blocks nest), can't be sorted.
 (declare block->lines)
 
+(defonce ^:private ^com.blockether.vis.render.BoundedCache block-lines-cache
+  ;; Lines of one top-level block at one width. A streaming answer grows only in its
+  ;; last block, so every earlier block is laid out once instead of on each frame.
+  ;; The render thread and the layout prewarm thread share it.
+  (BoundedCache. 1024))
+
+(defn- cached-block-lines
+  "Lines of `block`, cached by its value, `width`, `opts` and the active width method."
+  [block width opts]
+  (let [k [block width opts (UnicodeWidth/getWidthMethod)]]
+    (or (.get ^BoundedCache block-lines-cache k)
+        (.put ^BoundedCache block-lines-cache k (vec (block->lines block width opts))))))
+
 (defn- blocks->lines
   "Walk a sequence of canonical blocks, concatenating their line
    outputs.
@@ -533,7 +544,7 @@
                   (if (>= (count acc') cap) (reduced acc') acc')))
               []
               children))
-    (vec (mapcat #(block->lines % width opts) children))))
+    (vec (mapcat #(cached-block-lines % width opts) children))))
 
 (defn- inline-block->lines
   "Render a block whose children are inline (`:p`, `:h`, `:th`, `:td`,
@@ -554,13 +565,11 @@
    so source / patch alignment survives."
   #{"text" "plain" "output" "log"})
 
-(def ^:private ^java.util.Map folded-code-cache
+(def ^:private ^com.blockether.vis.render.BoundedCache folded-code-cache
   "Bounded access-order cache for the ANSI-fold stage. Layout used to split and
    rescan every ANSI row on each projection; keeping the width-dependent string
    segments avoids that O(lines) pass."
-  (java.util.Collections/synchronizedMap (proxy [java.util.LinkedHashMap] [128 0.75 true]
-                                           (removeEldestEntry [_eldest]
-                                             (> (.size ^java.util.LinkedHashMap this) 128)))))
+  (BoundedCache. 128))
 
 (defn- compute-folded-code-lines
   [^String content ^long budget]
@@ -573,10 +582,8 @@
    so color a producer already wrote survives the fold."
   [^String content ^long budget]
   (let [key [content budget]]
-    (or (.get ^java.util.Map folded-code-cache key)
-        (let [lines (compute-folded-code-lines content budget)]
-          (.put ^java.util.Map folded-code-cache key lines)
-          lines))))
+    (or (.get ^BoundedCache folded-code-cache key)
+        (.put ^BoundedCache folded-code-cache key (compute-folded-code-lines content budget)))))
 
 (defn- highlight-source
   "`content` colored for the fence language `lang` (`:python` or `:clojure`)."
@@ -593,10 +600,10 @@
    cached like `folded-code-lines`."
   [lang ^String content ^long budget]
   (let [key [content budget lang]]
-    (or (.get ^java.util.Map folded-code-cache key)
-        (let [lines (compute-folded-code-lines (highlight-source lang content) budget)]
-          (.put ^java.util.Map folded-code-cache key lines)
-          lines))))
+    (or (.get ^BoundedCache folded-code-cache key)
+        (.put ^BoundedCache folded-code-cache
+              key
+              (compute-folded-code-lines (highlight-source lang content) budget)))))
 
 (def ^:private highlighted-langs
   "Fence `:lang` values, lower-cased, that get color from a highlighter."
@@ -609,14 +616,12 @@
    "cljc" :clojure
    "edn" :clojure})
 
-(def ^:private ^java.util.Map mermaid-cache
+(def ^:private ^com.blockether.vis.render.BoundedCache mermaid-cache
   "Bounded access-order cache for rendered mermaid diagrams. A diagram costs a
    full rank / order / place pass, which must not repeat on every repaint; a
    `{:reason ...}` result caches the DECISION not to draw one, so an unsupported
    fence is parsed once."
-  (java.util.Collections/synchronizedMap (proxy [java.util.LinkedHashMap] [64 0.75 true]
-                                           (removeEldestEntry [_eldest]
-                                             (> (.size ^java.util.LinkedHashMap this) 64)))))
+  (BoundedCache. 64))
 
 (defn- mermaid-drawing
   "`{:rows rows}` for a `mermaid` fence, or `{:reason text}` when the renderer
@@ -630,15 +635,14 @@
         [content budget aspect]
 
         hit
-        (.get ^java.util.Map mermaid-cache key)]
+        (.get ^BoundedCache mermaid-cache key)]
 
     (or hit
         (let [drawing (update (mermaid/draw content budget {:cell-aspect aspect})
                               :rows
                               #(some-> %
                                        vec))]
-          (.put ^java.util.Map mermaid-cache key drawing)
-          drawing))))
+          (.put ^BoundedCache mermaid-cache key drawing)))))
 
 (defn- diagram-runs
   "One code run for a diagram row. The row keeps its ANSI tones; the code painter

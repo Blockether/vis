@@ -55,7 +55,8 @@
             [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.presentation :as ast])
-  (:import [java.util IdentityHashMap LinkedHashMap]
+  (:import [com.blockether.vis.render BoundedCache]
+           [java.util IdentityHashMap]
            [java.util.concurrent.atomic AtomicLong]))
 
 (set! *unchecked-math* :warn-on-boxed)
@@ -66,9 +67,8 @@
 
 (def ^:private ^:const height-cache-cap 8192)
 
-(defonce ^:private ^LinkedHashMap height-cache
-  (proxy [LinkedHashMap] [128 0.75 true]
-    (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) (long height-cache-cap)))))
+(defonce ^:private ^com.blockether.vis.render.BoundedCache height-cache
+  (BoundedCache. height-cache-cap))
 
 ;; Identity memo for the message fingerprint. `layout` pass-1 recomputed
 ;; `(hash (dissoc message ...))` for EVERY message EVERY tick (~2x per bubble,
@@ -201,19 +201,17 @@
   "Peek the sticky height cache. Returns a long or nil. The cache holds the
    height without the team card, so a card change keeps the measured trace."
   [message bubble-w settings detail-expansions session-id]
-  (when-let [h (locking height-cache
-                 (.get ^LinkedHashMap height-cache
-                       (height-key message bubble-w settings detail-expansions session-id)))]
+  (when-let [h (.get ^BoundedCache height-cache
+                     (height-key message bubble-w settings detail-expansions session-id))]
     (+ (long h) (card-rows message bubble-w))))
 
 (defn- height-cache-put!
   "Pin `h` as the real height for `message` at `bubble-w` under `settings`
    + its current expansion state. Returns `h` so callers can chain."
   [message bubble-w settings detail-expansions session-id h]
-  (locking height-cache
-    (.put ^LinkedHashMap height-cache
-          (height-key message bubble-w settings detail-expansions session-id)
-          (- (long h) (card-rows message bubble-w))))
+  (.put ^BoundedCache height-cache
+        (height-key message bubble-w settings detail-expansions session-id)
+        (- (long h) (card-rows message bubble-w)))
   h)
 
 ;; Estimate memo — same key axes as the sticky height cache. `layout`
@@ -225,9 +223,8 @@
 ;; after the first into hash lookups. Entries become garbage once the
 ;; real height lands (the height cache is checked FIRST) — the LRU cap
 ;; simply ages them out.
-(defonce ^:private ^LinkedHashMap estimate-cache
-  (proxy [LinkedHashMap] [128 0.75 true]
-    (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) (long height-cache-cap)))))
+(defonce ^:private ^com.blockether.vis.render.BoundedCache estimate-cache
+  (BoundedCache. height-cache-cap))
 
 ;; Sticky PROJECTION cache — the pass-2 companion to `height-cache`.
 ;; `layout` re-projects every VISIBLE bubble each frame; during a live turn
@@ -240,9 +237,7 @@
 ;; Live bubbles and windowed slices are never routed here, so a hit always
 ;; returns the complete stable projection used for measurement and painting.
 ;; Smaller cap than the height cache: each entry pins a wrapped-line vector.
-(defonce ^:private ^LinkedHashMap projection-cache
-  (proxy [LinkedHashMap] [128 0.75 true]
-    (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) 512))))
+(defonce ^:private ^com.blockether.vis.render.BoundedCache projection-cache (BoundedCache. 512))
 
 (defonce ^:private ^AtomicLong estimate-cache-gen (AtomicLong.))
 
@@ -252,14 +247,14 @@
   "Drop the sticky height cache AND the estimate memo. Tests + whole-cache
    busts (registry-toggle resync) call this."
   []
-  (locking height-cache (.clear ^LinkedHashMap height-cache))
+  (.clear ^BoundedCache height-cache)
   (render/clear-cache! estimate-cache estimate-cache-gen)
   (render/clear-cache! projection-cache projection-cache-gen))
 
 (defn height-cache-size
   "Current sticky-height entry count (handy for tests / diagnostics)."
   ^long []
-  (locking height-cache (.size ^LinkedHashMap height-cache)))
+  (.size ^BoundedCache height-cache))
 
 ;;; ── Estimated-height heuristic ─────────────────────────────────────────────
 
