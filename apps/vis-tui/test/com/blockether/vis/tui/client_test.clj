@@ -154,13 +154,22 @@
 
 (defn- failed-health-check
   [entry cause]
-  (let [log (java.io.StringWriter.)]
-    {:failure (binding [*err* log]
-                (with-redefs-fn {#'http/request (fn [_]
-                                                  (throw cause))
-                                 #'client/target-checked? (atom false)}
-                  #(try (#'client/check-target! entry) (catch Exception e e))))
-     :log (str log)}))
+  (let [failure
+        (atom nil)
+
+        signal
+        (tel/with-signal (with-redefs-fn {#'http/request (fn [_]
+                                                           (throw cause))
+                                          #'client/target-checked? (atom false)}
+                           #(reset! failure (try (#'client/check-target! entry)
+                                                 (catch Exception e e)))))]
+
+    {:failure @failure
+     :log (str (some-> signal
+                       :msg_
+                       force)
+               (some-> signal
+                       :data))}))
 
 (defdescribe
   connection-failure-is-an-actionable-user-error

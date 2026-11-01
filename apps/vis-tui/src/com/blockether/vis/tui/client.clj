@@ -186,14 +186,18 @@
               :else "Network I/O failed while contacting the gateway.")]
 
     ;; Transport messages can echo URLs or credentials. Keep every frame and cause
-    ;; class in the redirected diagnostic log, but never their untrusted messages.
-    (binding [*out* *err*]
-      (println "Gateway transport failure at" endpoint "(exception messages omitted for privacy)")
-      (doseq [^Throwable t causes]
-        (println (.getName (class t)))
-        (doseq [frame (.getStackTrace t)]
-          (println "\tat" (str frame))))
-      (flush))
+    ;; class in the diagnostic log, but never their untrusted messages.
+    (tel/log! {:level :warn
+               :id ::transport-failure
+               :data {:endpoint endpoint :causes (mapv #(.getName (class %)) causes)}
+               :msg (str/join "\n"
+                              (cons (str "Gateway transport failure at "
+                                         endpoint
+                                         " (exception messages omitted for privacy)")
+                                    (mapcat (fn [^Throwable t]
+                                              (cons (.getName (class t))
+                                                    (map #(str "\tat " %) (.getStackTrace t))))
+                                            causes)))})
     (ex-info
       (str
         "Could not connect to the Vis gateway at " endpoint
