@@ -15,7 +15,7 @@
 
 (def ^:private fixture-dir (io/file "test/com/blockether/vis/python/fixtures/format"))
 
-(def ^:private package-dir (io/file "packages/vis-python-presentation"))
+(def ^:private package-dir (io/file "packages/vis-presentation"))
 
 (defn- golden-pairs
   "Every `<name>.in.py` fixture with the `<name>.out.py` ruff made of it, sorted by name."
@@ -73,19 +73,18 @@
                           "# yapf: disable\nx=[1,2]\n"]]
         (expect (= suppressed (PythonFormatter/format suppressed))))))
 
-(defdescribe prep-marker-test
-             (it "names the prep marker after the Java sources, so a changed source compiles again"
-                 (let [expected
-                       (str "target/prepared/" (source-digest))
+(defdescribe
+  prep-marker-test
+  (it "names the prep marker after the Java sources, so a changed source compiles again"
+      (let [expected
+            (str "target/prepared/" (source-digest))
 
-                       ensure
-                       (-> (io/file package-dir "deps.edn")
-                           slurp
-                           edn/read-string
-                           :deps/prep-lib
-                           :ensure)]
+            ensure
+            (-> (io/file package-dir "deps.edn")
+                slurp
+                edn/read-string
+                :deps/prep-lib
+                :ensure)]
 
-                   (expect (= expected ensure)
-                           (str "Set :ensure in packages/vis-python-presentation/deps.edn to \""
-                                expected
-                                "\"")))))
+        (expect (= expected ensure)
+                (str "Set :ensure in packages/vis-presentation/deps.edn to \"" expected "\"")))))

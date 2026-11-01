@@ -143,7 +143,7 @@
 
 ;; --- Python fences -----------------------------------------------------------
 ;; A Python fence is colored by `PythonHighlighter` (plain Java, see
-;; packages/vis-python-presentation); the text itself never changes.
+;; packages/vis-presentation); the text itself never changes.
 
 (defdescribe tui-python-code-block-test
              (it "folds a wide Python row to the budget and keeps its color on every row"
@@ -164,7 +164,7 @@
 ;; --- Clojure fences ----------------------------------------------------------
 ;; Regression for the report that REPL code and values in the TUI lost their color:
 ;; a Clojure fence is colored by `ClojureHighlighter` (plain Java, see
-;; packages/vis-tui-render); the text itself never changes.
+;; packages/vis-presentation); the text itself never changes.
 
 (defdescribe tui-clojure-code-block-test
              (it "colors a Clojure fence, folds a wide row and keeps its color on every row"

@@ -17,10 +17,7 @@
                               "com.blockether.vis.tui.test-environment/no-live-gateway" "test"]}}
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         com.blockether/vis-contract {:local/root "../../packages/vis-contract"}
-        com.blockether/vis-python-presentation {:local/root "../../packages/vis-python-presentation"}
-        ;; Per-character render passes in plain Java; a fresh checkout needs
-        ;; `clojure -X:deps prep` to compile them.
-        com.blockether/vis-tui-render {:local/root "../../packages/vis-tui-render"}
+        com.blockether/vis-presentation {:local/root "../../packages/vis-presentation"}
         org.babashka/http-client {:mvn/version "0.4.26"}
         com.cnuernber/charred {:mvn/version "1.041"}
         io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
@@ -29,5 +26,5 @@
         org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
         com.taoensso/telemere {:mvn/version "1.2.1"}
         com.blockether/imaging {:mvn/version "0.1.12"}
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.58"}}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.59"}}
  :paths ["src" "resources"]}

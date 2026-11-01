@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.python.format
   "Beautify model-emitted Python before it is shown, with the plain-Java port of
-   `ruff format` in the vis-python-presentation package. Used by the gateway's
+   `ruff format` in the vis-presentation package. Used by the gateway's
    code renderer so the trace shows tidy, consistently-wrapped Python instead of
    the model's raw one-liners.
 

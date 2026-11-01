@@ -608,10 +608,13 @@
 ;; `:justify?` — flush-both-margins prose (op-card bodies, e.g. a fold receipt)
 
 (defn- plain-lines
-  "Entry `:line` strings with every PUA style/block sentinel removed."
+  "Entry `:line` strings with every PUA style/block sentinel and every SGR color
+   sequence removed. Code fences carry syntax colors as SGR sequences."
   [entries]
   (mapv (fn [e]
-          (str/replace (:line e) #"[\uE000-\uF8FF]" ""))
+          (-> (:line e)
+              (str/replace #"[\uE000-\uF8FF]" "")
+              (str/replace #"\u001b\[[0-9;]*m" "")))
         entries))
 
 (defdescribe

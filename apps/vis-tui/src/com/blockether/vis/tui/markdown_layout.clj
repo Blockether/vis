@@ -37,8 +37,8 @@
             [com.blockether.vis.tui.mermaid :as mermaid]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.presentation :as ir])
-  (:import [com.blockether.vis.python PythonHighlighter]
-           [com.blockether.vis.tui.render ClojureHighlighter]
+  (:import [com.blockether.vis.clojure ClojureHighlighter]
+           [com.blockether.vis.python PythonHighlighter]
            [com.googlecode.lanterna.terminal.image TerminalImage]
            [com.googlecode.lanterna ParagraphLayout ParagraphLayout$Prepared ParagraphLayout$Line
             ParagraphLayout$Options]))

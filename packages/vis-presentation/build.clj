@@ -16,7 +16,7 @@
             :class-dir class-dir
             :javac-opts ["--release" "21" "-Xlint:all" "-Werror"]
             :src-dirs ["src/java"]})
-  (b/copy-file {:src "NOTICE" :target (str class-dir "/META-INF/vis-python-presentation/NOTICE")})
+  (b/copy-file {:src "NOTICE" :target (str class-dir "/META-INF/vis-presentation/NOTICE")})
   (b/write-file {:path (-> (slurp "deps.edn")
                            edn/read-string
                            :deps/prep-lib

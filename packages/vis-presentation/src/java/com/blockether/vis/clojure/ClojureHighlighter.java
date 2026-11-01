@@ -1,4 +1,4 @@
-package com.blockether.vis.tui.render;
+package com.blockether.vis.clojure;
 
 import java.util.Set;
 

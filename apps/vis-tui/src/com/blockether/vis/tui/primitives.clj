@@ -16,8 +16,7 @@
    contain non-ASCII. Plain `count`/`subs` are still allowed for ASCII
    internals (box-drawing strings we authored, single-glyph keystroke
    labels, etc.) where the answer is identical and the call is a hot path."
-  (:import [com.blockether.vis.tui.render TerminalText]
-           [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TerminalTextUtils
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TerminalTextUtils
             TextCharacter TextColor]
            [com.googlecode.lanterna.graphics TextGraphics]))
 
@@ -94,9 +93,10 @@
   "Strip paint-only/control characters that must never hit raw Lanterna
    putString. Control chars become spaces. Inline style sentinels are removed:
    styled painters consume them, but raw fallback paths must not show PUA tofu.
-   One Java scan per string answers a clean string itself, without a new string."
+   Delegates to the lanterna fork's `TerminalTextUtils/sanitizeForPaint`
+   (>= 3.1.5-vis.59): one scan answers a clean string itself, without a new string."
   ^String [^String s]
-  (TerminalText/sanitizeForLanterna s))
+  (TerminalTextUtils/sanitizeForPaint s))
 
 (defn put-str!
   "Draw a string at (col, row). Control characters are sanitized."

@@ -1,5 +1,5 @@
-;; Python presentation for Vis: a formatter that produces what `ruff format` produces
-;; and a terminal syntax highlighter, both plain Java without dependencies. The classes
+;; Code presentation for Vis: a Python formatter that produces what `ruff format` produces
+;; and terminal syntax highlighters for Python and Clojure, all plain Java without dependencies. The classes
 ;; compile into `target/classes` when a consumer runs `clojure -X:deps prep`.
 ;;
 ;; The :ensure marker is named after a digest of `src/java`. Changed sources name a
@@ -7,6 +7,6 @@
 ;; keeping stale classes. The formatter test reports the digest to write here.
 {:paths ["target/classes"]
  :deps {}
- :deps/prep-lib {:alias :build :ensure "target/prepared/4c03bd732165595c" :fn javac}
+ :deps/prep-lib {:alias :build :ensure "target/prepared/388541fc46370bee" :fn javac}
  :aliases {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}}
                    :ns-default build}}}

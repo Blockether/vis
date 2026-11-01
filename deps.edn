@@ -7,9 +7,9 @@
  ;; JitPack hosts sherpa-onnx. tools.deps reads :mvn/repos only from the project it is invoked on.
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {com.blockether/vis-contract {:local/root "packages/vis-contract"}
-        ;; Python formatting and terminal coloring in plain Java; a fresh checkout needs
+        ;; Code formatting and terminal coloring in plain Java; a fresh checkout needs
         ;; `clojure -X:deps prep` to compile it.
-        com.blockether/vis-python-presentation {:local/root "packages/vis-python-presentation"}
+        com.blockether/vis-presentation {:local/root "packages/vis-presentation"}
          ai.djl.huggingface/tokenizers {:mvn/version "0.38.0"}
          babashka/fs {:mvn/version "0.5.34"}
         babashka/process {:mvn/version "0.6.25"}
