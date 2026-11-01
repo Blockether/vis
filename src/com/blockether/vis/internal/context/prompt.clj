@@ -1088,11 +1088,35 @@
                         (fn [[model message opts]]
                           [model (cache-neutral message) opts])))
 
+(defonce ^:private message-token-counts
+  ;; Message -> {[model opts] count}. A request repeats the message objects of the
+  ;; last one, and the same object answers from its cached hash without a walk.
+  ;; Weak keys keep a count only while its message lives.
+  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+
+(defn- message-tokens
+  "[[cached-message-tokens]] of `message`, first looked up by the message itself."
+  ^long [model message opts]
+  (let [k
+        [model opts]
+
+        ^java.util.Map counts
+        message-token-counts
+
+        known
+        (.get counts message)]
+
+    (if-let [n (get known k)]
+      (long n)
+      (let [n (long (cached-message-tokens model message opts))]
+        (.put counts message (assoc known k n))
+        n))))
+
 (defn- sum-message-tokens
   "`baseline` is the count of no messages. Add each cached message count above it."
   ^long [model messages opts ^long baseline]
   (long (reduce (fn [^long total message]
-                  (+ total (- (long (cached-message-tokens model message opts)) baseline)))
+                  (+ total (- (message-tokens model message opts) baseline)))
                 baseline
                 messages)))
 
