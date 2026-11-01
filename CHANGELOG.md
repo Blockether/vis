@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.4.5] - 2026-11-01
+## [v0.4.6] - 2026-11-01
 
 ### Added
 - Diagnostics: the TUI logs its startup phases. A first extension load logs its phases and its wait behind another load.
@@ -26,12 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Performance: the Companion reads session controls again only after a dropped connection. A page load does not wake every subscriber. A session opens with 31 requests instead of 47.
 - Performance: capability reads hash each voice reference clip once. A machine store write that changes nothing is skipped.
 - Performance: in debug mode, Jetty logs at INFO. Svar 0.7.218 arms its watchdog only while requests run.
+- Performance: the session list reads the store facts of a page in one batch. 100 rows take 8 ms instead of 20 ms.
+- Performance: a whole transcript reads the iterations of all turns in one batch. A short transcript takes 4 ms instead of 15 ms.
+- Performance: a session stream opens without a parse of the whole journal. It takes 0.8 ms instead of 2.5 ms.
+- Performance: a TUI scroll moves the transcript rows with a terminal scroll region. A page scroll sends 17 KB instead of 57 KB.
 
 ### Fixed
 - Activity: argument groups and message keys ignore the log print caps. Long or deep arguments no longer merge.
 - Digests and stored EDN ignore the log print caps. A change past the first 100 packages now refreshes extensions.
 - OpenRouter: the saved catalog keeps every model.
 - View: a restore that drops an owned picture saves the list again.
+- Python: a store sweep of another process no longer deletes guest modules while this process stages them.
+- Gateway: a failed session list read logs a warning with the read name and the error.
 
 ## [v0.4.3] - 2026-10-31
 
