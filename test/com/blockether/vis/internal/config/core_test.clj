@@ -1970,6 +1970,34 @@
                                                             nil)
                                                           :test)))
              (expect (= before (slurp (io/file store-dir "state.yml")))))
+           (finally (System/setProperty "user.home" old-home) (config/invalidate-config-cache!)))))
+  (it
+    "writes nothing when the update answers the same store with keyword keys"
+    ;; Each gateway start refreshed the provider catalogs, and every refresh that
+    ;; changed nothing rewrote state.yml and validated the whole config (perf goal).
+    (let [dir
+          (.toFile (Files/createTempDirectory "vis-store-keys"
+                                              (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          home
+          (io/file dir "home")
+
+          store
+          (io/file home ".vis" "state.yml")
+
+          old-home
+          (System/getProperty "user.home")]
+
+      (try (io/make-parents store)
+           (spit store "providers:\n- id: p1\n  api_key: k\n")
+           (.setLastModified store 1000000)
+           (System/setProperty "user.home" (.getPath home))
+           (config/invalidate-config-cache!)
+           (expect (nil? (config/update-machine-config! (fn [raw]
+                                                          (assoc raw
+                                                            "providers" [{:id :p1 :api-key "k"}]))
+                                                        :test)))
+           (expect (= 1000000 (.lastModified store)))
            (finally (System/setProperty "user.home" old-home) (config/invalidate-config-cache!))))))
 
 (defdescribe

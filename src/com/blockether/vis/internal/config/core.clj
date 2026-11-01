@@ -1957,7 +1957,9 @@
                    _
                    (when raw* (assert-machine-change-allowed! raw raw*))]
 
-               (when (and raw* (not= raw raw*))
+               ;; Compare the stored form: a writer may answer keyword-keyed entries
+               ;; that dump to the same YAML, and a write then rebuilt every reader.
+               (when (and raw* (not= (->yaml-safe raw) (->yaml-safe raw*)))
                  (binding [*machine-access-overrides* (select-keys (->yaml-safe raw*)
                                                                    ["workspace" "jail"])]
                    (save-config! raw* source))
