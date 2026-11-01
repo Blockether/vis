@@ -16,10 +16,14 @@
    this key has consumed and, for capped keys, its limit."
   (:require [com.blockether.vis.internal.util :as util]
             [babashka.http-client :as http]
+            [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [charred.api :as json]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.provider.key-store :as key-store]))
+            [com.blockether.vis.internal.provider.key-store :as key-store])
+  (:import (java.io File)
+           (java.nio.file CopyOption Files StandardCopyOption)))
 
 ;; Constants
 
@@ -199,23 +203,96 @@
 
 (def ^:private catalog-retry-ms 60000)
 
+(def ^:dynamic *catalog-file*
+  "The file that keeps the last fetched catalog for the next process. Tests bind it."
+  nil)
+
+(defn- catalog-file
+  ^File []
+  (or *catalog-file*
+      (io/file (System/getProperty "user.home") ".vis" "cache" "openrouter" "models.edn")))
+
+(defn- saved-catalog
+  "The cache entry of the catalog that an earlier fetch saved, or nil. Never throws."
+  []
+  (try (let [f (catalog-file)]
+         (when (.isFile f)
+           (let [catalog (edn/read-string (slurp f))]
+             (when (and (map? catalog) (seq catalog))
+               {:at (.lastModified f) :catalog (delay catalog)}))))
+       (catch Throwable _ nil)))
+
+(defn- save-catalog!
+  "Write a non-empty `catalog` through a temp file in the same directory. Never throws."
+  [catalog]
+  (when (seq catalog)
+    (try (let [f
+               (catalog-file)
+
+               dir
+               (doto (.getParentFile f) .mkdirs)
+
+               tmp
+               (File/createTempFile "models-" ".tmp" dir)]
+
+           (try (spit tmp (pr-str catalog))
+                (Files/move (.toPath tmp)
+                            (.toPath f)
+                            (into-array CopyOption
+                                        [StandardCopyOption/ATOMIC_MOVE
+                                         StandardCopyOption/REPLACE_EXISTING]))
+                (finally (Files/deleteIfExists (.toPath tmp)))))
+         (catch Throwable _ nil))))
+
 (defonce ^:private catalog-cache
-  ;; `{:at ms :catalog delay}` of the last fetch. Each config reload rebuilt the
-  ;; router of each project, and each build fetched the catalog again.
+  ;; `{:at ms :catalog delay}` of the last fetch, and `:refresh` while a background
+  ;; fetch runs. Each config reload rebuilt the router of each project, and each
+  ;; build fetched the catalog again.
   (atom nil))
 
+(defn- fetch-entry
+  "A cache entry whose catalog is fetched once, at its first deref, and saved."
+  [now]
+  {:at now :catalog (delay (doto (fetch-catalog!) save-catalog!))})
+
+(defn- stale?
+  [^long now {:keys [at catalog]}]
+  (and (realized? catalog)
+       (<= (long (if (empty? @catalog) catalog-retry-ms catalog-ttl-ms)) (- now (long at)))))
+
+(defn- refresh-catalog!
+  "Fetch the catalog in the background for the entry marked `token`. A failed fetch
+   keeps the old catalog and tries again after one minute."
+  [token ^long now]
+  (future (let [fetched (fetch-catalog!)]
+            (save-catalog! fetched)
+            (swap! catalog-cache (fn [entry]
+                                   (cond (not (identical? token (:refresh entry))) entry
+                                         (seq fetched) {:at now :catalog (delay fetched)}
+                                         :else {:at (- now
+                                                       (- (long catalog-ttl-ms)
+                                                          (long catalog-retry-ms)))
+                                                :catalog (:catalog entry)}))))))
+
 (defn- cached-catalog!
-  "The catalog of [[fetch-catalog!]], fetched at most once an hour. Concurrent
-   callers share one fetch. An empty answer is fetched again after one minute."
+  "The catalog of [[fetch-catalog!]], fetched at most once an hour. A new process
+   starts from the saved catalog. An old catalog serves at once while one background
+   fetch replaces it. Concurrent callers share one fetch, and an empty answer is
+   fetched again after one minute."
   [^long now]
-  (let [fresh? (fn [{:keys [at catalog]}]
-                 (or (not (realized? catalog))
-                     (< (- now (long at))
-                        (long (if (empty? @catalog) catalog-retry-ms catalog-ttl-ms)))))]
-    @(:catalog (swap! catalog-cache (fn [entry]
-                                      (if (and entry (fresh? entry))
-                                        entry
-                                        {:at now :catalog (delay (fetch-catalog!))}))))))
+  (when-not @catalog-cache
+    (when-let [saved (saved-catalog)]
+      (compare-and-set! catalog-cache nil saved)))
+  (let [[old entry] (swap-vals! catalog-cache
+                                (fn [entry]
+                                  (cond (nil? entry) (fetch-entry now)
+                                        (not (stale? now entry)) entry
+                                        (:refresh entry) entry
+                                        (seq @(:catalog entry)) (assoc entry :refresh (Object.))
+                                        :else (fetch-entry now))))]
+    (when (and (:refresh entry) (not (identical? (:refresh old) (:refresh entry))))
+      (refresh-catalog! (:refresh entry) now))
+    @(:catalog entry)))
 
 (defn- enrich-models
   "`:provider/enrich-models-fn` - resolve each CONFIGURED model's real context

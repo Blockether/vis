@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.provider.vendor.openrouter-test
-  (:require [com.blockether.svar.core :as svar]
+  (:require [clojure.edn]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.config.core :as config]
@@ -79,35 +80,88 @@
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits]))))))))
 
-(defdescribe catalog-cache-test
-             ;; Each config reload rebuilt every project router, and each build fetched the
-             ;; catalog over the network inside the request that caused it.
-             (it "shares one catalog fetch between router builds and retries an empty one"
-                 (let [fetches
-                       (atom 0)
+(defdescribe
+  catalog-cache-test
+  ;; Each config reload rebuilt every project router, and each build fetched the
+  ;; catalog over the network inside the request that caused it.
+  (it "shares one catalog fetch between router builds and retries an empty one"
+      (let [fetches
+            (atom 0)
 
-                       answer
-                       (atom {})
+            answer
+            (atom {})
 
-                       catalog
-                       #(#'openrouter/cached-catalog! %)]
+            catalog
+            #(#'openrouter/cached-catalog! %)]
 
-                   (reset! @#'openrouter/catalog-cache nil)
-                   (with-redefs-fn {#'openrouter/fetch-catalog! (fn []
-                                                                  (swap! fetches inc)
-                                                                  @answer)}
-                     (fn []
-                       (expect (= [{:name "a/m"}]
-                                  (#'openrouter/enrich-models {:models [{:name "a/m"}]} {}))
-                               "an unreachable catalog leaves the models")
-                       (reset! @#'openrouter/catalog-cache nil)
-                       (reset! fetches 0)
-                       (catalog 0)
-                       (catalog 1000)
-                       (expect (= 1 @fetches) "an empty catalog waits before the next fetch")
-                       (reset! answer {"a/m" {:context 64000}})
-                       (expect (= {"a/m" {:context 64000}} (catalog 61000)))
-                       (catalog 91000)
-                       (expect (= 2 @fetches) "a fetched catalog serves later builds")
-                       (catalog 3700000)
-                       (expect (= 3 @fetches) "an hour old catalog is fetched again"))))))
+        (reset! @#'openrouter/catalog-cache nil)
+        (binding [openrouter/*catalog-file* (java.io.File. (System/getProperty "java.io.tmpdir")
+                                                           (str (random-uuid) ".edn"))]
+          (with-redefs-fn {#'openrouter/fetch-catalog! (fn []
+                                                         (swap! fetches inc)
+                                                         @answer)}
+            (fn []
+              (expect (= [{:name "a/m"}] (#'openrouter/enrich-models {:models [{:name "a/m"}]} {}))
+                      "an unreachable catalog leaves the models")
+              (reset! @#'openrouter/catalog-cache nil)
+              (reset! fetches 0)
+              (catalog 0)
+              (catalog 1000)
+              (expect (= 1 @fetches) "an empty catalog waits before the next fetch")
+              (reset! answer {"a/m" {:context 64000}})
+              (expect (= {"a/m" {:context 64000}} (catalog 61000)))
+              (catalog 91000)
+              (expect (= 2 @fetches) "a fetched catalog serves later builds")
+              (catalog 3700000)
+              (loop [n 0]
+                (when (and (< n 200) (< @fetches 3)) (Thread/sleep 10) (recur (inc n))))
+              (expect (= 3 @fetches) "an hour old catalog is fetched again"))))))
+  ;; User request 2026-11-01: every CLI and gateway start waited 260-400 ms
+  ;; on this fetch in its first router build, even for a fresh copy.
+  (it "reads the catalog that an earlier process saved, without a fetch"
+      (let [file
+            (java.io.File/createTempFile "openrouter-models" ".edn")
+
+            fetches
+            (atom 0)]
+
+        (try (spit file (pr-str {"a/m" {:context 64000}}))
+             (reset! @#'openrouter/catalog-cache nil)
+             (binding [openrouter/*catalog-file* file]
+               (with-redefs-fn {#'openrouter/fetch-catalog! (fn []
+                                                              (swap! fetches inc)
+                                                              {})}
+                 (fn []
+                   (expect (= {"a/m" {:context 64000}}
+                              (#'openrouter/cached-catalog! (.lastModified file))))
+                   (expect (zero? @fetches) "a fresh saved catalog needs no fetch"))))
+             (finally (reset! @#'openrouter/catalog-cache nil) (.delete file)))))
+  (it "serves an old catalog at once and saves the one that it fetches in the background"
+      (let [file
+            (java.io.File/createTempFile "openrouter-models" ".edn")
+
+            fetched
+            (promise)]
+
+        (try (spit file (pr-str {"a/m" {:context 64000}}))
+             (reset! @#'openrouter/catalog-cache nil)
+             (binding [openrouter/*catalog-file* file]
+               (with-redefs-fn {#'openrouter/fetch-catalog! (fn []
+                                                              (deref fetched 5000 nil)
+                                                              {"a/m" {:context 128000}})}
+                 (fn []
+                   (let [later (+ (.lastModified file) 3700000)]
+                     (expect (= {"a/m" {:context 64000}} (#'openrouter/cached-catalog! later))
+                             "an old catalog is served while the fetch runs")
+                     (deliver fetched true)
+                     (loop [n 0]
+                       (when (and (< n 200)
+                                  (not= {"a/m" {:context 128000}}
+                                        (#'openrouter/cached-catalog! (inc later))))
+                         (Thread/sleep 10)
+                         (recur (inc n))))
+                     (expect (= {"a/m" {:context 128000}}
+                                (#'openrouter/cached-catalog! (inc later))))
+                     (expect (= {"a/m" {:context 128000}} (clojure.edn/read-string (slurp file)))
+                             "the next process reads the new catalog")))))
+             (finally (reset! @#'openrouter/catalog-cache nil) (.delete file))))))
