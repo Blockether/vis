@@ -589,6 +589,56 @@ describe('composer response controls', () => {
     expect(submitTurn.mock.calls[0]?.[2]?.extraBody).toBeUndefined();
   });
 
+  // Regression, session e2a68329-6a26-4cc7-a9f2-8b91a318a65d: each session open read every
+  // response control twice, once at mount and again when the event socket first connected.
+  it('reads the controls again only after a dropped connection comes back', async () => {
+    const pref = { provider: 'github-copilot', model: 'gpt-6-astra' };
+    const fleet = [routerProvider(pref.provider)];
+    const verbosity = toggle('verbosity', 'Verbosity', 'low', ['low', 'medium', 'high']);
+    const fetcher = vi.fn(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith('/v1/router')) return Response.json({ providers: fleet });
+      return Response.json(path.endsWith('verbosity') ? verbosity : null);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const gateway = new GatewayClient({ url: 'http://gateway.example.com/first-connect' });
+    const verbosityReads = () =>
+      fetcher.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/v1/settings/verbosity')).length;
+    const connectionListeners = new Set<(connected: boolean) => void>();
+    const emit = (connected: boolean) =>
+      act(() => {
+        for (const listener of [...connectionListeners]) listener(connected);
+      });
+    renderSessionScreen({
+      client: {
+        cachedSessionModel: () => pref,
+        sessionModel: () => Promise.resolve(pref),
+        cachedRouter: gateway.cachedRouter.bind(gateway),
+        router: gateway.router.bind(gateway),
+        defaultModel: gateway.defaultModel.bind(gateway),
+        cachedSetting: gateway.cachedSetting.bind(gateway),
+        setting: gateway.setting.bind(gateway),
+        setSetting: gateway.setSetting.bind(gateway),
+        submitTurn: turnSubmitter(),
+      },
+      subscriptions: {
+        subscribeConnection: (listener: (connected: boolean) => void) => {
+          connectionListeners.add(listener);
+          listener(false);
+          return () => connectionListeners.delete(listener);
+        },
+      },
+    });
+    await screen.findByRole('button', { name: /verbosity — low/i });
+    expect(verbosityReads()).toBe(1);
+    emit(true);
+    await act(async () => {});
+    expect(verbosityReads()).toBe(1);
+    emit(false);
+    emit(true);
+    await waitFor(() => expect(verbosityReads()).toBe(2));
+  });
+
   // Regression, issue #311: a project `.vis/config.yml` overlay sets the session's own
   // default. The chip named the gateway default from `/v1/router` instead.
   it('names the default of the session project, not the gateway default', async () => {

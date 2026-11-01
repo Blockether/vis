@@ -1467,6 +1467,18 @@ export function SessionScreen({
   // The level the user just asked for, shown until the gateway confirms it.
   const [pendingLevel, setPendingLevel] = useState<string | null>(null);
 
+  // The mount read goes over HTTP, so the first connect after open repeats it for
+  // nothing. Count only a connect after a drop, or after a failed control read.
+  const controlsFailedRef = useRef(false);
+  const controlsConnectRef = useRef({ previous: connected, seen: connected });
+  const [controlsReconnects, setControlsReconnects] = useState(0);
+  useEffect(() => {
+    const state = controlsConnectRef.current;
+    const isRecovery = connected && !state.previous && (state.seen || controlsFailedRef.current);
+    controlsConnectRef.current = { previous: connected, seen: state.seen || connected };
+    if (isRecovery) setControlsReconnects((count) => count + 1);
+  }, [connected]);
+
   // A failed read is not a model capability. Retry the control data on reconnect,
   // wake and session/picker changes, without clearing the last successful values.
   useEffect(() => {
@@ -1475,6 +1487,10 @@ export function SessionScreen({
       controller?.abort();
       controller = new AbortController();
       const { signal } = controller;
+      controlsFailedRef.current = false;
+      const fail = () => {
+        if (!signal.aborted) controlsFailedRef.current = true;
+      };
       for (const [id, receive] of [
         ['reasoning_level', setReasoning],
         ['verbosity', setVerbosity],
@@ -1490,6 +1506,7 @@ export function SessionScreen({
           })
           .catch(() => {
             /* Keep cached controls during a failed read. */
+            fail();
           });
       }
       // Both reads share the same router request and cache. The default asks the
@@ -1503,6 +1520,7 @@ export function SessionScreen({
         })
         .catch(() => {
           /* The next recovery event retries the capability lookup. */
+          fail();
         });
     };
     refresh();
@@ -1517,7 +1535,7 @@ export function SessionScreen({
       stopSettings();
       controller?.abort();
     };
-  }, [client, connected, routerOpen, sid, settingsTarget, settingsOpen]);
+  }, [client, controlsReconnects, routerOpen, sid, settingsTarget, settingsOpen]);
 
   async function toggleCodexFast() {
     if (!codexFast || codexFastBusy) return;
