@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.4.9] - 2026-11-01
+
+### Changed
+- Performance: a fold pass reuses the resolution of each plain scope fold. Applying summaries takes 1.8 ms instead of 3.5 ms, and the pre-fold stage of a long session takes 7.6-10.1 ms instead of 11.9-15.6 ms per iteration.
+
+### Fixed
+- Python: the gateway publishes its prestarted shared worker only after the warm-up. Startup extensions no longer load during the warm-up and lose their host APIs.
+
 ## [v0.4.8] - 2026-11-01
 
 ### Changed
