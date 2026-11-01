@@ -136,32 +136,39 @@
                               (#'openrouter/cached-catalog! (.lastModified file))))
                    (expect (zero? @fetches) "a fresh saved catalog needs no fetch"))))
              (finally (reset! @#'openrouter/catalog-cache nil) (.delete file)))))
-  (it "serves an old catalog at once and saves the one that it fetches in the background"
-      (let [file
-            (java.io.File/createTempFile "openrouter-models" ".edn")
+  (it
+    "serves an old catalog at once and saves the one that it fetches in the background"
+    (let [file
+          (java.io.File/createTempFile "openrouter-models" ".edn")
 
-            fetched
-            (promise)]
+          fetched
+          (promise)
 
-        (try (spit file (pr-str {"a/m" {:context 64000}}))
-             (reset! @#'openrouter/catalog-cache nil)
-             (binding [openrouter/*catalog-file* file]
-               (with-redefs-fn {#'openrouter/fetch-catalog! (fn []
-                                                              (deref fetched 5000 nil)
-                                                              {"a/m" {:context 128000}})}
-                 (fn []
-                   (let [later (+ (.lastModified file) 3700000)]
-                     (expect (= {"a/m" {:context 64000}} (#'openrouter/cached-catalog! later))
-                             "an old catalog is served while the fetch runs")
-                     (deliver fetched true)
-                     (loop [n 0]
-                       (when (and (< n 200)
-                                  (not= {"a/m" {:context 128000}}
-                                        (#'openrouter/cached-catalog! (inc later))))
-                         (Thread/sleep 10)
-                         (recur (inc n))))
-                     (expect (= {"a/m" {:context 128000}}
-                                (#'openrouter/cached-catalog! (inc later))))
-                     (expect (= {"a/m" {:context 128000}} (clojure.edn/read-string (slurp file)))
-                             "the next process reads the new catalog")))))
-             (finally (reset! @#'openrouter/catalog-cache nil) (.delete file))))))
+          fresh
+          {"a/m" {:context 128000} "b/m" {:context 1} "c/m" {:context 2}}]
+
+      (try (spit file (pr-str {"a/m" {:context 64000}}))
+           (reset! @#'openrouter/catalog-cache nil)
+           (binding [openrouter/*catalog-file*
+                     file
+
+                     ;; A process that prints short collections saved a cut catalog.
+                     *print-length*
+                     2]
+
+             (with-redefs-fn {#'openrouter/fetch-catalog! (fn []
+                                                            (deref fetched 5000 nil)
+                                                            fresh)}
+               (fn []
+                 (let [later (+ (.lastModified file) 3700000)]
+                   (expect (= {"a/m" {:context 64000}} (#'openrouter/cached-catalog! later))
+                           "an old catalog is served while the fetch runs")
+                   (deliver fetched true)
+                   (loop [n 0]
+                     (when (and (< n 200) (not= fresh (#'openrouter/cached-catalog! (inc later))))
+                       (Thread/sleep 10)
+                       (recur (inc n))))
+                   (expect (= fresh (#'openrouter/cached-catalog! (inc later))))
+                   (expect (= fresh (clojure.edn/read-string (slurp file)))
+                           "the next process reads the new catalog")))))
+           (finally (reset! @#'openrouter/catalog-cache nil) (.delete file))))))
