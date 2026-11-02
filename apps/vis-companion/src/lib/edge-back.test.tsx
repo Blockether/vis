@@ -233,6 +233,66 @@ describe('swiping back to the session list', () => {
   });
 });
 
+// User report: with the composer focused, a swipe back first slid the transcript out
+// and only then dropped the keyboard, once the session had closed. The keyboard now
+// goes as soon as the stroke reads as sideways, while the finger is still down.
+describe('the keyboard under a swipe back', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The session with its composer focused, the way a reader types into it. */
+  function typing(onBack = vi.fn()) {
+    const view = render(<OpenSession onBack={onBack} />);
+    const field = document.createElement('textarea');
+    view.getByTestId('pane').append(field);
+    field.focus();
+    expect(document.activeElement).toBe(field);
+    return { ...view, field };
+  }
+
+  it('drops the keyboard while the finger still drags the transcript out', () => {
+    const { getByTestId, field } = typing();
+    const line = getByTestId('line');
+
+    act(() => {
+      fireTouch(line, 'touchstart', [AT]);
+      fireTouch(line, 'touchmove', [across(EDGE_BACK_PX / 2)]);
+    });
+
+    expect(document.activeElement).not.toBe(field);
+    act(() => {
+      fireTouch(line, 'touchend', []);
+    });
+    settle();
+  });
+
+  it('keeps the keyboard for a touch that never becomes a sideways stroke', () => {
+    const { getByTestId, field } = typing();
+    const line = getByTestId('line');
+
+    act(() => {
+      fireTouch(line, 'touchstart', [AT]);
+      fireTouch(line, 'touchmove', [across(8)]);
+      fireTouch(line, 'touchend', []);
+    });
+    settle();
+    expect(document.activeElement).toBe(field);
+
+    act(() => {
+      fireTouch(line, 'touchstart', [AT]);
+      fireTouch(line, 'touchmove', [{ x: AT.x + 12, y: AT.y - 90 }]);
+      fireTouch(line, 'touchend', []);
+    });
+    settle();
+    expect(document.activeElement).toBe(field);
+  });
+});
+
 // Reported as "the swipe back has no iOS animation at all": the stroke used to
 // read the finger and do nothing until the lift, so the transcript stood still
 // and the list appeared in one jump. The way back is now the pop iOS

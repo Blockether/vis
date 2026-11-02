@@ -24,6 +24,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isAppForeground, isKeyboardInputElement } from './viewport';
 
 /** A finger, in client coordinates. */
 export interface EdgePoint {
@@ -250,7 +251,10 @@ function edgeOpen(pane: HTMLElement, under: HTMLElement | null, isLayer: boolean
     pane.style.left = `${box.left - frame.left}px`;
     pane.style.top = `${box.top - frame.top}px`;
     pane.style.width = `${width}px`;
-    pane.style.height = `${height}px`;
+    // The bottom is pinned to the shell, not a height: the stroke drops the keyboard,
+    // the shell grows back, and the transcript grows with it instead of leaving a gap.
+    pane.style.bottom = `${frame.height ? frame.bottom - box.bottom : 0}px`;
+    if (!frame.height) pane.style.height = `${height}px`;
     pane.style.margin = '0';
     pane.style.zIndex = '30';
   }
@@ -307,6 +311,16 @@ function edgeClose(stage: EdgeStage): void {
   stage.pane.style.cssText = stage.paneStyle;
   if (stage.under) stage.under.style.cssText = stage.underStyle;
   stage.veil?.remove();
+}
+
+/**
+ * Take the keyboard down when the field that holds it is in the pane being left.
+ * Only while the app is on screen: a blur from the background is what the keyboard
+ * watchdog kills for (`isAppForeground`).
+ */
+function edgeDropKeyboard(pane: HTMLElement): void {
+  const active = pane.ownerDocument.activeElement;
+  if (isAppForeground() && isKeyboardInputElement(active) && pane.contains(active)) active.blur();
 }
 
 /** Does this reader want the motion at all? */
@@ -456,6 +470,8 @@ export function useEdgeBack(
     let timer: number | null = null;
     // A stroke that the finger let go of, until its panes get their styles back.
     let landing: EdgeStage | null = null;
+    // This stroke has already taken the keyboard down.
+    let isKeyboardDropped = false;
 
     const pointOf = (event: TouchEvent): EdgePoint | null => {
       const touch = event.touches[0];
@@ -547,6 +563,7 @@ export function useEdgeBack(
       // the few touches that landed where the gesture could begin at all.
       gesture = started && edgeIsFree(touchEvent.target, pane, isLayer) ? started : null;
       velocity = 0;
+      isKeyboardDropped = false;
       lastAt = event.timeStamp;
       lastX = at?.x ?? 0;
       // THE STAGE IS SET UNDER THE FINGER, BEFORE IT MOVES. Bringing the app bar and the
@@ -573,6 +590,14 @@ export function useEdgeBack(
         return;
       }
       gesture = next;
+      // THE KEYBOARD GOES WITH THE FIRST SIDEWAYS MOVE. Left up, it stood over the
+      // transcript for the whole slide and fell only once the session had closed.
+      // A tap or a scroll that began in the strip keeps it.
+      const isSideways = next.across >= VERTICAL_PX && next.across > Math.abs((at?.y ?? 0) - next.from.y);
+      if (!isKeyboardDropped && at && isSideways) {
+        isKeyboardDropped = true;
+        edgeDropKeyboard(pane);
+      }
       if (!stage && next.across >= EDGE_OPEN_PX && wantsMotion(view)) {
         stage = edgeOpen(pane, under.current, isLayer);
         setSwiping(true);
