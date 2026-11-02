@@ -36,6 +36,60 @@
    :note (get-in (definition "submission") ["properties" "note" "maxLength"])
    :agent-note (get-in (definition "live_view") ["properties" "agent_note" "maxLength"])})
 
+;; Surfaces: where an app shows
+
+(def ^:private surfaces-rule (definition "app_surfaces"))
+
+(def surface-defaults
+  "The surfaces of an app that declares none: `{:inline true :session \"sidebar\"}`."
+  (into {}
+        (map (fn [[k v]] [(keyword k) (get v "default")]))
+        (get surfaces-rule "properties")))
+
+(def session-surfaces
+  "Where the session apps button can open an app, `off` included."
+  (vec (get-in surfaces-rule ["properties" "session" "enum"])))
+
+(def ^:private settings-key-rule (get-in (definition "live_view") ["properties" "settings_key"]))
+
+(defn- slug
+  [s]
+  (-> (str/lower-case (str s))
+      (str/replace #"[^a-z0-9]+" "_")
+      (str/replace #"^_+|_+$" "")))
+
+(defn settings-key
+  "The id prefix of the settings of app `view`, or nil for an app without a key.
+   It joins the owning extension (or `sandbox`) and the key. A long prefix keeps
+   its start and ends in a hash, so two apps never share one."
+  [view]
+  (when-let [k (some-> (:key view) str str/trim not-empty)]
+    (let [base (str "app_" (slug (str (or (:extension view) "sandbox") "_" k)))
+          limit (long (get settings-key-rule "maxLength"))]
+      (if (<= (count base) limit)
+        base
+        (str (str/replace (subs base 0 (- limit 9)) #"_+$" "")
+             "_"
+             (format "%08x" (bit-and 0xffffffff (long (hash base)))))))))
+
+(defn effective-surfaces
+  "The surfaces that a reader of app `view` gets. `setting` answers the value of a
+   setting id, or nil when the setting does not exist. `apps_inline` and
+   `apps_session` turn a surface off for every app. The app's own settings win
+   over what the app declared."
+  [view setting]
+  (let [declared (merge surface-defaults (:surfaces view))
+        own (settings-key view)
+        own-value (fn [suffix fallback]
+                    (let [v (when own (setting (str own suffix)))]
+                      (if (nil? v) fallback v)))
+        inline (own-value "_inline" (:inline declared))
+        session (own-value "_session" (:session declared))]
+    {:inline (and (not (false? (setting "apps_inline"))) (true? inline))
+     :session (if (false? (setting "apps_session"))
+                "off"
+                (if (some #{session} session-surfaces) session (:session surface-defaults)))}))
+
 (def ^:private key-rule (definition "idempotency_key"))
 
 (def ^:private key-pattern (re-pattern (get key-rule "pattern")))

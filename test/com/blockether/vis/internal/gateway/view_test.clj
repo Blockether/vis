@@ -21,6 +21,7 @@
             [com.blockether.vis.internal.gateway.server.views :as views-api]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gw-hi]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.view.core :as hi]
@@ -1771,3 +1772,45 @@
             (forget-app! closed)
             (expect (true? (get-in (json-body (app-view sid closed)) ["view" "is_closed"])))
             (expect (= "kept" (get (app-node (app-view sid closed) "general") "draft"))))))))
+
+;; Live app surfaces: the TUI and the Companion read where an app shows from these
+;; routes, so the person's choice for one app must reach both readers.
+(defdescribe
+  app-surfaces-route-test
+  (it "lists a keyed app with the person's choice over its declaration"
+      (recorded
+        (fn []
+          (let [sid (str (random-uuid))
+                setting "app_sandbox_board_session"
+                view-id (get (app-op! {"op" "open"
+                                       "view" {"title" "Board"
+                                               "session_id" sid
+                                               "placement" "attachment"
+                                               "key" "board"
+                                               "surfaces" {"session" "chat"}
+                                               "nodes" [{"id" "go" "type" "button" "label" "Go"}]}})
+                             "view_id")
+                one (fn [] (get (json-body (app-view sid view-id)) "view"))
+                listed (fn []
+                         (mapv #(get % "surfaces")
+                               (get (json-body (#'views-api/list-live-views-handler
+                                                {:path-params {:sid sid}
+                                                 :query-params {"placement" "attachment"}}))
+                                    "views")))]
+            (try (expect (= {"inline" true "session" "chat"} (get (one) "surfaces")))
+                 (expect (= "app_sandbox_board" (get (one) "settings_key")))
+                 (binding [toggles/*persist-writes* false]
+                   (toggles/set-value! setting "sidebar"))
+                 (expect (= {"inline" true "session" "sidebar"} (get (one) "surfaces")))
+                 (expect (= [{"inline" true "session" "sidebar"}] (listed)))
+                 (finally (swap! @#'toggles/state dissoc setting) (hi/close-live! view-id)))))))
+  (it "refuses surfaces on a view that is no app"
+      (recorded
+        (fn []
+          (expect (str/includes? (try (hi/open-live! {:title "Build"
+                                                       :session-id (str (random-uuid))
+                                                       :surfaces {:inline true}
+                                                       :nodes [{:id "n" :type :stat :label "N" :value 1}]})
+                                      ""
+                                      (catch clojure.lang.ExceptionInfo e (ex-message e)))
+                                 "only an app"))))))

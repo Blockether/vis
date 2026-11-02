@@ -25,6 +25,7 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.view.app-surfaces :as app-surfaces]
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as view-spec]
@@ -300,14 +301,14 @@
      (->> (concat views apps)
           (filter #(or (nil? placement) (= placement (:placement %))))
           (sort-by :created-at)
-          vec))))
+          (mapv app-surfaces/shown)))))
 
 (defn live-view-of
   "Live view `view-id` when it belongs to `sid`, else nil. Every REST answer goes
    through this: a view id from another session must not be readable from here."
   [sid view-id]
   (let [{:keys [kind view]} (view-of sid view-id)]
-    (when (= :live kind) view)))
+    (when (= :live kind) (app-surfaces/shown view))))
 
 (def ^:private live-log-page
   "Lines one log page answers: a WINDOW, the same amount a surface holds live

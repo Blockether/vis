@@ -149,6 +149,18 @@ def test_app_declaration_is_an_attachment_placement():
     }
 
 
+def test_app_surfaces_declaration_is_a_valid_view_and_a_typo_fails_at_once():
+    # Live app surfaces: a misspelled surface used to reach the engine and fail
+    # there, far from the declaration that held it.
+    app = vis.ui.app(
+        "Board", vis.ui.thread("t"), surfaces={"inline": False, "session": "chat"}
+    )
+    validate("view", "app_surfaces", app["surfaces"])
+    for wrong in ({"session": "side"}, {"inline": "no"}, {"place": "chat"}):
+        with pytest.raises(TypeError):
+            vis.ui.app("Board", vis.ui.thread("t"), surfaces=wrong)
+
+
 def test_attach_opens_one_app_and_answers_its_handle(host):
     app = vis.attach(
         vis.ui.app("Review", vis.ui.diff("change", PATCH), vis.ui.thread("general"))

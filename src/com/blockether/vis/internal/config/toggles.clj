@@ -826,6 +826,24 @@
        :group :council
        :parent "council"
        :persist? true})
+    ;; Live apps declare where they show; these two turn a surface off for every app.
+    ;; Each app with a key adds its own settings under them (`view.app-surfaces`).
+    (register-toggle! {:id "apps_inline"
+                       :label "Apps in the chat"
+                       :description "Show an app in the chat turn that opened it."
+                       :default true
+                       :scopes ["global"]
+                       :owner :vis
+                       :group :apps
+                       :persist? true})
+    (register-toggle! {:id "apps_session"
+                       :label "Session apps"
+                       :description "List the apps of a session under the session apps button."
+                       :default true
+                       :scopes ["global"]
+                       :owner :vis
+                       :group :apps
+                       :persist? true})
     ;; A snapshot is read into memory whole, and a Java byte array holds less than 2 GiB.
     (register-toggle! {:id "session_snapshot_limit"
                        :label "Session snapshot limit"

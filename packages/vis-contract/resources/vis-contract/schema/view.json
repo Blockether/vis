@@ -2272,6 +2272,27 @@
       "default": "inline",
       "description": "Where a live view shows. `attachment` makes a durable app attachment: it outlives the call that opened it and keeps its state after a restart."
     },
+    "app_surfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inline": {
+          "description": "Show the app in the chat turn that opened it.",
+          "type": "boolean",
+          "default": true
+        },
+        "session": {
+          "description": "Where the session apps button opens the app: beside the chat, in the chat area, or not at all.",
+          "type": "string",
+          "enum": [
+            "sidebar",
+            "chat",
+            "off"
+          ],
+          "default": "sidebar"
+        }
+      }
+    },
     "live_view": {
       "type": "object",
       "additionalProperties": false,
@@ -2305,6 +2326,17 @@
         "extension": {
           "description": "The extension that owns this panel view.",
           "$ref": "common.json#/$defs/non_blank_string",
+          "readOnly": true
+        },
+        "surfaces": {
+          "description": "Where an app shows. The opener declares the defaults. A reader gets the values after the person's settings. Only an app takes surfaces.",
+          "$ref": "#/$defs/app_surfaces"
+        },
+        "settings_key": {
+          "description": "The id prefix of the settings of this app: `<settings_key>_inline` and `<settings_key>_session`. Only an app with a key has them.",
+          "type": "string",
+          "pattern": "^app_[a-z0-9]+(?:_[a-z0-9]+)*$",
+          "maxLength": 64,
           "readOnly": true
         },
         "is_stale": {

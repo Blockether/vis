@@ -7339,12 +7339,19 @@ def _ui_scene_mesh(mesh_id, vertices, faces):
     }
 
 
-def _ui_app(title, *nodes, description=None, key=None, shortcuts=None, **options):
+def _ui_app(
+    title, *nodes, description=None, key=None, shortcuts=None, surfaces=None, **options
+):
     """An app declaration for `vis.attach`: a live view that stays in the session.
 
     The nodes are the same components as in `vis.live`, plus `diff` and `thread`.
     `key` makes the app adoptable: its owner can open the same key again later.
     `shortcuts` is a list of `vis.ui.shortcut(...)` values, at most 32.
+    `surfaces` sets where the app shows by default, for example
+    `{"inline": False, "session": "chat"}`. `inline` shows it in the chat turn
+    that opened it. `session` is `sidebar`, `chat` or `off` for the session apps
+    button. The person's settings can change both; an app with a `key` gets its
+    own settings.
     """
     request = {str(k): v for k, v in options.items()}
     request.update(placement="attachment", title=str(title), nodes=list(nodes))
@@ -7354,7 +7361,24 @@ def _ui_app(title, *nodes, description=None, key=None, shortcuts=None, **options
         request["key"] = str(key)
     if shortcuts is not None:
         request["shortcuts"] = _shortcut_list(shortcuts)
+    if surfaces is not None:
+        request["surfaces"] = _app_surfaces(surfaces)
     return request
+
+
+def _app_surfaces(surfaces):
+    """Check the declared surfaces of an app before the host sees them."""
+    from blockether.vis import _contracts
+
+    rule = _contracts.definition("view", "app_surfaces")["properties"]
+    places = rule["session"]["enum"]
+    if not isinstance(surfaces, dict) or set(surfaces) - set(rule):
+        raise TypeError("surfaces must be a dict with only " + " and ".join(sorted(rule)))
+    if "inline" in surfaces and not isinstance(surfaces["inline"], bool):
+        raise TypeError("surfaces inline must be True or False")
+    if "session" in surfaces and surfaces["session"] not in places:
+        raise TypeError("surfaces session must be one of " + ", ".join(places))
+    return dict(surfaces)
 
 
 def _shortcut_rules():

@@ -30,6 +30,7 @@
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.view.materializer :as materializer]
+            [com.blockether.vis.internal.view.app-surfaces :as app-surfaces]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.view :as view-spec]
@@ -1577,6 +1578,13 @@
         shortcuts
         (when (contains? view :shortcuts) (live-shortcuts invalid-live-view! (:shortcuts view)))
 
+        ;; The DECLARED surfaces. A reader gets them after the person's settings
+        ;; (`app-surfaces/shown`); the record keeps what the app asked for.
+        surfaces
+        (when (contains? view :surfaces)
+          (when-not app? (invalid-live-view! "only an app (placement attachment) takes :surfaces"))
+          (:surfaces view))
+
         _
         (some-> (app/shortcuts-error (cond-> {:placement placement :nodes nodes}
                                        shortcuts
@@ -1621,6 +1629,9 @@
 
         (seq shortcuts)
         (assoc :shortcuts shortcuts)
+
+        (some? surfaces)
+        (assoc :surfaces surfaces)
 
         agent-note
         (assoc :agent-note agent-note)))))
@@ -2204,9 +2215,13 @@
   (transduce (map #(channel-events/publish-channel-event! % event)) + 0 channel-ids))
 
 (defn- lifecycle-event
-  "Canonical channel envelope for either View kind."
+  "Canonical channel envelope for either View kind. An opened app carries the
+   surfaces that the person's settings give it."
   [op entry payload]
-  (merge {:op op :kind (:kind entry) :view-id (:id entry) :session-id (:session-id entry)} payload))
+  (merge {:op op :kind (:kind entry) :view-id (:id entry) :session-id (:session-id entry)}
+         (cond-> payload
+           (and (= :view/open op) (:view payload))
+           (update :view app-surfaces/shown))))
 
 ;; A live view's life — open, patch, close
 ;;
