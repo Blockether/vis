@@ -15,6 +15,7 @@ import base64
 import dis
 import hashlib
 import types
+import zlib
 
 #: The types a spill file can hold. A spill file is raw data, never a pickle.
 KINDS = {bytes: "bytes", str: "str"}
@@ -82,6 +83,13 @@ def snapshot(namespace, limit, total):
         )
     for name in set(_digests) - {item["name"] for item in spill}:
         del _digests[name]
+    # Large snapshots cross JSON after every block. Compress before that boundary.
+    if isinstance(text, str) and len(text) >= 65536:
+        packed = base64.b64encode(zlib.compress(text.encode("utf-8"), 1)).decode(
+            "ascii"
+        )
+        if len(packed) < len(text):
+            return {"text-zlib": packed, "spill": spill}
     return {"text": text, "spill": spill}
 
 

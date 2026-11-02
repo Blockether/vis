@@ -2432,6 +2432,18 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                     (when-not (contains? kept (.getName f)) (.delete f)))))
     nil))
 
+(defn- snapshot-text
+  "Decode snapshot text within a bounded UTF-8 buffer."
+  [snapshot]
+  (if-let [packed (:text-zlib snapshot)]
+    (let [limit (* 4 (long session-defs-max-bytes))]
+      (with-open [stream (java.util.zip.InflaterInputStream.
+                           (java.io.ByteArrayInputStream. (.decode (java.util.Base64/getDecoder)
+                                                                   ^String packed)))]
+        (let [raw (.readNBytes stream (int (inc limit)))]
+          (when (<= (alength raw) limit) (String. raw java.nio.charset.StandardCharsets/UTF_8)))))
+    (:text snapshot)))
+
 (defn persist-session-defs!
   "Write this session's helpers, imports and variables beside the session, for a
    LATER process.
@@ -2456,7 +2468,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                                                  ")")))
 
                src
-               (:text snap)
+               (snapshot-text snap)
 
                f
                (io/file (paths/sandbox-defs-file (str session-id)))]

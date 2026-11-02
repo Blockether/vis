@@ -16,3 +16,12 @@
                               (get-in (perf/summary 1000.0 {} stages) [:stages :code-result])))
                    (expect (nil? (get-in (perf/summary 1000.0 {} stages) [:stages :code-exec])))
                    (expect (= 0.0 (:overhead-ms (perf/summary 500.0 {} stages)))))))
+
+;; User report 168155ca: an RSS read failure discarded each native timing ledger.
+(defdescribe memory-read-failure-test
+             (it "keeps heap data and reports an RSS read failure"
+                 (with-redefs-fn {#'perf/linux-rss-mb (fn []
+                                                        (throw (java.io.IOException.
+                                                                 "RSS read failed")))}
+                   #(let [result (perf/memory)] (expect (number? (:heap-used-mb result)))
+                      (expect (= "RSS read failed" (:rss-error result)))))))

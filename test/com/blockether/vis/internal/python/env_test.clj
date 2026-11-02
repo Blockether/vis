@@ -1249,6 +1249,106 @@
           (expect (str/includes? out "day_set=False"))
           (expect (str/includes? out "grep=True"))))))
 
+;; User report 168155ca: each cheap block copied a large snapshot through JSON.
+(defdescribe
+  session-defs-transfer-budget-test
+  (it
+    "bounds transfer size and restores changed snapshots in both hosts"
+    (doseq [worker? [false true]]
+      (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                           "vis-snapshot-transfer"
+                           (make-array java.nio.file.attribute.FileAttribute 0)))
+            file (io/file dir "snapshot.py")
+            sid (str "vis-test-transfer-" (random-uuid))]
+
+        (try
+          (with-redefs [paths/sandbox-defs-file (fn [_]
+                                                  (.getPath file))
+                        paths/sandbox-spill-dir (fn [_]
+                                                  (.getPath (io/file dir "spill")))]
+
+            (tpc/with-own
+              [ctx {} nil {:worker? worker?}]
+              (expect
+                (nil?
+                  (:error
+                    (ep/run-python-block
+                      ctx
+                      "payload = [{'index': i, 'message': f'row {i}: ' + 'detail ' * 20} for i in range(1800)]
+"))))
+              (let [packet (#'ep/guest-value
+                            ctx
+                            "__import__('vis_snapshot').snapshot(globals(), 33554432, 134217728)")
+                    source (#'ep/guest-value ctx "__vis_defs_snapshot__()")]
+
+                (expect (string? (:text-zlib packet)))
+                (expect (pos? (count (:text-zlib packet))))
+                (expect (< (count (:text-zlib packet)) (/ (count source) 2))))
+              (expect (some? (ep/persist-session-defs! ctx sid)))
+              (expect (nil? (:error (ep/run-python-block ctx "payload[-1]['index'] = 1800
+"))))
+              (expect (some? (ep/persist-session-defs! ctx sid)))
+              (expect (nil? (ep/persist-session-defs! ctx sid))))
+            (ep/forget-session-defs! sid)
+            (tpc/with-own
+              [ctx {} nil {:worker? worker?}]
+              (ep/restore-session-defs! ctx sid)
+              (let [result (ep/run-python-block ctx "print(len(payload), payload[-1]['index'])")]
+                (expect (nil? (:error result)))
+                (expect (= "1800 1800
+" (:stdout result))))))
+          (finally (ep/forget-session-defs! sid)
+                   (io/delete-file file true)
+                   (io/delete-file dir true)))))))
+
+;; User report 168155ca: faster snapshot transport must preserve the saved state on refusal.
+(defdescribe
+  session-defs-compressed-limit-test
+  (it
+    "keeps the last saved helper when compressed text exceeds the snapshot budget"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-snapshot-limit"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          file
+          (io/file dir "snapshot.py")
+
+          sid
+          (str "vis-test-compressed-limit-" (random-uuid))]
+
+      (try (with-redefs [paths/sandbox-defs-file
+                         (fn [_]
+                           (.getPath file))
+
+                         paths/sandbox-spill-dir
+                         (fn [_]
+                           (.getPath (io/file dir "spill")))]
+
+             (tpc/with-own
+               [ctx {}]
+               (expect (nil? (:error (ep/run-python-block ctx "def kept():
+    return 42
+"))))
+               (expect (some? (ep/persist-session-defs! ctx sid)))
+               (let [saved (slurp file)]
+                 (expect (nil? (:error (ep/run-python-block
+                                         ctx
+                                         "def __vis_defs_snapshot__():
+    return 'x' * 131072
+"))))
+                 (with-redefs-fn {#'ep/session-defs-max-bytes 1024}
+                   #(expect (nil? (ep/persist-session-defs! ctx sid))))
+                 (expect (= saved (slurp file)))))
+             (ep/forget-session-defs! sid)
+             (tpc/with-own [ctx {}]
+                           (expect (= 1 (ep/restore-session-defs! ctx sid)))
+                           (expect (= "42
+" (:stdout (ep/run-python-block ctx "print(kept())"))))))
+           (finally (ep/forget-session-defs! sid)
+                    (io/delete-file file true)
+                    (io/delete-file dir true))))))
+
 (defdescribe
   persist-session-defs-budget-test
   ;; Regression: `persist-session-defs!` runs on the turn thread right after EVERY

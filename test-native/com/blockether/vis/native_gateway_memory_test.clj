@@ -2,6 +2,7 @@
   "Disk-backed terminal turns, SSE replay and Python display formatting in the linked gateway
    image."
   (:require [charred.api :as json]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
@@ -87,6 +88,28 @@
                (throw (ex-info (str "Owned native SSE replay timed out: " (pr-str @seen)) {})))
              result
              (finally (future-cancel pending)))))))
+
+(defn- await-perf-ledgers!
+  "Read the iteration and turn ledgers from this test's native gateway."
+  [dir]
+  (loop [attempt 0]
+    (let [ledgers
+          (into {}
+                (for [^File file (file-seq dir)
+                      :when (and (.isFile file) (str/ends-with? (.getName file) ".log"))
+                      [header data] (partition 2 1 (butlast (str/split (slurp file) #"\r?\n" -1)))
+                      :let
+                      [kind
+                       (second
+                         (re-find
+                           #"com\.blockether\.vis\.internal\.perf\[.*\] ::(iteration|turn)(?: |$)"
+                           header))]
+                      :when (and kind (str/starts-with? (str/trim data) "data: "))]
+
+                  [(keyword kind) (edn/read-string (subs (str/trim data) 6))]))]
+      (if (or (= #{:iteration :turn} (set (keys ledgers))) (>= attempt 100))
+        ledgers
+        (do (Thread/sleep 50) (recur (inc attempt)))))))
 
 (defdescribe
   native-gateway-memory-test
@@ -193,6 +216,14 @@
               (expect (= request (get turn "request")))
               (expect (= reply (get-in turn ["content" 0 "markdown"])))
               (expect (seq @asked) "The isolated local model must answer the turn")
+              ;; User report 168155ca: native RSS reads discarded the timing ledgers.
+              (let [ledgers (await-perf-ledgers! dir)]
+                (expect (= #{:iteration :turn} (set (keys ledgers))))
+                (doseq [entry (vals ledgers)]
+                  (expect (number? (:overhead-ms entry)))
+                  (expect (pos? (:heap-used-mb entry)))
+                  (when (= "Linux" (System/getProperty "os.name"))
+                    (expect (pos? (:rss-mb entry))))))
               (let [history (first (get (request-json! :get turns-path {}) "turns"))]
                 (doseq [field ["turn_id" "session_id" "status" "request"]]
                   (expect (= (get turn field) (get history field))))

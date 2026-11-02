@@ -8,7 +8,8 @@
   (:require [clojure.string :as str]
             [taoensso.telemere :as tel])
   (:import (java.io File)
-           (java.lang.management GarbageCollectorMXBean ManagementFactory)))
+           (java.lang.management GarbageCollectorMXBean ManagementFactory)
+           (java.nio.file Files)))
 
 (def ^:dynamic *ledger*
   "The atom of stage times of the running iteration: stage → `{:ms :n}`, or nil."
@@ -100,7 +101,7 @@
               (when (str/starts-with? line "VmRSS:")
                 (let [kb (parse-long (re-find #"\d+" line))]
                   (when kb (round1 (/ (double kb) 1024.0))))))
-            (str/split-lines (slurp f))))))
+            (str/split-lines (Files/readString (.toPath f)))))))
 
 (defn memory
   "Heap in use and, on Linux, resident memory, in MiB. A native image reports its
@@ -109,18 +110,20 @@
   (let [rt
         (Runtime/getRuntime)
 
-        rss
-        (linux-rss-mb)]
+        heap
+        {:heap-used-mb (round1 (/ (double (- (.totalMemory rt) (.freeMemory rt))) 1048576.0))}]
 
-    (cond-> {:heap-used-mb (round1 (/ (double (- (.totalMemory rt) (.freeMemory rt))) 1048576.0))}
-      rss
-      (assoc :rss-mb rss))))
+    (try (if-let [rss (linux-rss-mb)]
+           (assoc heap :rss-mb rss)
+           heap)
+         (catch Exception e (assoc heap :rss-error (or (ex-message e) (.getName (class e))))))))
 
 (defn- log-ledger!
   "Log one ledger line with signal `id` and `data` at info level. When its summary fails,
    log that failure instead: a ledger line must not stop a turn."
   [id data wall-ms phases stages]
-  (try (tel/log! {:level :info :id id :data (merge data (summary wall-ms phases stages) (memory))})
+  (try (let [entry (merge data (summary wall-ms phases stages) (memory))]
+         (tel/log! {:level :info :id id :data entry}))
        (catch Throwable e
          (tel/log! {:level :warn :id ::ledger-line-failed :data {:line id} :error e}))))
 
