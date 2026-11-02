@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-11-02
+
+### Changed
+- Python: after each block, a gateway session sends only the changed parts of its snapshot. Before, it sent the whole snapshot, which can be several megabytes. Vis sends the whole snapshot again when the parts do not match.
+- Companion: "Show more" and "Show less" open and close long messages and agent team rows with an animation.
+
 ### Fixed
 - Provider: an overload (HTTP 529) that arrives after the model starts to think is sent again on the same provider. The turn no longer fails with "Provider gateway unavailable". Svar is pinned at 0.7.220.
 - Sandbox: a killed process no longer leaves a partial Python session snapshot. Vis replaces the snapshot and its spill files in one atomic step, as owner-only (600) files.
