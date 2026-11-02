@@ -864,6 +864,50 @@
                         (team/timeline-items {"status" "completed"} {:items []})))))))
 
 (defdescribe
+  timeline-markdown-test
+  ;; User report 2026-11-02: timeline notes and messages showed raw Markdown, such as `##` and `**`.
+  (it "lists a step without its Markdown markers"
+      (expect (= "22:13:20  message  Python SDK timeline: done Files changed: • _contracts.py: lane"
+                 (team/timeline-line {"at" 1700000000000
+                                      "kind" "message"
+                                      "text" (str "## Python SDK `timeline`: done\n"
+                                                  "**Files changed:**\n- `_contracts.py`: lane")}
+                                     (java.time.ZoneId/of "UTC")))))
+  (it "opens a chosen step as Markdown, with one block for each authored line"
+      (let [item
+            {"at" 1700000000000 "kind" "note" "text" "## Done\n**Files:**\n- `a.clj`"}
+
+            picked?
+            (atom false)
+
+            opened
+            (atom [])]
+
+        (with-redefs [team/timeline!
+                      (constantly {:items [item]})
+
+                      team/summary
+                      (constantly {:agents []})
+
+                      dlg/select-dialog!
+                      (fn [_ _ items]
+                        (when-not (first (reset-vals! picked? true))
+                          (first (filter :markdown items))))
+
+                      dlg/markdown-viewer-dialog!
+                      (fn [_ _ md]
+                        (swap! opened conj md)
+                        nil)]
+
+          (expect (nil? (team/show-timeline! nil "leader" "s1")))
+          (expect (= ["## Done\n\n**Files:**\n\n- `a.clj`"] @opened)))))
+  (it "shows a Markdown note in its row without the markers"
+      (let [row (first (team/team-rows "turn-1"
+                                       [(agent-row 1 "running" "note" "**Fixing** the `parser`")]))]
+        (expect (str/includes? (first (team/row-lines row (team/row-columns [row]) 120 now-ms))
+                               "Fixing the parser")))))
+
+(defdescribe
   child-breadcrumb-test
   (it "names the path from the leader to the child session"
       (with-redefs [team/summary (constantly {:agents waiting-team})]

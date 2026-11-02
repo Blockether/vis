@@ -1,3 +1,5 @@
+import { fromMarkdown } from 'mdast-util-from-markdown';
+
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const ITEM = /^(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)/;
 const INDENT = /^[ \t]/;
@@ -44,4 +46,26 @@ export function councilMarkdown(text: string): string {
     prev = line;
   }
   return out.join('\n');
+}
+
+type MarkdownNode = { type: string; value?: string; alt?: string | null; children?: MarkdownNode[] };
+
+// The nodes that end a run of text on a one-line row.
+const LINE_BREAKS = new Set(['paragraph', 'heading', 'code', 'listItem', 'blockquote', 'thematicBreak', 'break']);
+
+/**
+ * Council text on one line without its Markdown markers, as a row shows it. A space parts
+ * two blocks, and a list item starts with `• `. Mirrors the row text of the TUI agent team.
+ */
+export function councilLine(text: string): string {
+  let out = '';
+  const walk = (node: MarkdownNode) => {
+    if (node.type === 'listItem') out += ' • ';
+    if (node.type === 'image') out += node.alt ?? '';
+    else if (node.type !== 'html' && typeof node.value === 'string') out += node.value;
+    node.children?.forEach(walk);
+    if (LINE_BREAKS.has(node.type)) out += ' ';
+  };
+  walk(fromMarkdown(councilMarkdown(text)) as MarkdownNode);
+  return out.replace(/\s+/g, ' ').trim();
 }

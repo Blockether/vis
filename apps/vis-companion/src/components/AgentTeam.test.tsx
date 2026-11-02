@@ -218,6 +218,26 @@ describe('agent timeline', () => {
     expect(part.textContent).not.toMatch(/##|`/);
   });
 
+  // User report 2026-11-02: timeline notes and messages showed raw Markdown, such as `##` and `**`.
+  it('shows the notes and messages of the timeline as Markdown', async () => {
+    const timeline = vi.fn(async (): Promise<AgentTimeline> => ({ session_id: 'child', items: [
+      { at: T0, kind: 'message', text: '## Python SDK `timeline`: done\n**Files changed:**\n- `_contracts.py`: lane' },
+      { at: T0 + 5_000, kind: 'note', text: 'Read **all** tests' },
+    ] }));
+    render(<TurnAgents {...props} timeline={timeline} agents={[child]} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
+    const steps = within(screen.getByRole('dialog', { name: '#1' })).getByRole('list', { name: 'Timeline' });
+    expect(within(steps).getByRole('heading', { name: 'Python SDK timeline: done' })).toBeInTheDocument();
+    expect(within(steps).getByText('Files changed:').tagName).toBe('STRONG');
+    expect(within(steps).getByText('all').tagName).toBe('STRONG');
+    expect(steps.textContent).not.toMatch(/##|\*\*|`/);
+  });
+
+  // User report 2026-11-02: a row showed the Markdown markers of a note.
+  it('shows a Markdown note in its row without the markers', () => {
+    expect(agentUpdate({ ...child, note: '## Done\n**Fixing** the `parser`' })).toBe('Done Fixing the parser');
+  });
+
   // User report: the sheet showed the result at its end and the end step said it again.
   it('shows the outcome above the steps, and the end step does not repeat it', () => {
     const end = { at: T0 + 61_000, kind: 'finished' as const, status: 'completed' as const, outcome: 'passed' as const, text: 'All 40 tests pass' };

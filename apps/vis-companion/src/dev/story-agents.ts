@@ -103,6 +103,11 @@ export function storyTimeline(agent: Subagent): AgentTimeline {
   const items: AgentTimeline['items'] = [
     { at: start, kind: 'started' },
     { at: start + 9_000, kind: 'note', text: 'Read the contract and the current views first.' },
+    {
+      at: start + 14_000,
+      kind: 'message',
+      text: '## Contract read\n**Routes to check:**\n- `GET /v1/sessions/:sid/agents`\n- `GET /v1/sessions/:sid/agents/:child/timeline`\nNext I compare the rows with the views.',
+    },
   ];
   items.push({ at: start + 20_000, kind: 'note', text: agent.note ?? agent.activity ?? 'Changed the rows and ran the checks.' });
   if (agent.finished_at) {

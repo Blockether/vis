@@ -14,7 +14,7 @@ import {
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
 import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
-import { councilMarkdown } from '../lib/council-markdown';
+import { councilLine, councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
 import { useClampMotion } from '../lib/clamp-motion';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
@@ -106,11 +106,13 @@ export function agentTime(agent: Subagent, now: number): number | undefined {
 /**
  * The update of a row. While the agent works: its newest progress note, the note that its
  * leader also reads, else its latest Activity line, else the first line of its task. After
- * its task: its result, else the reason of its end.
+ * its task: its result, else the reason of its end. A note, a result and a task are Markdown,
+ * so the row shows them without their markers.
  */
 export function agentUpdate(agent: Subagent): string | undefined {
-  if (!isLive(agent)) return agent.result ?? END_REASON[agent.status];
-  return agent.note ?? agent.activity ?? (agent.task.trim().split('\n', 1)[0].trim() || undefined);
+  if (!isLive(agent)) return agent.result == null ? END_REASON[agent.status] : councilLine(agent.result);
+  if (agent.note != null) return councilLine(agent.note);
+  return agent.activity ?? (councilLine(agent.task.trim().split('\n', 1)[0]) || undefined);
 }
 
 /** One count of a team line, such as `1 running`, with its ink. */
@@ -665,7 +667,9 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
               </div>
             </div>
             {outcome && (
-              <p className="max-w-[100ch] whitespace-pre-wrap font-semibold [overflow-wrap:anywhere]" data-agent-outcome>{outcome}</p>
+              <div className="max-w-[100ch] font-semibold [overflow-wrap:anywhere]" data-agent-outcome>
+                <Markdown compact hardBreaks>{councilMarkdown(outcome)}</Markdown>
+              </div>
             )}
           </div>
           {task && <AgentTask task={task} />}
@@ -687,10 +691,11 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
                     ) : (
                       <time dateTime={new Date(at).toISOString()} className={`tabular-nums ${isCurrent ? CURRENT_TIME : 'text-dialog-hint'}`}>{clockTime(at)}</time>
                     )}
-                    <p className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isCurrent ? 'font-semibold' : ''}`}>
-                      {word && <span className={`mr-3 ${word.isStatus ? 'uppercase' : ''} ${word.ink}`}>{word.text}</span>}
-                      {text}
-                    </p>
+                    {/* The text of a step is Markdown, like a Council message. */}
+                    <div className={`flex min-w-0 gap-x-3 [overflow-wrap:anywhere] ${isCurrent ? 'font-semibold' : ''}`}>
+                      {word && <span className={`shrink-0 ${word.isStatus ? 'uppercase' : ''} ${word.ink}`}>{word.text}</span>}
+                      {text && <div className="min-w-0 flex-1"><Markdown compact hardBreaks>{councilMarkdown(text)}</Markdown></div>}
+                    </div>
                   </li>
                 ))}
               </ol>

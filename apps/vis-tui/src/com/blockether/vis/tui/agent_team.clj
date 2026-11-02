@@ -11,6 +11,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
+            [com.blockether.vis.tui.presentation :as presentation]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t])
   (:import [com.googlecode.lanterna.graphics TextGraphics]
@@ -322,6 +323,11 @@
 
 (defn- one-line [text] (str/trim (str/replace (str text) #"\s+" " ")))
 
+(defn- markdown-line
+  "Agent Markdown `text` on one line without its markers, as a row shows it."
+  [text]
+  (one-line (presentation/render (presentation/council->ast (str text)) :plain)))
+
 (defn agent-label
   "The title of `agent`, or `#n` when it has no title. `n` is its start order in its team."
   [n agent]
@@ -378,9 +384,11 @@
    reason of its end. The questions and grant requests of an agent go to its leader, never to
    the person, so no row shows them."
   [agent]
-  (one-line (or (when (active? agent) (or (get agent "note") (get agent "activity")))
-                (get agent "result")
-                (end-reason agent))))
+  (let [live? (active? agent)]
+    (cond (and live? (get agent "note")) (markdown-line (get agent "note"))
+          (and live? (get agent "activity")) (one-line (get agent "activity"))
+          (get agent "result") (markdown-line (get agent "result"))
+          :else (one-line (end-reason agent)))))
 
 (defn- start-ms
   [agent]
@@ -1470,28 +1478,31 @@
 (def ^:private ^java.time.format.DateTimeFormatter clock
   (java.time.format.DateTimeFormatter/ofPattern "HH:mm:ss"))
 
+(defn- timeline-end
+  [item]
+  (when (= "finished" (get item "kind"))
+    {"status" (get item "status" "completed") "outcome" (get item "outcome")}))
+
+(defn- timeline-head
+  "The time and the word of a timeline step, such as `14:02:11  note`."
+  [item ^java.time.ZoneId zone]
+  (str (.format ^java.time.format.DateTimeFormatter clock
+                (.atZone (java.time.Instant/ofEpochMilli (long (get item "at"))) zone))
+       "  "
+       (if-let [end (timeline-end item)]
+         (status-word end)
+         (get item "kind"))))
+
 (defn timeline-line
-  "One plain timeline row, such as `14:02:11  note  Read the parser tests`."
+  "One plain timeline row, such as `14:02:11  note  Read the parser tests`. The text of a step
+   is Markdown, so the row shows it without its markers."
   ([item] (timeline-line item (java.time.ZoneId/systemDefault)))
   ([item ^java.time.ZoneId zone]
-   (let [kind
-         (get item "kind")
-
-         end
-         (when (= "finished" kind)
-           {"status" (get item "status" "completed") "outcome" (get item "outcome")})
-
-         word
-         (if end (status-word end) kind)]
-
-     (str (.format ^java.time.format.DateTimeFormatter clock
-                   (.atZone (java.time.Instant/ofEpochMilli (long (get item "at"))) zone))
-          "  "
-          word
-          (when-let [text (or (not-empty (one-line (get item "text")))
-                              (some-> end
-                                      end-reason))]
-            (str "  " text))))))
+   (str (timeline-head item zone)
+        (when-let [text (or (not-empty (markdown-line (get item "text")))
+                            (some-> (timeline-end item)
+                                    end-reason))]
+          (str "  " text)))))
 
 (defn timeline-items
   "The dialog items of the timeline of `agent`: its actions first, then one row per step."
@@ -1502,8 +1513,15 @@
         (cond error [{:section? true :label "Timeline"} {:label error}]
               (empty? items) [{:section? true :label "Timeline"} {:label "No steps yet"}]
               :else (into [{:section? true :label "Timeline"}]
+                          ;; A step with a text opens it as Markdown.
                           (map (fn [item]
-                                 {:label (timeline-line item)}))
+                                 (let [text (get item "text")]
+                                   (cond-> {:label (timeline-line item)}
+                                     (not (str/blank? text))
+                                     (assoc :title
+                                       (timeline-head item (java.time.ZoneId/systemDefault))
+                                       :markdown
+                                       (presentation/council-markdown text))))))
                           items))))
 
 (defn- agent-of
@@ -1551,7 +1569,10 @@
             (recur))
 
         nil
-        (when choice (recur))))))
+        (when choice
+          (when-let [md (:markdown choice)]
+            (dlg/markdown-viewer-dialog! screen (:title choice) md))
+          (recur))))))
 
 (def ^:private ^:const modal-row-width "The most cells of one agent row in the team modal." 200)
 
