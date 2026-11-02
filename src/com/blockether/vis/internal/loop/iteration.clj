@@ -1379,6 +1379,27 @@
                                            {:output-phase (:phase chunk) :output-chunks 1})
         :else evidence))
 
+(defn- next-provider-stream
+  "The text that the current provider attempt streamed, after `chunk`. A stopped call
+   has no final response, so a cancel keeps only this. A re-send or a fallback starts
+   the text again, like the live stream."
+  [stream chunk]
+  (case (:phase chunk)
+    (:provider-retry-reset :provider-fallback)
+    {}
+
+    :reasoning
+    (cond-> stream
+      (some? (:thinking chunk))
+      (assoc :reasoning (:thinking chunk)))
+
+    :content
+    (cond-> stream
+      (some? (:content chunk))
+      (assoc :content (:content chunk)))
+
+    stream))
+
 (defn- provider-output-chunk?
   "True after visible assistant output or a tool execution entered the stream.
    Engine lifecycle/progress chunks are safe to replay after a pre-output failure."
@@ -2888,6 +2909,9 @@
         provider-replay-evidence
         (atom nil)
 
+        provider-stream
+        (atom {})
+
         effective-messages
         @effective-messages-atom]
 
@@ -2903,6 +2927,7 @@
       :messages messages
       :provider-output-started? provider-output-started?
       :provider-replay-evidence provider-replay-evidence
+      :provider-stream provider-stream
       :recall-options recall-options
       :summaries summaries
       :user-input user-input)))
@@ -2914,9 +2939,10 @@
            council-active effective-messages-atom emergency-summaries-atom emit-hook! environment
            install-projection! iteration iteration-extra-body max-context-tokens message-base-atom
            message-token-counter on-chunk pre-resolved-model preferred-reasoning-effort
-           provider-output-started? provider-replay-evidence reasoning-effort reasoning-level
-           recall-options replay-target request-budget-atom route-change route-command-at-turn-start
-           routing session-turn-id summaries trailer-iters turn-pricing user-request]
+           provider-output-started? provider-replay-evidence provider-stream reasoning-effort
+           reasoning-level recall-options replay-target request-budget-atom route-change
+           route-command-at-turn-start routing session-turn-id summaries trailer-iters turn-pricing
+           user-request]
     :as state}]
   (let [resolved-model
         pre-resolved-model
@@ -3020,6 +3046,7 @@
                                           {:type :svar.core/stream-cancelled})))
                         (reset! provider-output-started? false)
                         (reset! provider-replay-evidence nil)
+                        (reset! provider-stream {})
                         (run-iteration
                           attempt-env
                           @effective-messages-atom
@@ -3067,6 +3094,7 @@
                                                                   window
                                                                   fold-budget)))))
                            :on-chunk (fn [chunk]
+                                       (swap! provider-stream next-provider-stream chunk)
                                        (cond
                                          ;; A Svar re-send starts its attempt over.
                                          (= :provider-retry-reset (:phase chunk))
@@ -3153,37 +3181,57 @@
            council-trailer effective-messages emit-hook! environment goal-at-turn-start iteration
            iteration-result last-context-atom loop-state max-context-tokens message-base-atom
            messages note-prompt-cache-status! on-chunk pre-resolved-model prompt-cache-status-atom
-           reasoning-effort request-budget-atom resolved-model session-turn-id
+           provider-stream reasoning-effort request-budget-atom resolved-model session-turn-id
            stable-prompt-messages standing-ctx-atom trace trace-store trailer-iters turn-position
            turn-pricing user-input user-request]}]
   (if-let [iteration-error-data (::loop-errors/iteration-error iteration-result)]
-    ;; Cancellation short-circuit. When the user pressed Esc
-    ;; mid-call, `cancel!` flipped the flag BEFORE
-    ;; future-cancel, so by the time we land here the flag is
-    ;; already true. Treat the resulting interrupt-shaped
-    ;; \"iteration-error-data\" as cancellation, not a real failure: skip
-    ;; the trace entry, skip the DB write, skip the on-chunk
-    ;; error chunk (otherwise the bubble paints a phantom
-    ;; ITERATION N ERROR block right next to FINAL ANSWER:
-    ;; \"_Cancelled by user._\"). Bail straight to the cancel
-    ;; result that the top-of-loop branch would have produced.
+    ;; Cancellation short-circuit. When the user pressed Esc mid-call, `cancel!`
+    ;; flipped the flag BEFORE future-cancel, so the interrupt-shaped error is a
+    ;; cancel, not a failure: no error trace entry and no ITERATION N ERROR chunk.
+    ;; The text that streamed before the stop stays, because the person already read
+    ;; it: the reasoning in one step and the answer text as the turn answer.
     (if (and cancel-atom @cancel-atom)
-      (do (log-stage! :error
-                      iteration
-                      {:reason :cancelled
-                       :cancel-source (cancellation/cancel-reason (:cancel-token environment))})
-          (let [sticky (some-> (:turn-state-atom environment)
-                               deref
-                               :best-answer
-                               :value)
-                result (merge {:answer sticky
-                               :status :cancelled
-                               :status-id (loop-router/status->id :cancelled)
-                               :trace trace
-                               :iteration-count iteration}
-                              (accounting/turn-cost @accounting-atom turn-pricing))]
+      (do
+        (log-stage! :error
+                    iteration
+                    {:reason :cancelled
+                     :cancel-source (cancellation/cancel-reason (:cancel-token environment))})
+        (let [{streamed-reasoning :reasoning streamed-content :content} @provider-stream
+              sticky (some-> (:turn-state-atom environment)
+                             deref
+                             :best-answer
+                             :value)
+              stored? (when (util/non-blank-string? streamed-reasoning)
+                        (ctx-loop/set-turn-state! environment
+                                                  :iteration-id
+                                                  (persistance/db-store-iteration!
+                                                    (:db-info environment)
+                                                    {:session-turn-id session-turn-id
+                                                     :council-input council-input
+                                                     :user-input (transcript/persisted-user-input
+                                                                   user-input)
+                                                     :vars []
+                                                     :code ""
+                                                     :thinking streamed-reasoning
+                                                     :duration-ms 0
+                                                     :llm-full-duration-ms 0
+                                                     :llm-messages effective-messages
+                                                     :llm-provider (:provider resolved-model)
+                                                     :llm-model (some-> (:name resolved-model)
+                                                                        str)}))
+                        true)
+              result (merge {:answer (or sticky
+                                         (when (util/non-blank-string? streamed-content)
+                                           {:answer streamed-content}))
+                             :status :cancelled
+                             :status-id (loop-router/status->id :cancelled)
+                             :trace trace
+                             :iteration-count (cond-> iteration
+                                                stored?
+                                                inc)}
+                            (accounting/turn-cost @accounting-atom turn-pricing))]
 
-            result))
+          result))
       (let [output-recovery-exhausted? (and (output-budget-exhausted? iteration-error-data)
                                             (= :llm-provider/output-budget-exhausted
                                                (get-in loop-state [:llm-provider :error :type])))

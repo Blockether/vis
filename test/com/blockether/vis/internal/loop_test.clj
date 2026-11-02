@@ -3768,6 +3768,43 @@
                (expect (= 1 @calls)))
              (finally (loop-env/dispose-environment! environment))))))
 
+(defdescribe
+  cancelled-provider-call-keeps-streamed-text-test
+  ;; Regression, Vis session df632d9b-3d4c-44e8-b0b6-46cc6bbf447e: Esc during a model
+  ;; call showed the streamed reasoning and answer live, but after a reload the
+  ;; cancelled turn had no text, because the stop skipped every write.
+  (it "keeps the reasoning and the answer text that streamed before the stop"
+      (let [environment
+            (loop-env/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+            tid
+            (persistance/db-store-session-turn! (:db-info environment)
+                                                {:parent-session-id (:session-id environment)
+                                                 :user-request "stop mid stream"})
+
+            cancelled
+            (atom false)]
+
+        (try (let [result (with-redefs [svar/ask-code!
+                                        (fn [_ {:keys [on-chunk]}]
+                                          (on-chunk {:reasoning "Reading the files."})
+                                          (on-chunk {:content "The first half"})
+                                          (reset! cancelled true)
+                                          (throw (ex-info "stream cancelled"
+                                                          {:type :svar.core/stream-cancelled})))]
+                            (iteration/iteration-loop environment
+                                                      "stop mid stream"
+                                                      {:session-turn-id tid
+                                                       :cancel-atom cancelled
+                                                       :on-chunk (fn [_])}))]
+               (expect (= :cancelled (:status result)))
+               (expect (= {:answer "The first half"} (:answer result)))
+               (expect (= ["Reading the files."]
+                          (mapv :thinking
+                                (persistance/db-list-session-turn-iterations (:db-info environment)
+                                                                             tid)))))
+             (finally (loop-env/dispose-environment! environment))))))
+
 (defdescribe eval-timeout-keeps-partial-stdout-test
              ;; The wall-clock backstop used to return only a timeout error. The
              ;; guest never reaches its final stdout outcome, so every line printed
