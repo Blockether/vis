@@ -1437,6 +1437,57 @@
       (expect (= 0 (agents/reconcile-orphans! db [live other-leader]))
               "A second sweep finds nothing"))))
 
+;; Regression (session 6866e0a0): after a gateway restart, the wait records of the ended
+;; children were empty, and the leader rebuilt their work from git diff.
+(defdescribe
+  ended-child-notes-test
+  (it
+    "gives the last notes of a child that ended without an answer"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          cut
+          (child! db leader {})
+
+          now
+          (System/currentTimeMillis)
+
+          r
+          (with-redefs [ps/db-list-session-turns
+                        (fn [_ id]
+                          (if (= cut (str id)) [{:id "t" :status :running}] []))
+
+                        ps/db-list-session-turns-meta
+                        (fn [_ id]
+                          (if (= cut (str id)) [{:id "t" :position 0 :created-at now}] []))
+
+                        ps/db-list-session-turn-iterations
+                        (fn [_ id]
+                          (if (= "t" (str id))
+                            [{:position 3 :assistant-prose "Wrote the fix"}
+                             {:position 0 :assistant-prose "Started"}
+                             {:position 1 :assistant-prose "Read the parser"}
+                             {:position 2 :assistant-prose " "} {:position 4}]
+                            []))]
+
+            (#'agents/record
+             db
+             nil
+             (constantly false)
+             (constantly false)
+             (+ now 60000)
+             (agents/info db cut)))]
+
+      (expect (= "failed" (:status r)))
+      (expect (nil? (:answer r)))
+      (expect (= ["Started" "Read the parser" "Wrote the fix"] (:notes r)))
+      (expect (document/valid-json? "agents"
+                                    "record"
+                                    (walk/stringify-keys (into {} (remove (comp nil? val)) r)))))))
+
 ;; User review: a wait record never says lost. A child without a live turn settles from the
 ;; last turn of its task, and a failure names why the child stopped.
 (defdescribe

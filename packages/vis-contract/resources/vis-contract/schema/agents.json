@@ -622,7 +622,7 @@
           "type": "string"
         },
         "notes": {
-          "description": "The new progress notes of a running child since the last wait.",
+          "description": "The new progress notes of a running child since the last wait. For a child that ended without an answer, its last progress notes.",
           "type": "array",
           "items": {
             "type": "string"

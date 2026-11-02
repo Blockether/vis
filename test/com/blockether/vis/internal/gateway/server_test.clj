@@ -41,7 +41,10 @@
     [com.blockether.vis.internal.gateway.wiring :as wiring]
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
-    [com.blockether.vis.internal.persistance.core]
+    [com.blockether.vis.internal.persistance.core :as persistance]
+    [com.blockether.vis.internal.persistance.sqlite.core :as sqlite]
+    [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
+    [com.blockether.vis.internal.session.cancellation :as cancellation]
     [com.blockether.vis.internal.provider.auth :as provider-auth]
     [com.blockether.vis.internal.provider.catalog :as catalog]
     [com.blockether.vis.internal.provider.limits :as provider-limits]
@@ -173,7 +176,7 @@
 (defn- with-stop-stub!
   [stops extra f]
   (with-redefs-fn (merge {#'state/running-turn-count (constantly 0)
-                          #'server/stop! (fn []
+                          #'server/stop! (fn [& _]
                                            (swap! stops inc))}
                          extra)
     f))
@@ -6391,6 +6394,67 @@
                       (future-cancel warmup)
                       (decision-cache/enable!)
                       (decision-cache/release-idle!))))))
+
+;; Regression (session 6866e0a0): a gateway restart cancelled the running Council
+;; children with :gateway-shutdown. Each child ended cancelled, and the leader got
+;; empty wait records. A stop must park running turns for the next gateway.
+(defn- stop-with-running-turn!
+  "Run `stop-fn` while one turn runs. Return its cancel reason and pending rows."
+  [stop-fn]
+  (let [store
+        (sqlite/db-open! :memory)
+
+        token
+        (cancellation/cancellation-token)]
+
+    (try
+      (let [sid (str (h/store-session! store {:channel :api}))]
+        (with-redefs [lp/db-info (constantly store)
+                      lp/by-id (constantly {:id sid})]
+
+          (#'state/update-session!
+           sid
+           (constantly {:next-seq 0
+                        :current-turn "r1"
+                        :turns {"r1" {:turn_id "r1"
+                                      :session_id sid
+                                      :status "running"
+                                      :request "busy"
+                                      :cancel-token token}}
+                        :turn-order ["r1"]}))
+          ;; Like the turn worker: a turn cancelled while the gateway drains parks,
+          ;; and any other cancelled turn ends.
+          (cancellation/on-cancel! token
+                                   #(if (state/draining?)
+                                      (#'state/park-turn! sid "r1" {:request "busy"} false)
+                                      (#'state/update-session!
+                                       sid
+                                       (fn [entry]
+                                         (-> entry
+                                             (assoc-in [:turns "r1" :status] "cancelled")
+                                             (assoc :current-turn nil))))))
+          (try (with-redefs-fn {(rv 'stop-route-contributions!) (fn [_])
+                                #'gw-view/uninstall! (fn [])
+                                #'resources/shutdown! (fn [])
+                                #'discovery/deregister-self! (fn [_])}
+                 #(with-server-state! {:server (org.eclipse.jetty.server.Server.) :db nil} stop-fn))
+               {:reason (cancellation/cancel-reason token)
+                :pending (mapv (juxt :turn-id :kind)
+                               (:turns (persistance/db-list-pending-turns store)))}
+               (finally (swap! @#'state/registry dissoc sid)
+                        (swap! @#'state/persisted-queues dissoc sid)))))
+      (finally (reset! @#'state/drain-state nil)
+               (decision-cache/enable!)
+               (sqlite/db-close! store)))))
+
+(defdescribe stop-parks-running-turns-test
+             (it "a stop parks a running turn so that the next gateway resumes it"
+                 (expect (= {:reason :gateway-drain :pending [["r1" "parked"]]}
+                            (stop-with-running-turn! server/stop!))))
+             (it "the idle reaper still cancels a stalled turn"
+                 ;; The reaper stops for a ghost turn of a killed client. Resuming it would loop.
+                 (expect (= {:reason :gateway-shutdown :pending []}
+                            (stop-with-running-turn! #(server/stop! {:park-turns? false}))))))
 
 (defdescribe
   voices-hang-off-the-machine-not-off-a-session

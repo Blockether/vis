@@ -458,7 +458,9 @@
                      (tel/log! :warn
                                ["gateway: no clients and" (running-turn-count)
                                 "stalled turn(s) - stopping"]))
-                   (stop!))
+                   ;; Cancel, do not park: the ghost turn of a killed client would
+                   ;; resume on each start.
+                   (stop! {:park-turns? false}))
                  (catch Throwable t
                    (tel/log! :warn ["gateway: refcount shutdown failed" (ex-message t)]))))))
 
@@ -2080,6 +2082,8 @@
   ([{:keys [port host token-file require-token? db managed? advertise]}]
    (when @instance/server-state
      (throw (ex-info "gateway already running" {:type :gateway/already-running})))
+   ;; A stop drains this process. A new start in the same process must run turns.
+   (state/end-drain!)
    (wiring/install!)
    (python-extensions/install-host-exchange! (host-exchange serving-handler))
    (let [port
@@ -2253,10 +2257,8 @@
       :managed? (boolean managed?)})))
 
 (def ^:private GRACEFUL_DRAIN_MS
-  "Max time `stop!` waits for in-flight turns to finish before forcing Jetty
-   down, so a SIGTERM / `vis-agent gateway stop` landing mid-turn lets active work
-   complete instead of being cut off. Only ever waits when turns are actually
-   running (the refcount-idle stop path already has zero)."
+  "Max time `stop!` waits for in-flight turns to park or end before it forces
+   Jetty down. Only waits when turns are running (an idle stop has zero)."
   8000)
 
 (defn- await-turns-drained!
@@ -2267,65 +2269,78 @@
              100
              #(let [n (long (running-turn-count))] (if (zero? n) (reduced n) n))))
 
+(defn- stop-running-turns!
+  "Stop the running turns before the runtime goes down. With `park-turns?`, each
+   turn parks, and the next gateway resumes it. Else each turn is cancelled.
+   Returns the count of turns that still run."
+  [park-turns?]
+  (if park-turns?
+    ;; A restart is not a user cancel. A cancelled turn ended for good, and a Council
+    ;; leader got empty records for its children (session 6866e0a0).
+    (let [running (try (:running (state/drain! {:timeout-ms 0 :grace-ms GRACEFUL_DRAIN_MS}))
+                       (catch Throwable t
+                         (tel/log! :warn ["gateway: drain before stop failed" (ex-message t)])
+                         nil))]
+      ;; A turn that did not park must still stop before the provider pool goes down.
+      (try (state/cancel-all-running!) (catch Throwable _ nil))
+      (long (or running (await-turns-drained!))))
+    (do (try (state/cancel-all-running!) (catch Throwable _ nil)) (long (await-turns-drained!)))))
+
 (defn stop!
-  "Stop the gateway server if running. Idempotent."
-  []
-  (when-let [{:keys [^Server server db stop-automations!]} @instance/server-state]
-    (when stop-automations! (stop-automations!))
-    ;; Release the listening socket FIRST so a successor daemon racing this
-    ;; close-then-reopen handoff can bind the port immediately. The slow reap
-    ;; below (killing every session's background `shell` children + REPLs) can eat
-    ;; seconds; when `.stop` ran AFTER it, the old process kept the port in
-    ;; LISTEN through the whole reap, the successor's bind-retry AND the
-    ;; client's `await-registry!` both timed out, and the first reopen died
-    ;; with "gateway daemon did not become ready". SO_REUSEADDR can't rescue
-    ;; this — it never lets a bind win over an ACTIVE listener, only a closed
-    ;; one, so the fix is to close the socket before the reap, not to retry.
-    ;; Graceful drain: give in-flight turns a bounded window to finish before we
-    ;; tear the socket + runtime down, so a SIGTERM / restart mid-turn doesn't
-    ;; guillotine active work. No-op when nothing is running (refcount-idle stop).
-    (let [pending (long (running-turn-count))]
-      (when (pos? pending)
-        (tel/log! :info ["gateway: draining before stop" pending "turn(s) running"])
-        ;; Cancel in-flight turns FIRST. The drain below only waits for them to
-        ;; reach a terminal state; it does NOT keep the provider transport
-        ;; alive — that executor is torn down concurrently on shutdown. A turn
-        ;; left looping would dispatch its next LLM iteration into the dying
-        ;; pool and die with a RejectedExecutionException surfaced to the user
-        ;; as a bogus "Provider unavailable"; cancelling makes it exit cleanly.
-        (try (state/cancel-all-running!) (catch Throwable _ nil))
-        (let [residual (long (await-turns-drained!))]
-          (when (pos? residual)
-            (tel/log! :warn
-                      ["gateway: drain timed out; forcing stop" residual
-                       "turn(s) still running"])))))
-    (when-let [warmup (:decision-warmup @instance/server-state)]
-      (future-cancel warmup))
-    (try (decision-jobs/stop!)
-         (catch Throwable t
-           (tel/log! :warn ["gateway: decision training shutdown failed" (ex-message t)])))
-    (try (decision-cache/shutdown!)
-         (catch Throwable t
-           (tel/log! :warn ["gateway: decision session shutdown failed" (ex-message t)])))
-    (try (.stop server) (catch Throwable _ nil))
-    (stop-route-contributions! (:contribs @live-app))
-    ;; The live-view bridge holds patches for up to one flush window. A gateway
-    ;; going away must publish what the engine already accepted, not swallow it.
-    (try (gw-view/uninstall!) (catch Throwable _ nil))
-    (try (state/stop-team-pusher!) (catch Throwable _ nil))
-    ;; Kill every session's background resources (background `shell` children, REPLs)
-    ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
-    ;; process; once it exits the children reparent to init and leak.
-    (try (resources/shutdown!) (catch Throwable _ nil))
-    (try (discovery/deregister-self! db) (catch Throwable _ nil))
-    (reset! instance/server-state nil)
-    (reset! live-app nil)
-    ;; Unpark `serve-main!` so the daemon process ends after a refcount/admin
-    ;; stop. Without this the JVM stayed parked on a dead promise: every TUI
-    ;; close-then-reopen leaked one idle daemon process (port + registry were
-    ;; released, but nothing terminated the process).
-    (deliver serve-exit true))
-  nil)
+  "Stop the gateway server if running. Idempotent. Running turns park for the next
+   gateway, unless `:park-turns?` is false: then they are cancelled."
+  ([] (stop! {}))
+  ([{:keys [park-turns?] :or {park-turns? true}}]
+   (when-let [{:keys [^Server server db stop-automations!]} @instance/server-state]
+     (when stop-automations! (stop-automations!))
+     ;; Release the listening socket FIRST so a successor daemon racing this
+     ;; close-then-reopen handoff can bind the port immediately. The slow reap
+     ;; below (killing every session's background `shell` children + REPLs) can eat
+     ;; seconds; when `.stop` ran AFTER it, the old process kept the port in
+     ;; LISTEN through the whole reap, the successor's bind-retry AND the
+     ;; client's `await-registry!` both timed out, and the first reopen died
+     ;; with "gateway daemon did not become ready". SO_REUSEADDR can't rescue
+     ;; this — it never lets a bind win over an ACTIVE listener, only a closed
+     ;; one, so the fix is to close the socket before the reap, not to retry.
+     ;; Stop in-flight turns FIRST. The provider transport executor is torn down
+     ;; concurrently on shutdown. A turn left looping would dispatch its next LLM
+     ;; iteration into the dying pool and die with a RejectedExecutionException
+     ;; surfaced to the user as a bogus "Provider unavailable".
+     (let [pending (long (running-turn-count))]
+       (when (pos? pending)
+         (tel/log! :info ["gateway: draining before stop" pending "turn(s) running"])
+         (let [residual (long (stop-running-turns! park-turns?))]
+           (when (pos? residual)
+             (tel/log! :warn
+                       ["gateway: drain timed out; forcing stop" residual
+                        "turn(s) still running"])))))
+     (when-let [warmup (:decision-warmup @instance/server-state)]
+       (future-cancel warmup))
+     (try (decision-jobs/stop!)
+          (catch Throwable t
+            (tel/log! :warn ["gateway: decision training shutdown failed" (ex-message t)])))
+     (try (decision-cache/shutdown!)
+          (catch Throwable t
+            (tel/log! :warn ["gateway: decision session shutdown failed" (ex-message t)])))
+     (try (.stop server) (catch Throwable _ nil))
+     (stop-route-contributions! (:contribs @live-app))
+     ;; The live-view bridge holds patches for up to one flush window. A gateway
+     ;; going away must publish what the engine already accepted, not swallow it.
+     (try (gw-view/uninstall!) (catch Throwable _ nil))
+     (try (state/stop-team-pusher!) (catch Throwable _ nil))
+     ;; Kill every session's background resources (background `shell` children, REPLs)
+     ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
+     ;; process; once it exits the children reparent to init and leak.
+     (try (resources/shutdown!) (catch Throwable _ nil))
+     (try (discovery/deregister-self! db) (catch Throwable _ nil))
+     (reset! instance/server-state nil)
+     (reset! live-app nil)
+     ;; Unpark `serve-main!` so the daemon process ends after a refcount/admin
+     ;; stop. Without this the JVM stayed parked on a dead promise: every TUI
+     ;; close-then-reopen leaked one idle daemon process (port + registry were
+     ;; released, but nothing terminated the process).
+     (deliver serve-exit true))
+   nil))
 
 (defn running? [] (some? @instance/server-state))
 

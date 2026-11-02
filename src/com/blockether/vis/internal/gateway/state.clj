@@ -327,6 +327,11 @@
   []
   (some? @drain-state))
 
+(defn end-drain!
+  "Let this gateway start turns again. Call it only when a gateway starts."
+  []
+  (reset! drain-state nil))
+
 (defn- turn-payload
   "The durable part of a turn record or launch map. The settings snapshot can hold
    secret values, so it stays out. A restored turn reads the current settings."

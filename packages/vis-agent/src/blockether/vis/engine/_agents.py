@@ -57,7 +57,7 @@ class SubagentRecord:
     that a 429 stopped is ``failed`` with ``error`` (code ``rate_limited``) and ``alternatives``:
     the working provider and model routes for a new child. A running child also has
     ``activity``, ``notes``, ``messages``, ``step_secs``, ``elapsed_secs`` and ``alerts``: its
-    progress since the last wait.
+    progress since the last wait. A child that ended without an answer has its last ``notes``.
     """
 
     session_id: str

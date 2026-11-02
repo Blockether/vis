@@ -778,11 +778,13 @@
   []
   (or (get @runtime :held?) (constantly false)))
 
+(declare ended-notes)
+
 (defn- record
   "One wait record. A queued or running child without a live turn after 30 s settles from its
    last turn: see [[settle!]]. A queued
    child whose queue a human holds is held. A child that a 429 stopped gets error and the working
-   routes of `router` in alternatives."
+   routes of `router` in alternatives. A child that ended without an answer gets its last notes."
   [db router live? held? now row]
   (let [sid
         (str (:session_id row))
@@ -806,13 +808,19 @@
         (when open? (get @questions sid))
 
         failure
-        (when (= "failed" status) (or (rate-limit-failure db row) (stop-failure db row)))]
+        (when (= "failed" status) (or (rate-limit-failure db row) (stop-failure db row)))
+
+        answer
+        (when (terminal-statuses status) (final-answer db row))
+
+        notes
+        (when (and (terminal-statuses status) (nil? answer)) (ended-notes db row now))]
 
     (cond-> {:session_id sid
              :status (cond question "asking"
                            (and (= "queued" status) (held? sid)) "held"
                            :else status)
-             :answer (when (terminal-statuses status) (final-answer db row))
+             :answer answer
              :question (:question question)
              :question_entry_id (:entry_id question)}
       (:budget question)
@@ -829,6 +837,9 @@
 
       (:files row)
       (assoc :files (:files row))
+
+      (seq notes)
+      (assoc :notes notes)
 
       failure
       (assoc :error
@@ -879,6 +890,17 @@
        (vec (sort-by #(long (or (:position %) 0))
                      (ps/db-list-session-turn-iterations db (:id turn))))
        [])]))
+
+(defn- ended-notes
+  "The last three progress notes of child `row` in its current task, clipped. The leader reads
+   them when the child ended without an answer."
+  [db row now]
+  (->> (second (current-steps db row now))
+       (keep :assistant-prose)
+       (remove str/blank?)
+       (map #(clip % 300))
+       (take-last 3)
+       vec))
 
 (defn latest-note
   "The newest progress note of child `row` in its current task, clipped, or nil. The leader reads
