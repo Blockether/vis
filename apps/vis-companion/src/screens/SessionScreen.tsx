@@ -52,6 +52,7 @@ import {
 } from '../lib/artifacts';
 import type { SessionArtifact } from '../lib/artifacts';
 import { ArtifactLinkContext } from '../lib/artifact-links';
+import { disclosureAnchor, isDisclosureMoving } from '../lib/clamp-motion';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
 import { Banner, ComposerButton, IconButton, LoadMore, Spinner } from '../components/ui';
 import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../components/icons';
@@ -4300,7 +4301,9 @@ export function SessionScreen({
     const disclosure = target.closest('summary, [data-disclosure-toggle]');
     if (!disclosure || !viewport.contains(disclosure)) return;
 
-    const anchorTop = disclosure.getBoundingClientRect().top;
+    // A body under its toggle opens downward; see `disclosureAnchor`.
+    const anchor = disclosureAnchor(viewport, disclosure);
+    const anchorTop = anchor.getBoundingClientRect().top;
     followingRef.current = false;
     if (disclosureScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(disclosureScrollFrameRef.current);
@@ -4308,22 +4311,27 @@ export function SessionScreen({
 
     const preserveAnchor = () => {
       const activeViewport = scrollRef.current;
-      if (!activeViewport || !disclosure.isConnected) return;
-      const shift = disclosure.getBoundingClientRect().top - anchorTop;
+      if (!activeViewport || !anchor.isConnected) return;
+      const shift = anchor.getBoundingClientRect().top - anchorTop;
       if (Math.abs(shift) > 0.5) activeViewport.scrollTop += shift;
     };
 
-    disclosureScrollFrameRef.current = window.requestAnimationFrame(() => {
-      preserveAnchor();
+    // Keep the anchor for two frames, and for every frame of a body still in motion.
+    const settle = (frames: number) => {
       disclosureScrollFrameRef.current = window.requestAnimationFrame(() => {
         disclosureScrollFrameRef.current = null;
         preserveAnchor();
+        if (frames > 1 || (disclosure.isConnected && isDisclosureMoving(disclosure))) {
+          settle(frames - 1);
+          return;
+        }
         const activeViewport = scrollRef.current;
         if (!activeViewport) return;
         followingRef.current = isAtBottom(activeViewport);
         syncJump();
       });
-    });
+    };
+    settle(2);
   }
 
   // Opening the keyboard re-pins only a reader who was measured at the end before the

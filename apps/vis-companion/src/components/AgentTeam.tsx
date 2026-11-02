@@ -3,6 +3,7 @@ import agentsSchema from '../../../../packages/vis-contract/resources/vis-contra
 import type { GatewayClient } from '../lib/gateway';
 import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
 import { councilMarkdown } from '../lib/council-markdown';
+import { useClampMotion } from '../lib/clamp-motion';
 import { Markdown } from './ChatContent';
 import { Button, DialogFrame, Modal, TextButton } from './ui';
 
@@ -352,28 +353,29 @@ const PART_NAME = 'mb-1 text-meta text-dialog-hint sm:text-ui';
 // The task of an agent as Markdown, like a Council request: its first four lines, and all of it
 // on request. The control under the task shows only when the four lines cut it.
 function AgentTask({ task }: { task: string }) {
-  const [isOpen, setOpen] = useState(false);
   const [isCut, setCut] = useState(false);
   const text = useRef<HTMLDivElement>(null);
+  const { isOpen, clampClass, toggle } = useClampMotion(text);
   useLayoutEffect(() => {
     const element = text.current;
-    if (element === null || isOpen) return undefined;
+    // Only a clamped body tells whether four lines cut the task.
+    if (element === null || !clampClass) return undefined;
     const measure = () => setCut(element.scrollHeight > element.clientHeight + 1);
     measure();
     if (typeof ResizeObserver === 'undefined') return undefined;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [task, isOpen]);
+  }, [task, clampClass]);
   return (
     <section aria-label="Task" className="max-w-[100ch]">
       <h3 className={PART_NAME}>Task</h3>
-      <div ref={text} className={`[overflow-wrap:anywhere] ${isOpen ? '' : 'line-clamp-4'}`}>
+      <div ref={text} className={`[overflow-wrap:anywhere] ${clampClass}`}>
         <Markdown compact hardBreaks>{councilMarkdown(task)}</Markdown>
       </div>
       {(isCut || isOpen) && (
         <p className="mt-1 text-dialog-hint">
-          <TextButton isTally aria-expanded={isOpen} onClick={() => setOpen((open) => !open)}>
+          <TextButton isTally aria-expanded={isOpen} onClick={toggle}>
             {isOpen ? 'Show less' : 'Show the whole task'}
           </TextButton>
         </p>

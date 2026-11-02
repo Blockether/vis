@@ -19,6 +19,7 @@ import {
 } from 'react';
 import Prism from '../lib/prism-core';
 import { ArtifactLinkContext } from '../lib/artifact-links';
+import { useClampMotion } from '../lib/clamp-motion';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunDialog, LiveRunRow, liveRunName } from './LiveArtifact';
@@ -4949,7 +4950,7 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
 function CouncilRequestBody({ children }: { children: string }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodyId = useId();
-  const [expanded, setExpanded] = useState(false);
+  const { isOpen: expanded, clampClass, toggle } = useClampMotion(bodyRef);
   const [collapsible, setCollapsible] = useState(false);
 
   useLayoutEffect(() => {
@@ -4967,7 +4968,7 @@ function CouncilRequestBody({ children }: { children: string }) {
 
   return (
     <>
-      <div id={bodyId} ref={bodyRef} className={`whitespace-normal ${expanded ? '' : 'line-clamp-4'}`}>
+      <div id={bodyId} ref={bodyRef} className={`whitespace-normal ${clampClass}`}>
         {children && <Markdown hardBreaks>{councilMarkdown(children)}</Markdown>}
       </div>
       {collapsible && (
@@ -4976,7 +4977,7 @@ function CouncilRequestBody({ children }: { children: string }) {
           aria-controls={bodyId}
           density="comfortable"
           className="mt-1 whitespace-normal"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={toggle}
         >
           {expanded ? 'Show less' : 'Show full message'}
         </Disclosure>
