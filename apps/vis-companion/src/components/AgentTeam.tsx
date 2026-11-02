@@ -531,8 +531,8 @@ export function clockTime(at: number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-// The time of the current timeline row: the accent face, its padding outside the time column.
-const CURRENT_TIME = '-mx-1 justify-self-start bg-accent px-1 text-accent-foreground';
+// The time of the current timeline row, in the accent ink.
+const CURRENT_TIME = 'text-accent';
 
 // The name of a part of the sheet. It is one step smaller than the text that it names.
 const PART_NAME = 'mb-1 text-meta text-dialog-hint sm:text-ui';
@@ -681,7 +681,7 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
               <ol aria-label="Timeline" className="space-y-2">
                 {rows.map(({ at, word, text, isCurrent }, index) => (
                   <li key={index} aria-current={isCurrent ? 'step' : undefined} className="grid grid-cols-[8ch_minmax(0,1fr)] gap-x-3">
-                    {/* The current row wears the accent face: its time, or NOW for an Activity line without one. */}
+                    {/* The current row shows its time in the accent ink, or NOW for an Activity line without one. */}
                     {at === undefined ? (
                       <span className={`uppercase ${CURRENT_TIME}`}>now</span>
                     ) : (
