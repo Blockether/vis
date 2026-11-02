@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Sandbox: a killed process no longer leaves a partial Python session snapshot. Vis replaces the snapshot and its spill files in one atomic step, as owner-only (600) files.
 - Sandbox: when the saved values of a Python session are larger than the snapshot budget, the newest values are kept first. Before, names early in alphabetical order took the budget, so a restart could lose the newest values. The Python runtime is pinned at `dd35c87`.
 - Tests: the test suite writes its sandbox snapshots under `target/`, not into `~/.vis/sandbox`.
+- Doctor: `vis-agent doctor --purge` reads the session database. Before, it passed only the database settings, so every row read was empty, and live drafts looked like orphans.
+- Doctor: `vis-agent doctor` and `--purge` report sandbox snapshots of sessions that have no row and the temp files of killed writes. Each item must be untouched for the cutoff (14 days). Vis never deletes these files on its own.
 
 ## [v0.4.13] - 2026-11-02
 

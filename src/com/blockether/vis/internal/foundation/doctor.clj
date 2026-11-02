@@ -81,7 +81,7 @@
              :data {:provider provider-id :env-vars env-vars}})
           gaps)))
 
-;; ::housekeeping - stale drafts and gateway journals
+;; ::housekeeping - stale drafts, gateway journals and sandbox snapshots
 
 (defn- housekeeping-diagnostics
   "Vis owns two directories that only ever grow: `~/.vis/drafts` (a full
@@ -93,7 +93,7 @@
    Reported as :info, never :warn: stale state is untidy, not broken, and
    `vis-agent doctor` must not start exiting 1 on a machine that is working fine."
   [environment]
-  (let [{:keys [days bytes drafts journals] :as report}
+  (let [{:keys [days bytes drafts journals sandbox] :as report}
         (try (housekeeping/scan {:db-info (:db-info environment)
                                  :days (:housekeeping-days environment)})
              (catch Throwable _ nil))
@@ -109,9 +109,11 @@
                       days
                       " days: "
                       (count (:reclaimable drafts))
-                      " draft workspace(s) and "
+                      " draft workspace(s), "
                       (count (:reclaimable journals))
-                      " session journal(s), "
+                      " session journal(s) and "
+                      (count (:reclaimable sandbox))
+                      " sandbox snapshot(s), "
                       (fmt/format-bytes (or bytes 0) " ")
                       " reclaimable.")
         :remediation
@@ -120,7 +122,8 @@
                :count n
                :bytes bytes
                :drafts-root (:root drafts)
-               :journals-root (:root journals)}}])))
+               :journals-root (:root journals)
+               :sandbox-root (:root sandbox)}}])))
 
 ;; The single fn the foundation extension wires into
 ;; `:ext/doctor-fn`. Order is intentional and scoped to foundation-owned

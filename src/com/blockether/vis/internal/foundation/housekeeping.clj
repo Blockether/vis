@@ -8,7 +8,8 @@
    work, so nothing here deletes it on its own: `scan` is pure observation (no
    mutation, never throws) and `purge!` is the explicit operator action behind
    `vis-agent doctor --purge`. `scan` reports the gateway journals the same way,
-   because an operator asking what is reclaimable today should see them.
+   because an operator asking what is reclaimable today should see them. It also
+   reports sandbox snapshots of sessions with no row, and temp files of killed writes.
 
    SELF-DELETING (`sweep-stale!`, once per process at startup): diagnostic logs,
    the gateway journals, the display caches and old downloaded
@@ -69,6 +70,14 @@
                  journals are addressed by absolute path from several processes, so that
                  location is a fixed contract rather than a user-facing configurable."}
   *events-home*
+  nil)
+
+(def
+  ^:dynamic
+  ^{:doc
+    "Test seam for the sandbox snapshot directory. `nil` (production) resolves to
+                 `paths/sandbox-defs-dir`."}
+  *sandbox-home*
   nil)
 
 (defn- events-dir
@@ -865,6 +874,83 @@
      :reclaimable (vec (sort-by (comp - long #(or (:bytes %) 0)) stale))
      :bytes (reduce + 0 (map #(long (or (:bytes %) 0)) stale))}))
 
+;; Sandbox snapshots
+
+(defn- sandbox-dir ^File [] (io/file (or *sandbox-home* (paths/sandbox-defs-dir))))
+
+(defn- temp-leftover?
+  "True for the `.<name>.tmp-<uuid>` file of a write that a killed process left."
+  [^String file-name]
+  (and (.startsWith file-name ".") (.contains file-name ".tmp-")))
+
+(defn- snapshot-owner
+  "The session id in a snapshot entry name: `<id>.py` or the `<id>.spill` directory."
+  [^File f]
+  (let [file-name (.getName f)]
+    (cond (temp-leftover? file-name) nil
+          (and (.isFile f) (.endsWith file-name ".py")) (subs file-name 0 (- (count file-name) 3))
+          (and (.isDirectory f) (.endsWith file-name ".spill"))
+          (subs file-name 0 (- (count file-name) 6))
+          :else nil)))
+
+(defn- session-row?
+  "True when `db-info` holds a row for session `id`, or when that is unknown. A name
+   that is not a UUID cannot be a session id: tests write such names."
+  [db-info ^String id]
+  (if-let [uuid (parse-uuid id)]
+    (try (some? (p/db-get-session db-info uuid)) (catch Throwable _ true))
+    false))
+
+(defn- scan-sandbox
+  "Report snapshot files of sessions with no row, and temp files of killed writes.
+   Both must be untouched since the cutoff. Without `db-info` no snapshot is
+   reported, because no row cannot be proved. A gateway can use another DB, so
+   this is a report for `doctor --purge`, never a startup sweep."
+  [db-info ^long cutoff-ms ^long now-ms]
+  (let [dir
+        (sandbox-dir)
+
+        entries
+        (when (.isDirectory dir) (vec (or (.listFiles dir) (make-array File 0))))
+
+        item
+        (fn [kind label files]
+          (let [stats
+                (map tree-stats files)
+
+                newest
+                (long (reduce max 0 (map :newest-ms stats)))]
+
+            (when (< newest cutoff-ms)
+              {:kind kind
+               :root (canonical (first files))
+               :label label
+               :paths (mapv canonical files)
+               :last-activity-ms newest
+               :age-days (ms->days (- now-ms newest))
+               :bytes (reduce + 0 (map :bytes stats))})))
+
+        temps
+        (keep (fn [^File f]
+                (when (and (.isFile f) (temp-leftover? (.getName f)))
+                  (item :sandbox-temp (.getName f) [f]))))
+
+        snapshots
+        (when db-info
+          (keep (fn [[id files]]
+                  (when-let [found (item :sandbox id files)]
+                    (when-not (session-row? db-info id) found)))))
+
+        reclaimable
+        (cond-> (into [] temps entries)
+          snapshots
+          (into snapshots (group-by snapshot-owner (sort (filter snapshot-owner entries)))))]
+
+    {:root (canonical dir)
+     :file-count (count entries)
+     :reclaimable (vec (sort-by (comp - long #(or (:bytes %) 0)) reclaimable))
+     :bytes (reduce + 0 (map #(long (or (:bytes %) 0)) reclaimable))}))
+
 ;; Public surface
 
 (defn scan
@@ -888,17 +974,24 @@
         (try (scan-drafts db-info cutoff now) (catch Throwable _ nil))
 
         journals
-        (try (scan-journals cutoff now) (catch Throwable _ nil))]
+        (try (scan-journals cutoff now) (catch Throwable _ nil))
+
+        sandbox
+        (try (scan-sandbox db-info cutoff now) (catch Throwable _ nil))
+
+        parts
+        [drafts journals sandbox]]
 
     {:days days
      :cutoff-ms cutoff
      :drafts drafts
      :journals journals
-     :bytes (+ (long (or (:bytes drafts) 0)) (long (or (:bytes journals) 0)))
-     :count (+ (count (:reclaimable drafts)) (count (:reclaimable journals)))}))
+     :sandbox sandbox
+     :bytes (reduce + 0 (map #(long (or (:bytes %) 0)) parts))
+     :count (reduce + 0 (map #(count (:reclaimable %)) parts))}))
 
 (defn- purge-one!
-  [db-info drafts-root events-root {:keys [kind root workspace-id] :as item}]
+  [db-info drafts-root events-root sandbox-root {:keys [kind root workspace-id paths] :as item}]
   (let [ok (case kind
              ;; Retry discarded rows through the same backend as live drafts;
              ;; raw deletion bypasses backend bookkeeping and cleanup refusals.
@@ -918,6 +1011,13 @@
                            (try (Files/deleteIfExists (.toPath (io/file root)))
                                 (catch Throwable _ false))))
 
+             ;; A snapshot file, its spill directory or a temp file, each confined
+             ;; to the sandbox directory.
+             (:sandbox :sandbox-temp)
+             (boolean (and (seq paths)
+                           (every? #(under? sandbox-root %) paths)
+                           (every? #(pos? (delete-tree! (io/file %))) paths)))
+
              false)]
     (assoc item :is-purged ok)))
 
@@ -928,18 +1028,19 @@
    With `:is-dry-run` true nothing is touched: `:purged` still carries the plan
    with every item stamped `:is-purged false`, so operators can look first."
   [{:keys [db-info is-dry-run] :as opts}]
-  (let [{:keys [drafts journals] :as report}
+  (let [{:keys [drafts journals sandbox] :as report}
         (scan opts)
 
         items
-        (into (vec (:reclaimable drafts)) (:reclaimable journals))]
+        (into (vec (:reclaimable drafts)) cat [(:reclaimable journals) (:reclaimable sandbox)])]
 
     (if is-dry-run
       (assoc report
         :purged (mapv #(assoc % :is-purged false) items)
         :reclaimed-bytes 0
         :is-dry-run true)
-      (let [done (mapv #(purge-one! db-info (:root drafts) (:root journals) %) items)]
+      (let [done (mapv #(purge-one! db-info (:root drafts) (:root journals) (:root sandbox) %)
+                       items)]
         (assoc report
           :purged done
           :is-dry-run false

@@ -12,9 +12,10 @@
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.test-temp :as test-temp]
-            [lazytest.core :refer [defdescribe expect it]])
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
   (:import [java.io File]
            [java.nio.file Files LinkOption]
            [java.nio.file.attribute FileAttribute]))
@@ -22,6 +23,13 @@
 ;; Fixtures
 
 (defn- tmp-dir ^File [prefix] (test-temp/temp-dir prefix))
+
+;; `scan` and `purge!` also read the sandbox directory. Each test gets its own,
+;; so no test reads or deletes the real `~/.vis/sandbox`.
+(set-ns-context! [(around-each [f]
+                               (binding [housekeeping/*sandbox-home* (.getPath (tmp-dir
+                                                                                 "vis-hk-sbx"))]
+                                 (f)))])
 
 (def ^:private day-ms 86400000)
 
@@ -159,6 +167,133 @@
                        (expect (= 2 (:file-count journals)))
                        (expect (= ["old.ndjson"] (mapv :label (:reclaimable journals))))
                        (expect (= 1 (:count report))))))))
+
+;; scan and purge! — sandbox snapshots
+;; The sandbox directory kept 11,388 snapshot files (254 MiB) of sessions with no
+;; row, written by test runs, and nothing could report or remove them.
+
+(defn- sandbox-fixture!
+  "A sandbox directory with snapshots of the sessions `gone` (no row, old), `kept`
+   (row, old) and `young` (no row, new), and an old and a new temp file."
+  [^File dir gone kept young]
+  (touch! dir (str gone ".py") 30 "x = 1\n")
+  (touch! dir (str gone ".spill" File/separator "index.json") 30 "{}")
+  (touch! dir (str kept ".py") 30 "x = 2\n")
+  (touch! dir (str young ".py") 1 "x = 3\n")
+  (touch! dir (str "." gone ".py.tmp-" (random-uuid)) 30 "partial")
+  (touch! dir (str "." young ".py.tmp-" (random-uuid)) 0 "in flight"))
+
+(defn- sandbox-items [report] (sort (map (juxt :kind :label) (:reclaimable (:sandbox report)))))
+
+(defdescribe
+  scan-sandbox-test
+  (it "reports old snapshots with no session row and old temp files, and keeps the rest"
+      (let [dir
+            (tmp-dir "vis-hk-sandbox")
+
+            [gone kept young]
+            (repeatedly 3 #(str (random-uuid)))]
+
+        (sandbox-fixture! dir gone kept young)
+        (binding [workspace/*drafts-home*
+                  (.getPath (tmp-dir "vis-hk-d"))
+
+                  housekeeping/*events-home*
+                  (.getPath (tmp-dir "vis-hk-ev"))
+
+                  housekeeping/*sandbox-home*
+                  (.getPath dir)]
+
+          (with-redefs [p/db-get-session (fn [_ id]
+                                           (when (= kept (str id)) {:id id}))]
+            (let [report (housekeeping/scan {:db-info :fixture :days 14})
+                  gone-item (first (filter #(= gone (:label %)) (:reclaimable (:sandbox report))))]
+
+              (expect (= 2 (:count report)))
+              (expect (= [[:sandbox gone] [:sandbox-temp (str "." gone)]]
+                         (mapv (fn [[k l]]
+                                 [k (if (= k :sandbox-temp) (subs l 0 37) l)])
+                               (sandbox-items report))))
+              ;; The snapshot and its spill directory go together.
+              (expect (= 2 (count (:paths gone-item)))))))))
+  (it "reports no snapshot without a database, and keeps one whose row lookup fails"
+      (let [dir
+            (tmp-dir "vis-hk-sandbox-nodb")
+
+            [gone kept young]
+            (repeatedly 3 #(str (random-uuid)))]
+
+        (sandbox-fixture! dir gone kept young)
+        (binding [workspace/*drafts-home*
+                  (.getPath (tmp-dir "vis-hk-d"))
+
+                  housekeeping/*events-home*
+                  (.getPath (tmp-dir "vis-hk-ev"))
+
+                  housekeeping/*sandbox-home*
+                  (.getPath dir)]
+
+          (expect (= [:sandbox-temp] (mapv first (sandbox-items (housekeeping/scan {:days 14})))))
+          (with-redefs [p/db-get-session (fn [_ _]
+                                           (throw (ex-info "db closed" {})))]
+            (expect (= [:sandbox-temp]
+                       (mapv first
+                             (sandbox-items (housekeeping/scan {:db-info :fixture :days 14})))))))))
+  (it "keeps the snapshot of a session that has a row in a real store"
+      ;; `vis-agent doctor` passed a bare spec, so every row read answered nil and
+      ;; the snapshots of live sessions were reported as orphans.
+      (let [dir
+            (tmp-dir "vis-hk-sandbox-store")
+
+            db
+            (p/db-create-connection! :memory)]
+
+        (try (let [live
+                   (str (h/store-session! db {:channel :api}))
+
+                   gone
+                   (str (random-uuid))]
+
+               (touch! dir (str live ".py") 30 "x = 1\n")
+               (touch! dir (str gone ".py") 30 "x = 2\n")
+               (binding [workspace/*drafts-home*
+                         (.getPath (tmp-dir "vis-hk-d"))
+
+                         housekeeping/*events-home*
+                         (.getPath (tmp-dir "vis-hk-ev"))
+
+                         housekeeping/*sandbox-home*
+                         (.getPath dir)]
+
+                 (expect (= [[:sandbox gone]]
+                            (sandbox-items (housekeeping/scan {:db-info db :days 14}))))))
+             (finally (p/db-dispose-connection! db)))))
+  (it "purges the reported files only, and a second pass finds nothing"
+      (let [dir
+            (tmp-dir "vis-hk-sandbox-purge")
+
+            [gone kept young]
+            (repeatedly 3 #(str (random-uuid)))]
+
+        (sandbox-fixture! dir gone kept young)
+        (binding [workspace/*drafts-home*
+                  (.getPath (tmp-dir "vis-hk-d"))
+
+                  housekeeping/*events-home*
+                  (.getPath (tmp-dir "vis-hk-ev"))
+
+                  housekeeping/*sandbox-home*
+                  (.getPath dir)]
+
+          (with-redefs [p/db-get-session (fn [_ id]
+                                           (when (= kept (str id)) {:id id}))]
+            (let [report (housekeeping/purge! {:db-info :fixture :days 14})]
+              (expect (every? :is-purged (:purged report)))
+              (expect (= #{(str kept ".py") (str young ".py")}
+                         (set (keep #(let [n (.getName ^File %)] (when-not (.startsWith n ".") n))
+                                    (.listFiles dir)))))
+              (expect (= 1 (count (filter #(.startsWith (.getName ^File %) ".") (.listFiles dir)))))
+              (expect (zero? (:count (housekeeping/purge! {:db-info :fixture :days 14}))))))))))
 
 ;; purge!
 

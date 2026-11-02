@@ -2158,6 +2158,12 @@
          :journal
          "journal "
 
+         :sandbox
+         "sandbox "
+
+         :sandbox-temp
+         "temp    "
+
          "?       ")
        (format "%-28s" (str (or label "?")))
        (format "%9s" (fmt/format-bytes (or bytes 0) " "))
@@ -2174,8 +2180,14 @@
    cutoff for both."
   [parsed _residual]
   (config/init-cli!)
-  (let [db-info
+  (let [db-spec
         (config/resolve-db-spec)
+
+        ;; Housekeeping reads draft and session rows. A bare spec has no
+        ;; connection, so every row read answered nil, and live drafts and
+        ;; sandbox snapshots looked like orphans.
+        db-info
+        (try (persistance/db-shared-connection! db-spec) (catch Throwable _ nil))
 
         days
         (get parsed "days")
@@ -2186,29 +2198,34 @@
         is-dry-run
         (boolean (get parsed "dry-run"))]
 
-    (if-not is-purge
-      (let [msgs (doctor/run-checks (cond-> {:db-info db-info}
-                                      days
-                                      (assoc :housekeeping-days days)))]
-        (commandline/stdout! (doctor/format-output msgs))
-        (System/exit (int (doctor/exit-code msgs))))
-      (let [{:keys [purged count bytes reclaimed-bytes] :as report}
-            (housekeeping/purge! {:db-info db-info :days days :is-dry-run is-dry-run})]
-        (commandline/stdout! (if (zero? (long (or count 0)))
-                               (str "Nothing untouched for over "
-                                    (:days report)
-                                    " days — drafts and session journals are already tidy.")
-                               (str (if is-dry-run "Would reclaim " "Reclaimed ")
-                                    count
-                                    (if (= 1 (long count)) " item, " " items, ")
-                                    (fmt/format-bytes (or (if is-dry-run bytes reclaimed-bytes) 0)
-                                                      " ")
-                                    " (untouched for over "
-                                    (:days report)
-                                    " days):\n"
-                                    (str/join "\n" (map housekeeping-line purged))
-                                    (when is-dry-run "\n\nRe-run without --dry-run to reclaim."))))
-        (System/exit 0)))))
+    (cond (not is-purge) (let [msgs (doctor/run-checks (cond-> {:db-info (or db-info db-spec)}
+                                                         days
+                                                         (assoc :housekeeping-days days)))]
+                           (commandline/stdout! (doctor/format-output msgs))
+                           (System/exit (int (doctor/exit-code msgs))))
+          ;; Without rows every draft and snapshot would look orphaned.
+          (nil? db-info) (do (commandline/stderr! (str "vis-agent: cannot open the database "
+                                                       (pr-str (:path db-spec))
+                                                       "; nothing was purged."))
+                             (System/exit 1))
+          :else (let [{:keys [purged count bytes reclaimed-bytes] :as report}
+                      (housekeeping/purge! {:db-info db-info :days days :is-dry-run is-dry-run})]
+                  (commandline/stdout!
+                    (if (zero? (long (or count 0)))
+                      (str
+                        "Nothing untouched for over "
+                        (:days report)
+                        " days — drafts, session journals and sandbox snapshots are already tidy.")
+                      (str (if is-dry-run "Would reclaim " "Reclaimed ")
+                           count
+                           (if (= 1 (long count)) " item, " " items, ")
+                           (fmt/format-bytes (or (if is-dry-run bytes reclaimed-bytes) 0) " ")
+                           " (untouched for over "
+                           (:days report)
+                           " days):\n"
+                           (str/join "\n" (map housekeeping-line purged))
+                           (when is-dry-run "\n\nRe-run without --dry-run to reclaim."))))
+                  (System/exit 0)))))
 
 ;;; ── `vis-agent extension` ───────────────────────────────────────────────────────────
 
