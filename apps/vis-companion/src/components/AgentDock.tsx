@@ -44,7 +44,7 @@ export function AgentDock({ agents, sid, runningTurnId, ...team }: Omit<TeamProp
           type="button"
           aria-expanded={open}
           aria-controls={body}
-          aria-labelledby={`${line}-team ${line}-facts`}
+          aria-labelledby={`${line}-team ${line}-time ${line}-counts`}
           onClick={() => setOpen((value) => !value)}
           className="absolute inset-0 rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
         />

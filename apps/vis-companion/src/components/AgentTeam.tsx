@@ -157,9 +157,9 @@ export function teamTime(agents: readonly Subagent[], now: number): number | und
   return ends.length ? Math.max(0, Math.max(...ends) - start) : undefined;
 }
 
-function Counts({ counts, className = '' }: { counts: readonly TeamCount[]; className?: string }) {
+function Counts({ counts, id }: { counts: readonly TeamCount[]; id?: string }) {
   return (
-    <span className={`flex flex-wrap gap-x-3 ${className}`}>
+    <span id={id} className="flex flex-wrap gap-x-3">
       {counts.map(({ text, count, ink }) => (
         <span key={text} className={`whitespace-nowrap uppercase tabular-nums ${ink}`}>{`${count} ${text}`}</span>
       ))}
@@ -169,19 +169,23 @@ function Counts({ counts, className = '' }: { counts: readonly TeamCount[]; clas
 
 /**
  * A team on one line: its time, then its counts by status: `TEAM  3m 20s  1 RUNNING  2 DONE`.
- * `action` stands right after the team word. `labelId` names the word `${labelId}-team` and the
- * facts after the action `${labelId}-facts`, so a control can take the line as its name.
+ * `action` stands right before the counts. `labelId` names the word, the time and the counts
+ * `${labelId}-team`, `${labelId}-time` and `${labelId}-counts`, so a control can take them as its name.
  */
 export function TeamLine({ agents, action, labelId }: { agents: readonly Subagent[]; action?: ReactNode; labelId?: string }) {
   const now = useNow(agents.some(isLive));
   const time = teamTime(agents, now);
   return (
-    <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-4" data-team-line>
+    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4" data-team-line>
       <span id={labelId && `${labelId}-team`} className="font-bold uppercase text-white">team</span>
-      {action}
-      <span id={labelId && `${labelId}-facts`} className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-4">
-        {time !== undefined && <span className="whitespace-nowrap text-dialog-hint tabular-nums" data-team-time>{formatAgentTime(time)}</span>}
-        <Counts counts={teamCounts(agents)} className="sm:ml-auto" />
+      {time !== undefined && (
+        <span id={labelId && `${labelId}-time`} className="whitespace-nowrap text-dialog-hint tabular-nums" data-team-time>
+          {formatAgentTime(time)}
+        </span>
+      )}
+      <span className="flex flex-wrap items-center gap-x-4 sm:ml-auto">
+        {action}
+        <Counts counts={teamCounts(agents)} id={labelId && `${labelId}-counts`} />
       </span>
     </span>
   );
@@ -195,7 +199,8 @@ export function hasTimeline(agents: readonly Subagent[]): boolean {
 /** The primary control that swaps the notes of a team for its timeline, and back. */
 export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
   return (
-    <Button density="inline" aria-pressed={isOn} onClick={onToggle} className="pointer-events-auto">
+    // The negative margin keeps the 20px control inside the 16px text line, so the line keeps its height.
+    <Button density="inline" aria-pressed={isOn} onClick={onToggle} className="pointer-events-auto -my-0.5">
       {isOn ? 'Close timeline' : 'Open timeline'}
     </Button>
   );
