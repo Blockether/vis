@@ -828,11 +828,16 @@
                  state
                  (catch Throwable t (stop-state! state) (throw t))))))
 
+(defonce ^:private spare-dirs
+  ;; Package directories that keep a spare: those of the loaded extensions. Only
+  ;; `keep-spares!` and `retain-spares!` write it, under the `spares` lock.
+  (atom #{}))
+
 (defn- refill-spare!
-  "Keep one spare for `packages` while spares are on."
+  "Keep one spare for `packages` while spares are on and a loaded extension uses `packages`."
   [packages]
   (locking spares
-    (when (and @spare-warmup (not (contains? @spares packages)))
+    (when (and @spare-warmup (contains? @spare-dirs packages) (not (contains? @spares packages)))
       (swap! spares assoc packages (start-spare! packages)))))
 
 (defn- take-spare!
@@ -853,24 +858,47 @@
       (let [state (when spare (try @spare (catch Throwable _ nil)))]
         (if (alive? state) state (when state (stop-state! state)))))))
 
+(defn- stop-spares!
+  "Stop the spare futures `stopped` in the background, also one still starting."
+  [stopped]
+  (doseq [spare stopped]
+    (future (when-let [state (try @spare (catch Throwable _ nil))]
+              (stop-state! state)))))
+
+(defn retain-spares!
+  "Keep spares only for `packages`, the package directories of the loaded extensions
+   (nil names the shared packages), while spares are on. Stop each other spare: an
+   updated extension must not leave a warm worker for its old directory."
+  [packages]
+  (let [dirs
+        (into #{} (map #(:packages (extension-worker-key nil %))) packages)
+
+        stopped
+        (locking spares
+          (when @spare-warmup
+            (reset! spare-dirs dirs)
+            (let [[old _] (swap-vals! spares select-keys dirs)]
+              (vals (apply dissoc old dirs)))))]
+
+    (stop-spares! stopped)
+    (doseq [dir dirs]
+      (refill-spare! dir))
+    nil))
+
 (defn keep-spares!
-  "Keep one warm trusted worker ready for each package directory that a context used,
-   and start spares for `packages` now (nil names the shared packages). `warmup` is
-   Python that runs in a spare before its first context; nil stops every spare.
-   A gateway calls this at start; tests and one-shot commands keep none."
+  "Keep one warm trusted worker ready for each package directory in `packages` (nil
+   names the shared packages). `warmup` is Python that runs in a spare before its first
+   context; nil stops every spare. A gateway calls this at start and
+   [[retain-spares!]] after each extension load; tests and one-shot commands keep none."
   [warmup packages]
   (let [stopped (locking spares
                   (reset! spare-warmup warmup)
-                  (if warmup
-                    []
+                  (when-not warmup
+                    (reset! spare-dirs #{})
                     (let [[old _] (reset-vals! spares {})]
                       (vals old))))]
-    (doseq [spare stopped]
-      (future (when-let [state (try @spare (catch Throwable _ nil))]
-                (stop-state! state))))
-    (when warmup
-      (doseq [dir (distinct packages)]
-        (refill-spare! (:packages (extension-worker-key nil dir)))))
+    (stop-spares! stopped)
+    (when warmup (retain-spares! packages))
     nil))
 
 (defn worker-live?

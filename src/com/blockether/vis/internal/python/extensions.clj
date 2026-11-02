@@ -590,6 +590,13 @@
   (str "vis_ext_" (.incrementAndGet ^AtomicLong context-seq)
        "_" (str/replace (str label) #"[^A-Za-z0-9_]" "_")))
 
+(defn- stop-unused-worker!
+  "Stop trusted worker `worker` when no extension namespace uses it. The shared
+   registration worker stays."
+  [worker]
+  (when (and (not= worker pyext/shared-key) (not-any? #{worker} (vals @context-workers)))
+    (pyext/stop-worker! worker)))
+
 (defn- open-context!
   "The body both `build-context` arities share.
 
@@ -604,7 +611,11 @@
          (pyext/install-runtime! worker sess)
          (swap! live-contexts conj sess)
          sess
-         (catch Throwable t (swap! context-workers dissoc sess) (throw t)))))
+         (catch Throwable t
+           (swap! context-workers dissoc sess)
+           ;; A namespace that failed to open must not leave its started worker running.
+           (stop-unused-worker! worker)
+           (throw t)))))
 
 (defn ^:no-doc build-context
   "Open one trusted extension namespace and answer its unique name.
@@ -1369,8 +1380,7 @@
              (try (python-host/forget-session! ctx) (catch Throwable _ nil))
              (when (and close-in-worker? opened? (pyext/worker-live? worker))
                (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))
-             (when (and (not= worker pyext/shared-key) (not-any? #{worker} (vals @context-workers)))
-               (pyext/stop-worker! worker))
+             (stop-unused-worker! worker)
              (when (and snapshot
                         (not (contains? @loading-snapshots snapshot))
                         (not-any? #(= snapshot (:snapshot %)) (vals @loaded))
@@ -4363,8 +4373,12 @@
              ;; A worker that no context uses after a failed load must not stay alive.
              (doseq [[k started] @prestarts]
                (deref started)
-               (when (and (not= k pyext/shared-key) (not-any? #{k} (vals @context-workers)))
-                 (pyext/stop-worker! k)))
+               (stop-unused-worker! k))
+             ;; A reload can move an extension to new packages: keep spares only for the loaded ones.
+             (try (pyext/retain-spares! (map :packages (vals @loaded)))
+                  (catch Throwable t
+                    (tel/log!
+                      {:level :warn :id ::retain-spares-failed :data {:error (ex-message t)}})))
              ;; A failed entry must not delete code still queued in this scan.
              ;; Release the scan's roots even if publication or retirement fails.
              (locking session-contexts

@@ -1927,6 +1927,38 @@ print(worker_value)"))))
                    (expect (not (identical? spare @(get @spares (:packages key))))))
                  (finally (worker/keep-spares! nil nil) (worker/stop-worker! key))))))))
 
+(defdescribe retain-spares-test
+             ;; Report 2026-11-02: after vis-spel moved from 0.1.21 to 0.1.25, the gateway kept a
+             ;; warm worker for the 0.1.21 packages until its restart.
+             (it "stops the spare of a package directory that the loaded extensions left"
+                 (let [tmp
+                       (java.nio.file.Files/createTempDirectory
+                         "retain-spares"
+                         (make-array java.nio.file.attribute.FileAttribute 0))
+
+                       old-dir
+                       (.getCanonicalPath (doto (io/file (str tmp) "old") .mkdirs))
+
+                       new-dir
+                       (.getCanonicalPath (doto (io/file (str tmp) "new") .mkdirs))
+
+                       spares
+                       @#'worker/spares
+
+                       key
+                       (worker/extension-worker-key (str (java.util.UUID/randomUUID)) old-dir)]
+
+                   (worker/keep-spares! nil nil)
+                   (try (worker/keep-spares! "pass\n" [old-dir])
+                        (let [^Process old-spare (:process @(get @spares old-dir))]
+                          (worker/retain-spares! [new-dir])
+                          (expect (= #{new-dir} (set (keys @spares))))
+                          (expect (.waitFor old-spare 10 java.util.concurrent.TimeUnit/SECONDS))
+                          ;; A late request for the old directory starts no new spare for it.
+                          (worker/start-worker! key)
+                          (expect (= #{new-dir} (set (keys @spares)))))
+                        (finally (worker/keep-spares! nil nil) (worker/stop-worker! key))))))
+
 (defdescribe
   prestart-worker-test
   ;; Regression, v0.4.8 release run 41321545703: the native gateway loaded extensions

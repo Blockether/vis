@@ -1430,11 +1430,13 @@
               (.getCanonicalPath ^java.io.File (temp-dir))
 
               ws
-              (ps/db-workspace-insert! store {:repo-id "slashapp" :repo-root root :root root :fork-ms 0})
+              (ps/db-workspace-insert! store
+                                       {:repo-id "slashapp" :repo-root root :root root :fork-ms 0})
 
               sid
-              (ps/db-store-session! store
-                                    {:channel :tui :workspace-id (:id ws) :title "slashapp" :system-prompt ""})
+              (ps/db-store-session!
+                store
+                {:channel :tui :workspace-id (:id ws) :title "slashapp" :system-prompt ""})
 
               ctx
               (:python-context (ep/create-python-context {} nil {:worker? true} nil))
@@ -1452,15 +1454,16 @@
 
           (try (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
                                 (constantly (io/file root "views"))}
-                 #(let [result
-                        (turn/run-turn! env "/open-game" {})
-
-                        [iteration]
+                 #(let [result (turn/run-turn! env "/open-game" {}) [iteration]
                         (ps/db-list-session-turn-iterations store (:session-turn-id result))]
-
-                    (expect (= :ok (get-in result [:slash :result :slash/status])) (pr-str (:slash result)))
-                    (expect (= ["application/vnd.vis.app+json"]
-                               (mapv :media-type (ps/db-list-iteration-attachments-meta store (:id iteration)))))))
+                    (expect (= :ok (get-in result [:slash :result :slash/status]))
+                            (pr-str (:slash result))) (expect
+                                                        (= ["application/vnd.vis.app+json"]
+                                                           (mapv
+                                                             :media-type
+                                                             (ps/db-list-iteration-attachments-meta
+                                                               store
+                                                               (:id iteration)))))))
                (finally (ep/dispose-python-context! ctx)))))))
   (it "lets an extension thread drive its views but not open one"
       ;; A worker thread of an extension repaints its board between callbacks.
@@ -10133,6 +10136,21 @@ vis.register_extension(vis.Extension(
                            @seen))]
         (expect (= #{"/pkgs/a"} (spares-for {"a" {:packages "/pkgs/a"}})))
         (expect (= #{nil "/pkgs/a"} (spares-for {"a" {:packages "/pkgs/a"} "b" {}}))))))
+
+(defdescribe failed-context-open-test
+             ;; Report 2026-11-02: a trusted namespace that failed to open left its started worker
+             ;; running until the gateway stopped.
+             (it "stops the worker of a namespace that failed to open"
+                 (let [key (worker/extension-worker-key (str (java.util.UUID/randomUUID)))]
+                   (worker/keep-spares! nil nil)
+                   (try (with-redefs [worker/install-runtime! (fn [& _]
+                                                                (throw (ex-info "install failed"
+                                                                                {})))]
+                          (expect (= "install failed"
+                                     (try (pyx/build-context key "failed-open")
+                                          (catch Exception e (ex-message e))))))
+                        (expect (not (worker/worker-live? key)))
+                        (finally (worker/stop-worker! key))))))
 
 (defdescribe slim-env-session-root-test
              ;; Defect: a ctx callback that took `workspace_root` as the session root scanned the
