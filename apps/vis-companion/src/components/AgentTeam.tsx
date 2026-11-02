@@ -365,7 +365,7 @@ function AgentTable({ rows, now, error, onSelect }: {
               </button>
               {isWide && isOpen && (
                 <div className={`hidden pb-1.5 sm:grid ${grid}`}>
-                  <span className="col-[3/-1] pl-3 text-dialog-hint">
+                  <span className="col-[3/-1] border-l border-transparent pl-3 text-dialog-hint">
                     <TextButton onClick={() => onSelect(agent.session_id)}>Open timeline</TextButton>
                   </span>
                 </div>
