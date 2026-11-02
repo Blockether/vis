@@ -270,6 +270,8 @@ function StatusMark({ status }: { status: string }) {
 const PHONE_COLUMNS = 'grid-cols-[var(--role)_minmax(0,1fr)_auto]';
 const WIDE_COLUMNS = 'sm:grid-cols-[0.75rem_var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem]';
 const WIDE_COLUMNS_SOLO = 'sm:grid-cols-[0.75rem_var(--role)_minmax(0,1fr)_7ch_1rem]';
+// The OPEN of a wide row, which opens the sheet of its agent, and the room for it under the axis.
+const OPEN_WIDTH = 'w-[4ch] shrink-0';
 
 // The widths of the columns that fit the team, in `ch` of the monospace font. A heading is the
 // least width of its column; the bold title gets one more `ch`.
@@ -294,7 +296,8 @@ function AxisMarks({ total, isLabeled = false }: { total: number; isLabeled?: bo
   ));
 }
 
-// The table of one team. A wide screen shows the time of each agent as a bar on one axis.
+// The table of one team. A wide screen shows the time of each agent as a bar on one axis; a row
+// there unfolds its update, and its OPEN opens the sheet.
 function AgentTable({ rows, now, error, onSelect }: {
   rows: readonly Subagent[];
   now: number;
@@ -311,8 +314,11 @@ function AgentTable({ rows, now, error, onSelect }: {
   return (
     <div style={columnWidths(rows)}>
       {hasBars && (
-        <div aria-hidden className={`hidden pt-1 text-dialog-hint sm:grid ${grid}`}>
-          <span className="relative col-start-4 h-[1lh]"><AxisMarks total={total} isLabeled /></span>
+        <div aria-hidden className="hidden gap-x-3 px-2 pt-1 text-dialog-hint sm:flex">
+          <div className={grid}>
+            <span className="relative col-start-4 h-[1lh]"><AxisMarks total={total} isLabeled /></span>
+          </div>
+          <span className={OPEN_WIDTH} />
         </div>
       )}
       <ul className="divide-y divide-dialog-edge/40 sm:divide-y-0">
@@ -325,7 +331,7 @@ function AgentTable({ rows, now, error, onSelect }: {
           const isOpen = folds.get(agent.session_id) ?? agent.status === 'running';
           const toggle = () => setFolds((before) => new Map(before).set(agent.session_id, !isOpen));
           return (
-            <li key={agent.session_id} className={isOpen ? 'sm:bg-white/5' : ''}>
+            <li key={agent.session_id} className={`sm:flex sm:items-baseline sm:gap-x-3 sm:px-2 ${isOpen ? 'sm:bg-white/5 sm:pb-1' : ''}`}>
               <button
                 type="button"
                 data-agent-row={agent.session_id}
@@ -363,12 +369,15 @@ function AgentTable({ rows, now, error, onSelect }: {
                   {time === undefined ? '' : formatAgentTime(time)}
                 </span>
               </button>
-              {isWide && isOpen && (
-                <div className={`hidden pb-1.5 sm:grid ${grid}`}>
-                  <span className="col-[3/-1] border-l border-transparent pl-3 text-dialog-hint">
-                    <TextButton onClick={() => onSelect(agent.session_id)}>Open timeline</TextButton>
-                  </span>
-                </div>
+              {isWide && (
+                <button
+                  type="button"
+                  aria-label={`Open ${agentLabel(agent, rows)}`}
+                  onClick={() => onSelect(agent.session_id)}
+                  className={`${OPEN_WIDTH} rounded-none py-1 text-right uppercase text-dialog-hint hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
+                >
+                  open
+                </button>
               )}
             </li>
           );

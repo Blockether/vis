@@ -100,7 +100,7 @@ describe('agent rows', () => {
   });
 
   // On a wide screen a row unfolds in place, and a running agent shows its update without a click.
-  it('unfolds a running row on a wide screen, folds it on a click, and opens the sheet from the row', async () => {
+  it('unfolds a running row on a wide screen, folds it on a click, and opens the sheet from its OPEN', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
@@ -112,7 +112,7 @@ describe('agent rows', () => {
     expect(running).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(done);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open timeline' })); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open #2' })); });
     expect(screen.getByRole('dialog', { name: '#2' })).toBeInTheDocument();
   });
 
