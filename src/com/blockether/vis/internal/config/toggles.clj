@@ -844,6 +844,14 @@
                        :owner :vis
                        :group :apps
                        :persist? true})
+    (register-toggle! {:id "apps_global"
+                       :label "Global apps"
+                       :description "List the apps of SDK programs that belong to no session."
+                       :default true
+                       :scopes ["global"]
+                       :owner :vis
+                       :group :apps
+                       :persist? true})
     ;; A snapshot is read into memory whole, and a Java byte array holds less than 2 GiB.
     (register-toggle! {:id "session_snapshot_limit"
                        :label "Session snapshot limit"

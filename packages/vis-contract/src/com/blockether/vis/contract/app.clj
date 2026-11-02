@@ -43,7 +43,8 @@
 (def surface-defaults
   "The surfaces of an app that declares none: `{:inline true :session \"sidebar\"}`."
   (into {}
-        (map (fn [[k v]] [(keyword k) (get v "default")]))
+        (map (fn [[k v]]
+               [(keyword k) (get v "default")]))
         (get surfaces-rule "properties")))
 
 (def session-surfaces
@@ -63,9 +64,13 @@
    It joins the owning extension (or `sandbox`) and the key. A long prefix keeps
    its start and ends in a hash, so two apps never share one."
   [view]
-  (when-let [k (some-> (:key view) str str/trim not-empty)]
+  (when-let [k (some-> (:key view)
+                       str
+                       str/trim
+                       not-empty)]
     (let [base (str "app_" (slug (str (or (:extension view) "sandbox") "_" k)))
           limit (long (get settings-key-rule "maxLength"))]
+
       (if (<= (count base) limit)
         base
         (str (str/replace (subs base 0 (- limit 9)) #"_+$" "")
@@ -78,17 +83,44 @@
    `apps_session` turn a surface off for every app. The app's own settings win
    over what the app declared."
   [view setting]
-  (let [declared (merge surface-defaults (:surfaces view))
-        own (settings-key view)
-        own-value (fn [suffix fallback]
-                    (let [v (when own (setting (str own suffix)))]
-                      (if (nil? v) fallback v)))
-        inline (own-value "_inline" (:inline declared))
-        session (own-value "_session" (:session declared))]
+  (let [declared
+        (merge surface-defaults (:surfaces view))
+
+        own
+        (settings-key view)
+
+        own-value
+        (fn [suffix fallback]
+          (let [v (when own (setting (str own suffix)))]
+            (if (nil? v) fallback v)))
+
+        inline
+        (own-value "_inline" (:inline declared))
+
+        session
+        (own-value "_session" (:session declared))]
+
     {:inline (and (not (false? (setting "apps_inline"))) (true? inline))
      :session (if (false? (setting "apps_session"))
                 "off"
                 (if (some #{session} session-surfaces) session (:session surface-defaults)))}))
+
+(def scopes
+  "Who an app can belong to: its session, or no session at all."
+  (vec (get (definition "app_scope") "enum")))
+
+(defn global?
+  "True when app `view` belongs to no session. Only an SDK program opens one."
+  [view]
+  (= "global"
+     (some-> (:scope view)
+             name)))
+
+(defn persistent?
+  "True when global app `view` comes back after a gateway restart. A session app
+   always comes back."
+  [view]
+  (not (and (global? view) (false? (:is-persistent view)))))
 
 (def ^:private key-rule (definition "idempotency_key"))
 

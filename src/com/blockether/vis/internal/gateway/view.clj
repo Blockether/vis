@@ -21,6 +21,7 @@
             [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.channel.events :as channel-events]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.loop :as lp]
@@ -219,11 +220,28 @@
           (assoc ops at (update prior k into (get op k)))
           :else (conj ops op))))
 
+(defn global-listed?
+  "Whether the person lets the surfaces list global apps: setting `apps_global`."
+  []
+  (not (false? (toggles/value-of "apps_global"))))
+
+(defn- publish-global!
+  "Offer one event of a global app on the fleet stream, when global apps show."
+  [type payload]
+  (when (global-listed?) (state/publish-fleet-event! type payload)))
+
 (defn- publish-patches!
   "Publish one coalesced frame. `first_seq`..`seq` is the range of engine
    patches it carries, so a client can tell a COALESCED jump from a real gap: a
-   frame that does not continue the one before it is a resync, not loss."
+   frame that does not continue the one before it is a resync, not loss. The
+   frame of a global app goes to the fleet stream."
   [frame]
+  (when (and (:is-global frame) (seq (:ops frame)))
+    (publish-global! gateway-contract/view-patch-event
+                     {:kind :live
+                      :view-id (:view-id frame)
+                      :first-seq (:first-seq frame)
+                      :patch {:view-id (:view-id frame) :seq (:seq frame) :ops (:ops frame)}}))
   (when (and (:session-id frame) (seq (:ops frame)))
     (state/append-event! (:session-id frame)
                          gateway-contract/view-patch-event
@@ -252,20 +270,23 @@
 (defn- buffer-patch!
   "Hold one accepted patch for `view-id` and make sure a flush is coming. The
    frame of an app is published live only."
-  [sid view-id patch app?]
+  [sid view-id patch app? global?]
   ;; The swap that STARTS a frame schedules its flush. A freshness read taken
   ;; before the swap could miss a flush that emptied the buffer in between, and
   ;; then no later patch scheduled one: the view froze while its record grew.
-  (let [[old _]
-        (swap-vals!
-          buffered
-          update
-          view-id
-          (fn [frame]
-            (-> (or frame
-                    {:session-id sid :view-id view-id :first-seq (:seq patch) :ops [] :is-app app?})
-                (assoc :seq (:seq patch))
-                (update :ops #(reduce coalesce % (:ops patch))))))]
+  (let [[old _] (swap-vals! buffered
+                            update
+                            view-id
+                            (fn [frame]
+                              (-> (or frame
+                                      {:session-id sid
+                                       :view-id view-id
+                                       :first-seq (:seq patch)
+                                       :ops []
+                                       :is-app app?
+                                       :is-global global?})
+                                  (assoc :seq (:seq patch))
+                                  (update :ops #(reduce coalesce % (:ops patch))))))]
     (when (nil? (get old view-id))
       (.schedule ^ScheduledExecutorService @flusher
                  ^Runnable
@@ -309,6 +330,24 @@
   [sid view-id]
   (let [{:keys [kind view]} (view-of sid view-id)]
     (when (= :live kind) (app-surfaces/shown view))))
+
+(defn global-apps
+  "The global apps, oldest first. A closed app stays listed until it is archived;
+   with `archived?`, only the archived apps. Empty while `apps_global` is off."
+  ([] (global-apps false))
+  ([archived?]
+   (if (global-listed?)
+     (filterv #(= (boolean archived?) (boolean (:is-archived %))) (view/global-apps))
+     [])))
+
+(defn global-app-of
+  "Global app `view-id`, open or closed, else nil. A session view never answers
+   here, so the global routes cannot read a session."
+  [view-id]
+  (when-let [app (or (some-> (view/open-view (str view-id))
+                             :view)
+                     (view/app-view nil view-id))]
+    (when (and (app/app? app) (app/global? app) (nil? (session-of app))) app)))
 
 (def ^:private live-log-page
   "Lines one log page answers: a WINDOW, the same amount a surface holds live
@@ -422,7 +461,10 @@
   (case (:op event)
     :view/open
     (let [sid (session-of event)]
-      (cond (and sid (= :input (:kind event)))
+      (cond (:is-global event)
+            (publish-global! gateway-contract/view-open-event
+                             {:kind (:kind event) :view-id (:view-id event) :view (:view event)})
+            (and sid (= :input (:kind event)))
             (state/append-event! sid
                                  gateway-contract/view-open-event
                                  {:kind :input
@@ -435,12 +477,19 @@
 
     :view/patch
     (when (= :live (:kind event))
-      (buffer-patch! (session-of event) (:view-id event) (:patch event) (boolean (:is-app event))))
+      (buffer-patch! (session-of event)
+                     (:view-id event)
+                     (:patch event)
+                     (boolean (:is-app event))
+                     (boolean (:is-global event))))
 
     :view/close
     (let [sid (session-of event)]
       ;; An ending never overtakes buffered live work.
       (when (= :live (:kind event)) (flush-view! (:view-id event)))
+      (when (:is-global event)
+        (publish-global! gateway-contract/view-close-event
+                         {:kind (:kind event) :view-id (:view-id event) :result (:result event)}))
       (when sid
         (state/append-event!
           sid

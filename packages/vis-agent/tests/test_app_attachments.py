@@ -161,6 +161,29 @@ def test_app_surfaces_declaration_is_a_valid_view_and_a_typo_fails_at_once():
             vis.ui.app("Board", vis.ui.thread("t"), surfaces=wrong)
 
 
+def test_app_scope_declaration_is_checked_as_the_engine_checks_it():
+    # Global apps: the engine refuses these declarations; refuse them at the call.
+    app = vis.ui.app(
+        "Board", vis.ui.thread("t"), key="b", scope="global", is_persistent=False
+    )
+    assert (app["scope"], app["is_persistent"]) == ("global", False)
+    assert "scope" not in vis.ui.app("Board", vis.ui.thread("t"))
+    with pytest.raises(ValueError, match="scope must be one of"):
+        vis.ui.app("Board", vis.ui.thread("t"), key="b", scope="machine")
+    with pytest.raises(ValueError, match="is_persistent"):
+        vis.ui.app("Board", vis.ui.thread("t"), key="b", is_persistent=False)
+    with pytest.raises(ValueError, match="is_persistent"):
+        vis.ui.app(
+            "Board", vis.ui.thread("t"), key="b", scope="session", is_persistent=True
+        )
+    with pytest.raises(TypeError, match="True or False"):
+        vis.ui.app(
+            "Board", vis.ui.thread("t"), key="b", scope="global", is_persistent="no"
+        )
+    with pytest.raises(ValueError, match="needs a key"):
+        vis.ui.app("Board", vis.ui.thread("t"), scope="global")
+
+
 def test_attach_opens_one_app_and_answers_its_handle(host):
     app = vis.attach(
         vis.ui.app("Review", vis.ui.diff("change", PATCH), vis.ui.thread("general"))

@@ -40,10 +40,10 @@
 
 (defn shown
   "`view` as a reader gets it. An app gains its effective `:surfaces` and, when it
-   has a key, its `:settings-key`; its own settings exist from then on. Any other
-   view passes through."
+   has a key, its `:settings-key`; its own settings exist from then on. A global
+   app shows in no session, so it and any other view pass through."
   [view]
-  (if-not (and (map? view) (app/app? view))
+  (if-not (and (map? view) (app/app? view) (not (app/global? view)))
     view
     (let [k (app/settings-key view)]
       (when k (register-settings! k view))

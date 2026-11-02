@@ -78,6 +78,32 @@
     (http/json-response {:requests (gw-view/input-views sid)})
     (http/session-404 (get-in request [:path-params :sid]))))
 
+(defn- action-response
+  "Apply the action in the body of `request` to View `view-id`, which the caller
+   already found readable, and answer the verdict."
+  [view-id request]
+  (try (let [{:keys [is-accepted reason] :as outcome} (gw-view/action! view-id
+                                                                       (http/body-json request))]
+         (cond (and (false? is-accepted) (= "unknown" reason)) (view-404 view-id)
+               ;; The client edited an older state, or the app is closed.
+               (and (false? is-accepted)
+                    (#{"conflict" "stale_revision" "closed" "disconnected"} reason))
+               (http/json-response 409 outcome)
+               (and (false? is-accepted) (= "not_cancellable" reason))
+               (http/error-response 409
+                                    :view-action-refused "this input View cannot be cancelled"
+                                    :view_id view-id
+                                    :action "cancel")
+               :else (http/json-response outcome)))
+       (catch clojure.lang.ExceptionInfo e
+         (let [{:keys [type action]} (ex-data e)]
+           (http/error-response (if (= :vis/view-action-not-supported type) 409 400)
+                                (or type :vis/view-action-refused)
+                                (ex-message e)
+                                :view_id view-id
+                                :action (some-> action
+                                                name))))))
+
 (defn- view-action-handler
   "POST /v1/sessions/:sid/views/:view-id/actions — apply one closed operator
    action to either View kind.
@@ -100,28 +126,24 @@
 
     (cond (nil? sid) (http/session-404 (get-in request [:path-params :sid]))
           (nil? descriptor) (view-404 view-id)
-          :else (try (let [{:keys [is-accepted reason] :as outcome}
-                           (gw-view/action! view-id (http/body-json request))]
-                       (cond (and (false? is-accepted) (= "unknown" reason)) (view-404 view-id)
-                             ;; The client edited an older state, or the app is closed.
-                             (and (false? is-accepted)
-                                  (#{"conflict" "stale_revision" "closed" "disconnected"} reason))
-                             (http/json-response 409 outcome)
-                             (and (false? is-accepted) (= "not_cancellable" reason))
-                             (http/error-response 409
-                                                  :view-action-refused
-                                                  "this input View cannot be cancelled"
-                                                  :view_id view-id
-                                                  :action "cancel")
-                             :else (http/json-response outcome)))
-                     (catch clojure.lang.ExceptionInfo e
-                       (let [{:keys [type action]} (ex-data e)]
-                         (http/error-response (if (= :vis/view-action-not-supported type) 409 400)
-                                              (or type :vis/view-action-refused)
-                                              (ex-message e)
-                                              :view_id view-id
-                                              :action (some-> action
-                                                              name))))))))
+          :else (action-response view-id request))))
+
+(defn- app-door-response
+  "Answer one app door call of an SDK program. A nil `sid` is the global door."
+  [sid body]
+  (if-not (and (map? body) (map? (get body "envelope")))
+    (http/error-response 400
+                         :invalid-request
+                         "the body must be {\"owner\": name, \"envelope\": {...}}")
+    (try {:status 200
+          :headers {"Content-Type" "application/json"}
+          :body
+          (live-view/owner-app-json! sid (get body "owner") (wire/json-str (get body "envelope")))}
+         (catch clojure.lang.ExceptionInfo e
+           (let [{:keys [status type]} (ex-data e)]
+             (http/error-response (or status 400)
+                                  (or type :vis/view-invalid-live-view)
+                                  (ex-message e)))))))
 
 (defn- app-door-handler
   "POST /v1/sessions/:sid/apps — the app door of an SDK program.
@@ -136,21 +158,15 @@
         body
         (http/body-json request)]
 
-    (cond (not (and sid (state/soul sid))) (http/session-404 (get-in request [:path-params :sid]))
-          (not (and (map? body) (map? (get body "envelope"))))
-          (http/error-response 400
-                               :invalid-request
-                               "the body must be {\"owner\": name, \"envelope\": {...}}")
-          :else (try {:status 200
-                      :headers {"Content-Type" "application/json"}
-                      :body (live-view/owner-app-json! (str sid)
-                                                       (get body "owner")
-                                                       (wire/json-str (get body "envelope")))}
-                     (catch clojure.lang.ExceptionInfo e
-                       (let [{:keys [status type]} (ex-data e)]
-                         (http/error-response (or status 400)
-                                              (or type :vis/view-invalid-live-view)
-                                              (ex-message e))))))))
+    (if-not (and sid (state/soul sid))
+      (http/session-404 (get-in request [:path-params :sid]))
+      (app-door-response (str sid) body))))
+
+(defn- global-app-door-handler
+  "POST /v1/apps — the global app door of an SDK program. The body is the body of
+   the session door. The door opens and drives only the global apps of that owner."
+  [request]
+  (app-door-response nil (http/body-json request)))
 
 (defn- path-view-id
   "The live view id in a file-backed resource path, only when it could BE one."
@@ -199,6 +215,33 @@
     (cond (nil? sid) (http/session-404 (get-in request [:path-params :sid]))
           (nil? view) (view-404 (get-in request [:path-params :view-id]))
           :else (http/json-response {:view view}))))
+
+(defn- list-global-apps-handler
+  "GET /v1/apps — the global apps, oldest first, each as the picture a surface
+   paints. A closed app stays listed; `archived=true` lists only the archived apps.
+   The list is empty while the person turns global apps off. The fleet stream
+   carries their `view.open`, `view.patch` and `view.close` frames."
+  [request]
+  (let [archived (get-in request [:query-params "archived"])]
+    (if-not (contains? #{nil "true" "false"} archived)
+      (http/error-response 400 :invalid-request "archived must be true or false")
+      (http/json-response {:views (gw-view/global-apps (= "true" archived))}))))
+
+(defn- global-app-handler
+  "GET /v1/apps/:view-id — one global app as the picture a surface paints."
+  [request]
+  (if-let [app (some-> (path-view-id request)
+                       gw-view/global-app-of)]
+    (http/json-response {:view app})
+    (view-404 (get-in request [:path-params :view-id]))))
+
+(defn- global-app-action-handler
+  "POST /v1/apps/:view-id/actions — apply one operator action to a global app."
+  [request]
+  (if-let [view-id (some-> (path-view-id request)
+                           (#(when (gw-view/global-app-of %) %)))]
+    (action-response view-id request)
+    (view-404 (get-in request [:path-params :view-id]))))
 
 (defn- live-view-log-handler
   "GET /v1/sessions/:sid/views/live/:view-id/log?node=… — one bounded page.
@@ -370,4 +413,8 @@
    [:get "/v1/sessions/:sid/views/live/:view-id"] live-view-handler
    [:get "/v1/sessions/:sid/views/live/:view-id/log"] live-view-log-handler
    [:post "/v1/sessions/:sid/apps"] app-door-handler
-   [:post "/v1/sessions/:sid/views/:view-id/actions"] view-action-handler})
+   [:post "/v1/sessions/:sid/views/:view-id/actions"] view-action-handler
+   [:get "/v1/apps"] list-global-apps-handler
+   [:post "/v1/apps"] global-app-door-handler
+   [:get "/v1/apps/:view-id"] global-app-handler
+   [:post "/v1/apps/:view-id/actions"] global-app-action-handler})

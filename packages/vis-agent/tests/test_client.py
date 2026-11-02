@@ -1250,3 +1250,57 @@ def test_live_view_reads_one_app_and_the_archived_apps():
         ("GET", "/v1/sessions/s1/views/live/app-1"),
         ("GET", "/v1/sessions/s1/views/live?placement=attachment&archived=true"),
     ]
+
+
+def test_global_apps_read_and_act_on_the_global_routes():
+    # Global apps: a global app record carries scope, surfaces and settings keys;
+    # a reader that did not know them could not read the app at all.
+    app = {
+        "id": "app-g",
+        "title": "Build lights",
+        "nodes": [{"type": "thread", "id": "general", "messages": []}],
+        "timeout_ms": 0,
+        "channel_ids": ["tui"],
+        "seq": 2,
+        "created_at": 1,
+        "placement": "attachment",
+        "key": "lights",
+        "scope": "global",
+        "is_persistent": False,
+        "surfaces": {"inline": True, "session": "sidebar"},
+        "settings_key": "app_ci_bot_lights",
+        "shortcuts": [{"key": "r", "action": "refresh"}],
+    }
+
+    def respond(method, path, body):
+        if path.startswith(("/v1/capabilities", "/v1/clients")):
+            return compatible(method, path, body)
+        if path.startswith("/v1/apps/app-g/actions"):
+            return 200, {"is_accepted": True, **json.loads(body)}
+        if path.startswith("/v1/apps/app-g"):
+            return 200, {"view": app}
+        return 200, {"views": [app]}
+
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
+        listed = client.apps(archived=True)
+        view = client.app("app-g")
+        answer = client.app_action("app-g", "activate", node_id="general")
+        with pytest.raises(ValueError):
+            client.app_action("app-g", "no-such-action")
+    assert [item.id for item in listed] == ["app-g"]
+    assert (view.scope, view.is_persistent, view.settings_key) == (
+        "global",
+        False,
+        "app_ci_bot_lights",
+    )
+    assert answer["is_accepted"] and answer["node_id"] == "general"
+    sent = [
+        (method, path)
+        for method, path, _, _ in calls
+        if not path.startswith(("/v1/capabilities", "/v1/clients"))
+    ]
+    assert sent == [
+        ("GET", "/v1/apps?archived=true"),
+        ("GET", "/v1/apps/app-g"),
+        ("POST", "/v1/apps/app-g/actions"),
+    ]

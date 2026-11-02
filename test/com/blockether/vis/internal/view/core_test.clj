@@ -3567,6 +3567,76 @@
         (get (sdk-door! sid "demo" {"op" "events" "view_id" view-id "after" after "timeout_ms" 0})
              "events")))
 
+(defn- global-app
+  "An open envelope of the global app of SDK owner `demo`, with `extra` view keys."
+  [extra]
+  {"op" "open"
+   "view" (merge {"title" "Clock"
+                  "placement" "attachment"
+                  "key" "clock"
+                  "nodes" [{"id" "go" "type" "button" "label" "Go"}]}
+                 extra)})
+
+(defn- door-status
+  "The HTTP status of the app door refusal of `f`, or nil when `f` was accepted."
+  [f]
+  (try (f) nil (catch clojure.lang.ExceptionInfo e (or (:status (ex-data e)) 400))))
+
+(defdescribe
+  global-app-test
+  ;; Live app surfaces, phase 2: an SDK program opens an app that belongs to no
+  ;; session, and the program decides whether it outlives a gateway restart.
+  (it "opens a global app without a session"
+      (recorded (fn []
+                  (let [view-id (get (sdk-door! nil "demo" (global-app {})) "view_id")]
+                    (try (expect (= [view-id] (mapv :id (hi/global-apps))))
+                         (expect (= "global" (:scope (hi/app-view nil view-id))))
+                         (expect (nil? (:session-id (hi/app-view nil view-id))))
+                         (finally (hi/close-live! view-id)))))))
+  (it "keeps a persistent global app after a restart and drops the other"
+      (recorded (fn []
+                  (let [kept
+                        (get (sdk-door! nil "demo" (global-app {})) "view_id")
+
+                        gone
+                        (get
+                          (sdk-door! nil "demo" (global-app {"key" "tick" "is_persistent" false}))
+                          "view_id")]
+
+                    (try (restart-app! kept)
+                         (restart-app! gone)
+                         (expect (= [kept] (mapv :id (hi/global-apps))))
+                         (expect (true? (:is-stale (hi/app-view nil kept))))
+                         (expect (= kept (get (sdk-door! nil "demo" (global-app {})) "view_id"))
+                                 "the owner adopts the kept app by key")
+                         (finally (hi/close-live! kept) (hi/close-live! gone)))))))
+  (it "keeps the global door and the session door apart"
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                session-app
+                (get (sdk-door! sid "demo" (keyed-app sid)) "view_id")
+
+                global-id
+                (get (sdk-door! nil "demo" (global-app {})) "view_id")
+
+                touch
+                (fn [door-sid view-id]
+                  (sdk-door! door-sid "demo" {"op" "state" "view_id" view-id}))]
+
+            (try (expect (= 400
+                            (door-status #(sdk-door! sid "demo" (global-app {"scope" "global"})))))
+                 (expect (= 403 (door-status #(touch nil session-app))))
+                 (expect (= 403 (door-status #(touch sid global-id))))
+                 (expect (nil? (door-status #(touch nil global-id))))
+                 (finally (hi/close-live! session-app) (hi/close-live! global-id)))))))
+  (it "refuses a global app from the python_execution sandbox"
+      (expect (str/includes? (str (live-refusal #(app-seam! (str (random-uuid))
+                                                            (global-app {"scope" "global"}))))
+                             "SDK program"))))
+
 (defdescribe
   app-restart-test
   ;; Live apps D6 and D8: a restored app waits for its owner, and an owner that

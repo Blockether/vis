@@ -87,6 +87,12 @@ class LiveView(_ViewRecord):
     submissions: tuple[Mapping[str, Any], ...] | None = None
     is_archived: bool | None = None
     is_closed: bool | None = None
+    shortcuts: tuple[Mapping[str, Any], ...] | None = None
+    agent_note: str | None = None
+    surfaces: Mapping[str, Any] | None = None
+    settings_key: str | None = None
+    scope: str | None = None
+    is_persistent: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

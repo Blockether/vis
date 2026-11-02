@@ -124,6 +124,10 @@ request.
 | List live views | `session.live_views()` | `get_session_views_live(sid)` |
 | Read one live view or app | `session.live_view(view_id)` | `get_session_views_live_view(sid, view_id)` |
 | Read a page of a log node | — | `get_session_views_live_log(sid, view_id, node_id, query=...)` |
+| Open or adopt a global app | `client.attach_app(app, owner=...)` | `post_apps(body=...)` |
+| List the global apps | `client.apps(...)` | `get_apps(query=...)` |
+| Read one global app | `client.app(view_id)` | `get_app(view_id)` |
+| Press a button in a global app | `client.app_action(view_id, action, ...)` | `post_app_actions(view_id, body=...)` |
 | Read one page of Activity history | — | `get_session_activity(sid, aid, query=...)` |
 | Export the full Activity history | — | `get_session_activity_export(sid, aid, query=...)` |
 
@@ -171,6 +175,10 @@ request.
 | List live views | `GET /v1/sessions/{sid}/views/live` |
 | Read one live view or app | `GET /v1/sessions/{sid}/views/live/{view-id}` |
 | Read a page of a log node | `GET /v1/sessions/{sid}/views/live/{view-id}/log` |
+| Open or adopt a global app | `POST /v1/apps` |
+| List the global apps | `GET /v1/apps` |
+| Read one global app | `GET /v1/apps/{view-id}` |
+| Press a button in a global app | `POST /v1/apps/{view-id}/actions` |
 | Read one page of Activity history | `GET /v1/sessions/{sid}/activity/{aid}` |
 | Export the full Activity history | `GET /v1/sessions/{sid}/activity/{aid}/export` |
 
@@ -1233,6 +1241,63 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/apps" \
   `open` envelope again with the same `key`, and poll from its new `events_cursor`.
 - While the app is stale, a press, a selection, an input change or a shortcut answers 409 with
   `reason` `disconnected`.
+
+</div>
+
+### Run a global app from a program
+
+A global app belongs to no session. People open it with the global apps button in the TUI and in
+the Companion app. Use it for a program that serves every session, for example a build monitor.
+Only a program opens a global app, and the app needs a `key`.
+
+<div data-variant="python">
+
+```python
+import blockether.vis.extension as vis
+
+app = client.attach_app(
+    vis.ui.app("Build lights", vis.ui.button("refresh", label="Refresh"), key="lights"),
+    owner="ci-bot",
+)
+app.run(lambda event: print(event.type, event.node_id))
+```
+
+`client.attach_app(app, *, owner, on_event=None)` returns a `LiveAttachment`. It works like
+`session.attach`, and it opens the app as `scope` `global`. A second call with the same owner and
+key returns the open app.
+
+- By default, a global app comes back after a gateway restart. It stays stale until its owner opens
+  the same key again.
+- Give `vis.ui.app(..., scope="global", is_persistent=False)` for an app that ends at a restart.
+- Keep the data of your app in your own store. Open the key again with that data after a restart.
+- `client.apps()` lists the global apps, and `client.app(view_id)` reads one.
+- `client.app_action(view_id, action, ...)` sends an operator action, as `session.view_action` does.
+
+The generated methods are `post_apps(body=...)`, `get_apps(query=...)`, `get_app(view_id)` and
+`post_app_actions(view_id, body=...)`.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/apps" \
+  -H 'content-type: application/json' \
+  --data '{"owner": "ci-bot", "envelope": {"op": "open", "view": {"title": "Build lights", "placement": "attachment", "key": "lights", "nodes": [{"type": "button", "id": "refresh", "label": "Refresh"}]}}}'
+vis_api "$VIS_GATEWAY_URL/v1/apps"
+```
+
+`POST /v1/apps` takes the body of `POST /v1/sessions/{sid}/apps`. It opens the app with `scope`
+`global`, and the other envelopes work in the same way.
+
+- An `open` envelope needs a `key`. An app with a `session_id` returns 403.
+- Give `"is_persistent": false` in the view for an app that ends at a gateway restart.
+- `GET /v1/apps` answers `views`, oldest first. Add `archived=true` to list only the archived apps.
+  The list is empty while the person turns global apps off.
+- `GET /v1/apps/{view-id}` answers one `view`. `POST /v1/apps/{view-id}/actions` takes an
+  operator action.
+- The fleet stream, `GET /v1/events?scope=fleet`, carries the `view.open`, `view.patch` and
+  `view.close` events of global apps, without `session_id`.
 
 </div>
 

@@ -1446,7 +1446,8 @@
              sid
              view-id
              {:seq n :ops [{:op :set :node-id "state" :text (str n)}]}
-             true))
+             true
+             false))
 
           coalesce
           @#'gw-hi/coalesce
@@ -1777,40 +1778,130 @@
 ;; routes, so the person's choice for one app must reach both readers.
 (defdescribe
   app-surfaces-route-test
-  (it "lists a keyed app with the person's choice over its declaration"
-      (recorded
-        (fn []
-          (let [sid (str (random-uuid))
-                setting "app_sandbox_board_session"
-                view-id (get (app-op! {"op" "open"
-                                       "view" {"title" "Board"
-                                               "session_id" sid
-                                               "placement" "attachment"
-                                               "key" "board"
-                                               "surfaces" {"session" "chat"}
-                                               "nodes" [{"id" "go" "type" "button" "label" "Go"}]}})
-                             "view_id")
-                one (fn [] (get (json-body (app-view sid view-id)) "view"))
-                listed (fn []
-                         (mapv #(get % "surfaces")
-                               (get (json-body (#'views-api/list-live-views-handler
-                                                {:path-params {:sid sid}
-                                                 :query-params {"placement" "attachment"}}))
-                                    "views")))]
-            (try (expect (= {"inline" true "session" "chat"} (get (one) "surfaces")))
-                 (expect (= "app_sandbox_board" (get (one) "settings_key")))
-                 (binding [toggles/*persist-writes* false]
-                   (toggles/set-value! setting "sidebar"))
-                 (expect (= {"inline" true "session" "sidebar"} (get (one) "surfaces")))
-                 (expect (= [{"inline" true "session" "sidebar"}] (listed)))
-                 (finally (swap! @#'toggles/state dissoc setting) (hi/close-live! view-id)))))))
+  (it
+    "lists a keyed app with the person's choice over its declaration"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              setting
+              "app_sandbox_board_session"
+
+              view-id
+              (get (app-op! {"op" "open"
+                             "view" {"title" "Board"
+                                     "session_id" sid
+                                     "placement" "attachment"
+                                     "key" "board"
+                                     "surfaces" {"session" "chat"}
+                                     "nodes" [{"id" "go" "type" "button" "label" "Go"}]}})
+                   "view_id")
+
+              one
+              (fn []
+                (get (json-body (app-view sid view-id)) "view"))
+
+              listed
+              (fn []
+                (mapv #(get % "surfaces")
+                      (get (json-body (#'views-api/list-live-views-handler
+                                       {:path-params {:sid sid}
+                                        :query-params {"placement" "attachment"}}))
+                           "views")))]
+
+          (try (expect (= {"inline" true "session" "chat"} (get (one) "surfaces")))
+               (expect (= "app_sandbox_board" (get (one) "settings_key")))
+               (binding [toggles/*persist-writes* false]
+                 (toggles/set-value! setting "sidebar"))
+               (expect (= {"inline" true "session" "sidebar"} (get (one) "surfaces")))
+               (expect (= [{"inline" true "session" "sidebar"}] (listed)))
+               (finally (swap! @#'toggles/state dissoc setting) (hi/close-live! view-id)))))))
   (it "refuses surfaces on a view that is no app"
+      (recorded (fn []
+                  (expect (str/includes? (try (hi/open-live!
+                                                {:title "Build"
+                                                 :session-id (str (random-uuid))
+                                                 :surfaces {:inline true}
+                                                 :nodes
+                                                 [{:id "n" :type :stat :label "N" :value 1}]})
+                                              ""
+                                              (catch clojure.lang.ExceptionInfo e (ex-message e)))
+                                         "only an app"))))))
+
+;; Live app surfaces, phase 2: a global app belongs to no session, so both clients
+;; read it from /v1/apps and follow it on the fleet stream.
+(defdescribe
+  global-app-route-test
+  (it
+    "opens a global app through POST /v1/apps, lists it and streams it on the fleet"
+    (gw-hi/install!)
+    (recorded
+      (fn []
+        (let [frames
+              (atom [])
+
+              sub
+              (str "global-app-" (random-uuid))
+
+              listed
+              (fn []
+                (mapv #(get % "id")
+                      (get (json-body (#'views-api/list-global-apps-handler {:query-params {}}))
+                           "views")))]
+
+          (state/subscribe-fleet! sub #(swap! frames conj %))
+          (let [opened
+                (#'views-api/global-app-door-handler
+                 {:body (body-stream {"owner" "demo"
+                                      "envelope" {"op" "open"
+                                                  "view" {"title" "Clock"
+                                                          "placement" "attachment"
+                                                          "key" "clock"
+                                                          "nodes" [{"id" "go"
+                                                                    "type" "button"
+                                                                    "label" "Go"}]}}})})
+
+                view-id
+                (get (json-body opened) "view_id")]
+
+            (try (expect (= 200 (:status opened)))
+                 (expect (= [view-id] (listed)))
+                 (expect (= "global"
+                            (get-in (json-body (#'views-api/global-app-handler
+                                                {:path-params {:view-id view-id}}))
+                                    ["view" "scope"])))
+                 (expect (some #(and (= "view.open" (get % "type"))
+                                     (= view-id (get % "view_id"))
+                                     (nil? (get % "session_id")))
+                               @frames)
+                         "the fleet stream carries the open of the global app")
+                 (binding [toggles/*persist-writes* false]
+                   (toggles/set-value! "apps_global" false))
+                 (expect (= [] (listed)) "the person turned global apps off")
+                 (finally (binding [toggles/*persist-writes* false]
+                            (toggles/set-value! "apps_global" true))
+                          (state/unsubscribe-fleet! sub)
+                          (hi/close-live! view-id))))))))
+  (it "never reads a session app through the global routes"
       (recorded
         (fn []
-          (expect (str/includes? (try (hi/open-live! {:title "Build"
-                                                       :session-id (str (random-uuid))
-                                                       :surfaces {:inline true}
-                                                       :nodes [{:id "n" :type :stat :label "N" :value 1}]})
-                                      ""
-                                      (catch clojure.lang.ExceptionInfo e (ex-message e)))
-                                 "only an app"))))))
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-op! {"op" "open"
+                               "view" {"title" "Board"
+                                       "session_id" sid
+                                       "placement" "attachment"
+                                       "nodes" [{"id" "go" "type" "button" "label" "Go"}]}})
+                     "view_id")]
+
+            (try (expect (= 404
+                            (:status (#'views-api/global-app-handler
+                                      {:path-params {:view-id view-id}}))))
+                 (expect (= 404
+                            (:status (#'views-api/global-app-action-handler
+                                      {:path-params {:view-id view-id}
+                                       :body (body-stream {"action" "activate" "node_id" "go"})}))))
+                 (finally (hi/close-live! view-id))))))))

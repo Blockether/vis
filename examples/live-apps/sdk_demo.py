@@ -7,6 +7,10 @@ Run it from this directory with the Python of the Vis SDK:
 Without `--session` it creates a session. Without app names it opens every app.
 It serves events until Ctrl+C. Run it again with the same `--session` and
 `--state`: it adopts the open apps by key and paints their saved state.
+
+With `--global`, the apps belong to no session: people open them from the global
+apps button. They come back after a gateway restart, until this program adopts
+them again by key. With `--ephemeral` too, a gateway restart ends them.
 """
 
 from __future__ import annotations
@@ -74,6 +78,20 @@ def opener_of(session, owner: str):
     return open_one
 
 
+def global_opener_of(client, owner: str, *, is_persistent: bool = True):
+    """Open each app declaration as a global app through the global door of `client`."""
+
+    def open_one(declaration, on_event):
+        scope = {"scope": "global"}
+        if not is_persistent:
+            scope["is_persistent"] = False
+        return client.attach_app(
+            dict(declaration, flush_ms=0, **scope), owner=owner, on_event=on_event
+        )
+
+    return open_one
+
+
 def main(argv=None) -> int:
     known = apps()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -95,9 +113,22 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--seconds", type=float, help="stop after this many seconds (default: Ctrl+C)"
     )
+    parser.add_argument(
+        "--global",
+        dest="is_global",
+        action="store_true",
+        help="open global apps, which belong to no session",
+    )
+    parser.add_argument(
+        "--ephemeral",
+        action="store_true",
+        help="with --global: a gateway restart ends the apps",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
+    if args.ephemeral and not args.is_global:
+        parser.error("--ephemeral needs --global")
     names = args.names or [name for name in known if name != "gallery"]
     unknown = [name for name in names if name not in known]
     if unknown:
@@ -105,17 +136,27 @@ def main(argv=None) -> int:
 
     token = os.environ.get("VIS_GATEWAY_TOKEN") or None
     with GatewayClient(args.url, token=token) as client:
-        session = (
-            client.session(args.session) if args.session else client.create_session()
-        )
         store = JsonStore(Path(args.state))
-        opened = Apps(opener_of(session, args.owner), store, prefix=f"{session.id}:")
+        if args.is_global:
+            # One store prefix for every run: the data outlives sessions and restarts.
+            place = "the global apps"
+            opener = global_opener_of(
+                client, args.owner, is_persistent=not args.ephemeral
+            )
+            opened = Apps(opener, store, prefix="global:")
+        else:
+            session = (
+                client.session(args.session)
+                if args.session
+                else client.create_session()
+            )
+            place = f"session {session.id}"
+            opened = Apps(
+                opener_of(session, args.owner), store, prefix=f"{session.id}:"
+            )
         for name in names:
             runner = opened.open(name)
-            print(
-                f"{name}: app {runner.view.id} is open in session {session.id}",
-                flush=True,
-            )
+            print(f"{name}: app {runner.view.id} is open in {place}", flush=True)
         stop = threading.Event()
         try:
             stop.wait(args.seconds)
@@ -131,7 +172,7 @@ def main(argv=None) -> int:
         for line in errors:
             print("error", line, file=sys.stderr)
         print(
-            f"served apps {', '.join(opened.runners)}; the apps stay open in the session",
+            f"served apps {', '.join(opened.runners)}; the apps stay open in {place}",
             flush=True,
         )
         return 1 if errors else 0

@@ -1572,8 +1572,37 @@
         (when (and owned? (not (trimmed (:key view))))
           (invalid-live-view! (str "a " (name placement) " view needs a :key that names it")))
 
+        ;; A global app belongs to no session. Only an SDK program opens one, and a
+        ;; key lets its owner adopt it again after a restart.
+        scope
+        (when (contains? view :scope)
+          (when-not app? (invalid-live-view! "only an app (placement attachment) takes :scope"))
+          (let [s (some-> (:scope view)
+                          name)]
+            (or (some #{s} app/scopes)
+                (invalid-live-view! (str ":scope must be one of " (str/join ", " app/scopes))))))
+
+        global?
+        (= "global" scope)
+
+        _
+        (when global?
+          (when-not extension-name
+            (invalid-live-view! "only an SDK program opens a global app: POST /v1/apps"))
+          (when-not (trimmed (:key view))
+            (invalid-live-view! "a global app needs a :key that names it"))
+          (when (trimmed (:session-id view))
+            (invalid-live-view! "a global app belongs to no session — drop :session-id")))
+
+        is-persistent
+        (when (contains? view :is-persistent)
+          (when-not global? (invalid-live-view! "only a global app takes :is-persistent"))
+          (when-not (boolean? (:is-persistent view))
+            (invalid-live-view! ":is-persistent must be true or false"))
+          (:is-persistent view))
+
         session-id
-        (or (trimmed (:session-id view)) (ambient-session-id))
+        (when-not global? (or (trimmed (:session-id view)) (ambient-session-id)))
 
         shortcuts
         (when (contains? view :shortcuts) (live-shortcuts invalid-live-view! (:shortcuts view)))
@@ -1632,6 +1661,12 @@
 
         (some? surfaces)
         (assoc :surfaces surfaces)
+
+        global?
+        (assoc :scope "global")
+
+        (false? is-persistent)
+        (assoc :is-persistent false)
 
         agent-note
         (assoc :agent-note agent-note)))))
@@ -2216,9 +2251,12 @@
 
 (defn- lifecycle-event
   "Canonical channel envelope for either View kind. An opened app carries the
-   surfaces that the person's settings give it."
+   surfaces that the person's settings give it. The envelope of a global app is
+   marked, because it names no session."
   [op entry payload]
-  (merge {:op op :kind (:kind entry) :view-id (:id entry) :session-id (:session-id entry)}
+  (merge (cond-> {:op op :kind (:kind entry) :view-id (:id entry) :session-id (:session-id entry)}
+           (and (:is-app entry) (app/global? @(:view entry)))
+           (assoc :is-global true))
          (cond-> payload
            (and (= :view/open op) (:view payload))
            (update :view app-surfaces/shown))))
@@ -2520,15 +2558,20 @@
          nil)))
 
 (defn- restore-app!
-  "Read app `view-id` of session `sid` back from its record. An open app goes back
-   to the registry without an owner callback, and a closed app to [[closed-apps]].
-   Answers the picture, or nil when the record holds no app of that session. The
-   call that restores an open app offers its accepted Sends to the session again."
+  "Read app `view-id` of session `sid` back from its record. A nil `sid` reads a
+   global app. An open app goes back to the registry without an owner callback,
+   and a closed app to [[closed-apps]]. Answers the picture, or nil when the record
+   holds no app of that session, or a global app that its SDK program did not
+   keep. The call that restores an open app offers its accepted Sends again."
   [sid view-id]
-  (when (and (parse-uuid (str sid)) (parse-uuid (str view-id)))
+  (when (and (or (nil? sid) (parse-uuid (str sid))) (parse-uuid (str view-id)))
     (let [file (sink/view-file sid view-id)]
       (when-let [{:keys [view node-seqs]} (replayed-app sid view-id file)]
-        (when (= (str sid) (:session-id view))
+        (when (and (= (some-> sid
+                              str)
+                      (:session-id view))
+                   (or sid (app/global? view))
+                   (app/persistent? view))
           (if (:is-closed view)
             (get (swap! closed-apps #(cond-> % (not (contains? % view-id)) (assoc view-id view)))
                  view-id)
@@ -2548,10 +2591,13 @@
 
 (defn app-view
   "App `view-id` of session `sid` as the surfaces paint it, open or closed, or
-   nil. After a restart, the first read replays its record."
+   nil. A nil `sid` reads a global app. After a restart, the first read replays
+   its record."
   [sid view-id]
   (let [sid
-        (str sid)
+        (some-> sid
+                str
+                not-empty)
 
         view-id
         (str view-id)
@@ -2570,6 +2616,12 @@
   "Every app of session `sid`, open or closed, in the order they opened."
   [sid]
   (into [] (comp (map :view-id) (distinct) (keep #(app-view sid %))) (sink/app-index (str sid))))
+
+(defn global-apps
+  "Every global app, open or closed, in the order they opened. A global app that
+   its SDK program did not keep is gone after a restart."
+  []
+  (into [] (comp (map :view-id) (distinct) (keep #(app-view nil %))) (sink/app-index nil)))
 
 (defn agent-notes
   "What the open apps and the HTML pages of session `sid` tell the model: one map
@@ -2664,7 +2716,7 @@
         (owned-key record)
 
         _
-        (when-not (trimmed (:session-id record))
+        (when-not (or (trimmed (:session-id record)) (app/global? record))
           (invalid-live-view! (str "view " view-id
                                    " names no session — set :session-id, or open it "
                                    "from an extension environment that carries one")))
@@ -4630,7 +4682,9 @@
           file
           (if (and own (.isFile ^java.io.File own)) own (sink/find-view-file view-id))]
 
-      (when file (restore-app! (.getName (.getParentFile ^java.io.File file)) view-id)))))
+      (when file
+        (let [dir (.getName (.getParentFile ^java.io.File file))]
+          (restore-app! (when-not (= sink/machine-dir dir) dir) view-id))))))
 
 (defn- owned-app
   "App `view-id` that the current owner drives, open or closed. nil for a view
@@ -4956,8 +5010,9 @@
    session `sid`. The owner is bound as extension `sdk/<owner>`.
 
    The door opens only apps of session `sid`, and it drives only the apps of that
-   owner in that session. A refusal of the owner throws `ex-info` with `:status`
-   403; every other refusal is the normal seam refusal."
+   owner in that session. A nil `sid` is the global door: it opens and drives only
+   the global apps of that owner. A refusal of the owner throws `ex-info` with
+   `:status` 403; every other refusal is the normal seam refusal."
   [sid owner envelope-json]
   (when-not (and (string? owner) (re-matches sdk-owner-pattern owner))
     (sdk-refusal! 400
@@ -4982,8 +5037,13 @@
           (let [view (get envelope "view")]
             (when-not (and (map? view) (= (name app/placement) (get view "placement")))
               (invalid-live-view! "the gateway app door opens only apps: placement \"attachment\""))
-            (when-not (contains? #{nil sid} (trimmed (get view "session_id")))
-              (sdk-refusal! 403 (str "the gateway app door opens apps only in session " sid))))
+            (when-not (contains? (hash-set nil sid) (trimmed (get view "session_id")))
+              (sdk-refusal! 403
+                            (if sid
+                              (str "the gateway app door opens apps only in session " sid)
+                              "the global app door opens no session app")))
+            (when (and sid (= "global" (get view "scope")))
+              (sdk-refusal! 400 "open a global app through POST /v1/apps")))
           (let [view-id (live-handle-id envelope op)
                 _ (recorded-app! view-id)
                 app (some #(when (app/app? %) %)
@@ -4993,8 +5053,10 @@
 
             (when-not app
               (invalid-live-patch! (str "a live " op " needs an app — " view-id " is no app")))
-            (when-not (= sid (:session-id app))
-              (sdk-refusal! 403 (str "app " view-id " belongs to another session")))
+            (when-not (and (= sid (:session-id app)) (= (nil? sid) (app/global? app)))
+              (sdk-refusal!
+                403
+                (str "app " view-id (if sid " belongs to another session" " is no global app"))))
             (when-not (= extension-name (:extension app))
               (sdk-refusal! 403
                             (str "app " view-id
@@ -5011,7 +5073,10 @@
       (-> envelope
           (dissoc "channel_id" "channel_ids")
           (cond->
-            (= "open" (live-op-name envelope))
-            (assoc-in ["view" "session_id"] sid))
+            (and sid (= "open" (live-op-name envelope)))
+            (assoc-in ["view" "session_id"] sid)
+
+            (and (nil? sid) (= "open" (live-op-name envelope)))
+            (assoc-in ["view" "scope"] "global"))
           live-dispatch
           wire/json-str))))

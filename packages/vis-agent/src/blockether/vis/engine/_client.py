@@ -447,6 +447,56 @@ class ExecutionLayer(ABC):
         """
         return Session(self, sid)
 
+    def attach_app(self, app, *, owner: str, on_event=None):
+        """Open or adopt a global app as owner program `owner`.
+
+        A global app belongs to no session; people open it from the global apps
+        button. `app` is a `vis.ui.app(..., key=...)` declaration or an app row
+        from `apps()`. A declaration needs a `key`, and its `scope` is `global`.
+        Opening the same owner and key again adopts the open app, also after a
+        gateway restart. With `is_persistent=False`, a gateway restart drops it.
+        The other rules are those of `Session.attach`; the door is
+        `POST /v1/apps`. Answers a `LiveAttachment`.
+        """
+        from blockether.vis.extension import _APP_MEDIA_TYPE, LiveAttachment, _AppDoor
+
+        if isinstance(app, Mapping) and app.get("media_type") != _APP_MEDIA_TYPE:
+            if app.get("scope", "global") != "global":
+                raise ValueError(
+                    "attach_app opens only global apps; use Session.attach"
+                )
+            if not str(app.get("key") or "").strip():
+                raise ValueError("a global app needs vis.ui.app(..., key=...)")
+            app = {**app, "scope": "global"}
+        return LiveAttachment._from(app, door=_AppDoor(self, owner), on_event=on_event)
+
+    def apps(self, archived: bool = False) -> list[LiveView]:
+        """Read the global apps, oldest first, as typed `LiveView` records.
+
+        A closed app stays listed. `archived=True` lists only the archived apps.
+        The list is empty while the person turns global apps off. This is a
+        snapshot; the owner gets the events of its app from `attach_app`.
+        """
+        answer = self.get_apps(query={"archived": "true"} if archived else None)
+        try:
+            return [LiveView.from_wire(item) for item in _field(answer, "views", list)]
+        except ValueError:
+            raise ProtocolError("invalid live View response") from None
+
+    def app(self, view_id: str) -> LiveView:
+        """Read one global app by id, also a closed or restored app."""
+        data = _field(self.get_app(view_id), "view", dict)
+        try:
+            return LiveView.from_wire(data)
+        except ValueError:
+            raise ProtocolError("invalid live View response") from None
+
+    def app_action(self, view_id: str, action: str, **values) -> JSONValue:
+        """Send an operator action to a global app, as `Session.view_action` does."""
+        body = {**values, "action": action}
+        validate("view", "operator_action", body)
+        return self.post_app_actions(view_id, body=body)
+
     def create_session(
         self,
         *,
@@ -2243,6 +2293,60 @@ class ExecutionLayer(ABC):
             "POST",
             "/v1/sessions/:sid/apps",
             path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def get_apps(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/apps — json response."""
+        response = self._request(
+            "GET", "/v1/apps", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def post_apps(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/apps — json response."""
+        response = self._request(
+            "POST", "/v1/apps", path={}, query=query, timeout=timeout, body=body
+        )
+        return response.json()
+
+    def get_app(
+        self, view_id: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/apps/:view-id — json response."""
+        response = self._request(
+            "GET",
+            "/v1/apps/:view-id",
+            path={"view-id": view_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def post_app_actions(
+        self,
+        view_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/apps/:view-id/actions — json response."""
+        response = self._request(
+            "POST",
+            "/v1/apps/:view-id/actions",
+            path={"view-id": view_id},
             query=query,
             timeout=timeout,
             body=body,

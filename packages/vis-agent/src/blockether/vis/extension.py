@@ -5819,23 +5819,25 @@ def _is_unreachable(error):
     return isinstance(error, (TransportError, ConnectionError, TimeoutError))
 
 
-def _has_ended(session):
-    """True when the client of `session` can never send a request again."""
-    client = getattr(session, "client", None)
+def _has_ended(target):
+    """True when the client of door target `target` can never send a request again."""
+    client = getattr(target, "client", target)
     return bool(
         getattr(client, "_closed", False) or getattr(client, "_lease_error", None)
     )
 
 
 class _AppDoor:
-    """Carry the app envelopes of one owner program over POST /v1/sessions/:sid/apps.
+    """Carry the app envelopes of one owner program over the SDK app door.
 
-    `session` is a `blockether.vis.engine.Session`. `owner` names the program:
-    the engine records the app owner as `sdk/<owner>`. A listener given at open
-    starts a daemon thread that long-polls the events of that app.
+    `target` is a `blockether.vis.engine.Session`, whose door is
+    POST /v1/sessions/:sid/apps, or an execution layer, whose door is the global
+    POST /v1/apps. `owner` names the program: the engine records the app owner as
+    `sdk/<owner>`. A listener given at open starts a daemon thread that long-polls
+    the events of that app.
     """
 
-    def __init__(self, session, owner):
+    def __init__(self, target, owner):
         import threading
 
         if not isinstance(owner, str) or not _OWNER_PATTERN.fullmatch(owner):
@@ -5843,7 +5845,10 @@ class _AppDoor:
                 "owner must be 1 to 64 characters of a-z, 0-9, '.', '_' or '-' "
                 f"and start with a letter or digit, got {owner!r}"
             )
-        self._session = session
+        self._session = target
+        self._client: Any = getattr(target, "client", target)
+        # A session handle has a client; a layer is its own client.
+        self._sid = None if self._client is target else target.id
         self.owner = owner
         self._stopped = set()
         # The open envelope of each app, so that a restart can open it again.
@@ -5851,12 +5856,18 @@ class _AppDoor:
         self._guard = threading.Lock()
 
     def _post(self, envelope, wait_ms=0):
-        answer = self._session._call(
+        if self._sid is None:
+            route, path = "/v1/apps", {}
+        else:
+            route, path = "/v1/sessions/:sid/apps", {"sid": self._sid}
+        response = self._client._request(
             "POST",
-            "/apps",
+            route,
+            path=path,
             body={"owner": self.owner, "envelope": envelope},
             timeout=None if wait_ms <= 0 else wait_ms / 1000 + 30,
         )
+        answer = response.json() if response.content else None
         return answer if isinstance(answer, dict) else {}
 
     def __call__(self, text, listener=None):
@@ -7340,7 +7351,15 @@ def _ui_scene_mesh(mesh_id, vertices, faces):
 
 
 def _ui_app(
-    title, *nodes, description=None, key=None, shortcuts=None, surfaces=None, **options
+    title,
+    *nodes,
+    description=None,
+    key=None,
+    shortcuts=None,
+    surfaces=None,
+    scope=None,
+    is_persistent=None,
+    **options,
 ):
     """An app declaration for `vis.attach`: a live view that stays in the session.
 
@@ -7352,6 +7371,10 @@ def _ui_app(
     that opened it. `session` is `sidebar`, `chat` or `off` for the session apps
     button. The person's settings can change both; an app with a `key` gets its
     own settings.
+    `scope="global"` makes an app of no session, which people open from the
+    global apps button. Only an SDK program opens one, with
+    `client.attach_app(...)`, and it needs a `key`. `is_persistent=False` lets a
+    global app end at a gateway restart; by default it comes back.
     """
     request = {str(k): v for k, v in options.items()}
     request.update(placement="attachment", title=str(title), nodes=list(nodes))
@@ -7363,7 +7386,29 @@ def _ui_app(
         request["shortcuts"] = _shortcut_list(shortcuts)
     if surfaces is not None:
         request["surfaces"] = _app_surfaces(surfaces)
+    request.update(_app_scope(scope, is_persistent, key))
     return request
+
+
+def _app_scope(scope, is_persistent, key):
+    """Check the scope keys of an app, as the engine does, before the host sees them."""
+    from blockether.vis import _contracts
+
+    scopes = _contracts.definition("view", "app_scope")["enum"]
+    keys = {}
+    if scope is not None:
+        if scope not in scopes:
+            raise ValueError("scope must be one of " + ", ".join(scopes))
+        keys["scope"] = scope
+    if is_persistent is not None:
+        if not isinstance(is_persistent, bool):
+            raise TypeError("is_persistent must be True or False")
+        if scope != "global":
+            raise ValueError('only an app with scope="global" takes is_persistent')
+        keys["is_persistent"] = is_persistent
+    if scope == "global" and (key is None or not str(key).strip()):
+        raise ValueError('an app with scope="global" needs a key that names it')
+    return keys
 
 
 def _app_surfaces(surfaces):
@@ -7373,7 +7418,9 @@ def _app_surfaces(surfaces):
     rule = _contracts.definition("view", "app_surfaces")["properties"]
     places = rule["session"]["enum"]
     if not isinstance(surfaces, dict) or set(surfaces) - set(rule):
-        raise TypeError("surfaces must be a dict with only " + " and ".join(sorted(rule)))
+        raise TypeError(
+            "surfaces must be a dict with only " + " and ".join(sorted(rule))
+        )
     if "inline" in surfaces and not isinstance(surfaces["inline"], bool):
         raise TypeError("surfaces inline must be True or False")
     if "session" in surfaces and surfaces["session"] not in places:

@@ -2293,6 +2293,15 @@
         }
       }
     },
+    "app_scope": {
+      "description": "Who an app belongs to. A `session` app belongs to the session that opened it. A `global` app belongs to no session: only an SDK program opens it, through `POST /v1/apps`.",
+      "type": "string",
+      "enum": [
+        "session",
+        "global"
+      ],
+      "default": "session"
+    },
     "live_view": {
       "type": "object",
       "additionalProperties": false,
@@ -2338,6 +2347,14 @@
           "pattern": "^app_[a-z0-9]+(?:_[a-z0-9]+)*$",
           "maxLength": 64,
           "readOnly": true
+        },
+        "scope": {
+          "description": "Who this app belongs to. Absent means `session`. Only an app takes a scope, and a `global` app needs a key.",
+          "$ref": "#/$defs/app_scope"
+        },
+        "is_persistent": {
+          "description": "Whether a global app comes back after a gateway restart, as a stale picture until its owner adopts it by key. Absent means true. Only a global app takes it.",
+          "type": "boolean"
         },
         "is_stale": {
           "description": "True for the saved picture of an owned view after a gateway restart, until its extension loads again.",

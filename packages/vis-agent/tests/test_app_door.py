@@ -11,7 +11,7 @@ import time
 import blockether.vis.extension as vis
 import pytest
 from blockether.vis._contracts import validate
-from blockether.vis.engine._client import Session
+from blockether.vis.engine._client import GatewayClient, Session
 from blockether.vis.engine._extensions import ClientExtensions
 
 
@@ -573,3 +573,51 @@ def test_shortcut_lists_fail_early_in_the_sdk(monkeypatch):
         handle.set_shortcuts([r, r])
     assert len(gateway.calls) == sent
     handle.close()
+
+
+class GlobalGateway(Gateway):
+    """Answer the global app door, `POST /v1/apps`, from one engine."""
+
+    def _request(self, method, route, *, path=None, body=None, timeout=None, **_):
+        self.calls.append((method, route, path, body, timeout))
+        assert (method, route, path) == ("POST", "/v1/apps", {})
+        answer = self.engine.host_live(json.dumps(body["envelope"]))
+        return Response(json.loads(answer))
+
+
+def test_attach_app_opens_a_global_app_over_the_global_door():
+    # Global apps: an SDK program opens an app of no session through POST /v1/apps.
+    gateway = GlobalGateway()
+    seen = []
+    handle = GatewayClient.attach_app(
+        gateway,
+        app(is_persistent=False, scope="global"),
+        owner="bot",
+        on_event=seen.append,
+    )
+    assert isinstance(handle, vis.LiveAttachment) and handle.id == "app-1"
+    view = gateway.envelopes("open")[0]["view"]
+    assert (view["scope"], view["key"], view["is_persistent"]) == (
+        "global",
+        "review",
+        False,
+    )
+    assert gateway.calls[0][3]["owner"] == "bot"
+    gateway.engine.press_shortcut("r")
+    assert wait_for(lambda: seen)
+    assert {c[1] for c in gateway.calls} == {"/v1/apps"}
+    handle.close()
+
+
+def test_attach_app_marks_a_declaration_global_and_refuses_a_session_app():
+    gateway = GlobalGateway()
+    GatewayClient.attach_app(gateway, app(), owner="bot").close()
+    assert gateway.envelopes("open")[0]["view"]["scope"] == "global"
+    sent = len(gateway.calls)
+    with pytest.raises(ValueError, match="key"):
+        GatewayClient.attach_app(
+            gateway, vis.ui.app("Review", vis.ui.button("go", label="Go")), owner="bot"
+        )
+    with pytest.raises(ValueError, match="only global"):
+        GatewayClient.attach_app(gateway, app(scope="session"), owner="bot")
+    assert len(gateway.calls) == sent

@@ -1282,6 +1282,15 @@
                (tel/log! :debug
                          ["gateway: dropped dead fleet subscriber" sub-id (ex-message err)])))))))
 
+(defn publish-fleet-event!
+  "Offer one event that belongs to no session, such as a frame of a global app,
+   to every fleet stream. The payload takes the canonical wire shape. The stream
+   keeps no replay, so a client reads the list again after a gap."
+  [type payload]
+  (publish-fleet! [(assoc (wire/canonical payload)
+                     "schema" 1
+                     "type" (wire/->wire type))]))
+
 (defn- fleet-title-tap
   "Forward a session's OWN rename to fleet watchers. `broadcast-title-event!` also
    copies that event into every other session (the copy carries

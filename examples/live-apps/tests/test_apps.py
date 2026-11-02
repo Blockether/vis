@@ -1,6 +1,7 @@
 """Every proof app, driven through the extension door against the test host."""
 
 import re
+import time
 
 import pytest
 from live_apps import (
@@ -755,3 +756,71 @@ def test_render_refuses_too_many_nodes():
     nodes = [{"type": "paragraph", "id": f"p{i}", "text": "x"} for i in range(65)]
     with pytest.raises(ValueError, match="maximum is 64"):
         runtime.check_tree(nodes)
+
+
+def _sdk_demo():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "sdk_demo.py"
+    spec = importlib.util.spec_from_file_location("sdk_demo", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class GlobalDoor:
+    """A gateway that answers only the global app door, from the test host."""
+
+    from blockether.vis.engine import GatewayClient
+
+    attach_app = GatewayClient.attach_app
+
+    def __init__(self, recorder):
+        self.recorder = recorder
+        self.routes = []
+
+    def _request(self, method, route, *, path=None, body=None, **_):
+        import json
+
+        self.routes.append((method, route))
+        answer = json.loads(self.recorder.host_live(json.dumps(body["envelope"])))
+
+        class Response:
+            content = b"{}"
+
+            def json(self):
+                return answer
+
+        return Response()
+
+
+def test_a_global_app_keeps_its_data_for_the_next_owner_process(recorder):
+    # Global apps: the program declares what outlives a restart through its store.
+    demo = _sdk_demo()
+    door, store = GlobalDoor(recorder), {}
+    first = Apps(
+        demo.global_opener_of(door, "demo", is_persistent=False),
+        store,
+        prefix="global:",
+    )
+    first.open("todo")
+    recorder.type_text("new", "keep me")
+    recorder.activate("add")
+    # The global door gives each event to the runner on its poll thread.
+    deadline = time.monotonic() + 5
+    while (
+        not (store.get("global:todo") or {}).get("items")
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.01)
+    # The program ends: closing its app also ends the poll of its door.
+    first.runners["todo"].close()
+    opened = recorder._open_view()
+    assert (opened["scope"], opened["is_persistent"]) == ("global", False)
+    assert "global:todo" in store
+    second = Apps(demo.global_opener_of(door, "demo"), store, prefix="global:")
+    runner = second.open("todo")
+    assert runner.state["items"][0]["text"] == "keep me"
+    assert set(door.routes) == {("POST", "/v1/apps")}
+    runner.close()

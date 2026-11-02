@@ -40,11 +40,20 @@
   ^File []
   (io/file (System/getProperty "user.home") ".vis" "gateway" "views"))
 
+(def machine-dir
+  "The directory of the records that belong to no session, such as a global app."
+  "machine")
+
+(defn- scope-dir
+  "The directory name of session `session-id`, or [[machine-dir]] without one."
+  [session-id]
+  (or (not-empty (str session-id)) machine-dir))
+
 (defn view-file
-  "The record of view `view-id`, kept under the session that opened it. A header
-   view has no session, so its record is kept under `machine`."
+  "The record of view `view-id`, kept under the session that opened it. A view
+   without a session, such as a global app, is kept under [[machine-dir]]."
   ^File [session-id view-id]
-  (io/file (views-dir) (or (not-empty (str session-id)) "machine") (str view-id ".ndjson")))
+  (io/file (views-dir) (scope-dir session-id) (str view-id ".ndjson")))
 
 (def ^:private record-scheme
   "URI scheme of a live record. Owned by [[record-backend]], which is the only thing
@@ -258,9 +267,10 @@
           (.listFiles (views-dir)))))
 
 (defn- app-index-file
-  "The list of the apps that session `session-id` opened, one NDJSON line each."
+  "The list of the apps that session `session-id` opened, one NDJSON line each.
+   Without a session, the list of the global apps."
   ^File [session-id]
-  (io/file (views-dir) (str session-id) "apps.ndjson"))
+  (io/file (views-dir) (scope-dir session-id) "apps.ndjson"))
 
 (defn index-app!
   "Add one app to the list of session `session-id`. `entry` holds `:view-id` and
