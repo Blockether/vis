@@ -17,6 +17,8 @@ import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
 import { councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
 import { useClampMotion } from '../lib/clamp-motion';
+import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
+export { axisMarks, formatAgentTime };
 import { Markdown } from './ChatContent';
 import { CheckIcon, CloseIcon } from './icons';
 import { Button, DialogFrame, Modal, TextButton } from './ui';
@@ -99,15 +101,6 @@ export function agentTime(agent: Subagent, now: number): number | undefined {
   if (start === undefined || agent.status === 'queued') return undefined;
   if (agent.status === 'running') return Math.max(0, now - start);
   return agent.finished_at == null ? undefined : Math.max(0, agent.finished_at - start);
-}
-
-/** `45s`, `3m 04s`, `1h 02m`. */
-export function formatAgentTime(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`;
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
 }
 
 /**
@@ -267,18 +260,6 @@ export function agentBars(rows: readonly Subagent[], now: number): Map<string, A
   }
   return bars;
 }
-
-// The steps of the time axis, in seconds. The axis takes the least step that gives at most five marks.
-const AXIS_STEPS = [10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
-
-/** The marks of a time axis of `ms`, in ms from 0: at most five, on a round step. */
-export function axisMarks(ms: number): number[] {
-  const seconds = ms / 1000;
-  const step = AXIS_STEPS.find((each) => seconds / each < 5) ?? Math.ceil(seconds / 4 / 3600) * 3600;
-  return Array.from({ length: Math.floor(seconds / step) + 1 }, (_, index) => index * step * 1000);
-}
-
-const axisLabel = (ms: number) => `${Math.floor(ms / 60_000)}:${pad(Math.floor(ms / 1000) % 60)}`;
 
 // The bar ink of each status word.
 const BAR_INK: Record<string, string> = {
@@ -699,11 +680,12 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
                   <li key={index} aria-current={isCurrent ? 'step' : undefined} className="grid grid-cols-[8ch_minmax(0,1fr)] gap-x-3">
                     {at === undefined ? (
                       <span className="uppercase text-accent-ink">now</span>
+                    ) : isCurrent ? (
+                      <time dateTime={new Date(at).toISOString()} title={clockTime(at)} className="uppercase text-accent-ink">now</time>
                     ) : (
                       <time dateTime={new Date(at).toISOString()} className="text-dialog-hint tabular-nums">{clockTime(at)}</time>
                     )}
                     <p className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isCurrent ? 'font-semibold' : ''}`}>
-                      {isCurrent && <span aria-hidden="true" className="mr-3 inline-block size-2 rounded-full bg-accent-ink motion-safe:animate-pulse" />}
                       {word && <span className={`mr-3 ${word.isStatus ? 'uppercase' : ''} ${word.ink}`}>{word.text}</span>}
                       {text}
                     </p>
