@@ -283,15 +283,11 @@ function columnWidths(rows: readonly Subagent[]): CSSProperties {
   } as CSSProperties;
 }
 
-// The marks of the time axis: a hairline in each bar, and its label above the first bar.
-function AxisMarks({ total, isLabeled = false }: { total: number; isLabeled?: boolean }) {
+// The labels of the time axis, above the first bar.
+function AxisMarks({ total }: { total: number }) {
   return axisMarks(total).map((at, index) => (
-    <span
-      key={at}
-      className={`absolute top-0 ${isLabeled ? (index === 0 ? '' : '-translate-x-1/2') : 'h-full w-px bg-dialog-edge/30'}`}
-      style={{ left: `${(at / total) * 100}%` }}
-    >
-      {isLabeled ? axisLabel(at) : null}
+    <span key={at} className={`absolute top-0 ${index === 0 ? '' : '-translate-x-1/2'}`} style={{ left: `${(at / total) * 100}%` }}>
+      {axisLabel(at)}
     </span>
   ));
 }
@@ -316,7 +312,7 @@ function AgentTable({ rows, now, error, onSelect }: {
       {hasBars && (
         <div aria-hidden className="hidden gap-x-3 px-2 pt-1 text-dialog-hint sm:flex">
           <div className={grid}>
-            <span className="relative col-start-4 h-[1lh]"><AxisMarks total={total} isLabeled /></span>
+            <span className="relative col-start-4 h-[1lh]"><AxisMarks total={total} /></span>
           </div>
           <span className={OPEN_WIDTH} />
         </div>
@@ -345,14 +341,13 @@ function AgentTable({ rows, now, error, onSelect }: {
                   {agentLabel(agent, rows)}
                 </span>
                 <span
-                  className={`order-4 col-span-2 line-clamp-2 text-dialog-hint [overflow-wrap:anywhere] sm:order-none sm:col-[3/-1] sm:row-start-2 sm:line-clamp-3 sm:border-l sm:border-dialog-edge/40 sm:pl-3 ${update ? '' : 'max-sm:hidden'} ${isOpen ? '' : 'sm:hidden'}`}
+                  className={`order-4 col-span-2 line-clamp-2 text-dialog-hint [overflow-wrap:anywhere] sm:order-none sm:col-[3/-1] sm:row-start-2 sm:line-clamp-3 ${update ? '' : 'max-sm:hidden'} ${isOpen ? '' : 'sm:hidden'}`}
                   title={update}
                 >
                   {update ?? ''}
                 </span>
                 {hasBars && (
                   <span aria-hidden className="relative hidden h-2 self-center sm:block">
-                    <AxisMarks total={total} />
                     {bar && (
                       <span
                         className={`absolute inset-y-0 ${bar.isWaiting ? 'top-1/2 border-t border-dashed border-dialog-hint' : BAR_INK[status.text]}`}
