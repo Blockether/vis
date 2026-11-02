@@ -76,7 +76,7 @@ function ListHeader({
   children: ReactNode;
 }) {
   return (
-    <legend className="mb-1 flex w-full items-center justify-between gap-2">
+    <legend className="mb-1 flex w-full items-center justify-between gap-2 last:mb-0">
       <span className="min-w-0">
         <Text variant="label" className="block truncate">
           {children}
@@ -138,6 +138,14 @@ function StringList({
       <ListHeader label={`Add ${name.toLowerCase()}`} hint={hint} onAdd={() => onChange([...rows, numbers ? 0 : ''])}>
         {label}
       </ListHeader>
+      {/* Hidden, but a trailing child would keep the spacing margin under the last row. */}
+      {!!suggestions?.length && (
+        <datalist id={suggestionsId}>
+          {suggestions.map((suggestion) => (
+            <option key={suggestion} value={suggestion} />
+          ))}
+        </datalist>
+      )}
       {rows.map((entry, index) => (
         <div key={index} className="flex min-w-0 items-center gap-2">
           <Input
@@ -167,13 +175,6 @@ function StringList({
         <Text as="p" variant="description">
           No entries
         </Text>
-      )}
-      {!!suggestions?.length && (
-        <datalist id={suggestionsId}>
-          {suggestions.map((suggestion) => (
-            <option key={suggestion} value={suggestion} />
-          ))}
-        </datalist>
       )}
     </fieldset>
   );

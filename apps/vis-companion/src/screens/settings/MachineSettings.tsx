@@ -409,23 +409,26 @@ export function ValueSetting({
           )}
         </div>
       )}
-      <SettingField
-        setting={toggle}
-        value={draft}
-        disabled={busy || disabled}
-        raw={raw}
-        onChange={(value, keepRaw) => {
-          setDraft(value);
-          if (!keepRaw) {
-            setRaw(undefined);
-            setError(undefined);
-          }
-        }}
-        onRawChange={(text, problem) => {
-          setRaw(text);
-          setError(problem);
-        }}
-      />
+      {/* Safari counts a flex-item fieldset's legend twice in its height; a block parent avoids it. */}
+      <div className="min-w-0">
+        <SettingField
+          setting={toggle}
+          value={draft}
+          disabled={busy || disabled}
+          raw={raw}
+          onChange={(value, keepRaw) => {
+            setDraft(value);
+            if (!keepRaw) {
+              setRaw(undefined);
+              setError(undefined);
+            }
+          }}
+          onRawChange={(text, problem) => {
+            setRaw(text);
+            setError(problem);
+          }}
+        />
+      </div>
       {error && (
         <p className="text-err" role="alert">
           <Text variant="description" tone="inherit">
