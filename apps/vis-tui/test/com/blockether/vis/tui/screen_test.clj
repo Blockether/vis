@@ -3382,10 +3382,29 @@ therapy line 2"
                      {:row row :col 2 :img {:path "/tmp/shot.png" :cols 10 :rows rows}})]
 
                (it "keeps every picture whose box ends above the band's first row"
-                   (expect (= [(region 2 5)] (above [(region 2 5) (region 9 5)] 12))))
-               (it "drops a picture the band would sit on top of"
-                   (expect (= [] (above [(region 10 4)] 12)))
-                   (expect (= [] (above [(region 12 1)] 12))))
+                   (expect (= [(region 2 5)] (above [(region 2 5) (region 12 5)] 12))))
+               (it "drops a picture that starts in the band, or that it cannot cut"
+                   (expect (= [] (above [(region 12 1) (region 13 4)] 12)))
+                   ;; Without a pixel size, another protocol cannot cut a picture.
+                   (with-redefs [timg/images-protocol (constantly :iterm2)]
+                     (expect (= [] (above [(region 10 4)] 12)))))
+               ;; User report: the picture that the C-x band partly covered vanished
+               ;; while the band was open. Its rows above the band stay on screen.
+               (it "keeps the rows above the band of a picture that reaches into it"
+                   (with-redefs [timg/images-protocol (constantly :kitty)]
+                     (expect (= [{:row 10
+                                  :col 2
+                                  :img {:path "/tmp/shot.png" :cols 10 :rows 4 :crop-top 0 :crop-bottom 2}}]
+                                (above [(region 10 4)] 12)))
+                     (expect (= [1 1]
+                                (-> (above [(assoc-in (region 10 4) [:img :crop-top] 1)] 12)
+                                    first
+                                    :img
+                                    ((juxt :crop-top :crop-bottom))))))
+                   (with-redefs [timg/images-protocol (constantly :iterm2)]
+                     (let [[kept] (above [(update (region 10 4) :img assoc :width 40 :height 80)] 12)]
+                       (expect (= 2 (get-in kept [:img :rows])))
+                       (expect (= {:x 0 :y 0 :w 40 :h 40} (get-in kept [:img :view]))))))
                (it "every C-x band's top row leaves room for the transcript above it"
                    (let [db {:layout {:cols 100 :rows 30 :messages-top 1 :input-h 3}
                              :messages [{:role :user}]

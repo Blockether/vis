@@ -2639,20 +2639,32 @@
   (reset! last-image-regions []))
 
 (defn- images-above-band
-  "The placements a session BAND may KEEP on the graphics layer: every image whose
-   whole reserved box ends above `band-top`.
+  "The placements a session BAND may KEEP on the graphics layer: every image that
+   starts above `band-top`, cut to its rows above the band.
 
    A band is not a modal. It is a strip glued to the prompt, with the transcript
    still readable above it —
    dropping every inline image the way a full-screen dialog does made every
    picture in the session vanish the moment C-x was pressed and only come back
-   after the band closed. Only a picture the band would sit UNDER has to go:
-   Kitty graphics ride above the text cells, so an image whose box reaches into
-   the band's rows would paint over the band itself."
+   after the band closed. Kitty graphics ride above the text cells, so an image
+   whose box reaches into the band's rows would paint over the band itself. Such
+   an image shows only its rows above the band ([[visible-slice]]), the same cut
+   as a picture scrolled past an edge. A picture of unknown size, or one that
+   starts in the band, leaves the layer."
   [regions ^long band-top]
-  (filterv (fn [{:keys [row img]}]
-             (<= (+ (long row) (long (or (:rows img) 1))) band-top))
-    regions))
+  (let [kitty? (= :kitty (timg/images-protocol))]
+    (into []
+          (keep (fn [{:keys [row img] :as region}]
+                  (let [rows (long (or (:rows img) 1))
+                        ;; A Kitty slice keeps its full box and names its cut rows.
+                        crop-top (if kitty? (long (or (:crop-top img) 0)) 0)
+                        shown (if kitty? (- rows crop-top (long (or (:crop-bottom img) 0))) rows)
+                        room (- band-top (long row))]
+
+                    (cond (<= shown room) region
+                          (pos? room) (some->> (visible-slice img crop-top room kitty?)
+                                               (assoc region :img))))))
+          regions)))
 
 (defn- clip-terminal-images-to-band!
   "Re-place exactly the images that stay clear of a band starting at `band-top`;
