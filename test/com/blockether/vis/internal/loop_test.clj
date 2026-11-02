@@ -207,7 +207,8 @@
    (captured-svar-ask-code-opts (helper-router :lmstudio helper-provider-network) invoke!))
   ([router invoke!]
    (let [seen (atom nil)]
-     (with-redefs-fn {#'loop-router/get-router (fn []
+     (with-redefs-fn {#'svar/session-capability (constantly nil)
+                      #'loop-router/get-router (fn []
                                                  router)
                       #'svar/ask-code! (fn [router opts]
                                          (reset! seen {:router router :opts opts})
@@ -255,7 +256,8 @@
     (try
       (let [{:keys [signals]}
             (tel/with-signals
-              (with-redefs [svar/count-messages (fn ^long [model request]
+              (with-redefs [svar/session-capability (constantly nil)
+                            svar/count-messages (fn ^long [model request]
                                                   (swap! counted conj [model request])
                                                   (long (counter model request)))
                             svar/count-tokens (fn ^long [_ _]
@@ -588,35 +590,41 @@
           calls
           (atom 0)]
 
-      (try (let [{:keys [signals]}
-                 (tel/with-signals
-                   (with-redefs [svar/ask-code! (fn [_ _]
-                                                  (swap! calls inc)
-                                                  (throw (ex-info "Context overflow"
-                                                                  {:type :svar.core/context-overflow
-                                                                   :input-tokens 276317
-                                                                   :max-input-tokens 272000})))]
-                     (iteration/iteration-loop environment "measure" {:session-turn-id tid})))
+      (try
+        (let [{:keys [signals]}
+              (tel/with-signals
+                (with-redefs [svar/session-capability
+                              (constantly nil)
 
-                 failed
-                 (:data (first (filter #(= ::transcript/context-token-counts (:id %)) signals)))
+                              svar/ask-code!
+                              (fn [_ _]
+                                (swap! calls inc)
+                                (throw (ex-info "Context overflow"
+                                                {:type :svar.core/context-overflow
+                                                 :input-tokens 276317
+                                                 :max-input-tokens 272000})))]
 
-                 terminal
-                 (:data (first (filter #(= ::iteration/context-overflow-terminal (:id %)) signals)))
+                  (iteration/iteration-loop environment "measure" {:session-turn-id tid})))
 
-                 correlation
-                 [:request-id :session-id :session-turn-id :iteration :prompt-base
-                  :base-message-count :trailer-iteration-count]]
+              failed
+              (:data (first (filter #(= ::transcript/context-token-counts (:id %)) signals)))
 
-             (expect (= 1 @calls))
-             (expect (some? (:request-id failed)))
-             (expect (= (select-keys failed correlation) (select-keys terminal correlation)))
-             (expect (= 0 (:trailer-iteration-count terminal)))
-             (expect (= :canonical (:prompt-base terminal)))
-             (expect (= :preflight (:rejection-source terminal)))
-             (expect (= 1 (:recovery-attempts terminal)))
-             (expect (false? (:output-started? terminal))))
-           (finally (loop-env/dispose-environment! environment))))))
+              terminal
+              (:data (first (filter #(= ::iteration/context-overflow-terminal (:id %)) signals)))
+
+              correlation
+              [:request-id :session-id :session-turn-id :iteration :prompt-base :base-message-count
+               :trailer-iteration-count]]
+
+          (expect (= 1 @calls))
+          (expect (some? (:request-id failed)))
+          (expect (= (select-keys failed correlation) (select-keys terminal correlation)))
+          (expect (= 0 (:trailer-iteration-count terminal)))
+          (expect (= :canonical (:prompt-base terminal)))
+          (expect (= :preflight (:rejection-source terminal)))
+          (expect (= 1 (:recovery-attempts terminal)))
+          (expect (false? (:output-started? terminal))))
+        (finally (loop-env/dispose-environment! environment))))))
 
 (defdescribe
   request-health-persistence-test
@@ -643,7 +651,8 @@
              (let [tid (persistance/db-store-session-turn! db
                                                            {:parent-session-id sid
                                                             :user-request "measure"})]
-               (with-redefs [svar/ask-code! (fn [_ _]
+               (with-redefs [svar/session-capability (constantly nil)
+                             svar/ask-code! (fn [_ _]
                                               {:stop-reason :end
                                                :tool-calls []
                                                :content "done"
@@ -651,6 +660,7 @@
                                                :routed/model model
                                                :api-usage {:input-tokens input :output-tokens 1}
                                                :tokens {}})]
+
                  (iteration/iteration-loop environment "measure" {:session-turn-id tid}))
                (let [usage (persistance/db-session-usage-stats db sid)
                      health (:health usage)]
@@ -688,7 +698,8 @@
         (try (let [tid (persistance/db-store-session-turn! db
                                                            {:parent-session-id sid
                                                             :user-request "measure"})]
-               (with-redefs [svar/ask-code! (fn [_ _]
+               (with-redefs [svar/session-capability (constantly nil)
+                             svar/ask-code! (fn [_ _]
                                               (compare-and-set! first-request
                                                                 nil
                                                                 (get @(:ctx-atom environment)
@@ -700,6 +711,7 @@
                                                :routed/model model
                                                :api-usage {:input-tokens 32000 :output-tokens 1}
                                                :tokens {}})]
+
                  (iteration/iteration-loop environment "measure" {:session-turn-id tid}))
                ;; Turn start priced the catalog's raw window (1M for Opus) until the
                ;; first response replaced it with Svar's routed budget.
@@ -770,10 +782,16 @@
           {:input 20736}]]
 
      (try
-       (with-redefs [svar/ask-code!
+       (with-redefs [svar/session-capability
+                     (constantly nil)
+
+                     svar/ask-code!
                      (fn [_ opts]
-                       (let [idx (count @requests)
-                             {:keys [input code]} (nth steps idx)]
+                       (let [idx
+                             (count @requests)
+
+                             {:keys [input code]}
+                             (nth steps idx)]
 
                          (swap! requests conj (:messages opts))
                          (swap! snapshots conj (ctx-loop/session-snapshot environment))
@@ -792,6 +810,7 @@
                                                  :name "python_execution"
                                                  :input {:code code}}]}
                                   {:stop-reason :end :tool-calls [] :content "done"}))))]
+
          (iteration/iteration-loop environment "fold settled work" {:session-turn-id tid}))
        (expect (= 4 (count @requests)))
        ;; A successful fold must survive before the turn finalizer runs.
@@ -1101,36 +1120,42 @@
         (expect (= 0 @provider-calls))
         (expect (= :vis/unsupported-reasoning-effort (:type (ex-data thrown))))
         (expect (= ["high" "max"] (:supported (ex-data thrown))))))
-  (it "returns content-free health for the request actually handed to the provider"
-      (let [environment
-            (loop-env/create-environment {:providers [{:id :lmstudio}]} {:db :memory})
+  (it
+    "returns content-free health for the request actually handed to the provider"
+    (let [environment
+          (loop-env/create-environment {:providers [{:id :lmstudio}]} {:db :memory})
 
-            messages
-            [{:role "system" :content "core"} {:role "user" :content "abcdefgh"}]
+          messages
+          [{:role "system" :content "core"} {:role "user" :content "abcdefgh"}]
 
-            seen
-            (atom nil)]
+          seen
+          (atom nil)]
 
-        (try (with-redefs [svar/ask-code! (fn [_ opts]
-                                            (reset! seen opts)
-                                            {:stop-reason :end
-                                             :tool-calls []
-                                             :content "done"
-                                             :api-usage {:input-tokens 300 :output-tokens 1}
-                                             :tokens {}})]
-               (let [result (iteration/run-iteration environment
-                                                     messages
-                                                     {:iteration 0
-                                                      :resolved-model {:provider :lmstudio
-                                                                       :name "local-model"}})]
-                 (expect (= (:request-health result)
-                            (prompt/request-health environment
-                                                   (:messages @seen)
-                                                   (:tools @seen)
-                                                   "local-model")))
-                 (expect (seq (get-in result [:request-health :breakdown])))
-                 (expect (not (str/includes? (pr-str (:request-health result)) "abcdefgh")))))
-             (finally (loop-env/dispose-environment! environment)))))
+      (try (with-redefs [svar/session-capability
+                         (constantly nil)
+
+                         svar/ask-code!
+                         (fn [_ opts]
+                           (reset! seen opts)
+                           {:stop-reason :end
+                            :tool-calls []
+                            :content "done"
+                            :api-usage {:input-tokens 300 :output-tokens 1}
+                            :tokens {}})]
+
+             (let [result (iteration/run-iteration environment
+                                                   messages
+                                                   {:iteration 0
+                                                    :resolved-model {:provider :lmstudio
+                                                                     :name "local-model"}})]
+               (expect (= (:request-health result)
+                          (prompt/request-health environment
+                                                 (:messages @seen)
+                                                 (:tools @seen)
+                                                 "local-model")))
+               (expect (seq (get-in result [:request-health :breakdown])))
+               (expect (not (str/includes? (pr-str (:request-health result)) "abcdefgh")))))
+           (finally (loop-env/dispose-environment! environment)))))
   (it
     "does not inject a prompt for models without native reasoning"
     (let [environment
@@ -1151,10 +1176,14 @@
           (fn [{:keys [content]}]
             (if (string? content) content (apply str (keep :text content))))]
 
-      (try (with-redefs [svar/ask-code!
+      (try (with-redefs [svar/session-capability
+                         (constantly nil)
+
+                         svar/ask-code!
                          (fn [_router opts]
                            (reset! seen opts)
                            {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
+
              (iteration/run-iteration environment
                                       messages
                                       {:iteration 0
@@ -1223,19 +1252,23 @@
           seen
           (atom nil)]
 
-      (try (with-redefs [svar/ask-code! (fn [_router opts]
-                                          (reset! seen opts)
-                                          {:stop-reason :end
-                                           :tool-calls []
-                                           :content "done"
-                                           :tokens {}
-                                           :routed/reasoning-effort {:requested "max"
-                                                                     :effective "max"
-                                                                     :supported ["high" "max"]
-                                                                     :wire-style :zai-effort
-                                                                     :extra-body
-                                                                     {:thinking {:type "enabled"}
-                                                                      :reasoning_effort "max"}}})]
+      (try (with-redefs [svar/session-capability
+                         (constantly nil)
+
+                         svar/ask-code!
+                         (fn [_router opts]
+                           (reset! seen opts)
+                           {:stop-reason :end
+                            :tool-calls []
+                            :content "done"
+                            :tokens {}
+                            :routed/reasoning-effort {:requested "max"
+                                                      :effective "max"
+                                                      :supported ["high" "max"]
+                                                      :wire-style :zai-effort
+                                                      :extra-body {:thinking {:type "enabled"}
+                                                                   :reasoning_effort "max"}}})]
+
              (let [result (iteration/run-iteration environment
                                                    []
                                                    {:iteration 0
@@ -1257,10 +1290,14 @@
             seen
             (atom nil)]
 
-        (try (with-redefs [svar/ask-code!
+        (try (with-redefs [svar/session-capability
+                           (constantly nil)
+
+                           svar/ask-code!
                            (fn [_router opts]
                              (reset! seen opts)
                              {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
+
                (iteration/run-iteration environment
                                         []
                                         {:iteration 0
@@ -1285,10 +1322,12 @@
           (let [environment (loop-env/create-environment ::router {:db :memory})
                 seen (atom nil)]
 
-            (try (with-redefs [svar/ask-code!
+            (try (with-redefs [svar/session-capability (constantly nil)
+                               svar/ask-code!
                                (fn [_router opts]
                                  (reset! seen opts)
                                  {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
+
                    (binding [toggles/*overrides* overrides]
                      (iteration/run-iteration environment
                                               []
@@ -2299,7 +2338,11 @@
           result
           {:role "user" :content [{:type "tool_result" :tool_use_id "call-1"}]}]
 
-      (with-redefs [svar/open-session
+      (with-redefs [svar/session-capability
+                    (fn [_ opts]
+                      {:auto-open? (= :openai-codex (get-in opts [:routing :provider]))})
+
+                    svar/open-session
                     (fn [router opts]
                       (expect (= ::router router))
                       (expect (nil? (:messages opts)))
@@ -2367,7 +2410,11 @@
           result
           {:role "user" :content [{:type "tool_result" :tool_use_id "call-1"}]}]
 
-      (with-redefs [registry/provider-by-id
+      (with-redefs [svar/session-capability
+                    (fn [_ opts]
+                      {:auto-open? (= :openai-codex (get-in opts [:routing :provider]))})
+
+                    registry/provider-by-id
                     (fn [_]
                       {:provider/get-token-fn (constantly credential)})
 
@@ -2449,7 +2496,11 @@
           second-assistant
           {:role "assistant" :content "terra answer"}]
 
-      (with-redefs [svar/open-session
+      (with-redefs [svar/session-capability
+                    (fn [_ opts]
+                      {:auto-open? (= :openai-codex (get-in opts [:routing :provider]))})
+
+                    svar/open-session
                     (fn [actual-router opts]
                       (swap! opened conj [actual-router opts])
                       ::session)
@@ -2498,7 +2549,11 @@
           asked
           (atom nil)]
 
-      (with-redefs [svar/open-session
+      (with-redefs [svar/session-capability
+                    (fn [_ opts]
+                      {:auto-open? (= :openai-codex (get-in opts [:routing :provider]))})
+
+                    svar/open-session
                     (fn [router opts]
                       (swap! opened conj [router opts])
                       ::fresh)
@@ -2543,7 +2598,11 @@
           messages
           [{:role "system" :content "rebased"} {:role "user" :content "continue"}]]
 
-      (with-redefs [svar/open-session
+      (with-redefs [svar/session-capability
+                    (fn [_ opts]
+                      {:auto-open? (= :openai-codex (get-in opts [:routing :provider]))})
+
+                    svar/open-session
                     (fn [_ opts]
                       (swap! opened conj opts)
                       ::fresh)
@@ -2579,7 +2638,11 @@
           asked
           (atom nil)]
 
-      (with-redefs [svar/close-session!
+      (with-redefs [svar/session-capability
+                    (fn [_ opts]
+                      {:auto-open? (= :openai-codex (get-in opts [:routing :provider]))})
+
+                    svar/close-session!
                     (fn [session]
                       (swap! closed conj session))
 
@@ -2614,7 +2677,10 @@
   (it "passes the prompt-cache key and caller headers to the Codex session"
       ;; Svar adds the `session-id` affinity header and keeps prewarm off.
       (let [opened (atom nil)]
-        (with-redefs [svar/open-session (fn [_ opts]
+        (with-redefs [svar/session-capability
+                      (fn [_ opts]
+                        {:auto-open? (= :openai-codex (get-in opts [:routing :provider]))})
+                      svar/open-session (fn [_ opts]
                                           (reset! opened opts)
                                           ::fresh)
                       svar/ask! (fn [_ _]
@@ -3084,12 +3150,16 @@
                        calls
                        (atom 0)]
 
-                   (try (with-redefs [svar/ask-code! (fn [_router _opts]
-                                                       (swap! calls inc)
-                                                       (throw (ex-info
-                                                                "Stream connection error: closed"
-                                                                {:type :svar.core/http-error
-                                                                 :stream? true})))]
+                   (try (with-redefs [svar/session-capability
+                                      (constantly nil)
+
+                                      svar/ask-code!
+                                      (fn [_router _opts]
+                                        (swap! calls inc)
+                                        (throw (ex-info "Stream connection error: closed"
+                                                        {:type :svar.core/http-error
+                                                         :stream? true})))]
+
                           (expect (throws? clojure.lang.ExceptionInfo
                                            #(iteration/run-iteration
                                               env
@@ -3174,33 +3244,41 @@
           during
           (atom nil)]
 
-      (try (with-redefs [svar/ask-code!
-                         (fn [_router opts]
-                           (when-let [on-resend (:on-empty-reply-resend opts)]
-                             (on-resend {:model "claude-x"
-                                         :provider-id :anthropic
-                                         :attempt 1
-                                         :max-resends 3
-                                         :delay-ms 2000}))
-                           ;; Everything the UI had been told while the ladder was still running.
-                           (reset! during (vec @chunks))
-                           {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
-             (iteration/run-iteration env
-                                      []
-                                      {:iteration 0
-                                       :resolved-model {:provider :anthropic :name "claude-x"}
-                                       :on-chunk #(swap! chunks conj %)})
-             (let [live (filterv #(= :provider-retry-reset (:phase %)) @during)
-                   ev (:event (first live))]
+      (try
+        (with-redefs [svar/session-capability
+                      (constantly nil)
 
-               (expect (= 1 (count live)))
-               (expect (= {:iteration 1 :attempt 1 :max-retries 3 :delay-ms 2000}
-                          (select-keys (first live) [:iteration :attempt :max-retries :delay-ms])))
-               (expect (= :svar.llm/empty-content (get-in (first live) [:error :type])))
-               (expect (= :empty-content (:reason ev)))
-               (expect (= "anthropic" (:from-provider ev)))
-               (expect (= "claude-x" (:from-model ev)))))
-           (finally (loop-env/dispose-environment! env))))))
+                      svar/ask-code!
+                      (fn [_router opts]
+                        (when-let [on-resend (:on-empty-reply-resend opts)]
+                          (on-resend {:model "claude-x"
+                                      :provider-id :anthropic
+                                      :attempt 1
+                                      :max-resends 3
+                                      :delay-ms 2000}))
+                        ;; Everything the UI had been told while the ladder was still running.
+                        (reset! during (vec @chunks))
+                        {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+
+          (iteration/run-iteration env
+                                   []
+                                   {:iteration 0
+                                    :resolved-model {:provider :anthropic :name "claude-x"}
+                                    :on-chunk #(swap! chunks conj %)})
+          (let [live
+                (filterv #(= :provider-retry-reset (:phase %)) @during)
+
+                ev
+                (:event (first live))]
+
+            (expect (= 1 (count live)))
+            (expect (= {:iteration 1 :attempt 1 :max-retries 3 :delay-ms 2000}
+                       (select-keys (first live) [:iteration :attempt :max-retries :delay-ms])))
+            (expect (= :svar.llm/empty-content (get-in (first live) [:error :type])))
+            (expect (= :empty-content (:reason ev)))
+            (expect (= "anthropic" (:from-provider ev)))
+            (expect (= "claude-x" (:from-model ev)))))
+        (finally (loop-env/dispose-environment! env))))))
 
 ;; Regression: svar speaks its own session notices on the SAME streaming callback as
 ;; routing events, and every chunk carrying `:event/type` was labelled
@@ -3214,10 +3292,12 @@
           (let [env (loop-env/create-environment ::router {:db :memory})
                 chunks (atom [])]
 
-            (try (with-redefs [svar/ask-code!
+            (try (with-redefs [svar/session-capability (constantly nil)
+                               svar/ask-code!
                                (fn [_router opts]
                                  (emit! (:on-chunk opts))
                                  {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+
                    (iteration/run-iteration env
                                             []
                                             {:iteration 0
@@ -3310,10 +3390,12 @@
           (let [env (loop-env/create-environment ::router {:db :memory})
                 chunks (atom [])]
 
-            (try (with-redefs [svar/ask-code!
+            (try (with-redefs [svar/session-capability (constantly nil)
+                               svar/ask-code!
                                (fn [_router opts]
                                  (emit! (:on-chunk opts))
                                  {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+
                    (iteration/run-iteration env
                                             []
                                             {:iteration 0
@@ -3363,9 +3445,11 @@
           (let [env (loop-env/create-environment ::router {:db :memory})
                 chunks (atom [])]
 
-            (try (with-redefs [svar/ask-code!
+            (try (with-redefs [svar/session-capability (constantly nil)
+                               svar/ask-code!
                                (fn [_router _opts]
                                  {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+
                    (iteration/run-iteration env
                                             []
                                             {:iteration iteration
@@ -3506,11 +3590,13 @@
                                              (apply run-block context code args))]
           (doseq [code ["print(await council.publish('after timeout', title='Timeout regression'))"
                         "print(42)"]]
-            (with-redefs [svar/ask-code! (fn [_ _]
+            (with-redefs [svar/session-capability (constantly nil)
+                          svar/ask-code! (fn [_ _]
                                            {:stop-reason :tool-calls
                                             :tool-calls [{:id "follow_up"
                                                           :name "python_execution"
                                                           :input {:code code}}]})]
+
               (let [result (try (iteration/run-iteration environment
                                                          []
                                                          {:iteration 1
@@ -3637,7 +3723,8 @@
 
         (try (expect (nil? (:error (#'python-exec/execute-code environment "print('ready')"))))
              (let [result (binding [rt/*eval-timeout-ms* 3000]
-                            (with-redefs [toggles/enabled? (constantly false)
+                            (with-redefs [svar/session-capability (constantly nil)
+                                          toggles/enabled? (constantly false)
                                           svar/ask-code! (fn [_ _]
                                                            (case (swap! calls inc)
                                                              1
@@ -3698,7 +3785,8 @@
                                      "handle = (n for n in range(3))\nprint('ready')"))))
              (let [result
                    (binding [rt/*eval-timeout-ms* 3000]
-                     (with-redefs [rt/eval-timeout-ms-for-code
+                     (with-redefs [svar/session-capability (constantly nil)
+                                   rt/eval-timeout-ms-for-code
                                    (fn [base code]
                                      (limit-for-code (if (= code after-code) 30000 base) code))
                                    svar/ask-code! (fn [_ opts]
@@ -3751,7 +3839,8 @@
             calls
             (atom 0)]
 
-        (try (let [result (with-redefs [svar/ask-code!
+        (try (let [result (with-redefs [svar/session-capability (constantly nil)
+                                        svar/ask-code!
                                         (fn [_ _]
                                           (swap! calls inc)
                                           (reset! (:python-context-retired-atom environment) true)
@@ -3760,6 +3849,7 @@
                                            :tool-calls [{:id "cancelled_call"
                                                          :name "python_execution"
                                                          :input {:code "print(42)"}}]})]
+
                             (iteration/iteration-loop environment
                                                       "cancel regression"
                                                       {:session-turn-id tid
@@ -3785,13 +3875,15 @@
             cancelled
             (atom false)]
 
-        (try (let [result (with-redefs [svar/ask-code!
+        (try (let [result (with-redefs [svar/session-capability (constantly nil)
+                                        svar/ask-code!
                                         (fn [_ {:keys [on-chunk]}]
                                           (on-chunk {:reasoning "Reading the files."})
                                           (on-chunk {:content "The first half"})
                                           (reset! cancelled true)
                                           (throw (ex-info "stream cancelled"
                                                           {:type :svar.core/stream-cancelled})))]
+
                             (iteration/iteration-loop environment
                                                       "stop mid stream"
                                                       {:session-turn-id tid
@@ -4071,34 +4163,45 @@
                      chunks
                      (atom [])]
 
-                 (try (with-redefs [svar/ask-code! (fn [_router _opts]
-                                                     {:stop-reason :tool-calls
-                                                      :tool-calls [{:id "call_1"
-                                                                    :name "python_execution"
-                                                                    :input {:code "print(6*7)"}}]
-                                                      :content nil
-                                                      :reasoning "computing"
-                                                      :tokens {}})]
-                        ;; The bug threw HERE — a tool-call iteration reaching the execute path.
-                        (let [result (iteration/run-iteration
-                                       env
-                                       []
-                                       {:iteration 0
-                                        :resolved-model {:provider :zai-coding-plan :name "glm-5.1"}
-                                        :on-chunk #(swap! chunks conj %)})
-                              tool-calls (:tool-calls result)
-                              form-res (first (filter #(= :form-result (:phase %)) @chunks))]
+                 (try
+                   (with-redefs [svar/session-capability
+                                 (constantly nil)
 
-                          ;; tool-call iteration (not a final answer)
-                          (expect (nil? (:final-result result)))
-                          (expect (= 1 (count tool-calls)))
-                          (expect (= "python_execution" (:name (first tool-calls))))
-                          ;; the call ACTUALLY executed in the sandbox (env was passed correctly):
-                          ;; python_execution returns what it print()s.
-                          (expect (some? form-res))
-                          (expect (nil? (:error form-res)))
-                          (expect (str/includes? (str (:stdout form-res)) "42"))))
-                      (finally (loop-env/dispose-environment! env))))))
+                                 svar/ask-code!
+                                 (fn [_router _opts]
+                                   {:stop-reason :tool-calls
+                                    :tool-calls [{:id "call_1"
+                                                  :name "python_execution"
+                                                  :input {:code "print(6*7)"}}]
+                                    :content nil
+                                    :reasoning "computing"
+                                    :tokens {}})]
+
+                     ;; The bug threw HERE — a tool-call iteration reaching the execute path.
+                     (let [result
+                           (iteration/run-iteration env
+                                                    []
+                                                    {:iteration 0
+                                                     :resolved-model {:provider :zai-coding-plan
+                                                                      :name "glm-5.1"}
+                                                     :on-chunk #(swap! chunks conj %)})
+
+                           tool-calls
+                           (:tool-calls result)
+
+                           form-res
+                           (first (filter #(= :form-result (:phase %)) @chunks))]
+
+                       ;; tool-call iteration (not a final answer)
+                       (expect (nil? (:final-result result)))
+                       (expect (= 1 (count tool-calls)))
+                       (expect (= "python_execution" (:name (first tool-calls))))
+                       ;; the call ACTUALLY executed in the sandbox (env was passed correctly):
+                       ;; python_execution returns what it print()s.
+                       (expect (some? form-res))
+                       (expect (nil? (:error form-res)))
+                       (expect (str/includes? (str (:stdout form-res)) "42"))))
+                   (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
   responses-execution-boundary-test
@@ -4128,39 +4231,41 @@
                            (if echo? (mapv #(assoc % "id" (str (get % "id") "_final")) calls) [])}})
             stream (apply str (map #(str "data: " (json/write-json-str %) "\n\n") events))]
 
-        (try (with-redefs [http/post (fn [_ _]
-                                       {:status 200
-                                        :body (java.io.ByteArrayInputStream. (.getBytes stream
-                                                                                        "UTF-8"))})
-                           svar/ask-code! (fn [_ _]
-                                            (assoc (svar-llm/openai-responses-completion
-                                                     {:model "test-model" :input []}
-                                                     {:api-key "test"
-                                                      :base-url "https://gateway.example.com/v1"
-                                                      :on-chunk (constantly nil)})
-                                              :stop-reason :tool-calls
-                                              :tokens {}))]
+        (try
+          (with-redefs [svar/session-capability (constantly nil)
+                        http/post (fn [_ _]
+                                    {:status 200
+                                     :body (java.io.ByteArrayInputStream. (.getBytes stream
+                                                                                     "UTF-8"))})
+                        svar/ask-code! (fn [_ _]
+                                         (assoc (svar-llm/openai-responses-completion
+                                                  {:model "test-model" :input []}
+                                                  {:api-key "test"
+                                                   :base-url "https://gateway.example.com/v1"
+                                                   :on-chunk (constantly nil)})
+                                           :stop-reason :tool-calls
+                                           :tokens {}))]
 
-               (let [result (iteration/run-iteration
-                              environment
-                              []
-                              {:iteration 0 :resolved-model {:provider :openai :name "gpt-4o"}})
-                     forms (eng/blocks->forms (:blocks result) {:turn 1 :iter 1})
-                     replay (#'transcript/conversation-suffix
-                             [[1 (assoc result :forms-vec forms)]]
-                             {:provider :openai :model "gpt-4o"})
-                     wire (mapcat #'svar-llm/responses-message-input-entries replay)
-                     wire-calls (filter #(= "function_call" (:type %)) wire)
-                     results (filter #(= "function_call_output" (:type %)) wire)]
+            (let [result (iteration/run-iteration
+                           environment
+                           []
+                           {:iteration 0 :resolved-model {:provider :openai :name "gpt-4o"}})
+                  forms (eng/blocks->forms (:blocks result) {:turn 1 :iter 1})
+                  replay (#'transcript/conversation-suffix
+                          [[1 (assoc result :forms-vec forms)]]
+                          {:provider :openai :model "gpt-4o"})
+                  wire (mapcat #'svar-llm/responses-message-input-entries replay)
+                  wire-calls (filter #(= "function_call" (:type %)) wire)
+                  results (filter #(= "function_call_output" (:type %)) wire)]
 
-                 (expect (= 2 (count forms)))
-                 (expect (not-any? :error forms))
-                 (expect
-                   (= ["call_one" "call_two"] (mapv :call_id wire-calls) (mapv :call_id results)))
-                 (expect (= ["fc_one" "fc_two"] (mapv :id wire-calls)))
-                 (expect (= ["1" "2"] (mapv #(str/trim (str (:stdout %))) forms)))
-                 (expect (not-any? #(str/includes? (:output %) "printed nothing") results))))
-             (finally (loop-env/dispose-environment! environment)))))))
+              (expect (= 2 (count forms)))
+              (expect (not-any? :error forms))
+              (expect
+                (= ["call_one" "call_two"] (mapv :call_id wire-calls) (mapv :call_id results)))
+              (expect (= ["fc_one" "fc_two"] (mapv :id wire-calls)))
+              (expect (= ["1" "2"] (mapv #(str/trim (str (:stdout %))) forms)))
+              (expect (not-any? #(str/includes? (:output %) "printed nothing") results))))
+          (finally (loop-env/dispose-environment! environment)))))))
 
 (defdescribe
   activity-ownership-boundary-test
@@ -4173,7 +4278,10 @@
           (atom [])]
 
       (try
-        (with-redefs [svar/ask-code!
+        (with-redefs [svar/session-capability
+                      (constantly nil)
+
+                      svar/ask-code!
                       (fn [_router _opts]
                         {:stop-reason :tool-calls
                          :tool-calls
@@ -4183,18 +4291,32 @@
                          :content nil
                          :reasoning "checking"
                          :tokens {}})]
-          (let [result (iteration/run-iteration env
-                                                []
-                                                {:iteration 0
-                                                 :resolved-model {:provider :zai-coding-plan
-                                                                  :name "glm-5.1"}
-                                                 :on-chunk #(swap! chunks conj %)})
-                block (first (:blocks result))
-                terminal (first (filter #(= :form-result (:phase %)) @chunks))
-                activity-chunks (filterv #(= :form-activity (:phase %)) @chunks)
-                settled (last activity-chunks)
-                forms (eng/blocks->forms (:blocks result) {:turn 1 :iter 1})
-                activity (:activity block)]
+
+          (let [result
+                (iteration/run-iteration env
+                                         []
+                                         {:iteration 0
+                                          :resolved-model {:provider :zai-coding-plan
+                                                           :name "glm-5.1"}
+                                          :on-chunk #(swap! chunks conj %)})
+
+                block
+                (first (:blocks result))
+
+                terminal
+                (first (filter #(= :form-result (:phase %)) @chunks))
+
+                activity-chunks
+                (filterv #(= :form-activity (:phase %)) @chunks)
+
+                settled
+                (last activity-chunks)
+
+                forms
+                (eng/blocks->forms (:blocks result) {:turn 1 :iter 1})
+
+                activity
+                (:activity block)]
 
             (expect (seq activity-chunks))
             (expect (true? (:settled? settled)))
@@ -5234,7 +5356,8 @@
                       :api-usage {:output-tokens 65536 :output-tokens-details {:reasoning 65536}}}]
 
         (try (let [result
-                   (with-redefs [svar/ask-code!
+                   (with-redefs [svar/session-capability (constantly nil)
+                                 svar/ask-code!
                                  (fn [_ opts]
                                    (let [call (count (swap! requests conj
                                                        (select-keys opts [:messages :extra-body])))]
@@ -5242,6 +5365,7 @@
                                        (do (when (= :cancel mode) (reset! cancelled true))
                                            (throw (ex-info "Output budget exhausted" cap-data)))
                                        {:stop-reason :end :content "Finished compactly."})))]
+
                      (iteration/iteration-loop environment
                                                "finish compactly"
                                                {:session-turn-id tid :cancel-atom cancelled}))]
@@ -5398,7 +5522,8 @@
          takes (atom 0)]
 
         (try
-          (with-redefs [transcript/target-supports-vision? (constantly vision?)
+          (with-redefs [svar/session-capability (constantly nil)
+                        transcript/target-supports-vision? (constantly vision?)
                         svar/ask-code! (fn [_ opts]
                                          (swap! requests conj (select-keys opts [:messages]))
                                          {:stop-reason :end :content "Done."})]
@@ -5449,9 +5574,14 @@
             requests
             (atom [])]
 
-        (try (with-redefs [svar/ask-code! (fn [_ opts]
-                                            (swap! requests conj opts)
-                                            {:stop-reason :end :content "Done."})]
+        (try (with-redefs [svar/session-capability
+                           (constantly nil)
+
+                           svar/ask-code!
+                           (fn [_ opts]
+                             (swap! requests conj opts)
+                             {:stop-reason :end :content "Done."})]
+
                (let [result (iteration/iteration-loop
                               environment
                               "start"
@@ -5467,9 +5597,11 @@
                                                        :user-request "start"})
               requests (atom [])]
 
-          (try (with-redefs [svar/ask-code! (fn [_ opts]
+          (try (with-redefs [svar/session-capability (constantly nil)
+                             svar/ask-code! (fn [_ opts]
                                               (swap! requests conj (select-keys opts [:messages]))
                                               {:stop-reason :end :content "Done."})]
+
                  (let [result (iteration/iteration-loop environment
                                                         "start"
                                                         {:session-turn-id tid
@@ -6586,35 +6718,38 @@
             diagnostic
             "Provider returned no executable tool call or answer text; nothing was executed."]
 
-        (try (with-redefs [svar/ask-code!
-                           (fn [_ _]
-                             (case (swap! requests inc)
-                               1
-                               (assoc reply :api-usage {:input-tokens 10 :output-tokens 221})
+        (try
+          (with-redefs [svar/session-capability (constantly nil)
+                        svar/ask-code!
+                        (fn [_ _]
+                          (case (swap! requests inc)
+                            1
+                            (assoc reply :api-usage {:input-tokens 10 :output-tokens 221})
 
-                               2
-                               {:stop-reason :end :content "A useful answer."}
+                            2
+                            {:stop-reason :end :content "A useful answer."}
 
-                               (throw (AssertionError. "Unexpected empty-response continuation"))))]
-               (let [result (turn/run-turn! env
-                                            "Answer the question"
-                                            {:hooks {:on-chunk #(swap! chunks conj %)}})
-                     rows (persistance/db-list-session-turn-iterations (:db-info env)
-                                                                       (:session-turn-id result))
-                     empty-row (first rows)
-                     final-row (second rows)]
+                            (throw (AssertionError. "Unexpected empty-response continuation"))))]
 
-                 (expect (= 2 @requests))
-                 (expect (= diagnostic (:assistant-prose empty-row)))
-                 (expect (= diagnostic (:assistant-prose (first (:trace result)))))
-                 (expect (= [diagnostic]
-                            (mapv :text (filter #(= :assistant-prose (:phase %)) @chunks))))
-                 (expect (empty? (:forms empty-row)))
-                 (expect (= 221 (:output-tokens empty-row)))
-                 (expect (= (:reasoning reply) (not-empty (:thinking empty-row))))
-                 (expect (str/blank? (:assistant-prose final-row)))
-                 (expect (= "A useful answer." (get-in result [:answer :answer])))))
-             (finally (loop-env/dispose-environment! env)))))))
+            (let [result (turn/run-turn! env
+                                         "Answer the question"
+                                         {:hooks {:on-chunk #(swap! chunks conj %)}})
+                  rows (persistance/db-list-session-turn-iterations (:db-info env)
+                                                                    (:session-turn-id result))
+                  empty-row (first rows)
+                  final-row (second rows)]
+
+              (expect (= 2 @requests))
+              (expect (= diagnostic (:assistant-prose empty-row)))
+              (expect (= diagnostic (:assistant-prose (first (:trace result)))))
+              (expect (= [diagnostic]
+                         (mapv :text (filter #(= :assistant-prose (:phase %)) @chunks))))
+              (expect (empty? (:forms empty-row)))
+              (expect (= 221 (:output-tokens empty-row)))
+              (expect (= (:reasoning reply) (not-empty (:thinking empty-row))))
+              (expect (str/blank? (:assistant-prose final-row)))
+              (expect (= "A useful answer." (get-in result [:answer :answer])))))
+          (finally (loop-env/dispose-environment! env)))))))
 
 (defdescribe
   trace-usage-test
@@ -6624,12 +6759,14 @@
                                                                  :base-url "http://127.0.0.1:1/v1"
                                                                  :models [{:name "model"}]}])
                                              {:db :memory})]
-        (try (with-redefs [svar/ask-code! (fn [_ _]
+        (try (with-redefs [svar/session-capability (constantly nil)
+                           svar/ask-code! (fn [_ _]
                                             {:stop-reason :end
                                              :content "The answer."
                                              :api-usage {:input-tokens 10
                                                          :output-tokens 5
                                                          :input-tokens-details {:cache-read 4}}})]
+
                (let [result (turn/run-turn! env "Answer the question" {})]
                  (expect (= {"input" 10 "output" 5 "cached" 4 "cache_created" 0}
                             (get-in (first (:trace result)) [:usage :tokens])))))
@@ -6650,13 +6787,17 @@
             seen
             (atom nil)]
 
-        (try (with-redefs [svar/ask-code!
+        (try (with-redefs [svar/session-capability
+                           (constantly nil)
+
+                           svar/ask-code!
                            (fn [_ _]
                              (reset! seen (:ctx (tel/with-signal
                                                   (tel/log! {:level :warn
                                                              :id ::provider-retry-declined}
                                                             "not retrying provider failure"))))
                              {:stop-reason :end :content "The answer."})]
+
                (turn/turn! env [(svar/user "Answer the question")] {})
                (expect (= (:session-id env) (:session-soul-id @seen)))
                (expect (some? (:session-turn-id @seen)))
@@ -7527,7 +7668,10 @@
             calls
             (atom 0)]
 
-        (try (with-redefs [svar/ask-code!
+        (try (with-redefs [svar/session-capability
+                           (constantly nil)
+
+                           svar/ask-code!
                            (fn [_ _]
                              (if (<= (swap! calls inc) 4)
                                {:stop-reason :tool-calls
@@ -7536,6 +7680,7 @@
                                               :input {:code "print(1)"}}]
                                 :tokens {}}
                                {:stop-reason :end :tool-calls [] :content "finished" :tokens {}}))]
+
                (let [result (turn/turn! env [(svar/user "repeat if needed")] {})]
                  (expect (= 5 @calls))
                  (expect (= "finished" (transcript/answer-markdown (:answer result))))))
@@ -8266,7 +8411,8 @@
           (reset! requests 0)
           (reset! warming? false)
           (let [result (with-redefs-fn
-                         {#'loop-router/provider-network-policy
+                         {#'svar/session-capability (constantly nil)
+                          #'loop-router/provider-network-policy
                           (fn [_ _]
                             ;; First-output deadline = 1000 + 1000 ms.
                             ;; Leave scheduling headroom while keeping
@@ -9290,12 +9436,14 @@
                       :token-read-percent 75
                       :request-hit-percent 100}]
 
-          (try (with-redefs [svar/ask-code! (fn [_router _opts]
+          (try (with-redefs [svar/session-capability (constantly nil)
+                             svar/ask-code! (fn [_router _opts]
                                               {:stop-reason :end
                                                :tool-calls []
                                                :content "done"
                                                :tokens {}
                                                :prompt-cache status})]
+
                  (let [result (iteration/run-iteration environment
                                                        []
                                                        {:iteration 0
@@ -10952,7 +11100,10 @@
                                                                                 environment)
                                                            :user-request request})}))]
 
-      (try (with-redefs [svar/ask-code!
+      (try (with-redefs [svar/session-capability
+                         (constantly nil)
+
+                         svar/ask-code!
                          (fn [_ opts]
                            (let [idx (count (swap! requests conj (:messages opts)))]
                              ;; The first iteration folds enough settled work to rebase.
@@ -10968,6 +11119,7 @@
                                                      :name "python_execution"
                                                      :input {:code "print('settled evidence')"}}]}
                                       {:stop-reason :end :tool-calls [] :content "done"}))))]
+
              (run-turn! "fold settled work")
              (run-turn! "continue"))
            (let [[first-request fold-request next-turn]
@@ -11203,7 +11355,10 @@
             counted
             (atom [])]
 
-        (try (with-redefs [svar/count-messages
+        (try (with-redefs [svar/session-capability
+                           (constantly nil)
+
+                           svar/count-messages
                            (fn (^long [model messages] (count-messages model messages {}))
                              (^long [model messages opts] (swap! counted into (for [message
                                                                                     messages
@@ -13385,7 +13540,8 @@
                           db
                           {:parent-session-id (:session-id environment) :user-request request})]
 
-                (with-redefs [svar/ask-code!
+                (with-redefs [svar/session-capability (constantly nil)
+                              svar/ask-code!
                               (fn [_ opts]
                                 (swap! requests conj
                                   {:sid (str (:session-id environment)) :messages (:messages opts)})
@@ -13404,6 +13560,7 @@
                                                :content "done"
                                                :tool-calls []
                                                :tokens {}})))]
+
                   (let [result
                         (iteration/iteration-loop environment request {:session-turn-id tid})]
                     (reset! loop-result
@@ -13820,12 +13977,17 @@
           environment
           (loop-env/create-environment router {:db :memory})]
 
-      (try (with-redefs [svar/ask-code! (fn [_ _]
-                                          {:stop-reason :end
-                                           :content "Done"
-                                           :routed/provider-id :peer
-                                           :routed/model "small"
-                                           :api-usage {:input-tokens 1000 :output-tokens 1}})]
+      (try (with-redefs [svar/session-capability
+                         (constantly nil)
+
+                         svar/ask-code!
+                         (fn [_ _]
+                           {:stop-reason :end
+                            :content "Done"
+                            :routed/provider-id :peer
+                            :routed/model "small"
+                            :api-usage {:input-tokens 1000 :output-tokens 1}})]
+
              (let [result (iteration/iteration-loop environment
                                                     "Return the result"
                                                     {:routing {:provider :fixture :model "large"}

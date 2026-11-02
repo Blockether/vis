@@ -3034,8 +3034,8 @@
                :model model)))
 
 (defn ask-code-with-session!
-  "Keep one opaque Svar session per effective router for a provider whose prompt
-   cache is a server continuation; other providers stay one-shot."
+  "Keep one opaque Svar session when the effective route enables it.
+   Anthropic threads require an explicit provider or call option; cache stays separate."
   [environment resolved-model ask-opts]
   (let [provider
         (:provider resolved-model)
@@ -3049,8 +3049,9 @@
         session-atom
         (:llm-session-atom environment)]
 
-    (if (and (= :server-continuation (:strategy (svar/provider-prompt-cache provider)))
-             session-atom)
+    (if (and session-atom
+             (:auto-open? (svar/session-capability router
+                                                   (pin-session-route ask-opts provider model))))
       (locking session-atom
         (let [entry
               @session-atom
@@ -3079,7 +3080,8 @@
           (svar/ask! session
                      (-> ask-opts
                          (dissoc :messages)
-                         (assoc :conversation (vec (:messages ask-opts)))
+                         (assoc :conversation (vec (:messages ask-opts))
+                                :prompt-cache-options {:session-scoped? session-context-message?})
                          (pin-session-route provider model)))))
       (do (when (and session-atom @session-atom)
             (locking session-atom (close-llm-session! session-atom)))
