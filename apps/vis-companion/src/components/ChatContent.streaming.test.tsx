@@ -26,7 +26,20 @@ vi.mock('../lib/artifacts', async (importOriginal) => {
   };
 });
 
-const { IterationTrace } = await import('./ChatContent');
+// react-markdown parses its text on every render, so each render is one parse.
+const parsed: string[] = [];
+vi.mock('react-markdown', async (importOriginal) => {
+  const original = await importOriginal<typeof import('react-markdown')>();
+  return {
+    ...original,
+    default: (options: Parameters<typeof original.default>[0]) => {
+      parsed.push(options.children ?? '');
+      return original.default(options);
+    },
+  };
+});
+
+const { IterationTrace, Markdown } = await import('./ChatContent');
 
 function attachment(position: number): IterationAttachment {
   return {
@@ -92,5 +105,116 @@ describe('a trace while its turn streams', () => {
     );
 
     expect(railPages).toHaveBeenCalledTimes(2);
+  });
+});
+
+/** The states of `text` that deltas of these sizes show, with the whole text last. */
+function streamStates(text: string, sizes = [3, 1, 7, 2, 5, 11, 4]): string[] {
+  const states: string[] = [];
+  for (let end = 0; end < text.length; ) {
+    end = Math.min(text.length, end + sizes[states.length % sizes.length]);
+    states.push(text.slice(0, end));
+  }
+  return states;
+}
+
+const ANSWER = [
+  '## Diagnosis',
+  '',
+  'Each flush parsed the **whole** answer again, see `cachedTree` and https://example.com/docs.',
+  '',
+  '- The stream sends a flush every 150 ms.',
+  '- Each flush parsed `6,308` characters:',
+  '  - nested item one',
+  '  - nested item two',
+  '',
+  '  The second paragraph makes this item loose.',
+  '- A third item.',
+  '',
+  '### Measurements',
+  '',
+  '| Step | Cost |',
+  '| ---- | ---: |',
+  '| parse | 1275 ms |',
+  '| commit | 376 ms |',
+  '',
+  '```text',
+  'flush 1: 120 chars',
+  '',
+  'flush 50: 6,308 chars',
+  '```',
+  '',
+  '> Only the last block of a text can still change.',
+  '',
+  'Done ~~soon~~ now.',
+].join('\n');
+
+/** Lines that change a block above them: a continued paragraph, list, heading and table. */
+const LATE_MARKERS = [
+  'Intro line',
+  '#not a heading, so the paragraph goes on',
+  '',
+  '1. Check the logs',
+  '',
+  '2. Fix the cause; the list goes on after a blank line',
+  '',
+  'Setext title',
+  '============',
+  '',
+  'Header | Value',
+  '--- | ---',
+  'parse | 1275 ms',
+  '',
+  '- item',
+  '---',
+  '',
+  '> A quote that',
+  'goes on lazily.',
+  '',
+  '```ts',
+  'const a = 1;',
+  '',
+  'const b = 2;',
+  '```',
+  '',
+  'Last paragraph.',
+].join('\n');
+
+describe('an answer while its turn streams', () => {
+  // Regression, user report ("rendering that big output took a while, and the app did not
+  // scroll to the bottom; a lag of a few seconds"): each flush of a streamed answer parsed
+  // the whole answer again, so every flush cost more than the one before it.
+  it('parses only the blocks that can still change', () => {
+    const point = (index: number) => `Point ${index}: ${'word '.repeat(12)}`;
+    const answer = Array.from({ length: 24 }, (_, index) => point(index)).join('\n\n');
+    const states = streamStates(answer);
+    const view = render(<Markdown>{states[0]}</Markdown>);
+
+    const work = states.slice(1).map((state) => {
+      parsed.length = 0;
+      view.rerender(<Markdown>{state}</Markdown>);
+      return parsed.reduce((sum, text) => sum + text.length, 0);
+    });
+
+    // Each flush parses its open point, so a flush that parses nothing means a broken seam.
+    expect(Math.min(...work)).toBeGreaterThan(0);
+    // A flush parses at most the last two points and its delta, never the whole answer.
+    expect(Math.max(...work)).toBeLessThan(3 * point(10).length);
+  });
+
+  it.each([
+    ['an answer', ANSWER, undefined, 'Done soon now.'],
+    // One character at a time, so a delta ends at each place where a block can change.
+    ['a text whose late lines change the blocks above them', LATE_MARKERS, [1], 'Last paragraph.'],
+  ])('renders each state of %s as the whole text renders it', (_, text, sizes, ending) => {
+    const states = streamStates(text, sizes);
+    const view = render(<Markdown>{states[0]}</Markdown>);
+    for (const state of states) {
+      view.rerender(<Markdown>{state}</Markdown>);
+      const whole = render(<Markdown>{state}</Markdown>);
+      expect(view.container.innerHTML, state).toBe(whole.container.innerHTML);
+      whole.unmount();
+    }
+    expect(view.container.textContent).toContain(ending);
   });
 });

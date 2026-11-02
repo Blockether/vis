@@ -65,6 +65,58 @@ describe('cachedTree', () => {
   });
 });
 
+describe('advanceSplit', () => {
+  /** The pieces after the last state. Each last piece parses as a message parses it. */
+  async function splitStream(states: string[]) {
+    const { advanceSplit, blockStartsOf, remarkParseCache, wholeSplit } = await freshCache();
+    let split = wholeSplit(states[0]);
+    for (const state of states) {
+      split = advanceSplit(split, state, blockStartsOf);
+      const tail = split.pieces[split.pieces.length - 1].text;
+      renderToStaticMarkup(
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkParseCache]}>{tail}</ReactMarkdown>,
+      );
+    }
+    return split.pieces;
+  }
+
+  it('cuts a growing text after the blocks that closed', async () => {
+    const pieces = await splitStream([
+      '## Plan\n\nRead the logs.\n\n- one\n',
+      '## Plan\n\nRead the logs.\n\n- one\n- two',
+    ]);
+    expect(pieces).toEqual([
+      { start: 0, text: '## Plan\n\nRead the logs.\n\n' },
+      { start: 25, text: '- one\n- two' },
+    ]);
+  });
+
+  it('keeps a block open while the line where it opens is unfinished', async () => {
+    // `2` alone is a paragraph after the list, but `2. Fix` continues the list.
+    const pieces = await splitStream(['1. Check\n\n2', '1. Check\n\n2. Fix']);
+    expect(pieces).toEqual([{ start: 0, text: '1. Check\n\n2. Fix' }]);
+  });
+
+  it('keeps a text with a link definition whole', async () => {
+    // The definition at the end gives the reference in the first block its link.
+    const text = 'Read [the guide][g].\n\nThen fix it.\n\n[g]: https://example.com/guide\n';
+    const pieces = await splitStream([text.slice(0, 36), text]);
+    expect(pieces).toEqual([{ start: 0, text }]);
+  });
+
+  it('makes a text one piece again when it changes in another way', async () => {
+    const { advanceSplit, wholeSplit } = await freshCache();
+    const grown = {
+      text: 'Old answer.\n\nMore.',
+      pieces: [
+        { start: 0, text: 'Old answer.\n\n' },
+        { start: 13, text: 'More.' },
+      ],
+    };
+    expect(advanceSplit(grown, 'New answer.', () => [0])).toEqual(wholeSplit('New answer.'));
+  });
+});
+
 describe('remarkParseCache', () => {
   const text = 'First line\nsecond line, see https://example.com and ~~old~~.\n\n| a | b |\n| - | - |\n| 1 | 2 |';
   const render = (plugins: Plugins) =>

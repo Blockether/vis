@@ -48,7 +48,13 @@ import {
 import { usePythonCodeShown, useStepsSummarized, useZenMode } from '../lib/transcript-display';
 import { isForkNotice } from '../lib/transcript-outline';
 import { useStickyOverlay } from '../lib/sticky-overlay';
-import { remarkParseCache } from '../lib/markdown-trees';
+import {
+  advanceSplit,
+  blockStartsOf,
+  remarkParseCache,
+  wholeSplit,
+  type SplitPiece,
+} from '../lib/markdown-trees';
 import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
 import { archiveOpenVerb, keepArchive } from '../lib/artifact-open';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
@@ -635,16 +641,8 @@ function imageFence(body: string): { name: string; path: string; meta: string } 
   return { name, path, meta: meta.join(' · ') };
 }
 
-export const Markdown = memo(function Markdown({
-  children,
-  compact = false,
-  hardBreaks = false,
-  justifyHardBreaks = false,
-  nested = false,
-  onOpenAttachment,
-  headingLevel,
-}: {
-  children: string;
+/** How a markdown text renders. All pieces of one text render with the same options. */
+type MarkdownOptions = {
   compact?: boolean;
   hardBreaks?: boolean;
   /** Compose authored reasoning lines separately while retaining their hard breaks. */
@@ -654,7 +652,18 @@ export const Markdown = memo(function Markdown({
   onOpenAttachment?: OpenAttachment;
   /** Embedded result dividers share the level below their enclosing step. */
   headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
-}) {
+};
+
+/** One piece of a markdown text: whole top-level blocks, without the frame of the text. */
+const MarkdownPiece = memo(function MarkdownPiece({
+  children,
+  compact = false,
+  hardBreaks = false,
+  justifyHardBreaks = false,
+  nested = false,
+  onOpenAttachment,
+  headingLevel,
+}: MarkdownOptions & { children: string }) {
   // Tool and activity prose stays on the same compact scale as its tables and code.
   // Only transcript messages use the full-size reading column.
   const artifactLinks = useContext(ArtifactLinkContext);
@@ -685,304 +694,340 @@ export const Markdown = memo(function Markdown({
     );
   };
   return (
-    <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
-      <ReactMarkdown
-        urlTransform={markdownUrlTransform}
-        // A newline the model authored is a HARD break in reasoning: the engine's
-        // `reasoning->ast` emits `[:br]` for it and the TUI paints it as its own row.
-        // CommonMark would otherwise flow those lines into one paragraph.
-        remarkPlugins={hardBreaks ? HARD_BREAK_PLUGINS : MARKDOWN_PLUGINS}
-        rehypePlugins={IMAGE_PLUGINS}
-        components={{
-          a: ({ children: label, href, title }) => {
-            const local = href && isLocalHref(href);
-            const attachmentId =
-              attachmentIdFromHref(href ?? '') ||
-              (local ? artifactLinks?.byName.get(href) : undefined);
-            if (attachmentId) return artifactButton(attachmentId, label, title, Boolean(local));
-            // Unknown local targets cannot be loaded as routes in this application.
-            if (!href || local) return <span>{label}</span>;
+    <ReactMarkdown
+      urlTransform={markdownUrlTransform}
+      // A newline the model authored is a HARD break in reasoning: the engine's
+      // `reasoning->ast` emits `[:br]` for it and the TUI paints it as its own row.
+      // CommonMark would otherwise flow those lines into one paragraph.
+      remarkPlugins={hardBreaks ? HARD_BREAK_PLUGINS : MARKDOWN_PLUGINS}
+      rehypePlugins={IMAGE_PLUGINS}
+      components={{
+        a: ({ children: label, href, title }) => {
+          const local = href && isLocalHref(href);
+          const attachmentId =
+            attachmentIdFromHref(href ?? '') ||
+            (local ? artifactLinks?.byName.get(href) : undefined);
+          if (attachmentId) return artifactButton(attachmentId, label, title, Boolean(local));
+          // Unknown local targets cannot be loaded as routes in this application.
+          if (!href || local) return <span>{label}</span>;
+          return (
+            <a
+              href={href}
+              title={title}
+              className={MARKDOWN_LINK}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {label}
+            </a>
+          );
+        },
+        // A model names the image it attached by the path it wrote, which is on the
+        // gateway host. Only a web image loads here; a session artifact opens in the reader.
+        // Send no Referer: image hosts with hotlink protection (Fandom and others) answer 404
+        // to a foreign app origin, but serve the same URL without one.
+        img: ({ src, alt, title, node }) => {
+          const source = typeof src === 'string' ? src : '';
+          if (/^https?:/i.test(source))
             return (
-              <a
-                href={href}
+              <img
+                src={source}
+                alt={alt ?? ''}
                 title={title}
-                className={MARKDOWN_LINK}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {label}
-              </a>
-            );
-          },
-          // A model names the image it attached by the path it wrote, which is on the
-          // gateway host. Only a web image loads here; a session artifact opens in the reader.
-          // Send no Referer: image hosts with hotlink protection (Fandom and others) answer 404
-          // to a foreign app origin, but serve the same URL without one.
-          img: ({ src, alt, title, node }) => {
-            const source = typeof src === 'string' ? src : '';
-            if (/^https?:/i.test(source))
-              return (
-                <img
-                  src={source}
-                  alt={alt ?? ''}
-                  title={title}
-                  referrerPolicy="no-referrer"
-                  className={
-                    node?.properties?.dataStandalone ? FIGURE_IMAGE_CLASS : INLINE_IMAGE_CLASS
-                  }
-                />
-              );
-            const name = localFilename(source);
-            const attachmentId =
-              attachmentIdFromHref(source) ||
-              artifactLinks?.byName.get(source) ||
-              (name ? artifactLinks?.byName.get(name) : undefined);
-            const label = alt || name || 'image';
-            if (attachmentId) return artifactButton(attachmentId, label, title, true);
-            return <span className="text-dialog-hint">{label}</span>;
-          },
-          blockquote: ({ children: quote }) => (
-            <blockquote
-              className={`${compact ? 'my-2 pl-3' : 'my-3 pl-4'} border-l-2 border-answer-edge text-dialog-hint`}
-            >
-              {quote}
-            </blockquote>
-          ),
-          code: ({ children: inline }) => (
-            <code className={`${INLINE_CODE_CLASS} break-all`}>{inline}</code>
-          ),
-          h1: ({ children: heading1 }) => (
-            <h1
-              aria-level={headingLevel}
-              className={`${heading('mb-1 mt-3 text-ui', 'mb-1.5 mt-4 text-subhead', 'mb-2 mt-6 text-head')} border-b-2 border-answer-edge pb-1 font-semibold tracking-[-0.015em] text-heading-1`}
-            >
-              {heading1}
-            </h1>
-          ),
-          h2: ({ children: heading2 }) => (
-            <h2
-              aria-level={headingLevel}
-              className={`${heading('mb-1 mt-3 text-ui', 'mb-1 mt-3.5 text-title', 'mb-1.5 mt-5 text-subhead')} border-b border-answer-edge pb-0.5 font-semibold tracking-[-0.01em] text-heading-2`}
-            >
-              {heading2}
-            </h2>
-          ),
-          h3: ({ children: heading3 }) => (
-            <h3
-              aria-level={headingLevel}
-              className={`${heading('mb-0.5 mt-2.5 text-meta', 'mb-1 mt-3 text-body', 'mb-1 mt-4 text-title')} font-semibold text-heading-3`}
-            >
-              {heading3}
-            </h3>
-          ),
-          h4: ({ children: heading4 }) => (
-            <h4
-              aria-level={headingLevel}
-              className={`${heading('mb-0.5 mt-2 text-meta', 'mb-0.5 mt-2.5 text-body', 'mb-1 mt-3.5 text-body')} font-semibold text-heading-3`}
-            >
-              {heading4}
-            </h4>
-          ),
-          h5: ({ children: heading5 }) => (
-            <h5
-              aria-level={headingLevel}
-              className={`${heading('mb-0.5 mt-2 text-chip uppercase tracking-[0.06em]', 'mb-0.5 mt-2.5 text-ui', 'mb-1 mt-3 text-ui')} font-semibold text-heading-3`}
-            >
-              {heading5}
-            </h5>
-          ),
-          h6: ({ children: heading6 }) => (
-            <h6
-              aria-level={headingLevel}
-              className={`${heading('mb-0.5 mt-2 text-chip', 'mb-0.5 mt-2.5 text-meta', 'mb-1 mt-3 text-meta')} font-semibold uppercase tracking-[0.08em] text-heading-3`}
-            >
-              {heading6}
-            </h6>
-          ),
-          hr: () => <hr className={`${compact ? 'my-3' : 'my-5'} border-answer-edge`} />,
-          li: ({ children: item }) => (
-            <JustifiedProse as="li" enabled={!nested} className={`my-0.5 ${runningText}`}>
-              {item}
-            </JustifiedProse>
-          ),
-          ol: ({ children: list, node, start }) => {
-            // The markers share one column, so the widest number in the list sizes it:
-            // "9." fits three characters, "10." four and "100." five.
-            const items = node?.children.filter((child) => child.type === 'element').length ?? 0;
-            const last = (start ?? 1) + Math.max(items - 1, 0);
-            return (
-              <ol
-                start={start}
-                role="list"
-                style={{ '--marker-column': `${String(last).length + 2}ch` } as CSSProperties}
-                className={`${compact ? 'my-2' : 'my-3'} markdown-list space-y-0.5 pl-[2ch]`}
-              >
-                {list}
-              </ol>
-            );
-          },
-          p: ({ children: paragraph }) => {
-            const paragraphClass = `${compact ? 'my-2' : 'my-2.5'} ${runningText}`;
-            if (justifyHardBreaks && hardBreaks && !nested) {
-              const lines: ReactNode[][] = [[]];
-              for (const part of Children.toArray(paragraph)) {
-                if (isValidElement(part) && part.type === 'br') {
-                  lines.push([]);
-                } else {
-                  const line = lines[lines.length - 1];
-                  // The Markdown break also carries a newline text node; its line is
-                  // already represented by the next paragraph, not a leading space.
-                  line.push(
-                    typeof part === 'string' && lines.length > 1 && !line.length
-                      ? part.replace(/^\r?\n/, '')
-                      : part,
-                  );
+                referrerPolicy="no-referrer"
+                className={
+                  node?.properties?.dataStandalone ? FIGURE_IMAGE_CLASS : INLINE_IMAGE_CLASS
                 }
-              }
-              if (lines.length > 1)
-                return (
-                  <div className={paragraphClass}>
-                    {lines.map((line, index) => (
-                      <JustifiedProse key={index} className={`my-0 min-h-[1lh] ${runningText}`}>
-                        {line}
-                      </JustifiedProse>
-                    ))}
-                  </div>
-                );
-            }
-            return (
-              <JustifiedProse enabled={!nested} className={paragraphClass}>
-                {paragraph}
-              </JustifiedProse>
-            );
-          },
-          pre: ({ children: codeNode }) => {
-            const raw = extractText(codeNode).replace(/\n$/, '');
-            const language = codeLanguage(codeNode);
-            if (language === 'diff' || language === 'patch' || language === 'udiff') {
-              return <DiffBlock value={stripMarks(raw)} compact={compact} frameless={nested} />;
-            }
-            // A CSV/TSV artifact is DATA: `attach` fences it as `vis-table` and
-            // both surfaces paint a real grid — the TUI's table dialog, this table.
-            if (language === 'vis-table') {
-              return <DataTable body={stripMarks(raw)} compact={compact} frameless={nested} />;
-            }
-            // A `mermaid` fence is a PICTURE: the TUI draws it with box-drawing
-            // glyphs, this surface draws the same source as an SVG with Pele.
-            // Anything Pele cannot draw falls back to the fence text.
-            if (language === 'mermaid') {
-              return (
-                <MermaidBlock
-                  source={stripMarks(raw)}
-                  compact={compact}
-                  frameless={nested}
-                  fallback={
-                    <SyntaxCodeBlock
-                      value={raw}
-                      language={language}
-                      compact={compact}
-                      frameless={nested}
-                      padded={!nested}
-                    />
-                  }
-                />
-              );
-            }
-            // A PDF or a note is a DOCUMENT: it never reaches the model, and the
-            // fence carries a descriptor only. The attachment rail below the block
-            // already shows that artifact as an openable tile, so painting the
-            // fence too put the same file on screen twice — the fence itself is
-            // rendered as nothing.
-            if (language === 'vis-doc') return null;
-            // A picture fence names a file on the gateway host, which this app cannot load.
-            // Like the TUI card, it is its own block with the name and size, apart from the prose.
-            if (language === 'vis-image') {
-              const picture = imageFence(stripMarks(raw));
-              const attachmentId =
-                artifactLinks?.byName.get(picture.name) ||
-                artifactLinks?.byName.get(localFilename(picture.path));
-              return (
-                <div
-                  role="group"
-                  aria-label={picture.name}
-                  className={`${compact ? 'my-2' : 'my-3'} border border-code-edge bg-code px-3 py-2 font-mono text-meta text-code-foreground`}
-                >
-                  <div className="font-semibold">
-                    {attachmentId
-                      ? artifactButton(attachmentId, picture.name, undefined, true)
-                      : picture.name}
-                  </div>
-                  <div className="text-dialog-hint">{picture.meta}</div>
-                </div>
-              );
-            }
-            return (
-              <SyntaxCodeBlock
-                value={raw}
-                language={language}
-                compact={compact}
-                frameless={nested}
-                padded={!nested}
               />
             );
-          },
-          strong: ({ children: strong }) => <strong className="font-semibold">{strong}</strong>,
-          table: ({ children: table }) => (
-            <div
-              role="region"
-              aria-label="Table"
-              tabIndex={0}
-              className={`${compact ? 'my-2' : 'my-3'} max-w-full overflow-x-auto overscroll-x-contain border border-code-edge`}
-            >
-              {/* The table sits on the SAME step as the surrounding prose — hardcoding
-                  `text-ui` made a tool result's table one step BIGGER than the compact
-                  code blocks (`text-meta`) in the very same card.
-                  A CELL IS NOT RUNNING PROSE. Inline `code` and links carry `break-all`,
-                  which gives the auto layout a one-character column it is free to starve.
-                  the auto layout is free to starve. Measured at 390px: the file column got
-                  58px of a 366px bubble and painted `manifest.edn` down six lines, while
-                  the scroller around this table had nothing left to scroll. Word-break goes
-                  back to `normal` here — the inherited `overflow-wrap: break-word` still
-                  breaks a token too long for a line of its own — so a column asks for the
-                  width its content needs and a wide table reaches for the scroller. */}
-              {/* The scroll viewport owns the frame; separate cell borders stay inside
-                  it in WebKit, including the bottom edge and partly visible columns. */}
-              <table
-                className={`w-full border-separate border-spacing-0 ${compact ? 'text-meta' : 'text-ui mouse:text-title'} [&_a]:[word-break:normal] [&_code]:[word-break:normal]`}
-              >
-                {table}
-              </table>
-            </div>
-          ),
-          // `align-top`: one wrapping cell makes the whole row tall, and middle-aligned
-          // neighbours then float in the middle of that emptiness. Rows read as rows
-          // when every cell starts on the first line.
-          td: ({ children: cell }) => (
-            <td
-              className={`${compact ? 'px-1.5 py-1' : 'px-2 py-1.5'} border-r border-t border-code-edge text-left align-top last:border-r-0`}
-            >
-              {cell}
-            </td>
-          ),
-          th: ({ children: cell }) => (
-            <th
-              className={`${compact ? 'px-1.5 py-1' : 'px-2 py-1.5'} border-r border-code-edge bg-code text-left align-top font-semibold last:border-r-0`}
-            >
-              {cell}
-            </th>
-          ),
-          ul: ({ children: list }) => (
-            <ul
+          const name = localFilename(source);
+          const attachmentId =
+            attachmentIdFromHref(source) ||
+            artifactLinks?.byName.get(source) ||
+            (name ? artifactLinks?.byName.get(name) : undefined);
+          const label = alt || name || 'image';
+          if (attachmentId) return artifactButton(attachmentId, label, title, true);
+          return <span className="text-dialog-hint">{label}</span>;
+        },
+        blockquote: ({ children: quote }) => (
+          <blockquote
+            className={`${compact ? 'my-2 pl-3' : 'my-3 pl-4'} border-l-2 border-answer-edge text-dialog-hint`}
+          >
+            {quote}
+          </blockquote>
+        ),
+        code: ({ children: inline }) => (
+          <code className={`${INLINE_CODE_CLASS} break-all`}>{inline}</code>
+        ),
+        h1: ({ children: heading1 }) => (
+          <h1
+            aria-level={headingLevel}
+            className={`${heading('mb-1 mt-3 text-ui', 'mb-1.5 mt-4 text-subhead', 'mb-2 mt-6 text-head')} border-b-2 border-answer-edge pb-1 font-semibold tracking-[-0.015em] text-heading-1`}
+          >
+            {heading1}
+          </h1>
+        ),
+        h2: ({ children: heading2 }) => (
+          <h2
+            aria-level={headingLevel}
+            className={`${heading('mb-1 mt-3 text-ui', 'mb-1 mt-3.5 text-title', 'mb-1.5 mt-5 text-subhead')} border-b border-answer-edge pb-0.5 font-semibold tracking-[-0.01em] text-heading-2`}
+          >
+            {heading2}
+          </h2>
+        ),
+        h3: ({ children: heading3 }) => (
+          <h3
+            aria-level={headingLevel}
+            className={`${heading('mb-0.5 mt-2.5 text-meta', 'mb-1 mt-3 text-body', 'mb-1 mt-4 text-title')} font-semibold text-heading-3`}
+          >
+            {heading3}
+          </h3>
+        ),
+        h4: ({ children: heading4 }) => (
+          <h4
+            aria-level={headingLevel}
+            className={`${heading('mb-0.5 mt-2 text-meta', 'mb-0.5 mt-2.5 text-body', 'mb-1 mt-3.5 text-body')} font-semibold text-heading-3`}
+          >
+            {heading4}
+          </h4>
+        ),
+        h5: ({ children: heading5 }) => (
+          <h5
+            aria-level={headingLevel}
+            className={`${heading('mb-0.5 mt-2 text-chip uppercase tracking-[0.06em]', 'mb-0.5 mt-2.5 text-ui', 'mb-1 mt-3 text-ui')} font-semibold text-heading-3`}
+          >
+            {heading5}
+          </h5>
+        ),
+        h6: ({ children: heading6 }) => (
+          <h6
+            aria-level={headingLevel}
+            className={`${heading('mb-0.5 mt-2 text-chip', 'mb-0.5 mt-2.5 text-meta', 'mb-1 mt-3 text-meta')} font-semibold uppercase tracking-[0.08em] text-heading-3`}
+          >
+            {heading6}
+          </h6>
+        ),
+        hr: () => <hr className={`${compact ? 'my-3' : 'my-5'} border-answer-edge`} />,
+        li: ({ children: item }) => (
+          <JustifiedProse as="li" enabled={!nested} className={`my-0.5 ${runningText}`}>
+            {item}
+          </JustifiedProse>
+        ),
+        ol: ({ children: list, node, start }) => {
+          // The markers share one column, so the widest number in the list sizes it:
+          // "9." fits three characters, "10." four and "100." five.
+          const items = node?.children.filter((child) => child.type === 'element').length ?? 0;
+          const last = (start ?? 1) + Math.max(items - 1, 0);
+          return (
+            <ol
+              start={start}
               role="list"
+              style={{ '--marker-column': `${String(last).length + 2}ch` } as CSSProperties}
               className={`${compact ? 'my-2' : 'my-3'} markdown-list space-y-0.5 pl-[2ch]`}
             >
               {list}
-            </ul>
-          ),
-        }}
-      >
-        {children}
-      </ReactMarkdown>
+            </ol>
+          );
+        },
+        p: ({ children: paragraph }) => {
+          const paragraphClass = `${compact ? 'my-2' : 'my-2.5'} ${runningText}`;
+          if (justifyHardBreaks && hardBreaks && !nested) {
+            const lines: ReactNode[][] = [[]];
+            for (const part of Children.toArray(paragraph)) {
+              if (isValidElement(part) && part.type === 'br') {
+                lines.push([]);
+              } else {
+                const line = lines[lines.length - 1];
+                // The Markdown break also carries a newline text node; its line is
+                // already represented by the next paragraph, not a leading space.
+                line.push(
+                  typeof part === 'string' && lines.length > 1 && !line.length
+                    ? part.replace(/^\r?\n/, '')
+                    : part,
+                );
+              }
+            }
+            if (lines.length > 1)
+              return (
+                <div className={paragraphClass}>
+                  {lines.map((line, index) => (
+                    <JustifiedProse key={index} className={`my-0 min-h-[1lh] ${runningText}`}>
+                      {line}
+                    </JustifiedProse>
+                  ))}
+                </div>
+              );
+          }
+          return (
+            <JustifiedProse enabled={!nested} className={paragraphClass}>
+              {paragraph}
+            </JustifiedProse>
+          );
+        },
+        pre: ({ children: codeNode }) => {
+          const raw = extractText(codeNode).replace(/\n$/, '');
+          const language = codeLanguage(codeNode);
+          if (language === 'diff' || language === 'patch' || language === 'udiff') {
+            return <DiffBlock value={stripMarks(raw)} compact={compact} frameless={nested} />;
+          }
+          // A CSV/TSV artifact is DATA: `attach` fences it as `vis-table` and
+          // both surfaces paint a real grid — the TUI's table dialog, this table.
+          if (language === 'vis-table') {
+            return <DataTable body={stripMarks(raw)} compact={compact} frameless={nested} />;
+          }
+          // A `mermaid` fence is a PICTURE: the TUI draws it with box-drawing
+          // glyphs, this surface draws the same source as an SVG with Pele.
+          // Anything Pele cannot draw falls back to the fence text.
+          if (language === 'mermaid') {
+            return (
+              <MermaidBlock
+                source={stripMarks(raw)}
+                compact={compact}
+                frameless={nested}
+                fallback={
+                  <SyntaxCodeBlock
+                    value={raw}
+                    language={language}
+                    compact={compact}
+                    frameless={nested}
+                    padded={!nested}
+                  />
+                }
+              />
+            );
+          }
+          // A PDF or a note is a DOCUMENT: it never reaches the model, and the
+          // fence carries a descriptor only. The attachment rail below the block
+          // already shows that artifact as an openable tile, so painting the
+          // fence too put the same file on screen twice — the fence itself is
+          // rendered as nothing.
+          if (language === 'vis-doc') return null;
+          // A picture fence names a file on the gateway host, which this app cannot load.
+          // Like the TUI card, it is its own block with the name and size, apart from the prose.
+          if (language === 'vis-image') {
+            const picture = imageFence(stripMarks(raw));
+            const attachmentId =
+              artifactLinks?.byName.get(picture.name) ||
+              artifactLinks?.byName.get(localFilename(picture.path));
+            return (
+              <div
+                role="group"
+                aria-label={picture.name}
+                className={`${compact ? 'my-2' : 'my-3'} border border-code-edge bg-code px-3 py-2 font-mono text-meta text-code-foreground`}
+              >
+                <div className="font-semibold">
+                  {attachmentId
+                    ? artifactButton(attachmentId, picture.name, undefined, true)
+                    : picture.name}
+                </div>
+                <div className="text-dialog-hint">{picture.meta}</div>
+              </div>
+            );
+          }
+          return (
+            <SyntaxCodeBlock
+              value={raw}
+              language={language}
+              compact={compact}
+              frameless={nested}
+              padded={!nested}
+            />
+          );
+        },
+        strong: ({ children: strong }) => <strong className="font-semibold">{strong}</strong>,
+        table: ({ children: table }) => (
+          <div
+            role="region"
+            aria-label="Table"
+            tabIndex={0}
+            className={`${compact ? 'my-2' : 'my-3'} max-w-full overflow-x-auto overscroll-x-contain border border-code-edge`}
+          >
+            {/* The table sits on the SAME step as the surrounding prose — hardcoding
+                `text-ui` made a tool result's table one step BIGGER than the compact
+                code blocks (`text-meta`) in the very same card.
+                A CELL IS NOT RUNNING PROSE. Inline `code` and links carry `break-all`,
+                which gives the auto layout a one-character column it is free to starve.
+                the auto layout is free to starve. Measured at 390px: the file column got
+                58px of a 366px bubble and painted `manifest.edn` down six lines, while
+                the scroller around this table had nothing left to scroll. Word-break goes
+                back to `normal` here — the inherited `overflow-wrap: break-word` still
+                breaks a token too long for a line of its own — so a column asks for the
+                width its content needs and a wide table reaches for the scroller. */}
+            {/* The scroll viewport owns the frame; separate cell borders stay inside
+                it in WebKit, including the bottom edge and partly visible columns. */}
+            <table
+              className={`w-full border-separate border-spacing-0 ${compact ? 'text-meta' : 'text-ui mouse:text-title'} [&_a]:[word-break:normal] [&_code]:[word-break:normal]`}
+            >
+              {table}
+            </table>
+          </div>
+        ),
+        // `align-top`: one wrapping cell makes the whole row tall, and middle-aligned
+        // neighbours then float in the middle of that emptiness. Rows read as rows
+        // when every cell starts on the first line.
+        td: ({ children: cell }) => (
+          <td
+            className={`${compact ? 'px-1.5 py-1' : 'px-2 py-1.5'} border-r border-t border-code-edge text-left align-top last:border-r-0`}
+          >
+            {cell}
+          </td>
+        ),
+        th: ({ children: cell }) => (
+          <th
+            className={`${compact ? 'px-1.5 py-1' : 'px-2 py-1.5'} border-r border-code-edge bg-code text-left align-top font-semibold last:border-r-0`}
+          >
+            {cell}
+          </th>
+        ),
+        ul: ({ children: list }) => (
+          <ul
+            role="list"
+            className={`${compact ? 'my-2' : 'my-3'} markdown-list space-y-0.5 pl-[2ch]`}
+          >
+            {list}
+          </ul>
+        ),
+      }}
+    >
+      {children}
+    </ReactMarkdown>
+  );
+});
+
+/**
+ * The pieces of a text that grows by appending. A closed piece keeps its text and its
+ * key, so its render stays. A text that changes in another way is one piece again.
+ */
+function useMarkdownPieces(text: string): readonly SplitPiece[] {
+  const [split, setSplit] = useState(() => wholeSplit(text));
+  let current = split;
+  if (split.text !== text) {
+    current = advanceSplit(split, text, blockStartsOf);
+    setSplit(current);
+  }
+  return current.pieces;
+}
+
+/**
+ * A STREAMED ANSWER RENDERS ONLY ITS OPEN BLOCKS AGAIN. Each flush of a stream used to
+ * parse and render the whole answer, so a long answer lagged more with each flush. The
+ * text renders in pieces of whole top-level blocks (see `advanceSplit`). A closed piece
+ * keeps its props, so memo skips it. Only the last piece parses again.
+ */
+export const Markdown = memo(function Markdown({
+  children,
+  ...options
+}: MarkdownOptions & { children: string }) {
+  const pieces = useMarkdownPieces(children);
+  return (
+    <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
+      {pieces.map((piece, index) => (
+        <Fragment key={piece.start}>
+          {/* The whole text also separates its blocks with a newline. */}
+          {index > 0 && '\n'}
+          <MarkdownPiece {...options}>{piece.text}</MarkdownPiece>
+        </Fragment>
+      ))}
     </div>
   );
 });
