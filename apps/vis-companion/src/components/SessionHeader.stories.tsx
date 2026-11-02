@@ -63,3 +63,18 @@ export const ActiveGoal: Story = {
     await userEvent.click(page.getByRole('button', { name: 'Close session goal' }));
   },
 };
+
+/** A subagent session names its path from the leader, like the TUI header. The path opens the parent. */
+export const Subagent: Story = {
+  args: {
+    model: {
+      ...meta.args.model,
+      agentPath: {
+        parentId: 'leader',
+        parent: { label: 'Leader' },
+        self: { role: { text: 'implement', ink: 'text-role-implement' }, label: 'Instant agent team state' },
+      },
+    },
+    commands: { ...meta.args.commands, openParent: () => {} },
+  },
+};

@@ -20,7 +20,7 @@ import {
 } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import { TurnAgents, agentsByTurn, dockTeams, useAgentTeam } from '../components/AgentTeam';
-import { AgentCrumb } from '../components/AgentCrumb';
+import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
 import {
@@ -5449,9 +5449,11 @@ export function SessionScreen({
     connected,
     artifacts: { count: artifacts.length + openAppCount, isOpen: artifactsOpen },
     goal: session?.goal,
+    agentPath: session?.agent?.role === 'subagent' ? agentPath(sid, session.agent, team.agents, title) : undefined,
   };
   const headerCommands: SessionHeaderCommands = {
     back: onBack,
+    openParent: (parentId) => onOpenSession(parentId),
     settings: () => setSettingsOpen(true),
     zen: () => setZenMode(true),
     toggleArtifacts: () => {
@@ -5507,9 +5509,6 @@ export function SessionScreen({
                 onClose={() => setPanelChoice(false)}
               />
             </div>
-          )}
-          {session?.agent?.role === 'subagent' && session.agent.parent_id && (
-            <AgentCrumb sid={sid} parentId={session.agent.parent_id} agents={team.agents} onOpen={onOpenSession} />
           )}
 
           {routerOpen && (

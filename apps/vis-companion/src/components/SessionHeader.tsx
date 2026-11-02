@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { SessionGoal } from '../lib/types';
+import type { AgentPath, AgentStep } from './AgentCrumb';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { useDeskRail } from '../lib/fit-rows';
 import { isIosNativeApp } from '../lib/host';
@@ -59,6 +60,8 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
 
 export type SessionHeaderModel = Readonly<{
   title: string;
+  /** The path of a subagent session from its leader. It replaces the title, like the TUI header. */
+  agentPath?: AgentPath;
   sessionId: string;
   connected: boolean;
   goal?: SessionGoal | null;
@@ -71,7 +74,19 @@ export type SessionHeaderCommands = Readonly<{
   settings?: () => void;
   /** Hide the chrome and keep only the transcript. */
   zen?: () => void;
+  /** Open the session that started this subagent session. */
+  openParent?: (sid: string) => void;
 }>;
+
+function PathStep({ step }: { step: AgentStep }) {
+  return (
+    <>
+      {step.role && <span className={`uppercase ${step.role.ink}`}>{step.role.text}</span>}
+      {step.role && ' '}
+      {step.label}
+    </>
+  );
+}
 
 /**
  * The session's navigation and connection state. What this session IS — its id — and
@@ -150,6 +165,8 @@ export function SessionHeader({
     copyReset.current = window.setTimeout(() => setCopy(null), 1_500);
   }
   const goal = model.goal;
+  const path = model.agentPath;
+  const openParent = commands.openParent;
   return (
     /* On iPhone the entire session row sits below the island, with the header
        background extending behind it. iPad has no island; browsers keep their
@@ -163,7 +180,22 @@ export function SessionHeader({
         {/* The title is the sentence the screen is about. It stays one step above
             the connection line by size and weight — all in the app's one mono face. */}
         <h1 className="truncate text-title font-semibold text-white mouse:text-body">
-          {model.title}
+          {/* A subagent session names its path from the leader instead of its title, and the
+              path opens the parent session. */}
+          {path && openParent ? (
+            <button
+              type="button"
+              title="Open the parent session"
+              className="block max-w-full truncate rounded-none text-left hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onClick={() => openParent(path.parentId)}
+            >
+              <PathStep step={path.parent} />
+              {' → '}
+              <PathStep step={path.self} />
+            </button>
+          ) : (
+            model.title
+          )}
         </h1>
         <div className="flex min-w-0 items-center gap-1.5 font-mono text-ui text-dialog-hint mouse:text-meta">
           <span

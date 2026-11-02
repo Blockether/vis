@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Subagent } from '../lib/types';
-import { AgentCrumb } from './AgentCrumb';
+import { agentPath } from './AgentCrumb';
 import { AgentDock } from './AgentDock';
 
 const base: Subagent = { session_id: 'a1', parent_id: 'lead', leader_id: 'lead', team_id: 'turn-1',
@@ -44,9 +44,31 @@ describe('AgentDock', () => {
   });
 });
 
-describe('AgentCrumb', () => {
+// User report: a subagent session had two headers. Its one header names the path from the
+// leader, like the TUI header, and opens the parent session.
+describe('agentPath', () => {
+  const lead = { parent_id: 'lead', leader_id: 'lead' };
+
   it('keeps the way back before the team rows arrive', () => {
-    render(<AgentCrumb sid="a2" parentId="lead" agents={[]} onOpen={vi.fn()} />);
-    expect(screen.getByRole('button', { name: /Leader/ })).toBeInTheDocument();
+    expect(agentPath('a2', lead, [], 'Fix the bug')).toEqual({
+      parentId: 'lead', parent: { label: 'Leader' }, self: { label: 'Fix the bug' } });
+  });
+
+  it('names a child of the leader with its role and its #N', () => {
+    expect(agentPath('a2', lead, [base, asking], 'title')).toEqual({ parentId: 'lead', parent: { label: 'Leader' },
+      self: { role: { text: 'implement', ink: 'text-role-implement' }, label: '#2' } });
+  });
+
+  it('names the parent of a grandchild by its role and name', () => {
+    const grandchild: Subagent = { ...base, session_id: 'g1', parent_id: 'a1', team_id: 'a1-turn', title: 'Grep logs' };
+    expect(agentPath('g1', { parent_id: 'a1', leader_id: 'lead' }, [base, grandchild], 'title')).toEqual({
+      parentId: 'a1',
+      parent: { role: { text: 'research', ink: 'text-role-research' }, label: '#1' },
+      self: { role: { text: 'research', ink: 'text-role-research' }, label: 'Grep logs' },
+    });
+  });
+
+  it('gives no path to a leader session', () => {
+    expect(agentPath('lead', { leader_id: 'lead' }, [base], 'title')).toBeUndefined();
   });
 });
