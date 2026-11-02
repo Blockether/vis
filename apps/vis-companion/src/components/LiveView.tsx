@@ -24,7 +24,6 @@ import {
   ListRow,
   Modal,
   KeyCap,
-  PROSE,
   Spinner,
   TextButton,
   ViewHeading,
@@ -291,7 +290,7 @@ function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolea
 function StatusRow({ node, aside }: { node: LiveStatusNode; aside?: ReactNode }) {
   const sentence = (
     <p
-      className={`min-w-0 text-subhead font-bold ${PROSE} [overflow-wrap:anywhere] ${
+      className={`min-w-0 text-left text-subhead font-bold text-pretty [overflow-wrap:anywhere] ${
         node.tone === 'error' ? 'text-err' : 'text-white'
       } ${aside ? 'flex-1' : ''}`}
     >
@@ -1019,8 +1018,13 @@ const LiveTableRow = memo(function LiveTableRow({
                 {isSelected ? '●' : '○'}
               </span>
               {/* An idle row says nothing more, so the selection glyph stays its only
-                  mark, as an idle stat shows none. */}
-              {row.tone !== 'idle' && <LineMark tone={row.tone} />}
+                  mark, as an idle stat shows none. Its slot stays, so the name keeps the
+                  column of the other rows (user report: a skipped job stood 20px left). */}
+              {row.tone === 'idle' ? (
+                <span aria-hidden="true" className="w-3 shrink-0" />
+              ) : (
+                <LineMark tone={row.tone} />
+              )}
               <RowFace columns={columns} row={row} />
             </span>
           </ListRow>
@@ -2226,8 +2230,9 @@ export function RunDialog({
   return (
     <Modal within="session" onDismiss={onClose}>
       <DialogFrame title={title} subtitle={subtitle} footer={footer} onClose={onClose}>
-        {/* The run is a BOX in here, so the dialog's edge is never mistaken for the run's. */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3">{children}</div>
+        {/* The run keeps the band's rail: each node brings its own `--live-view-inset`, so
+            a second gutter here doubled the side margin on a phone (user report). */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
       </DialogFrame>
     </Modal>
   );

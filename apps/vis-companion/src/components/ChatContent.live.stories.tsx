@@ -161,3 +161,81 @@ export const Unmatched: Story = {
     await userEvent.click(opened.getByRole('button', { name: `Close ${view.title}` }));
   },
 };
+
+// User report (iPhone screenshot): an opened GitHub watch had a double side margin, a
+// justified headline, and a skipped row whose name left the column of the other rows.
+const watchView: LiveView = {
+  id: 'release-watch',
+  title: 'Release & Deploy to Clojars · run 41435381498',
+  description: 'v0.5.0 · chore(release): v0.5.0 · push',
+  seq: 1,
+  owner: { invocation_id: activity.rows[0].id, activity_id: activity.history!.id },
+  nodes: [
+    {
+      id: 'status',
+      type: 'status',
+      text: 'native / native · vis-agent-linux-arm64.tar.gz',
+      detail: 'Test the native binaries · 12m 20s in this step · 5 other jobs running',
+      tone: 'running',
+    },
+    { id: 'progress', type: 'progress', label: 'Jobs finished', done: 22, total: 30 },
+    {
+      id: 'stats',
+      type: 'stat',
+      stats: [
+        { id: 'running', label: 'running', value_text: '6', tone: 'running' },
+        { id: 'passed', label: 'passed', value_text: '21', tone: 'ok' },
+        { id: 'queued', label: 'queued', value_text: '2', tone: 'idle' },
+        { id: 'elapsed', label: 'elapsed', value_text: '38m 24s', tone: 'idle' },
+      ],
+    },
+    {
+      id: 'jobs',
+      type: 'table',
+      columns: [
+        { id: 'job', label: 'Job', align: 'left' },
+        { id: 'state', label: 'Conclusion', align: 'left' },
+      ],
+      rows: [
+        { id: 'prepare', cells: ['prepare', 'success, 14s'], tone: 'ok' },
+        {
+          id: 'verify',
+          cells: ['Verify original product gates and repaired Linux checks', 'skipped, 0s'],
+          tone: 'idle',
+        },
+        {
+          id: 'macos',
+          cells: ['vis-agent-macos-arm64.tar.gz', 'success, 23m 36s'],
+          tone: 'ok',
+          parent: 'native',
+        },
+        {
+          id: 'linux-arm',
+          cells: ['vis-agent-linux-arm64.tar.gz', 'in progress, 37m 57s'],
+          tone: 'running',
+          parent: 'native',
+        },
+        { id: 'classpath', cells: ['classpath', 'success, 3m'], tone: 'ok', parent: 'classpath' },
+      ],
+      max_rows: 500,
+      order: 'insertion',
+      is_selectable: true,
+      selected_ids: ['linux-arm'],
+      groups: [
+        { id: 'native', label: 'native / native', is_open: true },
+        { id: 'classpath', label: 'Verify release source / classpath' },
+      ],
+    },
+  ],
+};
+
+/** The opened watch on a phone: one side margin, a ragged headline, one row column. */
+export const PhoneWatch: Story = {
+  args: { liveViews: [watchView] },
+  play: async ({ canvas }) => {
+    await userEvent.click(
+      canvas.getByRole('button', { name: `Open running live view: ${watchView.title}` }),
+    );
+    await expect(within(document.body).getByRole('dialog', { name: watchView.title })).toBeVisible();
+  },
+};
