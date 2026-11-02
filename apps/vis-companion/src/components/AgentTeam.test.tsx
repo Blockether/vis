@@ -99,20 +99,21 @@ describe('agent rows', () => {
     expect(axisMarks(50_000)).toEqual([0, 15_000, 30_000, 45_000]);
   });
 
-  // On a wide screen a row unfolds in place, and a running agent shows its update without a click.
-  it('unfolds a running row on a wide screen, folds it on a click, and opens the sheet from its time bar', async () => {
+  // On a wide screen the note of an agent stands beside its title, and the timeline replaces the notes.
+  it('shows the notes on a wide screen, swaps them for the timeline, and opens the sheet from a row', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
-    render(<TurnAgents {...props} agents={[child, { ...child, session_id: 'done', status: 'completed', finished_at: T0 + 9_000 }]} />);
-    const [running, done] = screen.getAllByRole('button').filter((row) => row.hasAttribute('data-agent-row'));
-    expect(running).toHaveAttribute('aria-expanded', 'true');
-    expect(done).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(running);
-    expect(running).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('dialog')).toBeNull();
-    fireEvent.click(done);
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open #2' })); });
+    render(<TurnAgents {...props} agents={[
+      { ...child, note: 'Reading the routes' },
+      { ...child, session_id: 'done', status: 'completed', finished_at: T0 + 9_000 },
+    ]} />);
+    expect(screen.getByText('Reading the routes')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open timeline' }));
+    expect(screen.queryByText('Reading the routes')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close timeline' })).toHaveAttribute('aria-pressed', 'true');
+    const [, done] = screen.getAllByRole('button').filter((row) => row.hasAttribute('data-agent-row'));
+    await act(async () => { fireEvent.click(done); });
     expect(screen.getByRole('dialog', { name: '#2' })).toBeInTheDocument();
   });
 

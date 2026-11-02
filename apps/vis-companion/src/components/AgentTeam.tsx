@@ -17,7 +17,7 @@ import { councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
 import { useClampMotion } from '../lib/clamp-motion';
 import { Markdown } from './ChatContent';
-import { CheckIcon, ChevronIcon, CloseIcon, MARK_NUDGE } from './icons';
+import { CheckIcon, CloseIcon } from './icons';
 import { Button, DialogFrame, Modal, TextButton } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
@@ -191,8 +191,8 @@ function useNow(ticking: boolean): number {
   return now;
 }
 
-// A wide screen: the `sm` width of the theme. A row there unfolds in place, and on a phone it
-// opens the sheet of its agent.
+// A wide screen: the `sm` width of the theme. A row there shows the note of its agent beside its
+// title, and the team can show its timeline.
 const WIDE = '(min-width: 640px)';
 
 function useWide(): boolean {
@@ -266,10 +266,10 @@ function StatusMark({ status }: { status: string }) {
 // line. ROLE fits the longest word of the team.
 const PHONE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_minmax(0,1fr)_auto] items-baseline gap-x-3 py-1 text-left';
 
-// The columns of a team on a wide screen: the chevron, ROLE, TITLE, the time bar, TIME and the
-// status mark, and the UPDATE of an unfolded row below them. TIME fits `59m 59s`, so a ticking
-// time never moves a column. TITLE takes at most a third of the row; a longer title wraps.
-const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[0.75rem_var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-2';
+// The columns of a team on a wide screen: ROLE, TITLE, then the NOTE, or the time bar while the
+// timeline shows, then TIME and the status mark. TIME fits `59m 59s`, so a ticking time never
+// moves a column. TITLE takes at most a third of the row; a longer title wraps.
+const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-2';
 
 const FOCUS = 'rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent';
 
@@ -300,8 +300,8 @@ interface TableProps {
   onSelect: (sid: string) => void;
 }
 
-// The table of one team. A phone row opens the sheet of its agent. A wide row unfolds its update,
-// and its time bar opens the sheet.
+// The table of one team. A row opens the sheet of its agent. A wide screen shows the note of
+// each agent beside its title, or the time bars of the team on one axis.
 function AgentTable(props: TableProps) {
   return useWide() ? <WideAgentTable {...props} /> : <PhoneAgentTable {...props} />;
 }
@@ -338,15 +338,23 @@ function PhoneAgentTable({ rows, now, error, onSelect }: TableProps) {
 }
 
 function WideAgentTable({ rows, now, error, onSelect }: TableProps) {
-  // The rows that a person folded or unfolded. Any other row is unfolded while its agent runs.
-  const [folds, setFolds] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const [isTimeline, setTimeline] = useState(false);
   const total = teamTime(rows, now);
-  const bars = agentBars(rows, now);
+  const hasTimeline = rows.length > 1 && !!total;
+  const showsBars = hasTimeline && isTimeline;
+  const bars = showsBars ? agentBars(rows, now) : new Map<string, AgentBar>();
   return (
     <div style={columnWidths(rows)}>
-      {rows.length > 1 && !!total && (
-        <div aria-hidden className={`pt-1 text-dialog-hint ${WIDE_ROW}`}>
-          <span className="relative col-start-4 h-[calc(1lh+0.5rem)] border-b border-dialog-edge/50"><AxisMarks total={total} /></span>
+      {hasTimeline && (
+        <div className="flex justify-end px-2 pt-1 text-dialog-hint">
+          <TextButton aria-pressed={isTimeline} onClick={() => setTimeline((value) => !value)}>
+            {isTimeline ? 'Close timeline' : 'Open timeline'}
+          </TextButton>
+        </div>
+      )}
+      {showsBars && (
+        <div aria-hidden className={`text-dialog-hint ${WIDE_ROW}`}>
+          <span className="relative col-start-3 h-[calc(1lh+0.5rem)] border-b border-dialog-edge/50"><AxisMarks total={total} /></span>
         </div>
       )}
       <ul>
@@ -356,44 +364,34 @@ function WideAgentTable({ rows, now, error, onSelect }: TableProps) {
           const update = agentUpdate(agent);
           const time = agentTime(agent, now);
           const bar = bars.get(agent.session_id);
-          const label = agentLabel(agent, rows);
-          const isOpen = folds.get(agent.session_id) ?? agent.status === 'running';
-          const toggle = () => setFolds((before) => new Map(before).set(agent.session_id, !isOpen));
           return (
-            <li key={agent.session_id} className={`py-1 hover:bg-white/5 ${WIDE_ROW}`}>
+            <li key={agent.session_id}>
               <button
                 type="button"
                 data-agent-row={agent.session_id}
-                aria-expanded={isOpen}
-                onClick={toggle}
-                className={`group col-span-3 grid grid-cols-subgrid items-baseline text-left ${FOCUS}`}
-              >
-                <ChevronIcon open={isOpen} className={`size-3 text-dialog-hint ${MARK_NUDGE}`} />
-                <span className={`uppercase ${role.ink}`}>{role.text}</span>
-                <span className="font-bold [overflow-wrap:anywhere] group-hover:underline" title={agent.task}>{label}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Open ${label}`}
-                title={`Open ${label}`}
                 onClick={() => onSelect(agent.session_id)}
-                className={`group/bar relative h-[1lh] cursor-pointer self-start ${FOCUS}`}
+                className={`group py-1 text-left hover:bg-white/5 ${FOCUS} ${WIDE_ROW}`}
               >
-                {bar && (
-                  <span
-                    className={`absolute top-1/2 -translate-y-1/2 transition-[height] motion-reduce:transition-none ${bar.isWaiting ? 'border-t border-dashed border-dialog-hint group-hover/bar:border-white' : `h-2 group-hover/bar:h-3.5 ${BAR_INK[status.text]}`}`}
-                    style={{ left: `${bar.start * 100}%`, width: `max(2px, ${(bar.end - bar.start) * 100}%)` }}
-                  />
+                <span className={`uppercase ${role.ink}`}>{role.text}</span>
+                <span className="font-bold [overflow-wrap:anywhere] group-hover:underline" title={agent.task}>{agentLabel(agent, rows)}</span>
+                {showsBars ? (
+                  <span aria-hidden className="relative h-2 self-center">
+                    {bar && (
+                      <span
+                        className={`absolute inset-y-0 ${bar.isWaiting ? 'top-1/2 border-t border-dashed border-dialog-hint' : BAR_INK[status.text]}`}
+                        style={{ left: `${bar.start * 100}%`, width: `max(2px, ${(bar.end - bar.start) * 100}%)` }}
+                      />
+                    )}
+                  </span>
+                ) : (
+                  <span className="truncate text-dialog-hint" title={update}>{update ?? ''}</span>
                 )}
+                <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
+                <span className={`self-center text-center ${status.ink}`}>
+                  <span className="sr-only">{status.text}</span>
+                  <span aria-hidden className="inline-flex"><StatusMark status={status.text} /></span>
+                </span>
               </button>
-              <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
-              <span className={`self-center text-center ${status.ink}`}>
-                <span className="sr-only">{status.text}</span>
-                <span aria-hidden className="inline-flex"><StatusMark status={status.text} /></span>
-              </span>
-              {isOpen && update && (
-                <span className="col-[3/-1] line-clamp-3 text-dialog-hint [overflow-wrap:anywhere]" title={update}>{update}</span>
-              )}
             </li>
           );
         })}
