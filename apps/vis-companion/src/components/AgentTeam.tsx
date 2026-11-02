@@ -2,6 +2,8 @@ import { type CSSProperties, useCallback, useEffect, useId, useLayoutEffect, use
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
 import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
+import { councilMarkdown } from '../lib/council-markdown';
+import { Markdown } from './ChatContent';
 import { Button, DialogFrame, Modal, TextButton } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
@@ -347,12 +349,12 @@ export function clockTime(at: number): string {
 // The name of a part of the sheet. It is one step smaller than the text that it names.
 const PART_NAME = 'mb-1 text-meta text-dialog-hint sm:text-ui';
 
-// The task of an agent: its first four lines, and all of it on request. The control under the
-// task shows only when the four lines cut it.
+// The task of an agent as Markdown, like a Council request: its first four lines, and all of it
+// on request. The control under the task shows only when the four lines cut it.
 function AgentTask({ task }: { task: string }) {
   const [isOpen, setOpen] = useState(false);
   const [isCut, setCut] = useState(false);
-  const text = useRef<HTMLParagraphElement>(null);
+  const text = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const element = text.current;
     if (element === null || isOpen) return undefined;
@@ -366,7 +368,9 @@ function AgentTask({ task }: { task: string }) {
   return (
     <section aria-label="Task" className="max-w-[100ch]">
       <h3 className={PART_NAME}>Task</h3>
-      <p ref={text} className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isOpen ? '' : 'line-clamp-4'}`}>{task}</p>
+      <div ref={text} className={`[overflow-wrap:anywhere] ${isOpen ? '' : 'line-clamp-4'}`}>
+        <Markdown compact hardBreaks>{councilMarkdown(task)}</Markdown>
+      </div>
       {(isCut || isOpen) && (
         <p className="mt-1 text-dialog-hint">
           <TextButton isTally aria-expanded={isOpen} onClick={() => setOpen((open) => !open)}>

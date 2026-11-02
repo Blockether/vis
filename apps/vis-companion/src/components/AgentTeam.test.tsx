@@ -159,6 +159,20 @@ describe('agent timeline', () => {
     ]);
   });
 
+  // User report: the sheet showed the Markdown of a task as raw text, with `##`, `-` and backticks.
+  it('shows the task as Markdown, not as its raw markers', async () => {
+    const task = 'Make the state known.\n\n## User report\n- The dock shows late.\n- Read `useAgentTeam` first.';
+    render(<TurnAgents {...props} agents={[{ ...child, task }]} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
+    const part = within(screen.getByRole('dialog', { name: '#1' })).getByRole('region', { name: 'Task' });
+    expect(within(part).getByRole('heading', { name: 'User report' })).toBeInTheDocument();
+    expect(within(part).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'The dock shows late.',
+      'Read useAgentTeam first.',
+    ]);
+    expect(part.textContent).not.toMatch(/##|`/);
+  });
+
   // User report: the sheet showed the result at its end and the end step said it again.
   it('shows the outcome above the steps, and the end step does not repeat it', () => {
     const end = { at: T0 + 61_000, kind: 'finished' as const, status: 'completed' as const, outcome: 'passed' as const, text: 'All 40 tests pass' };
