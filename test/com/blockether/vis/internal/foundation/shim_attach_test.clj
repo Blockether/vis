@@ -360,13 +360,18 @@
             out
             (block pctx
                    (str "import os, pathlib\n"
-                        "root = " (pr-str root)
-                        "\n" "with open(root + '/report.json','w') as f:\n"
-                        "    f.write('{}')\n" "os.environ['HOME'] = root\n"
-                        "attach(pathlib.Path(root + '/report.json'), 'pathlib.json')\n"
-                        "attach('~/report.json', 'tilde.json')\n"
-                        "try:\n" "    attach(root + '/nope.json')\n"
-                        "except Exception as e:\n" "    print('RAISED', e)\n"))]
+                        "root = "
+                        (pr-str root)
+                        "\n"
+                        "with open(root + '/report.json','w') as f:\n" "    f.write('{}')\n"
+                        ;; The interpreter and its environment serve every test in this JVM.
+                        "home = os.environ.get('HOME')\n" "os.environ['HOME'] = root\n"
+                        "try:\n" "    attach(pathlib.Path(root + '/report.json'), 'pathlib.json')\n"
+                        "    attach('~/report.json', 'tilde.json')\n" "    try:\n"
+                        "        attach(root + '/nope.json')\n" "    except Exception as e:\n"
+                        "        print('RAISED', e)\n" "finally:\n"
+                        "    if home is None:\n" "        os.environ.pop('HOME', None)\n"
+                        "    else:\n" "        os.environ['HOME'] = home\n"))]
 
         (expect (nil? (:error out)))
         (expect (= ["pathlib.json" "tilde.json"]
