@@ -634,13 +634,31 @@
                               :status "running"
                               :cancel-token (cancellation/cancellation-token)}}
                 :current-turn "lt"})
-             (let [[event] (push! 1 #(state/cancel-turn! leader "lt"))]
-               (expect (= #{{"session_id" b "status" "cancelled"}
-                            {"session_id" c "status" "cancelled"}}
-                          (set (rows event)))
+             ;; The two cancels can reach the push thread apart, so a client may get one event or
+             ;; two. It merges the rows by session id, and so does this check (CI run 41449961621).
+             (reset! events [])
+             (state/cancel-turn! leader "lt")
+             (let [merged (fn []
+                            (into {}
+                                  (for [[_ event] @events
+                                        row (get event "agents")]
+
+                                    [(get row "session_id") (get row "status")])))]
+               (loop [left 300]
+                 (when (and (not= {b "cancelled" c "cancelled"} (select-keys (merged) [b c]))
+                            (pos? left))
+                   (Thread/sleep 10)
+                   (recur (dec left))))
+               (expect (= {b "cancelled" c "cancelled"} (select-keys (merged) [b c]))
                        "The leader stop pushes each child that it cancelled")
-               (expect (= {"active" 0 "total" 3} (get event "team")))
-               (expect (not (contains? event "child_id"))))
+               (doseq [[sid event] @events]
+                 (expect (= leader sid))
+                 (expect (document/valid-json? "gateway"
+                                               "team_update"
+                                               (select-keys event ["team" "agents" "child_id"])))
+                 (expect (= (= 1 (count (get event "agents"))) (contains? event "child_id"))
+                         "Only an event of one child names it"))
+               (expect (= {"active" 0 "total" 3} (get (second (peek @events)) "team"))))
              (finally (state/remove-event-tap! ::spy) (reset! registry saved)))))))
 
 ;; With the client polls gone, these child changes reached no client: a model or routing-lock
