@@ -8981,7 +8981,8 @@
 
    `anchor` is `state/band-anchor`: `:content-top` is the first row the band may
    touch, `:prompt-h` the live height of the prompt it sits above, and
-   `:chat-left` the start of the chat pane. An optional `:paint-dock!`
+   `:chat-left` the start of the chat pane and `:chat-cols` its width, or nil for
+   the rest of the screen. An optional `:paint-dock!`
    `(fn [g top])` paints the agent dock on the `:dock-h` rows above the band.
    The band is clipped to that pane,
    leaving a docked project rail untouched. The frame is snapshotted before the
@@ -8991,7 +8992,7 @@
    `body` is called with `[g region]`, the same two handles every other host of
    `embed-transient!` composes. This is the only place the session screen turns
    an anchor into a band region: a second one is how two bands drift apart."
-  [^TerminalScreen screen {:keys [content-top prompt-h chat-left] :as anchor} body]
+  [^TerminalScreen screen {:keys [content-top prompt-h chat-left chat-cols] :as anchor} body]
   (let [size
         (modal-size! screen)
 
@@ -8999,7 +9000,8 @@
         (min (max 0 (long (or chat-left 0))) (max 0 (dec (.getColumns size))))
 
         cols
-        (- (.getColumns size) left)
+        (let [rest-cols (- (.getColumns size) left)]
+          (if chat-cols (max 1 (min rest-cols (long chat-cols))) rest-cols))
 
         g
         (binding [frame/*column-offset* left]

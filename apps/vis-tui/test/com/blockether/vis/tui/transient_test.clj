@@ -744,6 +744,28 @@
         (expect (some #(str/includes? (subs % 40) "C-x — vis commands") shown))
         (expect (every? #(= rail (subs % 0 40)) (str/split-lines (cap/frame-text capture)))))))
 
+;; Regression (user report): in Zen mode the C-x hydra spanned the whole terminal,
+;; outside the centred Zen column. The band stays inside the column.
+(defdescribe
+  band-zen-column-test
+  (it "keeps the C-x hydra inside the Zen column and its margins blank"
+      (let [anchor
+            (state/band-anchor {:layout {:messages-top 1 :input-h 3 :chat-left 23 :cols 74}})
+
+            capture
+            (cap/capture! {:cols 120
+                           :rows 30
+                           :keys [\d]
+                           :paint! (fn [{:keys [screen]}]
+                                     (dlg/prefix-band! screen anchor leader-spec))})
+
+            shown
+            (mapv #(format "%-120s" %) (str/split-lines (cap/frame-text capture 0)))]
+
+        (expect (nil? (:error capture)))
+        (expect (some #(str/includes? (subs % 23 97) "C-x — vis commands") shown))
+        (expect (every? #(and (str/blank? (subs % 0 23)) (str/blank? (subs % 97))) shown)))))
+
 ;; Regression (user report): the C-x hydra opened ABOVE the agent table, so the table
 ;; sat between the commands and the prompt. The agents are always above the band.
 (defdescribe

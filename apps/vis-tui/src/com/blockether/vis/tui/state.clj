@@ -38,13 +38,14 @@
                  (vis/set-context-session! session-id)))))
 
 (defn band-anchor
-  "WHERE a MAIN-SCREEN transient sits: `{:content-top :prompt-h :chat-left}`,
+  "WHERE a MAIN-SCREEN transient sits: `{:content-top :prompt-h :chat-left :chat-cols}`,
    read off the layout the renderer published for the live frame.
 
    Every band on the session screen is anchored the SAME way: it sits ABOVE the
    prompt box and its attachment rail at their LIVE height (`[:layout :input-h]`),
    and it stays in the chat pane to the right of the project rail
-   (`[:layout :chat-left]`).
+   (`[:layout :chat-left]`), at the pane's width (`[:layout :cols]`). Zen mode
+   narrows that pane to its centred column, so the band stays inside the column.
 
    The agent dock is ALWAYS above the band, never between the band and the
    prompt. The band covers the dock's own rows, and `:dock-h` rows directly above
@@ -59,7 +60,8 @@
      {:content-top (+ (long (or (get-in db [:layout :messages-top]) 1)) dock-h)
       :prompt-h (or (get-in db [:layout :input-h]) tr/prompt-rows)
       :dock-h dock-h
-      :chat-left (or (get-in db [:layout :chat-left]) 0)})))
+      :chat-left (or (get-in db [:layout :chat-left]) 0)
+      :chat-cols (get-in db [:layout :cols])})))
 
 (defonce ^:private event-registry (atom {}))
 
