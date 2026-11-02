@@ -283,11 +283,12 @@ function columnWidths(rows: readonly Subagent[]): CSSProperties {
   } as CSSProperties;
 }
 
-// The labels of the time axis, above the first bar.
+// The time axis above the bars, as a ruler: a label over a tick at each mark.
 function AxisMarks({ total }: { total: number }) {
   return axisMarks(total).map((at, index) => (
-    <span key={at} className={`absolute top-0 ${index === 0 ? '' : '-translate-x-1/2'}`} style={{ left: `${(at / total) * 100}%` }}>
-      {axisLabel(at)}
+    <span key={at} className="absolute inset-y-0" style={{ left: `${(at / total) * 100}%` }}>
+      <span className={`absolute top-0 ${index === 0 ? '' : '-translate-x-1/2'}`}>{axisLabel(at)}</span>
+      <span className="absolute bottom-0 h-1 w-px bg-dialog-edge/50" />
     </span>
   ));
 }
@@ -312,7 +313,7 @@ function AgentTable({ rows, now, error, onSelect }: {
       {hasBars && (
         <div aria-hidden className="hidden gap-x-3 px-2 pt-1 text-dialog-hint sm:flex">
           <div className={grid}>
-            <span className="relative col-start-4 h-[1lh]"><AxisMarks total={total} /></span>
+            <span className="relative col-start-4 h-[calc(1lh+0.5rem)] border-b border-dialog-edge/50"><AxisMarks total={total} /></span>
           </div>
           <span className={OPEN_WIDTH} />
         </div>
@@ -327,7 +328,7 @@ function AgentTable({ rows, now, error, onSelect }: {
           const isOpen = folds.get(agent.session_id) ?? agent.status === 'running';
           const toggle = () => setFolds((before) => new Map(before).set(agent.session_id, !isOpen));
           return (
-            <li key={agent.session_id} className={`sm:flex sm:items-start sm:gap-x-3 sm:px-2 ${isOpen ? 'sm:bg-white/5 sm:pb-1' : ''}`}>
+            <li key={agent.session_id} className="sm:flex sm:items-start sm:gap-x-3 sm:px-2 sm:py-1 sm:hover:bg-white/5">
               <button
                 type="button"
                 data-agent-row={agent.session_id}
