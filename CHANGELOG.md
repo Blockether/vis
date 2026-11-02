@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Provider: an overload (HTTP 529) that arrives after the model starts to think is sent again on the same provider. The turn no longer fails with "Provider gateway unavailable". Svar is pinned at 0.7.220.
+
 ## [v0.4.13] - 2026-11-02
 
 ### Changed
