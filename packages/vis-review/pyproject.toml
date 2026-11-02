@@ -1,0 +1,20 @@
+[project]
+name = "vis-review"
+version = "0.1.0"
+description = "Review what a session changed: a journal of every block, diffs, checks, an AI review and undo."
+keywords = ["review", "diff", "undo", "development"]
+requires-python = ">=3.12"
+dependencies = [
+  "vis-agent>=0.4.12",
+  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v3.2.0",
+]
+
+[tool.vis]
+category = "tools"
+source_paths = ["src"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
