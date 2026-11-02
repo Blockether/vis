@@ -181,7 +181,7 @@ describe('agent timeline', () => {
     expect(items).toEqual([
       `${clockTime(T0)}StartedVerify the contract`,
       `${clockTime(T0 + 12_000)}The schema has the new fields.`,
-      `${clockTime(T0 + 40_000)}MessageAsked: keep the old API?`,
+      `${clockTime(T0 + 40_000)}Asked: keep the old API?`,
       `${clockTime(T0 + 61_000)}doneAll 40 tests pass`,
     ]);
     expect(clockTime(T0)).toBe('14:03:07');

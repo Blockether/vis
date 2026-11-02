@@ -473,12 +473,11 @@ export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline,
   );
 }
 
-// The word of a step that starts a task or carries a message. A note is the agent's own prose,
-// so it carries no word, and the end carries its status word.
+// The word of a step that starts a task. A note and a message are the agent's own prose, so
+// they carry no word, and the end carries its status word.
 const STEP_WORDS: Partial<Record<AgentTimelineItem['kind'], string>> = {
   started: 'Started',
   continued: 'Continued',
-  message: 'Message',
 };
 
 /**
