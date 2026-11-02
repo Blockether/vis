@@ -128,3 +128,17 @@ describe('the session id behind the header menu', () => {
 // height. With the floor gone the heading also FOLLOWED its content, so anything
 // that changed the title block moved the whole band on a phone and nowhere else.
 // `DialogHeader isUnderNotch` clears a notch the same way.
+
+// User request: a subagent session takes no input in the Companion and the TUI. Its leader
+// gives it work, and its one header names the path from the leader.
+describe('a subagent session', () => {
+  it('has no composer, and its header names the path from the leader', async () => {
+    renderSessionScreen({
+      session: sessionFixture({ title: 'Fix the parser', agent: { role: 'subagent', parent_id: 'lead', leader_id: 'lead' } }),
+      client: { agents: () => Promise.resolve([]) },
+    });
+    expect(await screen.findByRole('heading', { name: 'Leader → Fix the parser' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Message Vis' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(Send|Queue) message$/ })).toBeNull();
+  });
+});

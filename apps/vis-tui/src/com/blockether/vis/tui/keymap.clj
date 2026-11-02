@@ -773,6 +773,12 @@
 ;; paints it and `input/resolve-prefix-key` still owns the keystroke, so the band
 ;; can never bind a key the chord itself does not.
 
+(defn subagent-session?
+  "True when the current session of `db` is a subagent session. Its leader gives it
+   work, so it has no prompt."
+  [db]
+  (not (str/blank? (str (get-in db [:session :agent :parent-id])))))
+
 (defn verb-available?
   "Does a prefix-command's `:show-when` tag hold for the current `db`? Untagged
    verbs always apply; the tagged ones surface in the band ONLY where they can
@@ -811,7 +817,7 @@
     (true? (:has-agents? db))
 
     :child-session
-    (not (str/blank? (str (get-in db [:session :agent :parent-id]))))
+    (subagent-session? db)
 
     true))
 

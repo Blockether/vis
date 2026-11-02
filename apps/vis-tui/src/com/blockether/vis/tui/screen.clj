@@ -503,7 +503,10 @@
     ;; T-003: never silently drop a non-empty submission while a turn or the
     ;; initial session build is in flight. Idle -> send-message. Busy/building ->
     ;; enqueue with visible feedback; binding/completion drains it.
-    (when (and (seq (str/trim text)) (or (:session db) building?))
+    ;; A subagent session has no prompt: a draft left in it is never sent.
+    (when (and (seq (str/trim text))
+               (or (:session db) building?)
+               (not (keymap/subagent-session? db)))
       (cond
         ;; Cancel in flight: the user pressed Esc to STOP this turn, so a new
         ;; submission is a fresh intent — not queue fodder. Keep it in the editor
@@ -3456,11 +3459,15 @@
 (defn- composer-geometry
   "One geometry contract for the prompt, attachment rail, and echo boundary."
   [db cols rows]
-  (let [text-rows
-        (input-text-rows (:input db) cols)
+  (let [;; A subagent session has no prompt and no attachment rail.
+        prompt?
+        (not (keymap/subagent-session? db))
+
+        text-rows
+        (if prompt? (input-text-rows (:input db) cols) 0)
 
         input-box-h
-        (+ text-rows 2 (* 2 (long render/input-pad-y)))
+        (if prompt? (+ text-rows 2 (* 2 (long render/input-pad-y))) 0)
 
         footer-row
         (- (long rows) (long (footer/rows db)))
@@ -3470,7 +3477,7 @@
 
         ;; The attachment rail touches the prompt, so the two read as one control.
         rail-h
-        (attachment-rail/rail-height (:attachments db))
+        (if prompt? (attachment-rail/rail-height (:attachments db)) 0)
 
         rail-top
         (- input-top rail-h)
@@ -3713,8 +3720,11 @@
                          {:focused? (:attachment-focus? db) :focused-index (:attachment-index db)}))
 
 (defn- paint-composer!
-  [g input input-top text-rows cols]
-  (render/draw-input-box! g input input-top text-rows cols nil))
+  "Paint the prompt and return its cursor, or nil in a subagent session, which has no prompt."
+  ^TerminalPosition [g db input input-top text-rows cols]
+  (when-not (keymap/subagent-session? db)
+    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols nil)]
+      (TerminalPosition. (int cx) (int cy)))))
 
 (defn- draw-bottom-chrome!
   "Paint the bottom screen chrome — attachment rail, composer, echo area, and
@@ -3726,7 +3736,7 @@
            slash-suggestions slash-command-index]}]
   (paint-agent-dock! g db dock-top cols)
   (paint-attachment-rail! g db rail-top cols)
-  (let [[cx cy] (paint-composer! g input input-top text-rows cols)]
+  (let [cursor (paint-composer! g db input input-top text-rows cols)]
     (footer/draw-echo-area! g db echo-row cols now-ms)
     (footer/draw-footer! g db footer-row cols now-ms)
     (when-not (:human-input db)
@@ -3737,7 +3747,7 @@
                                               slash-command-index))
     (if (or (overlay-locked? db) (scroll/scrolled-up? (:scroll db)))
       (frame/set-cursor! screen nil)
-      (frame/set-cursor! screen (TerminalPosition. cx cy)))))
+      (frame/set-cursor! screen cursor))))
 
 (defn- tab-content-loading?
   "True when the ACTIVE tab is still hydrating/building with an EMPTY transcript
@@ -4129,9 +4139,9 @@
                     :attachments (fn [graphics _]
                                    (paint-attachment-rail! graphics db rail-top cols))
                     :composer (fn [graphics _]
-                                (let [[cx cy]
-                                      (paint-composer! graphics input input-top text-rows cols)]
-                                  (vreset! cursor-position (TerminalPosition. cx cy))))
+                                (vreset!
+                                  cursor-position
+                                  (paint-composer! graphics db input input-top text-rows cols)))
                     :echo (fn [graphics _]
                             (footer/draw-echo-area! graphics db echo-row cols now-ms))
                     :footer (fn [graphics _]
@@ -5087,14 +5097,14 @@
           (footer/draw-echo-area! g db echo-row cols now-ms)
           (footer/draw-footer! g db footer-row cols now-ms)
           (.commitFrame interactions/hit-map))))
-    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols nil)]
+    (let [cursor (paint-composer! g db input input-top text-rows cols)]
       (if-let [[sx sy] (components/find-bar-cursor cols text-top (:search db))]
         ;; Active find bar owns the keyboard — cursor sits in its query field
         ;; (see the full-frame path / `find-bar-cursor` for the why).
         (frame/set-cursor! screen (TerminalPosition. sx sy))
         (if (scroll/scrolled-up? (:scroll db))
           (frame/set-cursor! screen nil)
-          (frame/set-cursor! screen (TerminalPosition. cx cy)))))
+          (frame/set-cursor! screen cursor))))
     ;; Outer chat scrollbar FIRST, then the suggestion popup on top — the
     ;; SAME order as the full-frame path (`draw-messages-area!` scrollbar →
     ;; `draw-bottom-chrome!` suggestions). The popup sits just above the input

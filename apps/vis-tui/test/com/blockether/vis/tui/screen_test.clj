@@ -1576,6 +1576,31 @@ therapy line 2"
                          input-state)
           (expect (= [[:enqueue-message "queued before ready" :tab-1] [:reset-input]] @events))))))
 
+;; User request: a subagent session takes no input in the TUI and the Companion. Its leader
+;; gives it work.
+(defdescribe
+  subagent-session-prompt-test
+  (let [child
+        {:session {:id "child" :agent {:role "subagent" :parent-id "lead" :leader-id "lead"}}
+         :active-tab-id :tab-1
+         :tabs [{:id :tab-1 :session-id "child" :active? true}]
+         :input (input/empty-input)
+         :attachments [{:id "a"}]
+         :loading? false}]
+    (it "gives the prompt and its attachment rail no rows"
+        (let [geometry (#'screen/composer-geometry child 80 30)]
+          (expect (= [0 0 0 0] (mapv geometry [:text-rows :input-box-h :rail-h :composer-h])))
+          (expect (= 27 (:messages-bottom geometry)))))
+    (it "keeps typing out of the draft"
+        (let [handler (:fn (get @@#'state/event-registry :update-input))]
+          (expect (= (input/empty-input)
+                     (:input (handler child [:update-input (input/paste-text (input/empty-input) "hi")]))))))
+    (it "sends nothing on Enter"
+        (let [events (atom [])]
+          (with-redefs [state/dispatch (fn [event] (swap! events conj event))]
+            (submit-input! child (input/paste-text (input/empty-input) "hi")))
+          (expect (= [] @events))))))
+
 (defdescribe
   selectable-ranges-test
   (it

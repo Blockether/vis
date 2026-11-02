@@ -5443,13 +5443,15 @@ export function SessionScreen({
       </ComposerButton>
     ) : null;
 
+  // A subagent session takes no input. Its header names its path from the leader.
+  const isSubagent = session?.agent?.role === 'subagent';
   const headerModel: SessionHeaderModel = {
     title,
     sessionId: sid,
     connected,
     artifacts: { count: artifacts.length + openAppCount, isOpen: artifactsOpen },
     goal: session?.goal,
-    agentPath: session?.agent?.role === 'subagent' ? agentPath(sid, session.agent, team.agents, title) : undefined,
+    agentPath: isSubagent && session?.agent ? agentPath(sid, session.agent, team.agents, title) : undefined,
   };
   const headerCommands: SessionHeaderCommands = {
     back: onBack,
@@ -5682,10 +5684,10 @@ export function SessionScreen({
             the caret and the queued turns survive a look at what the session made. */}
           <footer
             style={safeBottomStyle}
-            className={`relative z-10 shrink-0 pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pt-1.5 sm:pt-2 ${
+            className={`relative z-10 shrink-0 pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] ${isSubagent ? '' : 'pt-1.5 sm:pt-2'} ${
               zen
                 ? 'zen-footer'
-                : 'border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] mouse:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_var(--container-6xl))/2_+_1.5rem))] mouse:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_var(--container-6xl))/2_+_1.5rem))]'
+                : `${isSubagent ? '' : 'border-t border-dialog-edge'} bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] mouse:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_var(--container-6xl))/2_+_1.5rem))] mouse:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_var(--container-6xl))/2_+_1.5rem))]`
             } ${artifactsOpen ? 'hidden' : ''}`}
           >
             {/* Anchored to the footer's top edge, so it always clears the queue
@@ -5711,365 +5713,370 @@ export function SessionScreen({
               timeline={team.timeline}
             />
 
-            <ComposerSuggestions
-              kind="files"
-              items={fileMatches}
-              selectedIndex={fileIndex}
-              onSelect={(file) => completeFile(file.name)}
-            />
-            <ComposerSuggestions
-              kind="slashes"
-              items={slashMatches}
-              selectedIndex={slashIndex}
-              onSelect={completeSlash}
-            />
-
-            <QueuedTurnsTray
-              key={sid}
-              client={client}
-              sid={sid}
-              queued={queued}
-              paused={queuePaused}
-              running={running}
-              onError={setError}
-            />
-
-            <div
-              onDragEnter={handleDragOver}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={`relative rounded-none border border-dialog-edge bg-input transition-colors focus-within:border-accent ${zen ? 'shadow-float' : ''} ${dropActive ? 'ring-1 ring-accent ring-inset' : ''}`}
-            >
-              <ComposerPayloadShelf
-                pastes={activePastes}
-                attachments={attachments}
-                commands={payloadCommands}
+            {/* A subagent session takes no input: its leader gives it work. */}
+            {!isSubagent && (
+              <>
+              <ComposerSuggestions
+                kind="files"
+                items={fileMatches}
+                selectedIndex={fileIndex}
+                onSelect={(file) => completeFile(file.name)}
+              />
+              <ComposerSuggestions
+                kind="slashes"
+                items={slashMatches}
+                selectedIndex={slashIndex}
+                onSelect={completeSlash}
               />
 
-              {(composerNotice ||
-                voiceConversation ||
-                voicePhase !== 'idle' ||
-                voiceModel?.status === 'downloading' ||
-                (voiceRequested && voiceModel?.status !== 'ready')) && (
-                <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 whitespace-pre-line border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
-                  {voicePhase === 'recording' ? (
-                    <>
-                      <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{' '}
-                      {voiceConversation
-                        ? 'Voice conversation · Listening · tap the microphone again to finish'
-                        : 'Listening · tap the microphone again to finish'}
-                    </>
-                  ) : voicePhase === 'transcribing' ? (
-                    <>
-                      <span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" />{' '}
-                      {voiceConversation && 'Voice conversation · '}
-                      {voiceProgressLabel(voiceProgress)}
-                    </>
-                  ) : composerNotice ? (
-                    composerNotice
-                  ) : voiceSpeaking ? (
-                    <>Voice conversation · Speaking · tap the microphone to stop</>
-                  ) : voiceConversation && running ? (
-                    <>Voice conversation · {session?.agent_name ?? 'Vis'} is working</>
-                  ) : voiceConversation ? (
-                    <>Voice conversation · Ready · tap the microphone to speak</>
-                  ) : voiceModel?.status === 'downloading' ? (
-                    <>
-                      {voiceModel.phase === 'extracting'
-                        ? 'Unpacking voice model'
-                        : 'Downloading voice model'}
-                      {voiceModel.progress == null ? '…' : ` · ${Math.round(voiceModel.progress)}%`}
-                    </>
-                  ) : voiceModel?.status === 'failed' ? (
-                    <>
-                      Voice model failed
-                      {voiceModel.error ? ` · ${voiceModel.error}` : ''}
-                    </>
-                  ) : voiceModel?.status === 'absent' ? (
-                    <>Tap the microphone to install the local voice model</>
-                  ) : null}
-                </div>
-              )}
+              <QueuedTurnsTray
+                key={sid}
+                client={client}
+                sid={sid}
+                queued={queued}
+                paused={queuePaused}
+                running={running}
+                onError={setError}
+              />
 
-              {/* ONE pitch for the whole strip: 32px boxes 4px apart, which is exactly
-                the invisible touch reach every ComposerButton carries, so the controls
-                sit close together and no two targets overlap. */}
-              <div className="flex items-end gap-1 p-1.5 mouse:gap-2 mouse:p-1">
-                <ComposerAttachmentPicker
-                  accept={(
-                    capabilities?.features.attachments.media_types ?? ['image/*', 'video/*']
-                  ).join(',')}
-                  disabled={
-                    attachments.length >= (capabilities?.features.attachments.max_files ?? 8)
-                  }
-                  commands={attachmentCommands}
+              <div
+                onDragEnter={handleDragOver}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`relative rounded-none border border-dialog-edge bg-input transition-colors focus-within:border-accent ${zen ? 'shadow-float' : ''} ${dropActive ? 'ring-1 ring-accent ring-inset' : ''}`}
+              >
+                <ComposerPayloadShelf
+                  pastes={activePastes}
+                  attachments={attachments}
+                  commands={payloadCommands}
                 />
 
-                {/* ONE microphone, the way a messenger does it: TAP acts in the mode
-                  you are in, PRESS AND HOLD switches the mode. The mode was always a
-                  single boolean — the disclosure beside this button was a menu built
-                  around it, and the border welding the two read as a divider in the
-                  strip. A gesture nobody can see needs the name to say it, so the
-                  accessible label carries the act AND the switch, and a pointer that
-                  cannot hold gets the same switch from a right-click or Shift+Enter. */}
-                {renderVoiceControl()}
+                {(composerNotice ||
+                  voiceConversation ||
+                  voicePhase !== 'idle' ||
+                  voiceModel?.status === 'downloading' ||
+                  (voiceRequested && voiceModel?.status !== 'ready')) && (
+                  <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 whitespace-pre-line border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+                    {voicePhase === 'recording' ? (
+                      <>
+                        <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{' '}
+                        {voiceConversation
+                          ? 'Voice conversation · Listening · tap the microphone again to finish'
+                          : 'Listening · tap the microphone again to finish'}
+                      </>
+                    ) : voicePhase === 'transcribing' ? (
+                      <>
+                        <span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" />{' '}
+                        {voiceConversation && 'Voice conversation · '}
+                        {voiceProgressLabel(voiceProgress)}
+                      </>
+                    ) : composerNotice ? (
+                      composerNotice
+                    ) : voiceSpeaking ? (
+                      <>Voice conversation · Speaking · tap the microphone to stop</>
+                    ) : voiceConversation && running ? (
+                      <>Voice conversation · {session?.agent_name ?? 'Vis'} is working</>
+                    ) : voiceConversation ? (
+                      <>Voice conversation · Ready · tap the microphone to speak</>
+                    ) : voiceModel?.status === 'downloading' ? (
+                      <>
+                        {voiceModel.phase === 'extracting'
+                          ? 'Unpacking voice model'
+                          : 'Downloading voice model'}
+                        {voiceModel.progress == null ? '…' : ` · ${Math.round(voiceModel.progress)}%`}
+                      </>
+                    ) : voiceModel?.status === 'failed' ? (
+                      <>
+                        Voice model failed
+                        {voiceModel.error ? ` · ${voiceModel.error}` : ''}
+                      </>
+                    ) : voiceModel?.status === 'absent' ? (
+                      <>Tap the microphone to install the local voice model</>
+                    ) : null}
+                  </div>
+                )}
 
-                <textarea
-                  ref={composerRef}
-                  rows={1}
-                  // WebKit also disables smart quotes/dashes when spellcheck is off.
-                  spellCheck={false}
-                  autoCorrect="off"
-                  autoCapitalize="none"
-                  disabled={voicePhase === 'recording'}
-                  placeholder={
-                    voicePhase === 'recording'
-                      ? 'Listening…'
-                      : running
-                        ? `Message ${session?.agent_name ?? 'Vis'} — queues next`
-                        : `Message ${session?.agent_name ?? 'Vis'} or type / or @`
-                  }
-                  aria-label={`Message ${session?.agent_name ?? 'Vis'}`}
-                  // Both completion menus are anchored to this textarea and are mutually
-                  // exclusive (`fileMention` is only computed while the slash menu is shut),
-                  // so the announced popup must name whichever one is actually open.
-                  aria-controls={
-                    fileMatches.length
-                      ? composerSuggestionListId('files')
-                      : slashMatches.length
-                        ? composerSuggestionListId('slashes')
-                        : undefined
-                  }
-                  aria-autocomplete="list"
-                  aria-haspopup="listbox"
-                  className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:whitespace-nowrap placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1 mouse:text-title"
-                  onPaste={handlePaste}
-                  onFocus={handleComposerFocus}
-                  onSelect={(event) => {
-                    const position = event.currentTarget.selectionStart ?? 0;
-                    startTransition(() => setCaret(position));
-                  }}
-                  onChange={(event) => {
-                    const text = event.currentTarget.value;
-                    const position = event.currentTarget.selectionStart ?? text.length;
-                    const detached = detachLostReferences(text, attachmentsRef.current);
-                    if (detached !== attachmentsRef.current) {
-                      setAttachments(detached);
-                      if (!detached.some((attachment) => attachment.reference))
-                        imageCounterRef.current = 0;
+                {/* ONE pitch for the whole strip: 32px boxes 4px apart, which is exactly
+                  the invisible touch reach every ComposerButton carries, so the controls
+                  sit close together and no two targets overlap. */}
+                <div className="flex items-end gap-1 p-1.5 mouse:gap-2 mouse:p-1">
+                  <ComposerAttachmentPicker
+                    accept={(
+                      capabilities?.features.attachments.media_types ?? ['image/*', 'video/*']
+                    ).join(',')}
+                    disabled={
+                      attachments.length >= (capabilities?.features.attachments.max_files ?? 8)
                     }
-                    recordComposerDraft(text);
-                    startTransition(() => {
-                      setPromptSnapshot(text);
-                      setCaret(position);
-                      setSlashIndex(0);
-                      setSlashDismissed(false);
-                      setFileIndex(0);
-                      setFileDismissed(false);
-                    });
-                  }}
-                  onKeyDown={(event) => {
-                    if (
-                      !event.nativeEvent.isComposing &&
-                      !event.altKey &&
-                      !event.ctrlKey &&
-                      !event.metaKey &&
-                      (event.key === 'Backspace' || event.key === 'Delete')
-                    ) {
-                      const editor = event.currentTarget;
-                      const caret = editor.selectionStart;
-                      if (caret === editor.selectionEnd) {
-                        for (const attachment of attachmentsRef.current) {
-                          const token = attachment.reference;
-                          if (!token) continue;
-                          const start = event.key === 'Backspace' ? caret - token.length : caret;
-                          if (
-                            start >= 0 &&
-                            editor.value.slice(start, start + token.length) === token
-                          ) {
-                            event.preventDefault();
-                            const text =
-                              editor.value.slice(0, start) +
-                              editor.value.slice(start + token.length);
-                            setPrompt(text);
-                            // Deleting the marker keystroke by keystroke IS the
-                            // gesture: drop the payload, unless a duplicate token
-                            // elsewhere still backs it.
-                            if (!text.includes(token))
-                              setAttachments((current) =>
-                                current.filter((item) => item.id !== attachment.id),
-                              );
-                            editor.setSelectionRange(start, start);
-                            recordComposerDraft(text);
-                            return;
+                    commands={attachmentCommands}
+                  />
+
+                  {/* ONE microphone, the way a messenger does it: TAP acts in the mode
+                    you are in, PRESS AND HOLD switches the mode. The mode was always a
+                    single boolean — the disclosure beside this button was a menu built
+                    around it, and the border welding the two read as a divider in the
+                    strip. A gesture nobody can see needs the name to say it, so the
+                    accessible label carries the act AND the switch, and a pointer that
+                    cannot hold gets the same switch from a right-click or Shift+Enter. */}
+                  {renderVoiceControl()}
+
+                  <textarea
+                    ref={composerRef}
+                    rows={1}
+                    // WebKit also disables smart quotes/dashes when spellcheck is off.
+                    spellCheck={false}
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    disabled={voicePhase === 'recording'}
+                    placeholder={
+                      voicePhase === 'recording'
+                        ? 'Listening…'
+                        : running
+                          ? `Message ${session?.agent_name ?? 'Vis'} — queues next`
+                          : `Message ${session?.agent_name ?? 'Vis'} or type / or @`
+                    }
+                    aria-label={`Message ${session?.agent_name ?? 'Vis'}`}
+                    // Both completion menus are anchored to this textarea and are mutually
+                    // exclusive (`fileMention` is only computed while the slash menu is shut),
+                    // so the announced popup must name whichever one is actually open.
+                    aria-controls={
+                      fileMatches.length
+                        ? composerSuggestionListId('files')
+                        : slashMatches.length
+                          ? composerSuggestionListId('slashes')
+                          : undefined
+                    }
+                    aria-autocomplete="list"
+                    aria-haspopup="listbox"
+                    className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:whitespace-nowrap placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1 mouse:text-title"
+                    onPaste={handlePaste}
+                    onFocus={handleComposerFocus}
+                    onSelect={(event) => {
+                      const position = event.currentTarget.selectionStart ?? 0;
+                      startTransition(() => setCaret(position));
+                    }}
+                    onChange={(event) => {
+                      const text = event.currentTarget.value;
+                      const position = event.currentTarget.selectionStart ?? text.length;
+                      const detached = detachLostReferences(text, attachmentsRef.current);
+                      if (detached !== attachmentsRef.current) {
+                        setAttachments(detached);
+                        if (!detached.some((attachment) => attachment.reference))
+                          imageCounterRef.current = 0;
+                      }
+                      recordComposerDraft(text);
+                      startTransition(() => {
+                        setPromptSnapshot(text);
+                        setCaret(position);
+                        setSlashIndex(0);
+                        setSlashDismissed(false);
+                        setFileIndex(0);
+                        setFileDismissed(false);
+                      });
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        !event.nativeEvent.isComposing &&
+                        !event.altKey &&
+                        !event.ctrlKey &&
+                        !event.metaKey &&
+                        (event.key === 'Backspace' || event.key === 'Delete')
+                      ) {
+                        const editor = event.currentTarget;
+                        const caret = editor.selectionStart;
+                        if (caret === editor.selectionEnd) {
+                          for (const attachment of attachmentsRef.current) {
+                            const token = attachment.reference;
+                            if (!token) continue;
+                            const start = event.key === 'Backspace' ? caret - token.length : caret;
+                            if (
+                              start >= 0 &&
+                              editor.value.slice(start, start + token.length) === token
+                            ) {
+                              event.preventDefault();
+                              const text =
+                                editor.value.slice(0, start) +
+                                editor.value.slice(start + token.length);
+                              setPrompt(text);
+                              // Deleting the marker keystroke by keystroke IS the
+                              // gesture: drop the payload, unless a duplicate token
+                              // elsewhere still backs it.
+                              if (!text.includes(token))
+                                setAttachments((current) =>
+                                  current.filter((item) => item.id !== attachment.id),
+                                );
+                              editor.setSelectionRange(start, start);
+                              recordComposerDraft(text);
+                              return;
+                            }
                           }
                         }
                       }
-                    }
-                    // Asked per keystroke, so a keyboard folded onto a tablet
-                    // mid-session changes the answer without a remount.
-                    const enterSends = isEnterSendKeyboard();
-                    if (fileMatches.length) {
-                      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                      // Asked per keystroke, so a keyboard folded onto a tablet
+                      // mid-session changes the answer without a remount.
+                      const enterSends = isEnterSendKeyboard();
+                      if (fileMatches.length) {
+                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                          event.preventDefault();
+                          const delta = event.key === 'ArrowDown' ? 1 : -1;
+                          setFileIndex(
+                            (current) => (current + delta + fileMatches.length) % fileMatches.length,
+                          );
+                          return;
+                        }
+                        if (
+                          (event.key === 'Tab' || (event.key === 'Enter' && enterSends)) &&
+                          selectedFile
+                        ) {
+                          event.preventDefault();
+                          completeFile(selectedFile.name);
+                          return;
+                        }
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          setFileDismissed(true);
+                          return;
+                        }
+                      }
+                      if (
+                        slashMatches.length &&
+                        (event.key === 'ArrowDown' || event.key === 'ArrowUp')
+                      ) {
                         event.preventDefault();
                         const delta = event.key === 'ArrowDown' ? 1 : -1;
-                        setFileIndex(
-                          (current) => (current + delta + fileMatches.length) % fileMatches.length,
+                        setSlashIndex(
+                          (current) => (current + delta + slashMatches.length) % slashMatches.length,
                         );
                         return;
                       }
-                      if (
-                        (event.key === 'Tab' || (event.key === 'Enter' && enterSends)) &&
-                        selectedFile
-                      ) {
+                      if (slashMatches.length && event.key === 'Tab' && selectedSlash) {
                         event.preventDefault();
-                        completeFile(selectedFile.name);
-                        return;
-                      }
-                      if (event.key === 'Escape') {
-                        event.preventDefault();
-                        setFileDismissed(true);
-                        return;
-                      }
-                    }
-                    if (
-                      slashMatches.length &&
-                      (event.key === 'ArrowDown' || event.key === 'ArrowUp')
-                    ) {
-                      event.preventDefault();
-                      const delta = event.key === 'ArrowDown' ? 1 : -1;
-                      setSlashIndex(
-                        (current) => (current + delta + slashMatches.length) % slashMatches.length,
-                      );
-                      return;
-                    }
-                    if (slashMatches.length && event.key === 'Tab' && selectedSlash) {
-                      event.preventDefault();
-                      completeSlash(selectedSlash);
-                      return;
-                    }
-                    if (slashMatches.length && event.key === 'Escape') {
-                      event.preventDefault();
-                      setSlashDismissed(true);
-                      return;
-                    }
-                    // Shell-like recall (#372): ↑ on the first line brings back the
-                    // previous prompt, ↓ on the last line steps forward to the draft.
-                    // The open menus above own the arrows first.
-                    if (
-                      (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
-                      !event.nativeEvent.isComposing &&
-                      !event.altKey &&
-                      !event.ctrlKey &&
-                      !event.metaKey &&
-                      !event.shiftKey
-                    ) {
-                      const editor = event.currentTarget;
-                      const value = editor.value;
-                      const up = event.key === 'ArrowUp';
-                      const atEdge = (up ? isCaretOnFirstLine : isCaretOnLastLine)(
-                        value,
-                        editor.selectionStart,
-                        editor.selectionEnd,
-                      );
-                      // A send or an edit ends the recall: the shown text is no longer
-                      // the recalled prompt.
-                      const recall =
-                        promptRecallRef.current &&
-                        recallHistory[promptRecallRef.current.index] === value
-                          ? promptRecallRef.current
-                          : null;
-                      const step = atEdge
-                        ? stepPromptRecall(recallHistory, recall, up ? -1 : 1, value)
-                        : null;
-                      if (step) {
-                        event.preventDefault();
-                        promptRecallRef.current = step.recall;
-                        setPrompt(step.text);
-                        editor.setSelectionRange(step.text.length, step.text.length);
-                        recordComposerDraft(step.text);
-                        // A recalled command does not open the menus; the draft does.
-                        const recalled = step.recall !== null;
-                        startTransition(() => {
-                          setCaret(step.text.length);
-                          setSlashIndex(0);
-                          setSlashDismissed(recalled);
-                          setFileIndex(0);
-                          setFileDismissed(recalled);
-                        });
-                        return;
-                      }
-                    }
-                    // On a phone Return is the NEW LINE key: there is no Shift to
-                    // hold on an on-screen keyboard, so a submitting Enter makes a
-                    // paragraph impossible to type. Send is the send button.
-                    if (
-                      enterSends &&
-                      event.key === 'Enter' &&
-                      !event.shiftKey &&
-                      !event.nativeEvent.isComposing
-                    ) {
-                      event.preventDefault();
-                      if (
-                        selectedSlash &&
-                        slashText.toLowerCase() !== selectedSlash.name.toLowerCase()
-                      ) {
                         completeSlash(selectedSlash);
-                      } else {
-                        void send();
+                        return;
                       }
-                    }
-                  }}
-                />
+                      if (slashMatches.length && event.key === 'Escape') {
+                        event.preventDefault();
+                        setSlashDismissed(true);
+                        return;
+                      }
+                      // Shell-like recall (#372): ↑ on the first line brings back the
+                      // previous prompt, ↓ on the last line steps forward to the draft.
+                      // The open menus above own the arrows first.
+                      if (
+                        (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+                        !event.nativeEvent.isComposing &&
+                        !event.altKey &&
+                        !event.ctrlKey &&
+                        !event.metaKey &&
+                        !event.shiftKey
+                      ) {
+                        const editor = event.currentTarget;
+                        const value = editor.value;
+                        const up = event.key === 'ArrowUp';
+                        const atEdge = (up ? isCaretOnFirstLine : isCaretOnLastLine)(
+                          value,
+                          editor.selectionStart,
+                          editor.selectionEnd,
+                        );
+                        // A send or an edit ends the recall: the shown text is no longer
+                        // the recalled prompt.
+                        const recall =
+                          promptRecallRef.current &&
+                          recallHistory[promptRecallRef.current.index] === value
+                            ? promptRecallRef.current
+                            : null;
+                        const step = atEdge
+                          ? stepPromptRecall(recallHistory, recall, up ? -1 : 1, value)
+                          : null;
+                        if (step) {
+                          event.preventDefault();
+                          promptRecallRef.current = step.recall;
+                          setPrompt(step.text);
+                          editor.setSelectionRange(step.text.length, step.text.length);
+                          recordComposerDraft(step.text);
+                          // A recalled command does not open the menus; the draft does.
+                          const recalled = step.recall !== null;
+                          startTransition(() => {
+                            setCaret(step.text.length);
+                            setSlashIndex(0);
+                            setSlashDismissed(recalled);
+                            setFileIndex(0);
+                            setFileDismissed(recalled);
+                          });
+                          return;
+                        }
+                      }
+                      // On a phone Return is the NEW LINE key: there is no Shift to
+                      // hold on an on-screen keyboard, so a submitting Enter makes a
+                      // paragraph impossible to type. Send is the send button.
+                      if (
+                        enterSends &&
+                        event.key === 'Enter' &&
+                        !event.shiftKey &&
+                        !event.nativeEvent.isComposing
+                      ) {
+                        event.preventDefault();
+                        if (
+                          selectedSlash &&
+                          slashText.toLowerCase() !== selectedSlash.name.toLowerCase()
+                        ) {
+                          completeSlash(selectedSlash);
+                        } else {
+                          void send();
+                        }
+                      }
+                    }}
+                  />
 
-                {/* The action rail keeps a CONSTANT footprint. Send and stop used to
-                  mount and unmount independently, so starting a turn, typing during
-                  one, or a turn simply ending resized the textarea under the caret.
-                  Both squares are always laid out; only the stop button's contents
-                  come and go.
+                  {/* The action rail keeps a CONSTANT footprint. Send and stop used to
+                    mount and unmount independently, so starting a turn, typing during
+                    one, or a turn simply ending resized the textarea under the caret.
+                    Both squares are always laid out; only the stop button's contents
+                    come and go.
 
-                  The stop affordance still retires the moment the cancel is
-                  accepted: the running-turn bubble then carries the single "Vis is
-                  cancelling" line, and the finished turn carries "Cancelled by
-                  user." — one state at a time, never a button offering to cancel a
-                  cancel. */}
-                <div className="grid size-8 shrink-0 place-items-center mouse:size-7">
-                  {activeWork && !runningTurn?.cancelling && (
-                    <ComposerButton
-                      tone="stop"
-                      onMouseDown={keepKeyboard}
-                      onClick={cancel}
-                      label="Stop response"
-                    >
-                      <StopIcon className="size-3 text-err" />
-                    </ComposerButton>
-                  )}
+                    The stop affordance still retires the moment the cancel is
+                    accepted: the running-turn bubble then carries the single "Vis is
+                    cancelling" line, and the finished turn carries "Cancelled by
+                    user." — one state at a time, never a button offering to cancel a
+                    cancel. */}
+                  <div className="grid size-8 shrink-0 place-items-center mouse:size-7">
+                    {activeWork && !runningTurn?.cancelling && (
+                      <ComposerButton
+                        tone="stop"
+                        onMouseDown={keepKeyboard}
+                        onClick={cancel}
+                        label="Stop response"
+                      >
+                        <StopIcon className="size-3 text-err" />
+                      </ComposerButton>
+                    )}
+                  </div>
+                  <ComposerButton
+                    tone="send"
+                    onMouseDown={keepKeyboard}
+                    onClick={() => {
+                      // The composer stays focused, so iOS keeps one stable keyboard and
+                      // viewport while the answer starts streaming.
+                      void send();
+                    }}
+                    // Native keyboard edits can precede React's change event. An
+                    // empty React snapshot must not block the press that reads the
+                    // live textarea; send() already rejects genuinely empty input.
+                    disabled={voicePhase !== 'idle'}
+                    label={running ? 'Queue message' : 'Send message'}
+                    title={running ? 'Queue behind the running turn' : 'Send'}
+                  >
+                    <SendIcon className="size-3.5" />
+                  </ComposerButton>
                 </div>
-                <ComposerButton
-                  tone="send"
-                  onMouseDown={keepKeyboard}
-                  onClick={() => {
-                    // The composer stays focused, so iOS keeps one stable keyboard and
-                    // viewport while the answer starts streaming.
-                    void send();
-                  }}
-                  // Native keyboard edits can precede React's change event. An
-                  // empty React snapshot must not block the press that reads the
-                  // live textarea; send() already rejects genuinely empty input.
-                  disabled={voicePhase !== 'idle'}
-                  label={running ? 'Queue message' : 'Send message'}
-                  title={running ? 'Queue behind the running turn' : 'Send'}
-                >
-                  <SendIcon className="size-3.5" />
-                </ComposerButton>
               </div>
-            </div>
 
-            {/* The composer strip now belongs only to response controls. Cumulative
-              session usage lives behind the disclosure on the sessions list, where it
-              remains available without crowding the active session on a phone. */}
-            <ComposerResponseControls controls={responseControls} />
+              {/* The composer strip now belongs only to response controls. Cumulative
+                session usage lives behind the disclosure on the sessions list, where it
+                remains available without crowding the active session on a phone. */}
+              <ComposerResponseControls controls={responseControls} />
+              </>
+            )}
           </footer>
         </section>
           {isPanelOpen && docksPanel && (

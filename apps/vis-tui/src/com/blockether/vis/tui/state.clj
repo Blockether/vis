@@ -12,6 +12,7 @@
             [com.blockether.vis.tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.tui.theme :as tui-theme]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.live-view :as lv]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.virtual :as virtual]
@@ -3715,38 +3716,41 @@
 (reg-event-db
   :update-input
   (fn [db [_ new-input]]
-    ;; `:slash-command-hidden?` means "this buffer is not the user
-    ;; typing a slash": a tab-completed command, or a line RECALLED
-    ;; from the ↑ ring. Editing keeps it shut while the line is still
-    ;; a slash — the palette would only be in the way — and leaving
-    ;; slash-land (or `:reset-input`) arms it again.
-    (let [text
-          (input/input->text new-input)
+    ;; A subagent session has no prompt: its leader gives it work.
+    (if (keymap/subagent-session? db)
+      db
+      ;; `:slash-command-hidden?` means "this buffer is not the user
+      ;; typing a slash": a tab-completed command, or a line RECALLED
+      ;; from the ↑ ring. Editing keeps it shut while the line is still
+      ;; a slash — the palette would only be in the way — and leaving
+      ;; slash-land (or `:reset-input`) arms it again.
+      (let [text
+            (input/input->text new-input)
 
-          kept
-          (filterv (fn [{:keys [image-number]}]
-                     (or (nil? image-number)
-                         (str/includes? text (input/image-reference image-number))))
-            (:attachments db))
+            kept
+            (filterv (fn [{:keys [image-number]}]
+                       (or (nil? image-number)
+                           (str/includes? text (input/image-reference image-number))))
+              (:attachments db))
 
-          ;; An unchanged vector stays identical, so a keystroke keeps the
-          ;; cheap input-only frame.
-          attachments
-          (if (and (vector? (:attachments db)) (= (count kept) (count (:attachments db))))
-            (:attachments db)
-            kept)]
+            ;; An unchanged vector stays identical, so a keystroke keeps the
+            ;; cheap input-only frame.
+            attachments
+            (if (and (vector? (:attachments db)) (= (count kept) (count (:attachments db))))
+              (:attachments db)
+              kept)]
 
-      (cond-> (assoc db
-                :input new-input
-                :attachments attachments
-                :attachment-index (min (long (or (:attachment-index db) 0))
-                                       (max 0 (dec (count attachments))))
-                :attachment-focus? (boolean (and (:attachment-focus? db) (seq attachments))))
-        (not-any? :image-number attachments)
-        (assoc :image-counter 0)
+        (cond-> (assoc db
+                  :input new-input
+                  :attachments attachments
+                  :attachment-index (min (long (or (:attachment-index db) 0))
+                                         (max 0 (dec (count attachments))))
+                  :attachment-focus? (boolean (and (:attachment-focus? db) (seq attachments))))
+          (not-any? :image-number attachments)
+          (assoc :image-counter 0)
 
-        (not (str/starts-with? (str/triml text) "/"))
-        (assoc :slash-command-hidden? false)))))
+          (not (str/starts-with? (str/triml text) "/"))
+          (assoc :slash-command-hidden? false))))))
 
 (reg-event-db :set-attachment-capabilities
               (fn [db [_ capabilities]]
