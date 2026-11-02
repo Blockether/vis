@@ -2356,7 +2356,9 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
       (get-in old [session :notice]))))
 
 (def ^:private last-session-defs
-  "session-id -> the snapshot last written, so an unchanged toolbox re-writes nothing."
+  "session-id -> `{:text :id}`: the snapshot text last read, so an unchanged toolbox
+   re-writes nothing, and the guest's id for it, so the next snapshot can send only
+   what changed."
   (atom {}))
 
 (def ^:private spill-value-max-bytes
@@ -2432,17 +2434,48 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                     (when-not (contains? kept (.getName f)) (.delete f)))))
     nil))
 
+(defn- apply-snapshot-delta
+  "Rebuild snapshot text from `base` and delta `ops`. A `[start end]` op copies that
+   part of `base`, and a string op is new text. Answers nil when an op does not fit
+   or the result is not `length` long."
+  [^String base ops length]
+  (when
+    (and base (sequential? ops) (int? length) (<= 0 (long length) (long session-defs-max-bytes)))
+    (let [sb
+          (StringBuilder. (int length))
+
+          fits?
+          (fn [op]
+            (cond (string? op) (do (.append sb ^String op) true)
+                  (and (sequential? op) (= 2 (count op)) (every? int? op))
+                  (let [start
+                        (long (first op))
+
+                        end
+                        (long (second op))]
+
+                    (when (<= 0 start end (.length base))
+                      (.append sb base (int start) (int end))
+                      true))
+                  :else false))]
+
+      (when (and (every? fits? ops) (= (.length sb) (long length))) (.toString sb)))))
+
 (defn- snapshot-text
-  "Decode snapshot text within a bounded UTF-8 buffer."
-  [snapshot]
-  (if-let [packed (:text-zlib snapshot)]
-    (let [limit (* 4 (long session-defs-max-bytes))]
-      (with-open [stream (java.util.zip.InflaterInputStream.
-                           (java.io.ByteArrayInputStream. (.decode (java.util.Base64/getDecoder)
-                                                                   ^String packed)))]
-        (let [raw (.readNBytes stream (int (inc limit)))]
-          (when (<= (alength raw) limit) (String. raw java.nio.charset.StandardCharsets/UTF_8)))))
-    (:text snapshot)))
+  "Decode snapshot text within a bounded UTF-8 buffer. A delta rebuilds the text from
+   `base`, the text that the host read last."
+  [snapshot base]
+  (cond (:text-zlib snapshot) (let [limit (* 4 (long session-defs-max-bytes))]
+                                (with-open [stream (java.util.zip.InflaterInputStream.
+                                                     (java.io.ByteArrayInputStream.
+                                                       (.decode (java.util.Base64/getDecoder)
+                                                                ^String (:text-zlib snapshot))))]
+                                  (let [raw (.readNBytes stream (int (inc limit)))]
+                                    (when (<= (alength raw) limit)
+                                      (String. raw java.nio.charset.StandardCharsets/UTF_8)))))
+        (contains? snapshot :text-delta)
+        (apply-snapshot-delta base (:text-delta snapshot) (:length snapshot))
+        :else (:text snapshot)))
 
 (defn persist-session-defs!
   "Write this session's helpers, imports and variables beside the session, for a
@@ -2459,36 +2492,51 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    snapshot would erase the saved state."
   [session session-id]
   (when (and session session-id (not (contains? @disposed-sessions session)))
-    (try (let [snap
-               (within-budget #(guest-value session
-                                            (str "__import__('vis_snapshot').snapshot(globals(), "
-                                                 spill-value-max-bytes
-                                                 ", "
-                                                 spill-max-bytes
-                                                 ")")))
+    (try
+      (let [held
+            (get @last-session-defs session-id)
 
-               src
-               (snapshot-text snap)
+            fetch
+            (fn [base]
+              (within-budget #(guest-value session
+                                           (str "__import__('vis_snapshot').snapshot(globals(), "
+                                                spill-value-max-bytes
+                                                ", "
+                                                spill-max-bytes
+                                                ", "
+                                                (if (string? base) (py-json-literal base) "None")
+                                                ")"))))
 
-               f
-               (io/file (paths/sandbox-defs-file (str session-id)))]
+            snap
+            (fetch (:id held))
 
-           (cond
-             ;; Over budget: the snapshot never came back, which says nothing
-             ;; about the toolbox on disk — leave what is there alone.
-             (nil? src) nil
-             (str/blank? (str src)) (do (swap! last-session-defs dissoc session-id)
-                                        (when (.exists f) (.delete f))
-                                        (sync-spill! session session-id [])
-                                        nil)
-             (> (count (str src)) (long session-defs-max-bytes)) nil
-             :else (do (sync-spill! session session-id (:spill snap))
-                       (when-not (= (str src) (get @last-session-defs session-id))
-                         (io/make-parents f)
-                         (spit f (str src))
-                         (swap! last-session-defs assoc session-id (str src))
-                         f))))
-         (catch Throwable _ nil))))
+            ;; A delta that does not fit the held text asks once for the whole text.
+            [snap src]
+            (let [src (snapshot-text snap (:text held))]
+              (if (and (nil? src) (contains? snap :text-delta))
+                (let [snap (fetch nil)]
+                  [snap (snapshot-text snap nil)])
+                [snap src]))
+
+            f
+            (io/file (paths/sandbox-defs-file (str session-id)))]
+
+        (cond
+          ;; Over budget: the snapshot never came back, which says nothing
+          ;; about the toolbox on disk — leave what is there alone.
+          (nil? src) nil
+          (str/blank? (str src)) (do (swap! last-session-defs dissoc session-id)
+                                     (when (.exists f) (.delete f))
+                                     (sync-spill! session session-id [])
+                                     nil)
+          (> (count (str src)) (long session-defs-max-bytes)) nil
+          :else (let [changed? (not= (str src) (:text held))]
+                  (sync-spill! session session-id (:spill snap))
+                  (when changed? (io/make-parents f) (spit f (str src)))
+                  ;; Keep the guest's id even when the text did not change.
+                  (swap! last-session-defs assoc session-id {:text (str src) :id (:id snap)})
+                  (when changed? f))))
+      (catch Throwable _ nil))))
 
 (defn forget-session-defs!
   "Drop `session-id`'s entry from the in-memory dedup memo. The on-disk snapshot
@@ -2591,7 +2639,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                    n (guest-value session (str "__vis_restore_defs__(" (pr-str src) ")"))
                    report (guest-value session "__vis_restore_report__")]
 
-               (swap! last-session-defs assoc session-id src)
+               (swap! last-session-defs assoc session-id {:text src})
                (when (map? report)
                  (let [report (complete-restore-report session session-id report)]
                    (swap! restore-reports assoc

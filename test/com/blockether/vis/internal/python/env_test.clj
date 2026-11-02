@@ -1285,17 +1285,44 @@
                 (expect (pos? (count (:text-zlib packet))))
                 (expect (< (count (:text-zlib packet)) (/ (count source) 2))))
               (expect (some? (ep/persist-session-defs! ctx sid)))
-              (expect (nil? (:error (ep/run-python-block ctx "payload[-1]['index'] = 1800
+              (expect (nil? (:error (ep/run-python-block
+                                      ctx
+                                      "payload[-1]['index'] = 1800
+zz_note = 'n' * 3000
 "))))
               (expect (some? (ep/persist-session-defs! ctx sid)))
-              (expect (nil? (ep/persist-session-defs! ctx sid))))
+              (expect (nil? (ep/persist-session-defs! ctx sid)))
+              ;; User report, session 7d217191: each block sent and inflated the whole
+              ;; multi-megabyte snapshot. A small change must send a small delta.
+              (expect (nil? (:error (ep/run-python-block ctx "zz_note = 'm' * 3000
+"))))
+              (let [held (:id (get @@#'ep/last-session-defs sid))
+                    packet
+                    (#'ep/guest-value
+                     ctx
+                     (str "__import__('vis_snapshot').snapshot(globals(), 33554432, 134217728, '"
+                          held
+                          "')"))
+                    literal (reduce + (map count (filter string? (:text-delta packet))))]
+
+                (expect (vector? (:text-delta packet)))
+                (expect (< literal 10000 300000 (:length packet))))
+              ;; The guest id moved past the host's, so the next snapshot is whole again.
+              ;; A delta against the held text would bring back the old `zz_note`.
+              (expect (nil? (:error (ep/run-python-block ctx "payload[0]['index'] = -1
+"))))
+              (expect (some? (ep/persist-session-defs! ctx sid))))
             (ep/forget-session-defs! sid)
             (tpc/with-own
               [ctx {} nil {:worker? worker?}]
               (ep/restore-session-defs! ctx sid)
-              (let [result (ep/run-python-block ctx "print(len(payload), payload[-1]['index'])")]
+              (let
+                [result
+                 (ep/run-python-block
+                   ctx
+                   "print(len(payload), payload[0]['index'], payload[-1]['index'], zz_note[:1])")]
                 (expect (nil? (:error result)))
-                (expect (= "1800 1800
+                (expect (= "1800 -1 1800 m
 " (:stdout result))))))
           (finally (ep/forget-session-defs! sid)
                    (io/delete-file file true)
