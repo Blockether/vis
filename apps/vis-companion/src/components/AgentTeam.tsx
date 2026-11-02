@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type ReactNode,
   useCallback,
   useContext,
   useEffect,
@@ -166,16 +167,37 @@ function Counts({ counts, className = '' }: { counts: readonly TeamCount[]; clas
   );
 }
 
-/** A team on one line: its time, then its counts by status: `TEAM  3m 20s  1 RUNNING  2 DONE`. */
-export function TeamLine({ agents }: { agents: readonly Subagent[] }) {
+/**
+ * A team on one line: its time, then its counts by status: `TEAM  3m 20s  1 RUNNING  2 DONE`.
+ * `action` stands right after the team word. `labelId` names the word `${labelId}-team` and the
+ * facts after the action `${labelId}-facts`, so a control can take the line as its name.
+ */
+export function TeamLine({ agents, action, labelId }: { agents: readonly Subagent[]; action?: ReactNode; labelId?: string }) {
   const now = useNow(agents.some(isLive));
   const time = teamTime(agents, now);
   return (
     <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-4" data-team-line>
-      <span className="font-bold uppercase text-white">team</span>
-      {time !== undefined && <span className="whitespace-nowrap text-dialog-hint tabular-nums" data-team-time>{formatAgentTime(time)}</span>}
-      <Counts counts={teamCounts(agents)} className="sm:ml-auto" />
+      <span id={labelId && `${labelId}-team`} className="font-bold uppercase text-white">team</span>
+      {action}
+      <span id={labelId && `${labelId}-facts`} className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-4">
+        {time !== undefined && <span className="whitespace-nowrap text-dialog-hint tabular-nums" data-team-time>{formatAgentTime(time)}</span>}
+        <Counts counts={teamCounts(agents)} className="sm:ml-auto" />
+      </span>
     </span>
+  );
+}
+
+/** Whether the team of `agents` has a timeline to show: two agents or more, with a team time. */
+export function hasTimeline(agents: readonly Subagent[]): boolean {
+  return agents.length > 1 && !!teamTime(agents, Date.now());
+}
+
+/** The primary control that swaps the notes of a team for its timeline, and back. */
+export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
+  return (
+    <Button density="inline" aria-pressed={isOn} onClick={onToggle} className="pointer-events-auto">
+      {isOn ? 'Close timeline' : 'Open timeline'}
+    </Button>
   );
 }
 
@@ -195,7 +217,7 @@ function useNow(ticking: boolean): number {
 // title, and the team can show its timeline.
 const WIDE = '(min-width: 640px)';
 
-function useWide(): boolean {
+export function useWide(): boolean {
   return useSyncExternalStore(
     (change) => {
       const query = window.matchMedia(WIDE);
@@ -298,6 +320,8 @@ interface TableProps {
   now: number;
   error?: string | null;
   onSelect: (sid: string) => void;
+  /** A wide screen shows the time bars of the team instead of the notes. */
+  isTimeline?: boolean;
 }
 
 // The table of one team. A row opens the sheet of its agent. A wide screen shows the note of
@@ -337,23 +361,14 @@ function PhoneAgentTable({ rows, now, error, onSelect }: TableProps) {
   );
 }
 
-function WideAgentTable({ rows, now, error, onSelect }: TableProps) {
-  const [isTimeline, setTimeline] = useState(false);
+function WideAgentTable({ rows, now, error, onSelect, isTimeline = false }: TableProps) {
   const total = teamTime(rows, now);
-  const hasTimeline = rows.length > 1 && !!total;
-  const showsBars = hasTimeline && isTimeline;
+  const showsBars = isTimeline && rows.length > 1 && !!total;
   const bars = showsBars ? agentBars(rows, now) : new Map<string, AgentBar>();
   return (
     <div style={columnWidths(rows)}>
-      {hasTimeline && (
-        <div className="flex justify-end px-2 pt-1 text-dialog-hint">
-          <TextButton aria-pressed={isTimeline} onClick={() => setTimeline((value) => !value)}>
-            {isTimeline ? 'Close timeline' : 'Open timeline'}
-          </TextButton>
-        </div>
-      )}
       {showsBars && (
-        <div aria-hidden className={`text-dialog-hint ${WIDE_ROW}`}>
+        <div aria-hidden className={`pt-1 text-dialog-hint ${WIDE_ROW}`}>
           <span className="relative col-start-3 h-[calc(1lh+0.5rem)] border-b border-dialog-edge/50"><AxisMarks total={total} /></span>
         </div>
       )}
@@ -417,16 +432,23 @@ export interface TeamProps {
  * agent. The dock shows the table without the frame. A subagent never asks a person: its
  * leader answers it, so a row has no question and no control for one.
  */
-export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline, placement = 'transcript' }: TeamProps & {
+export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline, placement = 'transcript', isTimeline }: TeamProps & {
   /** The dock above the composer while the team works, or the turn of the transcript after. */
   placement?: 'dock' | 'transcript';
+  /** The dock owns the timeline switch of its teams; the transcript owns its own. */
+  isTimeline?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [isOwnTimeline, setOwnTimeline] = useState(false);
+  const isWide = useWide();
   const now = useNow(agents.some((agent) => agent.status === 'running'));
   if (agents.length === 0) return null;
   const rows = spawnOrder(agents);
   const chosen = rows.find((agent) => agent.session_id === selected);
-  const table = <AgentTable rows={rows} now={now} error={error} onSelect={setSelected} />;
+  const table = <AgentTable rows={rows} now={now} error={error} onSelect={setSelected} isTimeline={isTimeline ?? isOwnTimeline} />;
+  const toggle = isWide && hasTimeline(rows)
+    ? <TimelineToggle isOn={isOwnTimeline} onToggle={() => setOwnTimeline((value) => !value)} />
+    : undefined;
   return (
     <>
       {placement === 'transcript' ? (
@@ -436,7 +458,7 @@ export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline,
           data-transcript-part
         >
           <div className="flex border-b border-dialog-edge bg-panel px-3 py-1">
-            <TeamLine agents={rows} />
+            <TeamLine agents={rows} action={toggle} />
           </div>
           <div className="px-3">{table}</div>
         </section>
