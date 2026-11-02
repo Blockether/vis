@@ -337,8 +337,10 @@ a:hover {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Inset lists so Safari's wider outside markers stay inside the text column. */
 .content ul,
 .content ol {
+  margin-inline: 0.5rem;
   padding-inline-start: 3ch;
   list-style-position: outside;
 }
