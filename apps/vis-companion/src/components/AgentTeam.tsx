@@ -271,7 +271,7 @@ const PHONE_COLUMNS = 'grid-cols-[var(--role)_minmax(0,1fr)_auto]';
 const WIDE_COLUMNS = 'sm:grid-cols-[0.75rem_var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem]';
 const WIDE_COLUMNS_SOLO = 'sm:grid-cols-[0.75rem_var(--role)_minmax(0,1fr)_7ch_1rem]';
 // The OPEN of a wide row, which opens the sheet of its agent, and the room for it under the axis.
-const OPEN_WIDTH = 'w-[4ch] shrink-0';
+const OPEN_WIDTH = 'w-14 shrink-0';
 
 // The widths of the columns that fit the team, in `ch` of the monospace font. A heading is the
 // least width of its column; the bold title gets one more `ch`.
@@ -331,7 +331,7 @@ function AgentTable({ rows, now, error, onSelect }: {
           const isOpen = folds.get(agent.session_id) ?? agent.status === 'running';
           const toggle = () => setFolds((before) => new Map(before).set(agent.session_id, !isOpen));
           return (
-            <li key={agent.session_id} className={`sm:flex sm:items-baseline sm:gap-x-3 sm:px-2 ${isOpen ? 'sm:bg-white/5 sm:pb-1' : ''}`}>
+            <li key={agent.session_id} className={`sm:flex sm:items-start sm:gap-x-3 sm:px-2 ${isOpen ? 'sm:bg-white/5 sm:pb-1' : ''}`}>
               <button
                 type="button"
                 data-agent-row={agent.session_id}
@@ -370,14 +370,11 @@ function AgentTable({ rows, now, error, onSelect }: {
                 </span>
               </button>
               {isWide && (
-                <button
-                  type="button"
-                  aria-label={`Open ${agentLabel(agent, rows)}`}
-                  onClick={() => onSelect(agent.session_id)}
-                  className={`${OPEN_WIDTH} rounded-none py-1 text-right uppercase text-dialog-hint hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
-                >
-                  open
-                </button>
+                <span className={`flex h-[calc(1lh+0.5rem)] items-center justify-end ${OPEN_WIDTH}`}>
+                  <Button density="inline" aria-label={`Open ${agentLabel(agent, rows)}`} onClick={() => onSelect(agent.session_id)}>
+                    Open
+                  </Button>
+                </span>
               )}
             </li>
           );
