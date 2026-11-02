@@ -255,6 +255,101 @@ describe('a turn cancelled from this screen', () => {
     expect(await shownWork()).toBeInTheDocument();
     expect(screen.getAllByText('inspect the failure')).toHaveLength(1);
   });
+  // Regression, reported from the web and the desktop app: Escape stopped the answer and
+  // the screen jumped up to the previous answer. A reconcile (a wake, or the 30 s tick)
+  // can bring in the hollow `interrupted` row before the client applies `turn.cancelled`.
+  // It retired the bubble without the streamed copy, so the stopped work vanished.
+  it('keeps the work when a reconcile lands the cancelled row before its frame', async () => {
+    const events = subscriptionHub();
+    const partial = {
+      id: 'gw-raced-cancel',
+      request: 'inspect the race',
+      answer: '',
+      iterations: [{ position: 0, thinking: 'PARTIAL AGENT WORK' }],
+      startedAt: Date.now(),
+      status: 'running' as const,
+    };
+    const cancelled = {
+      turn_id: 'gw-raced-cancel',
+      request: 'inspect the race',
+      status: 'interrupted',
+      prior_outcome: 'cancelled',
+      created_at: Date.now(),
+      content: [],
+      iterations: [],
+    };
+
+    renderSessionScreen({
+      client: {
+        cachedRunningTurn: () => ({ turn: partial, seq: 5 }),
+        cachedTranscript: () => [],
+        session: () => Promise.resolve(sessionFixture({ live: false })),
+        transcriptIfMoved: () => Promise.resolve([cancelled]),
+        transcript: () => Promise.resolve([cancelled]),
+      },
+      subscriptions: { subscribeSession: events.subscribeSession },
+    });
+
+    expect(await shownWork()).toBeInTheDocument();
+    window.dispatchEvent(new Event('online'));
+    await waitFor(() => expect(document.querySelector('[data-live="true"]')).toBeNull());
+    events.emit({
+      type: 'turn.cancelled',
+      turn_id: 'gw-raced-cancel',
+      seq: 6,
+      status: 'cancelled',
+    } as unknown as SseEvent);
+    await linger(100);
+
+    expect(await shownWork()).toBeInTheDocument();
+    expect(screen.getAllByText('inspect the race')).toHaveLength(1);
+  });
+  // Regression, same report: a message queued after the stop starts in the frame batch
+  // that ends the stopped turn. The stopped copy waits for its row as `settlingTurn`,
+  // and the hollow row that ended that wait took the streamed work with it.
+  it('keeps the work when a queued turn takes the bubble of the stopped one', async () => {
+    const events = subscriptionHub();
+    const partial = {
+      id: 'gw-stopped',
+      request: 'inspect the queue',
+      answer: '',
+      iterations: [{ position: 0, thinking: 'PARTIAL AGENT WORK' }],
+      startedAt: Date.now(),
+      status: 'running' as const,
+    };
+    const stopped = {
+      turn_id: 'gw-stopped',
+      request: 'inspect the queue',
+      status: 'interrupted',
+      prior_outcome: 'cancelled',
+      created_at: Date.now(),
+      content: [],
+      iterations: [],
+    };
+    let rows: unknown[] = [];
+
+    renderSessionScreen({
+      client: {
+        cachedRunningTurn: () => ({ turn: partial, seq: 5 }),
+        cachedTranscript: () => [],
+        transcript: () => Promise.resolve(rows),
+      },
+      subscriptions: { subscribeSession: events.subscribeSession },
+    });
+
+    expect(await shownWork()).toBeInTheDocument();
+    act(() => {
+      events.emit({ type: 'turn.cancelled', turn_id: 'gw-stopped', seq: 6, status: 'cancelled' } as unknown as SseEvent);
+      events.emit({ type: 'turn.started', turn_id: 'gw-next', seq: 7, request: 'run this instead', started_at: Date.now() } as unknown as SseEvent);
+    });
+    expect(await screen.findByText('run this instead')).toBeInTheDocument();
+    rows = [stopped];
+    window.dispatchEvent(new Event('online'));
+    await linger(600);
+
+    expect(await shownWork()).toBeInTheDocument();
+    expect(screen.getAllByText('inspect the queue')).toHaveLength(1);
+  });
 });
 // Regression, reported from an iPhone: "the stream finished, the answer is
 // ready, but it is not showing — I have to go back to the session list and

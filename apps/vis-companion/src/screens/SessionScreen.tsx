@@ -656,6 +656,28 @@ function cancelledTurnWithStreamedOutput(
   };
 }
 
+/** A row of a turn that was stopped: it persists without the work that it streamed. */
+function stoppedTurnRow(row: TranscriptTurn): boolean {
+  return row.status === 'interrupted' || row.status === 'cancelled' || row.prior_outcome === 'cancelled';
+}
+
+/**
+ * The snapshots, with the streamed copy of a stopped turn kept. Every path that retires
+ * that copy comes through here: the terminal frame, a reconcile that brings in the hollow
+ * row first, and a queued turn that takes the bubble. A path that skipped it lost the
+ * stopped work, and the transcript shrank under the reader.
+ */
+function withStoppedWork(
+  current: ReadonlyMap<string, RunningTurn>,
+  streamed: RunningTurn | null,
+): ReadonlyMap<string, RunningTurn> {
+  const id = streamed?.id;
+  if (!id || !runningTurnCarriesOutput(streamed) || current.get(id) === streamed) return current;
+  const next = new Map(current);
+  next.set(id, streamed);
+  return next;
+}
+
 function cancelledTurnSeed(client: GatewayClient, sid: string): ReadonlyMap<string, RunningTurn> {
   const cached = client.cachedRunningTurn<RunningTurn>(sid)?.turn;
   return cached?.id && cached.status === 'cancelled' && runningTurnCarriesOutput(cached)
@@ -2278,6 +2300,11 @@ export function SessionScreen({
       const stillRunningThis =
         runningTurnId !== '' && gatewayRunning && (next.current_turn_id ?? '') === runningTurnId;
       if (landedRow && !stillRunningThis && (runningTurnRef.current?.id ?? '') === runningTurnId) {
+        // A stopped row can land here before its `turn.cancelled` frame is applied.
+        if (stoppedTurnRow(landedRow)) {
+          const streamed = runningTurnRef.current;
+          setCancelledTurnSnapshots((current) => withStoppedWork(current, streamed));
+        }
         setRunning(false);
         // Same batch as the rows themselves: the row that takes the bubble's
         // place must MOUNT knowing it inherits a painted trace.
@@ -2779,18 +2806,8 @@ export function SessionScreen({
       endedTurnIdsRef.current.add(finishedId);
       const ownsTerminal = (turn: RunningTurn | null) => turn?.id === finishedId;
       const streamedTurn = runningTurnRef.current;
-      if (
-        type === 'turn.cancelled' &&
-        streamedTurn !== null &&
-        ownsTerminal(streamedTurn) &&
-        runningTurnCarriesOutput(streamedTurn)
-      ) {
-        const cancelledTurn = streamedTurn;
-        setCancelledTurnSnapshots((current) => {
-          const next = new Map(current);
-          next.set(finishedId, cancelledTurn);
-          return next;
-        });
+      if (type === 'turn.cancelled' && ownsTerminal(streamedTurn)) {
+        setCancelledTurnSnapshots((current) => withStoppedWork(current, streamedTurn));
       }
       const terminalBlocks = Array.isArray(event.content)
         ? (event.content as ContentBlock[])
@@ -3075,6 +3092,10 @@ export function SessionScreen({
       if (retired) {
         settlingTurnRef.current = retired;
         setSettlingTurn(retired);
+        // Any read can bring in its row and end this copy, so a stopped turn keeps its work now.
+        if (retired.status === 'cancelled') {
+          setCancelledTurnSnapshots((current) => withStoppedWork(current, retired));
+        }
         // Widen now, not when the row lands: whichever read brings that row in, the
         // oldest row on screen must not leave the window in the same commit.
         widenWindowForHandover();
