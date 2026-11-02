@@ -250,6 +250,16 @@ describe('agent timeline', () => {
     expect(timelineStep({ at: T0, kind: 'note', text: 'Plain prose' }, child)).toEqual({ word: undefined, text: 'Plain prose' });
   });
 
+  // User report 2026-11-02: the current Activity row said NOW. It shows the clock time, like the other rows.
+  it('gives the current Activity row the clock time, not NOW', async () => {
+    vi.useFakeTimers({ now: T0 + 30_000, shouldAdvanceTime: true });
+    const timeline = vi.fn(async (): Promise<AgentTimeline> => ({ session_id: 'child', items: [{ at: T0, kind: 'started' }] }));
+    render(<TurnAgents {...props} timeline={timeline} agents={[{ ...child, activity: 'Patched AgentDock.tsx' }]} />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /running/ })); });
+    const steps = within(screen.getByRole('dialog', { name: '#1' })).getAllByRole('listitem');
+    expect(steps.at(-1)?.textContent).toBe(`${clockTime(T0 + 30_000)}Patched AgentDock.tsx`);
+  });
+
   // User report: the current action of a working agent stood above its task, apart from its timeline.
   it('marks the current step of a working agent as the last row of its timeline', () => {
     const items = steps.items.slice(0, 2);

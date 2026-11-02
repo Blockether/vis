@@ -684,12 +684,8 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
               <ol aria-label="Timeline" className="space-y-2">
                 {rows.map(({ at, word, text, isCurrent }, index) => (
                   <li key={index} aria-current={isCurrent ? 'step' : undefined} className="grid grid-cols-[8ch_minmax(0,1fr)] gap-x-3">
-                    {/* The current row shows its time in the accent ink, or NOW for an Activity line without one. */}
-                    {at === undefined ? (
-                      <span className={`uppercase ${CURRENT_TIME}`}>now</span>
-                    ) : (
-                      <time dateTime={new Date(at).toISOString()} className={`tabular-nums ${isCurrent ? CURRENT_TIME : 'text-dialog-hint'}`}>{clockTime(at)}</time>
-                    )}
+                    {/* The current row shows its time in the accent ink. An Activity line has no time of its own, so it shows the clock. */}
+                    <time dateTime={new Date(at ?? now).toISOString()} className={`tabular-nums ${isCurrent ? CURRENT_TIME : 'text-dialog-hint'}`}>{clockTime(at ?? now)}</time>
                     {/* The text of a step is Markdown, like a Council message. */}
                     <div className={`flex min-w-0 gap-x-3 [overflow-wrap:anywhere] ${isCurrent ? 'font-semibold' : ''}`}>
                       {word && <span className={`shrink-0 ${word.isStatus ? 'uppercase' : ''} ${word.ink}`}>{word.text}</span>}
