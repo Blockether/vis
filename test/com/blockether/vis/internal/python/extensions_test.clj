@@ -8199,208 +8199,94 @@ vis.register_extension(vis.Extension(
                    (finally (#'pyx/delete-tree! (:dir frozen)))))))
         (finally (#'pyx/delete-tree! root) (#'pyx/delete-tree! outside))))))
 
-(defdescribe
-  project-extension-environment-isolation-test
-  ;; Regression #226: existing project workers must never activate shared .pth hooks or
-  ;; cache shared imports, at registration or when realized for an agent session.
-  (it
-    "isolates existing environments and uses shared packages for unprepared projects"
-    (with-shared-packages
-      (fn [shared]
-        (let
-          [home
-           (.getParentFile shared)
+(defn- with-shared-worker-projects
+  "Load two packaged project extensions. Each has a helper module in its snapshot and a
+   module in its own project packages. Call `f` with the load result and the started
+   trusted worker keys."
+  [f]
+  (with-shared-packages
+    (fn [shared]
+      (let [home
+            (.getParentFile shared)
 
-           shared-editable
-           (io/file home "shared-editable")
+            started
+            (atom [])
 
-           source
-           (fn [name alias]
-             (str
-               "import importlib.util, sys\n"
-               "import blockether.vis.extension as vis\n"
-               "import isolation_collision\n"
-               "def snapshot():\n"
-               "    return {'value': isolation_collision.VALUE,\n"
-               "            'shared': importlib.util.find_spec('isolation_shared_only') is not None,\n"
-               "            'editable': importlib.util.find_spec('isolation_shared_editable') is not None,\n"
-               "            'hook': hasattr(sys, '_isolation_shared_hook'),\n"
-               "            'project': importlib.util.find_spec('isolation_project_editable') is not None}\n"
-               "BOOT = snapshot()\n"
-               "def probe():\n"
-               "    \"Inspect the selected environment.\"\n"
-               "    return {'boot': BOOT, 'call': snapshot()}\n"
-               "vis.register_extension(vis.Extension(name='"
-               name
-               "', description='Environment probe', alias='"
-               alias
-               "', symbols=[vis.Symbol(probe)]))\n"))
+            start-worker!
+            worker/start-worker!
 
-           sources
-           (merge
-             {"shared.py" (source "isolation-shared" "isolation_shared")
-              "declared.py" (str "# /// script\n# dependencies = []\n# [tool.vis]\n"
-                                 "# project = 'missing/current'\n# ///\n"
-                                 (source "isolation-declared" "isolation_declared"))
-              "missing/current/uv.lock" "version = 1\n"}
-             (into
-               {}
-               (mapcat
-                 (fn [name]
-                   (cond->
-                     [[(str name "/current/pyproject.toml")
-                       (str
-                         "[project]\nname='isolation-"
-                         name
-                         "'\nversion='1.0.0'\n"
-                         "description='Environment probe'\nrequires-python='>=3.11'\ndependencies=['vis-agent>=0.1.0']\n"
-                         "[tool.vis]\ncategory='tools'\n")]
-                      [(str name "/current/extension.py")
-                       (source (str "isolation-" name) (str "isolation_" name))]]
-                     (not= name "missing")
-                     (conj [(str name "/current/.venv/pyvenv.cfg") "home = fixture\n"])))
-                 ["one" "two" "missing"])))]
+            project
+            (fn [name]
+              {(str name "/current/pyproject.toml")
+               (str "[project]\nname='shared-worker-"
+                    name
+                    "'\nversion='1.0.0'\n"
+                    "description='Shared worker probe'\nrequires-python='>=3.11'\n"
+                    "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\n")
+               (str name "/current/.venv/pyvenv.cfg") "home = fixture\n"
+               (str name "/current/helper_" name ".py") "STATE = object()\n"
+               (str name "/current/extension.py")
+               (str "import blockether.vis.extension as vis\n"
+                    "import helper_"
+                    name
+                    " as helper\n"
+                    "BOOT = helper.STATE\n"
+                    "def probe():\n"
+                    "    \"Report the helper identity and the project package.\"\n"
+                    "    import helper_"
+                    name
+                    ", site_"
+                    name
+                    "\n"
+                    "    return [helper_"
+                    name
+                    ".STATE is BOOT, site_"
+                    name
+                    ".VALUE]\n"
+                    "vis.register_extension(vis.Extension(name='shared-worker-"
+                    name
+                    "',"
+                    " description='Shared worker probe', alias='shared_worker_" name
+                    "'," " symbols=[vis.Symbol(probe)]))\n")})]
 
-          (.mkdirs shared-editable)
-          (spit (io/file shared "isolation_collision.py") "VALUE = 'shared'\n")
-          (spit (io/file shared "isolation_shared_only.py") "VALUE = 'shared-only'\n")
-          (spit (io/file shared-editable "isolation_shared_editable.py")
-                "VALUE = 'shared-editable'\n")
-          (spit (io/file shared "isolation.pth")
-                (str (.getCanonicalPath shared-editable)
-                     "\nimport isolation_collision, sys; sys._isolation_shared_hook = True\n"))
-          (doseq [name ["one" "two"]]
-            (let [site (io/file home name)
-                  editable (io/file home (str name "-editable"))]
+        (doseq [name ["one" "two"]]
+          (let [site (io/file home name)]
+            (.mkdirs site)
+            (spit (io/file site (str "site_" name ".py")) (str "VALUE = '" name "'\n"))))
+        (with-redefs [python-runtime/ensure-project!
+                      (fn [project]
+                        (io/file home (.getName (.getParentFile ^java.io.File project))))
 
-              (.mkdirs site)
-              (.mkdirs editable)
-              (spit (io/file site "isolation_collision.py") (str "VALUE = '" name "'\n"))
-              (spit (io/file editable "isolation_project_editable.py") "VALUE = 'project'\n")
-              (spit (io/file site "project.pth") (str (.getCanonicalPath editable) "\n"))))
-          (with-redefs [python-runtime/ensure-project!
-                        (fn [project]
-                          (let [name (.getName (.getParentFile ^java.io.File project))]
-                            (when (= "missing" name)
-                              (throw (ex-info "Missing environments must use shared packages" {})))
-                            (io/file home name)))
+                      worker/start-worker!
+                      (fn [k]
+                        (swap! started conj k)
+                        (start-worker! k))]
 
-                        python-runtime/prepared-project
-                        (fn [_]
-                          (throw (ex-info "Missing environments must not require sync" {})))]
-
-            (with-fresh-loaded
-              sources
-              (fn [result _]
-                (expect (= 0 (:failed result)) (pr-str (pyx/load-failures)))
-                (doseq [name ["one" "two" "shared" "missing" "declared"]]
-                  (let [ext (registered (str "isolation-" name))
-                        shared? (contains? #{"shared" "missing" "declared"} name)
-                        value (if shared? "shared" name)
-                        expected {"value" value
-                                  "shared" shared?
-                                  "editable" shared?
-                                  "hook" shared?
-                                  "project" (not shared?)}
-                        report (:result ((symbol-fn ext 'probe)))]
-
-                    (expect (= expected (get report "boot")))
-                    (expect (= expected (get report "call")))
-                    (let [made (ep/create-python-context
-                                 {}
-                                 nil
-                                 {:worker? true :jail-enabled? false :enabled? false}
-                                 nil)
-                          ctx (:python-context made)
-                          env {:python-context ctx
-                               :session-id (str "isolation-" name)
-                               :extensions (atom [ext])
-                               :active-extensions (atom [])}]
-
-                      (try
-                        (loop-env/sync-active-extension-symbols! env [ext])
-                        (let
-                          [reply
-                           (ep/run-python-block
-                             ctx
-                             (str
-                               "report = await probe()\n"
-                               "print(report['boot'] == report['call'], report['call']['value'], "
-                               "report['call']['shared'], report['call']['editable'], "
-                               "report['call']['hook'], report['call']['project'])"))]
-                          (expect (nil? (:error reply)) (pr-str (:error reply)))
-                          (expect
-                            (= (str "True "
-                                    value
-                                    (if shared? " True True True False" " False False False True"))
-                               (str/trim (:stdout reply)))))
-                        (finally (ep/dispose-python-context! ctx))))))))))))))
+          (with-fresh-loaded (merge (project "one") (project "two"))
+                             (fn [result _]
+                               (f result @started))))))))
 
 (defdescribe
-  packaged-worker-prestart-test
-  ;; Issue #407: a load starts the workers of packaged extensions before registration.
-  ;; A failed load must not leave its started worker alive.
-  (it
-    "starts each package worker once and stops the worker of a failed load"
-    (with-shared-packages
-      (fn [shared]
-        (let [home
-              (.getParentFile shared)
-
-              started
-              (atom [])
-
-              start-worker!
-              worker/start-worker!
-
-              project
-              (fn [name body]
-                {(str name "/current/pyproject.toml")
-                 (str "[project]\nname='prestart-"
-                      name
-                      "'\nversion='1.0.0'\n"
-                      "description='Prestart probe'\nrequires-python='>=3.11'\n"
-                      "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\n")
-                 (str name "/current/.venv/pyvenv.cfg") "home = fixture\n"
-                 (str name "/current/extension.py") body})
-
-              sources
-              (merge (project "one"
-                              (str "import blockether.vis.extension as vis\n"
-                                   "def probe():\n" "    \"Answer one.\"\n"
-                                   "    return 1\n"
-                                   "vis.register_extension(vis.Extension(name='prestart-one',"
-                                   " description='Prestart probe', alias='prestart_one',"
-                                   " symbols=[vis.Symbol(probe)]))\n"))
-                     (project "two" "raise RuntimeError('prestart fixture failure')\n"))]
-
+  one-extension-worker-test
+  ;; Report 2026-11-02: each session started one Python worker for each packaged
+  ;; extension, about 28 workers for 7 sessions. All extensions now share one worker.
+  (it "registers packaged extensions in the shared worker with their own packages"
+      (with-shared-worker-projects
+        (fn [result started]
+          (expect (= 0 (:failed result)) (pr-str (pyx/load-failures)))
+          (expect (empty? (remove #{worker/shared-key} started)) (pr-str started))
           (doseq [name ["one" "two"]]
-            (.mkdirs (io/file home name)))
-          (with-redefs [python-runtime/ensure-project!
-                        (fn [project]
-                          (io/file home (.getName (.getParentFile ^java.io.File project))))
-
-                        worker/start-worker!
-                        (fn [k]
-                          (swap! started conj k)
-                          (start-worker! k))]
-
-            (with-fresh-loaded sources
-                               (fn [result _]
-                                 (let [packaged
-                                       (filterv #(not= worker/shared-key %) @started)
-
-                                       by-name
-                                       (fn [name]
-                                         (first (filter #(str/includes? (str (:packages %))
-                                                                        (str "/" name))
-                                                        packaged)))]
-
-                                   (expect (= 1 (:failed result)) (pr-str (pyx/load-failures)))
-                                   (expect (= 2 (count packaged)) (pr-str @started))
-                                   (expect (= (count packaged) (count (distinct packaged))))
-                                   (expect (worker/worker-live? (by-name "one")))
-                                   (expect (not (worker/worker-live? (by-name "two")))))))))))))
+            (expect (= name
+                       (second (:result ((symbol-fn (registered (str "shared-worker-" name))
+                                                    'probe))))))))))
+  (it "keeps the snapshot modules of a loaded extension when another loads"
+      (with-shared-worker-projects
+        (fn [result _]
+          (expect (= 0 (:failed result)) (pr-str (pyx/load-failures)))
+          (doseq [name ["one" "two"]]
+            (expect (true? (first (:result ((symbol-fn (registered (str "shared-worker-" name))
+                                                       'probe)))))
+                    name))))))
 
 (defdescribe
   registration-manifest-test
@@ -10122,20 +10008,20 @@ vis.register_extension(vis.Extension(
              (finally (doseq [^java.io.File f (reverse (file-seq root))]
                         (.delete f)))))))
 
-(defdescribe
-  spare-workers-follow-loaded-packages-test
-  ;; Perf pass 2026-10-31: the gateway kept a 48 MB shared-package spare worker that no
-  ;; loaded extension could use, because every loaded extension declared its packages.
-  (it "keeps a shared-package spare only while a loaded extension uses the shared packages"
-      (let [spares-for (fn [loaded]
-                         (let [seen (atom nil)]
-                           (with-redefs-fn {#'pyx/loaded (atom loaded)
-                                            #'worker/keep-spares! (fn [_ packages]
-                                                                    (reset! seen (set packages)))}
-                             #(pyx/keep-spare-workers!))
-                           @seen))]
-        (expect (= #{"/pkgs/a"} (spares-for {"a" {:packages "/pkgs/a"}})))
-        (expect (= #{nil "/pkgs/a"} (spares-for {"a" {:packages "/pkgs/a"} "b" {}}))))))
+(defdescribe spare-workers-follow-loaded-packages-test
+             ;; Perf pass 2026-10-31: the gateway kept a 48 MB shared-package spare worker that no
+             ;; loaded extension could use, because every loaded extension declared its packages.
+             (it "keeps one spare for the shared extension worker only while an extension is loaded"
+                 (let [spares-for (fn [loaded]
+                                    (let [seen (atom nil)]
+                                      (with-redefs-fn {#'pyx/loaded (atom loaded)
+                                                       #'worker/keep-spares! (fn [_ packages]
+                                                                               (reset! seen
+                                                                                 (set packages)))}
+                                        #(pyx/keep-spare-workers!))
+                                      @seen))]
+                   (expect (= #{nil} (spares-for {"a" {:packages "/pkgs/a"} "b" {}})))
+                   (expect (= #{} (spares-for {}))))))
 
 (defdescribe failed-context-open-test
              ;; Report 2026-11-02: a trusted namespace that failed to open left its started worker

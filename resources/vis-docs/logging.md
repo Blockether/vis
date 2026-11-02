@@ -136,7 +136,8 @@ by `turn_id` or `query_id`.
 
 ## Python runtime
 
-Session sandboxes and trusted Python extensions run in separate worker processes. Each worker
+Session sandboxes and trusted Python extensions run in separate worker processes. A session has
+one sandbox worker and one worker for all its extensions. Each worker
 writes its output to `pyext-<worker-id>/worker.log` while it runs. When a worker stops with only
 empty files, Vis deletes its directory. Python `print()` output comes back with the execution
 result. Extension `vis.log` messages go to the gateway log.

@@ -1437,12 +1437,6 @@
   [source]
   (cached-exec-python source "<string>" "__import__('__future__').annotations.compiler_flag"))
 
-(defn- context-worker-key
-  "The trusted worker that holds the context of an extension frozen at `snap`.
-   Declared packages get a worker of their own; other extensions share `worker`."
-  [worker ^File snap packages]
-  (if packages (pyext/extension-worker-key [worker (.getCanonicalPath snap)] packages) worker))
-
 (defn- evaluate-extension!
   "Evaluate admitted extension `source` in the open namespace `ctx`.
    `entry-path` is the canonical source entry file exposed through Python's
@@ -1455,6 +1449,8 @@
         {:ext {:ext/name label} :env (or bound-env {:workspace/root (workspace/cwd-root)})}
         (python-host/conveying
           ctx
+          ;; One worker holds every extension of a session. Drop only the cached modules of
+          ;; other snapshots that the top-level names of this snapshot shadow.
           (exec-in!
             ctx
             (str "import sys as __vis_pathsys__\n"
@@ -1487,8 +1483,12 @@
                  "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
                  "for __vis_name__, __vis_mod__ in list(__vis_pathsys__.modules.items()):\n"
                  "    __vis_file__ = getattr(__vis_mod__, '__file__', None) or ''\n"
+                 "    __vis_top__ = __vis_pathos__.path.join(__vis_ext_dir__,\n"
+                 "                                           __vis_name__.partition('.')[0])\n"
                  "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
-                 "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
+                 "            and not __vis_file__.startswith(__vis_ext_dir__)\n"
+                 "            and (__vis_pathos__.path.exists(__vis_top__)\n"
+                 "                 or __vis_pathos__.path.exists(__vis_top__ + '.py'))):\n"
                  "        del __vis_pathsys__.modules[__vis_name__]\n"))
           (exec-in! ctx bootstrap-python)
           (exec-in! ctx (postponed-annotations-python source)))))
@@ -1502,7 +1502,7 @@
    Returns the sealed and the unsealed registration without touching the Clojure
    registry."
   [worker label ^File snap entry-path source packages bound-env]
-  (let [ctx (build-context (context-worker-key worker snap packages) label)]
+  (let [ctx (build-context worker label)]
     (swap! context-lifecycle assoc
       ctx
       {:snapshot (.getCanonicalPath snap) :calls 0 :project-path (::project-path bound-env)})
@@ -1516,10 +1516,7 @@
    extension (#407). When that evaluation registers other data, the namespace closes,
    `stale!` runs and the operation fails. Returns the unsealed registration."
   [worker label ^File snap entry-path source packages bound-env sealed stale!]
-  (let [worker
-        (context-worker-key worker snap packages)
-
-        ctx
+  (let [ctx
         (context-name label)
 
         open
@@ -3743,15 +3740,20 @@
        (python-string-literal (classpath-src "blockether/vis/extension.py"))
        ")\n"))
 
+(defn- spare-packages
+  "The package keys of the spares to keep: the one shared extension worker of a session,
+   while an extension is loaded (#407)."
+  []
+  (when (seq @loaded) [nil]))
+
 (defn keep-spare-workers!
-  "Keep a warm trusted worker ready for the next extension context: one for each package
-   directory of a loaded extension, nil for the shared packages (#407). A gateway calls
-   this after its startup load. With `false`, stop the spares."
+  "Keep a warm trusted worker ready for the next session's extension contexts (#407). A
+   gateway calls this after its startup load. With `false`, stop the spares."
   ([] (keep-spare-workers! true))
   ([keep?]
-   ;; Perf pass 2026-10-31: a shared-package spare that no loaded extension used held a
-   ;; 48 MB worker for the life of the gateway. A first such context refills it on use.
-   (pyext/keep-spares! (when keep? spare-warmup-python) (map :packages (vals @loaded)))))
+   ;; Perf pass 2026-10-31: a spare that no loaded extension used held a 48 MB worker
+   ;; for the life of the gateway.
+   (pyext/keep-spares! (when keep? spare-warmup-python) (spare-packages))))
 
 (defn prestart-shared-worker!
   "Start the shared trusted worker in the background and warm it: the runtime, the
@@ -4226,37 +4228,12 @@
                                   (scanned opath)
                                   (or (glob-paths path) (glob-paths opath)))
                          opath))
-                     (scope-entries project-root)))
-
-             ;; Worker key -> the future that starts it ahead of the registration loop.
-             prestarts
-             (atom {})]
+                     (scope-entries project-root)))]
 
          (try
            (swap! failures #(vec (remove (fn [failure]
                                            (= project-root (:project-root failure)))
                                    %)))
-           ;; Each worker process takes tens of milliseconds to start. Start the
-           ;; workers of entries that always load again together; registration
-           ;; below still runs in file order and finds them ready.
-           (doseq [^File f
-                   files
-
-                   :let [path
-                         (.getCanonicalPath f)]
-                   :when (and (or all?
-                                  (nil? (get @loaded [project-root path]))
-                                  (failed-before path))
-                              ;; A manifest entry starts its worker at its first operation.
-                              (not (manifest f)))]
-
-             (when-let [frozen (try (per-root :frozen (get plans f) prepare-root!)
-                                    (catch Throwable _ nil))]
-               (let [k (context-worker-key pyext/shared-key (:dir frozen) (:packages frozen))]
-                 (when-not (contains? @prestarts k)
-                   (swap! prestarts assoc
-                     k
-                     (future (try (pyext/start-worker! k) (catch Throwable _ nil))))))))
            ;; Build-then-swap, file by file. A file that reloads cleanly swaps in
            ;; (its PREVIOUS context is closed only after the new one is live); a
            ;; file that FAILS keeps its last-good entry — still registered, context
@@ -4370,12 +4347,8 @@
             :failed (count (filter #(= project-root (:project-root %)) @failures))
             :changed? true}
            (finally
-             ;; A worker that no context uses after a failed load must not stay alive.
-             (doseq [[k started] @prestarts]
-               (deref started)
-               (stop-unused-worker! k))
-             ;; A reload can move an extension to new packages: keep spares only for the loaded ones.
-             (try (pyext/retain-spares! (map :packages (vals @loaded)))
+             ;; A reload can unload the last extension: keep a spare only while one is loaded.
+             (try (pyext/retain-spares! (spare-packages))
                   (catch Throwable t
                     (tel/log!
                       {:level :warn :id ::retain-spares-failed :data {:error (ex-message t)}})))

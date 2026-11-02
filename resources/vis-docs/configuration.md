@@ -729,6 +729,11 @@ import `~/.vis/python/packages`. Vis does not create or read `.venv` for them. I
 packages and global extensions keep their own environments. Run `/reload` after you change the
 value. See [Use shared packages for project extensions](extension-development.md#use-shared-packages-for-project-extensions).
 
+All extensions of a session run in one Python worker. Each extension imports its own environment
+first, but the extensions share one interpreter and its loaded modules. When two extensions need
+different versions of one package, the version that loads first is used by both. Give such
+extensions compatible dependencies.
+
 The Python language tools also follow this value. With `shared`, `py.run_tests` and `py.repl_start`
 run project Python with `vis-agent python --shared`, and they do not use the project's `.venv`.
 Extensions read the value with [`vis.python_environment()`](extension-api.md#python-environment).
