@@ -37,9 +37,11 @@ import {
   GitFork,
   Globe,
   Image,
+  LayoutGrid,
   LoaderCircle,
   type LucideIcon,
   MessageSquareMore,
+  Maximize2,
   Mic,
   MicVocal,
   Minus,
@@ -410,6 +412,16 @@ export function ZenIcon({ className }: { className?: string }) {
 /** The desk's sidebar, as the one glyph every desktop app uses for putting it away. */
 export function SidebarIcon({ className }: { className?: string }) {
   return <Mark icon={PanelLeft} className={className} />;
+}
+
+/** The live apps of a session, as a grid of tiles. */
+export function AppsIcon({ className }: { className?: string }) {
+  return <Mark icon={LayoutGrid} className={className} />;
+}
+
+/** Full screen: the app grows from its place to the whole session. */
+export function FullScreenIcon({ className }: { className?: string }) {
+  return <Mark icon={Maximize2} className={className} />;
 }
 
 /** The side panel of live views, on the edge where it opens. */

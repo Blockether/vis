@@ -72,7 +72,8 @@ import { getThemePref } from './lib/storage';
 import { IconButton } from './components/ui';
 import { CommandSurface } from './components/CommandSurface';
 import { CommandProvider, CommandRegistry, useCommands, type CommandHandlers } from './lib/commands';
-import { SearchIcon, SettingsIcon } from './components/icons';
+import { AppsIcon, SearchIcon, SettingsIcon } from './components/icons';
+import { GlobalApps, useGlobalApps } from './components/GlobalApps';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
@@ -446,6 +447,11 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     () => (client ? new SessionSubscriptionHub(client) : null),
     [client],
   );
+  // The apps of the gateway that belong to no session. Only an SDK program opens one.
+  const globalApps = useGlobalApps(client, subscriptions);
+  const [isGlobalAppsOpen, setGlobalAppsOpen] = useState(false);
+  const openGlobalApps = useCallback(() => setGlobalAppsOpen(true), []);
+  const closeGlobalApps = useCallback(() => setGlobalAppsOpen(false), []);
   const refresh = useCallback(async () => {
     const [connections, primaryConnection] = await Promise.all([
       loadConnections(),
@@ -1412,6 +1418,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
             'show-sessions': sessionsMounted && openSearch,
             'switch-project': canSplit && toggleSidebar,
             settings: openSettings,
+            'global-apps': globalApps.length > 0 && openGlobalApps,
           }}
         />
         <CommandSurface />
@@ -1421,6 +1428,11 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
               // There is nothing to search until a session list stands behind the dialog.
               onSearch={sessionsMounted ? openSearch : null}
               onAppSettings={openSettings}
+              globalApps={
+                globalApps.length > 0
+                  ? { count: globalApps.length, isOpen: isGlobalAppsOpen, onOpen: openGlobalApps }
+                  : undefined
+              }
             />
           )}
 
@@ -1549,6 +1561,15 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
               onClose={() => setSettingsDestination(null)}
             />
           )}
+          {client && (
+            <GlobalApps
+              client={client}
+              hub={subscriptions}
+              apps={globalApps}
+              isListOpen={isGlobalAppsOpen}
+              onListClose={closeGlobalApps}
+            />
+          )}
           {scopedSettings && (
             <ScopedSettingsDialog
               client={scopedSettings.client}
@@ -1572,10 +1593,13 @@ function ShellCommands({ handlers }: { handlers: CommandHandlers }) {
 export function Header({
   onSearch,
   onAppSettings,
+  globalApps,
 }: {
   /** Open the search dialog. `null` while there is no session list to search. */
   onSearch: (() => void) | null;
   onAppSettings: () => void;
+  /** The global apps button. Absent while no global app is listed. */
+  globalApps?: { count: number; isOpen: boolean; onOpen: () => void };
 }) {
   // `/` opens the search from anywhere on the shell except a field, where it is a
   // character someone is typing. From a field, C-x s s opens it, as in the TUI
@@ -1648,6 +1672,19 @@ export function Header({
               onClick={onSearch}
             >
               <SearchIcon className="size-4" />
+            </IconButton>
+          )}
+          {globalApps && (
+            <IconButton
+              type="button"
+              label={`Global apps (${globalApps.count})`}
+              title="Global apps (C-x b O)"
+              variant={globalApps.isOpen ? 'primary' : 'quiet'}
+              aria-haspopup="dialog"
+              aria-expanded={globalApps.isOpen}
+              onClick={globalApps.onOpen}
+            >
+              <AppsIcon className="size-4" />
             </IconButton>
           )}
           <IconButton

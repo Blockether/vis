@@ -21,6 +21,7 @@ import {
 } from './view';
 import type { ViewAnchor, ViewButtonVariant } from './view';
 import { axisLabel, axisMarks } from './time-axis';
+import { appSurfacesFromWire, type AppSurfaces } from './app-surfaces';
 import {
   mergeSceneObjects,
   sceneColor,
@@ -507,10 +508,18 @@ export interface LiveView {
   extension?: string;
   /** The owner's own stable name for the view. */
   key?: string;
+  /** `global` for an app that belongs to no session. Absent: a session app. */
+  scope?: 'global';
+  /** A global app that does not come back after a gateway restart. Absent: it comes back. */
+  is_persistent?: false;
   /** Local reconnect marker, never sent on the wire. */
   is_stale?: boolean;
   /** The keys an app binds, in the order the owner declared them. */
   shortcuts?: LiveShortcut[];
+  /** Where an app shows, after the person's settings. Absent: the schema defaults. */
+  surfaces?: AppSurfaces;
+  /** The id prefix of this app's own settings. */
+  settings_key?: string;
 }
 
 /**
@@ -1133,6 +1142,8 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     session_id: optionalText(view.session_id),
     extension: optionalText(view.extension),
     key: optionalText(view.key),
+    ...(view.scope === 'global' ? { scope: 'global' as const } : {}),
+    ...(view.is_persistent === false ? { is_persistent: false as const } : {}),
     ...(Array.isArray(view.submissions)
       ? { submissions: keyed(view.submissions, submissionFromWire) }
       : {}),
@@ -1140,6 +1151,8 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     ...(view.is_closed === true ? { is_closed: true } : {}),
     ...(view.is_stale === true ? { is_disconnected: true } : {}),
     ...(Array.isArray(view.shortcuts) ? { shortcuts: liveShortcutsFromWire(view.shortcuts) } : {}),
+    ...(view.surfaces === undefined ? {} : { surfaces: appSurfacesFromWire(view.surfaces) }),
+    ...(typeof view.settings_key === 'string' ? { settings_key: view.settings_key } : {}),
   };
 }
 

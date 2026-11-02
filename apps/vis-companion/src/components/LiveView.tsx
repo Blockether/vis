@@ -2336,6 +2336,8 @@ export function RunDialog({
   title,
   subtitle,
   footer,
+  closeLabel,
+  within = 'session',
   onClose,
   children,
 }: {
@@ -2344,6 +2346,10 @@ export function RunDialog({
   subtitle?: ReactNode;
   /** A docked strip under the body, such as the key legend of an app. */
   footer?: ReactNode;
+  /** The name of the way out, when it is not "Close <title>". */
+  closeLabel?: string;
+  /** What the dialog stands over: its session pane, or the whole shell for a global app. */
+  within?: 'app' | 'session';
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -2357,8 +2363,8 @@ export function RunDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <Modal within="session" onDismiss={onClose}>
-      <DialogFrame title={title} subtitle={subtitle} footer={footer} onClose={onClose}>
+    <Modal within={within} onDismiss={onClose}>
+      <DialogFrame title={title} subtitle={subtitle} footer={footer} closeLabel={closeLabel} onClose={onClose}>
         {/* The run keeps the band's rail: each node brings its own `--live-view-inset`, so
             a second gutter here doubled the side margin on a phone (user report). */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>

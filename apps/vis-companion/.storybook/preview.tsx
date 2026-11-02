@@ -52,7 +52,7 @@ const preview: Preview = {
           'Foundations',
           ['Controls', 'Menu', 'Calendar'],
           'App',
-          ['Header', 'Split view', 'Model picker', 'Pairing scanner', 'Memory overlay', 'Error recovery'],
+          ['Header', 'Global apps', 'Split view', 'Model picker', 'Pairing scanner', 'Memory overlay', 'Error recovery'],
           'Session list',
           [
             'Screen',
@@ -76,7 +76,7 @@ const preview: Preview = {
             'Human input',
             'Subagents',
             'Live view',
-            ['Panel', 'In transcript', 'Side panel', 'Apps', 'App cards'],
+            ['Panel', 'In transcript', 'Side panel', 'Apps', 'App cards', 'App surfaces'],
             'Artifacts',
             ['Sheet', 'Markdown', 'Text', 'Diff', 'Code review', 'File preview', 'Table', 'Media', 'Image viewer', 'PDF', 'ZIP'],
             'Context usage',

@@ -9,6 +9,7 @@ import { markSessionId } from '../lib/session-id';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
 import {
   AlertIcon,
+  AppsIcon,
   CheckIcon,
   ChevronIcon,
   ClipIcon,
@@ -99,11 +100,14 @@ export function SessionHeader({
   commands,
   sidebar,
   panel,
+  apps,
 }: {
   model: SessionHeaderModel;
   commands: SessionHeaderCommands;
   /** The live view panel of this session, when the session has panel views. */
   panel?: { isOpen: boolean; onToggle: () => void };
+  /** The session apps list, when the session has an app that shows there. */
+  apps?: { count: number; isOpen: boolean; onOpen: () => void };
   /**
    * The desk's list toggle, when the shell has a list beside this transcript to
    * put away: it stands on the band's leading edge, where the phone's arrow does.
@@ -230,6 +234,17 @@ export function SessionHeader({
             onClick={panel.onToggle}
           >
             <LivePanelIcon className="size-3.5" />
+          </IconButton>
+        )}
+        {apps && (
+          <IconButton
+            label={`Session apps (${apps.count})`}
+            variant={apps.isOpen ? 'primary' : 'quiet'}
+            aria-haspopup="dialog"
+            aria-expanded={apps.isOpen}
+            onClick={apps.onOpen}
+          >
+            <AppsIcon className="size-3.5" />
           </IconButton>
         )}
         <IconButton

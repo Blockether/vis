@@ -41,6 +41,11 @@ export const SearchShortcut: Story = {
   },
 };
 
+/** A program shows global apps: their button stands next to the search. */
+export const WithGlobalApps: Story = {
+  args: { globalApps: { count: 3, isOpen: false, onOpen: fn() } },
+};
+
 /** A dialog with the focus keeps the keyboard: `/` does not open the search past it. */
 export const BehindADialog: Story = {
   render: (args) => (

@@ -5568,6 +5568,31 @@ export class GatewayClient {
   }
 
   /**
+   * The global apps of this gateway, oldest first: apps that belong to no session.
+   * The list is empty while the person turns global apps off.
+   */
+  async globalApps(signal?: AbortSignal): Promise<LiveView[]> {
+    const response = await this.request<{ views: unknown[] }>('GET', '/v1/apps', undefined, signal);
+    return liveViewsFromWire(response.views);
+  }
+
+  /** One global app, also a closed one. `null` when the gateway cannot paint it. */
+  async globalApp(viewId: string, signal?: AbortSignal): Promise<LiveView | null> {
+    const response = await this.request<{ view: unknown }>(
+      'GET',
+      `/v1/apps/${encodeURIComponent(viewId)}`,
+      undefined,
+      signal,
+    );
+    return liveViewFromWire(response.view);
+  }
+
+  /** Apply one operator action to a global app. */
+  globalAppAction(viewId: string, action: ViewAction): Promise<ViewActionOutcome> {
+    return this.request<ViewActionOutcome>('POST', `/v1/apps/${encodeURIComponent(viewId)}/actions`, action);
+  }
+
+  /**
    * One page of a log node's RECORD — what scrolled off the window it shows.
    *
    * The record is a file the engine appends to, so this reads a RANGE of it

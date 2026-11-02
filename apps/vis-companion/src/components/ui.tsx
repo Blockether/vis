@@ -2993,6 +2993,7 @@ export function DialogHeader({
   isUnderNotch = false,
   isStacked = false,
   isCloseLeading = false,
+  leading,
   className = '',
 }: {
   title: ReactNode;
@@ -3038,6 +3039,8 @@ export function DialogHeader({
    * where a slip of the pointer closed the file instead of sending it.
    */
   isCloseLeading?: boolean;
+  /** A `BandButton` cell before the title, such as Back to the chat. */
+  leading?: ReactNode;
   /** Placement only; the band's own face is fixed. */
   className?: string;
 } & (
@@ -3063,6 +3066,7 @@ export function DialogHeader({
       {isCloseLeading && onClose && closeLabel && (
         <CloseButton isBand isLeading label={closeLabel} onClick={onClose} />
       )}
+      {leading}
       <div className={`min-w-0 flex-1 self-center py-1.5 ${LIST_EDGE}`}>
         {/* File names keep one row. Questions can wrap to three lines. */}
         <h2

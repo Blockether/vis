@@ -11,7 +11,7 @@ import { SessionEventsContext } from '../lib/session-events';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
-import { AppAttachmentRow, AppSurface, useSessionApps } from './AppAttachment';
+import { AppAttachmentRow, AppSurface, SessionAppViewsContext, useSessionApps } from './AppAttachment';
 import { StoryAppHost, TODO, type StoryApp } from '../dev/story-apps';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT } from '../lib/view';
 
@@ -417,6 +417,54 @@ describe('AppAttachmentRow in the transcript', () => {
   });
 });
 
+describe('AppAttachmentRow full screen', () => {
+  // The app surfaces work: Full screen opens the same app in the session dialog, and
+  // Escape leaves full screen first, then closes the app.
+  it('opens full screen from the turn, and Escape steps back to the turn, then to the row', async () => {
+    const { client } = fakeClient([game(3), game(3), game(3)], accepted);
+    const attachment = { view_id: 'app-1', filename: 'counter.app.json' } as unknown as IterationAttachment;
+    render(
+      <SessionEventsContext.Provider value={null}>
+        <div data-session-surface>
+          <AppAttachmentRow client={client} sid="s1" attachment={attachment} />
+        </div>
+      </SessionEventsContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open app counter' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Full screen Counter' }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const frame = document.querySelector<HTMLElement>('[data-app-frame="app-1"]');
+    expect(frame).not.toBeNull();
+    fireEvent.keyDown(frame!, { key: 'Escape' });
+    expect(await screen.findByRole('button', { name: 'Open app counter' })).toBeInTheDocument();
+    expect(document.querySelector('[data-app-frame="app-1"]')).toBeNull();
+  });
+
+  // An app that the person keeps out of the chat turn shows only its row there.
+  it('opens an app without the inline surface full screen and closes it to the row', async () => {
+    const { client } = fakeClient([], accepted);
+    const attachment = { view_id: 'app-1', filename: 'counter.app.json' } as unknown as IterationAttachment;
+    const known = [game(3, { surfaces: { inline: false, session: 'sidebar' } })];
+    render(
+      <SessionAppViewsContext.Provider value={known}>
+        <SessionEventsContext.Provider value={null}>
+          <div data-session-surface>
+            <AppAttachmentRow client={client} sid="s1" attachment={attachment} />
+          </div>
+        </SessionEventsContext.Provider>
+      </SessionAppViewsContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open app counter' }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(document.querySelector('[data-app-frame="app-1"]')).toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Open app counter' })).toBeInTheDocument();
+  });
+});
+
 describe('AppSurface focus, names and owner loss', () => {
   it('takes the focus when it opens and gives it back to the opener when it closes', async () => {
     const { client } = fakeClient([wizard(3)], accepted);
@@ -621,5 +669,39 @@ describe('AppSurface against an engine-like host', () => {
     fireEvent.click(nodeButton('add'));
     await screen.findByText('Call Ana');
     await waitFor(() => expect(screen.getByRole('textbox', { name: /New task/ })).toHaveValue(''));
+  });
+});
+
+describe('a global app', () => {
+  // A global app belongs to no session: it reads and acts on `/v1/apps` and
+  // follows the fleet stream, where session frames of the same id also arrive.
+  it('uses the global routes and leaves out session frames', async () => {
+    const fleet = new Set<(event: SseEvent) => void>();
+    const hub = {
+      subscribeFleet: (listener: (event: SseEvent) => void) => {
+        fleet.add(listener);
+        return () => fleet.delete(listener);
+      },
+      subscribeFleetState: (listener: (streaming: boolean) => void) => {
+        listener(true);
+        return () => undefined;
+      },
+    } as unknown as SessionSubscriptionHub;
+    const globalApp = vi.fn(async () => game(3, { scope: 'global', key: 'counter' }));
+    const globalAppAction = vi.fn(async (_vid: string, action: ViewAction) => accepted(action));
+    const client = { globalApp, globalAppAction } as unknown as GatewayClient;
+    render(
+      <SessionEventsContext.Provider value={hub}>
+        <AppSurface client={client} sid={null} viewId="app-1" fallbackTitle="counter" onClose={() => undefined} />
+      </SessionEventsContext.Provider>,
+    );
+    await screen.findByText('Pick me');
+    fireEvent.click(nodeButton('inc'));
+    await waitFor(() => expect(globalAppAction).toHaveBeenCalledWith('app-1', { action: 'activate', node_id: 'inc' }));
+    const emit = (event: SseEvent) => act(() => fleet.forEach((listener) => listener(event)));
+    emit({ type: VIEW_CLOSE_EVENT, view_id: 'app-1', session_id: 's1', result: {} });
+    expect(screen.queryByText('Closed')).toBeNull();
+    emit({ type: VIEW_CLOSE_EVENT, view_id: 'app-1', result: {} });
+    expect(await screen.findByText('Closed')).toBeInTheDocument();
   });
 });

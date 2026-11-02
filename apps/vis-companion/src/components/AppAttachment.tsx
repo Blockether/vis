@@ -4,7 +4,7 @@
  * its view and saves through `draft`, `change` and `submit` actions.
  */
 
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { runAppAction, SendKeys, type AppActionResult, type AppActionStatus } from '../lib/app-actions';
 import {
@@ -16,18 +16,30 @@ import {
   sendAction,
   withSubmission,
 } from '../lib/app-view';
-import type { GatewayClient } from '../lib/gateway';
+import { onSettingChange, type GatewayClient } from '../lib/gateway';
+import { appFrameStep, appSurfaces, isAppSurfaceSetting, shownAppFrame } from '../lib/app-surfaces';
+import { foldGlobalAppView, globalAppStateWord } from '../lib/global-apps';
 import type { HumanInputValue } from '../lib/human-input';
 import { liveViewFromWire, type LiveShortcut, type LiveView as LiveViewModel, type LiveNode } from '../lib/live-view';
 import { ariaShortcut, isAppKeyTarget, matchShortcut, shortcutLabel, shortcutName } from '../lib/app-shortcuts';
 import { SessionEventsContext } from '../lib/session-events';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { IterationAttachment } from '../lib/types';
+import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
 import { ActionStatus, type AppNodeActions } from './AppNodes';
 import { LiveViewPanel, RunDialog } from './LiveView';
-import { BandLabel, DialogHeader, ExecutionAction, KeyCap, ListRow } from './ui';
+import { ChevronIcon, FullScreenIcon } from './icons';
+import { BandButton, BandLabel, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, closeWith } from './ui';
+
+/** The open apps of the session, with their surfaces, for the rows of the transcript. */
+export const SessionAppViewsContext = createContext<readonly LiveViewModel[]>([]);
+
+/**
+ * The focus mark of an app row: a 2px bar in the row's own ink at its start edge.
+ * The hover paper alone is too faint on the dialog paper to show the focus.
+ */
+const APP_ROW_FOCUS = 'focus-visible:shadow-[inset_2px_0_0_currentColor]';
 
 /** Read the app again this long after an acknowledged action that no patch followed. */
 export const APP_ECHO_WAIT_MS = 1500;
@@ -49,7 +61,8 @@ export interface AppViewState {
  */
 export function useAppView(
   client: GatewayClient,
-  sid: string,
+  /** The session of the app, or `null` for a global app. */
+  sid: string | null,
   viewId: string,
   hub: SessionSubscriptionHub | null,
 ): AppViewState {
@@ -72,8 +85,7 @@ export function useAppView(
     reading.current?.abort();
     const controller = new AbortController();
     reading.current = controller;
-    client
-      .liveView(sid, viewId, controller.signal)
+    (sid === null ? client.globalApp(viewId, controller.signal) : client.liveView(sid, viewId, controller.signal))
       .then((read) => {
         if (controller.signal.aborted) return;
         if (!read) {
@@ -98,24 +110,29 @@ export function useAppView(
     };
   }, [reread]);
 
+  // A saved app setting changes where the app shows. The engine answers it on a read.
+  useEffect(
+    () => onSettingChange(client.base, (updated) => isAppSurfaceSetting(updated.id) && reread()),
+    [client, reread],
+  );
+
   useEffect(() => {
     if (!hub) return;
-    const offEvents = hub.subscribeSession(
-      sid,
-      (event) => {
-        const held = viewRef.current;
-        if (!held) return;
-        const folded = foldAppEvent(held, event);
-        if (folded.view !== held) commit(folded.view);
-        if (folded.isReread) reread();
-      },
-      { replay: false },
-    );
+    const fold = (event: SseEvent) => {
+      const held = viewRef.current;
+      if (!held) return;
+      const folded = sid === null ? foldGlobalAppView(held, event) : foldAppEvent(held, event);
+      if (folded.view !== held) commit(folded.view);
+      if (folded.isReread) reread();
+    };
+    // A global app lives on the fleet stream, which has no replay.
+    const offEvents = sid === null ? hub.subscribeFleet(fold) : hub.subscribeSession(sid, fold, { replay: false });
     let wasConnected: boolean | null = null;
-    const offConnection = hub.subscribeConnection((connected) => {
+    const onConnection = (connected: boolean) => {
       if (connected && wasConnected === false) reread();
       wasConnected = connected;
-    });
+    };
+    const offConnection = sid === null ? hub.subscribeFleetState(onConnection) : hub.subscribeConnection(onConnection);
     return () => {
       offEvents();
       offConnection();
@@ -124,7 +141,11 @@ export function useAppView(
 
   const act = useCallback(
     async (action: ViewAction) => {
-      const run = sending.current.then(() => runAppAction(() => client.viewAction(sid, viewId, action)));
+      const run = sending.current.then(() =>
+        runAppAction(() =>
+          sid === null ? client.globalAppAction(viewId, action) : client.viewAction(sid, viewId, action),
+        ),
+      );
       sending.current = run;
       const result = await run;
       const held = viewRef.current;
@@ -249,18 +270,38 @@ export function AppSurface({
   viewId,
   fallbackTitle,
   isInline = false,
+  isPane = false,
+  closeLabel,
+  backLabel,
+  onFullScreen,
+  onView,
   onClose,
 }: {
   client: GatewayClient;
-  sid: string;
+  /** The session of the app, or `null` for a global app, which opens over the whole shell. */
+  sid: string | null;
   viewId: string;
   fallbackTitle: string;
   /** Open in the transcript, where the row was, not in a dialog. */
   isInline?: boolean;
+  /** Fill the box that holds it: the side panel or the chat area. */
+  isPane?: boolean;
+  /** The name of the way out, when it is not "Close app <title>". */
+  closeLabel?: string;
+  /** Lead the band with a Back control of this name instead of a close at its end. */
+  backLabel?: string;
+  /** Offer a Full screen control that opens the same app in the session dialog. */
+  onFullScreen?: () => void;
+  /** Hear each new picture of the app, for example to learn its surfaces. */
+  onView?: (view: LiveViewModel) => void;
   onClose: () => void;
 }) {
   const hub = useContext(SessionEventsContext);
   const { view, isMissing, act } = useAppView(client, sid, viewId, hub);
+  useEffect(() => {
+    if (view) onView?.(view);
+  }, [view, onView]);
+  const isFramed = isInline || isPane;
   const buttonKeys = useRef(new Map<string, SendKeys>());
   const [formStatus, setFormStatus] = useState<AppActionStatus>('idle');
   const [fieldErrors, setFieldErrors] = useState<Readonly<Record<string, string>>>({});
@@ -396,8 +437,8 @@ export function AppSurface({
       // transcript, only a focus inside the app gives it the key, so the page keeps
       // its scroll keys and two open apps never share one press.
       const target = event.target;
-      const frame = surface.current?.closest(isInline ? '[data-app-frame]' : '[role="dialog"]') ?? null;
-      if (isInline ? !(target instanceof Node && frame?.contains(target)) : !isAppKeyTarget(target, frame, opener.current))
+      const frame = surface.current?.closest(isFramed ? '[data-app-frame]' : '[role="dialog"]') ?? null;
+      if (isFramed ? !(target instanceof Node && frame?.contains(target)) : !isAppKeyTarget(target, frame, opener.current))
         return;
       // Enter and Space on a focused control press that control, as they always do.
       if (
@@ -413,10 +454,10 @@ export function AppSurface({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [shortcuts, press, isInline]);
+  }, [shortcuts, press, isFramed]);
 
   const title = view?.title || fallbackTitle;
-  const state = view ? appStateWord(view) : '';
+  const state = view ? (sid === null ? globalAppStateWord(view) : appStateWord(view)) : '';
   const subtitle = view ? (
     <span className="flex items-center gap-2">
       <span>{state}</span>
@@ -432,7 +473,7 @@ export function AppSurface({
     <div
       ref={attachSurface}
       tabIndex={-1}
-      className={`min-w-0 focus:outline-none ${isInline ? '' : 'min-h-0 flex-1 overflow-y-auto'}`}
+      className={`min-w-0 focus:outline-none ${isInline ? '' : 'min-h-0 flex-1 overflow-y-auto overscroll-contain'}`}
       data-app-surface={viewId}
     >
       {view ? (
@@ -446,8 +487,10 @@ export function AppSurface({
           onSelect={isReadOnly ? undefined : onSelect}
           onChange={isReadOnly ? undefined : onChange}
           onSubmit={isReadOnly ? undefined : onSubmit}
-          load={(nodeId, from, limit, query) =>
-            client.liveViewLog(sid, viewId, nodeId, from, limit, query)
+          load={
+            sid === null
+              ? undefined
+              : (nodeId, from, limit, query) => client.liveViewLog(sid, viewId, nodeId, from, limit, query)
           }
         />
       ) : (
@@ -457,14 +500,20 @@ export function AppSurface({
       )}
     </div>
   );
-  if (isInline) {
+  const leave = closeLabel ?? `Close app ${title}`;
+  const fullScreen = onFullScreen ? (
+    <BandButton label={`Full screen ${title}`} onClick={onFullScreen}>
+      <FullScreenIcon className="size-3.5" />
+    </BandButton>
+  ) : undefined;
+  if (isFramed) {
     return (
       // Escape inside the app closes it, as it closes the dialog. An armed control
       // inside stops the key first.
       <section
         aria-label={title}
         data-app-frame={viewId}
-        className="flex min-w-0 flex-col border border-dialog-edge bg-panel"
+        className={`flex min-w-0 flex-col bg-panel ${isPane ? 'min-h-0 flex-1' : 'border border-dialog-edge'}`}
         onKeyDown={(event) => {
           if (event.key === 'Escape' && !event.defaultPrevented) {
             event.preventDefault();
@@ -472,8 +521,21 @@ export function AppSurface({
           }
         }}
       >
-        <DialogHeader title={title} isTitleTruncated subtitle={subtitle} closeLabel={`Close app ${title}`} onClose={onClose} />
-        <div className="border-t border-dialog-edge">{body}</div>
+        <DialogHeader
+          title={title}
+          isTitleTruncated
+          subtitle={subtitle}
+          leading={
+            backLabel ? (
+              <BandButton label={backLabel} onClick={onClose}>
+                <ChevronIcon back className="size-4" />
+              </BandButton>
+            ) : undefined
+          }
+          actions={fullScreen}
+          {...closeWith(backLabel ? undefined : onClose, leave)}
+        />
+        <div className={`border-t border-dialog-edge ${isPane ? 'flex min-h-0 flex-1 flex-col' : ''}`}>{body}</div>
         {footer && (
           <footer className="border-t border-dialog-edge bg-panel-2 px-4 py-2 font-mono text-meta text-dialog-hint">
             {footer}
@@ -483,7 +545,14 @@ export function AppSurface({
     );
   }
   return (
-    <RunDialog title={title} subtitle={subtitle} footer={footer} onClose={onClose}>
+    <RunDialog
+      title={title}
+      subtitle={subtitle}
+      footer={footer}
+      closeLabel={closeLabel}
+      within={sid === null ? 'app' : 'session'}
+      onClose={onClose}
+    >
       {body}
     </RunDialog>
   );
@@ -492,6 +561,8 @@ export function AppSurface({
 /**
  * An app in the transcript: one row that names it and opens it in its place.
  * The row reads nothing until it opens; the title comes from the app once it is read.
+ * Full screen opens the same app in the session dialog. An app without the inline
+ * surface never shows its frame in the turn: its row opens it full screen.
  */
 export const AppAttachmentRow = memo(function AppAttachmentRow({
   client,
@@ -507,41 +578,158 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
   const viewId = attachment.view_id ?? '';
   const name = appFallbackTitle(attachment.filename);
   const [opened, setOpened] = useStickyOverlay(`app:${viewId}`);
+  const [isFull, setFull] = useState(false);
+  // The session list knows where the app shows. A row outside it learns it from its read.
+  const known = useContext(SessionAppViewsContext).find((one) => one.id === viewId);
+  const [readInline, setReadInline] = useState<boolean | null>(null);
+  const inline = readInline ?? appSurfaces(known).inline;
   const place = useRef<HTMLDivElement | null>(null);
-  // The app replaces its row, so a close gives the focus to the row that comes back.
-  const close = useCallback(() => {
-    setOpened(false);
-    requestAnimationFrame(() => place.current?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true }));
-  }, [setOpened]);
-  const open = useCallback(() => setOpened(true), [setOpened]);
+  const frame = shownAppFrame(opened ? (isFull ? 'full' : 'inline') : 'row', inline);
+  const go = useCallback(
+    (step: 'open' | 'full' | 'escape' | 'close') => {
+      const next = appFrameStep(frame, step, inline);
+      setOpened(next !== 'row');
+      setFull(next === 'full');
+      // The app replaces its row, so a close gives the focus to the row that comes back.
+      if (next === 'row')
+        requestAnimationFrame(() => place.current?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true }));
+    },
+    [frame, inline, setOpened],
+  );
+  const open = useCallback(() => go('open'), [go]);
+  const onView = useCallback((view: LiveViewModel) => setReadInline(appSurfaces(view).inline), [setReadInline]);
   if (!viewId) return null;
+  const row = embedded ? (
+    <ExecutionAction onClick={open} aria-label={`Open app ${name}`}>
+      <BandLabel>APP</BandLabel>
+      <span className="min-w-0 flex-1 truncate">{name}</span>
+    </ExecutionAction>
+  ) : (
+    <ListRow onClick={open} title={name} aria-label={`Open app ${name}`} className={APP_ROW_FOCUS}>
+      <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">APP</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-ui text-muted">{name}</span>
+    </ListRow>
+  );
   return (
     <div ref={place} className="min-w-0">
-      {opened ? (
-        <AppSurface client={client} sid={sid} viewId={viewId} fallbackTitle={name} isInline onClose={close} />
-      ) : embedded ? (
-        <ExecutionAction onClick={open} aria-label={`Open app ${name}`}>
-          <BandLabel>APP</BandLabel>
-          <span className="min-w-0 flex-1 truncate">{name}</span>
-        </ExecutionAction>
+      {frame === 'inline' ? (
+        <AppSurface
+          client={client}
+          sid={sid}
+          viewId={viewId}
+          fallbackTitle={name}
+          isInline
+          onView={onView}
+          onFullScreen={() => go('full')}
+          onClose={() => go('close')}
+        />
       ) : (
-        <ListRow onClick={open} title={name} aria-label={`Open app ${name}`}>
-          <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">APP</span>
-          <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">{name}</span>
-        </ListRow>
+        row
+      )}
+      {frame === 'full' && (
+        <AppSurface
+          client={client}
+          sid={sid}
+          viewId={viewId}
+          fallbackTitle={name}
+          onView={onView}
+          // Escape leaves full screen first: back to the turn, or to the row.
+          closeLabel={inline ? `Leave full screen ${name}` : undefined}
+          onClose={() => go('escape')}
+        />
       )}
     </div>
   );
 });
 
 /** One app of the session list, with its title and state. */
-export function AppListRow({ view, onOpen }: { view: LiveViewModel; onOpen: (view: LiveViewModel) => void }) {
+export function AppListRow({
+  view,
+  stateWord = appStateWord,
+  onOpen,
+}: {
+  view: LiveViewModel;
+  stateWord?: (view: LiveViewModel) => string;
+  onOpen: (view: LiveViewModel) => void;
+}) {
   return (
-    <ListRow onClick={() => onOpen(view)} title={view.title} aria-label={`Open app ${view.title}`}>
+    <ListRow onClick={() => onOpen(view)} title={view.title} aria-label={`Open app ${view.title}`} className={APP_ROW_FOCUS}>
       <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">APP</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-chip text-white">{view.title}</span>
-      <span className="shrink-0 font-mono text-chip text-footer-muted">{appStateWord(view)}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-ui text-white">{view.title}</span>
+      <span className="shrink-0 font-mono text-meta text-footer-muted">{stateWord(view)}</span>
     </ListRow>
+  );
+}
+
+/**
+ * The session apps list of the header button. It lists each app whose session
+ * surface is not `off`; a pick opens the app where its surface says.
+ */
+export function SessionAppsDialog({
+  apps,
+  onPick,
+  onClose,
+}: {
+  apps: readonly LiveViewModel[];
+  onPick: (view: LiveViewModel) => void;
+  onClose: () => void;
+}) {
+  return (
+    <AppsListDialog
+      title="Session apps"
+      empty="No app of this session shows here."
+      within="session"
+      apps={apps}
+      onPick={onPick}
+      onClose={onClose}
+    />
+  );
+}
+
+/** A list of apps in a dialog. A pick opens one app; Escape closes the list. */
+export function AppsListDialog({
+  title,
+  empty,
+  within,
+  apps,
+  stateWord,
+  onPick,
+  onClose,
+}: {
+  title: string;
+  /** The note of an empty list. */
+  empty: string;
+  within: 'app' | 'session';
+  apps: readonly LiveViewModel[];
+  stateWord?: (view: LiveViewModel) => string;
+  onPick: (view: LiveViewModel) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !event.defaultPrevented) onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <Modal within={within} size="fit" onDismiss={onClose}>
+      <DialogFrame title={title} closeLabel={`Close ${title.toLowerCase()}`} onClose={onClose}>
+        {apps.length === 0 ? (
+          <p role="status" className="p-4 font-mono text-meta text-dialog-hint">
+            {empty}
+          </p>
+        ) : (
+          <ul aria-label={title} className="min-w-0">
+            {apps.map((view) => (
+              <li key={view.id}>
+                <AppListRow view={view} stateWord={stateWord} onOpen={onPick} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </DialogFrame>
+    </Modal>
   );
 }
 
@@ -575,6 +763,14 @@ export function useSessionApps(client: GatewayClient, sid: string): LiveViewMode
       });
     return () => controller.abort();
   }, [client, sid, generation, setApps]);
+
+  useEffect(
+    () =>
+      onSettingChange(client.base, (updated) => {
+        if (isAppSurfaceSetting(updated.id)) setGeneration((one) => one + 1);
+      }),
+    [client],
+  );
 
   useEffect(() => {
     if (!hub) return;

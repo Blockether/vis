@@ -21,6 +21,12 @@ export type WireApp = {
   shortcuts?: Record<string, unknown>[];
   is_closed?: boolean;
   description?: string;
+  /** Where the app shows, as the engine sends it after the settings. */
+  surfaces?: { inline: boolean; session: 'sidebar' | 'chat' | 'off' };
+  key?: string;
+  scope?: 'global';
+  /** The saved picture of an app whose owner is not connected. */
+  is_stale?: boolean;
 };
 
 /** What an app does with one action. */
@@ -101,12 +107,24 @@ export class StoryAppHost<S> {
       listener(true);
       return () => undefined;
     },
+    // A global app follows the fleet stream. Its frames name no session.
+    subscribeFleet: (listener: (event: SseEvent) => void) => {
+      this.listeners.add(listener);
+      return () => this.listeners.delete(listener);
+    },
+    subscribeFleetState: (listener: (streaming: boolean) => void) => {
+      listener(true);
+      return () => undefined;
+    },
   } as unknown as SessionSubscriptionHub;
 
   readonly client = {
     liveView: async (_sid: string, viewId: string) =>
       viewId === this.picture.id ? liveViewFromWire({ ...this.wire(), ...(this.isOwnerGone ? { is_stale: true } : {}) }) : null,
     viewAction: async (_sid: string, _viewId: string, action: ViewAction) => this.handle(action),
+    globalApp: async (viewId: string) =>
+      viewId === this.picture.id ? liveViewFromWire({ ...this.wire(), ...(this.isOwnerGone ? { is_stale: true } : {}) }) : null,
+    globalAppAction: async (_viewId: string, action: ViewAction) => this.handle(action),
     liveViewLog: async (_sid: string, _viewId: string, nodeId: string, from: number, limit: number) =>
       this.page(nodeId, from, limit),
   } as unknown as GatewayClient;

@@ -64,6 +64,15 @@ export const ActiveGoal: Story = {
   },
 };
 
+/** A session with live views and apps: the apps button stands next to the live panel button. */
+export const WithApps: Story = {
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  args: {
+    panel: { isOpen: false, onToggle: () => {} },
+    apps: { count: 2, isOpen: false, onOpen: () => {} },
+  },
+};
+
 /** A subagent session names its path from the leader, like the TUI header. The path opens the parent. */
 export const Subagent: Story = {
   args: {

@@ -60,6 +60,9 @@ import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../componen
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
 import { useCommands } from '../lib/commands';
+import { SessionAppsDialog, SessionAppViewsContext, useSessionApps } from '../components/AppAttachment';
+import { SessionAppSlot } from '../components/SessionAppSlot';
+import { pickedSessionApp, sessionApps } from '../lib/app-surfaces';
 import { FilePreview } from '../components/FilePreview';
 import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { JumpToLatestButton } from '../components/JumpToLatestButton';
@@ -4809,7 +4812,15 @@ export function SessionScreen({
   // A tablet or a desk docks the panel beside the transcript. A phone opens it as a sheet.
   const docksPanel = useMediaMatch('(min-width: 48rem)');
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null);
-  const isPanelOpen = panelViews.length > 0 && (panelChoice ?? docksPanel);
+  // The session apps of the header button. The list follows settings, so a saved app
+  // setting moves an opened app or takes it out.
+  const sessionAppViews = useSessionApps(client, sid);
+  const listedApps = useMemo(() => sessionApps(sessionAppViews), [sessionAppViews]);
+  const [appsListOpen, setAppsListOpen] = useState(false);
+  const [pickedAppId, setPickedAppId] = useState<string | null>(null);
+  const pickedApp = pickedSessionApp(sessionAppViews, pickedAppId, docksPanel);
+  // The side panel holds one thing: an app picked into it replaces the live views.
+  const isPanelOpen = panelViews.length > 0 && (panelChoice ?? docksPanel) && pickedApp?.slot !== 'sidebar';
   const watching = liveViews.at(-1)?.title ?? null;
   // The sender's own copy of a recording has its bytes but not the local transcript
   // the gateway started at upload. Revalidate while that transcript is pending; the
@@ -5579,12 +5590,22 @@ export function SessionScreen({
       setArtifactsOpen((was) => !was);
     },
   };
+  const togglePanel = () => {
+    if (pickedApp?.slot === 'sidebar') setPickedAppId(null);
+    setPanelChoice(!isPanelOpen);
+  };
+  const closeApp = () => setPickedAppId(null);
+  const pickApp = (view: { id: string }) => {
+    setAppsListOpen(false);
+    setPickedAppId(view.id);
+  };
   // The C-x keys and the command palette run the same actions as the controls above.
   const parentId = isSubagent ? session?.agent?.parent_id : undefined;
   useCommands({
     recenter: () => scrollToEnd('smooth'),
     'toggle-zen-mode': () => setZenMode(!zen),
-    'live-panel': panelViews.length > 0 && (() => setPanelChoice(!isPanelOpen)),
+    'live-panel': panelViews.length > 0 && (() => togglePanel()),
+    'session-apps': listedApps.length > 0 && (() => setAppsListOpen(true)),
     providers: onManageProviders && (() => onManageProviders()),
     'toggle-voice-recording': voiceSupported && (() => void toggleVoice()),
     'toggle-voice-conversation': voiceSupported && (() => void switchVoiceMode()),
@@ -5594,6 +5615,7 @@ export function SessionScreen({
 
   const screen = (
     <AttachImageContext.Provider value={attachCapturedImage}>
+      <SessionAppViewsContext.Provider value={sessionAppViews}>
       <WorkspaceRootsContext.Provider value={workspaceRoots}>
         <div className="flex h-full min-h-0 w-full">
         <section
@@ -5625,10 +5647,21 @@ export function SessionScreen({
               sidebar={sidebar}
               panel={
                 panelViews.length > 0
-                  ? { isOpen: isPanelOpen, onToggle: () => setPanelChoice(!isPanelOpen) }
+                  ? { isOpen: isPanelOpen, onToggle: togglePanel }
+                  : undefined
+              }
+              apps={
+                listedApps.length > 0
+                  ? { count: listedApps.length, isOpen: appsListOpen || pickedApp !== null, onOpen: () => setAppsListOpen(true) }
                   : undefined
               }
             />
+          )}
+          {appsListOpen && (
+            <SessionAppsDialog apps={listedApps} onPick={pickApp} onClose={() => setAppsListOpen(false)} />
+          )}
+          {pickedApp?.slot === 'sheet' && (
+            <SessionAppSlot client={client} sid={sid} view={pickedApp.view} slot="sheet" onClose={closeApp} />
           )}
           {isPanelOpen && !docksPanel && (
             <div className="absolute inset-0 z-30 flex flex-col bg-panel pt-[env(safe-area-inset-top)]">
@@ -5789,6 +5822,9 @@ export function SessionScreen({
                   onJump={jumpToTurn}
                 />
               </div>
+            )}
+            {pickedApp?.slot === 'chat' && (
+              <SessionAppSlot client={client} sid={sid} view={pickedApp.view} slot="chat" onClose={closeApp} />
             )}
             {loading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-ink">
@@ -6207,6 +6243,9 @@ export function SessionScreen({
             )}
           </footer>
         </section>
+          {pickedApp?.slot === 'sidebar' && (
+            <SessionAppSlot client={client} sid={sid} view={pickedApp.view} slot="sidebar" onClose={closeApp} />
+          )}
           {isPanelOpen && docksPanel && (
             <ResizablePanel>
               <LivePanel
@@ -6219,6 +6258,7 @@ export function SessionScreen({
           )}
         </div>
       </WorkspaceRootsContext.Provider>
+      </SessionAppViewsContext.Provider>
     </AttachImageContext.Provider>
   );
   return (
