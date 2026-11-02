@@ -20,6 +20,7 @@
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.loop.compaction :as compaction]
             [com.blockether.vis.internal.loop.iteration :as iteration]
@@ -122,8 +123,9 @@
    any LLM round-trip. Returns the same shape `iteration-loop` would
    have produced (so callers don't special-case slash turns).
 
-   The synthetic iteration row is persisted for audit/history."
-  [env user-request slash-result loop-opts]
+   The synthetic iteration row is persisted for audit/history. It also stores
+   `attachments`, the rows that the command recorded, such as the app that it opened."
+  [env user-request slash-result attachments loop-opts]
   (let [db-info
         (:db-info env)
 
@@ -190,6 +192,7 @@
                                              :llm-full-duration-ms 0
                                              :thinking ""
                                              :answer answer-md
+                                             :attachments attachments
                                              :llm-messages []
                                              :llm-returned-empty-code? false})
            (catch Throwable t
@@ -772,17 +775,23 @@
         resume
         (:resume loop-opts)
 
+        ;; What the command records, such as the row of an app that it opens. The slash
+        ;; step stores it, so the transcript lists it in that turn.
+        slash-attachments
+        (atom [])
+
         ;; A resumed parked turn already passed its slash, template and shell dispatch.
         slash-result
         (when-not resume
-          (extension/with-context
-            {:env env}
-            (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
-                 (catch Throwable t
-                   (tel/log! {:level :warn
-                              :id ::slash-dispatch-threw
-                              :data {:user-request user-request :error (ex-message t)}})
-                   {:handled? false}))))]
+          (binding [mpl-capture/*attachment-sink* slash-attachments]
+            (extension/with-context
+              {:env env}
+              (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
+                   (catch Throwable t
+                     (tel/log! {:level :warn
+                                :id ::slash-dispatch-threw
+                                :data {:user-request user-request :error (ex-message t)}})
+                     {:handled? false})))))]
 
     (cond resume
           ;; It continues with the request text that its turn row stores.
@@ -817,7 +826,7 @@
                                (= :ok (get-in slash-result [:result :slash/status]))
                                (true? (get-in slash-result [:result :slash/data :goal-run?])))
                         (run-normal-turn! env user-request loop-opts)
-                        (run-slash-turn! env user-request slash-result loop-opts)))
+                        (run-slash-turn! env user-request slash-result @slash-attachments loop-opts)))
                     (run-normal-turn! env user-request loop-opts))))))
 
 (defn custom-bindings

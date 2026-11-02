@@ -1,6 +1,6 @@
 /**
  * An app attachment: a card in the transcript and the full app surface that it
- * opens. The surface reads the app from the gateway, folds the session events of
+ * opens in its place. The surface reads the app from the gateway, folds the session events of
  * its view and saves through `draft`, `change` and `submit` actions.
  */
 
@@ -27,7 +27,7 @@ import type { IterationAttachment } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
 import { ActionStatus, type AppNodeActions } from './AppNodes';
 import { LiveViewPanel, RunDialog } from './LiveView';
-import { BandLabel, ExecutionAction, KeyCap, ListRow } from './ui';
+import { BandLabel, DialogHeader, ExecutionAction, KeyCap, ListRow } from './ui';
 
 /** Read the app again this long after an acknowledged action that no patch followed. */
 export const APP_ECHO_WAIT_MS = 1500;
@@ -238,18 +238,25 @@ function KeyLegend({
   );
 }
 
-/** The opened app: its title in the dialog band and its nodes in the shared renderer. */
+/**
+ * The opened app: its title in a band and its nodes in the shared renderer.
+ * In the transcript it opens in place of its row (`isInline`); the Artifacts
+ * sheet opens it in the session dialog.
+ */
 export function AppSurface({
   client,
   sid,
   viewId,
   fallbackTitle,
+  isInline = false,
   onClose,
 }: {
   client: GatewayClient;
   sid: string;
   viewId: string;
   fallbackTitle: string;
+  /** Open in the transcript, where the row was, not in a dialog. */
+  isInline?: boolean;
   onClose: () => void;
 }) {
   const hub = useContext(SessionEventsContext);
@@ -383,11 +390,15 @@ export function AppSurface({
     if (shortcuts.length === 0) return;
     function onKey(event: KeyboardEvent) {
       if (event.defaultPrevented) return;
-      // The key belongs to this app only when nothing else holds the focus: the
-      // page itself, the row that opened the app, or any control inside this
-      // app's own dialog. A dialog opened over the app keeps its keys.
+      // In a dialog, the key belongs to this app when nothing else holds the focus:
+      // the page itself, the row that opened the app, or any control inside this
+      // app's own dialog. A dialog opened over the app keeps its keys. In the
+      // transcript, only a focus inside the app gives it the key, so the page keeps
+      // its scroll keys and two open apps never share one press.
       const target = event.target;
-      if (!isAppKeyTarget(target, surface.current?.closest('[role="dialog"]') ?? null, opener.current)) return;
+      const frame = surface.current?.closest(isInline ? '[data-app-frame]' : '[role="dialog"]') ?? null;
+      if (isInline ? !(target instanceof Node && frame?.contains(target)) : !isAppKeyTarget(target, frame, opener.current))
+        return;
       // Enter and Space on a focused control press that control, as they always do.
       if (
         (event.key === 'Enter' || event.key === ' ') &&
@@ -402,63 +413,85 @@ export function AppSurface({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [shortcuts, press]);
+  }, [shortcuts, press, isInline]);
 
   const title = view?.title || fallbackTitle;
   const state = view ? appStateWord(view) : '';
-  return (
-    <RunDialog
-      title={title}
-      subtitle={
-        view ? (
-          <span className="flex items-center gap-2">
-            <span>{state}</span>
-            {/* A read-only app says why in its state word; an old refusal adds nothing. */}
-            <ActionStatus status={isReadOnly ? 'idle' : formStatus} isOnBand />
-          </span>
-        ) : undefined
-      }
-      footer={
-        view && shortcuts.length > 0 ? (
-          <KeyLegend shortcuts={shortcuts} nodes={view.nodes} lit={lit} onPress={press} />
-        ) : undefined
-      }
-      onClose={onClose}
+  const subtitle = view ? (
+    <span className="flex items-center gap-2">
+      <span>{state}</span>
+      {/* A read-only app says why in its state word; an old refusal adds nothing. */}
+      <ActionStatus status={isReadOnly ? 'idle' : formStatus} isOnBand />
+    </span>
+  ) : undefined;
+  const footer =
+    view && shortcuts.length > 0 ? (
+      <KeyLegend shortcuts={shortcuts} nodes={view.nodes} lit={lit} onPress={press} />
+    ) : undefined;
+  const body = (
+    <div
+      ref={attachSurface}
+      tabIndex={-1}
+      className={`min-w-0 focus:outline-none ${isInline ? '' : 'min-h-0 flex-1 overflow-y-auto'}`}
+      data-app-surface={viewId}
     >
-      <div
-        ref={attachSurface}
-        tabIndex={-1}
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto focus:outline-none"
-        data-app-surface={viewId}
+      {view ? (
+        <LiveViewPanel
+          view={view}
+          inDialog
+          isSettled={view.is_closed === true}
+          app={actions}
+          errors={fieldErrors}
+          onActivate={isReadOnly ? undefined : onActivate}
+          onSelect={isReadOnly ? undefined : onSelect}
+          onChange={isReadOnly ? undefined : onChange}
+          onSubmit={isReadOnly ? undefined : onSubmit}
+          load={(nodeId, from, limit, query) =>
+            client.liveViewLog(sid, viewId, nodeId, from, limit, query)
+          }
+        />
+      ) : (
+        <p role="status" className="p-4 font-mono text-meta text-dialog-hint">
+          {isMissing ? 'This app could not be read.' : 'Loading…'}
+        </p>
+      )}
+    </div>
+  );
+  if (isInline) {
+    return (
+      // Escape inside the app closes it, as it closes the dialog. An armed control
+      // inside stops the key first.
+      <section
+        aria-label={title}
+        data-app-frame={viewId}
+        className="flex min-w-0 flex-col border border-dialog-edge bg-panel"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && !event.defaultPrevented) {
+            event.preventDefault();
+            onClose();
+          }
+        }}
       >
-        {view ? (
-          <LiveViewPanel
-            view={view}
-            inDialog
-            isSettled={view.is_closed === true}
-            app={actions}
-            errors={fieldErrors}
-            onActivate={isReadOnly ? undefined : onActivate}
-            onSelect={isReadOnly ? undefined : onSelect}
-            onChange={isReadOnly ? undefined : onChange}
-            onSubmit={isReadOnly ? undefined : onSubmit}
-            load={(nodeId, from, limit, query) =>
-              client.liveViewLog(sid, viewId, nodeId, from, limit, query)
-            }
-          />
-        ) : (
-          <p role="status" className="p-4 font-mono text-meta text-dialog-hint">
-            {isMissing ? 'This app could not be read.' : 'Loading…'}
-          </p>
+        <DialogHeader title={title} isTitleTruncated subtitle={subtitle} closeLabel={`Close app ${title}`} onClose={onClose} />
+        <div className="border-t border-dialog-edge">{body}</div>
+        {footer && (
+          <footer className="border-t border-dialog-edge bg-panel-2 px-4 py-2 font-mono text-meta text-dialog-hint">
+            {footer}
+          </footer>
         )}
-      </div>
+      </section>
+    );
+  }
+  return (
+    <RunDialog title={title} subtitle={subtitle} footer={footer} onClose={onClose}>
+      {body}
     </RunDialog>
   );
 }
 
 /**
- * An app in the transcript: one row that names it and opens it. The row reads
- * nothing until it opens; the title comes from the app once it is read.
+ * An app in the transcript: one row that names it and opens it in its place.
+ * The row reads nothing until it opens; the title comes from the app once it is read.
  */
 export const AppAttachmentRow = memo(function AppAttachmentRow({
   client,
@@ -474,12 +507,19 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
   const viewId = attachment.view_id ?? '';
   const name = appFallbackTitle(attachment.filename);
   const [opened, setOpened] = useStickyOverlay(`app:${viewId}`);
-  const close = useCallback(() => setOpened(false), [setOpened]);
+  const place = useRef<HTMLDivElement | null>(null);
+  // The app replaces its row, so a close gives the focus to the row that comes back.
+  const close = useCallback(() => {
+    setOpened(false);
+    requestAnimationFrame(() => place.current?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true }));
+  }, [setOpened]);
   const open = useCallback(() => setOpened(true), [setOpened]);
   if (!viewId) return null;
   return (
-    <>
-      {embedded ? (
+    <div ref={place} className="min-w-0">
+      {opened ? (
+        <AppSurface client={client} sid={sid} viewId={viewId} fallbackTitle={name} isInline onClose={close} />
+      ) : embedded ? (
         <ExecutionAction onClick={open} aria-label={`Open app ${name}`}>
           <BandLabel>APP</BandLabel>
           <span className="min-w-0 flex-1 truncate">{name}</span>
@@ -490,10 +530,7 @@ export const AppAttachmentRow = memo(function AppAttachmentRow({
           <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">{name}</span>
         </ListRow>
       )}
-      {opened && (
-        <AppSurface client={client} sid={sid} viewId={viewId} fallbackTitle={name} onClose={close} />
-      )}
-    </>
+    </div>
   );
 });
 

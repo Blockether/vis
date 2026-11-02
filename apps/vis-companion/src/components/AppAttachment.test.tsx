@@ -9,9 +9,9 @@ import { GatewayError } from '../lib/gateway';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import { SessionEventsContext } from '../lib/session-events';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { SseEvent } from '../lib/types';
+import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
-import { AppSurface, useSessionApps } from './AppAttachment';
+import { AppAttachmentRow, AppSurface, useSessionApps } from './AppAttachment';
 import { StoryAppHost, TODO, type StoryApp } from '../dev/story-apps';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT } from '../lib/view';
 
@@ -386,6 +386,36 @@ function wizard(seq: number, extra: Record<string, unknown> = {}): LiveView {
   if (!parsed) throw new Error('fixture must parse');
   return parsed;
 }
+
+describe('AppAttachmentRow in the transcript', () => {
+  // User report 2026-11-02: an app opened from its transcript row covered the session in a
+  // dialog; it must open where its row was. Keys go to it only while the focus is inside it.
+  it('opens the app in place of its row, takes keys only from inside and gives the row back', async () => {
+    const { client, viewAction } = fakeClient([game(3)], accepted);
+    const attachment = { view_id: 'app-1', filename: 'counter.app.json' } as unknown as IterationAttachment;
+    render(
+      <SessionEventsContext.Provider value={null}>
+        <div data-session-surface>
+          <AppAttachmentRow client={client} sid="s1" attachment={attachment} />
+        </div>
+      </SessionEventsContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open app counter' }));
+    await screen.findByRole('toolbar', { name: 'App keys' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open app counter' })).toBeNull();
+    const surface = document.querySelector<HTMLElement>('[data-app-surface="app-1"]');
+    expect(document.activeElement).toBe(surface);
+    // The page keeps its own keys.
+    fireEvent.keyDown(document.body, { key: 'ArrowUp' });
+    fireEvent.keyDown(surface!, { key: 'ArrowUp' });
+    await waitFor(() => expect(viewAction).toHaveBeenCalledTimes(1));
+    expect(viewAction.mock.calls[0][2]).toEqual({ action: 'shortcut', key: 'ArrowUp' });
+    fireEvent.keyDown(surface!, { key: 'Escape' });
+    const row = await screen.findByRole('button', { name: 'Open app counter' });
+    await waitFor(() => expect(document.activeElement).toBe(row));
+  });
+});
 
 describe('AppSurface focus, names and owner loss', () => {
   it('takes the focus when it opens and gives it back to the opener when it closes', async () => {

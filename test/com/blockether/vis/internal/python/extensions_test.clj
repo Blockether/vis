@@ -1418,6 +1418,50 @@
                ;; Like a tool, the callback ran in the session's trusted worker.
                (expect (some? (:context (get @@#'pyx/session-contexts [ctx "slashroot"]))))
                (finally (ep/dispose-python-context! ctx)))))))
+  ;; User report 2026-11-02: `/apps` opened live apps, but the transcript showed no app
+  ;; row. Only the Artifacts sheet listed them, because the slash step stored no row.
+  (it
+    "files the row of an app that a slash command opens on the slash step"
+    (with-loaded
+      {"slashapp.py"
+       "import blockether.vis.extension as vis\ndef open_game(ctx):\n    vis.attach(vis.ui.app('Game', vis.ui.thread('general')))\n    return vis.ok('Game is open')\nvis.register_extension(vis.Extension(name='slashapp', description='slashapp', slash_commands=[vis.SlashCommand('open-game', open_game)]))"}
+      (fn [_ {:keys [store]}]
+        (let [root
+              (.getCanonicalPath ^java.io.File (temp-dir))
+
+              ws
+              (ps/db-workspace-insert! store {:repo-id "slashapp" :repo-root root :root root :fork-ms 0})
+
+              sid
+              (ps/db-store-session! store
+                                    {:channel :tui :workspace-id (:id ws) :title "slashapp" :system-prompt ""})
+
+              ctx
+              (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+              env
+              {:python-context ctx
+               :db-info store
+               :session-id sid
+               :channel :tui
+               :extensions (atom [(registered "slashapp")])
+               :active-extensions (atom [])
+               :workspace-atom (atom ws)
+               :ctx-atom (ctx-loop/make-ctx-atom sid)
+               :turn-state-atom (ctx-loop/make-turn-state-atom)}]
+
+          (try (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                                (constantly (io/file root "views"))}
+                 #(let [result
+                        (turn/run-turn! env "/open-game" {})
+
+                        [iteration]
+                        (ps/db-list-session-turn-iterations store (:session-turn-id result))]
+
+                    (expect (= :ok (get-in result [:slash :result :slash/status])) (pr-str (:slash result)))
+                    (expect (= ["application/vnd.vis.app+json"]
+                               (mapv :media-type (ps/db-list-iteration-attachments-meta store (:id iteration)))))))
+               (finally (ep/dispose-python-context! ctx)))))))
   (it "lets an extension thread drive its views but not open one"
       ;; A worker thread of an extension repaints its board between callbacks.
       (let [live
