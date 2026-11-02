@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Provider: conversations on the direct Anthropic API use Message Threads by default. Vis sends only the new messages while a thread is available. Set `extra_body.thread` to `null` to disable threads, for example for zero data retention. Svar is pinned at 0.7.221.
+
 ## [v0.5.0] - 2026-11-02
 
 ### Changed
