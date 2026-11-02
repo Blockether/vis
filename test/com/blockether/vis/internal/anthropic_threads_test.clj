@@ -47,7 +47,7 @@
 (defdescribe
   anthropic-vis-thread-test
   (it
-    "continues cached turns and closes the thread when the call opts out"
+    "uses threads by default and closes the thread when the call opts out"
     (let [seen
           (atom [])
 
@@ -55,7 +55,7 @@
           (atom nil)
 
           environment
-          {:router (router {:thread {:type "create"}}) :llm-session-atom session-atom}
+          {:router (router {}) :llm-session-atom session-atom}
 
           resolved
           {:provider :anthropic :name "claude-sonnet-4-6"}
@@ -91,7 +91,7 @@
             (expect (= 7 (count (:messages (last @seen)))))
             (expect (nil? @session-atom)))
           (finally (transcript/close-llm-session! session-atom))))))
-  (it "keeps Anthropic unthreaded without explicit opt-in"
+  (it "keeps Anthropic unthreaded with an explicit provider opt-out"
       (let [seen
             (atom [])
 
@@ -100,7 +100,7 @@
 
         (with-redefs [http/post (fixture seen)]
           (let [result (transcript/ask-code-with-session!
-                         {:router (router {}) :llm-session-atom session-atom}
+                         {:router (router {"thread" nil}) :llm-session-atom session-atom}
                          {:provider :anthropic :name "claude-sonnet-4-6"}
                          {:messages [(svar/user "one")]})]
             (expect (= "answer1" (:content result)))

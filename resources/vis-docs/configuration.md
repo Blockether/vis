@@ -286,26 +286,26 @@ provider are appended after them.
 
 ### Reduce latency with Anthropic threads
 
-Do not enable threads if you require zero data retention (ZDR).
+Disable threads if you require zero data retention (ZDR).
 Anthropic keeps encrypted conversation data in memory for up to one hour after its last use.
 There is no API to delete a thread.
 
-For long conversations on the direct Anthropic API, enable Message Threads:
+Vis enables Message Threads by default for conversations on the direct Anthropic API.
+To disable threads, set `extra_body.thread` to `null`:
 
 ```yaml
 providers:
   - id: anthropic
     api_key: ${ANTHROPIC_API_KEY}
     extra_body:
-      thread:
-        type: create
+      thread: null
 ```
 
 Vis keeps the full history locally and sends only new messages while a thread is available.
 After five idle minutes, or after compaction, Svar creates a new thread from that history.
 Prompt caching stays active and independent of threads.
 Token prices and rate limits do not change.
-Remove `extra_body.thread` to use ordinary requests again.
+Remove `extra_body.thread` to enable threads again.
 
 This integration supports the direct Anthropic API, not coding-plan OAuth or compatible proxies.
 See [Anthropic's Message Threads documentation](https://platform.claude.com/docs/en/build-with-claude/message-threads).

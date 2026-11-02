@@ -3035,7 +3035,7 @@
 
 (defn ask-code-with-session!
   "Keep one opaque Svar session when the effective route enables it.
-   Anthropic threads require an explicit provider or call option; cache stays separate."
+   Anthropic threads open by default unless explicitly disabled. Cache stays separate."
   [environment resolved-model ask-opts]
   (let [provider
         (:provider resolved-model)

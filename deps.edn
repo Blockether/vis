@@ -21,7 +21,7 @@
         ;; Names the wrong quote or bracket when Python refuses a `python_execution` block.
         com.blockether/parinferish {:mvn/version "0.2.4"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
-        com.blockether/svar {:git/sha "444331b0ef0d7ee9caf194443ec549abe23c4c37"
+        com.blockether/svar {:git/sha "87b14837bddcbfe8a6a7fcc62ab853da10aabf0d"
                              :git/url "https://github.com/Blockether/svar"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.
