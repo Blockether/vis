@@ -699,6 +699,18 @@
 ;; restart ends the question with its turn.
 (defonce ^:private questions (atom {}))
 
+(defn- request-changed
+  "Watch of `questions`: tell the runtime about each child whose open request opened, changed or
+   closed, so its team row changes at once."
+  [_ _ old new]
+  (when-let [changed! (get @runtime :changed!)]
+    (doseq [sid (into (set (keys old)) (keys new))
+            :when (not= (get old sid) (get new sid))]
+
+      (changed! sid))))
+
+(add-watch questions ::request-changed #'request-changed)
+
 (defn open-request
   "The open question that child `sid` waits on its parent to answer, or nil: `{:question text
    :entry_id id}`, plus `:budget` or `:files` for a budget or file request."
@@ -814,17 +826,18 @@
   [row now]
   (max (long (or (:created_at row) now)) (long (or (:resumed_at row) 0))))
 
-(defn- current-steps
-  "The turn of child `row` for its current task and the steps of that turn, as `[turn steps]`.
-   A forked child's copied turns are older than its task, so they never count."
+(defn- current-turn
+  "The turn metadata of child `row` for its current task, or nil. A forked child's copied turns
+   are older than its task, so they never count."
   [db row now]
-  (let [since
-        (- (long (started-at row now)) 1000)
+  (let [since (- (long (started-at row now)) 1000)]
+    (last (filter #(>= (long (or (epoch-ms (:created-at %)) 0)) since)
+                  (ps/db-list-session-turns-meta db (:session_id row))))))
 
-        turn
-        (last (filter #(>= (long (or (epoch-ms (:created-at %)) 0)) since)
-                      (ps/db-list-session-turns-meta db (:session_id row))))]
-
+(defn- current-steps
+  "The turn of child `row` for its current task and the steps of that turn, as `[turn steps]`."
+  [db row now]
+  (let [turn (current-turn db row now)]
     [turn
      (if turn
        (vec (sort-by #(long (or (:position %) 0))
@@ -835,8 +848,8 @@
   "The newest progress note of child `row` in its current task, clipped, or nil. The leader reads
    the same notes when it waits, and the team rows show the newest one."
   [db row now]
-  (let [[_ steps] (current-steps db row now)]
-    (some-> (some #(when-not (str/blank? (:assistant-prose %)) (:assistant-prose %)) (rseq steps))
+  (when-let [turn (current-turn db row now)]
+    (some-> (ps/db-latest-turn-prose db (:id turn))
             (clip 300))))
 
 (defn- fresh-steps

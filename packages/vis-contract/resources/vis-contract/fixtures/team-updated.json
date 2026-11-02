@@ -1,0 +1,177 @@
+{
+  "description": "The rows of one leader's agent team. `base` is the GET /v1/sessions/:sid/agents answer. Each `events` item is a session.team_updated payload (team_update shape). `merged` is the row list after a client applies the events in order: a row with a known session_id replaces that row in place, and a row with an unknown session_id goes at the end. The last event repeats an earlier one and changes nothing.",
+  "base": [
+    {
+      "session_id": "child-a",
+      "parent_id": "lead",
+      "leader_id": "lead",
+      "team_id": "team-1",
+      "task": "Task of child-a",
+      "status": "running",
+      "iteration_budget": 20,
+      "iterations_used": 2,
+      "created_at": 1000,
+      "note": "Reading the gateway routes.",
+      "activity": "Read ~/vis/src/a.clj"
+    },
+    {
+      "session_id": "child-b",
+      "parent_id": "lead",
+      "leader_id": "lead",
+      "team_id": "team-1",
+      "task": "Task of child-b",
+      "status": "queued",
+      "iteration_budget": 20,
+      "iterations_used": 0,
+      "created_at": 2000
+    }
+  ],
+  "events": [
+    {
+      "team": {
+        "active": 2,
+        "total": 2
+      },
+      "child_id": "child-a",
+      "agents": [
+        {
+          "session_id": "child-a",
+          "parent_id": "lead",
+          "leader_id": "lead",
+          "team_id": "team-1",
+          "task": "Task of child-a",
+          "status": "running",
+          "iteration_budget": 20,
+          "iterations_used": 3,
+          "created_at": 1000,
+          "note": "Patching the poll.",
+          "activity": "Patched ~/vis/src/a.clj",
+          "question": "May I edit server.clj?",
+          "question_entry_id": 41
+        }
+      ]
+    },
+    {
+      "team": {
+        "active": 3,
+        "total": 3
+      },
+      "child_id": "child-c",
+      "agents": [
+        {
+          "session_id": "child-c",
+          "parent_id": "lead",
+          "leader_id": "lead",
+          "team_id": "team-1",
+          "task": "Task of child-c",
+          "status": "running",
+          "iteration_budget": 20,
+          "iterations_used": 0,
+          "created_at": 3000
+        }
+      ]
+    },
+    {
+      "team": {
+        "active": 2,
+        "total": 3
+      },
+      "child_id": "child-b",
+      "agents": [
+        {
+          "session_id": "child-b",
+          "parent_id": "lead",
+          "leader_id": "lead",
+          "team_id": "team-1",
+          "task": "Task of child-b",
+          "status": "completed",
+          "iteration_budget": 20,
+          "iterations_used": 4,
+          "created_at": 2000,
+          "finished_at": 9000,
+          "result": "Done.",
+          "outcome": "passed"
+        }
+      ]
+    },
+    {
+      "team": {
+        "active": 2,
+        "total": 3
+      },
+      "agents": [
+        {
+          "session_id": "child-a",
+          "parent_id": "lead",
+          "leader_id": "lead",
+          "team_id": "team-1",
+          "task": "Task of child-a",
+          "status": "running",
+          "iteration_budget": 20,
+          "iterations_used": 3,
+          "created_at": 1000,
+          "note": "Patching the poll.",
+          "activity": "Patched ~/vis/src/a.clj",
+          "question": "May I edit server.clj?",
+          "question_entry_id": 41
+        },
+        {
+          "session_id": "child-b",
+          "parent_id": "lead",
+          "leader_id": "lead",
+          "team_id": "team-1",
+          "task": "Task of child-b",
+          "status": "completed",
+          "iteration_budget": 20,
+          "iterations_used": 4,
+          "created_at": 2000,
+          "finished_at": 9000,
+          "result": "Done.",
+          "outcome": "passed"
+        }
+      ]
+    }
+  ],
+  "merged": [
+    {
+      "session_id": "child-a",
+      "parent_id": "lead",
+      "leader_id": "lead",
+      "team_id": "team-1",
+      "task": "Task of child-a",
+      "status": "running",
+      "iteration_budget": 20,
+      "iterations_used": 3,
+      "created_at": 1000,
+      "note": "Patching the poll.",
+      "activity": "Patched ~/vis/src/a.clj",
+      "question": "May I edit server.clj?",
+      "question_entry_id": 41
+    },
+    {
+      "session_id": "child-b",
+      "parent_id": "lead",
+      "leader_id": "lead",
+      "team_id": "team-1",
+      "task": "Task of child-b",
+      "status": "completed",
+      "iteration_budget": 20,
+      "iterations_used": 4,
+      "created_at": 2000,
+      "finished_at": 9000,
+      "result": "Done.",
+      "outcome": "passed"
+    },
+    {
+      "session_id": "child-c",
+      "parent_id": "lead",
+      "leader_id": "lead",
+      "team_id": "team-1",
+      "task": "Task of child-c",
+      "status": "running",
+      "iteration_budget": 20,
+      "iterations_used": 0,
+      "created_at": 3000
+    }
+  ]
+}

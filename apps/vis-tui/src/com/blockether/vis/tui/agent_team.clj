@@ -24,15 +24,107 @@
 
 (defonce ^:private snapshots (atom {}))
 
-(defonce ^:private wakes
-  ;; Sessions whose team changed on the gateway. The refresh worker reads them at once.
-  (atom #{}))
+(defonce ^:private pending
+  ;; Work for the refresh worker, by session id. Only the worker takes it.
+  ;; `:read` is the number of the newest full read request, and `:forced?` reads also when the
+  ;; team summary counts no agents. `:setting?` reads the Subagents setting again. `:updates`
+  ;; holds the `agents` rows of the `session.team_updated` events, merged in arrival order, so
+  ;; it has at most one row for each agent. `:team` is the newest team summary, and `:lost?`
+  ;; marks a dropped event stream.
+  (atom {}))
+
+(defonce ^:private read-numbers
+  ;; One counter numbers the read requests and the reads. A read covers each request with a
+  ;; lower number, so a request made before a read starts never costs a second read.
+  (java.util.concurrent.atomic.AtomicLong.))
+
+(defn- want!
+  "Add work `f` for the refresh worker of `sid`."
+  [sid f]
+  (when sid (swap! pending update (str sid) f)))
 
 (defn refresh-now!
-  "Ask the refresh worker to read the team of `sid` at once, not at the next 5s refresh.
-   The gateway event `session.team_updated` calls it when a child changes its lifecycle."
+  "Ask the refresh worker to read the team of `sid` again. A forced read also asks the gateway
+   when the last team summary counts no agents."
+  ([sid] (refresh-now! sid false))
+  ([sid forced?]
+   (let [n (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong read-numbers)]
+     (want! sid
+            #(cond-> (assoc % :read (max n (long (or (:read %) 0)))) forced? (assoc :forced?
+                                                                               true))))))
+
+(defn note-team!
+  "Keep the team summary of leader `sid` from its session row, such as
+   `{\"active\" 0 \"total\" 0}`. With a total of 0, the open read asks the gateway only for
+   the Subagents setting. A child session counts 0, but its team read gives its siblings, so
+   never call this for a child."
+  [sid team]
+  (when (map? team) (want! sid #(assoc % :team team))))
+
+(defn- agent-row?
+  "Whether `row` has the fields that a team row needs."
+  [row]
+  (and (map? row)
+       (string? (get row "session_id"))
+       (string? (get row "task"))
+       (string? (get row "status"))))
+
+(defn merge-agents
+  "Apply the changed `rows` of one `session.team_updated` to the team rows `agents`. A row
+   replaces the row with the same `session_id` in place. A row with an unknown `session_id`
+   goes at the end, so the rows keep their start order. A repeated event changes nothing."
+  [agents rows]
+  (reduce (fn [out row]
+            (let [id (get row "session_id")]
+              (if-let [i (first (keep-indexed #(when (= id (get %2 "session_id")) %1) out))]
+                (assoc out i row)
+                (conj out row))))
+          (vec agents)
+          rows))
+
+(defn team-updated!
+  "Take the `session.team_updated` chunk of `sid`. Its `:agents` rows merge into the cached
+   team. Without usable rows, the worker reads the team again."
+  [sid {:keys [team agents]}]
+  (if (and (sequential? agents) (every? agent-row? agents))
+    (want! sid #(cond-> (update % :updates merge-agents agents) (map? team) (assoc :team team)))
+    (do (when (map? team) (want! sid #(assoc % :team team))) (refresh-now! sid true))))
+
+(defonce ^:private lost-streams
+  ;; Sessions whose event stream dropped and did not send `subscription.ready` again.
+  (atom #{}))
+
+(defn stream-lost!
+  "Mark the team of `sid` stale: its event stream dropped, so events can be missing."
   [sid]
-  (when sid (swap! wakes conj sid)))
+  (when sid (swap! lost-streams conj (str sid)) (want! sid #(assoc % :lost? true))))
+
+(defonce ^:private ready-streams
+  ;; Sessions whose event stream sent `subscription.ready` in this TUI run.
+  (atom #{}))
+
+(defn stream-ready!
+  "Take `subscription.ready` of `sid`. The gateway does not replay `session.team_updated`, so
+   each later `subscription.ready` reads the team again: the stream reconnected. The first one
+   only follows the subscription, and the open read covers it. After a dropped stream, the
+   read is forced: the gap can hold the first agents of the team."
+  [sid]
+  (when sid
+    (let [k
+          (str sid)
+
+          [lost]
+          (swap-vals! lost-streams disj k)
+
+          [ready]
+          (swap-vals! ready-streams conj k)]
+
+      (when (or (contains? lost k) (contains? ready k)) (refresh-now! sid (contains? lost k))))))
+
+(defn settings-changed!
+  "Ask the refresh worker to read the Subagents setting of `sid` again, after Settings closes."
+  [sid]
+  (want! sid #(assoc % :setting? true)))
 
 (defonce ^:private expanded-docks
   ;; Sessions whose dock shows the whole agent table. It lasts for this TUI run only.
@@ -97,62 +189,106 @@
 (defn summary
   "Cached team snapshot; never performs network work during painting."
   [sid]
-  (get @snapshots sid))
+  (get @snapshots
+       (some-> sid
+               str)))
 
 (defn enabled?
   "Whether the last gateway check enabled Subagents; never fetch during painting."
   [sid]
   (true? (:enabled? (summary sid))))
 
-(defn fetch!
-  "Refresh the team snapshot of `sid`. A failed read keeps the last agent list and the last
-   Subagents state, so one error does not hide the dock until the next refresh."
-  [sid]
+(defn- read-enabled
+  "The Subagents state of `sid`. A failed read keeps the last state of `previous`."
+  [sid previous]
+  ;; Subagents accepts project, group and session overrides, and the session's
+  ;; turns use its resolved value (issue #311). The global value can differ.
+  (try (true? (get (vis/setting "subagents" {:scope "session" :target-id (str sid)}) "enabled"))
+       (catch Exception _ (true? (:enabled? previous)))))
+
+(defn- read-agents
+  "The team of `sid` from the gateway as `{:agents}`. A failed read gives `{:error}` and keeps
+   the agent list of `previous`."
+  [sid previous]
+  (let [failed (fn [error]
+                 (cond-> {:error error}
+                   (:agents previous)
+                   (assoc :agents (:agents previous))))]
+    (try (let [response (vis/request! :get (path sid "") {:timeout-ms 2000})]
+           (if (= 200 (:status response))
+             (let [rows (wire/parse-json (:body response))]
+               (if (and (vector? rows) (every? agent-row? rows))
+                 {:agents rows}
+                 (failed "Invalid team response. Refresh to retry.")))
+             (failed "Could not load team. Refresh to retry.")))
+         (catch Exception _ (failed "Could not load team. Refresh to retry.")))))
+
+(defn- sync!
+  "Do the queued `work` of `sid` and store its new snapshot. Returns the snapshot.
+
+   A full read asks the gateway for the team, unless a newer read covered it or the team
+   summary counts no agents. `session.team_updated` rows merge without a read. A failed read
+   keeps the last agent list and the last Subagents state, so one error does not hide the
+   dock."
+  [sid {:keys [read forced? setting? updates team lost?]}]
   (let [previous
         (summary sid)
 
+        team
+        (or team (:team previous))
+
         enabled?
-        ;; Subagents accepts project, group and session overrides, and the session's
-        ;; turns use its resolved value (issue #311). The global value can differ.
-        (try (true? (get (vis/setting "subagents" {:scope "session" :target-id (str sid)})
-                         "enabled"))
-             (catch Exception _ (true? (:enabled? previous))))
+        (if (or setting? (nil? (:enabled? previous)))
+          (read-enabled sid previous)
+          (true? (:enabled? previous)))
 
-        failed
-        (fn [error]
-          (cond-> {:error error}
-            (:agents previous)
-            (assoc :agents (:agents previous))))
+        read?
+        (or (and enabled? (not (true? (:enabled? previous))))
+            (and read (> (long read) (long (or (:read-mark previous) 0))))
+            (and (seq updates) (nil? (:agents previous))))
 
-        result
-        (if enabled?
-          (try (let [response (vis/request! :get (path sid "") {:timeout-ms 2000})]
-                 (if (= 200 (:status response))
-                   (let [rows (wire/parse-json (:body response))]
-                     (if (and (vector? rows)
-                              (every? #(and (map? %)
-                                            (string? (get % "session_id"))
-                                            (string? (get % "task"))
-                                            (string? (get % "status")))
-                                      rows))
-                       {:agents rows}
-                       (failed "Invalid team response. Refresh to retry.")))
-                   (failed "Could not load team. Refresh to retry.")))
-               (catch Exception _ (failed "Could not load team. Refresh to retry.")))
-          {:agents []})
+        mark
+        (if read?
+          (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong read-numbers)
+          (:read-mark previous))
 
         result
-        (assoc result :enabled? enabled?)]
+        (cond (not enabled?) {:agents []}
+              (and read? (not forced?) (= 0 (get team "total"))) {:agents []}
+              read? (read-agents sid previous)
+              :else
+              (update (select-keys previous [:agents :error]) :agents #(merge-agents % updates)))
 
-    (swap! snapshots assoc sid (assoc result :checked-at (System/currentTimeMillis)))
-    result))
+        snapshot
+        (cond-> (assoc result
+                  :enabled? enabled?
+                  :checked-at (System/currentTimeMillis))
+          team
+          (assoc :team team)
 
-(def ^:private ^:const stale-ms "The age after which the header calls a team snapshot stale." 10000)
+          mark
+          (assoc :read-mark mark)
+
+          (and (not read?) (or lost? (:stale? previous)))
+          (assoc :stale? true))]
+
+    (swap! snapshots assoc (str sid) snapshot)
+    snapshot))
+
+(defn fetch!
+  "Read the Subagents setting and the team of `sid` now, and store the snapshot. Returns it.
+   A failed read keeps the last agent list and the last Subagents state."
+  [sid]
+  (sync! sid
+         {:read (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong read-numbers)
+          :forced? true
+          :setting? true}))
 
 (defn header-label
-  "Make unknown, failed and cached observations explicit in the header."
+  "Make unknown, failed and stale observations explicit in the header. A snapshot is stale
+   only after its event stream dropped, until the next read."
   [sid child?]
-  (let [{:keys [agents error checked-at]}
+  (let [{:keys [agents error checked-at stale?]}
         (summary sid)
 
         label
@@ -160,7 +296,7 @@
 
     (cond error (str label " !")
           (nil? checked-at) (str label " ?")
-          (> (- (System/currentTimeMillis) (long checked-at)) (long stale-ms)) (str label " stale")
+          stale? (str label " stale")
           :else (str label
                      " "
                      (count (filter #(contains? #{"queued" "running"} (get % "status")) agents))
@@ -1190,17 +1326,28 @@
                       (name-of pair))})))))
 
 (defn- shown-change?
-  "Whether a refresh from `before`, the last snapshot, to `after` can change the screen at
-   `now-ms`. A stale header turns fresh, and an active agent shows an elapsed time."
-  [before after now-ms]
+  "Whether a refresh from `before`, the last snapshot, to `after` can change the screen. An
+   active agent shows an elapsed time."
+  [before after]
   (or (nil? before)
-      (not= (dissoc before :checked-at) after)
-      (> (- (long now-ms) (long (:checked-at before 0))) (long stale-ms))
+      (not= (dissoc before :checked-at :read-mark) (dissoc after :checked-at :read-mark))
       (boolean (some active? (:agents after)))))
 
+(def ^:private ^:const tick-ms
+  "How often an active team repaints its elapsed times. A repaint reads nothing."
+  5000)
+
+(defn- take-work!
+  "Take the queued work of `sid`."
+  [sid]
+  (let [k (str sid)]
+    (get (first (swap-vals! pending dissoc k)) k)))
+
 (defn start-refresh!
-  "One screen-owned worker refreshes only the active session, every 5s, or at once after
-   `refresh-now!`. Call the returned cleanup on screen teardown. No network work runs in paint."
+  "One screen-owned worker keeps the team of the active session. It reads the team when the
+   active session changes, and then only for queued work: `session.team_updated`, a stream
+   reconnect or a settings change. It never reads on a timer. Call the returned cleanup on
+   screen teardown. No network work runs in paint."
   [session-id changed!]
   (let [running?
         (atom true)
@@ -1213,7 +1360,7 @@
               (loop [previous-id
                      nil
 
-                     next-at
+                     tick-at
                      0]
 
                 (when @running?
@@ -1223,26 +1370,37 @@
                         now
                         (System/currentTimeMillis)
 
-                        refresh?
-                        (and sid
-                             (or (not= sid previous-id)
-                                 (>= now (long next-at))
-                                 (contains? @wakes sid)))]
+                        switched?
+                        (and sid (not= sid previous-id))
 
-                    (when refresh?
-                      (swap! wakes disj sid)
+                        work
+                        (cond-> (when sid (take-work! sid))
+                          switched?
+                          (assoc :read
+                            (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong read-numbers)
+                            :setting?
+                            true))
+
+                        tick?
+                        (and sid
+                             (not switched?)
+                             (>= now (long tick-at))
+                             (boolean (some active? (:agents (summary sid)))))]
+
+                    (when (seq work)
                       (let [before
                             (summary sid)
 
                             after
-                            (fetch! sid)]
+                            (sync! sid work)]
 
                         ;; A slow response for an old tab must not repaint the new tab.
                         ;; An unchanged idle team must not force a full frame.
-                        (when (and @running? (= sid (session-id)) (shown-change? before after now))
+                        (when (and @running? (= sid (session-id)) (shown-change? before after))
                           (changed!))))
+                    (when (and tick? @running? (= sid (session-id))) (changed!))
                     (Thread/sleep 250)
-                    (recur sid (if refresh? (+ (System/currentTimeMillis) 5000) next-at)))))
+                    (recur sid (if (or switched? tick?) (+ now (long tick-ms)) tick-at)))))
               (catch InterruptedException _ nil)))
           "vis-tui-agent-team-refresh")]
 

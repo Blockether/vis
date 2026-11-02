@@ -1,5 +1,7 @@
 (ns com.blockether.vis.tui.agent-team-test
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.tui.agent-team :as team]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
@@ -320,37 +322,39 @@
                (expect (= (.getBackCharacter vs x y) (.getBackCharacter hs x y))))
              (finally (.stopScreen vs) (.stopScreen hs) (.close vt) (.close ht)))))))
 
-(defdescribe
-  refresh-repaint-test
-  ;; Report: an idle TUI drew a full frame every 5 s, after each unchanged team refresh.
-  (let [shown-change?
-        @(ns-resolve 'com.blockether.vis.tui.agent-team 'shown-change?)
+(defdescribe refresh-repaint-test
+             ;; Report: an idle TUI drew a full frame every 5 s, after each unchanged team refresh.
+             (let [shown-change?
+                   @(ns-resolve 'com.blockether.vis.tui.agent-team 'shown-change?)
 
-        idle
-        {:agents [{"session_id" "c" "task" "Work" "status" "completed"}] :enabled? true}
+                   idle
+                   {:agents [{"session_id" "c" "task" "Work" "status" "completed"}] :enabled? true}
 
-        fresh
-        (assoc idle :checked-at 1000)]
+                   fresh
+                   (assoc idle
+                     :checked-at 1000
+                     :read-mark 1)]
 
-    (it "repaints after the first refresh" (expect (true? (shown-change? nil idle 2000))))
-    (it "draws nothing for an unchanged idle team"
-        (expect (false? (shown-change? fresh idle 2000))))
-    (it "repaints when the team changes"
-        (expect (true? (shown-change? fresh (assoc idle :agents []) 2000))))
-    (it "repaints a stale header that the refresh makes fresh"
-        (expect (true? (shown-change? fresh idle 20000))))
-    (it "repaints an active agent for its elapsed time"
-        (let [active {:agents [{"session_id" "c" "task" "Work" "status" "running"}] :enabled? true}]
-          (expect (true? (shown-change? (assoc active :checked-at 1000) active 2000)))))))
+               (it "repaints after the first refresh" (expect (true? (shown-change? nil idle))))
+               (it "draws nothing for an unchanged idle team"
+                   (expect (false? (shown-change? fresh
+                                                  (assoc idle
+                                                    :checked-at 2000
+                                                    :read-mark 2)))))
+               (it "repaints when the team changes"
+                   (expect (true? (shown-change? fresh (assoc idle :agents [])))))
+               (it "repaints a stale header that the refresh makes fresh"
+                   (expect (true? (shown-change? (assoc fresh :stale? true) idle))))
+               (it "repaints an active agent for its elapsed time"
+                   (let [active {:agents [{"session_id" "c" "task" "Work" "status" "running"}]
+                                 :enabled? true}]
+                     (expect (true? (shown-change? (assoc active :checked-at 1000) active)))))))
 
 (defdescribe
   active-header-refresh-without-inspector-test
   (it "active header refresh without inspector"
       ;; The header used to remain unknown until the inspector was opened.
-      (let [start
-            (ns-resolve 'com.blockether.vis.tui.agent-team 'start-refresh!)
-
-            changed
+      (let [changed
             (java.util.concurrent.LinkedBlockingQueue.)
 
             sid
@@ -360,44 +364,58 @@
             (atom "running")
 
             calls
-            (atom 0)]
+            (atom 0)
 
-        (expect (some? start))
-        (when start
-          (with-redefs [vis/request!
-                        (fn [& _]
-                          (swap! calls inc)
-                          {:status 200
-                           :body (str "[{\"session_id\":\"child\",\"task\":\"Work\",\"status\":\""
-                                      @status
-                                      "\"}]")})]
-            (let [stop (start #(deref sid) #(.offer changed true))]
-              (try (expect (.poll changed 2 java.util.concurrent.TimeUnit/SECONDS))
-                   (expect (= "running" (get-in (team/summary @sid) [:agents 0 "status"])))
-                   (expect (= "Agents 1 active/1 cached" (team/header-label @sid false)))
-                   (reset! status "completed")
-                   (expect (.poll changed 7 java.util.concurrent.TimeUnit/SECONDS))
-                   (expect (= "completed" (get-in (team/summary @sid) [:agents 0 "status"])))
-                   (expect (= "Agents 0 active/1 cached" (team/header-label @sid false)))
-                   (reset! sid "other-header")
-                   (reset! status "cancelled")
-                   (expect (.poll changed 2 java.util.concurrent.TimeUnit/SECONDS))
-                   (expect (= "cancelled" (get-in (team/summary @sid) [:agents 0 "status"])))
-                   (expect (= 3 @calls))
-                   (finally (stop)))
-              (let [stopped-calls @calls]
-                (reset! sid "after-stop")
-                (expect (nil? (.poll changed 1 java.util.concurrent.TimeUnit/SECONDS)))
-                (expect (= stopped-calls @calls)))))))))
+            row
+            (fn [s]
+              {"session_id" "child" "task" "Work" "status" s})]
+
+        (with-redefs [vis/request! (fn [& _]
+                                     (swap! calls inc)
+                                     {:status 200
+                                      :body (str "[{\"session_id\":\"child\",\"task\":\"Work\","
+                                                 "\"status\":\""
+                                                 @status
+                                                 "\"}]")})]
+          (let [stop (team/start-refresh! #(deref sid) #(.offer changed true))]
+            (try (expect (.poll changed 2 java.util.concurrent.TimeUnit/SECONDS))
+                 (expect (= "running" (get-in (team/summary @sid) [:agents 0 "status"])))
+                 (expect (= "Agents 1 active/1 cached" (team/header-label @sid false)))
+                 (.clear changed)
+                 (team/team-updated! @sid
+                                     {:team {"active" 0 "total" 1} :agents [(row "completed")]})
+                 (expect (.poll changed 2 java.util.concurrent.TimeUnit/SECONDS))
+                 (expect (= "completed" (get-in (team/summary @sid) [:agents 0 "status"])))
+                 (expect (= "Agents 0 active/1 cached" (team/header-label @sid false)))
+                 (reset! sid "other-header")
+                 (reset! status "cancelled")
+                 (expect (.poll changed 2 java.util.concurrent.TimeUnit/SECONDS))
+                 (expect (= "cancelled" (get-in (team/summary @sid) [:agents 0 "status"])))
+                 (expect (= 2 @calls) "The event merges its rows without a read")
+                 (finally (stop)))
+            (let [stopped-calls @calls]
+              (reset! sid "after-stop")
+              (expect (nil? (.poll changed 1 java.util.concurrent.TimeUnit/SECONDS)))
+              (expect (= stopped-calls @calls))))))))
 
 (defdescribe header-observation-states-test
              (it "header observation states"
+                 ;; An old snapshot is current while its event stream is connected. Only a dropped stream
+                 ;; makes it stale, until the next read.
                  (doseq [[snapshot label] [[nil "Agents ?"] [{:error "Offline"} "Agents !"]
-                                           [{:agents [] :checked-at 0} "Agents stale"]
-                                           [{:agents [] :checked-at (System/currentTimeMillis)}
-                                            "Agents 0 active/0 cached"]]]
+                                           [{:agents [] :checked-at 0 :stale? true} "Agents stale"]
+                                           [{:agents [] :checked-at 0} "Agents 0 active/0 cached"]]]
                    (with-redefs [team/summary (constantly snapshot)]
                      (expect (= label (team/header-label "leader" false)))))))
+
+(defdescribe
+  team-update-merge-test
+  ;; Contract fixture team-updated.json: the gateway pushes only the changed rows. A wrong
+  ;; merge moves, doubles or drops agent rows in the dock.
+  (it "applies the session.team_updated rows of the contract fixture"
+      (let [{:strs [base events merged]}
+            (json/read-json (slurp (io/resource "vis-contract/fixtures/team-updated.json")))]
+        (expect (= merged (reduce #(team/merge-agents %1 (get %2 "agents")) base events))))))
 
 (defdescribe
   summary-counts-test

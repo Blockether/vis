@@ -6854,6 +6854,24 @@
 
       (when row {:position (:position row) :input-tokens (long (:input_tokens row))}))))
 
+(defn db-latest-turn-prose
+  "The newest nonblank assistant prose in the latest state of turn `session-turn-id`, or nil.
+   Reads one text column of one row, so a team row does not load the whole turn. The writer
+   trims prose, so a blank one is empty."
+  [db-info session-turn-id]
+  (when (and (ds db-info) session-turn-id)
+    (let [turn-id (->ref session-turn-id)]
+      (:llm_assistant_prose
+        (first (query-sql!
+                 db-info
+                 [(str
+                    "SELECT i.llm_assistant_prose FROM session_turn_iteration AS i "
+                    "INNER JOIN session_turn_state AS s ON s.id = i.session_turn_state_id "
+                    "WHERE s.session_turn_soul_id = ? AND s.version = "
+                    "(SELECT MAX(version) FROM session_turn_state WHERE session_turn_soul_id = ?) "
+                    "AND i.llm_assistant_prose <> '' ORDER BY i.position DESC LIMIT 1") turn-id
+                  turn-id]))))))
+
 ;; `db-list-iteration-vars`, `db-latest-var-registry`, `db-var-history*`,
 ;; `db-store-dependency!`, `db-list-dependencies`, `db-restore-blocks`,
 ;; and `latest-visible-definition-rows` were retired together with the

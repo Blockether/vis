@@ -1,8 +1,19 @@
-import { type CSSProperties, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  useCallback,
+  useContext,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
 import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
 import { councilMarkdown } from '../lib/council-markdown';
+import { SessionEventsContext } from '../lib/session-events';
 import { useClampMotion } from '../lib/clamp-motion';
 import { Markdown } from './ChatContent';
 import { Button, DialogFrame, Modal, TextButton } from './ui';
@@ -533,17 +544,13 @@ export function dockTeams(agents: readonly Subagent[], sid: string, runningTurnI
 
 /**
  * One reader for a session's subagents. It starts from the last team that this device
- * read for `sid`, so a switch back shows the dock at once. It polls while a turn runs,
- * an agent works or waits, or the session row says that a child is active. It reads
- * again when `generation` changes, for example on a `session.team_updated` event.
+ * read for `sid`, so a switch back shows the dock at once. It has no timer: the rows of
+ * each `session.team_updated` event go into the same cache. It reads the team on open,
+ * after a stream reconnect, when the page shows again, after a control call, and on an
+ * event without usable rows. It does not read when `teamTotal` is 0 and no rows are cached.
  */
-export function useAgentTeam(
-  client: GatewayClient,
-  sid: string,
-  running: boolean,
-  generation = 0,
-  activeChildren = 0,
-) {
+export function useAgentTeam(client: GatewayClient, sid: string, teamTotal: number | null = null) {
+  const hub = useContext(SessionEventsContext);
   const [state, setState] = useState<{ sid: string; agents: Subagent[] }>(() => ({
     sid,
     agents: client.cachedAgents?.(sid) ?? [],
@@ -551,14 +558,17 @@ export function useAgentTeam(
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  // Counts the applied events, so a read that an event passed reads again.
+  const pushes = useRef(0);
   const current = state.sid === sid ? state.agents : (client.cachedAgents?.(sid) ?? []);
-  const live = running || activeChildren > 0 || current.some(isLive);
+  const hasNoTeam = useEffectEvent(() => teamTotal === 0 && !client.cachedAgents?.(sid)?.length);
   useEffect(() => {
     const controller = new AbortController();
     let fetching = false;
     const refresh = async () => {
-      if (fetching || controller.signal.aborted || document.hidden) return;
+      if (fetching || controller.signal.aborted || document.hidden || hasNoTeam()) return;
       fetching = true;
+      const seen = pushes.current;
       try {
         const rows = await client.agents(sid, controller.signal);
         if (!controller.signal.aborted && Array.isArray(rows)) setState({ sid, agents: rows });
@@ -567,16 +577,39 @@ export function useAgentTeam(
       } finally {
         fetching = false;
       }
+      // The answer can be older than an event that came during the read.
+      if (pushes.current !== seen) void refresh();
     };
     void refresh();
-    const timer = live ? window.setInterval(() => { void refresh(); }, 3000) : undefined;
     document.addEventListener('visibilitychange', refresh);
+    let wasConnected: boolean | null = null;
+    const offConnection = hub?.subscribeConnection((connected) => {
+      if (connected && wasConnected === false) void refresh();
+      wasConnected = connected;
+    });
     return () => {
       controller.abort();
-      if (timer !== undefined) window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
+      offConnection?.();
     };
-  }, [client, sid, revision, generation, live]);
+  }, [client, hub, sid, revision]);
+  useEffect(() => {
+    if (!hub) return;
+    return hub.subscribeSession(
+      sid,
+      (event) => {
+        if (event.type !== 'session.team_updated') return;
+        const rows = client.applyTeamUpdate?.(sid, event) ?? null;
+        if (!rows) {
+          setRevision((value) => value + 1);
+          return;
+        }
+        pushes.current += 1;
+        setState({ sid, agents: rows });
+      },
+      { replay: false },
+    );
+  }, [client, hub, sid]);
   // One control call at a time for each child. It reads the team again after the call.
   // The result is the error text, or null when the call worked.
   const control = useCallback(async (child: string, call: () => Promise<unknown>, fallback: string) => {

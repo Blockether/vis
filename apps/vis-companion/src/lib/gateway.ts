@@ -1148,6 +1148,32 @@ export function sessionTeamFromWire(raw: unknown): SessionTeam | null {
   return count(active) && count(total) ? { active: active as number, total: total as number } : null;
 }
 
+/** The agent rows of a `session.team_updated` event, or null when it has no usable rows. */
+export function teamRowsFromWire(raw: unknown): Subagent[] | null {
+  if (!Array.isArray(raw)) return null;
+  const text = (value: unknown) => typeof value === 'string' && value.length > 0;
+  const isRow = (row: unknown) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+    const { session_id, team_id, status } = row as Record<string, unknown>;
+    return text(session_id) && text(team_id) && text(status);
+  };
+  return raw.every(isRow) ? (raw as Subagent[]) : null;
+}
+
+/**
+ * Apply changed agent rows to a team. A row with a known `session_id` replaces that row
+ * in place; a row with a new `session_id` goes at the end. A repeated change gives the same rows.
+ */
+export function mergeAgents(rows: readonly Subagent[], changed: readonly Subagent[]): Subagent[] {
+  const next = [...rows];
+  for (const row of changed) {
+    const at = next.findIndex((one) => one.session_id === row.session_id);
+    if (at < 0) next.push(row);
+    else next[at] = row;
+  }
+  return next;
+}
+
 function sessionGoalFromWire(raw: unknown): SessionGoal | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const g = raw as Record<string, unknown>;
@@ -4257,6 +4283,23 @@ export class GatewayClient {
   /** The last team that `agents` read for `sid`, or null before the first read. */
   cachedAgents(sid: string): Subagent[] | null {
     return this.isSessionDeleted(sid) ? null : readSnapshot<Subagent[]>(this.snapshotKey('agents', sid));
+  }
+
+  /**
+   * Apply the rows of a live `session.team_updated` event to the cached team of `sid`.
+   * Answer the new team, or null when the event cannot complete it; then the caller reads the team.
+   */
+  applyTeamUpdate(sid: string, raw: unknown): Subagent[] | null {
+    if (!raw || typeof raw !== 'object' || this.isSessionDeleted(sid)) return null;
+    const { agents, team } = raw as Record<string, unknown>;
+    const changed = teamRowsFromWire(agents);
+    if (!changed) return null;
+    const base = this.cachedAgents(sid);
+    const next = mergeAgents(base ?? [], changed);
+    // Without an earlier read, the rows are the whole team only when they count all its children.
+    if (!base && next.length !== sessionTeamFromWire(team)?.total) return null;
+    writeSnapshot(this.snapshotKey('agents', sid), next);
+    return next;
   }
 
   /** The steps of child `childId` of `sid`, oldest first, with their times. */

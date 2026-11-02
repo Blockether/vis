@@ -2137,6 +2137,29 @@
       ],
       "additionalProperties": false
     },
+    "team_update": {
+      "type": "object",
+      "description": "The payload of session.team_updated since protocol 21. team is the new summary of the leader. agents has the rows of the children that changed, in the GET /v1/sessions/:sid/agents row shape. A client replaces the row with the same session_id and appends a row with an unknown session_id at the end, which keeps spawn order. A repeated event gives the same rows.",
+      "properties": {
+        "team": {
+          "$ref": "#/$defs/session_team"
+        },
+        "child_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "agents.json#/$defs/agent"
+          }
+        }
+      },
+      "required": [
+        "team",
+        "agents"
+      ]
+    },
     "session_group_color": {
       "type": "string",
       "description": "Closed palette token a session group is painted with. Every channel maps a token to its own theme, so a group keeps its identity across the TUI, the companion app and the web UI. Never a hex string.",
@@ -2602,7 +2625,7 @@
       "properties": {
         "protocol": {
           "type": "integer",
-          "const": 20
+          "const": 21
         },
         "min_client": {
           "type": "integer",
@@ -2610,7 +2633,7 @@
         },
         "min_gateway": {
           "type": "integer",
-          "const": 20
+          "const": 21
         },
         "version": {
           "type": [
@@ -2792,7 +2815,7 @@
         },
         {
           "const": "session.team_updated",
-          "description": "Live only. The team summary of a leader changed: a subagent started, ended or was cancelled. team has the session_team shape. child_id names the child that changed, when one did."
+          "description": "Live only. A subagent of a leader changed: it started, took a step, opened or closed a request, ended or was cancelled. The payload has the team_update shape. child_id names the child that changed, when one did."
         },
         {
           "const": "session.title_updated"

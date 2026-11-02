@@ -4508,6 +4508,9 @@
            ;; `simplified_thinking_modes`. Read the session rows again so its footer agrees.
            (when-let [sid (get-in @state/app-db [:session :id])]
              (state/dispatch [:refresh-session-settings sid]))))
+     ;; Subagents can change in each settings scope. Read it again for the agent dock.
+     (some-> (get-in @state/app-db [:session :id])
+             agent-team/settings-changed!)
      nil)))
 
 (defn- open-settings-target!
@@ -6368,8 +6371,12 @@
                   :goal-sync
                   (state/dispatch [:sync-session-goal tab-id chunk])
 
+                  ;; The changed rows merge into the cached team. No timed read backs it up.
                   :team-sync
-                  (agent-team/refresh-now! (:session-id chunk))
+                  (agent-team/team-updated! (or (:session-id chunk) session-id) chunk)
+
+                  :stream-lost
+                  (agent-team/stream-lost! session-id)
 
                   ;; A run is BLOCKED on the operator in a process that is NOT
                   ;; this one — typically the serve daemon. The in-process `:tui`
@@ -6411,7 +6418,8 @@
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.
                   :gateway-ready
-                  (do (state/dispatch [:sync-agent-name tab-id chunk])
+                  (do (agent-team/stream-ready! session-id)
+                      (state/dispatch [:sync-agent-name tab-id chunk])
                       (state/dispatch [:sync-gateway-ready tab-id chunk]))
 
                   nil))))
@@ -10591,6 +10599,9 @@
                  open-session-tab!
                  (fn [{:keys [id history] :as session-result} notify? & [background?]]
                    (when (and id session-result)
+                     ;; Before the tab opens, so the open read knows a leader without agents.
+                     (when-not (:agent session-result)
+                       (agent-team/note-team! id (:team session-result)))
                      (state/dispatch [:open-session-tab
                                       (select-keys session-result
                                                    [:id :status :current-turn-id :history-cursor

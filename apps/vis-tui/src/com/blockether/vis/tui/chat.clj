@@ -1408,8 +1408,12 @@
       "session.goal_updated"
       {:phase :goal-sync :session-id (event-get event :session-id) :goal (event-get event :goal)}
 
+      ;; Since protocol 21, `agents` holds the changed team rows (gateway.json `team_update`).
       "session.team_updated"
-      {:phase :team-sync :session-id (event-get event :session-id) :team (event-get event :team)}
+      {:phase :team-sync
+       :session-id (event-get event :session-id)
+       :team (event-get event :team)
+       :agents (event-get event :agents)}
 
       ;; Both capabilities cross the process boundary on one lifecycle. Internal
       ;; state remains specialized: input owns the keyboard; live preserves it.
@@ -1692,7 +1696,11 @@
         cleanup
         (vis/gateway-mux-subscribe! sid
                                     (fn [event]
-                                      (try (deliver-gateway-event! on-chunk event)
+                                      (try (if (= "gateway.disconnected" (:type event))
+                                             ;; The mux's own drop edge. Only the cached agent
+                                             ;; team uses it, to show that it can be stale.
+                                             (on-chunk {:phase :stream-lost})
+                                             (deliver-gateway-event! on-chunk event))
                                            (catch Throwable _ nil)))
                                     cursor)]
 
@@ -1857,6 +1865,8 @@
                  ;; session map, so it is tab-scoped for free (`:session` is
                  ;; already per-tab state).
                  :history-cursor (select-keys page [:offset :total :has-more])
+                 ;; The child counts of a leader. A team of 0 needs no team read on open.
+                 :team (get soul "team")
                  :status (get soul "status")}
           tid
           (assoc :current-turn-id tid)

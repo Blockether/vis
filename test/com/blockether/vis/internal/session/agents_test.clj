@@ -2116,14 +2116,14 @@
           (:created_at row)
 
           note-of
-          (fn [turns iterations]
+          (fn [turns prose]
             (with-redefs [ps/db-list-session-turns-meta
                           (fn [_ _]
                             turns)
 
-                          ps/db-list-session-turn-iterations
+                          ps/db-latest-turn-prose
                           (fn [_ turn-id]
-                            (get iterations turn-id []))]
+                            (get prose turn-id))]
 
               (agents/latest-note db row (+ t0 100))))
 
@@ -2134,17 +2134,11 @@
           {:id "t1" :created-at (+ t0 10)}]
 
       (expect (= "I read the docs."
-                 (note-of [old current]
-                          {"old" [{:position 0 :assistant-prose "Old task"}]
-                           "t1" [{:position 1 :assistant-prose "I read the docs."}
-                                 {:position 2 :assistant-prose " "}
-                                 {:position 0 :assistant-prose "I start."}]})))
-      (expect (nil? (note-of [old] {"old" [{:position 0 :assistant-prose "Old task"}]}))
-              "A note of an older task never shows")
+                 (note-of [old current] {"old" "Old task" "t1" "I read the docs."})))
+      (expect (nil? (note-of [old] {"old" "Old task"})) "A note of an older task never shows")
       (expect (nil? (note-of [] {})))
       (expect (= (str (apply str (repeat 300 "a")) "…")
-                 (note-of [current]
-                          {"t1" [{:position 0 :assistant-prose (apply str (repeat 400 "a"))}]}))))))
+                 (note-of [current] {"t1" (apply str (repeat 400 "a"))}))))))
 
 ;; A subagent question that only the person can decide: the leader ends its turn suspended to ask
 ;; the person. The child keeps waiting for the reply of the next leader turn.

@@ -1,6 +1,8 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import teamUpdated from '../../../../packages/vis-contract/resources/vis-contract/fixtures/team-updated.json';
 import { GatewayClient } from './gateway';
+import type { Subagent } from './types';
 
 const conn = { url: 'http://gateway.example.com' };
 
@@ -77,3 +79,29 @@ describe('Subagent control client', () => {
   });
 });
 
+
+describe('pushed agent rows', () => {
+  const answer = (rows: unknown) =>
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(rows), { headers: { 'Content-Type': 'application/json' } })));
+
+  // Contract fixture `team-updated.json`: the Companion must draw the same team as the gateway pushes.
+  it('merges each session.team_updated into the read team, and a repeated event changes nothing', async () => {
+    answer(teamUpdated.base);
+    const client = new GatewayClient({ url: 'http://team-merge.example.com' });
+    await client.agents('lead');
+    for (const event of teamUpdated.events) client.applyTeamUpdate('lead', event);
+    expect(client.cachedAgents('lead')).toEqual(teamUpdated.merged as unknown as Subagent[]);
+    for (const event of teamUpdated.events) client.applyTeamUpdate('lead', event);
+    expect(client.cachedAgents('lead')).toEqual(teamUpdated.merged as unknown as Subagent[]);
+  });
+
+  // Without a read, one changed row is not the team: the dock would hide the other children.
+  it('keeps no team from an event alone unless its rows count every child', () => {
+    const client = new GatewayClient({ url: 'http://team-first.example.com' });
+    const [partial] = teamUpdated.events;
+    expect(client.applyTeamUpdate('lead', partial)).toBeNull();
+    expect(client.cachedAgents('lead')).toBeNull();
+    expect(client.applyTeamUpdate('lead', { team: { active: 1, total: 1 }, agents: partial.agents })).toEqual(partial.agents);
+    expect(client.applyTeamUpdate('lead', { team: { active: 1, total: 1 } })).toBeNull();
+  });
+});

@@ -1,6 +1,7 @@
 (ns com.blockether.vis.contract.gateway-test
   "Gateway payload validation and parity with the runtime HTTP surface."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as contract]
             com.blockether.vis.internal.gateway.server
@@ -109,9 +110,9 @@
       (expect (nil? (contract/match-route "/v1/sessions/s1/unknown")))
       (expect (nil? (contract/match-route nil))))
   (it "owns protocol compatibility without a runtime mirror"
-      (expect (= 20 contract/protocol-version))
+      (expect (= 21 contract/protocol-version))
       (expect (= 20 contract/minimum-client-protocol))
-      (expect (= 20 contract/minimum-gateway-protocol))
+      (expect (= 21 contract/minimum-gateway-protocol))
       (expect (every? (set (keys (get-in (document/schema-document "gateway")
                                          ["$defs" "http_headers" "properties"])))
                       ["x-vis-protocol" "x-vis-min-gateway-protocol" "x-vis-client"
@@ -129,7 +130,7 @@
                                              :client-min-gateway 1})))))
   (it "builds handshake and error response envelopes"
       (expect (=
-                {:protocol 20 :min-client 20 :min-gateway 20 :version "1.2.3" :build "abc123def456"}
+                {:protocol 21 :min-client 20 :min-gateway 21 :version "1.2.3" :build "abc123def456"}
                 (contract/handshake {:version "1.2.3" :build "abc123def456"})))
       (expect (= {"error" {"type" "invalid-request" "message" "replacement" "session_id" "s1"}}
                  (contract/error-body :mcp/invalid-request
@@ -351,3 +352,20 @@
                              {"content" [{"type" "prose" "markdown" "partial"}]})))
         (expect (= "turn failed" (error-of {"type" "turn.failed"} nil)))
         (expect (nil? (error-of {"type" "turn.completed" "error" "ignored"} nil))))))
+
+(defdescribe
+  team-update-fixture-test
+  ;; The TUI and the Companion merge pushed team rows from this fixture. A payload that the
+  ;; schema rejects would make them merge rows that the gateway never sends.
+  (it "validates each pushed team payload of the shared fixture"
+      (let [fixture (json/read-str (slurp (io/resource "vis-contract/fixtures/team-updated.json")))]
+        (doseq [event (get fixture "events")]
+          (expect (document/valid-json? "gateway" "team_update" event) event))
+        (doseq [agent (concat (get fixture "base") (get fixture "merged"))]
+          (expect (document/valid-json? "agents" "agent" agent) agent))))
+  (it "rejects a team payload without rows, the shape of protocol 20"
+      (expect (not (document/valid-json? "gateway" "team_update" {"team" {"active" 1 "total" 1}})))
+      (expect (not (document/valid-json? "gateway"
+                                         "team_update"
+                                         {"team" {"active" 1 "total" 1}
+                                          "agents" [{"session_id" "c1"}]})))))

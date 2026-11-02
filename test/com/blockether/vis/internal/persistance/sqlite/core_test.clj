@@ -315,6 +315,30 @@
         (expect (= {:position 1 :input-tokens 4000}
                    (persistance/db-latest-turn-request-usage s (str tid)))))))
 
+;; The team rows of a running child read its newest note on each push. The note read loaded every
+;; iteration of the turn, with its routing trace, to keep one text.
+(defdescribe
+  latest-turn-prose-test
+  (it "answers the newest nonblank prose of the latest retry state"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            tid
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "notes"})]
+
+        (expect (nil? (persistance/db-latest-turn-prose s tid)))
+        (expect (nil? (persistance/db-latest-turn-prose s nil)))
+        (h/store-iteration! s {:session-turn-id tid :code "" :assistant-prose "I start."})
+        (h/store-iteration! s {:session-turn-id tid :code "" :assistant-prose "I read the docs."})
+        (h/store-iteration! s {:session-turn-id tid :code "" :assistant-prose "  "})
+        (expect (= "I read the docs." (persistance/db-latest-turn-prose s tid)))
+        (persistance/db-retry-session-turn! s tid {:status :running})
+        (expect (nil? (persistance/db-latest-turn-prose s (str tid)))
+                "A note of an older retry state never shows"))))
+
 (defdescribe
   routing-event-batch-test
   (it

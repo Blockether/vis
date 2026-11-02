@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.gateway.agents-test
   (:require [charred.api :as json]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.server :as server]
@@ -7,6 +8,8 @@
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.router :as loop-router]
+            [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -17,6 +20,12 @@
 (wiring/install!)
 
 (h/use-mem-store! {"subagents" true})
+
+(defn- await-count
+  "Wait up to 3 s until `events` holds `n` items. The push thread sends team events."
+  [events n]
+  (loop [left 300]
+    (when (and (< (count @events) (long n)) (pos? left)) (Thread/sleep 10) (recur (dec left)))))
 
 (defn- request
   [method path body]
@@ -259,9 +268,170 @@
                                        (swap! events conj [sid event]))))
              (ps/db-agent-update! db child {:status "completed"})
              (state/append-event! child "turn.completed" {:turn_id "child-turn"})
+             (await-count events 1)
              (let [[sid event] (last @events)]
                (expect (= leader sid) "The leader stream gets the event")
                (expect (= {"active" 0 "total" 1} (get event "team")))
                (expect (= child (get event "child_id"))))
              (expect (= {"active" 0 "total" 1} (get (state/soul leader) "team")))
+             (finally (state/remove-event-tap! ::spy) (reset! registry saved)))))))
+
+;; The TUI polled the team every 5 s and the Companion every 3 s, and each poll built every row
+;; again. A step pushes the row instead, at most once every two seconds for each child, and the last
+;; step of a burst is always sent.
+(defdescribe
+  team-step-rate-test
+  (it
+    "sends the first step at once, holds the next ones in one timer and lets a lifecycle pass"
+    (let [mark
+          #'state/team-mark
+
+          due
+          #'state/team-due
+
+          take
+          #'state/team-take
+
+          q0
+          @#'state/empty-team-queue
+
+          [q1 a1]
+          (mark q0 "lead" "c1" 0 false)
+
+          q2
+          (take q1 "lead" 0)
+
+          [q3 a3]
+          (mark q2 "lead" "c1" 200 false)
+
+          [q4 a4]
+          (mark q3 "lead" "c1" 400 false)
+
+          [q5 a5]
+          (due q4 "lead" "c1")]
+
+      (expect (= :push a1))
+      (expect (= #{"c1"} (get-in q1 [:pending "lead"])))
+      (expect (= [:timer 1800] a3) "A step inside two seconds waits for the rest of them")
+      (expect (nil? a4) "A second step in the same wait adds no work")
+      (expect (= q3 q4))
+      (expect (= :push a5) "The timer sends the last step")
+      (expect (= #{"c1"} (get-in q5 [:pending "lead"])))
+      (let [[q a] (mark q3 "lead" "c1" 300 true)]
+        (expect (= :push a) "A lifecycle or request change goes at once")
+        (expect (empty? (:timers q)))
+        (expect (= [q nil] (due q "lead" "c1"))
+                "The timer that the urgent push replaced sends nothing"))
+      (expect (= [(update q2 :pending assoc "lead" #{"c1"}) :push] (mark q2 "lead" "c1" 2000 false))
+              "A step two seconds after the last push goes at once")
+      (expect (empty? (:sent (take q2 "lead" 5000))) "An old send time is dropped"))))
+
+;; The clients rendered the team from `GET /agents` reads. Each change now pushes the changed rows
+;; in `session.team_updated`, so the payload must be a valid `team_update` for each trigger.
+(defdescribe
+  team-push-test
+  (it
+    "pushes the changed rows for a start, a step, a request and both cancel paths"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          turn
+          (ps/db-store-session-turn! db {:parent-session-id leader :user-request "Parent"})
+
+          child!
+          (fn []
+            (str (h/fork-session-at-turn! db
+                                          leader
+                                          {:through-turn-id turn
+                                           :agent {:parent_id leader
+                                                   :leader_id leader
+                                                   :team_id (str turn)
+                                                   :task "Check evidence"
+                                                   :status "running"
+                                                   :iteration_budget 4
+                                                   :spawn_key (str (random-uuid))
+                                                   :spawn_fingerprint "f"
+                                                   :checkpoint [{:role :user
+                                                                 :content "Context"}]}})))
+
+          [a b c]
+          (repeatedly 3 child!)
+
+          events
+          (atom [])
+
+          registry
+          @#'state/registry
+
+          saved
+          @registry
+
+          questions
+          @#'agents/questions
+
+          push!
+          (fn [n f]
+            (reset! events [])
+            (f)
+            (await-count events n)
+            (expect (= n (count @events)) (pr-str @events))
+            (doseq [[sid event] @events]
+              (expect (= leader sid))
+              (expect (document/valid-json? "gateway"
+                                            "team_update"
+                                            (select-keys event ["team" "agents" "child_id"]))
+                      (pr-str event)))
+            (mapv second @events))
+
+          rows
+          (fn [event]
+            (mapv #(select-keys % ["session_id" "status" "question"]) (get event "agents")))]
+
+      (with-redefs [lp/db-info
+                    (constantly db)
+
+                    bus/publish!
+                    (fn [& _])
+
+                    bus/note-unjournaled!
+                    (fn [& _])]
+
+        (try (state/add-event-tap! ::spy
+                                   (fn [sid event]
+                                     (when (= "session.team_updated" (get event "type"))
+                                       (swap! events conj [sid event]))))
+             (let [[event] (push! 1 #(state/append-event! a "turn.started" {:turn_id "a-turn"}))]
+               (expect (= a (get event "child_id")))
+               (expect (= [{"session_id" a "status" "running"}] (rows event))))
+             ;; The start was the last push of `a`, so this step waits for its timer.
+             (push! 1 #(state/append-event! a "iteration.completed" {:turn_id "a-turn"}))
+             (let [[opened]
+                   (push! 1 #(swap! questions assoc b {:question "May I?" :entry_id 7}))
+
+                   [closed]
+                   (push! 1 #(swap! questions dissoc b))]
+
+               (expect (= [{"session_id" b "status" "running" "question" "May I?"}] (rows opened)))
+               (expect (= [{"session_id" b "status" "running"}] (rows closed))
+                       "A closed question leaves the row"))
+             (let [[event] (push! 1 #(state/agents-operation! leader :cancel {:session_id a}))]
+               (expect (= [{"session_id" a "status" "cancelled"}] (rows event)))
+               (expect (= {"active" 2 "total" 3} (get event "team"))))
+             (swap! registry assoc
+               leader
+               {:turns {"lt" {:turn_id "lt"
+                              :session_id leader
+                              :status "running"
+                              :cancel-token (cancellation/cancellation-token)}}
+                :current-turn "lt"})
+             (let [[event] (push! 1 #(state/cancel-turn! leader "lt"))]
+               (expect (= #{{"session_id" b "status" "cancelled"}
+                            {"session_id" c "status" "cancelled"}}
+                          (set (rows event)))
+                       "The leader stop pushes each child that it cancelled")
+               (expect (= {"active" 0 "total" 3} (get event "team")))
+               (expect (not (contains? event "child_id"))))
              (finally (state/remove-event-tap! ::spy) (reset! registry saved)))))))

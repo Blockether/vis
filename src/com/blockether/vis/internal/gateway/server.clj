@@ -2312,6 +2312,7 @@
     ;; The live-view bridge holds patches for up to one flush window. A gateway
     ;; going away must publish what the engine already accepted, not swallow it.
     (try (gw-view/uninstall!) (catch Throwable _ nil))
+    (try (state/stop-team-pusher!) (catch Throwable _ nil))
     ;; Kill every session's background resources (background `shell` children, REPLs)
     ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
     ;; process; once it exits the children reparent to init and leak.

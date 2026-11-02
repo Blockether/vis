@@ -728,9 +728,7 @@
               victim
               (if (and kept? (kept? oldest)) (or (first (remove kept? ring)) oldest) oldest)]
 
-          (recur (if (identical? victim oldest)
-                   (pop ring)
-                   (replay-ring/remove-frame ring victim))
+          (recur (if (identical? victim oldest) (pop ring) (replay-ring/remove-frame ring victim))
                  (- bytes (frame-bytes victim))
                  (max floor (long (or (get victim "seq") 0)))))
         (assoc entry
@@ -809,18 +807,14 @@
         coordinate
         (form-coordinate event)]
 
-    (if (and coordinate (= "block.activity" type))
-      (replace-in-ring entry event)
-      entry)))
+    (if (and coordinate (= "block.activity" type)) (replace-in-ring entry event) entry)))
 
 (defn- materialize-turn-progress
   "Keep exactly the latest `turn.progress` ticker of the session in the replay ring.
    The ticker is transient, but a client that attaches mid-wait must see the current
    phase, not a generic fallback until the next notice."
   [entry event]
-  (if (= "turn.progress" (get event "type"))
-    (replace-in-ring entry event)
-    entry))
+  (if (= "turn.progress" (get event "type")) (replace-in-ring entry event) entry))
 
 (defn- countdown-progress?
   "True for a progress notice with clocks: a silent provider attempt or a busy Python
@@ -2712,31 +2706,208 @@
                     (persistance/db-agent-team-counts [sid])
                     (get (str sid)))))
 
+(declare agent-view)
+
+;; Two seconds keeps the worst case (each child changes all the time) below the reads of the
+;; old 3 s and 5 s client polls, and still shows a step sooner than those polls did.
+(def ^:private team-step-ms "The shortest time between two step pushes of one child." 2000)
+
+;; The one thread that builds and appends `session.team_updated`, so pushes keep their order
+;; and no row is built on the turn thread of a child. [[stop-team-pusher!]] ends it.
+(defonce ^:private team-pusher (atom nil))
+
+(def ^:private empty-team-queue {:pending {} :timers #{} :sent {}})
+
+;; The push queue. `:pending` holds the changed children of each leader for its next push,
+;; `:timers` the children that wait for a step push, and `:sent` the last push time of a child.
+(defonce ^:private team-queue (atom empty-team-queue))
+
+(defn- pusher
+  "The push thread, started on first use."
+  ^java.util.concurrent.ScheduledExecutorService []
+  (or @team-pusher
+      (locking team-pusher
+        (or @team-pusher
+            (reset! team-pusher (java.util.concurrent.Executors/newSingleThreadScheduledExecutor
+                                  (util/daemon-thread-factory "vis-team-push")))))))
+
+(defn stop-team-pusher!
+  "Stop the push thread and drop its queue. Pushes are live only, so nothing is lost for a
+   reconnect: a client reads `GET /agents` again. A later change starts a new thread."
+  []
+  (when-let [executor (first (reset-vals! team-pusher nil))]
+    (.shutdownNow ^java.util.concurrent.ScheduledExecutorService executor))
+  (reset! team-queue empty-team-queue)
+  nil)
+
+;; The leader id of each session that sent a team event, or false for a session without a leader.
+;; The push thread fills it, so an event tap never reads the store on the turn thread.
+(defonce ^:private team-leaders (atom {}))
+
+(defn- team-pend
+  "`queue` with `child` pending for the next push of `leader`, and `:push` when that push is not
+   asked for yet."
+  [queue leader child]
+  [(update-in queue [:pending leader] (fnil conj #{}) child)
+   (when (empty? (get-in queue [:pending leader])) :push)])
+
+(defn- team-mark
+  "Mark child `child` of `leader` as changed at `now`. Answers `[queue action]`. A lifecycle or
+   request change (`urgent?`) is pending at once and takes the step timer away. A step change is
+   pending at once when the last push of the child is `team-step-ms` old. Else one timer for each
+   child sends it later, so more steps in that time add no work. `action` is `:push`,
+   `[:timer ms]` or nil."
+  [queue leader child now urgent?]
+  (let [wait (if-let [sent (get-in queue [:sent child])]
+               (- (+ (long sent) (long team-step-ms)) (long now))
+               0)]
+    (cond urgent? (team-pend (update queue :timers disj child) leader child)
+          (contains? (:timers queue) child) [queue nil]
+          (<= wait 0) (team-pend queue leader child)
+          :else [(update queue :timers conj child) [:timer wait]])))
+
+(defn- team-due
+  "The timer of `child` ended: answers `[queue action]` with the child pending for `leader`. An
+   urgent change took the timer away and already sent the row, so then nothing changes."
+  [queue leader child]
+  (if (contains? (:timers queue) child)
+    (team-pend (update queue :timers disj child) leader child)
+    [queue nil]))
+
+(defn- team-take
+  "`queue` after a push of `leader` at `now`: no pending child of `leader`, and each pushed child
+   sent at `now`. A send time older than `team-step-ms` limits nothing, so it goes."
+  [queue leader now]
+  (let [children (get-in queue [:pending leader])]
+    (-> queue
+        (update :pending dissoc leader)
+        (update :sent
+                (fn [sent]
+                  (merge
+                    (into {} (filter #(< (- (long now) (long (val %))) (long team-step-ms))) sent)
+                    (zipmap children (repeat now))))))))
+
+(defn- run-team!
+  "Run `f` on the push thread. A failure is logged and stops only that push."
+  ([f] (run-team! f 0))
+  ([f delay-ms]
+   (.schedule
+     (pusher)
+     ^Runnable
+     (fn []
+       (try (f)
+            (catch Throwable t
+              (tel/log! {:level :warn :id ::team-push-failed :data {:error (ex-message t)} :error t}
+                        "gateway: a team push failed"))))
+     (long delay-ms)
+     java.util.concurrent.TimeUnit/MILLISECONDS)))
+
+(defn- team-rows
+  "The team rows of `children`, in spawn order. A deleted child has no row."
+  [db children]
+  (->> children
+       (keep #(agents/info db %))
+       (sort-by (juxt :created_at :session_id))
+       (mapv #(agent-view db %))))
+
+(defn- push-team!
+  "Send the rows of the pending children of `leader` live on its stream, with its team summary.
+   Only the push thread calls it, so this is the one writer of `session.team_updated`."
+  [leader]
+  (let [[old _]
+        (swap-vals! team-queue team-take leader (util/now-ms))
+
+        children
+        (get-in old [:pending leader])]
+
+    (when (seq children)
+      (append-event! leader
+                     "session.team_updated"
+                     (cond-> {:team (team-wire (team-counts leader))
+                              :agents (read-or {:read :team-rows :session-id leader}
+                                               []
+                                               #(team-rows (lp/db-info) children))}
+                       (= 1 (count children))
+                       (assoc :child_id (first children)))
+                     {:store? false}))))
+
+(defn- step-team!
+  "Apply `f`, a queue step that answers `[queue action]`, and start what the action asks."
+  [leader child f]
+  (let [action (volatile! nil)]
+    (swap! team-queue (fn [queue]
+                        (let [[queue' a] (f queue)]
+                          (vreset! action a)
+                          queue')))
+    (let [a @action]
+      (cond (= :push a) (run-team! #(push-team! leader))
+            (vector? a) (run-team! #(step-team! leader
+                                                child
+                                                (fn [queue]
+                                                  (team-due queue leader child)))
+                                   (second a))))))
+
+(defn- mark-team!
+  [leader child urgent?]
+  (let [leader
+        (str leader)
+
+        child
+        (str child)]
+
+    (step-team! leader child #(team-mark % leader child (util/now-ms) urgent?))))
+
+(defn- resolve-leader!
+  "Read the leader of session `sid` once, keep it, and push the row of `sid` when it has one. The
+   push builds the row after each event that came during the read."
+  [sid]
+  (let [leader (some-> (agents/info (lp/db-info) sid)
+                       :leader_id
+                       str)]
+    (swap! team-leaders #(if (= ::resolving (get % sid)) (assoc % sid (or leader false)) %))
+    (when leader (mark-team! leader sid true))))
+
+(defn- team-changed!
+  "Session `sid` changed: push its row to its leader, when it has one. `urgent?` is false for a
+   step. The first event of a session reads its leader on the push thread, once."
+  [sid urgent?]
+  (let [sid
+        (str sid)
+
+        [old _]
+        (swap-vals! team-leaders #(if (contains? % sid) % (assoc % sid ::resolving)))
+
+        leader
+        (get old sid ::none)]
+
+    (cond (string? leader) (mark-team! leader sid urgent?)
+          (= ::none leader) (run-team! #(resolve-leader! sid)))))
+
 (defn- broadcast-team!
-  "Send the team summary of leader `leader` live on its stream, so each client shows a
-   new, finished or cancelled subagent at once instead of at its next poll. `child-id` names
-   the child that changed, when one did. This is the one writer of `session.team_updated`."
-  [leader child-id]
+  "Push the rows of `child-ids`, children of `leader`, live on its stream, so each client shows a
+   new, finished or cancelled subagent at once instead of at its next read."
+  [leader child-ids]
   (when leader
-    (append-event! (str leader)
-                   "session.team_updated"
-                   (cond-> {:team (team-wire (team-counts leader))}
-                     child-id
-                     (assoc :child_id (str child-id)))
-                   {:store? false})))
+    (doseq [child child-ids]
+      (swap! team-leaders assoc (str child) (str leader))
+      (mark-team! leader child true))))
 
 (def ^:private team-event-types
   "Turn events of a child that can change the team summary of its leader."
   #{"turn.queued" "turn.queued.deleted" "turn.started" "turn.completed" "turn.failed"
     "turn.cancelled"})
 
+(def ^:private team-step-types
+  "Events of a child that change the note or Activity line of its row."
+  #{"iteration.completed" "block.activity"})
+
 (defn- team-tap
-  "Event tap: after a child turn event, send the new team summary to the leader. The
+  "Event tap: after a child turn or step event, push the row of the child to its leader. The
    terminal events come after `agents/finish!` stored the child status."
   [sid event]
-  (when (contains? team-event-types (get event "type"))
-    (when-let [child (agents/info (lp/db-info) (str sid))]
-      (broadcast-team! (:leader_id child) sid))))
+  (let [type (get event "type")]
+    (cond (contains? team-event-types type) (team-changed! sid true)
+          (contains? team-step-types type) (team-changed! sid false))))
 
 (defonce team-listener (add-event-tap! ::team #'team-tap))
 
@@ -6251,8 +6422,10 @@
 
                                nil))))
                        ;; A child without a turn sends no turn event.
-                       (when (some #(contains? #{"queued" "running"} (:status %)) children)
-                         (broadcast-team! sid nil)))
+                       (broadcast-team! sid
+                                        (keep #(when (contains? #{"queued" "running"} (:status %))
+                                                 (:session_id %))
+                                              children)))
                      {:status "cancelling"})))))
 
 (defn cancel-session-turns!
@@ -7025,7 +7198,7 @@
               (delete-queued-turn! id tid))
             (cancel-session-turns! id :agent-cancel))
           ;; A child without a turn sends no turn event.
-          (broadcast-team! (:leader_id child) sid)
+          (broadcast-team! (:leader_id child) ids)
           {:session_id sid :status "cancelled" :cancelled ids}))))
 
 (defn- agent-files
@@ -7317,7 +7490,7 @@
                  (catch Exception e
                    (persistance/db-agent-update! db child-id {:status "failed"})
                    (throw e)))
-            (broadcast-team! sid child-id)
+            (broadcast-team! sid [child-id])
             (agent-view db (agents/info db child-id))))))))
 
 (defn- agent-live?
@@ -7375,7 +7548,8 @@
    :awaits-person? #'agent-awaits-person?
    :leader-active? #'agent-leader-active?
    :held? #'agent-held?
-   :publish #'agent-publish})
+   :publish #'agent-publish
+   :changed! #(team-changed! % true)})
 
 (defn agents-operation!
   [sid operation opts]
@@ -8753,6 +8927,7 @@
   ;; them: a shell log dies with the session that produced it and nothing else.
   (shell-log/delete-session-logs! sid)
   (persistance/db-delete-session-tree! (lp/db-info) sid)
+  (swap! team-leaders dissoc (str sid))
   ;; Notify attached clients while their sinks still exist. Reconnects learn the
   ;; same verdict from the missing persisted session, not a deleted replay ring.
   (append-event! sid "session.deleted" {} {:store? false})
