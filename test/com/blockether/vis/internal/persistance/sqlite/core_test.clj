@@ -99,9 +99,10 @@
              ;; A session list page read its session, workspace, agent and routing lock
              ;; for each row: 125 queries for 20 rows. The batch must answer what the
              ;; single reads answer, or a row shows a wrong title, path or lock.
-             (it "reads the facts of many sessions the same as one read for each"
-                 (let [s
-                       (h/store)
+             (it
+               "reads the facts of many sessions the same as one read for each"
+               (let [s
+                     (h/store)
 
                        project
                        (persistance/db-create-project! s {:name "facts"})
@@ -141,11 +142,13 @@
                                      :state-id state-id
                                      :workspace (persistance/db-workspace-for-session s state-id)
                                      :agent (persistance/db-agent-info s sid)
+                                     :team (get (persistance/db-agent-team-counts s [sid]) (str sid))
                                      :routing-locked? (persistance/db-routing-locked? s sid)}))]
                      (expect (= #{(str leader) (str child)} (set (keys facts))))
                      (expect (= {(str leader) (single leader) (str child) (single child)} facts))
                      (expect (= "facts" (get-in facts [(str leader) :session :project-name])))
                      (expect (true? (get-in facts [(str child) :routing-locked?])))
+                     (expect (= {:active 1 :total 1} (get-in facts [(str leader) :team])))
                      (expect (= ["src/**"] (get-in facts [(str child) :agent :files :write])))
                      (expect (some? (get-in facts [(str child) :workspace :root]))))
                    (expect (= {} (persistance/db-session-page-facts s [])))

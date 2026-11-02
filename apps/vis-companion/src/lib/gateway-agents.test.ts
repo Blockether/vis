@@ -63,4 +63,17 @@ describe('Subagent control client', () => {
     );
     await expect(new GatewayClient(conn).cancelAgent('lead', 'child')).rejects.toMatchObject({ status: 400 });
   });
+
+  it('applies a live team summary to the cached session row', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ id: 'team-row', title: 'Lead' }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )));
+    const client = new GatewayClient({ url: 'http://team-row.example.com' });
+    await client.session('team-row');
+    expect(client.noteSessionTeam('team-row', { active: 2, total: 3 })?.team).toEqual({ active: 2, total: 3 });
+    expect(client.cachedSession('team-row')?.team).toEqual({ active: 2, total: 3 });
+    expect(client.noteSessionTeam('team-row', { active: -1, total: 3 })?.team).toEqual({ active: 2, total: 3 });
+  });
 });
+

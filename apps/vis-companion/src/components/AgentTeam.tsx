@@ -530,16 +530,27 @@ export function dockTeams(agents: readonly Subagent[], sid: string, runningTurnI
 }
 
 /**
- * One reader for a session's subagents. It polls while a turn runs or an agent
- * works or waits, and reads again when `generation` changes.
+ * One reader for a session's subagents. It starts from the last team that this device
+ * read for `sid`, so a switch back shows the dock at once. It polls while a turn runs,
+ * an agent works or waits, or the session row says that a child is active. It reads
+ * again when `generation` changes, for example on a `session.team_updated` event.
  */
-export function useAgentTeam(client: GatewayClient, sid: string, running: boolean, generation = 0) {
-  const [state, setState] = useState<{ sid: string; agents: Subagent[] }>({ sid, agents: [] });
+export function useAgentTeam(
+  client: GatewayClient,
+  sid: string,
+  running: boolean,
+  generation = 0,
+  activeChildren = 0,
+) {
+  const [state, setState] = useState<{ sid: string; agents: Subagent[] }>(() => ({
+    sid,
+    agents: client.cachedAgents?.(sid) ?? [],
+  }));
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const current = state.sid === sid ? state.agents : [];
-  const live = running || current.some(isLive);
+  const current = state.sid === sid ? state.agents : (client.cachedAgents?.(sid) ?? []);
+  const live = running || activeChildren > 0 || current.some(isLive);
   useEffect(() => {
     const controller = new AbortController();
     let fetching = false;

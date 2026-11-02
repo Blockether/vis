@@ -24,6 +24,16 @@
 
 (defonce ^:private snapshots (atom {}))
 
+(defonce ^:private wakes
+  ;; Sessions whose team changed on the gateway. The refresh worker reads them at once.
+  (atom #{}))
+
+(defn refresh-now!
+  "Ask the refresh worker to read the team of `sid` at once, not at the next 5s refresh.
+   The gateway event `session.team_updated` calls it when a child changes its lifecycle."
+  [sid]
+  (when sid (swap! wakes conj sid)))
+
 (defonce ^:private expanded-docks
   ;; Sessions whose dock shows the whole agent table. It lasts for this TUI run only.
   (atom #{}))
@@ -1189,8 +1199,8 @@
       (boolean (some active? (:agents after)))))
 
 (defn start-refresh!
-  "One screen-owned worker refreshes only the active session, at most every 5s.
-   Call the returned cleanup on screen teardown. No network work runs in paint."
+  "One screen-owned worker refreshes only the active session, every 5s, or at once after
+   `refresh-now!`. Call the returned cleanup on screen teardown. No network work runs in paint."
   [session-id changed!]
   (let [running?
         (atom true)
@@ -1214,9 +1224,13 @@
                         (System/currentTimeMillis)
 
                         refresh?
-                        (and sid (or (not= sid previous-id) (>= now (long next-at))))]
+                        (and sid
+                             (or (not= sid previous-id)
+                                 (>= now (long next-at))
+                                 (contains? @wakes sid)))]
 
                     (when refresh?
+                      (swap! wakes disj sid)
                       (let [before
                             (summary sid)
 

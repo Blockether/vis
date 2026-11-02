@@ -5532,6 +5532,25 @@
                     (assoc :where [:= :leader_id (str leader-id)]))))
     []))
 
+(defn db-agent-team-counts
+  "The team summary of each leader in `leader-ids`, keyed by string leader id:
+   `{:active n :total m}`. `active` counts the queued and running children. One grouped
+   SQL read serves all ids; a leader without children has no key."
+  [db leader-ids]
+  (let [ids (into [] (comp (keep ->ref) (distinct)) leader-ids)]
+    (if (and (ds db) (seq ids))
+      (into {}
+            (map (fn [row]
+                   [(->ref (:leader_id row))
+                    {:active (long (or (:active row) 0)) :total (long (or (:total row) 0))}]))
+            (query! db
+                    {:select [:leader_id [[:count :*] :total]
+                              [[:sum [:case [:in :status ["queued" "running"]] 1 :else 0]] :active]]
+                     :from :session_agent
+                     :where [:in :leader_id ids]
+                     :group-by [:leader_id]}))
+      {})))
+
 (def ^:private page-facts-batch-size "Session ids that one page-facts SQL read binds." 500)
 
 (defn- by-column
@@ -5582,6 +5601,9 @@
                      db-info
                      {:select agent-columns :from :session_agent :where [:in :session_id ids]}))
 
+        teams
+        (db-agent-team-counts db-info ids)
+
         locked
         (into #{}
               (comp (filter #(= 1 (:locked %))) (map (comp ->ref :session_id)))
@@ -5591,31 +5613,32 @@
                        :where [:in :session_id ids]}))]
 
     (into {}
-          (map (fn [soul]
-                 (let [k
-                       (->ref (:id soul))
+          (map
+            (fn [soul]
+              (let [k
+                    (->ref (:id soul))
 
-                       state
-                       (get states k)]
+                    state
+                    (get states k)]
 
-                   [k
-                    {:session
-                     (session-row->session soul state (get project-names (:project_id soul)))
-                     :state-id (some-> (:id state)
-                                       ->uuid)
-                     :workspace (row->workspace (get workspaces
-                                                     (some-> (:workspace_id state)
-                                                             ->ref)))
-                     :agent (agent-row (get agents k))
-                     :routing-locked? (contains? locked k)}])))
+                [k
+                 {:session (session-row->session soul state (get project-names (:project_id soul)))
+                  :state-id (some-> (:id state)
+                                    ->uuid)
+                  :workspace (row->workspace (get workspaces
+                                                  (some-> (:workspace_id state)
+                                                          ->ref)))
+                  :agent (agent-row (get agents k))
+                  :team (get teams k)
+                  :routing-locked? (contains? locked k)}])))
           souls)))
 
 (defn db-session-page-facts
   "The per-row facts of a session list page, keyed by string session id:
-   `{:session :state-id :workspace :agent :routing-locked?}`. Each value equals the
+   `{:session :state-id :workspace :agent :team :routing-locked?}`. Each value equals the
    single reads `db-get-session`, `db-latest-session-state-id`, the state's workspace,
-   `db-agent-info` and `db-routing-locked?`. Six SQL reads serve each 500 ids, so a
-   page costs no read per row. An unknown session has no key."
+   `db-agent-info`, `db-agent-team-counts` and `db-routing-locked?`. Seven SQL reads serve
+   each 500 ids, so a page costs no read per row. An unknown session has no key."
   [db-info session-ids]
   (let [ids (into [] (comp (keep ->ref) (distinct)) session-ids)]
     (if (and (ds db-info) (seq ids))

@@ -287,7 +287,9 @@
     "Add iterations to one child budget within the schema maximum. Answer the new row or nil.")
   (db-agent-resume! [db-info session-id turns now]
     "Queue one idle child for a follow-up task in one transaction, under the active cap. `turns`
-     is its turn count before the task. Answer the new row or nil."))
+     is its turn count before the task. Answer the new row or nil.")
+  (db-agent-team-counts [db-info leader-ids]
+    "The `{:active :total}` child counts of each leader, keyed by string id, in one read."))
 
 (defprotocol SnapshotStore
   "Session snapshot operations of a persistence backend, with the `Store` dispatch. They

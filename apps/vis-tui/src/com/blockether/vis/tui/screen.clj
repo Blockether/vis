@@ -6368,6 +6368,9 @@
                   :goal-sync
                   (state/dispatch [:sync-session-goal tab-id chunk])
 
+                  :team-sync
+                  (agent-team/refresh-now! (:session-id chunk))
+
                   ;; A run is BLOCKED on the operator in a process that is NOT
                   ;; this one — typically the serve daemon. The in-process `:tui`
                   ;; channel bus never crosses a JVM, so this stream is the only

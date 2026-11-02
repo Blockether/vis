@@ -1408,6 +1408,9 @@
       "session.goal_updated"
       {:phase :goal-sync :session-id (event-get event :session-id) :goal (event-get event :goal)}
 
+      "session.team_updated"
+      {:phase :team-sync :session-id (event-get event :session-id) :team (event-get event :team)}
+
       ;; Both capabilities cross the process boundary on one lifecycle. Internal
       ;; state remains specialized: input owns the keyboard; live preserves it.
       "view.open"

@@ -202,3 +202,66 @@
              (activity! 1 [(row "succeeded" "Patched" "~/b.clj")] false)
              (expect (= "Patched ~/b.clj" (#'state/agent-activity sid)))
              (finally (reset! registry saved)))))))
+
+;; Regression: the Companion app showed a running team only after its 3 s team poll, and
+;; after a session switch only after a new read. The session row and a live event now
+;; carry the team summary, so each client knows at once whether subagents work.
+(defdescribe
+  team-summary-test
+  (it
+    "puts the team summary in the leader row and sends it live when a child changes"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          turn
+          (ps/db-store-session-turn! db {:parent-session-id leader :user-request "Parent"})
+
+          child
+          (str (h/fork-session-at-turn! db
+                                        leader
+                                        {:through-turn-id turn
+                                         :agent {:parent_id leader
+                                                 :leader_id leader
+                                                 :team_id (str turn)
+                                                 :task "Check evidence"
+                                                 :iteration_budget 4
+                                                 :spawn_key "k"
+                                                 :spawn_fingerprint "f"
+                                                 :checkpoint [{:role :user :content "Context"}]}}))
+
+          events
+          (atom [])
+
+          registry
+          @#'state/registry
+
+          saved
+          @registry]
+
+      (with-redefs [lp/db-info
+                    (constantly db)
+
+                    bus/publish!
+                    (fn [& _])
+
+                    bus/note-unjournaled!
+                    (fn [& _])]
+
+        (try (expect (= {"active" 1 "total" 1} (get (state/soul leader) "team")))
+             (expect (= {"active" 0 "total" 0} (get (state/soul child) "team"))
+                     "A subagent leads no team")
+             (state/add-event-tap! ::spy
+                                   (fn [sid event]
+                                     (when (= "session.team_updated" (get event "type"))
+                                       (swap! events conj [sid event]))))
+             (ps/db-agent-update! db child {:status "completed"})
+             (state/append-event! child "turn.completed" {:turn_id "child-turn"})
+             (let [[sid event] (last @events)]
+               (expect (= leader sid) "The leader stream gets the event")
+               (expect (= {"active" 0 "total" 1} (get event "team")))
+               (expect (= child (get event "child_id"))))
+             (expect (= {"active" 0 "total" 1} (get (state/soul leader) "team")))
+             (finally (state/remove-event-tap! ::spy) (reset! registry saved)))))))

@@ -122,6 +122,12 @@ export interface AgentFiles {
   deny?: string[];
 }
 
+/** The team summary of a leader session (`$defs.session_team` in the gateway schema). */
+export interface SessionTeam {
+  active: number;
+  total: number;
+}
+
 export interface Session {
   id: string;
   title?: string;
@@ -130,6 +136,8 @@ export interface Session {
   channel?: string;
   /** Explicit objective; null means this session has no goal. */
   goal?: SessionGoal | null;
+  /** The leader's team: children that are queued or running now, and all children. */
+  team?: SessionTeam | null;
   agent?: { role: 'leader' | 'subagent'; parent_id?: string; leader_id: string };
   /** The session state's ROOT model — a bare name, no provider, not the pin. */
   model?: string;

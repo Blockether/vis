@@ -57,6 +57,7 @@ import type {
   Session,
   SessionGoal,
   SessionGroup,
+  SessionTeam,
   SessionGroupPage,
   Project,
   SessionUsage,
@@ -821,6 +822,8 @@ const SNAPSHOT_KIND_LIMITS = new Map<string, number>([
   ['live', SESSION_CACHE_LIMIT],
   // Streaming bubbles are memory-only but can retain whole generated answers.
   ['running-turn', SESSION_CACHE_LIMIT],
+  // The last team of a session, so a switch back or a cold start shows its dock at once.
+  ['agents', SESSION_CACHE_LIMIT],
   // The head list seeds model pins for up to one complete session-list window.
   ['model', 100],
 ]);
@@ -888,6 +891,7 @@ const SESSION_SNAPSHOT_KINDS = new Set([
   'live',
   'model',
   'queued',
+  'agents',
   'running-turn',
   'session',
   'transcript',
@@ -1134,6 +1138,14 @@ function reconcileRows<T>(previous: T[] | null, next: T[]): T[] {
 /** Single-payload variant: keep the cached object when the wire repeats itself. */
 function reconcileRow<T>(previous: T | null, next: T): T {
   return previous !== null && sameJson(previous, next) ? previous : next;
+}
+
+/** The team summary of a session row or a `session.team_updated` event, or null. */
+export function sessionTeamFromWire(raw: unknown): SessionTeam | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const { active, total } = raw as Record<string, unknown>;
+  const count = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0;
+  return count(active) && count(total) ? { active: active as number, total: total as number } : null;
 }
 
 function sessionGoalFromWire(raw: unknown): SessionGoal | null {
@@ -4232,7 +4244,19 @@ export class GatewayClient {
   }
 
   async agents(sid: string, signal?: AbortSignal): Promise<Subagent[]> {
-    return this.request('GET', `/v1/sessions/${encodeURIComponent(sid)}/agents`, undefined, signal);
+    const rows = await this.request<Subagent[]>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/agents`,
+      undefined,
+      signal,
+    );
+    if (Array.isArray(rows)) writeSnapshot(this.snapshotKey('agents', sid), rows);
+    return rows;
+  }
+
+  /** The last team that `agents` read for `sid`, or null before the first read. */
+  cachedAgents(sid: string): Subagent[] | null {
+    return this.isSessionDeleted(sid) ? null : readSnapshot<Subagent[]>(this.snapshotKey('agents', sid));
   }
 
   /** The steps of child `childId` of `sid`, oldest first, with their times. */
@@ -4403,6 +4427,14 @@ export class GatewayClient {
   noteSessionAgentName(sid: string, agentName: string): void {
     const previous = this.cachedSession(sid);
     if (previous) this.absorbSessionRow(sid, { ...previous, agent_name: agentName });
+  }
+
+  /** Apply the team summary of a live `session.team_updated` event to the cached row. */
+  noteSessionTeam(sid: string, raw: unknown): Session | null {
+    const previous = this.cachedSession(sid);
+    const team = sessionTeamFromWire(raw);
+    if (!previous || !team) return previous;
+    return this.absorbSessionRow(sid, { ...previous, team });
   }
 
   /** Apply a live goal without allowing replay or an older HTTP snapshot to rewind it. */

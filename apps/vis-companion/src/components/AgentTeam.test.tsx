@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { GatewayClient } from '../lib/gateway';
+import { GatewayClient } from '../lib/gateway';
 import type { AgentTimeline, Subagent } from '../lib/types';
 import {
   TurnAgents,
@@ -270,8 +270,8 @@ describe('teams', () => {
   });
 });
 
-function Team({ client, sid, running = false }: { client: GatewayClient; sid: string; running?: boolean }) {
-  const team = useAgentTeam(client, sid, running);
+function Team({ client, sid, running = false, active = 0 }: { client: GatewayClient; sid: string; running?: boolean; active?: number }) {
+  const team = useAgentTeam(client, sid, running, 0, active);
   return <TurnAgents agents={team.agents} pending={team.pending} error={team.error} onOpen={vi.fn()} onCancel={team.cancel} timeline={team.timeline} />;
 }
 
@@ -345,5 +345,36 @@ describe('agent team reader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  // User report 2026-11-01: the running agent team showed only after 3-4 seconds, and a
+  // session switch lost it until a new read finished.
+  it('shows the last team of a session at once after a switch back, before the new read', async () => {
+    const reads = new Map<string, (rows: Subagent[]) => void>();
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => new Promise<Response>((done) => {
+      reads.set(new URL(String(input)).pathname.split('/')[3], (rows) =>
+        done(new Response(JSON.stringify(rows), { headers: { 'Content-Type': 'application/json' } })));
+    })));
+    const client = new GatewayClient({ url: 'http://team-switch.example.com' });
+    const { rerender } = render(<Team client={client} sid="switch-leader" />);
+    await act(async () => {});
+    await act(async () => { reads.get('switch-leader')!([child]); });
+    expect(screen.getByRole('button', { name: /^agent#1/ })).toBeInTheDocument();
+    rerender(<Team client={client} sid="switch-other" />);
+    await act(async () => {});
+    await act(async () => { reads.get('switch-other')!([]); });
+    expect(screen.queryByRole('button', { name: /^agent#1/ })).not.toBeInTheDocument();
+    rerender(<Team client={client} sid="switch-leader" />);
+    expect(screen.getByRole('button', { name: /^agent#1/ })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it('polls while the session row says that a child is active, before a row is known', async () => {
+    vi.useFakeTimers();
+    const agents = vi.fn().mockResolvedValue([]);
+    render(<Team client={{ agents, cancelAgent: vi.fn() } as unknown as GatewayClient} sid="leader" active={1} />);
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(agents).toHaveBeenCalledTimes(2);
   });
 });

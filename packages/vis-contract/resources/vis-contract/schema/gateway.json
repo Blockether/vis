@@ -2108,12 +2108,34 @@
           "minLength": 1,
           "maxLength": 80,
           "description": "Coding-agent name resolved by the gateway from the session workspace configuration."
+        },
+        "team": {
+          "$ref": "#/$defs/session_team"
         }
       },
       "required": [
         "id",
         "goal"
       ]
+    },
+    "session_team": {
+      "type": "object",
+      "description": "The subagents of a leader session. active counts the queued and running children; total counts all children. A subagent session has zero of each.",
+      "properties": {
+        "active": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "active",
+        "total"
+      ],
+      "additionalProperties": false
     },
     "session_group_color": {
       "type": "string",
@@ -2767,6 +2789,10 @@
         },
         {
           "const": "session.status"
+        },
+        {
+          "const": "session.team_updated",
+          "description": "Live only. The team summary of a leader changed: a subagent started, ended or was cancelled. team has the session_team shape. child_id names the child that changed, when one did."
         },
         {
           "const": "session.title_updated"

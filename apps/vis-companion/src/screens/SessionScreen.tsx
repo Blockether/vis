@@ -791,6 +791,8 @@ export function SessionScreen({
   // Zen mode keeps only the transcript and the composer, in a golden ratio column.
   const zen = useZenMode();
   const [session, setSession] = useState<Session | null>(() => client.cachedSession(sid));
+  // Counts `session.team_updated` events, so the agent team reads again at once.
+  const [teamSignal, setTeamSignal] = useState(0);
   const [turns, setTurns] = useState<TranscriptTurn[]>(() => openingTranscript ?? []);
   // Whether the turns on screen were confirmed against the gateway during THIS
   // visit. Cached rows paint the first frame, but a cached 'running' row is a
@@ -3001,6 +3003,14 @@ export function SessionScreen({
             if (row) setSession(row);
             break;
           }
+          // A child of this leader changed its lifecycle. The row gets the new
+          // summary, and the team reads again now, not at the next poll.
+          case 'session.team_updated': {
+            const row = client.noteSessionTeam(sid, event.team);
+            if (row) setSession(row);
+            setTeamSignal((value) => value + 1);
+            break;
+          }
           default:
             break;
         }
@@ -4651,7 +4661,14 @@ export function SessionScreen({
   // Kept as a boolean (not `runningTurn`) so streaming frames don't re-run the memo.
   const hasRunningTurn = runningTurn != null;
   // Subagents belong to the turn that started them, so each turn shows its own.
-  const team = useAgentTeam(client, sid, hasRunningTurn, turns.length);
+  // The session row says at once whether a child is active, before the first team read.
+  const team = useAgentTeam(
+    client,
+    sid,
+    hasRunningTurn,
+    turns.length + teamSignal,
+    session?.id === sid ? (session.team?.active ?? 0) : 0,
+  );
   const teams = useMemo(() => agentsByTurn(team.agents), [team.agents]);
   // A team stands in the dock while its turn runs or an agent of it still works; then in its turn.
   const docked = useMemo(

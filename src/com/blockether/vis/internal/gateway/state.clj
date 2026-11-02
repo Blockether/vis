@@ -2698,6 +2698,48 @@
            "gateway: a store read failed; the answer uses its fallback")
          fallback)))
 
+(defn- team-wire
+  "The wire team summary of one leader: its queued or running and its total children."
+  [counts]
+  {:active (long (or (:active counts) 0)) :total (long (or (:total counts) 0))})
+
+(defn- team-counts
+  "The child counts of leader `sid`, in one read."
+  [sid]
+  (read-or {:read :team-counts :session-id (str sid)}
+           nil
+           #(some-> (lp/db-info)
+                    (persistance/db-agent-team-counts [sid])
+                    (get (str sid)))))
+
+(defn- broadcast-team!
+  "Send the team summary of leader `leader` live on its stream, so each client shows a
+   new, finished or cancelled subagent at once instead of at its next poll. `child-id` names
+   the child that changed, when one did. This is the one writer of `session.team_updated`."
+  [leader child-id]
+  (when leader
+    (append-event! (str leader)
+                   "session.team_updated"
+                   (cond-> {:team (team-wire (team-counts leader))}
+                     child-id
+                     (assoc :child_id (str child-id)))
+                   {:store? false})))
+
+(def ^:private team-event-types
+  "Turn events of a child that can change the team summary of its leader."
+  #{"turn.queued" "turn.queued.deleted" "turn.started" "turn.completed" "turn.failed"
+    "turn.cancelled"})
+
+(defn- team-tap
+  "Event tap: after a child turn event, send the new team summary to the leader. The
+   terminal events come after `agents/finish!` stored the child status."
+  [sid event]
+  (when (contains? team-event-types (get event "type"))
+    (when-let [child (agents/info (lp/db-info) (str sid))]
+      (broadcast-team! (:leader_id child) sid))))
+
+(defonce team-listener (add-event-tap! ::team #'team-tap))
+
 (def ^:dynamic ^:private *turn-iterations*
   "Request-local iterations of a whole-transcript read, by string turn id, from
    one batch read; nil when each turn reads its own."
@@ -6207,7 +6249,10 @@
                                "running"
                                (cancel-turn! child-id child-tid :parent-cancel)
 
-                               nil)))))
+                               nil))))
+                       ;; A child without a turn sends no turn event.
+                       (when (some #(contains? #{"queued" "running"} (:status %)) children)
+                         (broadcast-team! sid nil)))
                      {:status "cancelling"})))))
 
 (defn cancel-session-turns!
@@ -6701,6 +6746,11 @@
                  ;; The next settled turn replaces both marks.
                  :was_interrupted (boolean (:latest-turn-interrupted? stats))
                  :was_failed (boolean (:latest-turn-failed? stats))
+                 ;; The team of a leader, so a client knows at once whether subagents
+                 ;; work, before it reads the team. `session.team_updated` moves it live.
+                 :team (team-wire (if-let [fact (page-fact sid)]
+                                    (:team fact)
+                                    (team-counts sid)))
                  :agent (let [env {:db-info (lp/db-info) :session-id sid}]
                           (if-let [fact (page-fact sid)]
                             (agents/context env
@@ -6974,6 +7024,8 @@
 
               (delete-queued-turn! id tid))
             (cancel-session-turns! id :agent-cancel))
+          ;; A child without a turn sends no turn event.
+          (broadcast-team! (:leader_id child) sid)
           {:session_id sid :status "cancelled" :cancelled ids}))))
 
 (defn- agent-files
@@ -7265,6 +7317,7 @@
                  (catch Exception e
                    (persistance/db-agent-update! db child-id {:status "failed"})
                    (throw e)))
+            (broadcast-team! sid child-id)
             (agent-view db (agents/info db child-id))))))))
 
 (defn- agent-live?
