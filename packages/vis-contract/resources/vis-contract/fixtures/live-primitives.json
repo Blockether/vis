@@ -319,6 +319,27 @@
       ]
     },
     {
+      "id": "timeline",
+      "type": "timeline",
+      "label": "Timeline",
+      "lanes": [
+        {
+          "id": "build",
+          "label": "Build",
+          "tone": "ok",
+          "start": 1767225600000,
+          "end": 1767225680000
+        },
+        {
+          "id": "test",
+          "label": "Run tests",
+          "tone": "running",
+          "detail": "12 of 40",
+          "start": 1767225620000
+        }
+      ]
+    },
+    {
       "id": "table",
       "type": "table",
       "columns": [

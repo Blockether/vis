@@ -84,6 +84,7 @@
    there."
   {:stat "nothing counted yet"
    :steps "no steps yet"
+   :timeline "no lanes yet"
    :log "no output yet"
    :table "no rows yet"
    :link "no links"})
@@ -798,9 +799,13 @@
   (fn [node _ctx]
     (:type node)))
 
+;; A divider between the nodes of one `wrap` line stands upright, one cell wide:
+;; it separates things side by side. Anywhere else it is a rule across the band.
 (defmethod node-rows :divider
-  [{:keys [id]} {:keys [text-w]}]
-  [{:kind :trule :node-id id :text (apply str (repeat (max 0 (long text-w)) "─"))}])
+  [{:keys [id is-upright]} {:keys [text-w]}]
+  [{:kind :trule
+    :node-id id
+    :text (if is-upright "│" (apply str (repeat (max 0 (long text-w)) "─")))}])
 
 (defmethod node-rows :paragraph
   [{:keys [id text]} {:keys [text-w]}]
@@ -1030,6 +1035,187 @@
         (pos? (long behind))
         (conj (more-row id behind "step"))))
     [{:kind :empty :node-id id :text (empty-text :steps)}]))
+
+(def ^:private axis-steps
+  "The round steps of a timeline axis, in seconds — the Companion's `AXIS_STEPS`,
+   so both surfaces mark the same times. The axis takes the least step that gives
+   fewer than five marks."
+  [10 15 30 60 120 300 600 900 1800 3600 7200])
+
+(defn axis-marks
+  "The marks of a time axis `ms` long, in ms from its start, on one round step."
+  [ms]
+  (let [seconds
+        (/ (double (max 0 (long ms))) 1000.0)
+
+        step
+        (long (or (some #(when (< (/ seconds (double %)) 5.0) %) axis-steps)
+                  (* 3600 (long (Math/ceil (/ seconds 4.0 3600.0))))))]
+
+    (mapv #(* (long %) step 1000) (range (inc (long (Math/floor (/ seconds (double step)))))))))
+
+(defn- axis-label
+  "A mark as `m:ss` — the Companion's axis label."
+  [ms]
+  (format "%d:%02d" (quot (long ms) 60000) (rem (quot (long ms) 1000) 60)))
+
+(defn lane-span
+  "The shared scale of `lanes` at clock `now`: `[from to]` in epoch ms. It runs
+   from the earliest start to the latest end, or to `now` while a lane runs, and
+   is never shorter than one millisecond."
+  [lanes now]
+  (let [from
+        (long (reduce min (map :start lanes)))
+
+        ends
+        (keep :end lanes)
+
+        to
+        (reduce max
+                from
+                (cond-> (vec ends)
+                  (some #(nil? (:end %)) lanes)
+                  (conj (long now))))]
+
+    [from (max (inc from) (long to))]))
+
+(defn lane-cells
+  "Where one lane's bar stands on a track `bar-w` cells wide: `[a b]`, cells `a`
+   up to but not including `b`. Every lane keeps at least one cell, so a lane
+   that took no time still shows where it happened."
+  [{:keys [start end]} [from to] now bar-w]
+  (let [w
+        (long bar-w)
+
+        span
+        (double (- (long to) (long from)))
+
+        at
+        #(long (Math/round (* (double w) (/ (double (- (long %) (long from))) span))))
+
+        stop
+        (max (long start) (min (long to) (long (or end now))))
+
+        a
+        (min (max 0 (long (at start))) (max 0 (dec w)))
+
+        b
+        (min w (max (inc a) (long (at stop))))]
+
+    [a b]))
+
+(defn- axis-rows
+  "The ruler under the bars: a tick at each round mark, then its `m:ss` label.
+   A label that would touch the one before it, or pass the track's end, is left
+   out; the first label always stands."
+  [id indent bar-w ms text-w]
+  (let [w
+        (long bar-w)
+
+        marks
+        (mapv (fn [at]
+                [(min (max 0 (dec w))
+                      (long (Math/round (* (double w) (/ (double at) (double ms))))))
+                 (axis-label at)])
+              (axis-marks ms))
+
+        ticks
+        (reduce (fn [^String s [x _]]
+                  (str (subs s 0 x) "┬" (subs s (inc (long x)))))
+                (apply str (repeat w "─"))
+                marks)
+
+        labels
+        (first (reduce (fn [[^String s free] [x ^String text]]
+                         (let [n (count text)]
+                           (if (and (>= (long x) (long free)) (<= (+ (long x) n) w))
+                             [(str (subs s 0 x) text (subs s (+ (long x) n))) (+ (long x) n 1)]
+                             [s free])))
+                       [(apply str (repeat w " ")) 0]
+                       marks))
+
+        pad
+        (apply str (repeat (long indent) " "))]
+
+    (mapv (fn [text]
+            (let [segments (runs-cut [{:text pad} {:text text :fg t/dialog-hint}] text-w)]
+              {:kind :axis :node-id id :segments segments :text (segment-line segments)}))
+          (remove str/blank? [ticks (str/trimr labels)]))))
+
+(defmethod node-rows :timeline
+  [{:keys [id lanes]} {:keys [text-w fresh is-expanded now-ms]}]
+  (if (seq lanes)
+    (let [{:keys [shown behind]}
+          (windowed lanes is-expanded false)
+
+          ;; A settled view holds no clock: it reads the time it ended, else its
+          ;; last end, so a receipt paints the same bars every time it opens.
+          now
+          (long (or now-ms (reduce max (map #(or (:end %) (:start %)) lanes))))
+
+          [from to :as scale]
+          (lane-span lanes now)
+
+          said
+          (fn [{:keys [label detail]}]
+            (str (flat-text label) (when (seq (flat-text detail)) (str " — " (flat-text detail)))))
+
+          took
+          (mapv #(elapsed-text (- (max (long (:start %)) (min (long to) (long (or (:end %) now))))
+                                  (long (:start %))))
+                shown)
+
+          dur-w
+          (long (reduce max 0 (map p/display-width took)))
+
+          ;; `label  bar  duration  mark`: six columns of air and one mark.
+          avail
+          (max 0 (- (long text-w) dur-w 7))
+
+          label-w
+          (min (long (reduce max 1 (map (comp p/display-width said) shown)))
+               (max 1 (- avail (min 8 (quot avail 2)))))
+
+          bar-w
+          (max 1 (- avail label-w))
+
+          rows
+          (mapv (fn [lane took]
+                  (let [is-fresh
+                        (contains? fresh (:id lane))
+
+                        [a b]
+                        (lane-cells lane scale now bar-w)
+
+                        ink
+                        (tone-fg (:tone lane))
+
+                        segments
+                        (runs-cut
+                          [{:text (str (p/pad-right (p/ellipsize (said lane) label-w) label-w) "  ")
+                            :fg t/dialog-fg
+                            :styles (if is-fresh [p/BOLD] [])}
+                           {:text (apply str (repeat a "░")) :fg t/dialog-hint}
+                           {:text (apply str (repeat (- (long b) (long a)) "█")) :fg ink}
+                           {:text (apply str (repeat (- bar-w (long b)) "░")) :fg t/dialog-hint}
+                           {:text (str "  " (p/pad-left took dur-w) "  ") :fg t/dialog-hint}
+                           {:text (get tone-glyph (:tone lane) "·") :fg ink}]
+                          text-w)]
+
+                    {:kind :lane
+                     :node-id id
+                     :item-id (:id lane)
+                     :tone (:tone lane)
+                     :is-fresh is-fresh
+                     :segments segments
+                     :text (segment-line segments)}))
+                shown
+                took)]
+
+      (cond-> (into rows (axis-rows id (+ label-w 2) bar-w (- (long to) (long from)) text-w))
+        (pos? (long behind))
+        (conj (more-row id behind "lane"))))
+    [{:kind :empty :node-id id :text (empty-text :timeline)}]))
 
 (defn- log-line-rows
   "One log line wrapped to `text-w` columns.
@@ -1581,7 +1767,9 @@
         (or (not disclosure?) (:is-open node-ctx))
 
         children
-        (not-empty (:children node))
+        (cond->> (not-empty (:children node))
+          (= :wrap (:direction node))
+          (mapv #(cond-> % (= :divider (:type %)) (assoc :is-upright true))))
 
         n
         (count children)
@@ -1652,39 +1840,44 @@
    the band is wide enough for all of them; a `grid` or `wrap` group lays its
    nodes out as [[node-section]] describes. Carries `{:widths …}` as metadata —
    what the tables measured this pass, on its way back into the pane through
-   [[painted]]."
-  [pane text-w]
-  (let [{:keys [view widths fresh expanded]}
-        pane
+   [[painted]].
 
-        ctx
-        (fn [node w]
-          {:text-w w
-           :widths widths
-           :fresh (get-in fresh [:items (:id node)] #{})
-           :is-expanded (or (= :log (:type node)) (contains? (set expanded) (:id node)))
-           :expanded (set expanded)
-           :is-open (get (:disclosures pane)
-                         (:id node)
-                         (and (not (settled? pane)) (true? (:default-expanded node))))
-           :is-interactive (not (settled? pane))
-           :is-record-unread (contains? (:log-fill-error pane) (:id node))})
+   `now-ms` is the clock a running timeline lane extends to. A settled pane holds
+   no clock: its lanes read the time of their last end."
+  ([pane text-w] (plan pane text-w (System/currentTimeMillis)))
+  ([pane text-w now-ms]
+   (let [{:keys [view widths fresh expanded]}
+         pane
 
-        head
-        (mapv (fn [runs]
-                {:kind :prose :runs runs :text (segment-line runs)})
-              (md-lines (:description view) text-w))
+         ctx
+         (fn [node w]
+           {:text-w w
+            :widths widths
+            :fresh (get-in fresh [:items (:id node)] #{})
+            :is-expanded (or (= :log (:type node)) (contains? (set expanded) (:id node)))
+            :expanded (set expanded)
+            :is-open (get (:disclosures pane)
+                          (:id node)
+                          (and (not (settled? pane)) (true? (:default-expanded node))))
+            :is-interactive (not (settled? pane))
+            :now-ms (when-not (settled? pane) now-ms)
+            :is-record-unread (contains? (:log-fill-error pane) (:id node))})
 
-        sections
-        (mapv #(node-section % ctx fresh (long text-w)) (:nodes view))]
+         head
+         (mapv (fn [runs]
+                 {:kind :prose :runs runs :text (segment-line runs)})
+               (md-lines (:description view) text-w))
 
-    (with-meta (stacked-rows (cond-> []
-                               (seq head)
-                               (conj head)
+         sections
+         (mapv #(node-section % ctx fresh (long text-w)) (:nodes view))]
 
-                               true
-                               (into sections)))
-      {:widths (reduce merge {} (map (comp :widths meta) sections))})))
+     (with-meta (stacked-rows (cond-> []
+                                (seq head)
+                                (conj head)
+
+                                true
+                                (into sections)))
+       {:widths (reduce merge {} (map (comp :widths meta) sections))}))))
 
 (defn- view-nodes
   "Every node of `pane`'s view, groups opened, in declaration order."
@@ -1878,6 +2071,25 @@
                              (get (:disclosures pane) (:id node) (:default-expanded node)))
                          (some active? (:children node)))))]
         (boolean (some active? (get-in pane [:view :nodes])))))))
+
+(def timeline-tick-ms
+  "How often a pane with a running timeline lane paints again: its bars and
+   durations move by the second, so a faster frame would only cost work."
+  1000)
+
+(defn ticking?
+  "Whether the visible, open pane shows a timeline lane that still runs. A
+   settled or minimized pane never ticks: its record holds no clock."
+  [panes]
+  (when-let [pane (last (remove dormant? panes))]
+    (when-not (or (settled? pane) (minimized? pane))
+      (letfn [(running? [node]
+                (or (and (= :timeline (:type node)) (some #(nil? (:end %)) (:lanes node)))
+                    (and (= :group (:type node))
+                         (or (not (:is-collapsible node))
+                             (get (:disclosures pane) (:id node) (:default-expanded node)))
+                         (some running? (:children node)))))]
+        (boolean (some running? (get-in pane [:view :nodes])))))))
 
 ;;; ── Where the viewport sits ─────────────────────────────────────────────────
 

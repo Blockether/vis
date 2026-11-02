@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type CSSProperties,
   type HTMLAttributes,
   type ReactNode,
 } from 'react';
@@ -36,6 +37,7 @@ import { DiffNodeView, ThreadNodeView, type AppNodeActions } from './AppNodes';
 import { LiveScene } from './LiveScene';
 import { humanInputDefaultValue, type HumanInputValue } from '../lib/human-input';
 import { ariaShortcut, nodeShortcuts } from '../lib/app-shortcuts';
+import { formatDuration } from '../lib/time-axis';
 import {
   ArrowOutIcon,
   CircleAlertIcon,
@@ -64,6 +66,8 @@ import {
   liveFraction,
   livePercent,
   orderedRows,
+  timelineGeometry,
+  timelineStill,
   type LiveCardNode,
   type LiveInputNode,
   type LiveLinkNode,
@@ -78,6 +82,7 @@ import {
   type LiveRow,
   type LiveShortcut,
   type LiveTableNode,
+  type LiveTimelineNode,
   type LiveTone,
   type LiveView as LiveViewModel,
 } from '../lib/live-view';
@@ -143,6 +148,7 @@ const TONE_WORD: Record<LiveTone, string> = {
 const EMPTY_LINE = {
   stat: 'nothing counted yet',
   steps: 'no steps yet',
+  timeline: 'no lanes yet',
   log: 'no output yet',
   table: 'no rows yet',
   link: 'no links',
@@ -486,6 +492,100 @@ function StepsRows({ node }: { node: LiveStepsNode }) {
         );
       })}
     </ol>
+  );
+}
+
+/** The ink of a lane's bar: the tone mark's colour, filled. */
+const BAR_INK: Record<LiveTone, string> = {
+  idle: 'bg-dialog-hint',
+  running: 'bg-accent-ink',
+  ok: 'bg-ok',
+  warn: 'bg-warn',
+  error: 'bg-err',
+};
+
+// The clock of a running timeline. It ticks once a second only while `ticking`.
+function useClock(ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return undefined;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [ticking]);
+  return now;
+}
+
+// The columns of a timeline: LABEL, the BAR on the shared scale, the DURATION and the
+// tone MARK. LABEL fits the longest label, but takes at most two fifths of the row.
+// DURATION fits `59m 59s`, so a ticking time never moves the bars.
+const LANE_ROW = 'grid min-w-0 grid-cols-[min(var(--lane-label),40%)_minmax(0,1fr)_7ch_auto] gap-x-3';
+
+/**
+ * Parallel work on ONE time scale (`timeline`). Each bar starts where its lane
+ * started, so a reader sees what overlapped and what waited. A ruler over the bars
+ * gives round marks from the earliest start. A running lane reaches to now, and the
+ * clock ticks only while a lane runs; a receipt draws to its last end and stays still.
+ */
+function TimelineRows({ node, isSettled }: { node: LiveTimelineNode; isSettled: boolean }) {
+  const isRunning = node.lanes.some((lane) => lane.end === undefined);
+  const clock = useClock(isRunning && !isSettled);
+  if (node.lanes.length === 0) return <Empty>{EMPTY_LINE.timeline}</Empty>;
+  const geometry = timelineGeometry(node.lanes, isSettled ? timelineStill(node.lanes) : clock);
+  const widest = Math.max(...node.lanes.map((lane) => lane.label.length));
+  return (
+    <div className="min-w-0 font-mono text-body" style={{ '--lane-label': `${widest + 1}ch` } as CSSProperties}>
+      {geometry.marks.length > 1 && (
+        <div aria-hidden="true" className={`pb-1 text-meta text-dialog-hint ${LANE_ROW}`}>
+          <span className="relative col-start-2 h-[calc(1lh+0.25rem)] border-b border-dialog-edge/50">
+            {geometry.marks.map((mark, index) => (
+              <span key={mark.at} className="absolute inset-y-0" style={{ left: `${mark.left * 100}%` }}>
+                <span className={`absolute top-0 ${index === 0 ? '' : '-translate-x-1/2'}`}>{mark.label}</span>
+                <span className="absolute bottom-0 h-1 w-px bg-dialog-edge/50" />
+              </span>
+            ))}
+          </span>
+        </div>
+      )}
+      <ol className="min-w-0">
+        {node.lanes.map((lane, index) => {
+          const bar = geometry.bars[index];
+          const isLoud = lane.tone === 'running' || lane.tone === 'error';
+          return (
+            <li key={lane.id} className={`py-1 ${LANE_ROW}`}>
+              <span className="min-w-0">
+                <span
+                  className={`block [overflow-wrap:anywhere] ${lane.tone === 'error' ? 'text-err' : 'text-white'} ${isLoud ? 'font-bold' : ''}`}
+                >
+                  <InlineMarkdown>{lane.label}</InlineMarkdown>
+                </span>
+                {lane.detail && (
+                  <span className="block text-meta text-dialog-hint [overflow-wrap:anywhere]">
+                    <InlineMarkdown>{lane.detail}</InlineMarkdown>
+                  </span>
+                )}
+              </span>
+              <span aria-hidden="true" className="relative flex h-[1lh] items-center">
+                <span className="relative h-2 w-full bg-white/5">
+                  <span
+                    data-lane-bar={lane.id}
+                    className={`absolute inset-y-0 ${BAR_INK[lane.tone]}`}
+                    style={{ left: `${bar.left * 100}%`, width: `max(2px, ${bar.width * 100}%)` }}
+                  />
+                </span>
+              </span>
+              <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">
+                {formatDuration(bar.duration)}
+              </span>
+              <span className="flex items-start">
+                <LineMark tone={lane.tone} />
+                <span className="sr-only">{TONE_WORD[lane.tone]}</span>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 
@@ -1606,6 +1706,7 @@ function NodeCell({
   onSelect,
   presentation,
   statusAside,
+  inWrap = false,
 }: {
   node: LiveNode;
   load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
@@ -1613,6 +1714,8 @@ function NodeCell({
   presentation: NodePresentation;
   /** A control that stands on the headline's line, at its right end. */
   statusAside?: ReactNode;
+  /** The node is a direct child of a `wrap` group: it stands on a line with its siblings. */
+  inWrap?: boolean;
 }) {
   const contentId = useId();
   const isDisclosure = node.type === 'log' || (node.type === 'group' && node.is_collapsible);
@@ -1672,13 +1775,25 @@ function NodeCell({
                   load={load}
                   onSelect={onSelect}
                   presentation={presentation}
+                  inWrap={node.direction === 'wrap'}
                 />
               ))}
             </ViewLayout>
           )}
-          {node.type === 'divider' && (
-            <hr className="m-0 w-full border-0 border-t border-dialog-edge/40" />
-          )}
+          {/* On a `wrap` line a divider separates the items of that line, so it stands
+              upright and one line of body text tall. Anywhere else it breaks the column. */}
+          {node.type === 'divider' &&
+            (inWrap ? (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                className="flex h-[1lh] items-center font-mono text-body"
+              >
+                <span className="h-full w-px bg-dialog-edge" />
+              </div>
+            ) : (
+              <hr className="m-0 w-full border-0 border-t border-dialog-edge/40" />
+            ))}
           {node.type === 'paragraph' && (
             <ViewParagraph>
               <InlineMarkdown>{node.text}</InlineMarkdown>
@@ -1731,6 +1846,9 @@ function NodeCell({
           {node.type === 'progress' && <ProgressRow node={node} />}
           {node.type === 'stat' && <StatRow node={node} />}
           {node.type === 'steps' && <StepsRows node={node} />}
+          {node.type === 'timeline' && (
+            <TimelineRows node={node} isSettled={presentation.isSettled} />
+          )}
           {node.type === 'log' && (
             <LogRows
               node={node}

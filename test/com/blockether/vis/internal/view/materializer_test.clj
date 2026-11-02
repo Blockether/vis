@@ -939,3 +939,74 @@
                                                       :meshes [{:id "bad" :vertices [[0.0 0.0 0.0] [1.0 0.0 0.0] [0.0 1.0 0.0]]
                                                                 :faces [[0 1 3]]}]})))
                              "missing vertex"))))
+
+(defn- lane
+  ([id label tone start] {:id id :label label :tone tone :start start})
+  ([id label tone start end] (assoc (lane id label tone start) :end end)))
+
+(defn- timeline-node [& lanes] {:id "tl" :type :timeline :label "Timeline" :lanes (vec lanes)})
+
+(defdescribe
+  timeline-patch-test
+  (it "appends lanes by id like steps: a known id is replaced in place, a new id goes last"
+      (let [v (patched (view (timeline-node (lane "a" "Build" :running 0)
+                                            (lane "b" "Lint" :ok 0 5)))
+                       {:op :append
+                        :node-id "tl"
+                        :lanes [(lane "a" "Build" :ok 0 9) (lane "c" "Test" :idle 3)]})]
+        (expect (= [(lane "a" "Build" :ok 0 9) (lane "b" "Lint" :ok 0 5) (lane "c" "Test" :idle 3)]
+                   (:lanes (node v "tl"))))))
+  (it "sets the lane list as a whole, removes lanes by id, and clears them"
+      (let [v (view (timeline-node (lane "a" "Build" :running 0) (lane "b" "Lint" :ok 0 5)))]
+        (expect (= [(lane "c" "Test" :idle 3)]
+                   (:lanes (node
+                             (patched v {:op :set :node-id "tl" :lanes [(lane "c" "Test" :idle 3)]})
+                             "tl"))))
+        (expect (= ["b"]
+                   (mapv :id
+                         (:lanes (node (patched v {:op :remove :node-id "tl" :item-ids ["a"]})
+                                       "tl")))))
+        (expect (= [] (:lanes (node (patched v {:op :clear :node-id "tl"}) "tl"))))))
+  (it "refuses a set or an append that would hold more lanes than the contract allows"
+      (let [bound
+            (long (:max-lanes hs/lane-defaults))
+
+            lanes
+            (mapv #(lane (str "l" %) (str "Lane " %) :idle 0) (range bound))
+
+            v
+            (view (apply timeline-node lanes))
+
+            more
+            (conj lanes (lane "extra" "Extra" :idle 0))]
+
+        (expect (str/includes? (str (refusal #(patched v
+                                                       {:op :append
+                                                        :node-id "tl"
+                                                        :lanes [(lane "extra" "Extra" :idle 0)]})))
+                               (str "holds at most " bound)))
+        (expect (str/includes? (str (refusal #(patched v {:op :set :node-id "tl" :lanes more})))
+                               (str "holds at most " bound))))))
+
+(defdescribe
+  timeline-markdown-test
+  (it "prints one bullet per lane with UTC times, `now` for a running lane, and reads it back"
+      (let [v
+            (view (timeline-node (lane "build" "Build" :ok 1767225600000 1767225680000)
+                                 (assoc (lane "run-tests" "Run tests" :running 1767225620000)
+                                   :detail "12 of 40")))
+
+            {:keys [md again back]}
+            (repainted v)]
+
+        (expect (str/includes?
+                  md
+                  (str "- [ok] Build · 2026-01-01T00:00:00.000Z → 2026-01-01T00:01:20.000Z\n"
+                       "- [running] Run tests — 12 of 40 · 2026-01-01T00:00:20.000Z → now")))
+        (expect (= md again))
+        (expect (= (:lanes (node v "tl")) (:lanes (first (:nodes (:view back))))))))
+  (it "keeps an empty timeline a timeline through the round trip"
+      (let [{:keys [md again back]} (repainted (view (timeline-node)))]
+        (expect (= md again))
+        (expect (= {:type :timeline :lanes []}
+                   (select-keys (first (:nodes (:view back))) [:type :lanes]))))))

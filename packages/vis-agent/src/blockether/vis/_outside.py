@@ -1037,6 +1037,7 @@ _LIVE_HANDLE_OPS = ("patch", "state", "events", "close")
 _LIVE_ITEMS = {
     "stat": "stats",
     "steps": "steps",
+    "timeline": "lanes",
     "table": "rows",
     "link": "links",
     "log": "lines",
@@ -1128,6 +1129,11 @@ def _live_check_node(node, seen, *, is_declaration=True):
         complaint = _contracts.scene_node(node)
         if complaint:
             return complaint
+    if kind == "timeline":
+        try:
+            node["lanes"] = _contracts.checked_lanes(node.get("lanes") or [])
+        except ValueError as error:
+            return str(error)
     if kind == "button":
         if not isinstance(node.get("label"), str) or not node["label"].strip():
             return "a button needs a label"
@@ -1365,6 +1371,11 @@ def _live_apply(view, op):
             except ValueError as error:
                 raise Refused(str(error)) from None
             node[key] = _live_upsert(node.get(key), payload)
+            if key == "lanes":
+                try:
+                    node[key] = _contracts.checked_lanes(node[key])
+                except ValueError as error:
+                    raise Refused(str(error)) from None
         if "groups" in op:
             # A table upserts its group DECLARATIONS in the same append that
             # carries the rows hanging under them, and a second declaration

@@ -5815,7 +5815,12 @@
                                           (long spinner-tick-ms)))
                                  (and scroll-anim?
                                       (>= (- (long now-ms) (long last-frame-ms))
-                                          (long scroll-anim-tick-ms)))))
+                                          (long scroll-anim-tick-ms)))
+                                 ;; A running timeline lane moves by the second;
+                                 ;; the idle park wakes often enough to see it.
+                                 (and (>= (- (long now-ms) (long last-frame-ms))
+                                          (long lv/timeline-tick-ms))
+                                      (lv/ticking? (:live-views db)))))
 
                         same-size?
                         (and (= last-cols cols) (= last-rows rows))

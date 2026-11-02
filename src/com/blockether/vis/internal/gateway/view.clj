@@ -180,7 +180,7 @@
   "The one payload key an `append` carries — `:lines` for a log, the keyed
    collection for everything else."
   [op]
-  (first (filter #(contains? op %) [:lines :rows :stats :steps :links])))
+  (first (filter #(contains? op %) [:lines :rows :stats :steps :lanes :links])))
 
 (defn- coalesce
   "Fold `op` into `ops`, merging it into the last operation with the same owner

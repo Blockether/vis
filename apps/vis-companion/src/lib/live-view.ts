@@ -20,6 +20,7 @@ import {
   viewMaxColumns,
 } from './view';
 import type { ViewAnchor, ViewButtonVariant } from './view';
+import { axisLabel, axisMarks } from './time-axis';
 import {
   mergeSceneObjects,
   sceneColor,
@@ -40,6 +41,7 @@ export const LIVE_NODE_TYPES = [
   'progress',
   'stat',
   'steps',
+  'timeline',
   'log',
   'table',
   'link',
@@ -200,6 +202,22 @@ export interface LiveStep {
 export interface LiveStepsNode extends LiveNodeBase {
   type: 'steps';
   steps: LiveStep[];
+}
+
+/** One bar of a timeline. Times are epoch ms; a lane without `end` still runs. */
+export interface LiveLane {
+  id: string;
+  label: string;
+  tone: LiveTone;
+  start: number;
+  detail?: string;
+  end?: number;
+}
+
+/** Parallel work on ONE shared time scale: each lane starts where it started. */
+export interface LiveTimelineNode extends LiveNodeBase {
+  type: 'timeline';
+  lanes: LiveLane[];
 }
 
 /** Output as it arrives. `lines` is what this panel holds of the `total_lines` recorded. */
@@ -416,6 +434,7 @@ export type LiveLeafNode =
   | LiveProgressNode
   | LiveStatNode
   | LiveStepsNode
+  | LiveTimelineNode
   | LiveLogNode
   | LiveTableNode
   | LiveLinkNode
@@ -662,6 +681,27 @@ function stepFromWire(raw: Record<string, unknown>): LiveStep | null {
     tone: tone(raw.tone),
     detail: optionalText(raw.detail),
     value: optionalText(raw.value),
+  };
+}
+
+/** A time on the wire: a whole, non-negative epoch ms. */
+function epochMs(value: unknown): number | undefined {
+  return Number.isInteger(value) && (value as number) >= 0 ? (value as number) : undefined;
+}
+
+/** A lane without a start, or one that ends before it starts, has no place on the scale. */
+function laneFromWire(raw: Record<string, unknown>): LiveLane | null {
+  const id = text(raw.id);
+  const start = epochMs(raw.start);
+  const end = epochMs(raw.end);
+  if (id === '' || start === undefined || (end !== undefined && end < start)) return null;
+  return {
+    id,
+    label: text(raw.label) || id,
+    tone: tone(raw.tone),
+    start,
+    detail: optionalText(raw.detail),
+    ...(end === undefined ? {} : { end }),
   };
 }
 
@@ -959,6 +999,8 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
       return { ...base, type: 'stat', stats: keyed(node.stats, statFromWire) };
     case 'steps':
       return { ...base, type: 'steps', steps: keyed(node.steps, stepFromWire) };
+    case 'timeline':
+      return { ...base, type: 'timeline', lanes: keyed(node.lanes, laneFromWire) };
     case 'log':
       return {
         ...base,
@@ -1128,6 +1170,64 @@ function upsert<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
   return merged;
 }
 
+/** Where one lane stands on the shared scale: fractions of the axis from 0 to 1. */
+export interface LiveLaneBar {
+  id: string;
+  left: number;
+  width: number;
+  /** How long the lane ran, or runs, in ms. */
+  duration: number;
+  isRunning: boolean;
+}
+
+/** The bars of a timeline and the round marks of its axis, all on one scale. */
+export interface LiveTimelineGeometry {
+  /** The length of the axis in ms: the earliest start to the latest end, or to now. */
+  total: number;
+  /** A lane still runs, so the picture moves with the clock. */
+  isRunning: boolean;
+  bars: LiveLaneBar[];
+  marks: { at: number; left: number; label: string }[];
+}
+
+/**
+ * The clock of a timeline that no longer moves: the latest time it holds. A settled
+ * view draws a lane that never ended up to here, so a receipt never ticks.
+ */
+export function timelineStill(lanes: readonly LiveLane[]): number {
+  return lanes.reduce((latest, lane) => Math.max(latest, lane.end ?? lane.start), 0);
+}
+
+/**
+ * Every lane on ONE scale (`timeline`): the axis runs from the earliest start to the
+ * latest end, and to `now` while a lane runs. A running lane ends at `now`, never
+ * before its own start, so a clock behind the producer draws no negative bar.
+ */
+export function timelineGeometry(lanes: readonly LiveLane[], now: number): LiveTimelineGeometry {
+  if (lanes.length === 0) return { total: 0, isRunning: false, bars: [], marks: [] };
+  const isRunning = lanes.some((lane) => lane.end === undefined);
+  const endOf = (lane: LiveLane) => lane.end ?? Math.max(lane.start, now);
+  const from = Math.min(...lanes.map((lane) => lane.start));
+  const to = Math.max(...lanes.map(endOf));
+  const total = to - from;
+  const share = (at: number) => (total > 0 ? (at - from) / total : 0);
+  return {
+    total,
+    isRunning,
+    bars: lanes.map((lane) => ({
+      id: lane.id,
+      left: share(lane.start),
+      width: share(endOf(lane)) - share(lane.start),
+      duration: endOf(lane) - lane.start,
+      isRunning: lane.end === undefined,
+    })),
+    marks:
+      total > 0
+        ? axisMarks(total).map((at) => ({ at, left: at / total, label: axisLabel(at) }))
+        : [],
+  };
+}
+
 /**
  * A group is a DECLARATION, so a second one MERGES into the first: re-toning a
  * group mid-run must not drop the label it was declared with. Rows replace in
@@ -1158,7 +1258,7 @@ function withoutIds<T extends { id: string }>(existing: T[], ids: unknown): T[] 
 /** The key an `append` fills for this node type (`live/appendable-key`). */
 function appendKey(
   node: LiveNode,
-): 'lines' | 'rows' | 'stats' | 'steps' | 'links' | 'objects' | null {
+): 'lines' | 'rows' | 'stats' | 'steps' | 'lanes' | 'links' | 'objects' | null {
   switch (node.type) {
     case 'log':
       return 'lines';
@@ -1168,6 +1268,8 @@ function appendKey(
       return 'stats';
     case 'steps':
       return 'steps';
+    case 'timeline':
+      return 'lanes';
     case 'link':
       return 'links';
     case 'scene':
@@ -1216,6 +1318,12 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
         ...node,
         label: 'label' in op ? optionalText(op.label) : node.label,
         steps: 'steps' in op ? keyed(op.steps, stepFromWire) : node.steps,
+      };
+    case 'timeline':
+      return {
+        ...node,
+        label: 'label' in op ? optionalText(op.label) : node.label,
+        lanes: 'lanes' in op ? keyed(op.lanes, laneFromWire) : node.lanes,
       };
     case 'table':
       return {
@@ -1305,6 +1413,11 @@ function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
         ...node,
         steps: upsert(node.steps, keyed(op.steps, stepFromWire)),
       };
+    case 'timeline':
+      return {
+        ...node,
+        lanes: upsert(node.lanes, keyed(op.lanes, laneFromWire)),
+      };
     case 'link':
       return {
         ...node,
@@ -1337,6 +1450,8 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       return { ...node, stats: withoutIds(node.stats, op.item_ids) };
     case 'steps':
       return { ...node, steps: withoutIds(node.steps, op.item_ids) };
+    case 'timeline':
+      return { ...node, lanes: withoutIds(node.lanes, op.item_ids) };
     case 'link':
       return { ...node, links: withoutIds(node.links, op.item_ids) };
     case 'diff':
@@ -1363,6 +1478,8 @@ function applyClear(node: LiveLeafNode): LiveNode {
       return { ...node, stats: [] };
     case 'steps':
       return { ...node, steps: [] };
+    case 'timeline':
+      return { ...node, lanes: [] };
     case 'link':
       return { ...node, links: [] };
     case 'scene':

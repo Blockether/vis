@@ -189,6 +189,70 @@ export const Dividers: Story = {
   },
 };
 
+// The lanes start relative to the page load, so the running lane shows a short time.
+const LOADED = Date.now();
+
+/**
+ * A TEAM-like header made only of public nodes: a `wrap` line of paragraphs, a
+ * button and dividers that stand upright between them. Under it, the lanes of the
+ * team on one time scale. The running lane ticks once a second.
+ */
+export const TeamTimeline: Story = {
+  args: {
+    onInterrupt: undefined,
+    onActivate: fn(),
+    view: {
+      id: 'team-timeline',
+      title: 'Team',
+      seq: 1,
+      nodes: [
+        {
+          id: 'head',
+          type: 'group',
+          direction: 'wrap',
+          children: [
+            { id: 'team', type: 'paragraph', text: '**TEAM**' },
+            { id: 'after-team', type: 'divider' },
+            { id: 'time', type: 'paragraph', text: '1m 20s' },
+            {
+              id: 'toggle',
+              type: 'button',
+              label: 'Open timeline',
+              action: 'activate',
+              variant: 'secondary',
+              is_disabled: false,
+              clicks: 0,
+            },
+            { id: 'after-toggle', type: 'divider' },
+            { id: 'counts', type: 'paragraph', text: '4 running · 1 queued · 1 done' },
+          ],
+        },
+        {
+          id: 'lanes',
+          type: 'timeline',
+          label: 'Agents',
+          lanes: [
+            { id: 'map', label: 'Map the routes', tone: 'ok', start: LOADED - 80_000, end: LOADED - 30_000 },
+            { id: 'build', label: 'Build the dock', tone: 'running', detail: 'step 3 of 5', start: LOADED - 60_000 },
+            { id: 'verify', label: 'Verify the sheet', tone: 'error', start: LOADED - 45_000, end: LOADED - 10_000 },
+            { id: 'audit', label: 'Audit', tone: 'idle', start: LOADED - 5_000, end: LOADED - 5_000 },
+          ],
+        },
+      ],
+    },
+  },
+  play: async ({ canvas, args }) => {
+    const separators = canvas.getAllByRole('separator');
+    await expect(separators).toHaveLength(2);
+    for (const separator of separators) {
+      await expect(separator).toHaveAttribute('aria-orientation', 'vertical');
+    }
+    await userEvent.click(canvas.getByRole('button', { name: 'Open timeline' }));
+    await expect(args.onActivate).toHaveBeenCalledWith('toggle');
+    await expect(canvas.getByText('Build the dock').closest('li')).toHaveTextContent('Running');
+  },
+};
+
 // THE TRANSCRIPT STATES A RUN. Embedded, the panel is ONE row that opens: the picture —
 // dividers and all — is painted in the run's own screen rather than in the trace.
 export const EmbeddedRow: Story = {

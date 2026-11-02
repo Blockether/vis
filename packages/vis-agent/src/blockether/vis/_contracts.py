@@ -42,8 +42,18 @@ def definition(name: str, key: str) -> dict[str, Any]:
 
 # An appended live item replaces the item with its id. The host fills these keys
 # when the item leaves them out; every other required key must come with it.
-_LIVE_ITEM_DEFAULTS = {"step": {"tone": "idle"}, "link": {"target_kind": "url"}}
-_LIVE_ITEMS = {"stats": "stat", "steps": "step", "rows": "row", "links": "link"}
+_LIVE_ITEM_DEFAULTS = {
+    "step": {"tone": "idle"},
+    "lane": {"tone": "idle"},
+    "link": {"target_kind": "url"},
+}
+_LIVE_ITEMS = {
+    "stats": "stat",
+    "steps": "step",
+    "lanes": "lane",
+    "rows": "row",
+    "links": "link",
+}
 
 
 def live_items(key: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -75,6 +85,62 @@ def button_variant_error(variant: Any) -> str | None:
     if variant is None or variant in allowed:
         return None
     return f"button variant must be one of {', '.join(allowed)}, not {variant!r}"
+
+
+def _timeline_branch() -> dict[str, Any]:
+    return next(
+        branch
+        for branch in definition("view", "component")["oneOf"]
+        if branch["properties"]["type"].get("const") == "timeline"
+    )
+
+
+def _epoch_ms(value: Any) -> bool:
+    return type(value) is int and value >= 0
+
+
+def lanes_error(lanes: Any) -> str | None:
+    """Answer what makes the lanes of a timeline invalid, or None when they are valid.
+
+    The schema bounds the count and the time fields. It cannot say that ids are unique
+    in one node or that a lane never ends before it starts, so this check says it.
+    """
+    if not isinstance(lanes, (list, tuple)):
+        return "timeline lanes must be a list"
+    limit = _timeline_branch()["properties"]["lanes"]["maxItems"]
+    if len(lanes) > limit:
+        return f"a timeline holds at most {limit} lanes"
+    ids = [lane.get("id") if isinstance(lane, dict) else None for lane in lanes]
+    if repeated := sorted({i for i in ids if ids.count(i) > 1}, key=str):
+        return f"timeline lane id repeats: {repeated[0]}"
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            return f"every lane must be a map, got {lane!r}"
+        name = lane.get("id")
+        if not _epoch_ms(lane.get("start")):
+            return (
+                f"lane {name}: start must be epoch milliseconds, a nonnegative integer"
+            )
+        if "end" in lane and not _epoch_ms(lane["end"]):
+            return f"lane {name}: end must be epoch milliseconds, a nonnegative integer"
+        if "end" in lane and lane["end"] < lane["start"]:
+            return "a lane ends before it starts"
+    return None
+
+
+def checked_lanes(lanes: Any) -> list[dict[str, Any]]:
+    """Return timeline lanes with their defaults filled; refuse invalid lanes.
+
+    Every host and builder calls this one check, so they refuse the same lanes.
+    """
+    if not isinstance(lanes, (list, tuple)) or not all(
+        isinstance(lane, dict) for lane in lanes
+    ):
+        raise ValueError("timeline lanes must be a list of maps")
+    filled = live_items("lanes", [dict(lane) for lane in lanes])
+    if complaint := lanes_error(filled):
+        raise ValueError(complaint)
+    return filled
 
 
 def _defaults(key: str) -> dict[str, Any]:

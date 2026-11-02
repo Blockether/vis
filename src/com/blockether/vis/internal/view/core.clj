@@ -739,6 +739,7 @@
    :rows view-spec/live-row-keys
    :stats view-spec/live-stat-keys
    :steps view-spec/live-step-keys
+   :lanes view-spec/live-lane-keys
    :links view-spec/live-link-keys
    :groups view-spec/live-table-group-keys
    :objects view-spec/live-scene-object-keys
@@ -752,6 +753,7 @@
    :rows "row"
    :stats "stat"
    :steps "step"
+   :lanes "lane"
    :links "link"
    :groups "table group"
    :objects "scene object"
@@ -806,6 +808,13 @@
     (if (and (number? n) (<= 0 (double n) 1))
       (double n)
       (fail! (str what " must be a fraction from 0 to 1, or absent when the size is unknown")))))
+
+(defn- live-epoch
+  "A point in time as whole epoch milliseconds. A time before 1970 is refused."
+  [fail! what value]
+  (let [ms (live-long fail! what value)]
+    (when (neg? (long ms)) (fail! (str what " must be epoch milliseconds, not negative")))
+    ms))
 
 (defn- live-target-kind
   "What a link points AT. Named by the spec, or inferred from a target carrying a
@@ -940,6 +949,23 @@
 
           (some? (:value item))
           (assoc :value (live-fraction item-fail! ":value" (:value item))))
+
+        ;; One bar of a timeline. No `:end` means it still runs.
+        :lanes
+        (let [start (live-epoch item-fail! ":start" (:start item))
+              end (some->> (:end item)
+                           (live-epoch item-fail! ":end"))]
+
+          (when (and end (< (long end) (long start))) (item-fail! "a lane ends before it starts"))
+          (cond-> {:id id
+                   :label (or label (item-fail! "a lane needs a :label"))
+                   :tone (or tone :idle)
+                   :start start}
+            (trimmed (:detail item))
+            (assoc :detail (trimmed (:detail item)))
+
+            end
+            (assoc :end end)))
 
         :links
         (let [target (live-text item-fail! ":target" (:target item))]
@@ -1286,6 +1312,9 @@
 
                :steps
                (assoc base :steps (items :steps))
+
+               :timeline
+               (assoc base :lanes (items :lanes))
 
                :log
                (cond-> (assoc base
@@ -1652,6 +1681,8 @@
             (normalize-live-items fail! :stats value))
    :steps (fn [fail! value]
             (normalize-live-items fail! :steps value))
+   :lanes (fn [fail! value]
+            (normalize-live-items fail! :lanes value))
    :links (fn [fail! value]
             (normalize-live-items fail! :links value))
    :objects (fn [fail! value]
@@ -2071,9 +2102,9 @@
                 #{}
                 [view-spec/live-view-keys view-spec/live-node-keys view-spec/live-group-keys
                  view-spec/live-column-keys view-spec/live-table-group-keys view-spec/live-row-keys
-                 view-spec/live-stat-keys view-spec/live-step-keys view-spec/live-link-keys
-                 view-spec/live-sorted-keys view-spec/live-patch-keys view-spec/live-op-keys
-                 view-spec/live-result-keys view-spec/live-picture-keys
+                 view-spec/live-stat-keys view-spec/live-step-keys view-spec/live-lane-keys
+                 view-spec/live-link-keys view-spec/live-sorted-keys view-spec/live-patch-keys
+                 view-spec/live-op-keys view-spec/live-result-keys view-spec/live-picture-keys
                  view-spec/live-elided-keys])))
 
 (def ^:private live-wire-terms

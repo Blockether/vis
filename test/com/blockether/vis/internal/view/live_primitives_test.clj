@@ -424,3 +424,40 @@
                      (catch clojure.lang.ExceptionInfo _ true)))
         (expect (some? (spec/live-node-error {:id "bad" :type :divider key value}))))))
 
+(defdescribe
+  timeline-validation-test
+  (it "refuses a lane that ends before it starts, and a repeated lane id"
+      (let [lane
+            {:id "build" :label "Build" :tone "ok" :start 2000}
+
+            refusal
+            (fn [node]
+              (try (engine/normalize-live-node node)
+                   nil
+                   (catch clojure.lang.ExceptionInfo e (ex-message e))))]
+
+        (expect (nil? (refusal {:id "tl" :type "timeline" :lanes [(assoc lane :end 2000)]})))
+        (expect (str/includes? (str (refusal
+                                      {:id "tl" :type "timeline" :lanes [(assoc lane :end 1999)]}))
+                               "a lane ends before it starts"))
+        (expect (str/includes? (str (refusal {:id "tl" :type "timeline" :lanes [lane lane]}))
+                               "timeline lane id repeats: build"))
+        (expect (str/includes? (str (try (engine/normalize-live-op {:op "append"
+                                                                    :node-id "tl"
+                                                                    :lanes [(assoc lane :end 1)]})
+                                         nil
+                                         (catch clojure.lang.ExceptionInfo e (ex-message e))))
+                               "a lane ends before it starts"))))
+  (it "refuses a timeline with more lanes than the contract allows"
+      (let [bound
+            (long (:max-lanes spec/lane-defaults))
+
+            lanes
+            (mapv #(hash-map :id (str "l" %) :label "Lane" :tone "idle" :start 0)
+                  (range (inc bound)))]
+
+        (expect (try (engine/normalize-live-node {:id "tl" :type "timeline" :lanes lanes})
+                     false
+                     (catch clojure.lang.ExceptionInfo _ true)))
+        (expect (some? (engine/normalize-live-node
+                         {:id "tl" :type "timeline" :lanes (pop lanes)}))))))

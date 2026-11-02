@@ -655,6 +655,39 @@
         "tone"
       ]
     },
+    "lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One bar of a timeline. Times are epoch milliseconds. A lane without end still runs, and end is never before start.",
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "label": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "tone": {
+          "$ref": "#/$defs/tone"
+        },
+        "detail": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "tone",
+        "start"
+      ]
+    },
     "link": {
       "type": "object",
       "additionalProperties": false,
@@ -1107,6 +1140,34 @@
             "id",
             "type",
             "steps"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "timeline"
+            },
+            "lanes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/lane"
+              },
+              "minItems": 0,
+              "maxItems": 100
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "lanes"
           ]
         },
         {
@@ -2385,6 +2446,12 @@
                 "$ref": "#/$defs/step"
               }
             },
+            "lanes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/lane"
+              }
+            },
             "selected_ids": {
               "type": "array",
               "items": {
@@ -2511,6 +2578,12 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/step"
+              }
+            },
+            "lanes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/lane"
               }
             },
             "links": {

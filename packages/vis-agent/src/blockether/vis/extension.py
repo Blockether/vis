@@ -4828,7 +4828,7 @@ class _KeyedNode(_Node):
     """A node holding items the extension addresses by id: it can drop them."""
 
     def remove(self: _Node, *item_ids):
-        # Stat and Steps borrow this method, so `self` can be any node.
+        # Stat, Steps and Timeline borrow this method, so `self` can be any node.
         # Ids as arguments or as one iterable, because a caller with a list
         # should not have to spread it.
         ids = (
@@ -4950,6 +4950,39 @@ class Steps(_Node):
                 )
             ],
         )
+
+    def clear(self):
+        return self._op("clear")
+
+    def remove(self, *item_ids):
+        return _KeyedNode.remove(self, *item_ids)
+
+
+class Timeline(_Node):
+    """Bars of parallel work on one shared time scale."""
+
+    def set(self, lane_id, label, start, end=None, tone=None, detail=None):
+        """Add or replace one lane by id. Times are epoch milliseconds.
+
+        A lane without ``end`` still runs. The new lane replaces the old one, so give
+        ``start`` again when you finish a lane with ``end``.
+        """
+        from blockether.vis import _contracts
+
+        lane = _live_item(
+            lane_id,
+            {
+                "label": label,
+                "tone": tone,
+                "detail": detail,
+                "start": start,
+                "end": end,
+            },
+        )
+        complaint = _contracts.lanes_error([lane])
+        if complaint:
+            raise ValueError(f"timeline {self.node_id}: {complaint}")
+        return self._op("append", lanes=[lane])
 
     def clear(self):
         return self._op("clear")
@@ -5145,6 +5178,7 @@ _LIVE_NODES = {
     "progress": Progress,
     "stat": Stat,
     "steps": Steps,
+    "timeline": Timeline,
     "log": Log,
     "table": Table,
     "link": Link,
@@ -6319,6 +6353,7 @@ class _LiveRecorder:
     _COLLECTION = {
         "stat": "stats",
         "steps": "steps",
+        "timeline": "lanes",
         "table": "rows",
         "link": "links",
         "scene": "objects",
@@ -6424,10 +6459,22 @@ class _LiveRecorder:
                     raise AssertionError(complaint)
             elif kind in self._COLLECTION:
                 items = node.setdefault(self._COLLECTION[kind], [])
+                if kind == "timeline":
+                    self._check_lanes(node)
                 if kind == "link":
                     for item in items:
                         item.setdefault("target_kind", "url")
         return view
+
+    @staticmethod
+    def _check_lanes(node):
+        from blockether.vis import _contracts
+
+        # Vis raises VisToolError, a RuntimeError, so the recorder does too.
+        try:
+            node["lanes"] = _contracts.checked_lanes(node.get("lanes") or [])
+        except ValueError as error:
+            raise RuntimeError(f"timeline {node.get('id')}: {error}") from None
 
     def _parent(self, node_id):
         def find(nodes):
@@ -6486,6 +6533,8 @@ class _LiveRecorder:
             # that leaves the key out.
             if "detail" in op and not str(op["detail"]).strip():
                 node.pop("detail", None)
+            if node["type"] == "timeline":
+                self._check_lanes(node)
         elif action == "set-value":
             if op.get("value") is None:
                 node.pop("value", None)
@@ -6535,6 +6584,8 @@ class _LiveRecorder:
 
             incoming = _contracts.live_items(key, incoming)
             node[key] = self._upsert(node[key], incoming)
+            if node["type"] == "timeline":
+                self._check_lanes(node)
             if "groups" in op:
                 # `live/apply-append`: a group already declared KEEPS the keys the
                 # new declaration leaves out, so re-toning a head does not drop
@@ -7149,6 +7200,24 @@ def _ui_steps(node_id, steps=None, **spec):
     return _live_node("steps", node_id, dict(spec, steps=steps))
 
 
+def _ui_timeline(node_id, lanes=None, **spec):
+    """Parallel work as bars on one shared time scale, like a Gantt chart.
+
+    Each lane is ``{'id': ..., 'label': ..., 'tone': ..., 'start': ms}`` with an
+    optional ``detail`` and ``end``. Times are integer epoch milliseconds. A lane
+    without ``end`` still runs, and surfaces draw it up to now. Lane ids are unique,
+    and no lane ends before it starts.
+    """
+    from blockether.vis import _contracts
+
+    if lanes is not None:
+        try:
+            lanes = _contracts.checked_lanes(lanes)
+        except ValueError as error:
+            raise ValueError(f"timeline {node_id}: {error}") from None
+    return _live_node("timeline", node_id, dict(spec, lanes=lanes))
+
+
 def _ui_output(node_id, **spec):
     """Durable output with an independent disclosure, collapsed by default.
 
@@ -7423,6 +7492,7 @@ class _UI:
     progress = staticmethod(_ui_progress)
     stat = staticmethod(_ui_stat)
     steps = staticmethod(_ui_steps)
+    timeline = staticmethod(_ui_timeline)
     output = staticmethod(_ui_output)
     table = staticmethod(_ui_table)
     table_column = staticmethod(_ui_table_column)

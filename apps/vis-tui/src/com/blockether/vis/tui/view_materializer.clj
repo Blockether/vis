@@ -59,6 +59,7 @@
    :progress #{:value :done :total}
    :stat #{:stats}
    :steps #{:steps}
+   :timeline #{:lanes}
    :log #{:window-lines}
    :table #{:order :max-rows :selected-ids}
    :link #{:links}
@@ -69,7 +70,13 @@
   "The key an `append` carries, per node type — the one axis a `log` and a
    `table` differ on, and the reason appending rows to a log is a refusal
    rather than a silent no-op."
-  {:stat :stats :steps :steps :log :lines :table :rows :link :links :scene :objects})
+  {:stat :stats
+   :steps :steps
+   :timeline :lanes
+   :log :lines
+   :table :rows
+   :link :links
+   :scene :objects})
 
 (def ^:private patch-item-caps
   "How many items ONE patch may carry into a node. Not a cap on the node: it
@@ -235,9 +242,11 @@
                    ;; line it was carrying instead of refusing the patch.
                    (and (contains? given :detail) (str/blank? (:detail op)))
                    (dissoc :detail))]
-      (checked-node (if (contains? given :stats)
-                      (assoc merged :stats (checked-count! merged (:stats op)))
-                      merged)))))
+      (checked-node
+        (reduce (fn [node k]
+                  (if (contains? given k) (assoc node k (checked-count! node (get op k))) node))
+                merged
+                [:stats :lanes])))))
 
 (defn- apply-append
   "A node with items added. A `log` keeps every line it is handed — the terminal
@@ -300,6 +309,10 @@
                                           :total-lines (+ (long (:total-lines node)) (count items)))
                                   styled?
                                   (assoc :line-tones tones)))
+        ;; A timeline lane carries an order rule the item bound cannot see, so the
+        ;; node is checked whole: a lane may not end before it starts.
+        (= :timeline (:type node)) (checked-node
+                                     (update node k #(checked-count! node (upsert % items))))
         :else (update node k #(checked-count! node (upsert % items)))))))
 
 (defn- prune-selected
@@ -558,6 +571,7 @@
    and a table with no rows still says what it is watching."
   {:stat "_nothing counted yet_"
    :steps "_no steps yet_"
+   :timeline "_no lanes yet_"
    :log "_no output yet_"
    :table "_no rows yet_"
    :link "_no links_"})
@@ -885,6 +899,31 @@
                  (when value (str " · " (percent value) "%"))))
           steps)
     [(empty-line :steps)]))
+
+(def ^:private lane-time-format
+  "UTC with exactly three millisecond digits, also when they are zero."
+  (.withZone (java.time.format.DateTimeFormatter/ofPattern "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+             java.time.ZoneOffset/UTC))
+
+(defn- iso-ms
+  "Epoch milliseconds as UTC ISO-8601 with milliseconds, the one time form a
+   timeline lane prints and reads back — the engine prints the same bytes."
+  [ms]
+  (.format ^java.time.format.DateTimeFormatter lane-time-format
+           (java.time.Instant/ofEpochMilli (long ms))))
+
+(defmethod node->markdown :timeline
+  [{:keys [lanes]} _]
+  (if (seq lanes)
+    (mapv (fn [{:keys [label tone detail start end]}]
+            (str "- "
+                 (tone-tag tone)
+                 label
+                 (when detail (str " — " detail))
+                 " · " (iso-ms start)
+                 " → " (if end (iso-ms end) "now")))
+          lanes)
+    [(empty-line :timeline)]))
 
 (defmethod node->markdown :log
   [{:keys [lines total-lines]} {:keys [log-tail-lines]}]
@@ -1241,6 +1280,10 @@
                (re-matches #".+ — attachment `.+`" text)
                (re-matches #".+ — `.+`" text))))
 
+(def ^:private lane-line
+  "One painted timeline lane: what it says, then its start and its end or `now`."
+  #"(.*) · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) → (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z|now)")
+
 (defn- block-type
   "Which node painted this block. Every type paints a shape no other one makes: a
    fence is a log, a rail is a table, a bullet list is steps or links, a bold
@@ -1258,6 +1301,9 @@
           (contains? type-painting-nothing head) (type-painting-nothing head)
           (re-matches #"`{3,}" head) :log
           (str/starts-with? head "|") :table
+          (and (str/starts-with? head "- ")
+               (every? #(re-matches lane-line (first (untoned (bullet at %)))) lines))
+          :timeline
           (str/starts-with? head "- ") (if (every? (fn [line]
                                                      (link-item? (first (untoned (bullet at
                                                                                          line)))))
@@ -1546,6 +1592,36 @@
                                    percent-text
                                    (assoc :value (/ (long (parse-long percent-text)) 100.0)))))
                              lines))}))
+
+(defmethod markdown->node :timeline
+  [_ {:keys [at lines]}]
+  (if (= (empty-line :timeline) (first lines))
+    {:type :timeline :lanes []}
+    {:type :timeline
+     :lanes (addressed
+              "lane"
+              :label
+              (mapv (fn [line]
+                      (let [[body tone]
+                            (untoned (bullet at line))
+
+                            [_ text start end]
+                            (or (re-matches lane-line body)
+                                (invalid-markdown! at "a lane paints `label · start → end`"))
+
+                            [_ label detail]
+                            (re-matches #"(.*?) — (.*)" text)
+
+                            epoch
+                            #(.toEpochMilli (java.time.Instant/parse %))]
+
+                        (cond-> {:label (or label text) :tone (or tone :idle) :start (epoch start)}
+                          detail
+                          (assoc :detail detail)
+
+                          (not= "now" end)
+                          (assoc :end (epoch end)))))
+                    lines))}))
 
 (defmethod markdown->node :log
   [_ {:keys [at lines]}]

@@ -14,6 +14,8 @@ import {
   liveViewsFromWire,
   orderedRows,
   staleLiveViews,
+  timelineGeometry,
+  timelineStill,
   LIVE_LOG_WINDOW,
   LIVE_OPS,
   type LiveInputNode,
@@ -885,4 +887,76 @@ it('LIVE_OPS names every patch op that view.json declares', () => {
     (branch: { properties: { op: { const: string } } }) => branch.properties.op.const,
   );
   expect([...LIVE_OPS].sort()).toEqual([...declared].sort());
+});
+
+describe('a timeline', () => {
+  const T0 = 1767225600000;
+  const lanes = [
+    { id: 'build', label: 'Build', tone: 'ok', start: T0, end: T0 + 80_000 },
+    { id: 'test', label: 'Run tests', tone: 'running', start: T0 + 20_000 },
+  ];
+  const board = (wire: unknown[] = lanes): LiveView => {
+    const view = liveViewFromWire({
+      id: 'ci',
+      title: 'CI',
+      seq: 0,
+      nodes: [{ id: 'jobs', type: 'timeline', lanes: wire }],
+    });
+    if (!view) throw new Error('a timeline view must be paintable');
+    return view;
+  };
+  const laneIds = (view: LiveView) => nodeOfType(view, 'jobs', 'timeline').lanes.map((lane) => lane.id);
+
+  // A bar needs a place on the scale: no start, a fractional time, or an end before
+  // the start would draw a bar the producer never meant.
+  it('drops a lane that has no place on the scale', () => {
+    expect(
+      laneIds(
+        board([
+          ...lanes,
+          { id: 'no-start', label: 'No start', tone: 'ok' },
+          { id: 'fraction', label: 'Fraction', tone: 'ok', start: T0 + 0.5 },
+          { id: 'backwards', label: 'Backwards', tone: 'ok', start: T0, end: T0 - 1 },
+        ]),
+      ),
+    ).toEqual(['build', 'test']);
+    expect(nodeOfType(board(), 'jobs', 'timeline').lanes[1]).not.toHaveProperty('end');
+  });
+
+  it('replaces the lanes on set, upserts them on append, and drops them on remove and clear', () => {
+    const finished = { ...lanes[1], tone: 'ok', end: T0 + 90_000 };
+    const late = { id: 'lint', label: 'Lint', tone: 'running', start: T0 + 30_000 };
+    const appended = patched(board(), 1, [{ op: 'append', node_id: 'jobs', lanes: [late, finished] }]);
+    expect(laneIds(appended)).toEqual(['build', 'test', 'lint']);
+    expect(nodeOfType(appended, 'jobs', 'timeline').lanes[1]).toMatchObject({ tone: 'ok', end: T0 + 90_000 });
+    expect(laneIds(patched(board(), 1, [{ op: 'set', node_id: 'jobs', lanes: [late] }]))).toEqual(['lint']);
+    expect(laneIds(patched(board(), 1, [{ op: 'set', node_id: 'jobs', label: 'Jobs' }]))).toEqual(['build', 'test']);
+    expect(laneIds(patched(board(), 1, [{ op: 'remove', node_id: 'jobs', item_ids: ['build'] }]))).toEqual(['test']);
+    expect(laneIds(patched(board(), 1, [{ op: 'clear', node_id: 'jobs' }]))).toEqual([]);
+  });
+
+  it('puts every lane on one scale and runs a live lane to the clock', () => {
+    const parsed = nodeOfType(board(), 'jobs', 'timeline').lanes;
+    const geometry = timelineGeometry(parsed, T0 + 100_000);
+    expect(geometry).toMatchObject({ total: 100_000, isRunning: true });
+    expect(geometry.bars).toEqual([
+      { id: 'build', left: 0, width: 0.8, duration: 80_000, isRunning: false },
+      { id: 'test', left: 0.2, width: 0.8, duration: 80_000, isRunning: true },
+    ]);
+    expect(geometry.marks.map((mark) => mark.label)).toEqual(['0:00', '0:30', '1:00', '1:30']);
+    expect(geometry.marks[1].left).toBe(0.3);
+  });
+
+  // A settled view draws to the time of its last end, so a receipt never moves; a
+  // clock behind the producer gives a running lane no width rather than a negative one.
+  it('holds a still picture at the last end and never draws a bar backwards', () => {
+    const parsed = nodeOfType(board(), 'jobs', 'timeline').lanes;
+    const still = timelineGeometry(parsed, timelineStill(parsed));
+    expect(still.total).toBe(80_000);
+    expect(still.bars[1]).toMatchObject({ left: 0.25, width: 0.75, duration: 60_000 });
+    const behind = timelineGeometry([parsed[1]], T0);
+    expect(behind).toMatchObject({ total: 0, marks: [] });
+    expect(behind.bars[0]).toMatchObject({ width: 0, duration: 0 });
+    expect(timelineGeometry([], T0)).toEqual({ total: 0, isRunning: false, bars: [], marks: [] });
+  });
 });

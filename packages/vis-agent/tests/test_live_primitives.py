@@ -637,3 +637,109 @@ def test_a_panel_view_pushes_events_to_its_open_callback(monkeypatch):
         assert [(e.type, e.node_id) for e in seen] == [("activate", "go")]
         assert [e.node_id for e in view.events()] == ["go"]
         assert len(seen) == 1, "a pushed event reaches each callback once"
+
+
+def _fixture_timeline():
+    fixture = (
+        Path(__file__).parents[2]
+        / "vis-contract/resources/vis-contract/fixtures/live-primitives.json"
+    )
+    nodes = json.loads(fixture.read_text())["nodes"]
+    return next(node for node in nodes if node["type"] == "timeline")
+
+
+def test_timeline_builder_makes_a_contract_node_and_refuses_bad_lanes():
+    from blockether.vis._contracts import problems
+
+    node = vis.ui.timeline(
+        "jobs", lanes=[{"id": "a", "label": "A", "start": 5}], label="Jobs"
+    )
+    assert problems("view", "component", node) == []
+    assert node["lanes"] == [{"id": "a", "label": "A", "tone": "idle", "start": 5}]
+    for lanes, reason in (
+        ([{"id": "a", "label": "A", "start": 9, "end": 3}], "ends before it starts"),
+        (
+            [
+                {"id": "a", "label": "A", "start": 1},
+                {"id": "a", "label": "B", "start": 2},
+            ],
+            "timeline lane id repeats: a",
+        ),
+        ([{"id": "a", "label": "A", "start": 1.5}], "epoch milliseconds"),
+        ([{"id": "a", "label": "A", "start": True}], "epoch milliseconds"),
+        ([{"id": "a", "start": 1}], "label is missing"),
+        ("a", "list of maps"),
+    ):
+        with pytest.raises(ValueError, match=reason):
+            vis.ui.timeline("jobs", lanes=lanes)
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_timeline_ops_follow_the_steps_rules(monkeypatch, host_kind):
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    fixture = _fixture_timeline()
+    with vis.live("Jobs", [fixture], flush_ms=0) as view:
+        jobs = view["timeline"]
+        assert isinstance(jobs, vis.Timeline)
+        assert view.state()["nodes"][0]["lanes"] == fixture["lanes"]
+        # An append upserts by id: the lane keeps its place and is replaced whole.
+        jobs.set("test", "Run tests", 1767225620000, end=1767225700000, tone="ok")
+        jobs.set("lint", "Lint", 1767225630000)
+        lanes = view.state()["nodes"][0]["lanes"]
+        assert [lane["id"] for lane in lanes] == ["build", "test", "lint"]
+        assert lanes[1] == {
+            "id": "test",
+            "label": "Run tests",
+            "tone": "ok",
+            "start": 1767225620000,
+            "end": 1767225700000,
+        }
+        assert lanes[2]["tone"] == "idle"
+        jobs.remove("build")
+        assert [lane["id"] for lane in view.state()["nodes"][0]["lanes"]] == [
+            "test",
+            "lint",
+        ]
+        jobs._op("set", lanes=[{"id": "x", "label": "X", "tone": "warn", "start": 1}])
+        assert [lane["id"] for lane in view.state()["nodes"][0]["lanes"]] == ["x"]
+        jobs.clear()
+        assert view.state()["nodes"][0]["lanes"] == []
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_timeline_hosts_refuse_what_the_engine_refuses(monkeypatch, host_kind):
+    from blockether.vis._contracts import definition
+
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    branch = next(
+        b
+        for b in definition("view", "component")["oneOf"]
+        if b["properties"]["type"].get("const") == "timeline"
+    )
+    limit = branch["properties"]["lanes"]["maxItems"]
+    late = {"id": "a", "label": "A", "tone": "ok", "start": 9, "end": 3}
+    with vis.live("Jobs", [vis.ui.timeline("jobs", lanes=[])], flush_ms=0) as view:
+        jobs = view["jobs"]
+        with pytest.raises(ValueError, match="ends before it starts"):
+            jobs.set("a", "A", 9, end=3)
+        for op in (
+            {"lanes": [late]},
+            {"lanes": [{**late, "id": str(i), "end": 10} for i in range(limit + 1)]},
+        ):
+            with pytest.raises(RuntimeError):
+                jobs._op("append", **op)
+                view.flush()
+        with pytest.raises(RuntimeError, match="ends before it starts"):
+            jobs._op("set", lanes=[late])
+            view.flush()
+    with pytest.raises(RuntimeError, match="ends before it starts"):
+        with vis.live(
+            "Jobs", [{"id": "j", "type": "timeline", "lanes": [late]}], flush_ms=0
+        ):
+            pass

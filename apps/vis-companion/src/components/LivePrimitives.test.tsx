@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
@@ -154,5 +154,59 @@ describe('the complete live vocabulary', () => {
     expect(screen.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe(
       'false',
     );
+  });
+});
+
+describe('a timeline and a line of separated items', () => {
+  const lanes = () => {
+    const node = all(view().nodes).find((n) => n.type === 'timeline');
+    if (!node) throw new Error('the fixture holds a timeline');
+    return { ...view(), nodes: [node] };
+  };
+  const start = fixture.nodes.find((n) => n.id === 'timeline')!.lanes!.find((l) => l.id === 'test')!.start!;
+  afterEach(() => vi.useRealTimers());
+
+  it('runs a live lane to the clock each second and holds a receipt still', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(start + 90_000);
+    const mounted = render(<LiveViewPanel view={lanes()} />);
+    const row = (label: string) => screen.getByText(label).closest('li')!;
+    expect(row('Build')).toHaveTextContent('1m 20s');
+    expect(row('Run tests')).toHaveTextContent('1m 30s');
+    act(() => vi.advanceTimersByTime(1000));
+    expect(row('Run tests')).toHaveTextContent('1m 31s');
+    mounted.rerender(<LiveViewPanel view={lanes()} isSettled />);
+    expect(row('Run tests')).toHaveTextContent('1m 00s');
+    act(() => vi.advanceTimersByTime(5000));
+    expect(row('Run tests')).toHaveTextContent('1m 00s');
+  });
+
+  it('stands a divider upright only between the items of a wrap line', () => {
+    render(
+      <LiveViewPanel
+        view={{
+          id: 'team',
+          title: 'Team',
+          seq: 1,
+          nodes: [
+            {
+              id: 'head',
+              type: 'group',
+              direction: 'wrap',
+              children: [
+                { id: 'team', type: 'paragraph', text: 'TEAM' },
+                { id: 'between', type: 'divider' },
+                { id: 'time', type: 'paragraph', text: '1m 20s' },
+              ],
+            },
+            { id: 'below', type: 'divider' },
+          ],
+        }}
+      />,
+    );
+    const [upright, across] = screen.getAllByRole('separator');
+    expect(upright.getAttribute('aria-orientation')).toBe('vertical');
+    expect(across.tagName).toBe('HR');
+    expect(across.getAttribute('aria-orientation')).toBeNull();
   });
 });

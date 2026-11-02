@@ -327,12 +327,13 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.ui.progress(id, total=…)` | a bar | `.set(value=, done=, total=)` |
 | `vis.ui.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.steps(id, steps=[…])` | a checklist | `.set(step_id, label, tone=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.timeline(id, lanes=[…])` | bars on one shared time axis | `.set(lane_id, label, start, end=, tone=, detail=)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines, tone=)`, `.clear()` |
 | `vis.ui.table(id, columns=[vis.ui.table_column(…)], groups=[vis.ui.table_group(…)])` | rows keyed by id, optionally folded into groups | `.upsert(row_id, cells, tone=, parent=)`, `.group(group_id, label=, tone=, order=, is_open=)`, `.replace(rows)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.ui.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
 | `vis.ui.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
 | `vis.ui.heading(id, text, level=2)` | a heading at level 1–6 | `.set(text, level=)` |
-| `vis.ui.divider(id)` | a horizontal rule between sections | none (use `view.add(...)` or `view.drop(id)`) |
+| `vis.ui.divider(id)` | a rule between sections, vertical in a `wrap` group | none (use `view.add(...)` or `view.drop(id)`) |
 | `vis.ui.code(id, text, language=None)` | literal, whitespace-preserving code | `.set(text, language=)` |
 | `vis.ui.spinner(id, text="Working", variant="braille")` | an explicit activity indicator | `.set(text=, variant=, is_active=)` |
 | `vis.ui.button(id, label, is_disabled=False, variant=None)` | an operator action; `variant` is `primary`, `secondary` or `destructive` | `.set(label=, is_disabled=)` |
@@ -603,11 +604,11 @@ answer values.
 
 Use `vis.ui.divider("section-break")` between sections, like an HTML `<hr>`. It fills
 its current container’s width in the terminal and Companion, including inside
-columns and disclosures, and remains visible in completed receipts. A divider
-has only an id: it has no label, content, style options or update verbs. Use a
-heading for a section title, and `view.drop("section-break")` to remove the rule.
-The Clojure builder is `(view/divider "section-break")`. The wire node is
-`{"id": "section-break", "type": "divider"}`.
+columns and disclosures, and remains visible in completed receipts. Directly inside
+a `vis.ui.wrap` group, it draws a vertical separator between the items of that line.
+A divider has only an id: it has no label, content, style options or update verbs.
+Use a heading for a section title, and `view.drop("section-break")` to remove the rule.
+The wire node is `{"id": "section-break", "type": "divider"}`.
 
 Display text accepts inline Markdown: `` `code` ``, `**bold**`, `_italic_` and links. Status text
 wraps and is justified within its column.

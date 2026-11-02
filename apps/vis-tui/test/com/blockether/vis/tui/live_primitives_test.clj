@@ -10,6 +10,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.live-view :as lv]
+            [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.view-materializer :as materializer]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
@@ -847,3 +848,133 @@
                    ;; Without an open log the body itself is the scrolled thing.
                    (expect (= {:row 10 :track 1 :total 2 :start 0}
                               (#'lv/bar-shape [{:node-id "p"} {:node-id "q"}] 0 1 10))))))
+
+(defn- timeline-node
+  "The shared fixture's timeline node: one ended lane and one running lane."
+  []
+  (some #(when (= "timeline" (:id %)) %)
+        (tree-seq #(seq (or (:children %) (:nodes %))) #(or (:children %) (:nodes %)) (fixture))))
+
+(def ^:private t0 "The fixture's first lane start." 1767225600000)
+
+(defdescribe
+  timeline-markdown-test
+  (it "prints each lane with UTC times and reads it back with the running lane still open"
+      (let [view
+            (assoc (fixture) :nodes [(timeline-node)])
+
+            markdown
+            (materializer/->markdown view)
+
+            parsed
+            (first (:nodes (:view (materializer/parse-markdown markdown))))]
+
+        (expect (str/includes? markdown
+                               "- [running] Run tests — 12 of 40 · 2026-01-01T00:00:20.000Z → now"))
+        (expect (= markdown (materializer/->markdown (assoc view :nodes [parsed]))))
+        (expect (= (mapv #(dissoc % :id) (:lanes (timeline-node)))
+                   (mapv #(dissoc % :id) (:lanes parsed))))))
+  (it "reads an empty timeline back as a timeline, not as empty steps"
+      (let [view (assoc (fixture) :nodes [(assoc (timeline-node) :lanes [])])]
+        (expect (= [:timeline []]
+                   ((juxt :type :lanes)
+                     (first (:nodes (:view (materializer/parse-markdown (materializer/->markdown
+                                                                          view)))))))))))
+
+(defdescribe
+  timeline-append-test
+  (let [view
+        (assoc (fixture) :nodes [(timeline-node)])
+
+        append
+        (fn [lanes]
+          (:lanes (first (:nodes (materializer/apply-patch
+                                   view
+                                   {:view-id (:id view)
+                                    :seq (inc (long (:seq view)))
+                                    :ops [{:op :append :node-id "timeline" :lanes lanes}]})))))]
+
+    (it "replaces a lane by id in its slot and appends a new one"
+        (expect (= [["build" :error] ["test" :running] ["new" :idle]]
+                   (mapv (juxt :id :tone)
+                         (append
+                           [{:id "build" :label "Build" :tone :error :start t0 :end (+ t0 1000)}
+                            {:id "new" :label "New" :tone :idle :start t0}])))))
+    (it "refuses a lane that ends before it starts"
+        (expect (= "a lane ends before it starts"
+                   (try (append [{:id "bad" :label "Bad" :tone :ok :start (+ t0 10) :end t0}])
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (:reason (ex-data e)))))))))
+
+(defdescribe timeline-geometry-test
+             (let [[ended running]
+                   (:lanes (timeline-node))
+
+                   now
+                   (+ t0 100000)
+
+                   scale
+                   (lv/lane-span [ended running] now)]
+
+               (it "runs the shared scale from the first start to the clock while a lane runs"
+                   (expect (= [t0 now] scale))
+                   (expect (= [t0 (+ t0 80000)] (lv/lane-span [ended] now))))
+               (it "places an ended lane at its own times and a running lane up to the clock"
+                   (expect (= [0 40] (lv/lane-cells ended scale now 50)))
+                   (expect (= [10 50] (lv/lane-cells running scale now 50))))
+               (it "keeps one cell for a lane that took no time"
+                   (expect (= [49 50] (lv/lane-cells {:start now :end now} scale now 50)))))
+             (it "marks the axis on the least round step that gives fewer than five marks"
+                 (expect (= [0 30000 60000 90000] (lv/axis-marks 100000)))
+                 (expect (= [0 10000 20000 30000 40000] (lv/axis-marks 45000)))))
+
+(defdescribe
+  timeline-rows-test
+  (it "never paints a row wider than the band"
+      (doseq [w
+              [80 40 20 12]
+
+              :let [pane
+                    (lv/opened (assoc (fixture) :nodes [(timeline-node)]))]
+              row
+              (lv/plan pane w (+ t0 100000))]
+
+        (expect (<= (long (p/display-width (str (:text row)))) w) (str w " " (:text row)))))
+  (it "draws a settled timeline to its last end, not to the clock"
+      (let [pane
+            (lv/settled (lv/opened (assoc (fixture) :nodes [(timeline-node)])) {:reason :completed})
+
+            bar
+            (fn [later]
+              (some #(when (= "test" (:item-id %)) (:text %)) (lv/plan pane 80 later)))]
+
+        (expect (= (bar (+ t0 100000)) (bar (+ t0 900000))))))
+  (it "ticks only an open pane with a running lane"
+      (let [open (lv/opened (assoc (fixture) :nodes [(timeline-node)]))]
+        (expect (lv/ticking? [open]))
+        (expect (not (lv/ticking? [(lv/settled open {:reason :completed})])))
+        (expect (not (lv/ticking? [(lv/opened (assoc (fixture)
+                                                :nodes [(update (timeline-node)
+                                                                :lanes
+                                                                #(vec (take 1 %)))]))]))))))
+
+(defdescribe divider-orientation-test
+             (it "stands a divider upright inside a wrap group and lays it flat elsewhere"
+                 (let [view
+                       (assoc (fixture)
+                         :nodes [{:id "g"
+                                  :type :group
+                                  :direction :wrap
+                                  :children [{:id "a" :type :paragraph :text "TEAM"}
+                                             {:id "d" :type :divider}
+                                             {:id "b" :type :paragraph :text "1m 20s"}]}
+                                 {:id "flat" :type :divider}])
+
+                       rows
+                       (lv/plan (lv/opened view) 40)
+
+                       cells
+                       (tree-seq #(seq (:cells %)) :cells {:cells rows})]
+
+                   (expect (= "│" (some #(when (= "d" (:node-id %)) (:text %)) cells)))
+                   (expect (= 40 (count (some #(when (= "flat" (:node-id %)) (:text %)) rows)))))))

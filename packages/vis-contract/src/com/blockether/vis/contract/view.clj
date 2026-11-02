@@ -186,6 +186,10 @@
   "Live step collection bound."
   {:max-steps (get-in live-nodes ["steps" "properties" "steps" "maxItems"])})
 
+(def lane-defaults
+  "Live timeline lane bound."
+  {:max-lanes (get-in live-nodes ["timeline" "properties" "lanes" "maxItems"])})
+
 (def link-defaults
   "Live link collection bound."
   {:max-links (get-in live-nodes ["link" "properties" "links" "maxItems"])})
@@ -271,6 +275,7 @@
    :steps {:key :steps :max (:max-steps step-defaults)}
    :table {:key :rows :max (:max-rows table-defaults)}
    :link {:key :links :max (:max-links link-defaults)}
+   :timeline {:key :lanes :max (:max-lanes lane-defaults)}
    :scene {:key :objects :max (:max-objects scene-defaults)}})
 
 ;; The live keys — closed in both directions, exactly like the form's
@@ -293,6 +298,8 @@
 (def live-stat-keys "Every key one stat may carry." (schema-keys "stat"))
 
 (def live-step-keys "Every key one step may carry." (schema-keys "step"))
+
+(def live-lane-keys "Every key one timeline lane may carry." (schema-keys "lane"))
 
 (def live-link-keys "Every key one link may carry." (schema-keys "link"))
 
@@ -679,11 +686,21 @@
                     (str "scene object " id " names an unknown mesh " (pr-str mesh))))
                 objects)))))
 
+(defn- timeline-error
+  "nil unless a timeline repeats a lane id or has a lane that ends before it starts."
+  [{:keys [type lanes]}]
+  (when (= :timeline type)
+    (or (some->> (repeated-id lanes)
+                 (str "timeline lane id repeats: "))
+        (when (some (fn [{:keys [start end]}] (and end (< (long end) (long start)))) lanes)
+          "a lane ends before it starts"))))
+
 (defn live-node-error
   "nil when `node` is a valid normalized live node, otherwise a reason."
   [node]
   (or (schema-error "component" node)
       (scene-error node)
+      (timeline-error node)
       (when-not (ordered-by-declared-column? node) "table order must name a declared column")
       (when-not (selection-belongs-to-table? node) "selection must belong to a selectable table")))
 

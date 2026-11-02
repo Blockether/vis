@@ -63,6 +63,7 @@ the code.
 ### Divider
 
 `vis.ui.divider(id)` draws a rule across its container, like an HTML `<hr>`. It has no text or options.
+Directly inside a `vis.ui.wrap` group, it draws a vertical separator between the items of that line.
 
 ## State
 
@@ -98,6 +99,13 @@ vis.ui.stat("summary", stats=[{"id": "open", "label": "Open", "value_text": "3"}
 
 `vis.ui.steps(id, steps=[...])` shows a checklist. Each step has `id`, `label`, `tone` and an optional
 `detail`. Add or change one step with `view[id].set(step_id, label, tone="ok")`.
+
+### Timeline
+
+`vis.ui.timeline(id, lanes=[...])` draws one bar for each lane on a shared time axis. Each lane has
+`id`, `label`, `tone`, `start` and optional `end` and `detail`. The times are epoch milliseconds.
+A lane without `end` is still running and grows to the current time. Add or change one lane with
+`view[id].set(lane_id, label, start, end=None, tone="running")`.
 
 ### Log
 
