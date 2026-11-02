@@ -246,10 +246,18 @@ export function ToneMark({ tone, className = 'size-3' }: { tone: LiveTone; class
  * words, however they wrap and whatever size the mark is. A padding guessed for one
  * size put the marks of a step rail below the labels they belong to.
  */
-function LineMark({ tone, className = 'size-3' }: { tone: LiveTone; className?: string }) {
+function LineMark({
+  tone,
+  className = 'size-3',
+  boxClassName = '',
+}: {
+  tone: LiveTone;
+  className?: string;
+  boxClassName?: string;
+}) {
   const Drawn = TONE_MARK[tone];
   return (
-    <span className="flex h-[1lh] shrink-0 items-center">
+    <span className={`flex h-[1lh] shrink-0 items-center ${boxClassName}`}>
       <Drawn className={`${className} ${MARK_INK[tone]}`} />
     </span>
   );
@@ -1086,6 +1094,9 @@ const LiveTableRow = memo(function LiveTableRow({
   // under its head's name. Indenting only the words left the mark on the outer
   // column, with a wider gap after it than any other row has.
   const mark = row.parent ? 'ml-5' : '';
+  // The State column shows the tone on a wide screen, so the lead mark shows only
+  // where that column hides (user report: two marks for one state in a row).
+  const lead = hasState ? 'sm:hidden' : '';
   return (
     <SelectableTableRow
       isSelected={isSelected}
@@ -1121,9 +1132,9 @@ const LiveTableRow = memo(function LiveTableRow({
                   mark, as an idle stat shows none. Its slot stays, so the name keeps the
                   column of the other rows (user report: a skipped job stood 20px left). */}
               {row.tone === 'idle' ? (
-                <span aria-hidden="true" className="w-3 shrink-0" />
+                <span aria-hidden="true" className={`w-3 shrink-0 ${lead}`} />
               ) : (
-                <LineMark tone={row.tone} />
+                <LineMark tone={row.tone} boxClassName={lead} />
               )}
               <RowFace columns={columns} row={row} />
             </span>
@@ -1131,7 +1142,7 @@ const LiveTableRow = memo(function LiveTableRow({
         ) : (
           <span className="flex min-w-0 items-start gap-2 py-1.5 sm:pr-(--live-view-inset)">
             <span className={`flex min-w-0 flex-1 items-start gap-2 ${mark}`}>
-              <LineMark tone={row.tone} />
+              <LineMark tone={row.tone} boxClassName={lead} />
               <RowFace columns={columns} row={row} />
             </span>
           </span>
