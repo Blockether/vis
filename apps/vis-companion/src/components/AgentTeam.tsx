@@ -499,11 +499,11 @@ const STEP_WORDS: Partial<Record<AgentTimelineItem['kind'], string>> = {
 };
 
 /**
- * What the sheet shows above the timeline: the latest Activity line while the agent works, else
- * its result or the reason of its end. A note is a step of the timeline, so it never shows here.
+ * What the sheet shows above the timeline: the result of an ended agent, or the reason of its end.
+ * A working agent has none: its current step is the last row of the timeline.
  */
 export function agentOutcome(agent: Subagent): string | undefined {
-  const text = isLive(agent) ? agent.activity : agent.result ?? END_REASON[agent.status];
+  const text = isLive(agent) ? undefined : agent.result ?? END_REASON[agent.status];
   return text?.trim() || undefined;
 }
 
@@ -525,6 +525,21 @@ export function timelineStep(item: AgentTimelineItem, agent: Subagent): {
     word: end && { ...end, isStatus: true },
     text: text === agentOutcome(agent) ? undefined : text,
   };
+}
+
+/** One row of the sheet's timeline. A row without `at` is the current Activity line. */
+export type TimelineRow = ReturnType<typeof timelineStep> & { at?: number; isCurrent: boolean };
+
+/**
+ * The rows of the sheet's timeline. While the agent works, its last row is current: its Activity
+ * line when it has one and it does not say the last step again, else its last step.
+ */
+export function timelineRows(items: readonly AgentTimelineItem[], agent: Subagent): TimelineRow[] {
+  const rows: TimelineRow[] = items.map((item) => ({ ...timelineStep(item, agent), at: item.at, isCurrent: false }));
+  if (!isLive(agent)) return rows;
+  const activity = agent.activity?.trim();
+  if (activity && activity !== rows.at(-1)?.text?.trim()) return [...rows, { text: activity, isCurrent: true }];
+  return rows.map((row, index) => (index === rows.length - 1 ? { ...row, isCurrent: true } : row));
 }
 
 const pad = (value: number) => String(value).padStart(2, '0');
@@ -642,6 +657,7 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
   const time = agentTime(agent, now);
   const live = isLive(agent);
   const outcome = agentOutcome(agent);
+  const rows = steps && 'items' in steps ? timelineRows(steps.items, agent) : [];
   const task = agent.task.trim();
   return (
     <Modal size="full" within="session" onDismiss={onClose}>
@@ -652,9 +668,11 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
         <div className="w-full space-y-6 px-3 py-4 font-mono text-ui text-white sm:px-4 sm:text-body" data-agent-timeline>
           <div className="space-y-1">
             <div className="flex items-center gap-x-4">
-              <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-4">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3">
                 <span className={`uppercase ${role.ink}`}>{role.text}</span>
+                <Divider />
                 <span className={`uppercase ${status.ink}`}>{status.text}</span>
+                {time !== undefined && <Divider />}
                 {time !== undefined && <span className="text-dialog-hint tabular-nums">{formatAgentTime(time)}</span>}
               </div>
               <div className="flex shrink-0 gap-2">
@@ -663,7 +681,7 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
               </div>
             </div>
             {outcome && (
-              <p className={`max-w-[100ch] whitespace-pre-wrap [overflow-wrap:anywhere] ${live ? '' : 'font-semibold'}`} data-agent-outcome>{outcome}</p>
+              <p className="max-w-[100ch] whitespace-pre-wrap font-semibold [overflow-wrap:anywhere]" data-agent-outcome>{outcome}</p>
             )}
           </div>
           {task && <AgentTask task={task} />}
@@ -673,22 +691,24 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
               <p className="text-dialog-hint">Reading the timeline…</p>
             ) : 'error' in steps ? (
               <p role="alert" className="text-err-ink">{steps.error}</p>
-            ) : steps.items.length === 0 ? (
+            ) : rows.length === 0 ? (
               <p className="text-dialog-hint">No steps yet.</p>
             ) : (
               <ol aria-label="Timeline" className="space-y-2">
-                {steps.items.map((item, index) => {
-                  const { word, text } = timelineStep(item, agent);
-                  return (
-                    <li key={index} className="grid grid-cols-[8ch_minmax(0,1fr)] gap-x-3">
-                      <time dateTime={new Date(item.at).toISOString()} className="text-dialog-hint tabular-nums">{clockTime(item.at)}</time>
-                      <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-                        {word && <span className={`mr-3 ${word.isStatus ? 'uppercase' : ''} ${word.ink}`}>{word.text}</span>}
-                        {text}
-                      </p>
-                    </li>
-                  );
-                })}
+                {rows.map(({ at, word, text, isCurrent }, index) => (
+                  <li key={index} aria-current={isCurrent ? 'step' : undefined} className="grid grid-cols-[8ch_minmax(0,1fr)] gap-x-3">
+                    {at === undefined ? (
+                      <span className="uppercase text-accent-ink">now</span>
+                    ) : (
+                      <time dateTime={new Date(at).toISOString()} className="text-dialog-hint tabular-nums">{clockTime(at)}</time>
+                    )}
+                    <p className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isCurrent ? 'font-semibold' : ''}`}>
+                      {isCurrent && <span aria-hidden="true" className="mr-3 inline-block size-2 rounded-full bg-accent-ink motion-safe:animate-pulse" />}
+                      {word && <span className={`mr-3 ${word.isStatus ? 'uppercase' : ''} ${word.ink}`}>{word.text}</span>}
+                      {text}
+                    </p>
+                  </li>
+                ))}
               </ol>
             )}
           </section>

@@ -20,6 +20,7 @@ import {
   formatAgentTime,
   teamCounts,
   teamTime,
+  timelineRows,
   timelineStep,
   useAgentTeam,
 } from './AgentTeam';
@@ -224,10 +225,21 @@ describe('agent timeline', () => {
     expect(agentOutcome(done)).toBe('All 40 tests pass');
     expect(timelineStep(end, done)).toEqual({ word: { text: 'done', ink: 'text-ok-ink', isStatus: true }, text: undefined });
     expect(timelineStep(end, { ...done, result: 'Other words' }).text).toBe('All 40 tests pass');
-    // While the agent works, its Activity line is the outcome. Its note is already a step.
-    expect(agentOutcome({ ...child, note: 'Reading the schema', activity: ' Search files agents ' })).toBe('Search files agents');
-    expect(agentOutcome({ ...child, note: 'Reading the schema' })).toBeUndefined();
+    // While the agent works, it has no outcome: its current step is in the timeline.
+    expect(agentOutcome({ ...child, note: 'Reading the schema', activity: ' Search files agents ' })).toBeUndefined();
     expect(timelineStep({ at: T0, kind: 'note', text: 'Plain prose' }, child)).toEqual({ word: undefined, text: 'Plain prose' });
+  });
+
+  // User report: the current action of a working agent stood above its task, apart from its timeline.
+  it('marks the current step of a working agent as the last row of its timeline', () => {
+    const items = steps.items.slice(0, 2);
+    const current = (rows: ReturnType<typeof timelineRows>) => rows.filter((row) => row.isCurrent).map((row) => [row.at, row.text]);
+    expect(current(timelineRows(items, { ...child, activity: ' Patched AgentDock.tsx ' }))).toEqual([[undefined, 'Patched AgentDock.tsx']]);
+    expect(timelineRows(items, { ...child, activity: 'Patched AgentDock.tsx' })).toHaveLength(3);
+    expect(current(timelineRows(items, child))).toEqual([[T0 + 12_000, 'The schema has the new fields.']]);
+    // An Activity line that says the last step again marks that step, not a second row.
+    expect(timelineRows(items, { ...child, activity: 'The schema has the new fields.' }).map((row) => row.isCurrent)).toEqual([false, true]);
+    expect(current(timelineRows(steps.items, { ...child, status: 'completed', activity: 'Patched AgentDock.tsx' }))).toEqual([]);
   });
 
   it('says when there are no steps, and shows a read error', async () => {
