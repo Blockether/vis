@@ -557,7 +557,7 @@ function AgentTask({ task }: { task: string }) {
     return () => observer.disconnect();
   }, [task, clampClass]);
   return (
-    <section aria-label="Task" className="max-w-[100ch]">
+    <section aria-label="Task">
       <h3 className={PART_NAME}>Task</h3>
       <div ref={text} className={`[overflow-wrap:anywhere] ${clampClass}`}>
         <Markdown compact hardBreaks>{councilMarkdown(task)}</Markdown>
@@ -667,13 +667,13 @@ export function AgentTimelineSheet({ agent, label, now, pending, load, onOpen, o
               </div>
             </div>
             {outcome && (
-              <div className="max-w-[100ch] font-semibold [overflow-wrap:anywhere]" data-agent-outcome>
+              <div className="font-semibold [overflow-wrap:anywhere]" data-agent-outcome>
                 <Markdown compact hardBreaks>{councilMarkdown(outcome)}</Markdown>
               </div>
             )}
           </div>
           {task && <AgentTask task={task} />}
-          <section aria-label="Steps" className="max-w-[100ch]">
+          <section aria-label="Steps">
             <h3 className={PART_NAME}>Timeline</h3>
             {steps === null ? (
               <p className="text-dialog-hint">Reading the timeline…</p>
