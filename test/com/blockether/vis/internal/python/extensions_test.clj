@@ -6886,6 +6886,116 @@ vis.register_extension(vis.Extension(name='asker', description='asker', alias='a
                           (expect (not (contains? @@#'pyx/live-contexts ctx))))
                         (finally (deliver reply {"value" nil}) (pyx/close-context! ctx))))))
 
+(def ^:private context-bound-helper-py
+  "import os
+import blockether.vis.extension as vis
+import context_helper_bound
+
+def probe():
+    'Tell whether the helper module uses the SDK module of this context.'
+    return {'pid': os.getpid(), 'same': context_helper_bound.vis is vis}
+
+vis.register_extension(vis.Extension(name='context-bound', description='Context binding fixture.',
+    alias='context_bound', symbols=[vis.Symbol(probe)]))
+")
+
+(defdescribe extension-context-module-binding-test
+             ;; vis-review report: an app opened from a helper module after a session context was rebuilt in
+             ;; the same worker sealed its `on_event` callback in the old context. Each event then failed
+             ;; with `KeyError: 'c12'`.
+             (it
+               "imports the helper modules again for a new session context in the same worker"
+               (with-fresh-loaded
+                 {"extension.py" context-bound-helper-py
+                  "context_helper_bound/__init__.py" "import blockether.vis.extension as vis\n"}
+                 (fn [loaded _]
+                   (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+                   (let [worker
+                         (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+                         env
+                         {:python-context worker :session-id worker}
+
+                         probe
+                         (fn []
+                           (binding [extension/*current-environment* env]
+                             (:result ((symbol-fn (registered "context-bound") 'probe)))))]
+
+                     (try (let [first-call
+                                (probe)
+
+                                first-ctx
+                                (:context (get @@#'pyx/session-contexts [worker "context-bound"]))]
+
+                            (expect (true? (get first-call "same")))
+                            ;; A new registration of the same snapshot replaced the source, as a project load
+                            ;; does after the prewarm. No call holds the context, so the next call rebuilds it.
+                            (swap! @#'pyx/session-contexts assoc-in
+                              [[worker "context-bound"] :source-context]
+                              ::replaced)
+                            (let [second-call (probe)]
+                              (expect (not= first-ctx
+                                            (:context (get @@#'pyx/session-contexts
+                                                           [worker "context-bound"]))))
+                              (expect (= (get first-call "pid") (get second-call "pid")))
+                              (expect (true? (get second-call "same")))))
+                          (finally (ep/dispose-python-context! worker))))))))
+
+(defn- shared-bound-py
+  "An extension that imports `shared_helper_bound` from `shared`, a directory outside its snapshot."
+  [shared]
+  (str
+    "import os
+import sys
+sys.path.insert(0, "
+    (pr-str (str shared))
+    ")
+import blockether.vis.extension as vis
+import shared_helper_bound
+
+def probe():
+    'Tell whether the shared helper uses the SDK module of this context.'
+    return {'pid': os.getpid(), 'same': shared_helper_bound.vis is vis}
+
+vis.register_extension(vis.Extension(name='shared-bound', description='Shared helper fixture.',
+    alias='shared_bound', symbols=[vis.Symbol(probe, activity=shared_helper_bound.activity())]))
+"))
+
+(defdescribe
+  extension-shared-package-binding-test
+  ;; vis-review report: vis-review and vis-lang-python both import vis_lang_interface in one session
+  ;; worker. vis-lang-python then failed to open with "activity must be a vis.Activity declaration",
+  ;; because the shared package kept the SDK module of the context that imported it first.
+  (it
+    "imports a shared package again for a new session context in the same worker"
+    (let [shared (.toFile (java.nio.file.Files/createTempDirectory
+                            "vis-shared-helper"
+                            (make-array java.nio.file.attribute.FileAttribute 0)))]
+      (spit
+        (io/file shared "shared_helper_bound.py")
+        "import blockether.vis.extension as vis\n\ndef activity():\n    return vis.Activity(label='Probe', show_start=False)\n")
+      (with-fresh-loaded
+        {"extension.py" (shared-bound-py shared)}
+        (fn [loaded _]
+          (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+          (let [worker (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                env {:python-context worker :session-id worker}
+                probe (fn []
+                        (binding [extension/*current-environment* env]
+                          ((symbol-fn (registered "shared-bound") 'probe))))]
+
+            (try (let [first-call (:result (probe))]
+                   (expect (true? (get first-call "same")))
+                   (swap! @#'pyx/session-contexts assoc-in
+                     [[worker "shared-bound"] :source-context]
+                     ::replaced)
+                   (let [answer (probe)
+                         second-call (:result answer)]
+
+                     (expect (= (get first-call "pid") (get second-call "pid")) (pr-str answer))
+                     (expect (true? (get second-call "same")))))
+                 (finally (ep/dispose-python-context! worker)))))))))
+
 (def ^:private reload-dialog-py
   "import os
 import blockether.vis.extension as vis

@@ -124,6 +124,46 @@
   (str "_vis_body = " (python-string-literal (classpath-src "blockether/vis/extension.py"))
        "\n" (classpath-src "vis-host-python/extension_bootstrap.py")))
 
+(def ^:private stale-sdk-modules-python
+  "Drop shared packages that still hold the SDK module of an older context.
+
+   A package outside the snapshot keeps the SDK module of the context that imported it first.
+   Drop each package family that holds an older SDK object, directly or through another
+   dropped module. Runs after the snapshot preamble, which binds `__vis_pathsys__`,
+   `__vis_pathos__` and `__vis_package_paths__`."
+  "import types as __vis_types__, sysconfig as __vis_sysconfig__
+__vis_std__ = __vis_sysconfig__.get_paths()['stdlib']
+__vis_shims__ = __vis_pathos__.path.dirname(__vis_package_paths__.__file__)
+__vis_bound__ = {'blockether.vis.extension'}
+__vis_open__ = [(__vis_n__, __vis_m__) for __vis_n__, __vis_m__
+                in list(__vis_pathsys__.modules.items())
+                if isinstance(__vis_m__, __vis_types__.ModuleType)
+                and not __vis_n__.startswith('blockether.') and __vis_n__ != '__main__'
+                and '__vis_ext_dir__' not in __vis_m__.__dict__
+                and not (__vis_m__.__dict__.get('__file__') or __vis_std__)
+                    .startswith((__vis_std__, __vis_shims__))]
+def __vis_owner__(v):
+    if isinstance(v, __vis_types__.ModuleType):
+        return v.__dict__.get('__name__')
+    if isinstance(v, type):
+        return v.__dict__.get('__module__')
+    if isinstance(v, __vis_types__.FunctionType):
+        return v.__module__
+    return type(v).__dict__.get('__module__')
+__vis_more__ = True
+while __vis_more__:
+    __vis_more__ = False
+    for __vis_n__, __vis_m__ in __vis_open__:
+        if __vis_n__ not in __vis_bound__ and any(
+                __vis_owner__(v) in __vis_bound__ for v in list(__vis_m__.__dict__.values())):
+            __vis_bound__.add(__vis_n__)
+            __vis_more__ = True
+__vis_tops__ = {__vis_n__.partition('.')[0] for __vis_n__ in __vis_bound__} - {'blockether'}
+for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
+                     if __vis_n__.partition('.')[0] in __vis_tops__]:
+    __vis_pathsys__.modules.pop(__vis_name__, None)
+")
+
 ;; Marshalling helpers
 
 (defonce
@@ -1449,8 +1489,9 @@
         {:ext {:ext/name label} :env (or bound-env {:workspace/root (workspace/cwd-root)})}
         (python-host/conveying
           ctx
-          ;; One worker holds every extension of a session. Drop only the cached modules of
-          ;; other snapshots that the top-level names of this snapshot shadow.
+          ;; One worker holds every extension of a session. Drop each cached module that a
+          ;; top-level name of this snapshot provides, from this snapshot or another one. Each
+          ;; context has its own SDK module, and a cached helper module keeps the old one.
           (exec-in!
             ctx
             (str "import sys as __vis_pathsys__\n"
@@ -1470,14 +1511,14 @@
                  "\n"
                  "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                  "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
-                 "__vis_packages__ = "
-                 (python-string-literal (or packages (runtime/packages-dir)))
+                 "__vis_packages__ = " (python-string-literal (or packages (runtime/packages-dir)))
                  "\nimport package_paths as __vis_package_paths__\n"
                  "__vis_package_paths__.refresh(__vis_packages__, reload=True)\n"
                  "if __vis_packages__ in __vis_pathsys__.path:\n"
                  "    __vis_pathsys__.path.remove(__vis_packages__)\n"
                  "__vis_pathsys__.path.insert(1, __vis_packages__)\n"
-                 "import importlib as __vis_importlib__\n" "__vis_importlib__.invalidate_caches()\n"
+                 "import importlib as __vis_importlib__\n"
+                 "__vis_importlib__.invalidate_caches()\n"
                  "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
                  "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
                  "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
@@ -1486,10 +1527,10 @@
                  "    __vis_top__ = __vis_pathos__.path.join(__vis_ext_dir__,\n"
                  "                                           __vis_name__.partition('.')[0])\n"
                  "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
-                 "            and not __vis_file__.startswith(__vis_ext_dir__)\n"
                  "            and (__vis_pathos__.path.exists(__vis_top__)\n"
                  "                 or __vis_pathos__.path.exists(__vis_top__ + '.py'))):\n"
                  "        del __vis_pathsys__.modules[__vis_name__]\n"))
+          (exec-in! ctx stale-sdk-modules-python)
           (exec-in! ctx bootstrap-python)
           (exec-in! ctx (postponed-annotations-python source)))))
     (let [sealed (run-in ctx "__vis_registration__()")]
