@@ -70,6 +70,8 @@ import { connectWebLaunch, type WebLaunch } from './lib/web-launch';
 import { applyTheme, resolveTheme } from './lib/theme';
 import { getThemePref } from './lib/storage';
 import { IconButton } from './components/ui';
+import { CommandSurface } from './components/CommandSurface';
+import { CommandProvider, CommandRegistry, useCommands, type CommandHandlers } from './lib/commands';
 import { SearchIcon, SettingsIcon } from './components/icons';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
@@ -582,6 +584,8 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
 
   // Stable, so a render of the shell that leaves the list alone skips it (`SessionsList`).
   const openSearch = useCallback(() => setSearching(true), []);
+  // One registry for the life of the shell: screens add the verbs that they can run.
+  const [commandRegistry] = useState(() => new CommandRegistry());
 
   // Bumped by every accepted share. A counter, not a flag: two links dropped
   // back to back must both re-route, including the one that arrives while the
@@ -1399,8 +1403,18 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     isSplit || edgeBack.isSwiping || (shellView === 'sessions' && (!isDesk || isSidebarShown));
 
   return (
+    <CommandProvider registry={commandRegistry}>
     <OpenMachineSettings.Provider value={openMachineSettings}>
       <OpenScopedSettings.Provider value={openScopedSettings}>
+        {/* The shell's own verbs for the C-x keys and the command palette. */}
+        <ShellCommands
+          handlers={{
+            'show-sessions': sessionsMounted && openSearch,
+            'switch-project': canSplit && toggleSidebar,
+            settings: openSettings,
+          }}
+        />
+        <CommandSurface />
         <Shell>
           {(isChromeVisible || edgeBack.isSwiping) && (
             <Header
@@ -1545,7 +1559,14 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
         </Shell>
       </OpenScopedSettings.Provider>
     </OpenMachineSettings.Provider>
+    </CommandProvider>
   );
+}
+
+/** Registers the shell's verbs inside the provider that the shell itself renders. */
+function ShellCommands({ handlers }: { handlers: CommandHandlers }) {
+  useCommands(handlers);
+  return null;
 }
 
 export function Header({
@@ -1557,15 +1578,14 @@ export function Header({
   onAppSettings: () => void;
 }) {
   // `/` opens the search from anywhere on the shell except a field, where it is a
-  // character someone is typing. `Ctrl+/` is never a character, so it opens the search
-  // from a field too: the chord a desktop or browser reader presses mid-sentence. A
-  // Windows AltGr layout types `/` as Ctrl+Alt, so Alt disqualifies the chord. Another
-  // dialog keeps the keyboard while it holds focus, and a key something inside already
+  // character someone is typing. From a field, C-x s s opens it, as in the TUI
+  // (`CommandSurface`). A chord with a modifier is never this key. Another dialog
+  // keeps the keyboard while it holds focus, and a key something inside already
   // handled stays its own. The search dialog it opens owns Escape.
   useEffect(() => {
     if (!onSearch) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== '/' || event.metaKey || event.altKey || event.defaultPrevented) return;
+      if (event.key !== '/' || event.metaKey || event.altKey || event.ctrlKey || event.defaultPrevented) return;
       const at = document.activeElement as HTMLElement | null;
       if (at?.closest('[role="dialog"]')) return;
       const isField =
@@ -1574,7 +1594,7 @@ export function Header({
           at.tagName === 'INPUT' ||
           at.tagName === 'TEXTAREA' ||
           at.tagName === 'SELECT');
-      if (isField && !event.ctrlKey) return;
+      if (isField) return;
       event.preventDefault();
       onSearch();
     };
@@ -1623,8 +1643,8 @@ export function Header({
             <IconButton
               type="button"
               label="Search sessions"
-              title="Search sessions (Ctrl+/)"
-              aria-keyshortcuts="Control+/ /"
+              title="Search sessions (/ or C-x s s)"
+              aria-keyshortcuts="/"
               onClick={onSearch}
             >
               <SearchIcon className="size-4" />

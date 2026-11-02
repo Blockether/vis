@@ -1,0 +1,299 @@
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+
+import { useCommandRegistry, useCommands, type CommandRegistry } from '../lib/commands';
+import {
+  KEYMAP_GROUPS,
+  KEYMAP_VERBS,
+  PALETTE_KEY,
+  PALETTE_ONLY_VERBS,
+  PREFIX_LABEL,
+  chordKeys,
+  chordStep,
+  matchVerbs,
+  sectionTitle,
+  type ChordState,
+  type KeymapVerb,
+} from '../lib/keymap';
+import { SearchIcon } from './icons';
+import { DialogFrame, Input, KeyCap, Modal } from './ui';
+
+/** Every command of the palette: the C-x verbs, then the commands without a key. */
+const PALETTE_VERBS: readonly KeymapVerb[] = [...KEYMAP_VERBS, ...PALETTE_ONLY_VERBS];
+
+type PaletteMode = 'palette' | 'help';
+
+/** True when the focused field holds a selection, so Ctrl+X must stay the field's cut. */
+function fieldHasSelection(at: Element | null): boolean {
+  if (at instanceof HTMLInputElement || at instanceof HTMLTextAreaElement) {
+    try {
+      return at.selectionStart !== null && at.selectionStart !== at.selectionEnd;
+    } catch {
+      // An input type without a caret, such as a checkbox, has no selection to cut.
+      return false;
+    }
+  }
+  if (at instanceof HTMLElement && at.isContentEditable) {
+    const selection = window.getSelection();
+    return !!selection && !selection.isCollapsed;
+  }
+  return false;
+}
+
+/** Re-render when a screen registers, drops or gates a command. */
+function useRegistryVersion(registry: CommandRegistry | null): number {
+  return useSyncExternalStore(
+    registry?.subscribe ?? (() => () => {}),
+    registry?.getVersion ?? (() => 0),
+  );
+}
+
+/**
+ * THE KEYBOARD'S WAY TO EVERY VERB: the C-x chords and the command palette.
+ *
+ * C-x, then a group key, then a verb key runs a verb, exactly as in the TUI: C-x s s
+ * opens the session search, C-x m c chooses a model. While a chord waits, a band at the
+ * bottom lists the keys that can follow, like the TUI hydra. C-x p opens the palette,
+ * which finds every command by name. Escape or C-g ends a chord.
+ *
+ * Ctrl+X in a field that holds a selection stays the field's cut. A dialog with the focus
+ * keeps the keyboard, as the search key already does.
+ */
+export function CommandSurface() {
+  const registry = useCommandRegistry();
+  useRegistryVersion(registry);
+  const [chord, setChord] = useState<ChordState>(null);
+  const chordRef = useRef<ChordState>(null);
+  const [palette, setPalette] = useState<PaletteMode | null>(null);
+
+  const moveChord = useCallback((next: ChordState) => {
+    chordRef.current = next;
+    setChord(next);
+  }, []);
+
+  useCommands({ 'toggle-help': () => setPalette((open) => (open === 'help' ? null : 'help')) });
+
+  useEffect(() => {
+    if (!registry) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.isComposing) return;
+      const live = KEYMAP_VERBS.filter((verb) => registry.isAvailable(verb.id));
+      const groups = KEYMAP_GROUPS.filter((group) => live.some((verb) => verb.group === group.id));
+      const step = chordStep(chordRef.current, event, groups, live);
+      if (step.kind === 'ignore' || step.kind === 'wait') return;
+      if (step.kind === 'start') {
+        if (event.defaultPrevented || event.repeat) return;
+        const at = document.activeElement;
+        if (at?.closest('[role="dialog"]')) return;
+        if (fieldHasSelection(at)) return;
+      }
+      // Each key of a chord belongs to the chord, never to the field under it.
+      // The Escape that ends a chord must not also cancel the running turn.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (step.kind === 'start') moveChord({ group: null });
+      else if (step.kind === 'group') moveChord({ group: step.group });
+      else {
+        moveChord(null);
+        if (step.kind === 'palette') setPalette('palette');
+        else if (step.kind === 'verb') registry.run(step.verb.id);
+      }
+    };
+    // A click elsewhere is a new gesture, so it ends the chord.
+    const onPointer = () => {
+      if (chordRef.current) moveChord(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('pointerdown', onPointer, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('pointerdown', onPointer, true);
+    };
+  }, [registry, moveChord]);
+
+  if (!registry) return null;
+  return (
+    <>
+      {chord && <ChordBand registry={registry} group={chord.group} />}
+      {palette && (
+        <CommandPalette
+          registry={registry}
+          mode={palette}
+          onClose={() => setPalette(null)}
+        />
+      )}
+    </>
+  );
+}
+
+/** One key and what it does, as a row of the band. */
+function BandRow({ keyName, title, description }: { keyName: string; title: string; description: string }) {
+  return (
+    <li className="flex min-w-0 items-baseline gap-2">
+      <KeyCap keyName={keyName} />
+      <span className="shrink-0 text-dialog-foreground">{title}</span>
+      <span className="min-w-0 truncate text-dialog-hint">{description}</span>
+    </li>
+  );
+}
+
+/** The keys that can follow the pressed part of a chord, like the TUI's C-x band. */
+function ChordBand({ registry, group }: { registry: CommandRegistry; group: string | null }) {
+  const live = KEYMAP_VERBS.filter((verb) => registry.isAvailable(verb.id));
+  const heading = group ? KEYMAP_GROUPS.find((item) => item.id === group) : null;
+  const pressed = heading ? `${PREFIX_LABEL} ${heading.key}` : PREFIX_LABEL;
+  return (
+    <div
+      role="status"
+      aria-label={`${pressed} keys`}
+      data-chord-band
+      className="pointer-events-none fixed inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 flex justify-center px-3"
+    >
+      <div className="w-full max-w-2xl border border-dialog-edge bg-panel px-3 py-2 font-mono text-meta shadow-float">
+        <div className="mb-1.5 flex items-baseline gap-2 text-dialog-hint">
+          <span className="font-bold text-dialog-title-foreground">{pressed}</span>
+          <span>{heading ? heading.title : 'Press a key · Esc cancels'}</span>
+        </div>
+        <ul className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+          {heading
+            ? live
+                .filter((verb) => verb.group === heading.id && verb.key)
+                .map((verb) => (
+                  <BandRow key={verb.id} keyName={verb.key ?? ''} title={verb.title} description={verb.description} />
+                ))
+            : (
+              <>
+                {KEYMAP_GROUPS.filter((item) => live.some((verb) => verb.group === item.id)).map((item) => (
+                  <BandRow key={item.id} keyName={item.key} title={`${item.title.toLowerCase()}…`} description={item.description} />
+                ))}
+                <BandRow keyName={PALETTE_KEY} title="command palette…" description="Find and run any command" />
+                {live
+                  .filter((verb) => verb.group === null && verb.key)
+                  .map((verb) => (
+                    <BandRow key={verb.id} keyName={verb.key ?? ''} title={verb.title} description={verb.description} />
+                  ))}
+              </>
+            )}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The searchable list of commands. `palette` lists the commands that can run here; `help`
+ * lists every key of the map, and the ones that cannot run here are dimmed.
+ */
+function CommandPalette({
+  registry,
+  mode,
+  onClose,
+}: {
+  registry: CommandRegistry;
+  mode: PaletteMode;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listId = useId();
+  const all = mode === 'help' ? KEYMAP_VERBS : PALETTE_VERBS.filter((verb) => registry.isAvailable(verb.id));
+  const rows = matchVerbs(all, query);
+  const at = Math.min(active, Math.max(0, rows.length - 1));
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    document.getElementById(`${listId}-${at}`)?.scrollIntoView({ block: 'nearest' });
+  }, [listId, at]);
+
+  const run = (verb: KeymapVerb | undefined) => {
+    if (!verb || !registry.isAvailable(verb.id)) return;
+    onClose();
+    // The palette leaves first, so the verb opens its own dialog over the screen.
+    window.setTimeout(() => registry.run(verb.id), 0);
+  };
+
+  return (
+    <Modal onDismiss={onClose} size="fit">
+      <DialogFrame title={mode === 'help' ? 'Keyboard shortcuts' : 'Command palette'} onClose={onClose}>
+        <div className="shrink-0 border-b border-dialog-edge px-3 py-3 sm:px-4">
+          <Input
+            ref={inputRef}
+            value={query}
+            type="search"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder={mode === 'help' ? 'Type to find a key…' : 'Type to search commands…'}
+            aria-label={mode === 'help' ? 'Find a key' : 'Search commands'}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-activedescendant={rows.length ? `${listId}-${at}` : undefined}
+            icon={<SearchIcon className="size-3" />}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setActive(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown' || (event.ctrlKey && event.key === 'n')) {
+                event.preventDefault();
+                setActive(rows.length ? (at + 1) % rows.length : 0);
+              } else if (event.key === 'ArrowUp' || (event.ctrlKey && event.key === 'p')) {
+                event.preventDefault();
+                setActive(rows.length ? (at - 1 + rows.length) % rows.length : 0);
+              } else if (event.key === 'Enter') {
+                event.preventDefault();
+                run(rows[at]);
+              } else if (event.key === 'Escape' || (event.ctrlKey && event.key === 'g')) {
+                event.preventDefault();
+                event.stopPropagation();
+                onClose();
+              }
+            }}
+          />
+        </div>
+        <ul
+          id={listId}
+          role="listbox"
+          aria-label={mode === 'help' ? 'Keys' : 'Commands'}
+          className="max-h-[60dvh] min-h-0 flex-1 overflow-y-auto overscroll-contain bg-page py-1 font-mono text-ui"
+        >
+          {rows.length === 0 && <li className="px-4 py-3 text-dialog-hint">No command matches.</li>}
+          {rows.map((verb, index) => {
+            const title = sectionTitle(verb);
+            const heading = index === 0 || title !== sectionTitle(rows[index - 1]) ? title : null;
+            const isAvailable = registry.isAvailable(verb.id);
+            return (
+              <li key={verb.id} role="presentation">
+                {heading && (
+                  <div role="presentation" className="px-4 pb-1 pt-2 text-meta font-bold uppercase text-dialog-hint">
+                    {heading}
+                  </div>
+                )}
+                <div
+                  id={`${listId}-${index}`}
+                  role="option"
+                  aria-selected={index === at}
+                  aria-disabled={!isAvailable || undefined}
+                  className={`flex min-w-0 cursor-pointer items-baseline gap-3 px-4 py-1.5 ${index === at ? 'bg-dialog-title text-dialog-title-foreground' : 'text-dialog-foreground'} ${isAvailable ? '' : 'cursor-default opacity-60'}`}
+                  onMouseMove={() => setActive(index)}
+                  onClick={() => run(verb)}
+                >
+                  <span className="shrink-0">{verb.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-meta opacity-75">{verb.description}</span>
+                  <span className="flex shrink-0 gap-1">
+                    {chordKeys(verb).map((key, place) => (
+                      <KeyCap key={place} keyName={key} />
+                    ))}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </DialogFrame>
+    </Modal>
+  );
+}

@@ -59,6 +59,7 @@ import { Banner, ComposerButton, IconButton, LoadMore, Spinner } from '../compon
 import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../components/icons';
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
+import { useCommands } from '../lib/commands';
 import { FilePreview } from '../components/FilePreview';
 import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { JumpToLatestButton } from '../components/JumpToLatestButton';
@@ -5578,6 +5579,18 @@ export function SessionScreen({
       setArtifactsOpen((was) => !was);
     },
   };
+  // The C-x keys and the command palette run the same actions as the controls above.
+  const parentId = isSubagent ? session?.agent?.parent_id : undefined;
+  useCommands({
+    recenter: () => scrollToEnd('smooth'),
+    'toggle-zen-mode': () => setZenMode(!zen),
+    'live-panel': panelViews.length > 0 && (() => setPanelChoice(!isPanelOpen)),
+    providers: onManageProviders && (() => onManageProviders()),
+    'toggle-voice-recording': voiceSupported && (() => void toggleVoice()),
+    'toggle-voice-conversation': voiceSupported && (() => void switchVoiceMode()),
+    'session-settings': () => setSettingsOpen(true),
+    'agent-parent': !!parentId && (() => onOpenSession(parentId)),
+  });
 
   const screen = (
     <AttachImageContext.Provider value={attachCapturedImage}>

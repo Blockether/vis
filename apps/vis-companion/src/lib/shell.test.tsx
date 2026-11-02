@@ -145,8 +145,9 @@ describe('the app bar', () => {
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: 'Search sessions' })).not.toBeInTheDocument(),
     );
-    // `Ctrl+/` is the same door: the chord a desktop or browser reader presses anywhere.
-    await userEvent.keyboard('{Control>}/{/Control}');
+    // `C-x s s` is the same door: the chord a desktop or browser reader presses anywhere,
+    // a field included. User request: it replaces `Ctrl+/`, as in the TUI.
+    await userEvent.keyboard('{Control>}x{/Control}ss');
     expect(
       await screen.findByRole('searchbox', { name: 'Search session titles and messages' }),
     ).toHaveFocus();

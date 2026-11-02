@@ -36,6 +36,7 @@
    overlay, the clickable header chips — reads this namespace, so a shortcut is
    defined once and stays in sync."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.tui.header-model :as vh])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -78,20 +79,31 @@
    is the faithful home for vis verbs."
   \x)
 
+(def ^:private keymap-document
+  "The shared C-x key map of `vis-contract/schema/keymap.json`. The Companion reads
+   the same document, so both clients bind the same keys."
+  (document/schema-document "keymap"))
+
+(defn- document-key
+  "The plain character of the key string `s` in the key map document."
+  [s]
+  (first s))
+
+(defn- document-entries
+  "The `oneOf` entries of the key map definition `definition`, in document order."
+  [definition]
+  (get-in keymap-document ["$defs" definition "oneOf"]))
+
 (def prefix-groups
-  "The C-x groups, in band order. C-x and a group key open the band of that group;
-   the next key runs one of its verbs. Two levels give each group its own letters,
-   so the C-x keys no longer run out. The Extensions group shows only when an
-   extension binds a key. `:description` is the dim text of the group row."
-  [{:id :session :key \s :title "Session" :description "Switch, start, fork and file sessions"}
-   {:id :group :key \g :title "Group" :description "Rename, colour, archive and delete groups"}
-   {:id :model :key \m :title "Model" :description "Model, reasoning and answer length"}
-   {:id :view :key \b :title "View" :description "Search, folds, Zen mode and panels"}
-   {:id :attachments :key \a :title "Attachments" :description "Attach files and look at pictures"}
-   {:id :voice :key \v :title "Voice" :description "Voice input and spoken answers"}
-   {:id :queue :key \q :title "Queue" :description "Send or edit queued messages"}
-   {:id :agents :key \t :title "Agents" :description "Open a subagent, or go back to its parent"}
-   {:id :extensions :key \e :title "Extensions" :description "Keys that extensions add"}])
+  "The C-x groups, in band order, from `keymap.json`. C-x and a group key open the
+   band of that group; the next key runs one of its verbs. The Extensions group shows
+   only when an extension binds a key. `:description` is the dim text of the group row."
+  (mapv (fn [g]
+          {:id (keyword (get g "const"))
+           :key (document-key (get g "x-vis-key"))
+           :title (get g "title")
+           :description (get g "description")})
+        (document-entries "group")))
 
 (def ^:private group-by-id (into {} (map (juxt :id identity)) prefix-groups))
 
@@ -101,231 +113,26 @@
   :extensions)
 
 (def prefix-commands
-  "C-x <group key> <key> → app verb. `:group` is a `prefix-groups` id; a verb
-   without `:group` sits on the top level, so C-x and its key run it. `:key` is
-   pressed as a PLAIN character: a Ctrl'd key is not reliable, because `Ctrl+S` and
+  "C-x <group key> <key> → app verb, from `keymap.json`. `:group` is a `prefix-groups`
+   id; a verb without `:group` sits on the top level, so C-x and its key run it. `:key`
+   is pressed as a PLAIN character: a Ctrl'd key is not reliable, because `Ctrl+S` and
    `Ctrl+Q` are tty flow control and `Ctrl+M` is Enter. Keys are case-sensitive
    inside a group: an exact match wins, then the lower-case key. `:description` is
    the dim text that the band shows after the label.
 
    An optional `:show-when` tag gates the band row to the context where the verb can
    act (`verb-available?`). The chord, the palette and help still list every verb."
-  [{:action :toggle-help :key \h :label "help" :description "Show every key binding"}
-   {:action :new-session
-    :key \n
-    :label "new session"
-    :group :session
-    :description "Start an empty session"}
-   {:action :show-sessions
-    :key \s
-    :label "switch session"
-    :group :session
-    :description "Open another session"}
-   ;; C-x s Backspace and C-x s Delete also delete (`input/resolve-prefix-key`).
-   {:action :delete-session
-    :key \d
-    :label "delete session"
-    :group :session
-    :description "Delete this session after you confirm"}
-   {:action :archive-session
-    :key \a
-    :label "archive session"
-    :group :session
-    :description "Archive this session, or restore it"}
-   {:action :fork-session
-    :key \f
-    :label "fork session"
-    :group :session
-    :show-when :has-turns
-    :description "Copy this session into a new one"}
-   {:action :fork-at-turn
-    :key \t
-    :label "fork at turn"
-    :group :session
-    :show-when :has-turns
-    :description "Copy this session up to a turn that you choose"}
-   ;; BLO-167: file the session under one of its project's groups.
-   {:action :session-group
-    :key \m
-    :label "move to group"
-    :group :session
-    :description "File this session under a project group"}
-   {:action :session-metrics
-    :key \u
-    :label "session metrics"
-    :group :session
-    :description "Show the token use and budgets of this session"}
-   ;; The Group verbs act on the group that holds the current session.
-   {:action :group-new
-    :key \n
-    :label "new group"
-    :group :group
-    :description "Create a group in this session's project"}
-   {:action :group-rename
-    :key \r
-    :label "rename group"
-    :group :group
-    :show-when :has-group
-    :description "Rename this session's group"}
-   {:action :group-recolour
-    :key \c
-    :label "group colour"
-    :group :group
-    :show-when :has-group
-    :description "Change the colour of this session's group"}
-   {:action :group-settings
-    :key \s
-    :label "group settings"
-    :group :group
-    :show-when :has-group
-    :description "Open the settings of this session's group"}
-   {:action :group-archive
-    :key \a
-    :label "archive group"
-    :group :group
-    :show-when :has-group
-    :description "Archive this session's group, or restore it"}
-   {:action :group-delete
-    :key \d
-    :label "delete group"
-    :group :group
-    :show-when :has-group
-    :description "Delete this session's group after you confirm"}
-   {:action :cycle-model
-    :key \m
-    :label "next model"
-    :group :model
-    :description "Use the next configured model"}
-   {:action :pick-model
-    :key \c
-    :label "choose model"
-    :group :model
-    :description "Choose a model from a list"}
-   {:action :pick-reasoning
-    :key \r
-    :label "reasoning"
-    :group :model
-    :description "Set the reasoning effort"}
-   ;; Fast mode acts only on OpenAI Codex, so other sessions do not see it (#333).
-   {:action :toggle-codex-fast
-    :key \f
-    :label "fast mode"
-    :group :model
-    :show-when :codex
-    :description "Turn Codex fast mode on or off"}
-   {:action :cycle-verbosity
-    :key \l
-    :label "length"
-    :group :model
-    :description "Make answers shorter or longer"}
-   {:action :toggle-thinking-summary
-    :key \t
-    :label "thinking summary"
-    :group :model
-    :description "Show or hide the summary of model thinking"}
-   {:action :providers
-    :key \p
-    :label "providers"
-    :group :model
-    :description "Add model providers and sign in"}
-   {:action :search-open
-    :key \f
-    :label "search"
-    :group :view
-    :description "Find text in this conversation"}
-   {:action :recenter
-    :key \j
-    :label "jump to bottom"
-    :group :view
-    :description "Go to the newest message"}
-   ;; `z` = vim's fold prefix: the jump-label overlay toggles folds.
-   {:action :toggle-detail-labels
-    :key \z
-    :label "label folds"
-    :group :view
-    :description "Put a key on each fold, then press it to jump"}
-   ;; Zen mode shows only the transcript and the prompt.
-   {:action :toggle-zen-mode
-    :key \Z
-    :label "zen mode"
-    :group :view
-    :description "Show only the transcript and the prompt"}
-   {:action :live-panel
-    :key \p
-    :label "side panel"
-    :group :view
-    :show-when :has-panel
-    :description "Show or hide the side panel view"}
-   {:action :switch-project
-    :key \w
-    :label "project sidebar"
-    :group :view
-    :description "Show or hide the project sidebar"}
-   {:action :toggle-agent-dock
-    :key \a
-    :label "agent details"
-    :group :view
-    :description "Show or hide the subagent details"}
-   {:action :pick-file
-    :key \a
-    :label "attach file"
-    :group :attachments
-    :description "Add files to the next message"}
-   {:action :focus-attachments
-    :key \i
-    :label "inspect attachments"
-    :group :attachments
-    :description "List, preview and remove attachments"}
-   ;; Only a graphical terminal can show the image viewer.
-   {:action :view-images
-    :key \v
-    :label "view images"
-    :group :attachments
-    :show-when :image-viewer
-    :description "Show the session pictures in the terminal"}
-   ;; The system viewer works on every terminal.
-   {:action :open-newest-image
-    :key \o
-    :label "open picture"
-    :group :attachments
-    :show-when :has-images
-    :description "Open the newest picture in the system viewer"}
-   {:action :toggle-voice-recording
-    :key \v
-    :label "record"
-    :group :voice
-    :description "Start or stop voice input"}
-   ;; The conversation MODE speaks the answers of this conversation, and only this one.
-   {:action :toggle-voice-conversation
-    :key \c
-    :label "conversation"
-    :group :voice
-    :description "Speak the answers of this conversation"}
-   ;; Mark every queued message for the running turn's next step.
-   {:action :queue-send-all-now
-    :key \s
-    :label "send all now"
-    :group :queue
-    :description "Give every queued message to the running turn"}
-   ;; The keys act on the Queued block until Esc (`input/queue-focus-event`).
-   {:action :queue-edit
-    :key \e
-    :label "edit queued"
-    :group :queue
-    :description "Edit, move or remove queued messages"}
-   ;; C-x t 1-9 opens that dock row (`input/resolve-group-key`).
-   {:action :agent-team
-    :key \t
-    :label "agent team"
-    :group :agents
-    :show-when :has-agents
-    :description "List the subagents, then open one or stop it"}
-   {:action :agent-parent
-    :key \b
-    :label "back to parent"
-    :group :agents
-    :show-when :child-session
-    :description "Open the session that started this subagent"}])
+  (mapv (fn [v]
+          (cond-> {:action (keyword (get v "const"))
+                   :key (document-key (get v "x-vis-key"))
+                   :label (get v "title")
+                   :description (get v "description")}
+            (get v "x-vis-group")
+            (assoc :group (keyword (get v "x-vis-group")))
+
+            (get v "x-vis-show-when")
+            (assoc :show-when (keyword (get v "x-vis-show-when")))))
+        (document-entries "verb")))
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
@@ -754,11 +561,11 @@
   "C-l — Emacs `recenter`: jump the conversation to the bottom + repaint."
   \l)
 
-(def ^:const prefix-palette-key
-  "C-x p — after the C-x prefix, this key opens the Command Palette. A PLAIN `p`
-   is the primary, reliable, no-config, Emacs-idiomatic palette trigger; a Ctrl'd
-   second key (C-x C-p) is ALSO accepted for old muscle memory."
-  \p)
+(def prefix-palette-key
+  "C-x p — after the C-x prefix, this key opens the Command Palette. `keymap.json`
+   owns it. A PLAIN `p` is the primary, reliable, no-config, Emacs-idiomatic palette
+   trigger; a Ctrl'd second key (C-x C-p) is ALSO accepted for old muscle memory."
+  (document-key (get keymap-document "x-vis-palette-key")))
 
 (def ^:const palette-meta-key
   "M-x palette alias: Alt/Option + this key also opens the palette (the canonical

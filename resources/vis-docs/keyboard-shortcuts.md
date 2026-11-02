@@ -2,7 +2,8 @@
 
 Use these keyboard shortcuts, also called keybindings, in the Vis terminal app. With them you can
 send a message, start a new line, run commands, move through a session and edit your text. The
-desktop and phone app has [a smaller set of keys](#in-the-desktop-or-phone-app).
+desktop and phone app uses [the same Ctrl+X keys](#in-the-desktop-or-phone-app) for the
+commands that it has.
 
 To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
 
@@ -24,8 +25,8 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
 - **You want to see the pictures in a message larger.** See [View pictures](#view-pictures).
 - **You want to use an app, such as a review, a form or a game.** See [Use an app](#use-an-app).
 - **An extension added a key, or a key does something new.** See [Keys from extensions](#keys-from-extensions).
-- **You want to send an earlier message again from the desktop or phone app.** See [In the
-  desktop or phone app](#in-the-desktop-or-phone-app).
+- **You want to send an earlier message again, or run a command by key, in the desktop or phone
+  app.** See [In the desktop or phone app](#in-the-desktop-or-phone-app).
 - **You want to know what cancelling or quitting does to your queued messages.** Read
   [Control a running session](sessions.md#control-a-running-session) instead.
 
@@ -413,6 +414,23 @@ message with more lines, they first move the cursor. The app keeps your 20 newes
 does not keep commands such as `/reload`, but it keeps `/goal`. Messages from other sessions
 through Council are not included. On a phone with no keyboard, Return starts a new line, and the
 send button sends the message.
+
+The app uses the same **Ctrl+X** keys as the terminal app. For example, press **Ctrl+X s s** to
+search your sessions, also when the cursor is in the message box. After **Ctrl+X**, a band at the
+bottom of the window shows the keys that you can press next.
+
+| Keys | What they do |
+|---|---|
+| Ctrl+X p | Open the command palette. Type part of a command name, then press Enter |
+| Ctrl+X h | Show all keys. A key that the app cannot use now is dimmed |
+| Ctrl+X s s | Search your sessions |
+| Esc or Ctrl+G | Cancel the keys that you started |
+| / | Search your sessions when the cursor is not in a text field |
+
+The app shows and runs only the commands that it can use now. For example, **Ctrl+X a a**
+attaches a file only when the message box is open. Some terminal commands are not in the app yet,
+such as groups, session metrics and the picture keys. When you select text in a field, **Ctrl+X**
+cuts the text and does not start a key.
 
 To see a picture larger in the app, click or tap it. If the message has more pictures, use these
 keys in the picture viewer. On a phone, swipe left or right instead.

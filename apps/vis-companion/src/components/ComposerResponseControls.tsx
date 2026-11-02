@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { FastIcon, ReasoningIcon, ThinkingIcon, VerbosityIcon } from './icons';
+import { useCommands } from '../lib/commands';
 import { keepKeyboard } from '../lib/keyboard';
 import { Menu, MENU_WIDTH, MenuItem } from './Menu';
 import { MetaButton } from './ui';
@@ -52,6 +53,16 @@ function Divider() {
 function ReasoningChoice({ control }: { control: ChoiceControl }) {
   const [menu, setMenu] = useState<MenuPosition | null>(null);
   const close = useCallback(() => setMenu(null), []);
+  // C-x m r opens the same list under the chip.
+  const anchor = useId();
+  useCommands({
+    'pick-reasoning':
+      !control.busy &&
+      (() => {
+        const chip = document.querySelector(`[data-command-anchor="${CSS.escape(anchor)}"]`);
+        if (chip) setMenu(menuPosition(chip.getBoundingClientRect(), MENU_WIDTH));
+      }),
+  });
   // Escape belongs to the open list. The screen under it reads Escape as "cancel
   // the running turn", so the list catches the key first.
   useEffect(() => {
@@ -71,6 +82,7 @@ function ReasoningChoice({ control }: { control: ChoiceControl }) {
         isPicker
         density="compact"
         className="shrink-0"
+        data-command-anchor={anchor}
         onMouseDown={keepKeyboard}
         onClick={(event) =>
           setMenu(menuPosition(event.currentTarget.getBoundingClientRect(), MENU_WIDTH))
@@ -112,6 +124,7 @@ function ReasoningChoice({ control }: { control: ChoiceControl }) {
 
 /** The simplified modes have three levels, so a tap on the chip steps to the next one. */
 function ReasoningCycle({ control }: { control: CycleControl }) {
+  useCommands({ 'pick-reasoning': !control.busy && control.cycle });
   return (
     <MetaButton
       density="compact"
@@ -141,6 +154,13 @@ export function ComposerResponseControls({
 }: {
   controls: ComposerResponseControlsModel;
 }) {
+  // The C-x m keys run the same controls as the chips.
+  useCommands({
+    'pick-model': controls.model.choose,
+    'cycle-verbosity': controls.verbosity && !controls.verbosity.busy && controls.verbosity.cycle,
+    'toggle-thinking-summary': controls.thinking && !controls.thinking.busy && controls.thinking.toggle,
+    'toggle-codex-fast': controls.fast && !controls.fast.busy && controls.fast.toggle,
+  });
   return (
     <div className="flex w-full items-center gap-1 pt-1 mouse:gap-1.5 mouse:pt-0.5">
       <MetaButton

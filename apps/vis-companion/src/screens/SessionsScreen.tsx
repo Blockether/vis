@@ -62,6 +62,7 @@ import {
 import { shareSummary, type SharedPayload } from '../lib/share-intake';
 import { favoriteRank, nextFavoriteRank } from '../lib/favorites';
 import { randomUuid } from '../lib/uuid';
+import { useCommands } from '../lib/commands';
 import {
   fleetError,
   fleetRead,
@@ -1781,6 +1782,22 @@ export function SessionsScreen({
   commitRef.current = () => void commitDelete();
   const confirmDelete = useCallback(() => commitRef.current(), []);
   const deleting = rowAction?.mode === 'delete' ? rowAction : null;
+  // THE OPEN SESSION'S ROW runs the Session verbs of the C-x keys and the palette.
+  const openSessionRow = openSession
+    ? machines
+        .find((machine) => machineKey(machine.conn) === machineKey(openSession.conn))
+        ?.sessions?.find((row) => row.id === openSession.sid)
+    : undefined;
+  const row = openSessionRow;
+  const openRoot = row?.workspace?.is_draft ? row.workspace.repo_root : row?.workspace?.root;
+  useCommands({
+    'new-session':
+      !!openSession && !!openRoot && (() => createSession(openSession.conn, openRoot, row?.group_id ?? undefined)),
+    'fork-session': !!openSession && !!row && row.turn_count > 0 && (() => forkSession(row, openSession.conn)),
+    'archive-session': !!openSession && !!row && (() => archiveSession(row, openSession.conn, !row.archived_at)),
+    // The delete is confirmed in the row, so it needs the list on screen.
+    'delete-session': isVisible && !!openSession && !!row && (() => startDelete(row, openSession.conn)),
+  });
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       open: onOpen,
@@ -2313,17 +2330,21 @@ export function SessionsScreen({
             <span>Reading sessions...</span>
           </footer>
         )}
-        {/* THE DESK'S OWN FOOTER, and it says only what is true here: `Ctrl+/` opens the
-            fleet search from anywhere, a field included (`App`), and the count is the
+        {/* THE DESK'S OWN FOOTER, and it says only what is true here: `C-x s s` opens the
+            fleet search from anywhere, a field included (`CommandSurface`), and the count is the
             gateway's. The sidebar has room for a footer without spending a row of the
             list on it. */}
         {isDesk && (
           <footer className="flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-3 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
             <span className="flex items-center gap-1.5">
               <kbd className="border border-dialog-edge px-1 font-mono text-chip normal-case">
-                Ctrl+/
+                C-x s s
               </kbd>
               Search
+              <kbd className="ml-1.5 border border-dialog-edge px-1 font-mono text-chip normal-case">
+                C-x p
+              </kbd>
+              Commands
             </span>
             <span className="tabular-nums">
               {machines.length > 1

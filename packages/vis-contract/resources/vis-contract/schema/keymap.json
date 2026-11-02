@@ -1,0 +1,411 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/keymap.json",
+  "title": "Key map contract",
+  "description": "The C-x key map that the TUI and the Companion share. Press C-x, then a group key, then a verb key. Each client binds the verbs that it can run.",
+  "x-vis-prefix": "C-x",
+  "x-vis-palette-key": "p",
+  "$defs": {
+    "group": {
+      "type": "string",
+      "description": "One C-x group, in band order. x-vis-key is the plain key after C-x that opens it.",
+      "oneOf": [
+        {
+          "const": "session",
+          "title": "Session",
+          "description": "Switch, start, fork and file sessions",
+          "x-vis-key": "s"
+        },
+        {
+          "const": "group",
+          "title": "Group",
+          "description": "Rename, colour, archive and delete groups",
+          "x-vis-key": "g"
+        },
+        {
+          "const": "model",
+          "title": "Model",
+          "description": "Model, reasoning and answer length",
+          "x-vis-key": "m"
+        },
+        {
+          "const": "view",
+          "title": "View",
+          "description": "Search, folds, Zen mode and panels",
+          "x-vis-key": "b"
+        },
+        {
+          "const": "attachments",
+          "title": "Attachments",
+          "description": "Attach files and look at pictures",
+          "x-vis-key": "a"
+        },
+        {
+          "const": "voice",
+          "title": "Voice",
+          "description": "Voice input and spoken answers",
+          "x-vis-key": "v"
+        },
+        {
+          "const": "queue",
+          "title": "Queue",
+          "description": "Send or edit queued messages",
+          "x-vis-key": "q"
+        },
+        {
+          "const": "agents",
+          "title": "Agents",
+          "description": "Open a subagent, or go back to its parent",
+          "x-vis-key": "t"
+        },
+        {
+          "const": "extensions",
+          "title": "Extensions",
+          "description": "Keys that extensions add",
+          "x-vis-key": "e"
+        }
+      ]
+    },
+    "verb": {
+      "type": "string",
+      "description": "One app verb in kebab case, in band order. x-vis-key is its plain key inside x-vis-group, or after C-x when it has no group.",
+      "oneOf": [
+        {
+          "const": "toggle-help",
+          "title": "help",
+          "description": "Show every key binding",
+          "x-vis-key": "h"
+        },
+        {
+          "const": "new-session",
+          "title": "new session",
+          "description": "Start an empty session",
+          "x-vis-key": "n",
+          "x-vis-group": "session"
+        },
+        {
+          "const": "show-sessions",
+          "title": "switch session",
+          "description": "Open another session",
+          "x-vis-key": "s",
+          "x-vis-group": "session"
+        },
+        {
+          "const": "delete-session",
+          "title": "delete session",
+          "description": "Delete this session after you confirm",
+          "x-vis-key": "d",
+          "x-vis-group": "session",
+          "$comment": "C-x s Backspace and C-x s Delete also delete (input/resolve-prefix-key)."
+        },
+        {
+          "const": "archive-session",
+          "title": "archive session",
+          "description": "Archive this session, or restore it",
+          "x-vis-key": "a",
+          "x-vis-group": "session"
+        },
+        {
+          "const": "fork-session",
+          "title": "fork session",
+          "description": "Copy this session into a new one",
+          "x-vis-key": "f",
+          "x-vis-group": "session",
+          "x-vis-show-when": "has-turns"
+        },
+        {
+          "const": "fork-at-turn",
+          "title": "fork at turn",
+          "description": "Copy this session up to a turn that you choose",
+          "x-vis-key": "t",
+          "x-vis-group": "session",
+          "x-vis-show-when": "has-turns"
+        },
+        {
+          "const": "session-group",
+          "title": "move to group",
+          "description": "File this session under a project group",
+          "x-vis-key": "m",
+          "x-vis-group": "session",
+          "$comment": "BLO-167: file the session under one of its project's groups."
+        },
+        {
+          "const": "session-metrics",
+          "title": "session metrics",
+          "description": "Show the token use and budgets of this session",
+          "x-vis-key": "u",
+          "x-vis-group": "session"
+        },
+        {
+          "const": "group-new",
+          "title": "new group",
+          "description": "Create a group in this session's project",
+          "x-vis-key": "n",
+          "x-vis-group": "group",
+          "$comment": "The Group verbs act on the group that holds the current session."
+        },
+        {
+          "const": "group-rename",
+          "title": "rename group",
+          "description": "Rename this session's group",
+          "x-vis-key": "r",
+          "x-vis-group": "group",
+          "x-vis-show-when": "has-group"
+        },
+        {
+          "const": "group-recolour",
+          "title": "group colour",
+          "description": "Change the colour of this session's group",
+          "x-vis-key": "c",
+          "x-vis-group": "group",
+          "x-vis-show-when": "has-group"
+        },
+        {
+          "const": "group-settings",
+          "title": "group settings",
+          "description": "Open the settings of this session's group",
+          "x-vis-key": "s",
+          "x-vis-group": "group",
+          "x-vis-show-when": "has-group"
+        },
+        {
+          "const": "group-archive",
+          "title": "archive group",
+          "description": "Archive this session's group, or restore it",
+          "x-vis-key": "a",
+          "x-vis-group": "group",
+          "x-vis-show-when": "has-group"
+        },
+        {
+          "const": "group-delete",
+          "title": "delete group",
+          "description": "Delete this session's group after you confirm",
+          "x-vis-key": "d",
+          "x-vis-group": "group",
+          "x-vis-show-when": "has-group"
+        },
+        {
+          "const": "cycle-model",
+          "title": "next model",
+          "description": "Use the next configured model",
+          "x-vis-key": "m",
+          "x-vis-group": "model"
+        },
+        {
+          "const": "pick-model",
+          "title": "choose model",
+          "description": "Choose a model from a list",
+          "x-vis-key": "c",
+          "x-vis-group": "model"
+        },
+        {
+          "const": "pick-reasoning",
+          "title": "reasoning",
+          "description": "Set the reasoning effort",
+          "x-vis-key": "r",
+          "x-vis-group": "model"
+        },
+        {
+          "const": "toggle-codex-fast",
+          "title": "fast mode",
+          "description": "Turn Codex fast mode on or off",
+          "x-vis-key": "f",
+          "x-vis-group": "model",
+          "x-vis-show-when": "codex",
+          "$comment": "Fast mode acts only on OpenAI Codex, so other sessions do not see it (#333)."
+        },
+        {
+          "const": "cycle-verbosity",
+          "title": "length",
+          "description": "Make answers shorter or longer",
+          "x-vis-key": "l",
+          "x-vis-group": "model"
+        },
+        {
+          "const": "toggle-thinking-summary",
+          "title": "thinking summary",
+          "description": "Show or hide the summary of model thinking",
+          "x-vis-key": "t",
+          "x-vis-group": "model"
+        },
+        {
+          "const": "providers",
+          "title": "providers",
+          "description": "Add model providers and sign in",
+          "x-vis-key": "p",
+          "x-vis-group": "model"
+        },
+        {
+          "const": "search-open",
+          "title": "search",
+          "description": "Find text in this conversation",
+          "x-vis-key": "f",
+          "x-vis-group": "view"
+        },
+        {
+          "const": "recenter",
+          "title": "jump to bottom",
+          "description": "Go to the newest message",
+          "x-vis-key": "j",
+          "x-vis-group": "view"
+        },
+        {
+          "const": "toggle-detail-labels",
+          "title": "label folds",
+          "description": "Put a key on each fold, then press it to jump",
+          "x-vis-key": "z",
+          "x-vis-group": "view",
+          "$comment": "z is the vim fold prefix: the jump-label overlay toggles folds."
+        },
+        {
+          "const": "toggle-zen-mode",
+          "title": "zen mode",
+          "description": "Show only the transcript and the prompt",
+          "x-vis-key": "Z",
+          "x-vis-group": "view",
+          "$comment": "Zen mode shows only the transcript and the prompt."
+        },
+        {
+          "const": "live-panel",
+          "title": "side panel",
+          "description": "Show or hide the side panel view",
+          "x-vis-key": "p",
+          "x-vis-group": "view",
+          "x-vis-show-when": "has-panel"
+        },
+        {
+          "const": "switch-project",
+          "title": "project sidebar",
+          "description": "Show or hide the project sidebar",
+          "x-vis-key": "w",
+          "x-vis-group": "view"
+        },
+        {
+          "const": "toggle-agent-dock",
+          "title": "agent details",
+          "description": "Show or hide the subagent details",
+          "x-vis-key": "a",
+          "x-vis-group": "view"
+        },
+        {
+          "const": "pick-file",
+          "title": "attach file",
+          "description": "Add files to the next message",
+          "x-vis-key": "a",
+          "x-vis-group": "attachments"
+        },
+        {
+          "const": "focus-attachments",
+          "title": "inspect attachments",
+          "description": "List, preview and remove attachments",
+          "x-vis-key": "i",
+          "x-vis-group": "attachments"
+        },
+        {
+          "const": "view-images",
+          "title": "view images",
+          "description": "Show the session pictures in the terminal",
+          "x-vis-key": "v",
+          "x-vis-group": "attachments",
+          "x-vis-show-when": "image-viewer",
+          "$comment": "Only a graphical terminal can show the image viewer."
+        },
+        {
+          "const": "open-newest-image",
+          "title": "open picture",
+          "description": "Open the newest picture in the system viewer",
+          "x-vis-key": "o",
+          "x-vis-group": "attachments",
+          "x-vis-show-when": "has-images",
+          "$comment": "The system viewer works on every terminal."
+        },
+        {
+          "const": "toggle-voice-recording",
+          "title": "record",
+          "description": "Start or stop voice input",
+          "x-vis-key": "v",
+          "x-vis-group": "voice"
+        },
+        {
+          "const": "toggle-voice-conversation",
+          "title": "conversation",
+          "description": "Speak the answers of this conversation",
+          "x-vis-key": "c",
+          "x-vis-group": "voice",
+          "$comment": "The conversation mode speaks the answers of this conversation, and only this one."
+        },
+        {
+          "const": "queue-send-all-now",
+          "title": "send all now",
+          "description": "Give every queued message to the running turn",
+          "x-vis-key": "s",
+          "x-vis-group": "queue",
+          "$comment": "Mark every queued message for the running turn's next step."
+        },
+        {
+          "const": "queue-edit",
+          "title": "edit queued",
+          "description": "Edit, move or remove queued messages",
+          "x-vis-key": "e",
+          "x-vis-group": "queue",
+          "$comment": "The keys act on the Queued block until Esc (input/queue-focus-event)."
+        },
+        {
+          "const": "agent-team",
+          "title": "agent team",
+          "description": "List the subagents, then open one or stop it",
+          "x-vis-key": "t",
+          "x-vis-group": "agents",
+          "x-vis-show-when": "has-agents",
+          "$comment": "C-x t 1-9 opens that dock row (input/resolve-group-key)."
+        },
+        {
+          "const": "agent-parent",
+          "title": "back to parent",
+          "description": "Open the session that started this subagent",
+          "x-vis-key": "b",
+          "x-vis-group": "agents",
+          "x-vis-show-when": "child-session"
+        }
+      ]
+    },
+    "show_when": {
+      "type": "string",
+      "description": "The context in which a band lists a verb. The palette and help list every verb.",
+      "oneOf": [
+        {
+          "const": "has-turns",
+          "description": "The session has at least one turn."
+        },
+        {
+          "const": "has-group",
+          "description": "The session is filed under a group."
+        },
+        {
+          "const": "codex",
+          "description": "The session uses OpenAI Codex."
+        },
+        {
+          "const": "has-panel",
+          "description": "The session has a side panel view."
+        },
+        {
+          "const": "image-viewer",
+          "description": "The client can show pictures in place."
+        },
+        {
+          "const": "has-images",
+          "description": "The session has at least one picture."
+        },
+        {
+          "const": "has-agents",
+          "description": "The session has subagents."
+        },
+        {
+          "const": "child-session",
+          "description": "The session is a subagent session."
+        }
+      ]
+    }
+  }
+}

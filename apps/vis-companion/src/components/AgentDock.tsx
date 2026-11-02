@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import { useCommands } from '../lib/commands';
 import type { Subagent } from '../lib/types';
 import { TeamLine, TimelineToggle, TurnAgents, dockTeams, hasTimeline, useWide, type TeamProps } from './AgentTeam';
 import { ChevronIcon, MARK_NUDGE } from './icons';
@@ -21,6 +22,11 @@ export function AgentDock({ agents, sid, runningTurnId, ...team }: Omit<TeamProp
   const line = useId();
   const isWide = useWide();
   const teams = dockTeams(agents, sid, runningTurnId);
+  // C-x b a folds the dock; C-x t t opens it.
+  useCommands({
+    'toggle-agent-dock': teams.length > 0 && (() => setOpen((value) => !value)),
+    'agent-team': teams.length > 0 && (() => setOpen(true)),
+  });
   if (teams.length === 0) return null;
   const toggle = isWide && teams.some(hasTimeline) ? (
     <TimelineToggle

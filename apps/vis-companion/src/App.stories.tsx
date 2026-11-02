@@ -22,12 +22,12 @@ type Story = StoryObj<typeof meta>;
 
 /**
  * The glass opens the search dialog, and so does `/` unless a field holds the caret.
- * `Ctrl+/` is no character, so it opens the search from inside the field too.
+ * From inside a field, `C-x s s` opens it (`CommandSurface`).
  */
 export const SearchShortcut: Story = {
   play: async ({ args, canvas }) => {
     const glass = canvas.getByRole('button', { name: 'Search sessions' });
-    await expect(glass).toHaveAttribute('aria-keyshortcuts', 'Control+/ /');
+    await expect(glass).toHaveAttribute('aria-keyshortcuts', '/');
     await userEvent.click(glass);
     await expect(args.onSearch).toHaveBeenCalledTimes(1);
     await userEvent.keyboard('/');
@@ -38,16 +38,10 @@ export const SearchShortcut: Story = {
     await userEvent.keyboard('/');
     await expect(field).toHaveValue('/');
     await expect(args.onSearch).toHaveBeenCalledTimes(2);
-    await userEvent.keyboard('{Control>}/{/Control}');
-    await expect(args.onSearch).toHaveBeenCalledTimes(3);
-    await expect(field).toHaveValue('/');
-    // A Windows AltGr layout reports Ctrl+Alt while it only types the slash.
-    await userEvent.keyboard('{Control>}{Alt>}/{/Alt}{/Control}');
-    await expect(args.onSearch).toHaveBeenCalledTimes(3);
   },
 };
 
-/** A dialog with the focus keeps the keyboard: neither `/` nor `Ctrl+/` opens the search past it. */
+/** A dialog with the focus keeps the keyboard: `/` does not open the search past it. */
 export const BehindADialog: Story = {
   render: (args) => (
     <>
@@ -59,11 +53,8 @@ export const BehindADialog: Story = {
     </>
   ),
   play: async ({ args, canvas }) => {
-    await userEvent.click(canvas.getByRole('textbox', { name: 'Machine name' }));
-    await userEvent.keyboard('{Control>}/{/Control}');
     canvas.getByRole('button', { name: 'Save' }).focus();
     await userEvent.keyboard('/');
-    await userEvent.keyboard('{Control>}/{/Control}');
     await expect(args.onSearch).not.toHaveBeenCalled();
   },
 };

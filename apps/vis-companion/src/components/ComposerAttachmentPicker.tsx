@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { useRef, useState, type ChangeEvent } from 'react';
 
+import { useCommands } from '../lib/commands';
 import { keepKeyboard } from '../lib/keyboard';
 import { CameraIcon, ClipIcon, ImageIcon, PlusIcon } from './icons';
 import { MenuItem } from './Menu';
@@ -33,6 +34,8 @@ export function ComposerAttachmentPicker({
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // C-x a a opens the same picker as the button.
+  useCommands({ 'pick-file': !disabled && (() => (isNative ? setMenuOpen(true) : inputRef.current?.click())) });
   const label = isNative
     ? 'Attach a photo, clip, recording or file'
     : 'Choose photos, clips, recordings or files';

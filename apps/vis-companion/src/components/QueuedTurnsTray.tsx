@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import type { GatewayClient } from '../lib/gateway';
 import { isCommandRequest } from '../lib/gateway';
+import { useCommands } from '../lib/commands';
 import type { QueuedTurn, QueuePausedInfo } from '../lib/types';
 import { Button, CloseButton, TextButton } from './ui';
 
@@ -46,6 +47,19 @@ export function QueuedTurnsTray({
   const [sendingAll, setSendingAll] = useState(false);
   const markable = running ? queued.filter(canSendNow) : [];
   const unmarked = markable.filter((item) => item.deliver !== 'next_iteration');
+  const list = useRef<HTMLDivElement>(null);
+  const sendAllNow = () => {
+    setSendingAll(true);
+    void client
+      .sendQueueNow(sid)
+      .catch(report)
+      .finally(() => setSendingAll(false));
+  };
+  // C-x q s and C-x q e run the same actions as the tray.
+  useCommands({
+    'queue-send-all-now': !sendingAll && unmarked.length > 0 && sendAllNow,
+    'queue-edit': queued.length > 0 && (() => list.current?.focus()),
+  });
 
   const markBusy = (turnId: string, busy: boolean) => {
     setBusyIds((current) => {
@@ -101,19 +115,14 @@ export function QueuedTurnsTray({
                 title="Deliver every queued message into the running turn at its next step"
                 disabled={sendingAll || unmarked.length === 0}
                 className="ml-auto shrink-0"
-                onClick={() => {
-                  setSendingAll(true);
-                  void client
-                    .sendQueueNow(sid)
-                    .catch(report)
-                    .finally(() => setSendingAll(false));
-                }}
+                onClick={sendAllNow}
               >
                 Send all now
               </Button>
             )}
           </div>
           <div
+            ref={list}
             role="region"
             aria-label="Queued messages"
             tabIndex={0}
