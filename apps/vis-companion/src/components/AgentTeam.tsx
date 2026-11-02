@@ -262,16 +262,16 @@ function StatusMark({ status }: { status: string }) {
   return <span className="inline-block size-2 rounded-full bg-accent-ink motion-safe:animate-pulse" />;
 }
 
-// The columns of the team. On a phone: ROLE, TITLE and STATUS, then UPDATE and TIME on the second
-// line. On a wide screen: the chevron, ROLE, TITLE, the time bar, TIME and the status mark, and
-// the UPDATE of an unfolded row below them. A team of one agent has no time bar. ROLE and TITLE fit
-// the longest word of the team, and TIME fits `59m 59s`, so a ticking time never moves a column.
-// TITLE takes at most a third of the row; a longer title wraps.
-const PHONE_COLUMNS = 'grid-cols-[var(--role)_minmax(0,1fr)_auto]';
-const WIDE_COLUMNS = 'sm:grid-cols-[0.75rem_var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem]';
-const WIDE_COLUMNS_SOLO = 'sm:grid-cols-[0.75rem_var(--role)_minmax(0,1fr)_7ch_1rem]';
-// The OPEN of a wide row, which opens the sheet of its agent, and the room for it under the axis.
-const OPEN_WIDTH = 'w-14 shrink-0';
+// The columns of a team on a phone: ROLE, TITLE and STATUS, then UPDATE and TIME on the second
+// line. ROLE fits the longest word of the team.
+const PHONE_ROW = 'grid w-full min-w-0 grid-cols-[var(--role)_minmax(0,1fr)_auto] items-baseline gap-x-3 py-1 text-left';
+
+// The columns of a team on a wide screen: the chevron, ROLE, TITLE, the time bar, TIME and the
+// status mark, and the UPDATE of an unfolded row below them. TIME fits `59m 59s`, so a ticking
+// time never moves a column. TITLE takes at most a third of the row; a longer title wraps.
+const WIDE_ROW = 'grid w-full min-w-0 grid-cols-[0.75rem_var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-2';
+
+const FOCUS = 'rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent';
 
 // The widths of the columns that fit the team, in `ch` of the monospace font. A heading is the
 // least width of its column; the bold title gets one more `ch`.
@@ -293,84 +293,106 @@ function AxisMarks({ total }: { total: number }) {
   ));
 }
 
-// The table of one team. A wide screen shows the time of each agent as a bar on one axis; a row
-// there unfolds its update, and its OPEN opens the sheet.
-function AgentTable({ rows, now, error, onSelect }: {
+interface TableProps {
   rows: readonly Subagent[];
   now: number;
   error?: string | null;
   onSelect: (sid: string) => void;
-}) {
-  const isWide = useWide();
+}
+
+// The table of one team. A phone row opens the sheet of its agent. A wide row unfolds its update,
+// and its time bar opens the sheet.
+function AgentTable(props: TableProps) {
+  return useWide() ? <WideAgentTable {...props} /> : <PhoneAgentTable {...props} />;
+}
+
+function PhoneAgentTable({ rows, now, error, onSelect }: TableProps) {
+  return (
+    <ul className="divide-y divide-dialog-edge/40" style={columnWidths(rows)}>
+      {rows.map((agent) => {
+        const role = agentRole(agent);
+        const status = agentStatus(agent);
+        const update = agentUpdate(agent);
+        const time = agentTime(agent, now);
+        return (
+          <li key={agent.session_id}>
+            <button type="button" data-agent-row={agent.session_id} onClick={() => onSelect(agent.session_id)} className={`group ${FOCUS} ${PHONE_ROW}`}>
+              <span className={`order-1 uppercase ${role.ink}`}>{role.text}</span>
+              <span className="order-2 font-bold [overflow-wrap:anywhere] group-hover:underline" title={agent.task}>
+                {agentLabel(agent, rows)}
+              </span>
+              {update && (
+                <span className="order-4 col-span-2 line-clamp-2 text-dialog-hint [overflow-wrap:anywhere]" title={update}>{update}</span>
+              )}
+              <span className={`order-3 whitespace-nowrap text-right uppercase ${status.ink}`}>{status.text}</span>
+              <span className="order-5 col-start-3 whitespace-nowrap text-right text-dialog-hint tabular-nums">
+                {time === undefined ? '' : formatAgentTime(time)}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+      {error && <li role="alert" className="py-1 text-err-ink">{error}</li>}
+    </ul>
+  );
+}
+
+function WideAgentTable({ rows, now, error, onSelect }: TableProps) {
   // The rows that a person folded or unfolded. Any other row is unfolded while its agent runs.
   const [folds, setFolds] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const total = teamTime(rows, now);
-  const hasBars = isWide && rows.length > 1 && !!total;
-  const bars = hasBars ? agentBars(rows, now) : new Map<string, AgentBar>();
-  const grid = `grid w-full min-w-0 items-baseline gap-x-3 ${PHONE_COLUMNS} ${hasBars ? WIDE_COLUMNS : WIDE_COLUMNS_SOLO}`;
+  const bars = agentBars(rows, now);
   return (
     <div style={columnWidths(rows)}>
-      {hasBars && (
-        <div aria-hidden className="hidden gap-x-3 px-2 pt-1 text-dialog-hint sm:flex">
-          <div className={grid}>
-            <span className="relative col-start-4 h-[calc(1lh+0.5rem)] border-b border-dialog-edge/50"><AxisMarks total={total} /></span>
-          </div>
-          <span className={OPEN_WIDTH} />
+      {rows.length > 1 && !!total && (
+        <div aria-hidden className={`pt-1 text-dialog-hint ${WIDE_ROW}`}>
+          <span className="relative col-start-4 h-[calc(1lh+0.5rem)] border-b border-dialog-edge/50"><AxisMarks total={total} /></span>
         </div>
       )}
-      <ul className="divide-y divide-dialog-edge/40 sm:divide-y-0">
+      <ul>
         {rows.map((agent) => {
           const role = agentRole(agent);
           const status = agentStatus(agent);
           const update = agentUpdate(agent);
           const time = agentTime(agent, now);
           const bar = bars.get(agent.session_id);
+          const label = agentLabel(agent, rows);
           const isOpen = folds.get(agent.session_id) ?? agent.status === 'running';
           const toggle = () => setFolds((before) => new Map(before).set(agent.session_id, !isOpen));
           return (
-            <li key={agent.session_id} className="sm:flex sm:items-start sm:gap-x-3 sm:px-2 sm:py-1 sm:hover:bg-white/5">
+            <li key={agent.session_id} className={`py-1 hover:bg-white/5 ${WIDE_ROW}`}>
               <button
                 type="button"
                 data-agent-row={agent.session_id}
-                aria-expanded={isWide ? isOpen : undefined}
-                onClick={isWide ? toggle : () => onSelect(agent.session_id)}
-                className={`group rounded-none py-1 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${grid}`}
+                aria-expanded={isOpen}
+                onClick={toggle}
+                className={`group col-span-3 grid grid-cols-subgrid items-baseline text-left ${FOCUS}`}
               >
-                {isWide && <ChevronIcon open={isOpen} className={`hidden size-3 text-dialog-hint sm:block ${MARK_NUDGE}`} />}
-                <span className={`order-1 uppercase sm:order-none ${role.ink}`}>{role.text}</span>
-                <span className="order-2 font-bold [overflow-wrap:anywhere] group-hover:underline sm:order-none" title={agent.task}>
-                  {agentLabel(agent, rows)}
-                </span>
-                <span
-                  className={`order-4 col-span-2 line-clamp-2 text-dialog-hint [overflow-wrap:anywhere] sm:order-none sm:col-[3/-1] sm:row-start-2 sm:line-clamp-3 ${update ? '' : 'max-sm:hidden'} ${isOpen ? '' : 'sm:hidden'}`}
-                  title={update}
-                >
-                  {update ?? ''}
-                </span>
-                {hasBars && (
-                  <span aria-hidden className="relative hidden h-2 self-center sm:block">
-                    {bar && (
-                      <span
-                        className={`absolute inset-y-0 ${bar.isWaiting ? 'top-1/2 border-t border-dashed border-dialog-hint' : BAR_INK[status.text]}`}
-                        style={{ left: `${bar.start * 100}%`, width: `max(2px, ${(bar.end - bar.start) * 100}%)` }}
-                      />
-                    )}
-                  </span>
-                )}
-                <span className={`order-3 whitespace-nowrap text-right uppercase sm:order-last sm:self-center sm:text-center ${status.ink}`}>
-                  <span className="sm:sr-only">{status.text}</span>
-                  {isWide && <span aria-hidden className="hidden sm:inline-flex"><StatusMark status={status.text} /></span>}
-                </span>
-                <span className="order-5 col-start-3 whitespace-nowrap text-right text-dialog-hint tabular-nums sm:order-none sm:col-start-auto">
-                  {time === undefined ? '' : formatAgentTime(time)}
-                </span>
+                <ChevronIcon open={isOpen} className={`size-3 text-dialog-hint ${MARK_NUDGE}`} />
+                <span className={`uppercase ${role.ink}`}>{role.text}</span>
+                <span className="font-bold [overflow-wrap:anywhere] group-hover:underline" title={agent.task}>{label}</span>
               </button>
-              {isWide && (
-                <span className={`flex h-[calc(1lh+0.5rem)] items-center justify-end ${OPEN_WIDTH}`}>
-                  <Button density="inline" aria-label={`Open ${agentLabel(agent, rows)}`} onClick={() => onSelect(agent.session_id)}>
-                    Open
-                  </Button>
-                </span>
+              <button
+                type="button"
+                aria-label={`Open ${label}`}
+                title={`Open ${label}`}
+                onClick={() => onSelect(agent.session_id)}
+                className={`group/bar relative h-[1lh] cursor-pointer self-start ${FOCUS}`}
+              >
+                {bar && (
+                  <span
+                    className={`absolute top-1/2 -translate-y-1/2 transition-[height] motion-reduce:transition-none ${bar.isWaiting ? 'border-t border-dashed border-dialog-hint group-hover/bar:border-white' : `h-2 group-hover/bar:h-3.5 ${BAR_INK[status.text]}`}`}
+                    style={{ left: `${bar.start * 100}%`, width: `max(2px, ${(bar.end - bar.start) * 100}%)` }}
+                  />
+                )}
+              </button>
+              <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
+              <span className={`self-center text-center ${status.ink}`}>
+                <span className="sr-only">{status.text}</span>
+                <span aria-hidden className="inline-flex"><StatusMark status={status.text} /></span>
+              </span>
+              {isOpen && update && (
+                <span className="col-[3/-1] line-clamp-3 text-dialog-hint [overflow-wrap:anywhere]" title={update}>{update}</span>
               )}
             </li>
           );

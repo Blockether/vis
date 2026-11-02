@@ -100,7 +100,7 @@ describe('agent rows', () => {
   });
 
   // On a wide screen a row unfolds in place, and a running agent shows its update without a click.
-  it('unfolds a running row on a wide screen, folds it on a click, and opens the sheet from its OPEN', async () => {
+  it('unfolds a running row on a wide screen, folds it on a click, and opens the sheet from its time bar', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
     }));
