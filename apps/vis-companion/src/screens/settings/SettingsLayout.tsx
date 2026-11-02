@@ -197,6 +197,13 @@ export function SettingsPanel({
             label: `${isOwnOpen ? 'Hide' : 'Show'} ${title}`,
           }
         : undefined);
+  // The band's own verb opens the band, so the form or result it adds is seen.
+  // Opening twice changes nothing, so a click that follows a press is harmless.
+  const openBand = () => {
+    if (disclosure && !isNested) {
+      if (!disclosure.isOpen) disclosure.onToggle();
+    } else setOwnOpen(true);
+  };
   const level = isNested ? headingLevel + 1 : headingLevel;
   const TitleContainer = fold ? 'span' : 'div';
   const TitleHeading = fold ? 'span' : level === 3 ? 'h3' : level === 4 ? 'h4' : 'h5';
@@ -240,14 +247,14 @@ export function SettingsPanel({
         <SettingsHeader
           action={
             action && (
-              // The band's own verb opens the band, so the form or result it adds is seen.
+              // An icon action presses on release (`useTapPress`), and iOS can drop
+              // the click after it, so the release opens the band too.
               <span
                 className="contents"
-                onClickCapture={() => {
-                  if (disclosure && !isNested) {
-                    if (!disclosure.isOpen) disclosure.onToggle();
-                  } else setOwnOpen(true);
+                onPointerUpCapture={(event) => {
+                  if (event.button === 0) openBand();
                 }}
+                onClickCapture={openBand}
               >
                 {action}
               </span>

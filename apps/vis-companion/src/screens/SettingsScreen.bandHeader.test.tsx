@@ -2,6 +2,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { IconButton } from '../components/ui';
 import { SettingsBandsOpen, SettingsPanel } from './settings/SettingsLayout';
 
 afterEach(() => {
@@ -49,5 +50,28 @@ describe('every settings band with a body folds', () => {
     expect(screen.getByText('context7')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Hide MCP servers' }));
     expect(screen.queryByText('context7')).toBeNull();
+  });
+
+  // Reported: the Automations + made a new automation, but its band stayed folded.
+  // An icon action presses on release, and iOS can drop the click that follows.
+  it('opens the band when its icon action is pressed without a click', () => {
+    let added = 0;
+    render(
+      <SettingsPanel
+        title="Automations"
+        action={
+          <IconButton label="New automation" onClick={() => (added += 1)}>
+            +
+          </IconButton>
+        }
+      >
+        <p>Morning summary</p>
+      </SettingsPanel>,
+    );
+    const plus = screen.getByRole('button', { name: 'New automation' });
+    fireEvent.pointerDown(plus, { button: 0 });
+    fireEvent.pointerUp(plus, { button: 0 });
+    expect(added).toBe(1);
+    expect(screen.getByText('Morning summary')).toBeVisible();
   });
 });
