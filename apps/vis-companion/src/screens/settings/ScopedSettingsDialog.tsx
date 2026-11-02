@@ -9,6 +9,7 @@ import { McpServersPanel, SettingRow, secretSafeMessage, settingTree } from './M
 import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingMachine } from './SettingField';
 import { hostOf } from '../../lib/endpoints';
+import { onWake } from '../../lib/wake';
 import { SettingsBandsOpen, SettingsLoading, SettingsPanel, SettingsSection } from './SettingsLayout';
 
 type ScopedSettingsProps = {
@@ -54,9 +55,12 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
         if (!controller.signal.aborted) setError((err as Error).message);
       } finally { reading = false; }
     };
+    // No timer: only this dialog or another client changes these settings, and a
+    // 3 s poll cost 27 statements a read, also while the app was hidden. Read on
+    // open and on wake; a save reads its own answer.
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 3000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+    const offWake = onWake(() => void refresh());
+    return () => { controller.abort(); offWake(); };
   }, [client, owner]);
   const save = async (toggle: Toggle, action: 'toggle' | 'value' | 'inherit', value?: SettingValue) => {
     if (saving.current) return false;

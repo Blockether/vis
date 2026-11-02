@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
@@ -16,6 +17,7 @@ import { councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
 import { useClampMotion } from '../lib/clamp-motion';
 import { Markdown } from './ChatContent';
+import { CheckIcon, ChevronIcon, CloseIcon, MARK_NUDGE } from './icons';
 import { Button, DialogFrame, Modal, TextButton } from './ui';
 
 /** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
@@ -189,13 +191,85 @@ function useNow(ticking: boolean): number {
   return now;
 }
 
-// The columns of the team table: ROLE, TITLE, UPDATE, STATUS and TIME, so the status stands
-// right before the time. ROLE, TITLE and STATUS fit the longest word of the team, and TIME fits
-// `59m 59s`, so a ticking time never moves a column. TITLE takes at most a third of the row; a
-// longer title wraps. On a phone, UPDATE and TIME are the second line.
-const COLUMNS = 'grid-cols-[var(--role)_minmax(0,1fr)_auto] sm:grid-cols-[var(--role)_min(var(--title),32%)_minmax(0,1fr)_var(--status)_7ch]';
-const ROW = `w-full min-w-0 items-baseline gap-x-3 py-1 text-left ${COLUMNS}`;
-const ROW_BUTTON = `group grid rounded-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${ROW}`;
+// A wide screen: the `sm` width of the theme. A row there unfolds in place, and on a phone it
+// opens the sheet of its agent.
+const WIDE = '(min-width: 640px)';
+
+function useWide(): boolean {
+  return useSyncExternalStore(
+    (change) => {
+      const query = window.matchMedia(WIDE);
+      query.addEventListener?.('change', change);
+      return () => query.removeEventListener?.('change', change);
+    },
+    () => window.matchMedia(WIDE).matches,
+    () => false,
+  );
+}
+
+/** Where the current task of an agent stands on the team time: its start and end, from 0 to 1. */
+export interface AgentBar {
+  start: number;
+  end: number;
+  isWaiting: boolean;
+}
+
+/**
+ * The bar of each agent on the time of its team, by session id. A task goes from its start to
+ * its end, or to now while it runs. A queued agent waits from its spawn to the end of the team.
+ * An agent without the marks of its task has no bar.
+ */
+export function agentBars(rows: readonly Subagent[], now: number): Map<string, AgentBar> {
+  const bars = new Map<string, AgentBar>();
+  const starts = marks(rows.map((agent) => agent.created_at));
+  const total = teamTime(rows, now);
+  if (starts.length === 0 || !total) return bars;
+  const from = Math.min(...starts);
+  const share = (at: number) => Math.min(1, Math.max(0, (at - from) / total));
+  for (const agent of rows) {
+    const start = agent.status === 'queued' ? agent.created_at : startOf(agent);
+    const end = agent.status === 'queued' ? from + total : agent.status === 'running' ? now : agent.finished_at;
+    if (start == null || end == null) continue;
+    bars.set(agent.session_id, { start: share(start), end: share(end), isWaiting: agent.status === 'queued' });
+  }
+  return bars;
+}
+
+// The steps of the time axis, in seconds. The axis takes the least step that gives at most five marks.
+const AXIS_STEPS = [10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
+
+/** The marks of a time axis of `ms`, in ms from 0: at most five, on a round step. */
+export function axisMarks(ms: number): number[] {
+  const seconds = ms / 1000;
+  const step = AXIS_STEPS.find((each) => seconds / each < 5) ?? Math.ceil(seconds / 4 / 3600) * 3600;
+  return Array.from({ length: Math.floor(seconds / step) + 1 }, (_, index) => index * step * 1000);
+}
+
+const axisLabel = (ms: number) => `${Math.floor(ms / 60_000)}:${pad(Math.floor(ms / 1000) % 60)}`;
+
+// The bar ink of each status word.
+const BAR_INK: Record<string, string> = {
+  running: 'bg-accent-ink',
+  done: 'bg-ok-ink',
+  failed: 'bg-err-ink',
+};
+
+// The mark of a status word on a wide screen. The word stays for a screen reader.
+function StatusMark({ status }: { status: string }) {
+  if (status === 'done') return <CheckIcon className="size-3 text-ok-ink" />;
+  if (status === 'failed') return <CloseIcon className="size-3 text-err-ink" />;
+  if (status === 'queued') return <span className="inline-block size-2 rounded-full border border-dialog-hint" />;
+  return <span className="inline-block size-2 rounded-full bg-accent-ink motion-safe:animate-pulse" />;
+}
+
+// The columns of the team. On a phone: ROLE, TITLE and STATUS, then UPDATE and TIME on the second
+// line. On a wide screen: the chevron, ROLE, TITLE, the time bar, TIME and the status mark, and
+// the UPDATE of an unfolded row below them. A team of one agent has no time bar. ROLE and TITLE fit
+// the longest word of the team, and TIME fits `59m 59s`, so a ticking time never moves a column.
+// TITLE takes at most a third of the row; a longer title wraps.
+const PHONE_COLUMNS = 'grid-cols-[var(--role)_minmax(0,1fr)_auto]';
+const WIDE_COLUMNS = 'sm:grid-cols-[0.75rem_var(--role)_min(var(--title),32%)_minmax(0,1fr)_7ch_1rem]';
+const WIDE_COLUMNS_SOLO = 'sm:grid-cols-[0.75rem_var(--role)_minmax(0,1fr)_7ch_1rem]';
 
 // The widths of the columns that fit the team, in `ch` of the monospace font. A heading is the
 // least width of its column; the bold title gets one more `ch`.
@@ -204,50 +278,98 @@ function columnWidths(rows: readonly Subagent[]): CSSProperties {
   return {
     '--role': `${widest('role', rows.map((agent) => agentRole(agent).text))}ch`,
     '--title': `${widest('title', rows.map((agent) => agentLabel(agent, rows))) + 1}ch`,
-    '--status': `${widest('status', rows.map((agent) => agentStatus(agent).text))}ch`,
   } as CSSProperties;
 }
 
-// The table of one team, with the column headings on a wide screen.
+// The marks of the time axis: a hairline in each bar, and its label above the first bar.
+function AxisMarks({ total, isLabeled = false }: { total: number; isLabeled?: boolean }) {
+  return axisMarks(total).map((at, index) => (
+    <span
+      key={at}
+      className={`absolute top-0 ${isLabeled ? (index === 0 ? '' : '-translate-x-1/2') : 'h-full w-px bg-dialog-edge/30'}`}
+      style={{ left: `${(at / total) * 100}%` }}
+    >
+      {isLabeled ? axisLabel(at) : null}
+    </span>
+  ));
+}
+
+// The table of one team. A wide screen shows the time of each agent as a bar on one axis.
 function AgentTable({ rows, now, error, onSelect }: {
   rows: readonly Subagent[];
   now: number;
   error?: string | null;
   onSelect: (sid: string) => void;
 }) {
+  const isWide = useWide();
+  // The rows that a person folded or unfolded. Any other row is unfolded while its agent runs.
+  const [folds, setFolds] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const total = teamTime(rows, now);
+  const hasBars = isWide && rows.length > 1 && !!total;
+  const bars = hasBars ? agentBars(rows, now) : new Map<string, AgentBar>();
+  const grid = `grid w-full min-w-0 items-baseline gap-x-3 ${PHONE_COLUMNS} ${hasBars ? WIDE_COLUMNS : WIDE_COLUMNS_SOLO}`;
   return (
     <div style={columnWidths(rows)}>
-      <div aria-hidden className={`hidden border-b border-dialog-edge text-dialog-hint uppercase sm:grid ${ROW}`}>
-        <span>role</span>
-        <span>title</span>
-        <span>update</span>
-        <span>status</span>
-        <span className="text-right">time</span>
-      </div>
-      <ul className="divide-y divide-dialog-edge/40">
+      {hasBars && (
+        <div aria-hidden className={`hidden pt-1 text-dialog-hint sm:grid ${grid}`}>
+          <span className="relative col-start-4 h-[1lh]"><AxisMarks total={total} isLabeled /></span>
+        </div>
+      )}
+      <ul className="divide-y divide-dialog-edge/40 sm:divide-y-0">
         {rows.map((agent) => {
           const role = agentRole(agent);
           const status = agentStatus(agent);
           const update = agentUpdate(agent);
           const time = agentTime(agent, now);
+          const bar = bars.get(agent.session_id);
+          const isOpen = folds.get(agent.session_id) ?? agent.status === 'running';
+          const toggle = () => setFolds((before) => new Map(before).set(agent.session_id, !isOpen));
           return (
-            <li key={agent.session_id}>
-              <button type="button" data-agent-row={agent.session_id} onClick={() => onSelect(agent.session_id)} className={ROW_BUTTON}>
+            <li key={agent.session_id} className={isOpen ? 'sm:bg-white/5' : ''}>
+              <button
+                type="button"
+                data-agent-row={agent.session_id}
+                aria-expanded={isWide ? isOpen : undefined}
+                onClick={isWide ? toggle : () => onSelect(agent.session_id)}
+                className={`group rounded-none py-1 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${grid}`}
+              >
+                {isWide && <ChevronIcon open={isOpen} className={`hidden size-3 text-dialog-hint sm:block ${MARK_NUDGE}`} />}
                 <span className={`order-1 uppercase sm:order-none ${role.ink}`}>{role.text}</span>
                 <span className="order-2 font-bold [overflow-wrap:anywhere] group-hover:underline sm:order-none" title={agent.task}>
                   {agentLabel(agent, rows)}
                 </span>
                 <span
-                  className={`order-4 col-span-2 line-clamp-2 text-dialog-hint [overflow-wrap:anywhere] sm:order-none sm:col-span-1 ${update ? '' : 'max-sm:hidden'}`}
+                  className={`order-4 col-span-2 line-clamp-2 text-dialog-hint [overflow-wrap:anywhere] sm:order-none sm:col-[3/-1] sm:row-start-2 sm:line-clamp-3 sm:border-l sm:border-dialog-edge/40 sm:pl-3 ${update ? '' : 'max-sm:hidden'} ${isOpen ? '' : 'sm:hidden'}`}
                   title={update}
                 >
                   {update ?? ''}
                 </span>
-                <span className={`order-3 whitespace-nowrap text-right uppercase sm:order-none sm:text-left ${status.ink}`}>{status.text}</span>
+                {hasBars && (
+                  <span aria-hidden className="relative hidden h-2 self-center sm:block">
+                    <AxisMarks total={total} />
+                    {bar && (
+                      <span
+                        className={`absolute inset-y-0 ${bar.isWaiting ? 'top-1/2 border-t border-dashed border-dialog-hint' : BAR_INK[status.text]}`}
+                        style={{ left: `${bar.start * 100}%`, width: `max(2px, ${(bar.end - bar.start) * 100}%)` }}
+                      />
+                    )}
+                  </span>
+                )}
+                <span className={`order-3 whitespace-nowrap text-right uppercase sm:order-last sm:self-center sm:text-center ${status.ink}`}>
+                  <span className="sm:sr-only">{status.text}</span>
+                  {isWide && <span aria-hidden className="hidden sm:inline-flex"><StatusMark status={status.text} /></span>}
+                </span>
                 <span className="order-5 col-start-3 whitespace-nowrap text-right text-dialog-hint tabular-nums sm:order-none sm:col-start-auto">
                   {time === undefined ? '' : formatAgentTime(time)}
                 </span>
               </button>
+              {isWide && isOpen && (
+                <div className={`hidden pb-1.5 sm:grid ${grid}`}>
+                  <span className="col-[3/-1] pl-3 text-dialog-hint">
+                    <TextButton onClick={() => onSelect(agent.session_id)}>Open timeline</TextButton>
+                  </span>
+                </div>
+              )}
             </li>
           );
         })}
@@ -542,14 +664,26 @@ export function dockTeams(agents: readonly Subagent[], sid: string, runningTurnI
     .map(([, team]) => team);
 }
 
+/** How often the team of a gateway older than protocol 21 is read while it is live. */
+const LEGACY_TEAM_POLL_MS = 3000;
+
 /**
  * One reader for a session's subagents. It starts from the last team that this device
  * read for `sid`, so a switch back shows the dock at once. It has no timer: the rows of
  * each `session.team_updated` event go into the same cache. It reads the team on open,
  * after a stream reconnect, when the page shows again, after a control call, and on an
  * event without usable rows. It does not read when `teamTotal` is 0 and no rows are cached.
+ *
+ * `legacyRunning` is null for a gateway that pushes rows. For an older gateway it says whether
+ * the leader's turn runs: such a gateway sends only counts, so the team is read every 3 s
+ * while the turn runs or a child is live.
  */
-export function useAgentTeam(client: GatewayClient, sid: string, teamTotal: number | null = null) {
+export function useAgentTeam(
+  client: GatewayClient,
+  sid: string,
+  teamTotal: number | null = null,
+  legacyRunning: boolean | null = null,
+) {
   const hub = useContext(SessionEventsContext);
   const [state, setState] = useState<{ sid: string; agents: Subagent[] }>(() => ({
     sid,
@@ -562,6 +696,7 @@ export function useAgentTeam(client: GatewayClient, sid: string, teamTotal: numb
   const pushes = useRef(0);
   const current = state.sid === sid ? state.agents : (client.cachedAgents?.(sid) ?? []);
   const hasNoTeam = useEffectEvent(() => teamTotal === 0 && !client.cachedAgents?.(sid)?.length);
+  const polls = legacyRunning !== null && (legacyRunning || current.some(isLive));
   useEffect(() => {
     const controller = new AbortController();
     let fetching = false;
@@ -581,6 +716,7 @@ export function useAgentTeam(client: GatewayClient, sid: string, teamTotal: numb
       if (pushes.current !== seen) void refresh();
     };
     void refresh();
+    const timer = polls ? window.setInterval(() => void refresh(), LEGACY_TEAM_POLL_MS) : undefined;
     document.addEventListener('visibilitychange', refresh);
     let wasConnected: boolean | null = null;
     const offConnection = hub?.subscribeConnection((connected) => {
@@ -589,10 +725,11 @@ export function useAgentTeam(client: GatewayClient, sid: string, teamTotal: numb
     });
     return () => {
       controller.abort();
+      if (timer !== undefined) window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
       offConnection?.();
     };
-  }, [client, hub, sid, revision]);
+  }, [client, hub, sid, revision, polls]);
   useEffect(() => {
     if (!hub) return;
     return hub.subscribeSession(

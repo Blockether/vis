@@ -10,9 +10,27 @@
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.util :as util])
   (:import (java.net URI URISyntaxException)
-           (java.util Base64 UUID)))
+           (java.util Base64 UUID)
+           (java.util.concurrent LinkedBlockingQueue TimeUnit)))
 
 (def ^:private schema (document/schema-document "automations"))
+
+(defonce ^:private ^LinkedBlockingQueue scheduler-wakes
+  ;; One pending wake. A wake during a scheduler pass stays queued for the next sleep.
+  (LinkedBlockingQueue. 1))
+
+(defn wake-scheduler!
+  "Tell the scheduler to look at the store again now, for example after a change."
+  []
+  (.offer ^LinkedBlockingQueue scheduler-wakes true)
+  nil)
+
+(defn await-scheduler-wake!
+  "Sleep up to `ms` milliseconds or until the next [[wake-scheduler!]]. Throws
+   InterruptedException when the thread is interrupted."
+  [ms]
+  (.poll ^LinkedBlockingQueue scheduler-wakes (long ms) TimeUnit/MILLISECONDS)
+  nil)
 
 (defn limit
   "One value of the contract `x-vis-limits`."
@@ -239,6 +257,7 @@
                             :definition definition
                             :created_at now
                             :updated_at now})
+    (wake-scheduler!)
     (describe db id now)))
 
 (defn- touched-at
@@ -263,11 +282,14 @@
                              :enabled (get definition "enabled")
                              :definition definition
                              :updated_at (touched-at row now)))
+    (wake-scheduler!)
     (describe db id now)))
 
 (defn delete!
   [db id]
-  (if (ps/db-automation-delete! db id) {"id" id "is_deleted" true} (not-found! "Automation" id)))
+  (if (ps/db-automation-delete! db id)
+    (do (wake-scheduler!) {"id" id "is_deleted" true})
+    (not-found! "Automation" id)))
 
 (defn rotate-secret!
   "Create or replace one secret and answer it once."

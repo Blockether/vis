@@ -385,6 +385,141 @@
        (catch Throwable t (tel/log! :debug ["gateway-bus: waiting clear failed" (ex-message t)])))
   nil)
 
+;; Fleet watch index
+
+(def ^:private ^:const WATCH_CACHE_MS
+  "How long ONE scan of the watch directory is reused. A team push asks once for each push, and
+   a sibling's first subscriber reaches its own clients with an attach push, so a second of delay
+   only defers the next step row."
+  1000)
+
+(defn- watch-dir
+  "Directory with one marker for each session that a process on this machine streams to a client.
+   A process that runs a child pushes its team rows only when the leader has a watcher here or in
+   a sibling process. A sibling of the journal directory, so a redirected journal moves it too."
+  ^Path []
+  (.resolveSibling (events-dir) "watch"))
+
+(defn- watch-file ^File [sid] (.toFile (.resolve (watch-dir) (str sid "." (producer-pid) ".json"))))
+
+;; The sessions that have a watch marker of this process.
+(defonce ^:private watching (atom #{}))
+
+(defonce ^:private watch-cache (atom {}))
+
+;; The sessions of the last watch scan. Only [[scan-watchers]] writes it.
+(defonce ^:private watch-seen (atom #{}))
+
+;; `{:interested? f :added! g}`: the gateway scans each second only while `(f)` is true, and
+;; `(g sids)` gets the sessions that a scan found newly watched.
+(defonce ^:private watch-hooks (atom nil))
+
+(defn set-watch-hooks!
+  "Register `interested?`, a 0-arg fn, and `added!`, a fn of the newly watched session ids. The
+   tailer scans the watch markers each second while `(interested?)`, so a process that skipped a
+   team push learns about a new watcher in another process without a later change."
+  [interested? added!]
+  (reset! watch-hooks {:interested? interested? :added! added!}))
+
+(declare clear-watching!)
+
+(defonce ^:private watch-hook
+  ;; A DELAY, so the hook is added at run time, never in a native image build.
+  (delay (.addShutdownHook (Runtime/getRuntime)
+                           (Thread. ^Runnable
+                                    (fn []
+                                      (clear-watching!))
+                                    "vis-watch-markers"))))
+
+(defn sync-watching!
+  "Make the watch marker of `sid` for this process match `(watched?)`. The check and the write run
+   under one lock, so the last of two racing calls leaves the marker of the newest state. A
+   repeated call writes nothing. Never throws."
+  [sid watched?]
+  (let [sid (str sid)]
+    (locking watching
+      (try (let [on? (boolean (watched?))]
+             (when-not (= on? (contains? @watching sid))
+               (if on?
+                 (let [dir (watch-dir)]
+                   (force watch-hook)
+                   (when-not (Files/exists dir (make-array LinkOption 0))
+                     (Files/createDirectories dir (make-array FileAttribute 0)))
+                   (spit (watch-file sid)
+                         (wire/json-str (merge {"schema" 1 "session_id" sid}
+                                               (update-keys (process-stamp) name))))
+                   (swap! watching conj sid))
+                 (do (.delete (watch-file sid)) (swap! watching disj sid)))))
+           (catch Throwable t
+             (tel/log! :debug ["gateway-bus: watch mark failed" (ex-message t)])))))
+  nil)
+
+(defn clear-watching!
+  "Remove every watch marker of this process. Shutdown calls it. Never throws."
+  []
+  (doseq [sid @watching]
+    (sync-watching! sid (constantly false)))
+  nil)
+
+(defn- read-watchers
+  "The set of sessions with a watch marker of another LIVE process. The marker of a dead process
+   is deleted here, because that process cannot remove it any more."
+  []
+  (try (let [dir (.toFile (watch-dir))]
+         (if-not (.isDirectory dir)
+           #{}
+           (reduce
+             (fn [acc ^File f]
+               (let [marker (when (str/ends-with? (.getName f) ".json")
+                              (try (wire/parse-json (slurp f)) (catch Throwable _ nil)))
+                     pid (get marker "owner_pid")
+                     stamp {:owner_pid pid :owner_started_at (get marker "owner_started_at")}]
+
+                 (cond (nil? marker) acc
+                       (and pid (== (long pid) (long (producer-pid)))) acc
+                       (and pid (get marker "session_id") (stamp-alive? stamp))
+                       (conj acc (str (get marker "session_id")))
+                       :else (do (.delete f) acc))))
+             #{}
+             (or (.listFiles dir) (make-array File 0)))))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: watch scan failed" (ex-message t)]) #{})))
+
+(defn- scan-watchers
+  "[[read-watchers]], and give the `:added!` hook the sessions that the previous scan did not have."
+  []
+  (let [sids
+        (read-watchers)
+
+        [old _]
+        (reset-vals! watch-seen sids)
+
+        added
+        (remove old sids)]
+
+    (when-let [added! (and (seq added) (:added! @watch-hooks))]
+      (try (added! added)
+           (catch Throwable t (tel/log! :debug ["gateway-bus: watch hook failed" (ex-message t)]))))
+    sids))
+
+(defn- watchers
+  "The cached result of [[scan-watchers]]."
+  []
+  (util/ttl-cached watch-cache WATCH_CACHE_MS :sessions scan-watchers))
+
+(defn watched-elsewhere?
+  "True when another live process on this machine streams session `sid` to a client."
+  [sid]
+  (contains? (watchers) (str sid)))
+
+(defn- watch-tick!
+  "Scan the watch markers once, when the gateway is interested. The tailer calls it each second.
+   Never throws."
+  []
+  (try (when-let [interested? (:interested? @watch-hooks)]
+         (when (interested?) (watchers)))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: watch tick failed" (ex-message t)])))
+  nil)
+
 ;; sid-str -> this process's tail of that session's journal:
 ;;   {:lock Object   ; hydrate! (HTTP threads) vs drain-file! (tailer thread)
 ;;    :off  long     ; bytes already consumed
@@ -421,6 +556,29 @@
       (assoc (or t {:lock (Object.)})
         :off (long off)
         :head head)))
+  nil)
+
+(defn- skip-own-bytes!
+  "Move this process's tail of `sid` from `off` with head `head` to `off'` with head `head'`: past
+   bytes that this process just wrote. Only a tail at `off` moves, so no line of another process is
+   skipped. It takes no [[tail-lock]], because a delivery under that lock can wait for the writer.
+   A lost race only makes the tailer read its own line again, which [[deliver-line!]] skips."
+  [sid off head off' head']
+  (swap! tails (fn [m]
+                 (let [k
+                       (str sid)
+
+                       t
+                       (get m k)]
+
+                   (if (and t
+                            (== (long off) (long (:off t)))
+                            (or (nil? (:head t)) (= head (:head t))))
+                     (assoc m
+                       k (assoc t
+                           :off (long off')
+                           :head head'))
+                     m))))
   nil)
 
 (def ^:private ^:const HEAD_MAX_BYTES
@@ -628,7 +786,15 @@
                   "\n")]
 
          (with-open [raf (RandomAccessFile. f "rw")]
-           (let [len (.length raf)]
+           (let [len (.length raf)
+                 ;; A tail at the end has read every earlier line, so it can skip this one.
+                 seen-head (when (some-> (get @tails (str sid))
+                                         :off
+                                         long
+                                         (== len))
+                             (read-head! raf len))
+                 bytes (.getBytes ^String line StandardCharsets/UTF_8)]
+
              (cond truncate? (.setLength raf 0)
                    (> len (long MAX_FILE_BYTES))
                    ;; Size cap MID-turn. Keep the turn's first line: hydrate reads
@@ -640,9 +806,18 @@
                      (.setLength raf 0)
                      (when (< (count head) (long HEAD_MAX_BYTES))
                        (.seek raf 0)
-                       (.write raf (.getBytes (str head "\n") StandardCharsets/UTF_8))))))
-           (.seek raf (.length raf))
-           (.write raf (.getBytes ^String line StandardCharsets/UTF_8))))
+                       (.write raf (.getBytes (str head "\n") StandardCharsets/UTF_8)))))
+             (let [pos (.length raf)
+                   end (+ pos (alength bytes))]
+
+               (.seek raf pos)
+               (.write raf bytes)
+               ;; The bytes before `pos` are the same lines, or a head line that it read, unless
+               ;; another process appended before this write.
+               (when (and seen-head
+                          (or truncate? (> len (long MAX_FILE_BYTES)) (== pos len))
+                          (== end (.length raf)))
+                 (skip-own-bytes! sid len seen-head end (read-head! raf end)))))))
        ;; The fleet's liveness marker rides the SAME durable write as the event
        ;; that changes it: a turn whose start reached disk is announced to every
        ;; process on this machine, and a write that failed announces nothing.
@@ -916,6 +1091,7 @@
 (defonce ^:private drain-buf (atom (byte-array 0)))
 
 (defn- deliver-line!
+  "Deliver one journal line of `sid`. True when it was a line of another process."
   [sid ^String line]
   ;; Skip our OWN lines with a cheap substring test BEFORE parsing — the
   ;; streaming producer tails its own journal, so this avoids parse-then-discard
@@ -930,7 +1106,8 @@
 
             (try (f sid store? clean)
                  (catch Throwable t
-                   (tel/log! :debug ["gateway-bus: deliver failed" (ex-message t)])))))))))
+                   (tel/log! :debug ["gateway-bus: deliver failed" (ex-message t)])))
+            true))))))
 
 (defn- drain-file!
   "Drain the journal `f` of the session the CALLER named `sid`.
@@ -960,7 +1137,8 @@
             len
             (.length f)]
 
-        ;; Unchanged since the last drain: no open, no read, no parse.
+        ;; Unchanged since the last drain: no open, no read, no parse. Only a line of another
+        ;; process makes the drain busy; its own lines keep the tailer at the idle rate.
         (when-not (== len off0)
           (with-open [raf (RandomAccessFile. f "r")]
             (let [head' (read-head! raf len)
@@ -973,6 +1151,7 @@
                   ;; `turn.started` (unrepeatable seq + ms ts), so a CHANGED head
                   ;; PROVES a rewrite and we replay from byte 0.
                   off (if (or (and head (not= head head')) (> off0 len)) 0 off0)
+                  foreign? (volatile! false)
                   ;; Bytes of COMPLETE lines this drain consumed (0 = nothing whole).
                   consumed
                   (if (<= len off)
@@ -1003,13 +1182,14 @@
                                         i)]
                               (when (> end start)
                                 (let [line (String. buf start (- end start) StandardCharsets/UTF_8)]
-                                  (when-not (str/blank? line) (deliver-line! sid line))))
+                                  (when (and (not (str/blank? line)) (deliver-line! sid line))
+                                    (vreset! foreign? true))))
                               (recur (inc i) (inc i) i))
                             (recur start (inc i) last-nl))
                           (inc last-nl)))))]
 
               (set-tail! sid (+ off (long consumed)) head')
-              (pos? (long consumed)))))))))
+              @foreign?)))))))
 
 (defn journal-high-water-seq
   "Highest `\"seq\"` persisted in `sid`'s journal file, or 0 when there is none.
@@ -1217,19 +1397,23 @@
                 ;; Sweep orphaned journals ~once a minute (wall-clock) so the
                 ;; poll set — and the disk — never grow without bound.
                 (loop [quiet 0
-                       last-sweep 0]
+                       last-sweep 0
+                       last-watch 0]
 
                   (when-not (Thread/interrupted)
                     (let [busy? (poll-once!)
                           now (util/now-ms)
                           last-sweep
                           (if (>= (- now last-sweep) (long SWEEP_MS)) (do (sweep!) now) last-sweep)
+                          last-watch (if (>= (- now last-watch) (long WATCH_CACHE_MS))
+                                       (do (watch-tick!) now)
+                                       last-watch)
                           quiet (if busy? 0 (inc quiet))]
 
                       (try (Thread/sleep (long
                                            (if (>= quiet (long IDLE_AFTER)) IDLE_POLL_MS POLL_MS)))
                            (catch InterruptedException _ (.interrupt (Thread/currentThread))))
-                      (recur quiet last-sweep)))))
+                      (recur quiet last-sweep last-watch)))))
               "gateway-bus-tailer")]
       (.setDaemon t true)
       (.start t)

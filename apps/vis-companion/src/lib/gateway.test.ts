@@ -1329,6 +1329,44 @@ describe('GatewayClient transcript revalidation', () => {
     turns = fresh;
     expect(await client.transcriptIfMoved('session-1', answered)).toHaveLength(2);
   });
+
+  // Audit of Companion polls: the 5 s reconcile reread the transcript page on every
+  // tick of a running turn, because a cached 'running' row always counted as moved.
+  // The row still naming that turn as live is no news; the row letting it go is.
+  it('rereads a running placeholder only once the row no longer names it live', async () => {
+    const running = {
+      id: 'session-1',
+      title: 'Running',
+      live: true,
+      current_turn_id: 'turn-1',
+      turn_count: 1,
+      server_time_ms: 0,
+      modified_at: '2026-08-14T03:00:00Z',
+    };
+    const fetched = vi.fn((url: string) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            String(url).includes('/transcript')
+              ? { turns: [{ turn_id: 'turn-1', status: 'running' }], total: 1, offset: 0 }
+              : running,
+          ),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetched);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    const pages = () => fetched.mock.calls.filter(([url]) => String(url).includes('/transcript'));
+
+    expect(await client.transcriptIfMoved('session-1', running)).toHaveLength(1);
+    expect(await client.transcriptIfMoved('session-1', running)).toBeNull();
+    expect(pages()).toHaveLength(1);
+
+    const settled = { ...running, live: false, current_turn_id: null };
+    expect(await client.transcriptIfMoved('session-1', settled)).toHaveLength(1);
+    expect(pages()).toHaveLength(2);
+  });
 });
 
 // Regression, this Vis session (paraphrased: "switching between sessions on the web is
@@ -1495,7 +1533,7 @@ describe('GatewayClient speakText', () => {
     async (sid) => {
       const seen: string[] = [];
       const fetchMock = vi.fn().mockImplementation((url: string, init: RequestInit) => {
-        seen.push(`${init.method} ${url.replace('http://gateway.example.com:7890', '')}`);
+        seen.push(`${init.method ?? 'GET'} ${url.replace('http://gateway.example.com:7890', '')}`);
         if (url.endsWith('/speech') && init.method === 'POST') {
           return Promise.resolve(
             new Response(
@@ -1516,18 +1554,18 @@ describe('GatewayClient speakText', () => {
           return Promise.resolve(new Response(new Uint8Array([1, 2, 3])));
         }
         if (init.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }));
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              id: 'job-1',
-              phase: 'spoken',
-              progress: 1,
-              is_done: true,
+        const done = { id: 'job-1', phase: 'spoken', progress: 1, is_done: true };
+        if (url.endsWith('/events')) {
+          return Promise.resolve(
+            new Response(`event: speech.job\ndata: ${JSON.stringify(done)}\n\n`, {
+              headers: { 'Content-Type': 'text/event-stream' },
             }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            },
-          ),
+          );
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify(done), {
+            headers: { 'Content-Type': 'application/json' },
+          }),
         );
       });
       vi.stubGlobal('fetch', fetchMock);
@@ -1537,14 +1575,52 @@ describe('GatewayClient speakText', () => {
 
       expect(audio.size).toBe(3);
       const base = `/v1${sid ? '/sessions/session-1' : ''}/speech`;
+      // The job's own stream pushes the end: no 400 ms reads of the job resource.
       expect(seen).toEqual([
         `POST ${base}`,
-        `GET ${base}/jobs/job-1`,
+        `GET ${base}/jobs/job-1/events`,
         `GET ${base}/jobs/job-1/audio`,
         `DELETE ${base}/jobs/job-1`,
       ]);
     },
   );
+
+  it('reads the job resource when its event stream fails', async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string, init: RequestInit) => {
+        const path = url.replace('http://gateway.example.com:7890', '');
+        seen.push(`${init.method ?? 'GET'} ${path}`);
+        const json = (body: unknown, status = 200) =>
+          Promise.resolve(
+            new Response(JSON.stringify(body), {
+              status,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          );
+        if (init.method === 'POST') {
+          return json({ id: 'job-1', phase: 'queued', progress: 0, is_done: false }, 202);
+        }
+        if (path.endsWith('/events')) return json({ error: { message: 'proxy' } }, 502);
+        if (path.endsWith('/audio')) return Promise.resolve(new Response(new Uint8Array([1, 2])));
+        if (init.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }));
+        return json({ id: 'job-1', phase: 'spoken', progress: 1, is_done: true });
+      }),
+    );
+    const mod = await import('./gateway');
+
+    const audio = await new mod.GatewayClient(conn).speakText('session-1', 'A long answer');
+
+    expect(audio.size).toBe(2);
+    expect(seen).toEqual([
+      'POST /v1/sessions/session-1/speech',
+      'GET /v1/sessions/session-1/speech/jobs/job-1/events',
+      'GET /v1/sessions/session-1/speech/jobs/job-1',
+      'GET /v1/sessions/session-1/speech/jobs/job-1/audio',
+      'DELETE /v1/sessions/session-1/speech/jobs/job-1',
+    ]);
+  });
 
   it('names what the machine refused instead of a bare status', async () => {
     vi.stubGlobal(

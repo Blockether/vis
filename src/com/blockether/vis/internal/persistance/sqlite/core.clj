@@ -5973,8 +5973,9 @@
                                                     :from :session_agent
                                                     :where [:= :team_id (:team_id agent)]})))
                              max-team-children))
+                ;; The team total never goes down, so a retry cannot clear it.
                 (throw (ex-info (str "A task may create at most " max-team-children " subagents.")
-                                {:error :agent-limit})))
+                                {:error :budget-exceeded})))
               (when (and agent
                          (>= (long (:n (query-one! tx-info
                                                    {:select [[[:count :*] :n]]
@@ -6871,6 +6872,23 @@
                     "(SELECT MAX(version) FROM session_turn_state WHERE session_turn_soul_id = ?) "
                     "AND i.llm_assistant_prose <> '' ORDER BY i.position DESC LIMIT 1") turn-id
                   turn-id]))))))
+
+(defn db-turn-published-after
+  "True when an iteration after `position` in the latest state of turn `session-turn-id` published
+   a Council message. Reads at most one row and no iteration payload. The writer stores no column
+   for an iteration without a publication."
+  [db-info session-turn-id position]
+  (boolean
+    (when (and (ds db-info) session-turn-id)
+      (let [turn-id (->ref session-turn-id)]
+        (seq (query-sql!
+               db-info
+               [(str "SELECT 1 FROM session_turn_iteration AS i "
+                     "INNER JOIN session_turn_state AS s ON s.id = i.session_turn_state_id "
+                     "WHERE s.session_turn_soul_id = ? AND s.version = "
+                     "(SELECT MAX(version) FROM session_turn_state WHERE session_turn_soul_id = ?) "
+                     "AND i.council_publications IS NOT NULL AND i.position > ? LIMIT 1") turn-id
+                turn-id (long position)]))))))
 
 ;; `db-list-iteration-vars`, `db-latest-var-registry`, `db-var-history*`,
 ;; `db-store-dependency!`, `db-list-dependencies`, `db-restore-blocks`,

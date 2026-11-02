@@ -676,8 +676,40 @@ describe('what a run says about its own layout', () => {
 
       expect(onRecordFiled).toHaveBeenCalledTimes(1);
       expect(screen.getByText('0')).toBeVisible();
-      act(() => vi.advanceTimersByTime(8_000));
+      await act(() => vi.advanceTimersByTimeAsync(8_000));
       expect(onRecordFiled).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Audit of Companion polls: each close reread the whole transcript page five
+  // times, also after the first read already showed the record.
+  it('stops rereading at the first read that shows the record', async () => {
+    let receive: ((event: SseEvent) => void) | null = null;
+    const client = { liveViews: () => Promise.resolve([opened()]) } as unknown as GatewayClient;
+    const subscriptions = {
+      subscribeConnection: () => () => undefined,
+      subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+        receive = listener;
+        return () => undefined;
+      },
+    } as unknown as SessionSubscriptionHub;
+    const onRecordFiled = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+
+    function Probe() {
+      const views = useLiveViews(client, subscriptions, 'session-1', onRecordFiled);
+      return <span>{views.length}</span>;
+    }
+
+    render(<Probe />);
+    await waitFor(() => expect(screen.getByText('1')).toBeVisible());
+    vi.useFakeTimers();
+    try {
+      act(() => receive?.({ type: VIEW_CLOSE_EVENT, kind: 'live', view_id: opened().id }));
+      await act(() => vi.advanceTimersByTimeAsync(8_000));
+      expect(onRecordFiled).toHaveBeenCalledTimes(2);
+      expect(onRecordFiled).toHaveBeenLastCalledWith(opened().id);
     } finally {
       vi.useRealTimers();
     }

@@ -112,7 +112,7 @@
   (it "owns protocol compatibility without a runtime mirror"
       (expect (= 21 contract/protocol-version))
       (expect (= 20 contract/minimum-client-protocol))
-      (expect (= 21 contract/minimum-gateway-protocol))
+      (expect (= 20 contract/minimum-gateway-protocol))
       (expect (every? (set (keys (get-in (document/schema-document "gateway")
                                          ["$defs" "http_headers" "properties"])))
                       ["x-vis-protocol" "x-vis-min-gateway-protocol" "x-vis-client"
@@ -130,7 +130,7 @@
                                              :client-min-gateway 1})))))
   (it "builds handshake and error response envelopes"
       (expect (=
-                {:protocol 21 :min-client 20 :min-gateway 21 :version "1.2.3" :build "abc123def456"}
+                {:protocol 21 :min-client 20 :min-gateway 20 :version "1.2.3" :build "abc123def456"}
                 (contract/handshake {:version "1.2.3" :build "abc123def456"})))
       (expect (= {"error" {"type" "invalid-request" "message" "replacement" "session_id" "s1"}}
                  (contract/error-body :mcp/invalid-request

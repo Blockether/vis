@@ -359,7 +359,12 @@ export interface ProviderAuth extends ProviderFleet {
  * them honest. This is all a model picker needs — signing in is a different
  * job, and lives in `useProviderAuth` below.
  */
-export function useProviderFleet(client: GatewayClient, contextSessionId?: string): ProviderFleet {
+export function useProviderFleet(
+  client: GatewayClient,
+  contextSessionId?: string,
+  /** Ask every provider live on mount; a background sweep warmed only changed ones. */
+  live = false,
+): ProviderFleet {
   // Paint whatever the shared router cache already holds (prefetched at
   // connect time) so a screen opens instantly; `reload` revalidates under it.
   // A session context reads the providers of that session's project (#410).
@@ -382,7 +387,7 @@ export function useProviderFleet(client: GatewayClient, contextSessionId?: strin
   );
 
   const reload = useCallback(
-    async (signal?: AbortSignal, opts?: { force?: boolean }) => {
+    async (signal?: AbortSignal, opts?: { force?: boolean; live?: boolean }) => {
       try {
         const rows = await client.router(
           signal,
@@ -451,9 +456,9 @@ export function useProviderFleet(client: GatewayClient, contextSessionId?: strin
 
   useEffect(() => {
     const controller = new AbortController();
-    void reload(controller.signal);
+    void reload(controller.signal, live ? { live } : undefined);
     return () => controller.abort();
-  }, [reload]);
+  }, [reload, live]);
 
   // An extension reload can add, change or remove a provider (#393). Paint the
   // fleet that the client read after it, without a second read here.
@@ -494,7 +499,8 @@ export function useProviderFleet(client: GatewayClient, contextSessionId?: strin
  * clients retain manual URL entry. No token or PKCE verifier lands here.
  */
 export function useProviderAuth(client: GatewayClient, contextSessionId?: string): ProviderAuth {
-  const fleet = useProviderFleet(client, contextSessionId);
+  // The accounts panel answers "is this signed in", so it asks live on open.
+  const fleet = useProviderFleet(client, contextSessionId, true);
   const { setProviders, setErr, setNote, setPending, reload } = fleet;
   const [flow, setFlow] = useState<AuthFlow | null>(null);
   const [redirectUrl, setRedirectUrl] = useState('');

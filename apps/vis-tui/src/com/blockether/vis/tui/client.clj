@@ -56,6 +56,15 @@
 
 (defonce ^:private target-checked? (atom false))
 
+;; The protocol that the checked gateway announced in its `/healthz` handshake, or nil.
+(defonce ^:private gateway-protocol* (atom nil))
+
+;; Last answer and validator of each revalidated GET, keyed by path.
+(defonce ^:private etag-cache* (atom {}))
+
+;; Wall-clock ms of the last event that each session's stream delivered, keyed by sid.
+(defonce ^:private stream-seen* (atom {}))
+
 (defonce ^:private client-id (atom nil))
 
 (defonce ^:private slash-cache* (atom []))
@@ -145,6 +154,8 @@
   (reset! target* (target-entry (or url (System/getenv url-env))
                                 (or token (System/getenv token-env))))
   (reset! target-checked? false)
+  (reset! gateway-protocol* nil)
+  (reset! etag-cache* {})
   (reset! client-id nil)
   @target*)
 
@@ -249,28 +260,30 @@
                              :else (str body)))
       {}))
 
+(defn- checked-json
+  "The parsed JSON body of `response`. Throws with `:http-status` on a 4xx or 5xx."
+  [response]
+  (let [status
+        (long (:status response))
+
+        parsed
+        (parse-json-body (:body response))
+
+        reason
+        (or (get parsed "message") (get-in parsed ["error" "message"]))]
+
+    (when (>= status 400)
+      (throw (ex-info (or reason (str "gateway HTTP " status))
+                      (assoc parsed
+                        :http-status status
+                        :vis/user-error true))))
+    parsed))
+
 (defn- send-json-with-entry!
   ([entry method path] (send-json-with-entry! entry method path nil nil))
   ([entry method path body] (send-json-with-entry! entry method path body nil))
   ([entry method path body opts]
-   (let [response
-         (gw-send! entry method path (assoc (or opts {}) :body body))
-
-         status
-         (long (:status response))
-
-         parsed
-         (parse-json-body (:body response))
-
-         reason
-         (or (get parsed "message") (get-in parsed ["error" "message"]))]
-
-     (when (>= status 400)
-       (throw (ex-info (or reason (str "gateway HTTP " status))
-                       (assoc parsed
-                         :http-status status
-                         :vis/user-error true))))
-     parsed)))
+   (checked-json (gw-send! entry method path (assoc (or opts {}) :body body)))))
 
 (defn- shutdown-subscriptions!
   []
@@ -349,7 +362,14 @@
             (throw (ex-info "gateway protocol is incompatible"
                             {:type :gateway/incompatible :verdict verdict})))
           (report-newer-gateway! verdict)
+          (reset! gateway-protocol* (:protocol handshake))
           (reset! target-checked? true))))))
+
+(defn gateway-protocol
+  "The protocol of the checked gateway, or nil before the first `/healthz` check.
+   A gateway below 21 pushes no agent rows in `session.team_updated`."
+  []
+  @gateway-protocol*)
 
 (defn- target!
   []
@@ -386,6 +406,36 @@
    (let [entry (target!)]
      (ensure-client! entry)
      (send-json-with-entry! entry method path body))))
+
+(def ^:private etag-cache-limit 64)
+
+(defn- revalidated-json!
+  "GET `path` with the validator of its last answer. A 304 answers that kept body
+   again, so an unchanged list costs no transfer and no parse on either side."
+  [path]
+  (let [entry
+        (target!)
+
+        _
+        (ensure-client! entry)
+
+        {:keys [etag body]}
+        (get @etag-cache* path)
+
+        response
+        (gw-send! entry "GET" path {:headers (when etag {"If-None-Match" etag})})
+
+        headers
+        (:headers response)]
+
+    (if (and etag (= 304 (:status response)))
+      body
+      (let [parsed (checked-json response)]
+        (when-let [tag (or (get headers "etag") (get headers "ETag"))]
+          (swap! etag-cache* (fn [m]
+                               (assoc (if (>= (count m) (long etag-cache-limit)) {} m)
+                                 path {:etag tag :body parsed}))))
+        parsed))))
 
 (defn request!
   ([method path] (request! method path {}))
@@ -668,7 +718,7 @@
    the loose sessions alone. A group is a shelf a surface paints whole, however deep in the
    fleet its rows sit; without the option `:grouped` is empty and nothing moves."
   [opts]
-  (let [body (send-json! "GET" (session-window-path opts))]
+  (let [body (revalidated-json! (session-window-path opts))]
     {:sessions (vec (get body "sessions"))
      :grouped (vec (get body "grouped"))
      :awaiting (vec (get body "awaiting"))
@@ -766,10 +816,9 @@
    totals, in one answer (`state/projects-overview`). `:dirty` names local unsent drafts."
   ([] (projects-overview {}))
   ([{:keys [dirty]}]
-   (send-json! "GET"
-               (str "/v1/projects/overview"
-                    (when (seq dirty)
-                      (str "?dirty=" (enc (str/join "," (sort (map str dirty))))))))))
+   (revalidated-json! (str "/v1/projects/overview"
+                           (when (seq dirty)
+                             (str "?dirty=" (enc (str/join "," (sort (map str dirty))))))))))
 
 (defn create-project! [opts] (send-json! "POST" "/v1/projects" opts))
 
@@ -870,7 +919,7 @@
              (str/join "&"))
 
         body
-        (send-json! "GET" (str "/v1/session-groups?" qs))]
+        (revalidated-json! (str "/v1/session-groups?" qs))]
 
     {:groups (vec (get body "groups"))
      :total (long (or (get body "total") 0))
@@ -1043,15 +1092,18 @@
 
 (defonce ^:private session-model-refreshing (atom #{}))
 
-(def ^:private session-model-cache-ttl-ms 750)
+(defn refresh-session-model!
+  "Single-flight background read of the model pref of `sid` into the cache. The
+   daemon round-trip blocks, so it never runs on the render thread. Errors keep
+   the last-known value. Call it when a session stream opens or reconnects, and
+   after an extension reload."
+  [sid]
+  (let [k
+        (str sid)
 
-(defn- refresh-session-model!
-  "Single-flight background refresh of the session-model cache for `sid` —
-   same discipline as `refresh-resources!`: the daemon round-trip is BLOCKING
-   and must never run on the render thread. Errors leave the last-known value
-   untouched."
-  [sid k]
-  (let [[old _] (swap-vals! session-model-refreshing conj k)]
+        [old _]
+        (swap-vals! session-model-refreshing conj k)]
+
     (when-not (contains? old k)
       (future (try (let [{:keys [pick default]} (session-model-answer sid)]
                      (swap! session-model-cache assoc k {:at (now-ms) :val pick :default default}))
@@ -1059,26 +1111,24 @@
                    (finally (swap! session-model-refreshing disj k)))))))
 
 (defn session-model-cached
-  "Footer-frequency read of the session's model pref served from a per-sid
-   cache that NEVER blocks the caller (issue #29, gateway leg: this used to
-   be a live `session-model` HTTP round-trip per footer frame). A stale (or
-   cold) entry kicks a background single-flight refresh and this returns the
-   last-known value immediately (nil before the first success).
-   `set-session-model!` writes through, so a pick made in THIS client shows
-   on the very next frame."
+  "Footer-frequency read of the session's model pref, a pure cache read that
+   never sends a request (issue #29). Paint must not send HTTP: a TTL refresh
+   from paint sent about 72 reads a minute while a turn streamed.
+   `refresh-session-model!` fills the entry when the stream opens or reconnects.
+   `set-session-model!` and `note-session-model!` write through, so a pick from
+   any client shows on the next frame."
   [sid]
-  (let [k
-        (str sid)
+  (some->> sid
+           str
+           (get @session-model-cache)
+           :val))
 
-        now
-        (now-ms)
-
-        {:keys [at val]}
-        (get @session-model-cache k)]
-
-    (when-not (and at (< (- now (long at)) (long session-model-cache-ttl-ms)))
-      (refresh-session-model! sid k))
-    val))
+(defn note-session-model!
+  "Write a `session.model_updated` pref of `sid` through into the cache. A nil
+   pref clears the pin, so the footer falls back to the default."
+  [sid pref]
+  (swap! session-model-cache update (str sid) assoc :at (now-ms) :val pref)
+  nil)
 
 (defn session-default-model-cached
   "The default `{:provider :model}` that the turns of session `sid` use without
@@ -1087,64 +1137,15 @@
    (issue #311).
 
    A pure cache read without a refresh: it shares the `session-model-cached`
-   entry. Every caller reads the pick through that function first, and that
-   read keeps the entry fresh."
+   entry, which `refresh-session-model!` fills."
   [sid]
   (some->> sid
            str
            (get @session-model-cache)
            :default))
 
-;; Managed resources (backgrounds) — the daemon owns the registry (the agent's
-;; tools register here while a turn runs IN THE DAEMON), so a client in another
-;; process reads/controls them over HTTP. An in-process client uses the
-;; local registry directly and never touches these.
-
-(defn list-resources
-  "Vector of the session's live resource DATA maps from the daemon's registry
-   (string-keyed, same shape `resources/list-resources` returns in-process)."
-  [sid]
-  (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/resources")) "resources")))
-
-(defonce ^:private resources-cache (atom {}))
-
-(defonce ^:private resources-refreshing (atom #{}))
-
-(def ^:private resources-cache-ttl-ms 750)
-
-(defn- refresh-resources!
-  "Single-flight background refresh of the resource cache for `sid`. The daemon
-   round-trip (`list-resources`) is BLOCKING and must never run on the render
-   thread — a busy daemon then stalls every TUI frame. Only one fetch per sid is
-   ever in flight, so render-cadence misses can't pile futures up. Errors leave
-   the last-known value untouched."
-  [sid k]
-  (let [[old _] (swap-vals! resources-refreshing conj k)]
-    (when-not (contains? old k)
-      (future (try (let [v (list-resources sid)]
-                     (swap! resources-cache assoc k {:at (now-ms) :val v}))
-                   (catch Throwable _ nil)
-                   (finally (swap! resources-refreshing disj k)))))))
-
-(defn list-resources-cached
-  "Footer-frequency read: the session's resource list served from a per-sid cache
-   that NEVER blocks the caller. A stale (or cold) entry kicks a background
-   single-flight refresh and this returns the last-known value immediately (nil
-   before the first success). Keeping the daemon HTTP round-trip OFF the render
-   thread is what stops a busy daemon from stalling every TUI frame."
-  [sid]
-  (let [k
-        (str sid)
-
-        now
-        (now-ms)
-
-        {:keys [at val]}
-        (get @resources-cache k)]
-
-    (when-not (and at (< (- now (long at)) (long resources-cache-ttl-ms)))
-      (refresh-resources! sid k))
-    val))
+;; Managed resources (backgrounds) — the daemon owns the registry, so a client in
+;; another process controls them over HTTP.
 
 (defn stop-resource!
   "Run the resource's stop-fn in the daemon and unregister it. Returns the
@@ -2100,6 +2101,14 @@
                  (finally (request! :delete (speech-job-path sid :synthesize job-id "")))))
           :else (do (parsed-response! response) nil))))
 
+(defn- note-stream-seen! [sid] (swap! stream-seen* assoc (str sid) (now-ms)) nil)
+
+(defn session-stream-seen-ms
+  "Wall-clock ms of the last event that the stream of `sid` delivered, or nil.
+   The turn liveness probe asks the gateway only after this goes quiet."
+  [sid]
+  (get @stream-seen* (str sid)))
+
 (defn- open-sse-events!
   "Open ONE SSE connection for `sid` from `cursor` and read it with
    [[read-sse-frames!]]. For each parsed event: advance `cursor*` (highest `:seq`
@@ -2114,6 +2123,7 @@
     (with-open [^InputStream in (:body response)]
       (read-sse-frames! in
                         (fn [event]
+                          (note-stream-seen! sid)
                           (when-let [s (get event "seq")]
                             (swap! cursor* max (long s)))
                           (handle event))
@@ -2195,6 +2205,7 @@
                                 {:keys [sinks cursor-atom]} (get (:subs @mux) esid)]
 
                             (when (seq sinks)
+                              (note-stream-seen! esid)
                               (mux-advance-cursor! cursor-atom event)
                               (doseq [[_ sink] sinks]
                                 (try (sink event) (catch Throwable _ nil)))))
@@ -2575,6 +2586,8 @@
 
 (def gateway-list-turns list-turns)
 
+(def gateway-get-turn get-turn)
+
 (def gateway-live-views live-views)
 
 (def gateway-app-views app-views)
@@ -2781,7 +2794,7 @@
                       :at now
                       :refreshing? true)]
         (when (compare-and-set! router-cache* cached pending)
-          (future (let [result (try {:rows (vec (router))} (catch Exception _ {}))
+          (future (let [result (try {:rows (vec (router {:probe :changed}))} (catch Exception _ {}))
                         completed-at (now-ms)]
 
                     (swap! router-cache* (fn [current]

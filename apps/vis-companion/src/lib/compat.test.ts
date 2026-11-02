@@ -6,8 +6,17 @@ import {
   APP_PROTOCOL,
   compatFromHealth,
   compatOf,
+  pushesTeamRows,
   shouldRereadCompat,
 } from './compat';
+
+// Requirement: a fleet keeps older machines (min_gateway 20). A gateway before protocol 21
+// pushes no agent rows, so its team must be polled; a missing handshake keeps the push path.
+describe('pushesTeamRows', () => {
+  it('pushes from protocol 21, polls below it, and assumes push before a handshake', () => {
+    expect([20, 21, 22, null].map(pushesTeamRows)).toEqual([false, true, true, true]);
+  });
+});
 
 // Regression: a matching pair showed the full-screen "Update the gateway" wall.
 // `client.health()` RESOLVES `undefined` when the gateway answers 304 or a 200

@@ -609,6 +609,60 @@ def test_malformed_turn_status_does_not_spin_until_timeout():
         assert len(calls) == 1
 
 
+def test_turn_wait_follows_the_event_stream_instead_of_polling():
+    # Audit row 2: `Turn.wait` read the whole turn 10 times a second until it ended.
+    from blockether.vis.engine import Turn
+
+    reads = []
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path == "/v1/sessions/s/seq":
+            return 200, {"seq": 4}
+        if path == "/v1/sessions/s/turns/t":
+            reads.append(time.monotonic())
+            # The turn runs for 0.5 s, then ends with its terminal event.
+            status = "completed" if reads[-1] - reads[0] > 0.5 else "running"
+            return 200, {"turn_id": "t", "status": status}
+        if path.startswith("/v1/events?"):
+            assert parse_qs(urlsplit(path).query)["sids"] == ["s:4"]
+            time.sleep(0.6)
+            data = [
+                {"type": "subscription.ready", "session_id": "s", "cursor": 4},
+                {"type": "turn.started", "session_id": "s", "seq": 5, "turn_id": "t"},
+                {"type": "turn.completed", "session_id": "s", "seq": 6, "turn_id": "u"},
+                {"type": "turn.completed", "session_id": "s", "seq": 7, "turn_id": "t"},
+            ]
+            frames = (b"data: " + json.dumps(e).encode() + b"\n\n" for e in data)
+            return 200, b": ping\n\n" + b"".join(frames), "text/event-stream"
+        return 404, {"error": {"code": "missing", "message": path}}
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        assert Turn(client.session("s"), "t").wait(timeout=2)["status"] == "completed"
+    assert len(reads) == 2
+
+
+def test_turn_wait_on_a_silent_stream_keeps_its_deadline():
+    from blockether.vis.engine import Turn
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path == "/v1/sessions/s/seq":
+            return 200, {"seq": 0}
+        if path == "/v1/sessions/s/turns/t":
+            return 200, {"turn_id": "t", "status": "running"}
+        time.sleep(2)
+        return 200, b": ping\n\n", "text/event-stream"
+
+    with endpoint(respond) as (url, _), GatewayClient(url, timeout=30) as client:
+        started = time.monotonic()
+        with pytest.raises(VisTimeout, match="turn was not cancelled"):
+            Turn(client.session("s"), "t").wait(timeout=0.5)
+        assert time.monotonic() - started < 1.5
+
+
 def test_dedicated_public_operations_replace_raw_call():
     with endpoint(lambda *_: (200, {"models": []})) as (url, calls):
         client = GatewayClient(url)

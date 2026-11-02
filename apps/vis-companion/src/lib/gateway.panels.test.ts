@@ -155,6 +155,39 @@ describe("warming a machine's settings panels", () => {
   });
 });
 
+// Audit of Companion polls: the sweep ran a full `/v1/router` read for every paired
+// machine every 5 minutes, which is a live upstream auth and limits call per
+// provider, also with Settings never opened. Only the accounts panel asks live.
+describe('warming the provider fleet', () => {
+  it('sweeps with probe=changed and asks live once when the panel opens', async () => {
+    const asked: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        asked.push(String(url));
+        return Promise.resolve(json({ providers }));
+      }),
+    );
+    const mod = await import('./gateway');
+    const client = new mod.GatewayClient(conn);
+    const routerReads = () => asked.filter((url) => new URL(url).pathname === '/v1/router');
+
+    client.prefetchRouter();
+    await vi.waitFor(() => expect(routerReads()).toHaveLength(1));
+    expect(new URL(routerReads()[0]!).searchParams.get('probe')).toBe('changed');
+
+    // A screen that only paints the fleet takes the warmed rows.
+    await client.router();
+    expect(routerReads()).toHaveLength(1);
+
+    // The accounts panel needs a live verdict, once per TTL.
+    await client.router(undefined, { live: true });
+    await client.router(undefined, { live: true });
+    expect(routerReads()).toHaveLength(2);
+    expect(new URL(routerReads()[1]!).searchParams.get('probe')).toBeNull();
+  });
+});
+
 // Regression, user report: opening every session re-read the same machine's
 // capabilities just to decide whether its composer should show a microphone.
 describe('capabilities shared by one machine', () => {

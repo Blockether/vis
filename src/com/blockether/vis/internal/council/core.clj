@@ -366,6 +366,8 @@
               (replay! fingerprint inserted)]
 
           (when (:inserted? inserted)
+            ;; A child question parks until a reply lands in its thread.
+            (agents/council-inserted! entry)
             (doseq [id (:ping entry)]
               (if-let [active (get fleet id)]
                 (when-let [input-state (when required? (:input-state active))]

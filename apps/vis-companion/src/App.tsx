@@ -865,12 +865,14 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // to paint Providers, MCP and Notifications empty and fill them a moment
   // later — reported as the dialog flickering — because each panel asked its
   // machine on mount. Swept here, the panel a reader opens has already been
-  // answered and only repaints rows that really moved. `/v1/router` is the
-  // expensive one (a live auth + limits probe per provider), so the whole sweep
-  // is TTL-guarded inside the client.
+  // answered and only repaints rows that really moved. The sweep is TTL-guarded
+  // inside the client, and its `/v1/router` read asks live only the providers
+  // without a current verdict. A hidden app shows no panel, so it sweeps nothing;
+  // the wake sweeps again.
   useEffect(() => {
     if (conns.length === 0) return;
     const warm = () => {
+      if (document.visibilityState === 'hidden') return;
       for (const conn of conns)
         new GatewayClient({ url: conn.url, token: conn.token }).prefetchPanels();
     };
@@ -1277,14 +1279,15 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
         busy = false;
       }
     };
+    // The order changes only on a pairing or a reorder, and each sync takes the
+    // gateway's `state.yml` lock. So it syncs on a connections change (this effect),
+    // on wake and on online, with no timer.
     void sync();
-    const timer = window.setInterval(() => void sync(), 30_000);
     const retry = () => void sync();
     window.addEventListener('online', retry);
     const unwatch = onWake(retry);
     return () => {
       ctrl.abort();
-      window.clearInterval(timer);
       window.removeEventListener('online', retry);
       unwatch();
     };
@@ -1495,6 +1498,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
                     sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
                     onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
                     onManageProviders={openProviderSettings}
+                    gatewayProtocol={compat?.gatewayProtocol ?? null}
                   />
                 </SessionEventsContext.Provider>
               )}

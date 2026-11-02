@@ -1337,6 +1337,23 @@
   "How often an active team repaints its elapsed times. A repaint reads nothing."
   5000)
 
+(def ^:private push-protocol
+  "The first gateway protocol whose `session.team_updated` carries the changed rows."
+  21)
+
+(def ^:private legacy-read-ms
+  "How often the worker reads the team from a gateway below `push-protocol`. Such a
+   gateway pushes only the counts, so without this read the rows go stale."
+  5000)
+
+(defn- legacy-gateway?
+  "True when the checked gateway announced a protocol below `push-protocol`. An
+   unknown protocol counts as current: the first request checks it."
+  []
+  (boolean (some-> (vis/gateway-protocol)
+                   long
+                   (< (long push-protocol)))))
+
 (defn- take-work!
   "Take the queued work of `sid`."
   [sid]
@@ -1346,8 +1363,10 @@
 (defn start-refresh!
   "One screen-owned worker keeps the team of the active session. It reads the team when the
    active session changes, and then only for queued work: `session.team_updated`, a stream
-   reconnect or a settings change. It never reads on a timer. Call the returned cleanup on
-   screen teardown. No network work runs in paint."
+   reconnect or a settings change. A gateway of protocol 21 or later pushes the rows, so the
+   worker never reads on a timer. An older gateway pushes only the counts, so the worker then
+   reads every `legacy-read-ms`. Call the returned cleanup on screen teardown. No network
+   work runs in paint."
   [session-id changed!]
   (let [running?
         (atom true)
@@ -1361,6 +1380,9 @@
                      nil
 
                      tick-at
+                     0
+
+                     read-at
                      0]
 
                 (when @running?
@@ -1373,13 +1395,21 @@
                         switched?
                         (and sid (not= sid previous-id))
 
+                        legacy-read?
+                        (and sid (not switched?) (>= now (long read-at)) (legacy-gateway?))
+
                         work
                         (cond-> (when sid (take-work! sid))
                           switched?
                           (assoc :read
                             (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong read-numbers)
                             :setting?
-                            true))
+                            true)
+
+                          legacy-read?
+                          (assoc :read
+                            (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong
+                                              read-numbers)))
 
                         tick?
                         (and sid
@@ -1400,7 +1430,10 @@
                           (changed!))))
                     (when (and tick? @running? (= sid (session-id))) (changed!))
                     (Thread/sleep 250)
-                    (recur sid (if (or switched? tick?) (+ now (long tick-ms)) tick-at)))))
+                    (recur
+                      sid
+                      (if (or switched? tick?) (+ now (long tick-ms)) tick-at)
+                      (if (or switched? legacy-read?) (+ now (long legacy-read-ms)) read-at)))))
               (catch InterruptedException _ nil)))
           "vis-tui-agent-team-refresh")]
 

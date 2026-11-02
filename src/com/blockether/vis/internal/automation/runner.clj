@@ -21,7 +21,13 @@
            (java.util.concurrent ExecutorService Executors)
            (java.util.concurrent.atomic AtomicBoolean)))
 
-(def ^:private tick-ms 5000)
+(def ^:private tick-ms
+  "The wait before the scheduler looks again at a callback that is due but still pending."
+  5000)
+
+(def ^:private max-sleep-ms
+  "The longest scheduler sleep. It also bounds a change that another process made."
+  60000)
 
 (def ^:private once-grace-ms
   "A missed one-time trigger still starts when it is at most one day late."
@@ -174,18 +180,21 @@
    callbacks batch by batch, so a backlog does not wait for later ticks."
   [db]
   (when (.compareAndSet ^AtomicBoolean delivery-running false true)
-    (submit-task! delivery-pool
-                  (fn []
-                    (try (loop [seen #{}]
-                           (let [batch (remove #(seen (:id %))
-                                         (ps/db-automation-due-deliveries db (util/now-ms) 16))]
-                             (when (seq batch)
-                               (run! #(send-callback! db %) batch)
-                               (recur (into seen (map :id) batch)))))
-                         (catch Throwable t
-                           (tel/log!
-                             {:level :warn :id ::delivery-failed :data {:error (ex-message t)}}))
-                         (finally (.set ^AtomicBoolean delivery-running false)))))))
+    (submit-task!
+      delivery-pool
+      (fn []
+        (try (let [sent (loop [seen #{}]
+                          (let [batch (remove #(seen (:id %))
+                                        (ps/db-automation-due-deliveries db (util/now-ms) 16))]
+                            (if (seq batch)
+                              (do (run! #(send-callback! db %) batch)
+                                  (recur (into seen (map :id) batch)))
+                              seen)))]
+               ;; A failed callback has a new attempt time: the scheduler sleeps until it.
+               (when (seq sent) (automation/wake-scheduler!)))
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::delivery-failed :data {:error (ex-message t)}}))
+             (finally (.set ^AtomicBoolean delivery-running false)))))))
 
 (defn- deliver!
   "Send the alert and queue the callback of one finished run."
@@ -699,6 +708,45 @@
                                                       :finished_at (util/now-ms)})]
       (deliver! db (ps/db-automation-get db (:automation_id run)) updated))))
 
+(defn sleep-ms
+  "The scheduler wait after a pass at `now`: until the next schedule fire or callback
+   attempt, and at most `max-sleep-ms`. A callback that is already due is still pending,
+   so the scheduler looks again after `tick-ms`."
+  ^long [now next-fire next-delivery]
+  (let [now
+        (long now)
+
+        delivery
+        (when next-delivery
+          (if (<= (long next-delivery) now) (+ now (long tick-ms)) (long next-delivery)))
+
+        until
+        (reduce min (+ now (long max-sleep-ms)) (keep identity [next-fire delivery]))]
+
+    (max 1 (- (long until) now))))
+
+(defn- next-fire-at
+  "The earliest next due time in the schedule cache `cache`, or nil."
+  [cache]
+  (let [dues (keep identity (mapcat (comp vals :dues) (vals (:rows cache))))]
+    (when (seq dues) (reduce min dues))))
+
+(defn- schedule-pass!
+  "Fire the schedules due in (`from`, `to`] and start the due callbacks. Answer the wait
+   until the next pass."
+  [db from to once-from]
+  (let [cache
+        (fire-schedules! db from to once-from)
+
+        delivery
+        (:next_attempt_at (first (ps/db-automation-due-deliveries db Long/MAX_VALUE 1)))
+
+        now
+        (util/now-ms)]
+
+    (when (and delivery (<= (long delivery) now)) (deliver-due! db))
+    (sleep-ms now (next-fire-at cache) delivery)))
+
 (defonce ^:private scheduler (atom nil))
 
 (defn stop!
@@ -731,24 +779,30 @@
         (util/now-ms)
 
         thread
-        (Thread. ^Runnable
-                 (fn []
-                   (loop [from
-                          started
+        (Thread.
+          ^Runnable
+          (fn []
+            (loop [from
+                   started
 
-                          once-from
-                          (- started (long once-grace-ms))]
+                   once-from
+                   (- started (long once-grace-ms))]
 
-                     (when (.get running)
-                       (let [to (util/now-ms)]
-                         (try (fire-schedules! db from to once-from)
-                              (deliver-due! db)
-                              (catch Throwable t
-                                (tel/log!
-                                  {:level :warn :id ::tick-failed :data {:error (ex-message t)}})))
-                         (try (Thread/sleep (long tick-ms)) (catch InterruptedException _ nil))
-                         (recur to to)))))
-                 "vis-automations")]
+              (when (.get running)
+                (let [to
+                      (util/now-ms)
+
+                      wait
+                      (try (schedule-pass! db from to once-from)
+                           (catch Throwable t
+                             (tel/log!
+                               {:level :warn :id ::tick-failed :data {:error (ex-message t)}})
+                             tick-ms))]
+
+                  ;; A change of an automation in this process ends the sleep early.
+                  (try (automation/await-scheduler-wake! wait) (catch InterruptedException _ nil))
+                  (recur to to)))))
+          "vis-automations")]
 
     (.setDaemon thread true)
     (.start thread)

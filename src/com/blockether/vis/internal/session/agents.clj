@@ -732,6 +732,42 @@
                     {:session_id child :entry_id entry_id})))
           @questions)))
 
+;; Team signals. A wait parks on `team-signal` until the generation of its key moves: the team of a
+;; leader for a child change, or a Council thread for a reply. The fallback tick covers a change in
+;; another process, the answer grace and `settle!`.
+(defonce ^:private team-signal (Object.))
+
+(defonce ^:private team-gens (atom {}))
+
+(def ^:private ^:const signal-tick-ms "The longest park of a wait without a signal." 5000)
+
+(defn- signal-gen [k] (get @team-gens k 0))
+
+(defn signal!
+  "Wake each wait on key `k`: `[:team leader]` or `[:thread entry-id]`."
+  [k]
+  (swap! team-gens update k (fnil inc 0))
+  (locking team-signal (.notifyAll ^Object team-signal)))
+
+(defn- signal-gens [ks] (mapv signal-gen ks))
+
+(defn- park!
+  "Block until a generation of keys `ks` moves past `gens`, `ms` pass or `deadline` comes."
+  [ks gens ms deadline]
+  (let [until (min (+ (util/now-ms) (long ms)) (long deadline))]
+    (locking team-signal
+      (loop []
+
+        (let [left (- until (util/now-ms))]
+          (when (and (= gens (signal-gens ks)) (pos? left)) (.wait team-signal left) (recur)))))))
+
+(defn council-inserted!
+  "A Council entry was stored: wake the questions that wait on its thread or on the entry that it
+   answers."
+  [{:keys [thread_id reply_to]}]
+  (doseq [id (distinct (remove nil? [thread_id reply_to]))]
+    (signal! [:thread (str id)])))
+
 (defn- runtime-fn
   [k]
   (or (get @runtime k) (fail! :unavailable "Managed subagents require the gateway runtime")))
@@ -859,10 +895,11 @@
     (filterv #(> (long (or (:position %) -1)) mark) steps)))
 
 (defn- published?
-  "Whether running child `row` published a Council message that no wait showed yet."
+  "Whether running child `row` published a Council message that no wait showed yet. Reads no
+   iteration payload."
   [db row now]
-  (let [[turn steps] (current-steps db row now)]
-    (boolean (some #(seq (:council-publications %)) (fresh-steps turn steps)))))
+  (boolean (when-let [turn (current-turn db row now)]
+             (ps/db-turn-published-after db (:id turn) (get @shown (str (:id turn)) -1)))))
 
 (defn- digest
   "The progress of running child `row` since the last wait: its `activity`, its new progress
@@ -938,16 +975,17 @@
       (assoc :alerts alerts))))
 
 (defn- wait-records
-  "Poll until every child ends, one child asks or is held, or the timeout ends. A completed
+  "Wait until every child ends, one child asks or is held, or the timeout ends. A completed
    child gets 5 s to store its answer. The wait also ends when a child that was open at its start
    ends or publishes a Council message. Then the record of each running child also has its
-   [[digest]]."
+   [[digest]]. The wait reads the store rows of the team after each signal of a team change, and
+   at least every 5 s; it builds no team row."
   [env ids timeout-secs]
-  (let [list-fn
-        (runtime-fn :list)
-
-        live?
+  (let [live?
         (runtime-fn :live?)
+
+        activity
+        (or (get @runtime :activity) (constantly nil))
 
         held?
         (held-fn)
@@ -958,13 +996,21 @@
         me
         (str (:session-id env))
 
+        self
+        (info db me)
+
+        team
+        [:team (str (or (:leader_id self) me))]
+
         ids
         (when (seq ids) (set (map str ids)))
 
         pick
         (fn []
           (let [rows
-                (list-fn env {})
+                (cond->> (ps/db-agent-list db (second team))
+                  self
+                  (filter #(= (:team_id self) (:team_id %))))
 
                 rows
                 (if ids
@@ -1031,33 +1077,50 @@
                           (published? db row now))))
                     rows)))
 
+        deadline
+        (util/deadline-ms timeout-secs)
+
+        step
+        (fn []
+          (let [now
+                (util/now-ms)
+
+                rows
+                (vec (pick))
+
+                recs
+                (mapv #(shown-record env (record db (:router env) live? held? now %)) rows)
+
+                done?
+                (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
+
+                answered?
+                (every? #(or (not= "completed" (:status %)) (:answer %)) recs)]
+
+            (vreset! last-rows rows)
+            (when (and done? (nil? @done-at)) (vreset! done-at now))
+            (if (or (some #(contains? #{"asking" "held"} (:status %)) recs)
+                    (and done? (or answered? (> now (+ (long @done-at) 5000))))
+                    (event? now rows recs))
+              (reduced recs)
+              recs)))
+
         recs
-        (util/poll
-          (util/deadline-ms timeout-secs)
-          1000
-          (fn []
-            (let [now
-                  (util/now-ms)
+        (loop []
 
-                  rows
-                  (vec (pick))
+          (let [gens
+                (signal-gens [team])
 
-                  recs
-                  (mapv #(shown-record env (record db (:router env) live? held? now %)) rows)
+                v
+                (step)]
 
-                  done?
-                  (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
-
-                  answered?
-                  (every? #(or (not= "completed" (:status %)) (:answer %)) recs)]
-
-              (vreset! last-rows rows)
-              (when (and done? (nil? @done-at)) (vreset! done-at now))
-              (if (or (some #(contains? #{"asking" "held"} (:status %)) recs)
-                      (and done? (or answered? (> now (+ (long @done-at) 5000))))
-                      (event? now rows recs))
-                (reduced recs)
-                recs))))
+            (cond (reduced? v) @v
+                  (>= (util/now-ms) deadline) v
+                  :else
+                  ;; A grace of 5 s for an answer or an end needs a finer tick than a signal gives.
+                  (do
+                    (park! [team] gens (if (or @done-at (seq @ended)) 1000 signal-tick-ms) deadline)
+                    (recur)))))
 
         now
         (util/now-ms)
@@ -1065,7 +1128,10 @@
         rows
         (into {} (map (juxt #(str (:session_id %)) identity)) @last-rows)]
 
-    (mapv #(if (= "running" (:status %)) (merge % (digest db (get rows (:session_id %)) now)) %)
+    (mapv #(if (= "running" (:status %))
+             (let [row (get rows (:session_id %))]
+               (merge % (digest db (assoc row :activity (activity (:session_id %))) now)))
+             %)
           recs)))
 
 (defn timeline
@@ -1189,15 +1255,26 @@
         deadline
         (util/deadline-ms (wait-timeout opts 240))
 
-        ;; A full team admits the next child when an earlier one ends.
+        ;; A full team admits the next child when an earlier one ends. The end of a child signals
+        ;; the team, so the retry parks on that signal.
+        team
+        [:team (str (or (:leader_id (info (:db-info env) (:session-id env))) (:session-id env)))]
+
         spawn
         (fn [spec]
-          (let [r (util/poll deadline
-                             1000
-                             #(try (reduced (str (:session_id (runtime-op! env :spawn spec))))
-                                   (catch clojure.lang.ExceptionInfo e
-                                     (if (= :agent-limit (:error (ex-data e))) e (throw e)))))]
-            (if (string? r) r (throw r))))
+          (loop []
+
+            (let [gens
+                  (signal-gens [team])
+
+                  r
+                  (try (str (:session_id (runtime-op! env :spawn spec)))
+                       (catch clojure.lang.ExceptionInfo e
+                         (if (= :agent-limit (:error (ex-data e))) e (throw e))))]
+
+              (cond (string? r) r
+                    (>= (util/now-ms) deadline) (throw r)
+                    :else (do (park! [team] gens signal-tick-ms deadline) (recur))))))
 
         ids
         (mapv spawn specs)]
@@ -1309,18 +1386,22 @@
             (:entry_id entry)]
 
         (swap! questions assoc sid (merge {:question question :entry_id entry-id} request))
-        (try (util/poll deadline
-                        1000
-                        (fn []
-                          (let [reply-id (some :reply_entry_id
-                                               (:replies (ps/db-council-get db entry-id)))]
-                            ;; The call returns the reply, so Council input must not deliver it again.
-                            (cond reply-id (reduced (do (ps/db-council-delivered! db sid [reply-id])
-                                                        (:content (ps/db-council-get db reply-id))))
-                                  (or (= "cancelled" (:status (info db sid)))
-                                      (not (or (live? parent) (awaits-person? parent))))
-                                  (reduced nil)
-                                  :else nil))))
+        ;; A reply in this process signals the thread, and a cancel of this child signals its team.
+        ;; The tick covers a reply from another process and a stopped parent.
+        (try (let [ks [[:thread (str entry-id)] [:team (str (or (:leader_id me) parent))]]]
+               (loop []
+
+                 (let [gens (signal-gens ks)
+                       reply-id (some :reply_entry_id (:replies (ps/db-council-get db entry-id)))]
+
+                   ;; The call returns the reply, so Council input must not deliver it again.
+                   (cond reply-id (do (ps/db-council-delivered! db sid [reply-id])
+                                      (:content (ps/db-council-get db reply-id)))
+                         (or (= "cancelled" (:status (info db sid)))
+                             (not (or (live? parent) (awaits-person? parent)))
+                             (>= (util/now-ms) deadline))
+                         nil
+                         :else (do (park! ks gens signal-tick-ms deadline) (recur))))))
              (finally (swap! questions #(if (= entry-id (get-in % [sid :entry_id]))
                                           (dissoc % sid)
                                           %))))))))
@@ -1474,6 +1555,9 @@
              (str "The budget of a subagent stays at most " max-budget " iterations")))
     (let [row (or (ps/db-agent-extend-budget! db session_id iterations)
                   (fail! :budget-exceeded "The subagent budget did not change"))]
+      ;; The team row shows the budget, and a plain extend answers no request.
+      (when-let [changed! (get @runtime :changed!)]
+        (changed! session_id))
       (answer-request!
         env
         session_id

@@ -65,6 +65,35 @@ async function quietTurn() {
   };
 }
 
+// Audit of Companion polls: the session reconcile read the session row every 5 s
+// beside a live stream that already carries every turn and status change.
+describe('session reconcile safety net', () => {
+  async function sessionReadsInAMinute(live: boolean) {
+    const session = vi.fn(async () => sessionFixture({ live: false, current_turn_id: null }));
+    renderSessionScreen({
+      client: { session },
+      subscriptions: {
+        subscribeConnection: (listener: (connected: boolean) => void) => {
+          listener(live);
+          return () => {};
+        },
+      },
+    });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    const opened = session.mock.calls.length;
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    return session.mock.calls.length - opened;
+  }
+
+  it('reads every 30 s while the session stream is live', async () => {
+    expect(await sessionReadsInAMinute(true)).toBe(2);
+  });
+
+  it('reads every 5 s while the session stream is down', async () => {
+    expect(await sessionReadsInAMinute(false)).toBe(12);
+  });
+});
+
 describe('quiet running turns', () => {
   // Regression: the turn timer ignored SSE comments and restarted a healthy stream.
   it('keeps one stream while heartbeats arrive during a quiet tool call', async () => {

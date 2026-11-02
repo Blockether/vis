@@ -4464,6 +4464,96 @@
             (expect (= [["b" true]] @pages))
             (finally (stop))))))))
 
+(defdescribe
+  fleet-frames-patch-sidebar-rows-test
+  ;; B1: a session deleted in another client stayed in the sidebar until the 8 s full read.
+  ;; A status or title frame read every project although the frame names the change.
+  (letfn
+    [(run! [frames]
+       (let [sink
+             (atom nil)
+
+             full
+             (atom [])
+
+             pages
+             (atom [])
+
+             counts
+             (atom 0)
+
+             db
+             (atom (-> (fixture-db)
+                       (assoc-in [:project-sidebar :expanded] #{"a" "b"})
+                       (assoc-in [:project-sidebar :pages]
+                                 {"a" {:sessions [{"id" "a1" "title" "One" "live" false}
+                                                  {"id" "a2" "title" "Two"}]}
+                                  "b" {:sessions [{"id" "b1" "title" "Three"}]}})))]
+
+         (with-redefs [state/app-db
+                       db
+
+                       vis/gateway-fleet-subscribe!
+                       (fn [callback]
+                         (reset! sink callback)
+                         (fn []))
+
+                       screen/warm-picker-cache!
+                       (constantly true)
+
+                       screen/refresh-projects!
+                       (fn [automatic?]
+                         (swap! full conj automatic?))
+
+                       screen/load-project-page!
+                       (fn [pid automatic?]
+                         (swap! pages conj [pid automatic?]))
+
+                       vis/gateway-projects-overview
+                       (fn [_]
+                         (swap! counts inc)
+                         {"projects" []})]
+
+           (let [stop (#'screen/start-projects-refresh!)]
+             (try
+               (loop [attempt 0]
+                 (when (and (empty? @full) (< attempt 60)) (Thread/sleep 50) (recur (inc attempt))))
+               (reset! full [])
+               (doseq [frame frames]
+                 (@sink frame))
+               (Thread/sleep 1300)
+               {:pages (get-in @db [:project-sidebar :pages])
+                :full @full
+                :read @pages
+                :counts @counts}
+               (finally (stop)))))))]
+    (it "removes a deleted session from every loaded page without a full read"
+        (let [{:keys [pages full read counts]} (run! [{"type" "session.deleted"
+                                                       "session_id" "a2"}])]
+          (expect (= ["a1"] (mapv #(get % "id") (get-in pages ["a" :sessions]))))
+          (expect (empty? full))
+          (expect (empty? read))
+          (expect (= 1 counts))))
+    (it
+      "changes a status row in place and reads only the page that shows it"
+      (let [{:keys [pages full read]} (run! [{"type" "session.status"
+                                              "session_id" "a1"
+                                              "is_live" true
+                                              "is_awaiting_input" true
+                                              "awaiting_input_count" 1}])]
+        (expect
+          (= {"id" "a1" "title" "One" "live" true "is_awaiting_input" true "awaiting_input_count" 1}
+             (get-in pages ["a" :sessions 0])))
+        (expect (empty? full))
+        (expect (= [["a" true]] read))))
+    (it "retitles a row without any read"
+        (let [{:keys [pages full read counts]}
+              (run! [{"type" "session.title_updated" "session_id" "b1" "title" "Renamed"}])]
+          (expect (= "Renamed" (get-in pages ["b" :sessions 0 "title"])))
+          (expect (empty? full))
+          (expect (empty? read))
+          (expect (zero? counts))))))
+
 (defn- every-kind-db
   "A rail with every row kind: projects, both sets, two groups and two saved sessions."
   []

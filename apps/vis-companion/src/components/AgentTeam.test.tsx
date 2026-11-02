@@ -11,8 +11,10 @@ import {
   agentOutcome,
   agentStatus,
   agentTime,
+  agentBars,
   agentUpdate,
   agentsByTurn,
+  axisMarks,
   clockTime,
   dockTeams,
   formatAgentTime,
@@ -37,7 +39,7 @@ function deferred<T>() {
 
 const rowTexts = () => screen.getAllByRole('button').map((row) => row.textContent);
 
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('agent rows', () => {
   // A subagent asks only its leader. Its question or request is no status for a person.
@@ -73,6 +75,45 @@ describe('agent rows', () => {
     expect(agentTime({ ...child, status: 'failed' }, T0 + 9_000)).toBeUndefined();
     expect(agentTime({ ...child, created_at: undefined }, T0)).toBeUndefined();
     expect([0, 45_999, 184_000, 3_725_000].map(formatAgentTime)).toEqual(['0s', '45s', '3m 04s', '1h 02m']);
+  });
+
+  // The bars of a wide screen show which agents worked at the same time, and for how long.
+  it('puts each task on the team time: an end to its end, a run to now, a queue from its spawn to the end', () => {
+    const team = [
+      { ...child, session_id: 'done', status: 'completed', finished_at: T0 + 30_000 },
+      { ...child, session_id: 'run', created_at: T0 + 30_000, resumed_at: T0 + 60_000 },
+      { ...child, session_id: 'wait', status: 'queued', created_at: T0 + 90_000 },
+      { ...child, session_id: 'lost', status: 'failed', created_at: T0 + 10_000 },
+    ] as Subagent[];
+    expect(Object.fromEntries(agentBars(team, T0 + 120_000))).toEqual({
+      done: { start: 0, end: 0.25, isWaiting: false },
+      run: { start: 0.5, end: 1, isWaiting: false },
+      wait: { start: 0.75, end: 1, isWaiting: true },
+    });
+    expect(agentBars([{ ...child, created_at: undefined }], T0).size).toBe(0);
+  });
+
+  it('marks the time axis on a round step, with at most five marks', () => {
+    expect(axisMarks(262_000)).toEqual([0, 60_000, 120_000, 180_000, 240_000]);
+    expect(axisMarks(40_000)).toEqual([0, 10_000, 20_000, 30_000, 40_000]);
+    expect(axisMarks(50_000)).toEqual([0, 15_000, 30_000, 45_000]);
+  });
+
+  // On a wide screen a row unfolds in place, and a running agent shows its update without a click.
+  it('unfolds a running row on a wide screen, folds it on a click, and opens the sheet from the row', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('min-width: 640px'), media: query, addEventListener: () => {}, removeEventListener: () => {},
+    }));
+    render(<TurnAgents {...props} agents={[child, { ...child, session_id: 'done', status: 'completed', finished_at: T0 + 9_000 }]} />);
+    const [running, done] = screen.getAllByRole('button').filter((row) => row.hasAttribute('data-agent-row'));
+    expect(running).toHaveAttribute('aria-expanded', 'true');
+    expect(done).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(running);
+    expect(running).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(done);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open timeline' })); });
+    expect(screen.getByRole('dialog', { name: '#2' })).toBeInTheDocument();
   });
 
   it('shows what a working agent does now: its newest note, its activity or its task, then its result', () => {
@@ -293,12 +334,12 @@ function fakeHub() {
   };
 }
 
-function TeamView({ client, sid, total }: { client: GatewayClient; sid: string; total?: number | null }) {
-  const team = useAgentTeam(client, sid, total);
+function TeamView({ client, sid, total, legacy = null }: { client: GatewayClient; sid: string; total?: number | null; legacy?: boolean | null }) {
+  const team = useAgentTeam(client, sid, total, legacy);
   return <TurnAgents agents={team.agents} pending={team.pending} error={team.error} onOpen={vi.fn()} onCancel={team.cancel} timeline={team.timeline} />;
 }
 
-function Team({ hub = null, ...props }: { client: GatewayClient; sid: string; total?: number | null; hub?: SessionSubscriptionHub | null }) {
+function Team({ hub = null, ...props }: { client: GatewayClient; sid: string; total?: number | null; legacy?: boolean | null; hub?: SessionSubscriptionHub | null }) {
   return <SessionEventsContext.Provider value={hub}><TeamView {...props} /></SessionEventsContext.Provider>;
 }
 
@@ -341,6 +382,23 @@ describe('agent team reader', () => {
     await act(async () => {});
     await act(async () => { vi.advanceTimersByTime(60_000); });
     expect(agents).toHaveBeenCalledTimes(1);
+  });
+
+  // A gateway before protocol 21 sends only counts, so the rows of its team change only on a read.
+  it('reads the team of an older gateway every 3 s while it is live, and stops when it ends', async () => {
+    vi.useFakeTimers();
+    const agents = vi.fn().mockResolvedValue([child]);
+    const view = render(<Team client={fakeClient(agents)} sid="leader" total={1} legacy={false} hub={fakeHub().hub} />);
+    await act(async () => {});
+    const opened = agents.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+    expect(agents).toHaveBeenCalledTimes(opened + 3);
+    agents.mockResolvedValue([{ ...child, status: 'completed' }]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    const ended = agents.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(agents).toHaveBeenCalledTimes(ended);
+    view.unmount();
   });
 
   it('draws the pushed rows without a read, and reads on an event without rows', async () => {

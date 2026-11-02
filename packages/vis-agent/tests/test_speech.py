@@ -53,6 +53,15 @@ def respond(method, path, raw):
         if len(body["text"]) < 20:
             return 200, WAV, "audio/wav"
         return 202, {"id": "vj_1", "is_done": False, "phase": "queued"}
+    if route in {"/v1/speech/jobs/vj_1/events", "/v1/voice/jobs/vj_2/events"}:
+        job_id = route.split("/")[4]
+        _, job = respond("GET", route.removesuffix("/events"), b"")
+        name = "speech.job" if job_id == "vj_1" else "voice.job"
+        return (
+            200,
+            f"event: {name}\ndata: {json.dumps(job)}\n\n".encode(),
+            ("text/event-stream"),
+        )
     if route == "/v1/speech/jobs/vj_1":
         return 200, {
             "id": "vj_1",
@@ -130,6 +139,46 @@ def test_transcribe_waits_for_the_job(tmp_path):
         heard = GatewayClient(url).speech.transcribe(WAV, engine="parakeet-local")
         assert (heard.text, heard.engine) == ("Hello there.", "parakeet-local")
         assert calls[0][1] == "/v1/voice?engine=parakeet-local"
+
+
+@pytest.mark.parametrize("direction", ["speech", "voice"])
+def test_a_job_wait_follows_the_job_stream(direction):
+    # Audit row 6: a job wait read the job every 250 ms until it was done.
+    from blockether.vis._contracts import definition
+
+    names = {
+        b["x-vis-direction"]: b["const"]
+        for b in definition("gateway", "job_event_type")["oneOf"]
+    }
+    name = names["synthesize" if direction == "speech" else "transcribe"]
+    job = {"id": "vj_3", "engine": "vibevoice-local", "text": "Hi there."}
+
+    def stream(method, path, raw):
+        if result := compatible(method, path, raw):
+            return result
+        route = urlsplit(path).path
+        if method == "POST":
+            return 202, {**job, "is_done": False, "phase": "queued"}
+        if route == f"/v1/{direction}/jobs/vj_3/events":
+            frames = [
+                {**job, "is_done": False, "phase": "running"},
+                {**job, "is_done": True, "phase": "done"},
+            ]
+            body = b"".join(
+                f"event: {name}\ndata: {json.dumps(f)}\n\n".encode() for f in frames
+            )
+            return 200, body, "text/event-stream"
+        if route == "/v1/speech/jobs/vj_3/audio":
+            return 200, WAV, "audio/wav"
+        return 404, {"error": {"code": "missing", "message": "missing"}}
+
+    with endpoint(stream) as (url, calls):
+        speech = GatewayClient(url).speech
+        if direction == "speech":
+            assert speech.speak("A sentence long enough.").engine == "vibevoice-local"
+        else:
+            assert speech.transcribe(WAV).text == "Hi there."
+        assert f"/v1/{direction}/jobs/vj_3" not in [c[1] for c in calls]
 
 
 def test_saved_audio_creates_its_directory(tmp_path):

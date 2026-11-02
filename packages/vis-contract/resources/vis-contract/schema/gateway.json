@@ -2633,7 +2633,7 @@
         },
         "min_gateway": {
           "type": "integer",
-          "const": 21
+          "const": 20
         },
         "version": {
           "type": [

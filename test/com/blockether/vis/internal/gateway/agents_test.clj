@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.gateway.agents-test
   (:require [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -13,7 +14,11 @@
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.sandbox.jail :as jail]
+            [com.blockether.vis.internal.sandbox.policy :as policy]
+            [com.blockether.vis.test-temp :as test-temp]
             [lazytest.core :refer [defdescribe expect it]]
+            [next.jdbc :as jdbc]
             [reitit.core :as r])
   (:import [java.io ByteArrayInputStream]))
 
@@ -26,6 +31,116 @@
   [events n]
   (loop [left 300]
     (when (and (< (count @events) (long n)) (pos? left)) (Thread/sleep 10) (recur (dec left)))))
+
+(defn- drain!
+  "Wait until the push thread ran each job that is queued now and each job that those jobs queue."
+  []
+  (dotimes [_ 3]
+    (let [done (promise)]
+      (#'state/run-team! #(deliver done true))
+      (deref done 3000 nil))))
+
+(defn- push-statements
+  "Run `f` and answer the SQL statements that the push thread ran meanwhile."
+  [f]
+  (let [n
+        (atom 0)
+
+        count!
+        (fn [run]
+          (fn [& args]
+            (when (str/starts-with? (.getName (Thread/currentThread)) "vis-team-push")
+              (swap! n inc))
+            (apply run args)))]
+
+    (with-redefs [jdbc/execute!
+                  (count! jdbc/execute!)
+
+                  jdbc/execute-one!
+                  (count! jdbc/execute-one!)]
+
+      (f)
+      (drain!))
+    @n))
+
+(defn- with-team
+  "Run `f` with a leader and one child for each status of `statuses`, in a store and a journal
+   directory of this test. `f` gets `{:db :leader :children :events}`. `events` collects each
+   `session.team_updated` as `[sid event]`. With `watched?`, a client stream watches the leader.
+   Steps are not rate limited."
+  [{:keys [statuses watched?]} f]
+  (let [db
+        (h/store)
+
+        leader
+        (str (h/store-session! db {:channel :api}))
+
+        turn
+        (ps/db-store-session-turn! db {:parent-session-id leader :user-request "Parent"})
+
+        children
+        (mapv (fn [status]
+                (str (h/fork-session-at-turn! db
+                                              leader
+                                              {:through-turn-id turn
+                                               :agent {:parent_id leader
+                                                       :leader_id leader
+                                                       :team_id (str turn)
+                                                       :task "Check evidence"
+                                                       :status status
+                                                       :iteration_budget 4
+                                                       :spawn_key (str (random-uuid))
+                                                       :spawn_fingerprint "f"
+                                                       :checkpoint [{:role :user
+                                                                     :content "Context"}]}})))
+              statuses)
+
+        events
+        (atom [])
+
+        registry
+        @#'state/registry
+
+        saved
+        @registry
+
+        journal
+        (.toPath (java.io.File. (test-temp/temp-dir "team-push") "events"))]
+
+    (with-redefs [lp/db-info
+                  (constantly db)
+
+                  bus/publish!
+                  (fn [& _])
+
+                  bus/note-unjournaled!
+                  (fn [& _])
+
+                  bus/events-dir
+                  (constantly journal)
+
+                  state/team-step-ms
+                  0]
+
+      (try (reset! @#'bus/watch-cache {})
+           (state/add-event-tap! ::spy
+                                 (fn [sid event]
+                                   (when (= "session.team_updated" (get event "type"))
+                                     (swap! events conj [sid event]))))
+           (when watched?
+             (swap! registry assoc-in
+               [leader :subscribers "client"]
+               (fn [_])))
+           (f {:db db :leader leader :children children :events events})
+           (finally (state/remove-event-tap! ::spy)
+                    (state/stop-team-pusher!)
+                    (reset! registry saved)
+                    (reset! @#'bus/watch-cache {}))))))
+
+(defn- last-row
+  "The row of `child` in the last team event, or nil."
+  [events child]
+  (some #(when (= child (get % "session_id")) %) (get (second (last @events)) "agents")))
 
 (defn- request
   [method path body]
@@ -266,6 +381,10 @@
                                    (fn [sid event]
                                      (when (= "session.team_updated" (get event "type"))
                                        (swap! events conj [sid event]))))
+             ;; A client watches the leader, so the gateway builds and sends rows.
+             (swap! registry assoc-in
+               [leader :subscribers "client"]
+               (fn [_]))
              (ps/db-agent-update! db child {:status "completed"})
              (state/append-event! child "turn.completed" {:turn_id "child-turn"})
              (await-count events 1)
@@ -296,35 +415,118 @@
           @#'state/empty-team-queue
 
           [q1 a1]
-          (mark q0 "lead" "c1" 0 false)
+          (mark q0 "lead" "c1" 0 false :full)
 
           q2
           (take q1 "lead" 0)
 
           [q3 a3]
-          (mark q2 "lead" "c1" 200 false)
+          (mark q2 "lead" "c1" 200 false :activity)
 
           [q4 a4]
-          (mark q3 "lead" "c1" 400 false)
+          (mark q3 "lead" "c1" 400 false :activity)
 
           [q5 a5]
           (due q4 "lead" "c1")]
 
       (expect (= :push a1))
-      (expect (= #{"c1"} (get-in q1 [:pending "lead"])))
+      (expect (= {"c1" :full} (get-in q1 [:pending "lead"])))
       (expect (= [:timer 1800] a3) "A step inside two seconds waits for the rest of them")
       (expect (nil? a4) "A second step in the same wait adds no work")
       (expect (= q3 q4))
       (expect (= :push a5) "The timer sends the last step")
-      (expect (= #{"c1"} (get-in q5 [:pending "lead"])))
-      (let [[q a] (mark q3 "lead" "c1" 300 true)]
+      (expect (= {"c1" :activity} (get-in q5 [:pending "lead"])))
+      (let [[q a] (mark q3 "lead" "c1" 300 true :activity)]
         (expect (= :push a) "A lifecycle or request change goes at once")
+        (expect (= {"c1" :full} (get-in q [:pending "lead"])) "An urgent change rebuilds the row")
         (expect (empty? (:timers q)))
         (expect (= [q nil] (due q "lead" "c1"))
                 "The timer that the urgent push replaced sends nothing"))
-      (expect (= [(update q2 :pending assoc "lead" #{"c1"}) :push] (mark q2 "lead" "c1" 2000 false))
+      (expect (= [(update q2 :pending assoc "lead" {"c1" :activity}) :push]
+                 (mark q2 "lead" "c1" 2000 false :activity))
               "A step two seconds after the last push goes at once")
       (expect (empty? (:sent (take q2 "lead" 5000))) "An old send time is dropped"))))
+
+;; Most child steps are `block.activity`, which change only the Activity line of a row. Each
+;; one rebuilt the whole row with 17 statements. Only a step that changes more rebuilds it.
+(defdescribe
+  team-change-kind-test
+  (it "keeps the strongest change kind of a child until its push"
+      (let [mark
+            #'state/team-mark
+
+            due
+            #'state/team-due
+
+            q0
+            (first (mark @#'state/empty-team-queue "lead" "c1" 0 false :activity))]
+
+        (expect (= {"c1" :activity} (get-in q0 [:pending "lead"])))
+        (expect (= {"c1" :full}
+                   (get-in (first (mark q0 "lead" "c1" 1 false :full)) [:pending "lead"]))
+                "A full change wins over an Activity change")
+        (expect (= {"c1" :full}
+                   (-> q0
+                       (mark "lead" "c1" 1 false :full)
+                       first
+                       (mark "lead" "c1" 2 false :activity)
+                       first
+                       (get-in [:pending "lead"])))
+                "An Activity change does not weaken a pending one")
+        (let [timed (-> @#'state/empty-team-queue
+                        (assoc :sent {"c1" 0})
+                        (mark "lead" "c1" 100 false :activity)
+                        first
+                        (mark "lead" "c1" 200 false :full)
+                        first)]
+          (expect (= {"c1" :full} (:timers timed)) "A timer keeps the strongest step of its wait")
+          (expect (= {"c1" :full} (get-in (first (due timed "lead" "c1")) [:pending "lead"]))))))
+  (it
+    "reuses only a cached row for an Activity change and keeps rows of live children"
+    (let [plan
+          #'state/team-plan
+
+          remember
+          #'state/team-remember
+
+          running
+          {:session_id "c1" :status "running" :created_at 1}
+
+          done
+          {:session_id "c2" :status "completed" :created_at 2}
+
+          cache
+          (remember @#'state/empty-team-cache
+                    "lead"
+                    ["c1" "c2"]
+                    [running done]
+                    {:active 1 :total 2})]
+
+      (expect (= {:rows {"c1" running} :teams {"lead" {:active 1 :total 2}}}
+                 (select-keys cache [:rows :teams]))
+              "A finished row and a team without active children are not kept")
+      (expect (= {:full ["c2"] :reuse [running]} (plan cache {"c1" :activity "c2" :activity}))
+              "An Activity change without a cached row rebuilds the row")
+      (expect (= {:full ["c1"] :reuse []} (plan cache {"c1" :full})))
+      (expect (= {:rows {} :teams {}}
+                 (select-keys
+                   (remember cache "lead" ["c1"] [(assoc running :status "completed")] {:active 0})
+                   [:rows :teams]))
+              "A child that ended leaves the cache")
+      (expect (= {:rows {} :teams {}}
+                 (select-keys (#'state/team-forget cache "lead" ["c1"]) [:rows :teams])))))
+  (it "keeps each full change of the last 10 s for a new watcher"
+      (let [note
+            #'state/team-note
+
+            cache
+            (note @#'state/empty-team-cache "lead" {"c1" :full "c2" :activity} 1000)]
+
+        (expect (= {"c1" ["lead" 1000]} (:recent cache)) "An Activity change is not an end")
+        (expect (= [["lead" "c1"]] (#'state/team-recent cache #{"lead"} 5000)))
+        (expect (empty? (#'state/team-recent cache #{"other"} 5000)) "Only the watched leader")
+        (expect (= {"c3" ["lead" 12000]} (:recent (note cache "lead" {"c3" :full} 12000)))
+                "A change older than 10 s goes"))))
 
 ;; The clients rendered the team from `GET /agents` reads. Each change now pushes the changed rows
 ;; in `session.team_updated`, so the payload must be a valid `team_update` for each trigger.
@@ -403,6 +605,10 @@
                                    (fn [sid event]
                                      (when (= "session.team_updated" (get event "type"))
                                        (swap! events conj [sid event]))))
+             ;; A client watches the leader, so the gateway builds and sends rows.
+             (swap! registry assoc-in
+               [leader :subscribers "client"]
+               (fn [_]))
              (let [[event] (push! 1 #(state/append-event! a "turn.started" {:turn_id "a-turn"}))]
                (expect (= a (get event "child_id")))
                (expect (= [{"session_id" a "status" "running"}] (rows event))))
@@ -420,8 +626,9 @@
              (let [[event] (push! 1 #(state/agents-operation! leader :cancel {:session_id a}))]
                (expect (= [{"session_id" a "status" "cancelled"}] (rows event)))
                (expect (= {"active" 2 "total" 3} (get event "team"))))
-             (swap! registry assoc
+             (swap! registry update
                leader
+               merge
                {:turns {"lt" {:turn_id "lt"
                               :session_id leader
                               :status "running"
@@ -435,3 +642,238 @@
                (expect (= {"active" 0 "total" 3} (get event "team")))
                (expect (not (contains? event "child_id"))))
              (finally (state/remove-event-tap! ::spy) (reset! registry saved)))))))
+
+;; With the client polls gone, these child changes reached no client: a model or routing-lock
+;; change, an open or closed form for the person, a file grant and a plain budget extend.
+(defdescribe
+  team-trigger-test
+  (it "pushes the child row when its model or routing lock changes"
+      (with-team {:statuses ["running"] :watched? true}
+                 (fn [{:keys [db children events]}]
+                   (let [[child] children]
+                     (smodel/set-model! db child "p" "small" :agent-routing)
+                     (drain!)
+                     (expect (= "small" (get (last-row events child) "model")))
+                     (expect (false? (get (last-row events child) "routing_locked")))
+                     (reset! events [])
+                     (state/set-session-model! child "p" "small")
+                     (drain!)
+                     (expect (true? (get (last-row events child) "routing_locked"))
+                             "A human pick of the same model locks routing")))))
+  (it "pushes the child row when a form for the person opens and closes"
+      (let [open (atom 0)]
+        (with-redefs [bus/session-waiting? (fn [_]
+                                             (pos? (long @open)))
+                      bus/session-waiting-count (fn [_]
+                                                  @open)]
+
+          (with-team {:statuses ["running"] :watched? true}
+                     (fn [{:keys [children events]}]
+                       (let [[child] children]
+                         (reset! open 1)
+                         (state/append-event! child
+                                              "view.open"
+                                              {:kind "input" :view_id "req" :view {:id "req"}})
+                         (drain!)
+                         (expect (= 1 (get (last-row events child) "pending_input_count")))
+                         (reset! open 0)
+                         (state/append-event! child "view.close" {:kind "input" :view_id "req"})
+                         (drain!)
+                         (expect (false? (get (last-row events child) "pending_input")))))))))
+  (it "pushes the child row after a file grant and a plain extend"
+      (with-team {:statuses ["running"] :watched? true}
+                 (fn [{:keys [db leader children events]}]
+                   (let [[child] children]
+                     (with-redefs [state/agent-files (fn [_ _ files]
+                                                       files)
+                                   jail/grant-jail! (fn [& _])
+                                   policy/restrict (fn [& _]
+                                                     {})]
+
+                       (#'state/agent-grant
+                        {:db-info db :session-id leader :security-policy {}}
+                        {:session_id child :files {:read_only ["/tmp/team-grant"]}}))
+                     (drain!)
+                     (expect (= ["/tmp/team-grant"]
+                                (get-in (last-row events child) ["files" "read_only"])))
+                     (state/agents-operation! leader :extend {:session_id child :iterations 3})
+                     (drain!)
+                     (expect (= 7 (get (last-row events child) "iteration_budget"))))))))
+
+;; Most child steps are `block.activity`. Each rebuilt the row with 17 statements, but it changes
+;; only the Activity line, which is in memory.
+(defdescribe
+  team-activity-push-test
+  (it "reuses the cached row for an Activity step and rebuilds it for an iteration"
+      (with-team
+        {:statuses ["running"] :watched? true}
+        (fn [{:keys [children events]}]
+          (let [[child]
+                children
+
+                activity!
+                (fn [headline]
+                  (state/append-event! child
+                                       "block.activity"
+                                       {:turn_id "t"
+                                        :iteration 1
+                                        :form_index 0
+                                        :activity {:rows [{:state "running"
+                                                           :presentation {:headline headline}}]}}
+                                       {:store? false}))]
+
+            (expect (pos? (long (push-statements
+                                  #(state/append-event! child "turn.started" {:turn_id "t"})))))
+            (expect (zero? (long (push-statements #(activity! "Read")))))
+            (expect (= "Read" (get (last-row events child) "activity")))
+            (expect (= {"active" 1 "total" 1} (get (second (last @events)) "team")))
+            (expect (pos? (long (push-statements #(state/append-event! child
+                                                                       "iteration.completed"
+                                                                       {:turn_id "t"})))))
+            (expect (= "Read" (get (last-row events child) "activity"))))))))
+
+;; A team pushed rows to nobody: without an open client, each child step still read the store.
+(defdescribe
+  team-watcher-test
+  (it "builds nothing without a watcher and pushes the live rows when the first client attaches"
+      (with-team {:statuses ["running" "completed"]}
+                 (fn [{:keys [leader children events]}]
+                   (let [[running] children]
+                     (state/append-event! running "turn.started" {:turn_id "t"})
+                     (drain!)
+                     (expect (zero? (long (push-statements #(state/append-event!
+                                                              running
+                                                              "iteration.completed"
+                                                              {:turn_id "t"})))))
+                     (expect (empty? @events))
+                     (let [replay (state/subscribe! leader
+                                                    "client-1"
+                                                    (fn [_])
+                                                    0)]
+                       (expect (vector? (vec replay))))
+                     (drain!)
+                     (expect (= [running]
+                                (mapv #(get % "session_id") (get (second (last @events)) "agents")))
+                             "Only the queued or running child is sent")
+                     (expect (.exists (#'bus/watch-file leader)) "Other processes see the watcher")
+                     (state/unsubscribe! leader "client-1")
+                     (expect (not (.exists (#'bus/watch-file leader))))))))
+  (it "counts the watch marker of another live process and deletes one of a dead process"
+      (with-team
+        {:statuses ["running"]}
+        (fn [{:keys [leader children events]}]
+          (let [[child]
+                children
+
+                dir
+                (#'bus/watch-dir)
+
+                marker!
+                (fn [pid]
+                  (let [f (.toFile (.resolve dir (str leader "." pid ".json")))]
+                    (java.nio.file.Files/createDirectories
+                      dir
+                      (make-array java.nio.file.attribute.FileAttribute 0))
+                    (spit f (json/write-json-str {"schema" 1 "session_id" leader "owner_pid" pid}))
+                    (reset! @#'bus/watch-cache {})
+                    f))
+
+                dead
+                (marker! 2147483646)]
+
+            (state/append-event! child "turn.started" {:turn_id "t"})
+            (drain!)
+            (expect (empty? @events) "A marker of a dead process does not count")
+            (expect (not (.exists dead)))
+            (marker! (.pid (.get (.parent (java.lang.ProcessHandle/current)))))
+            (state/append-event! child "turn.completed" {:turn_id "t"})
+            (drain!)
+            (expect (= [child]
+                       (mapv #(get % "session_id") (get (second (last @events)) "agents"))))))))
+  ;; Leader follow-up #9234: a push in the second before a scan saw a new watcher in another
+  ;; process was skipped, so a child that then waited for the person kept a stale row there.
+  (it
+    "pushes the open rows once when a live process starts to watch the leader"
+    (with-team
+      {:statuses ["running"]}
+      (fn [{:keys [leader children events]}]
+        (let [[child]
+              children
+
+              dir
+              (#'bus/watch-dir)]
+
+          (reset! @#'bus/watch-seen #{})
+          (state/append-event! child "turn.started" {:turn_id "t"})
+          (swap! @#'state/registry assoc-in [child :current-turn] "t")
+          (drain!)
+          (#'bus/watch-tick!)
+          (drain!)
+          (expect (empty? @events) "Nobody watches the leader yet")
+          (java.nio.file.Files/createDirectories dir
+                                                 (make-array java.nio.file.attribute.FileAttribute
+                                                             0))
+          (spit (.toFile (.resolve dir
+                                   (str leader
+                                        "."
+                                        (.pid (.get (.parent (java.lang.ProcessHandle/current))))
+                                        ".json")))
+                (json/write-json-str {"schema" 1
+                                      "session_id" leader
+                                      "owner_pid"
+                                      (.pid (.get (.parent (java.lang.ProcessHandle/current))))}))
+          (reset! @#'bus/watch-cache {})
+          (#'bus/watch-tick!)
+          (drain!)
+          (expect (= [[child]]
+                     (mapv #(mapv (fn [row]
+                                    (get row "session_id"))
+                                  (get (second %) "agents"))
+                           @events))
+                  "The new watcher gets the row without another change")
+          (reset! @#'bus/watch-cache {})
+          (#'bus/watch-tick!)
+          (drain!)
+          (expect (= 1 (count @events)) "A watcher that stays gets no second push")))))
+  ;; Leader follow-up #9243: a child that ended in the second before a new watcher in another
+  ;; process stayed running there for ever, because nothing changed it again.
+  (it
+    "pushes a child that ended just before a live process starts to watch, not an older one"
+    (with-team
+      {:statuses ["completed" "completed"]}
+      (fn [{:keys [leader children events]}]
+        (let [[fresh old]
+              children
+
+              dir
+              (#'bus/watch-dir)
+
+              pid
+              (.pid (.get (.parent (java.lang.ProcessHandle/current))))]
+
+          (reset! @#'bus/watch-seen #{})
+          (doseq [child children]
+            (state/append-event! child "turn.completed" {:turn_id "t"}))
+          (drain!)
+          (expect (empty? @events) "Nobody watches the leader when the children end")
+          ;; The end of `old` is long before the watcher comes; the end of `fresh` is 2 s before.
+          (swap! @#'state/team-cache
+            (fn [cache]
+              (-> cache
+                  (assoc-in [:recent fresh] [leader (- (System/currentTimeMillis) 2000)])
+                  (assoc-in [:recent old] [leader (- (System/currentTimeMillis) 11000)]))))
+          (java.nio.file.Files/createDirectories dir
+                                                 (make-array java.nio.file.attribute.FileAttribute
+                                                             0))
+          (spit (.toFile (.resolve dir (str leader "." pid ".json")))
+                (json/write-json-str {"schema" 1 "session_id" leader "owner_pid" pid}))
+          (reset! @#'bus/watch-cache {})
+          (#'bus/watch-tick!)
+          (drain!)
+          (expect (= [[fresh]]
+                     (mapv #(mapv (fn [row]
+                                    (get row "session_id"))
+                                  (get (second %) "agents"))
+                           @events))
+                  "Only the child that ended recently is pushed")
+          (expect (= "completed" (get (last-row events fresh) "status"))))))))

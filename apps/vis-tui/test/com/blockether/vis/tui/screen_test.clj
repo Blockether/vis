@@ -1413,7 +1413,7 @@
             (expect (= {:projects [] :groups {}} (:catalog @@#'screen/picker-cache*)))
             (expect (= 1 @reads))))))
   (it
-    "warms the kept rows on the first tick, on a session change and on fleet deltas"
+    "warms the kept rows on the first tick and on a session change, not on fleet deltas"
     (let [sink
           (atom nil)
 
@@ -1438,7 +1438,6 @@
                                                           nil))
                        #'screen/refresh-projects! (fn [_]
                                                     nil)
-                       #'screen/picker-rewarm-ms 0
                        #'screen/warm-picker-cache! (fn [id]
                                                      (swap! warms conj id)
                                                      true)}
@@ -1447,8 +1446,10 @@
             (try (expect (= ["a"] (wait-for ["a"])))
                  (swap! db assoc-in [:session :id] "b")
                  (expect (= ["a" "b"] (wait-for ["a" "b"])))
-                 (@sink {"type" "session.title_updated"})
-                 (expect (= ["a" "b" "b"] (wait-for ["a" "b" "b"])))
+                 ;; A fleet delta patches the kept rows; the picker open reads them again.
+                 (@sink {"type" "session.title_updated" "session_id" "a" "title" "New"})
+                 (Thread/sleep 1300)
+                 (expect (= ["a" "b"] @warms))
                  (finally (swap! db assoc :shutdown? true) (stop))))))))
   ;; REGRESSION: the stop function interrupted only the 1s sleep, and the loop ran on.
   ;; On macOS CI it then sent a picker read into the stubs of a later test.
@@ -1465,7 +1466,6 @@
                                                             nil))
                          #'screen/refresh-projects! (fn [_]
                                                       nil)
-                         #'screen/picker-rewarm-ms 0
                          #'screen/warm-picker-cache! (fn [id]
                                                        (swap! warms conj id)
                                                        true)}
@@ -2877,7 +2877,7 @@ therapy line 2"
 
       (try
         (with-redefs-fn {#'vis/router-cache* cache
-                         #'vis/router (fn []
+                         #'vis/router (fn [& _]
                                         (swap! calls inc)
                                         (deliver entered true)
                                         @release
@@ -3477,15 +3477,38 @@ therapy line 2"
             old-db
             @state/app-db]
 
-        (try (with-redefs [vis/gateway-session-model (fn [_]
-                                                       {:provider "anthropic-coding-plan"
-                                                        :model "claude-opus-5"})]
+        (try (with-redefs [vis/gateway-session-model-cached (fn [_]
+                                                              {:provider "anthropic-coding-plan"
+                                                               :model "claude-opus-5"})]
                (reset! state/app-db {:session {:id "s1"}
                                      :session-model-pref {:provider "openai-codex"
                                                           :model "gpt-5.6-terra"}})
                (expect (= :openai-codex (active-provider-id)))
                (swap! state/app-db dissoc :session-model-pref)
                (expect (= :anthropic-coding-plan (active-provider-id))))
+             (finally (reset! state/app-db old-db)))))
+  ;; The poller sent a blocking `GET /v1/sessions/:sid/model` each time a refresh was due.
+  (it "reads the session model from the cache, not the gateway"
+      (let [active-provider-id
+            (deref #'screen/active-provider-id)
+
+            old-db
+            @state/app-db
+
+            reads
+            (atom 0)]
+
+        (try (with-redefs [vis/gateway-session-model
+                           (fn [_]
+                             (swap! reads inc)
+                             nil)
+
+                           vis/gateway-session-model-cached
+                           (constantly {:provider "zai" :model "glm"})]
+
+               (reset! state/app-db {:session {:id "s1"}})
+               (expect (= :zai (active-provider-id)))
+               (expect (zero? @reads)))
              (finally (reset! state/app-db old-db))))))
 
 (defn- painted-bubble-grid

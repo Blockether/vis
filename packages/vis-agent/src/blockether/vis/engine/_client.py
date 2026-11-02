@@ -51,6 +51,15 @@ _JOB_EVENTS = {
     branch["x-vis-direction"]: branch["const"]
     for branch in definition("gateway", "job_event_type")["oneOf"]
 }
+# A polling stream waits this long after a page with an event, and doubles the
+# wait after each quiet page up to the maximum.
+_POLL_MIN_SECONDS = 0.1
+_POLL_MAX_SECONDS = 1.0
+_TURN_SETTLED_STATUSES = frozenset(
+    {"completed", "failed", "cancelled", "suspended", "error"}
+)
+# Events after which a turn record cannot change again, or no longer exists.
+_TURN_END_EVENTS = _TURN_TERMINAL_EVENTS | {"turn.queued.deleted", "session.deleted"}
 
 
 class TransportError(RuntimeError):
@@ -152,6 +161,13 @@ def _segment(value: Any) -> str:
     if not value or value in {".", ".."}:
         raise ValueError("path identifiers must be nonempty, non-dot segments")
     return quote(value, safe="")
+
+
+def _set_read_timeout(raw, seconds: float) -> None:
+    """Set the read timeout of an open HTTP response socket, when it has one."""
+    sock = getattr(getattr(getattr(raw, "fp", None), "raw", None), "_sock", None)
+    if sock is not None:
+        sock.settimeout(seconds)
 
 
 def _field(data: Any, name: str, kind: type) -> Any:
@@ -3742,7 +3758,7 @@ class Turn:
         return self.session._call("POST", "/turns/:tid/cancel", path={"tid": self.id})
 
     def wait(self, *, timeout: float = 300):
-        """Poll this turn until it finishes or suspends, returning its record.
+        """Wait until this turn finishes or suspends, returning its record.
 
         Args:
             timeout: Positive finite overall wait deadline in seconds.
@@ -3759,23 +3775,41 @@ class Turn:
 
         Transport and HTTP errors also propagate. For a local engine, a timeout
         of the underlying pipe operation closes that process. This keeps replies
-        in order. It is different from only ending the poll loop.
+        in order. It is different from only ending the wait.
+
+        The record is read once, and again after the session event stream
+        reports the end of the turn. Application-owned callbacks are serviced
+        while the stream waits.
         """
         end = time.monotonic() + _duration(timeout)
-        while True:
-            remaining = end - time.monotonic()
-            if remaining <= 0:
+
+        def remaining():
+            left = end - time.monotonic()
+            if left <= 0:
                 raise VisTimeout("turn wait timed out; turn was not cancelled")
-            data = self.read(timeout=remaining)
-            if _field(data, "status", str) in {
-                "completed",
-                "failed",
-                "cancelled",
-                "suspended",
-                "error",
-            }:
-                return data
-            time.sleep(min(0.1, max(0, end - time.monotonic())))
+            return left
+
+        # Read the position first: a turn that is still open here ends later.
+        cursor = _field(
+            self.session._call("GET", "/seq", timeout=remaining()), "seq", int
+        )
+        data = self.read(timeout=remaining())
+        if _field(data, "status", str) in _TURN_SETTLED_STATUSES:
+            return data
+        events = self.session.events(cursor=cursor)
+        events._deadline = end
+        try:
+            with events:
+                for event in events:
+                    if event.type == "session.deleted" or (
+                        event.turn_id == self.id and event.type in _TURN_END_EVENTS
+                    ):
+                        data = self.read(timeout=remaining())
+                        if _field(data, "status", str) in _TURN_SETTLED_STATUSES:
+                            return data
+        except VisTimeout:
+            raise VisTimeout("turn wait timed out; turn was not cancelled") from None
+        raise TransportError("event stream ended before the turn")
 
 
 class _ActivityStreamDecoder:
@@ -3852,6 +3886,8 @@ class _EventStream:
         self.reconnects, self.retry_delay = reconnects, retry_delay
         self._raw = None
         self._closed = False
+        # A monotonic end of an SDK wait. It replaces the idle timeout.
+        self._deadline: float | None = None
         self._iterator = self._iterate()
         client._streams.add(self)
 
@@ -3884,6 +3920,18 @@ class _EventStream:
             self._iterator.close()
         self.client._streams.discard(self)
 
+    def _read_timeout(self):
+        """Answer the socket read timeout, shortened to the deadline of a wait."""
+        if self._deadline is None:
+            return self.client.timeout
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise VisTimeout("event wait timed out")
+        return min(self.client.timeout, remaining)
+
+    def _expired(self):
+        return self._deadline is not None and time.monotonic() >= self._deadline
+
     def _iterate(self):
         try:
             for attempt in range(self.reconnects + 1):
@@ -3891,13 +3939,18 @@ class _EventStream:
                     time.sleep(self.retry_delay)
                 try:
                     route, query = self._endpoint()
-                    with self.client._open("GET", route, query=query) as raw:
+                    with self.client._open(
+                        "GET", route, query=query, timeout=self._read_timeout()
+                    ) as raw:
                         self._raw = raw
                         decode = _ActivityStreamDecoder()
                         if raw.headers.get_content_type() != "text/event-stream":
                             raise ProtocolError("expected event stream")
                         data, size, event_name = [], 0, None
                         for line in iter(lambda: raw.readline(1048577), b""):
+                            if self._deadline is not None:
+                                # Heartbeats keep the socket busy past a deadline.
+                                _set_read_timeout(raw, self._read_timeout())
                             size += len(line)
                             if size > 1048576:
                                 raise ProtocolError("event frame exceeds 1 MiB")
@@ -3925,6 +3978,8 @@ class _EventStream:
                 except (ProtocolError, GatewayError):
                     raise
                 except (OSError, TransportError):
+                    if self._expired():
+                        raise VisTimeout("event wait timed out") from None
                     if reason := getattr(self.client, "_lease_error", None):
                         raise TransportError(reason) from None
                 finally:
@@ -3949,10 +4004,14 @@ class _PollingEvents(_EventStream):
     """Poll finite event pages so callback code runs on the SDK calling thread."""
 
     def _iterate(self):
-        deadline = time.monotonic() + self.client.timeout
+        idle = time.monotonic() + self.client.timeout
+        delay = _POLL_MIN_SECONDS
         try:
             while not self._closed:
-                if time.monotonic() >= deadline:
+                if self._deadline is not None:
+                    if time.monotonic() >= self._deadline:
+                        raise VisTimeout("event wait timed out")
+                elif time.monotonic() >= idle:
                     raise VisTimeout("event stream idle timeout")
                 self._pump()
                 for name, value in self._page():
@@ -3961,8 +4020,12 @@ class _PollingEvents(_EventStream):
                         yield event
                         if self._terminal(event):
                             return
-                        deadline = time.monotonic() + self.client.timeout
-                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+                        idle = time.monotonic() + self.client.timeout
+                        delay = _POLL_MIN_SECONDS
+                limit = idle if self._deadline is None else self._deadline
+                time.sleep(min(delay, max(0, limit - time.monotonic())))
+                # A quiet stream costs at most one page each second.
+                delay = min(delay * 2, _POLL_MAX_SECONDS)
         finally:
             self.client._streams.discard(self)
 

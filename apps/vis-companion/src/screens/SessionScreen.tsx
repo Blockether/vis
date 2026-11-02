@@ -23,6 +23,7 @@ import { TurnAgents, agentsByTurn, dockTeams, useAgentTeam } from '../components
 import { agentPath } from '../components/AgentCrumb';
 import { AgentDock } from '../components/AgentDock';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
+import { pushesTeamRows } from '../lib/compat';
 import {
   ComposerAttachmentPicker,
   type ComposerAttachmentCommands,
@@ -206,6 +207,13 @@ import { randomUuid } from '../lib/uuid';
 
 const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
 const RUNNING_TURN_BODY_THROTTLE_MS = 150;
+/** Reads of a pending recording's transcription before it waits for a wake: about 7.5 minutes. */
+const RECORDING_READS = 20;
+
+/** The wait after read `attempt` of a pending recording: 1, 2, 4 … 30 s. */
+function recordingReadDelay(attempt: number): number {
+  return Math.min(30_000, 1000 * 2 ** (attempt - 1));
+}
 
 // A body frame may wait for stable rotation geometry, but lifecycle truth may
 // not: a terminal must stop the spinner/settle immediately and a new start must
@@ -312,6 +320,16 @@ function settledTurnRow(
   if (!turnId || !turns?.length) return null;
   const row = turns.find((turn) => rowId(turn) === turnId);
   return row && isSettledRow(row) ? row : null;
+}
+
+/** Does a transcript hold the record artifact of the closed live view `viewId`? */
+function transcriptShowsRecord(turns: readonly TranscriptTurn[] | null | undefined, viewId: string): boolean {
+  return (
+    !!viewId &&
+    !!turns?.some((turn) =>
+      turn.iterations?.some((step) => step.attachments?.some((entry) => entry.view_id === viewId)),
+    )
+  );
 }
 
 /** The status a terminal frame gives the turn it ends. */
@@ -756,6 +774,7 @@ export function SessionScreen({
   onBack,
   onOpenSession,
   onManageProviders,
+  gatewayProtocol = null,
   fresh = false,
   talk,
   sidebar,
@@ -767,6 +786,8 @@ export function SessionScreen({
   onOpenSession: (sid: string, fresh?: boolean) => void;
   /** Open this gateway's settings, where provider accounts and OAuth live; an id focuses one provider. */
   onManageProviders?: (providerId?: string) => void;
+  /** The protocol of this session's gateway, or null before its handshake answers. */
+  gatewayProtocol?: number | null;
   fresh?: boolean;
   /** The nonce of a Talk link (the Action Button). A new value arms voice conversation once. */
   talk?: string;
@@ -2308,13 +2329,26 @@ export function SessionScreen({
     const reconcile = async () => {
       if (inflightSince !== null && Date.now() - inflightSince < STALE_RECONCILE_MS) return;
       inflightSince = Date.now();
+      lastReconcileAt = inflightSince;
       try {
         await reconcileOnce();
       } finally {
         inflightSince = null;
       }
     };
-    const timer = window.setInterval(() => void reconcile(), 5000);
+    // A safety net, not the feed: a live session stream carries every turn and status
+    // change, so a tick then only repairs a missed frame and runs every 30 s. With the
+    // stream down it is the only source, and runs every 5 s.
+    const STREAMED_RECONCILE_MS = 30_000;
+    let lastReconcileAt = Date.now();
+    let streamLive = false;
+    const stopLive = subscriptions.subscribeConnection((live) => {
+      streamLive = live;
+    });
+    const timer = window.setInterval(() => {
+      if (streamLive && Date.now() - lastReconcileAt < STREAMED_RECONCILE_MS) return;
+      void reconcile();
+    }, 5000);
     // Every wake signal, DOM *and* native resume (a Capacitor iOS webview can
     // resume without firing a single DOM event). Force the multiplexed SSE
     // stream to reconnect so a silently frozen background socket does not sit
@@ -2407,6 +2441,7 @@ export function SessionScreen({
       if (wakeGeometryFrame !== null) window.cancelAnimationFrame(wakeGeometryFrame);
       stopWake();
       stopReady();
+      stopLive();
     };
   }, [
     client,
@@ -4667,7 +4702,13 @@ export function SessionScreen({
   const hasRunningTurn = runningTurn != null;
   // Subagents belong to the turn that started them, so each turn shows its own.
   // A session row without children spares the team read.
-  const team = useAgentTeam(client, sid, session?.id === sid ? (session.team?.total ?? null) : null);
+  // An older gateway pushes no rows: its team is read on a timer while the turn runs.
+  const team = useAgentTeam(
+    client,
+    sid,
+    session?.id === sid ? (session.team?.total ?? null) : null,
+    pushesTeamRows(gatewayProtocol) ? null : hasRunningTurn,
+  );
   const teams = useMemo(() => agentsByTurn(team.agents), [team.agents]);
   // A team stands in the dock while its turn runs or an agent of it still works; then in its turn.
   const docked = useMemo(
@@ -4703,9 +4744,13 @@ export function SessionScreen({
   );
   // Activity is transcript-native, like in the TUI. Resolve its live picture before
   // building either row owner so optimistic and persisted handoff paints one slot.
-  const revealFiledLiveRecord = useCallback(() => {
-    void loadTranscript();
-  }, [loadTranscript]);
+  const revealFiledLiveRecord = useCallback(
+    async (viewId: string) => {
+      if (transcriptShowsRecord(turnsRef.current, viewId)) return true;
+      return transcriptShowsRecord(await loadTranscript(), viewId);
+    },
+    [loadTranscript],
+  );
   const sessionLiveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
   // An inline view stands in its turn. A panel view stands beside the transcript.
   const liveViews = useMemo(
@@ -4794,26 +4839,39 @@ export function SessionScreen({
     const controller = new AbortController();
     let timer: number | undefined;
     let remaining = pendingRecordingTurns.split('|');
+    // No event says a transcription finished, so this reads. It backs off, stops
+    // after `RECORDING_READS` and waits while the app is hidden: the 1 s loop
+    // ran forever for a turn that was deleted or whose worker died.
+    let attempt = 0;
+    let reading = false;
     for (const turn of turnsRef.current) {
       if (remaining.includes(turn.turn_id) && turn.attachments?.length) {
         client.rememberSentAttachments(sid, turn.turn_id, turn.attachments);
       }
     }
     const refresh = async () => {
+      timer = undefined;
+      if (document.visibilityState === 'hidden') return;
+      attempt += 1;
+      reading = true;
+      // `null` is a failed read, which earns another try; a 404 is a turn that is gone.
       const updates = await Promise.all(
-        remaining.map(async (id): Promise<readonly [string, GatewayAttachment[]]> => {
+        remaining.map(async (id): Promise<readonly [string, GatewayAttachment[] | null]> => {
           try {
             return [
               id,
               await client.fetchTurnAttachments(sid, id, controller.signal, true),
             ] as const;
-          } catch {
-            return [id, []] as const;
+          } catch (error) {
+            return [id, error instanceof GatewayError && error.status === 404 ? [] : null] as const;
           }
         }),
       );
+      reading = false;
       if (controller.signal.aborted) return;
-      const byId = new Map(updates.filter(([, rows]) => rows.length));
+      const byId = new Map(
+        updates.flatMap(([id, rows]) => (rows?.length ? [[id, rows] as const] : [])),
+      );
       setTurns((current) =>
         current.map((turn) => {
           const rows = byId.get(turn.turn_id);
@@ -4823,7 +4881,7 @@ export function SessionScreen({
       remaining = updates
         .filter(
           ([, rows]) =>
-            !rows.length ||
+            rows === null ||
             rows.some(
               (row) =>
                 row.media_type?.startsWith('audio/') &&
@@ -4832,11 +4890,19 @@ export function SessionScreen({
             ),
         )
         .map(([id]) => id);
-      if (remaining.length) timer = window.setTimeout(refresh, 1000);
+      if (remaining.length && attempt < RECORDING_READS)
+        timer = window.setTimeout(refresh, recordingReadDelay(attempt));
     };
     void refresh();
+    // A wake resumes a paused or spent loop with a fresh budget.
+    const stopWake = onWake(() => {
+      if (!remaining.length || timer !== undefined || reading) return;
+      attempt = 0;
+      void refresh();
+    });
     return () => {
       controller.abort();
+      stopWake();
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [client, sid, pendingRecordingTurns]);

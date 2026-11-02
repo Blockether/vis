@@ -486,6 +486,42 @@
             (expect (= [["turn.failed" "T9"]]
                        (mapv #(vector (get % "type") (get % "turn_id")) @capture))))))))
 
+;; Polling audit B2: the tailer counted the lines that its own process wrote as work, so each
+;; local turn kept it at the 100 ms rate and it read back every byte that it wrote.
+(defdescribe
+  own-journal-lines-are-not-tail-work-test
+  (it "a drain of only own lines is idle, and a caught-up tail skips the next own line"
+      (with-temp-journal
+        (fn [capture _]
+          (let [sid
+                (str (random-uuid))
+
+                f
+                (#'bus/session-file sid)
+
+                own
+                (fn [n]
+                  (#'bus/write-event!
+                   sid
+                   {"type" "content.delta" "seq" n "session_id" sid}
+                   {:store? true}))
+
+                off
+                #(:off (get @(var-get #'bus/tails) sid))]
+
+            (own 1)
+            (expect (not (#'bus/drain-file! sid f)) "Own lines are no work for the tailer")
+            (expect (= (.length f) (off)))
+            (own 2)
+            (expect (= (.length f) (off)) "The writer moved the caught-up tail past its line")
+            (spit f
+                  (str (wire/json-str (assoc (delta "other-process" dead-pid "T1") :session_id sid))
+                       "\n")
+                  :append
+                  true)
+            (expect (true? (#'bus/drain-file! sid f)) "A line of another process is work")
+            (expect (= ["content.delta"] (mapv #(get % "type") @capture))))))))
+
 ;; Regression: the companion sat on "thinking" forever while the turn ran in
 ;; another process. `hydrate!` mirrored the turn as running (it keeps the
 ;; CALLER's sid), then every live delta and the terminal event were dropped.

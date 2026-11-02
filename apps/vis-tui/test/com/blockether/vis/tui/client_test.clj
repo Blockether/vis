@@ -404,6 +404,93 @@
             (expect (= 1 @calls))
             (expect (empty? @pending)))))))
 
+(defdescribe background-router-refresh-asks-only-changed-providers
+             ;; The 30 s render refresh sent a full `GET /v1/router`, which asks every provider live.
+             (it "refreshes the footer rows with probe=changed"
+                 (let [asked (atom [])]
+                   (with-router-cache nil
+                                      (fn [{:keys [pending]}]
+                                        (with-redefs-fn {#'client/router (fn [& [opts]]
+                                                                           (swap! asked conj opts)
+                                                                           [])}
+                                          #(do (#'client/router-cached)
+                                               (run-router-refresh! pending)))))
+                   (expect (= [{:probe :changed}] @asked)))))
+
+(defdescribe
+  footer-model-read-sends-no-request
+  ;; The footer read refreshed the model pref from paint every 750 ms, about 72
+  ;; `GET /v1/sessions/:sid/model` a minute while a turn streamed.
+  (it
+    "answers from the cache and never starts a read"
+    (let [sent (atom 0)]
+      (with-redefs-fn {#'client/session-model-cache (atom {"s1" {:val {:provider "p" :model "m"}}})
+                       #'client/send-json! (fn [& _]
+                                             (swap! sent inc)
+                                             {})
+                       #'clojure.core/future-call (fn [task]
+                                                    (task)
+                                                    nil)}
+        #(dotimes [_ 50] (expect (= {:provider "p" :model "m"} (client/session-model-cached "s1")))
+           (expect (nil? (client/session-model-cached "cold")))))
+      (expect (zero? @sent))))
+  (it "takes a model change from the stream without a read"
+      (with-redefs-fn {#'client/session-model-cache (atom {"s1" {:val {:provider "p" :model "m"}
+                                                                 :default {:provider "d"
+                                                                           :model "x"}}})}
+        #(do (client/note-session-model! "s1" {:provider "q" :model "n"})
+             (expect (= {:provider "q" :model "n"} (client/session-model-cached "s1")))
+             (expect (= {:provider "d" :model "x"} (client/session-default-model-cached "s1")))
+             (client/note-session-model! "s1" nil)
+             (expect (nil? (client/session-model-cached "s1")))))))
+
+(defdescribe
+  list-reads-revalidate-with-the-kept-etag
+  ;; The sidebar read the full session page and project overview every 8 s. The gateway
+  ;; answers 304 to a matching `If-None-Match`, but the TUI never sent one.
+  (it "sends the kept ETag and answers a 304 with the kept body"
+      (let [sent
+            (atom [])
+
+            answers
+            (atom [{:status 200
+                    :headers {"etag" "W/\"a\""}
+                    :body "{\"sessions\":[{\"id\":\"s1\"}],\"total\":1}"}
+                   {:status 304 :headers {"etag" "W/\"a\""} :body ""}])]
+
+        (with-redefs-fn {#'client/etag-cache* (atom {})
+                         #'client/target! (fn []
+                                            {})
+                         #'client/ensure-client! (fn [_]
+                                                   nil)
+                         #'client/gw-send! (fn [_ _ path opts]
+                                             (swap! sent conj
+                                               [path (get-in opts [:headers "If-None-Match"])])
+                                             (let [[a] (swap-vals! answers #(vec (rest %)))]
+                                               (first a)))}
+          #(let [first-page (client/list-sessions-page {:limit 5}) second-page
+                 (client/list-sessions-page {:limit 5})] (expect (= [{"id" "s1"}]
+                                                                    (:sessions first-page)))
+             (expect (= first-page second-page))))
+        (expect (= [nil "W/\"a\""] (mapv second @sent))))))
+
+(defdescribe gateway-protocol-follows-the-handshake
+             ;; The agent team falls back to a timed read only for a gateway below protocol 21.
+             (it "keeps the protocol of the checked gateway"
+                 (with-redefs-fn {#'client/target-checked? (atom false)
+                                  #'client/gateway-protocol* (atom nil)
+                                  #'client/gw-send! (fn [& _]
+                                                      {:status 200
+                                                       :body (wire/json-str
+                                                               {"status" "ok"
+                                                                "protocol" {"protocol" 20
+                                                                            "min_client" 20
+                                                                            "min_gateway" 20
+                                                                            "version" "0.0.1"}})})}
+                   #(do (expect (nil? (client/gateway-protocol)))
+                        (#'client/check-target! {})
+                        (expect (= 20 (client/gateway-protocol)))))))
+
 (defdescribe router-refresh-failure-keeps-data-and-backs-off
              (it "router refresh failure keeps data and backs off"
                  (let [rows [{"id" "test-provider" "default_model" "old-model"}]]

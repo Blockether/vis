@@ -75,7 +75,7 @@
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [java.util.concurrent.atomic AtomicLong]
-           [java.util.concurrent.locks ReentrantLock]))
+           [java.util.concurrent.locks Condition ReentrantLock]))
 
 (set! *warn-on-reflection* true)
 
@@ -4386,6 +4386,27 @@
   ;; Foreground loads that wait for `ensure-load-lock`. A background load yields to them.
   (AtomicLong. 0))
 
+(defonce ^:private ^ReentrantLock foreground-gate
+  ;; Guards the signal that the last waiting foreground load got the load lock.
+  (ReentrantLock.))
+
+(defonce ^:private ^Condition foreground-done (.newCondition foreground-gate))
+
+(defn- await-foreground-loads!
+  "Block until no foreground load waits for the load lock. A virtual thread parks here
+   without a poll and without pinning its carrier."
+  []
+  (.lock foreground-gate)
+  (try (while (pos? (.get ^AtomicLong foreground-loads)) (.await foreground-done))
+       (finally (.unlock foreground-gate))))
+
+(defn- end-foreground-wait!
+  "Count one foreground load out of the wait, and wake the background loads after the last."
+  []
+  (.lock foreground-gate)
+  (try (when (zero? (.decrementAndGet ^AtomicLong foreground-loads)) (.signalAll foreground-done))
+       (finally (.unlock foreground-gate))))
+
 (def ^:private ^:dynamic *background-load?*
   "True while this thread prepares a project that no session waits for."
   false)
@@ -4399,12 +4420,11 @@
     (do (if *background-load?*
           (loop []
 
-            (while (pos? (.get ^AtomicLong foreground-loads)) (Thread/sleep 10))
+            (await-foreground-loads!)
             (.lock ensure-load-lock)
             (when (pos? (.get ^AtomicLong foreground-loads)) (.unlock ensure-load-lock) (recur)))
           (do (.incrementAndGet ^AtomicLong foreground-loads)
-              (try (.lock ensure-load-lock)
-                   (finally (.decrementAndGet ^AtomicLong foreground-loads)))))
+              (try (.lock ensure-load-lock) (finally (end-foreground-wait!)))))
         (try (f) (finally (.unlock ensure-load-lock))))))
 
 (defn- with-phased-load-lock

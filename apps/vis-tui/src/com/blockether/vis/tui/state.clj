@@ -461,10 +461,15 @@
   10000)
 
 (def ^:private turn-liveness-probe-interval-ms
-  "Minimum gap between liveness probes for one tab. The render loop pokes the
-   watchdog every `spinner-tick-ms`; this throttles it down to one cheap
-   `gateway-list-turns` round-trip per tab per interval, on the queue lane."
+  "Minimum gap between two reconnect resync probes for one tab."
   5000)
+
+(def ^:private stream-silence-ms
+  "How long a session stream must stay silent before the liveness watchdog asks the
+   gateway, and the minimum gap between two such probes. It is one gateway SSE
+   heartbeat (`sse/HEARTBEAT_MS`). While events arrive, the stream itself proves
+   that the turn is live, so a probe would only repeat what the stream says."
+  15000)
 
 (def ^:private live-progress-render-interval-ms
   "Maximum wall-clock interval between live reasoning redraws.
@@ -3366,30 +3371,83 @@
           (assoc-in [:project-sidebar :index] next-index)))
       db)))
 
-;; A rename shows at once in every loaded page. The project refresh after it reads the
-;; pages again, after several gateway requests.
-(defn- retitle-page
-  [page sid title]
-  (let [retitle #(if (= sid (str (get % "id"))) (assoc % "title" title) %)]
+(defn patch-session-rows
+  "Apply `f` to the row of session `sid` in every row list of `page`. When `f`
+   returns nil, the row leaves the page. Other rows stay as they are."
+  [page sid f]
+  (let [sid
+        (str sid)
+
+        step
+        #(if (= sid (str (get % "id"))) (f %) %)]
+
     (cond-> page
       (seq (:sessions page))
-      (update :sessions (partial mapv retitle))
+      (update :sessions #(into [] (keep step) %))
 
       (seq (:grouped page))
-      (update :grouped (partial mapv retitle))
+      (update :grouped #(into [] (keep step) %))
 
       (seq (:awaiting page))
-      (update :awaiting (partial mapv retitle))
+      (update :awaiting #(into [] (keep step) %))
 
       (map? (:current page))
-      (update :current retitle))))
+      (update :current step))))
 
-(reg-event-db
-  :project-session-retitled
-  (fn [db [_ sid title]]
-    (cond-> db
-      (map? (get-in db [:project-sidebar :pages]))
-      (update-in [:project-sidebar :pages] update-vals #(retitle-page % (str sid) title)))))
+(defn status-row-patch
+  "The row change that a fleet `session.status` frame states, as a row function.
+   It copies only the fields that the frame carries."
+  [frame]
+  (fn [row]
+    (cond-> row
+      (contains? frame "is_live")
+      (assoc "live" (boolean (get frame "is_live")))
+
+      (contains? frame "is_awaiting_input")
+      (assoc "is_awaiting_input" (boolean (get frame "is_awaiting_input")))
+
+      (contains? frame "awaiting_input_count")
+      (assoc "awaiting_input_count" (get frame "awaiting_input_count")))))
+
+(defn session-page-ids
+  "Ids of the loaded sidebar pages that show session `sid`."
+  [db sid]
+  (let [sid
+        (str sid)
+
+        shows?
+        (fn [rows]
+          (some #(= sid (str (get % "id"))) rows))]
+
+    (into #{}
+          (keep (fn [[pid page]]
+                  (when (or (shows? (:sessions page))
+                            (shows? (:grouped page))
+                            (shows? (:awaiting page))
+                            (= sid (str (get (:current page) "id"))))
+                    pid)))
+          (get-in db [:project-sidebar :pages]))))
+
+(defn- patch-sidebar-rows
+  [db sid f]
+  (cond-> db
+    (map? (get-in db [:project-sidebar :pages]))
+    (update-in [:project-sidebar :pages] update-vals #(patch-session-rows % sid f))))
+
+;; A rename shows at once in every loaded page, without a gateway read.
+(reg-event-db :project-session-retitled
+              (fn [db [_ sid title]]
+                (patch-sidebar-rows db sid #(assoc % "title" title))))
+
+;; A fleet `session.status` frame changes the row in place, without a gateway read.
+(reg-event-db :project-session-status
+              (fn [db [_ sid frame]]
+                (patch-sidebar-rows db sid (status-row-patch frame))))
+
+;; A fleet `session.deleted` frame removes the row from every loaded page.
+(reg-event-db :project-session-removed
+              (fn [db [_ sid]]
+                (patch-sidebar-rows db sid (constantly nil))))
 
 (reg-event-db :project-page-failed
               (fn [db [_ pid request-id focus-index]]
@@ -6743,43 +6801,56 @@
       (conj active))))
 
 (defn- turn-liveness-probe-due?
-  "True when a tab's in-flight turn has outlived `turn-liveness-grace-ms` and has
-   not been probed within `turn-liveness-probe-interval-ms`. A pending cancel is
-   skipped — `:cancel-self-heal-tick` already owns that path."
-  [tab now-ms]
-  (boolean (and (:loading? tab)
-                (:gateway-turn-id tab)
-                (not (:cancelling? tab))
-                (>= (- (long now-ms) (long (or (:turn-start-ms tab) now-ms)))
-                    (long turn-liveness-grace-ms))
-                (>= (- (long now-ms) (long (or (:liveness-probed-at-ms tab) 0)))
-                    (long turn-liveness-probe-interval-ms)))))
+  "True when a tab's in-flight turn has outlived `turn-liveness-grace-ms`, its
+   session stream delivered nothing for `stream-silence-ms` (`seen-ms` is the last
+   event, or nil), and it was not probed within `stream-silence-ms`. A pending
+   cancel is skipped — `:cancel-self-heal-tick` already owns that path."
+  [tab now-ms seen-ms]
+  (let [now
+        (long now-ms)
 
-(reg-event-fx :turn-liveness-tick
-              ;; If stream completion is missed, query gateway truth and settle through the
-              ;; normal writer. This heartbeat is a transport-independent last resort.
-              (fn [db [_ now-ms]]
-                (let [now
-                      (or now-ms (System/currentTimeMillis))
+        start
+        (long (or (:turn-start-ms tab) now))]
 
-                      due
-                      (filterv (fn [tab-id]
-                                 (let [tab (db-for-tab db tab-id)]
-                                   (and (turn-liveness-probe-due? tab now)
-                                        (some? (get-in tab [:session :id])))))
-                        (loading-tab-ids db))]
+    (boolean (and (:loading? tab)
+                  (:gateway-turn-id tab)
+                  (not (:cancelling? tab))
+                  (>= (- now start) (long turn-liveness-grace-ms))
+                  (>= (- now (max start (long (or seen-ms 0)))) (long stream-silence-ms))
+                  (>= (- now (long (or (:liveness-probed-at-ms tab) 0)))
+                      (long stream-silence-ms))))))
 
-                  (if (empty? due)
-                    {:db db}
-                    {:db (reduce (fn [acc tab-id]
-                                   (update-tab acc tab-id #(assoc % :liveness-probed-at-ms now)))
-                                 db
-                                 due)
-                     :fx (mapv (fn [tab-id]
-                                 (let [tab (db-for-tab db tab-id)]
-                                   [:probe-turn-liveness tab-id (get-in tab [:session :id])
-                                    (:gateway-turn-id tab) (:live-turn-client-id tab)]))
-                               due)}))))
+(reg-event-fx
+  :turn-liveness-tick
+  ;; If stream completion is missed, query gateway truth and settle through the
+  ;; normal writer. This heartbeat is a transport-independent last resort.
+  (fn [db [_ now-ms]]
+    (let [now
+          (or now-ms (System/currentTimeMillis))
+
+          due
+          (filterv (fn [tab-id]
+                     (let [tab
+                           (db-for-tab db tab-id)
+
+                           sid
+                           (get-in tab [:session :id])]
+
+                       (and (some? sid)
+                            (turn-liveness-probe-due? tab now (vis/session-stream-seen-ms sid)))))
+            (loading-tab-ids db))]
+
+      (if (empty? due)
+        {:db db}
+        {:db (reduce (fn [acc tab-id]
+                       (update-tab acc tab-id #(assoc % :liveness-probed-at-ms now)))
+                     db
+                     due)
+         :fx (mapv (fn [tab-id]
+                     (let [tab (db-for-tab db tab-id)]
+                       [:probe-turn-liveness tab-id (get-in tab [:session :id])
+                        (:gateway-turn-id tab) (:live-turn-client-id tab)]))
+                   due)}))))
 
 (defn- gateway-resync-probe-due?
   "True when a tab's in-flight turn must be re-asked of the gateway RIGHT NOW,
@@ -7874,9 +7945,22 @@
 
 (def ^:private terminal-turn-statuses #{"completed" "failed" "cancelled"})
 
+(defn- probed-turn
+  "The gateway row of turn `tid` of `sid`, or nil. One registry read of that turn;
+   the full turn list, with content and images, only when the gateway does not
+   know `tid` (404). The list then matches the row by its client id."
+  [sid tid client-id]
+  (try (or (vis/gateway-get-turn sid tid)
+           (some (fn [t]
+                   (when (or (= (str tid) (str (get t "turn_id")))
+                             (and client-id (= (str client-id) (str (get t "idempotency_key")))))
+                     t))
+                 (vis/gateway-list-turns sid)))
+       (catch Throwable _ nil)))
+
 (reg-fx :probe-turn-liveness
         ;; Ask the gateway registry whether the turn this tab still paints as live has
-        ;; actually settled (see `:turn-liveness-tick`). One cheap listing on the queue
+        ;; actually settled (see `:turn-liveness-tick`). One cheap turn read on the queue
         ;; lane — never on the Lanterna input/render thread. A settled row is replayed
         ;; through `:sync-turn-terminal`, the exact writer the real terminal event uses,
         ;; so a late/duplicate event is a harmless no-op (that handler bails unless the
@@ -7884,28 +7968,21 @@
         ;; turn, an unreachable daemon — leaves the live view untouched.
         (fn [workspace-id sid tid client-id]
           (when (and sid tid)
-            (gateway-queue-io!
-              (fn []
-                (when-let [turns (try (vis/gateway-list-turns sid) (catch Throwable _ nil))]
-                  (when-let [row (some (fn [t]
-                                         (when (or (= (str tid) (str (get t "turn_id")))
-                                                   (and client-id
-                                                        (= (str client-id)
-                                                           (str (get t "idempotency_key")))))
-                                           t))
-                                       turns)]
-                    (let [status (str (get row "status"))]
-                      (when (contains? terminal-turn-statuses status)
-                        (dispatch [:sync-turn-terminal workspace-id
-                                   {:phase :turn-terminal
-                                    :turn-id (or (get row "turn_id") tid)
-                                    :client-id (or (get row "idempotency_key") client-id)
-                                    :status status
-                                    ;; The watchdog gets a FULL turn row, unlike the lean
-                                    ;; terminal SSE event. Preserve a failed turn's canonical
-                                    ;; error blocks so its fallback paints the same provider
-                                    ;; card as live delivery and reload.
-                                    :content (vec (or (get row "content") []))}]))))))))))
+            (gateway-queue-io! (fn []
+                                 (when-let [row (probed-turn sid tid client-id)]
+                                   (let [status (str (get row "status"))]
+                                     (when (contains? terminal-turn-statuses status)
+                                       (dispatch
+                                         [:sync-turn-terminal workspace-id
+                                          {:phase :turn-terminal
+                                           :turn-id (or (get row "turn_id") tid)
+                                           :client-id (or (get row "idempotency_key") client-id)
+                                           :status status
+                                           ;; The watchdog gets a FULL turn row, unlike the lean
+                                           ;; terminal SSE event. Preserve a failed turn's canonical
+                                           ;; error blocks so its fallback paints the same provider
+                                           ;; card as live delivery and reload.
+                                           :content (vec (or (get row "content") []))}])))))))))
 
 (reg-fx :gateway-cancel-turn
         ;; Fire-and-forget cancel of the exact RUNNING gateway turn whose correlated

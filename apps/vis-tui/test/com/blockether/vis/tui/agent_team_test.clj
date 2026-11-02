@@ -437,6 +437,35 @@
               "• 1 DONE  • 4 FAILED"]]]
       (expect (= label (team/summary-counts (map-indexed #(team/team-row (inc %1) %2) agents)))))))
 
+(defdescribe legacy-gateway-team-read-test
+             ;; A gateway below protocol 21 pushes only the team counts in `session.team_updated`.
+             ;; Without a timed read, the dock then shows the rows of the first read for good.
+             (letfn
+               [(agent-reads [protocol]
+                  (let [reads
+                        (atom 0)
+
+                        changed
+                        (java.util.concurrent.LinkedBlockingQueue.)]
+
+                    (with-redefs-fn {#'vis/gateway-protocol (constantly protocol)
+                                     #'team/legacy-read-ms 200
+                                     #'vis/request! (fn [_ url _]
+                                                      (when (str/includes? (str url) "/agents")
+                                                        (swap! reads inc))
+                                                      {:status 200 :body "[]"})}
+                      #(let [stop
+                             (team/start-refresh! (constantly (str "legacy-" protocol))
+                                                  (fn []
+                                                    (.offer changed true)))] (try
+                                                                               (Thread/sleep 1300)
+                                                                               (finally (stop)))))
+                    @reads))]
+               (it "reads the team on a timer from a gateway below protocol 21"
+                   (expect (<= 4 (agent-reads 20))))
+               (it "reads the team only on open from a gateway of protocol 21"
+                   (expect (= 1 (agent-reads 21))))))
+
 (defdescribe old-tab-response-does-not-repaint-new-tab-test
              (it "old tab response does not repaint new tab"
                  (let [entered

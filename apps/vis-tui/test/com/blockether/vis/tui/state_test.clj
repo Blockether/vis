@@ -5092,16 +5092,39 @@
 
 (defn- liveness-tick!
   "Run the liveness watchdog with the gateway registry stubbed to `turns` and
-   both worker lanes made synchronous, so the probe's verdict lands inline."
+   both worker lanes made synchronous, so the probe's verdict lands inline. The
+   gateway does not know the turn by id, so the probe falls back to the list."
   [turns now-ms]
-  (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
+  (with-redefs-fn {#'vis/gateway-get-turn (constantly nil)
+                   #'vis/gateway-list-turns (fn [_sid]
                                               turns)
+                   #'vis/session-stream-seen-ms (constantly nil)
                    #'vis/worker-future (fn [_ _]
                                          (future nil))
                    #'state/gateway-queue-io! (fn [f]
                                                (f)
                                                nil)}
     #(state/dispatch [:turn-liveness-tick now-ms])))
+
+(defn- probe-reads!
+  "Run one liveness tick at `now-ms` with the last stream event at `seen-ms`.
+   The gateway answers turn reads with `row`. Returns the requests per route."
+  [row seen-ms now-ms]
+  (let [reads (atom {:turn 0 :list 0})]
+    (with-redefs-fn {#'vis/gateway-get-turn (fn [_sid _tid]
+                                              (swap! reads update :turn inc)
+                                              row)
+                     #'vis/gateway-list-turns (fn [_sid]
+                                                (swap! reads update :list inc)
+                                                (when row [row]))
+                     #'vis/session-stream-seen-ms (constantly seen-ms)
+                     #'vis/worker-future (fn [_ _]
+                                           (future nil))
+                     #'state/gateway-queue-io! (fn [f]
+                                                 (f)
+                                                 nil)}
+      #(state/dispatch [:turn-liveness-tick now-ms]))
+    @reads))
 
 (defdescribe
   turn-liveness-tick-test
@@ -5138,9 +5161,11 @@
   (it "throttles repeat probes to one per interval"
       (reset! state/app-db (terminal-test-db))
       (let [calls (atom 0)]
-        (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
-                                                    (swap! calls inc)
-                                                    [])
+        (with-redefs-fn {#'vis/gateway-get-turn (fn [_sid _tid]
+                                                  (swap! calls inc)
+                                                  nil)
+                         #'vis/gateway-list-turns (constantly [])
+                         #'vis/session-stream-seen-ms (constantly nil)
                          #'vis/worker-future (fn [_ _]
                                                (future nil))
                          #'state/gateway-queue-io! (fn [f]
@@ -5148,7 +5173,7 @@
                                                      nil)}
           #(do (state/dispatch [:turn-liveness-tick 100000])
                (state/dispatch [:turn-liveness-tick 101000])
-               (state/dispatch [:turn-liveness-tick 106000])))
+               (state/dispatch [:turn-liveness-tick 115000])))
         (expect (= 2 @calls))))
   (it "throttles repeat probes of a background tab"
       ;; The tab snapshot dropped `:liveness-probed-at-ms`, so a background turn
@@ -5161,9 +5186,11 @@
                             :tab-locals
                             {"s1" (dissoc (terminal-test-db) :active-tab-id :render-version)}})
       (let [calls (atom 0)]
-        (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
-                                                    (swap! calls inc)
-                                                    [])
+        (with-redefs-fn {#'vis/gateway-get-turn (fn [_sid _tid]
+                                                  (swap! calls inc)
+                                                  nil)
+                         #'vis/gateway-list-turns (constantly [])
+                         #'vis/session-stream-seen-ms (constantly nil)
                          #'vis/worker-future (fn [_ _]
                                                (future nil))
                          #'state/gateway-queue-io! (fn [f]
@@ -5171,18 +5198,35 @@
                                                      nil)}
           #(do (state/dispatch [:turn-liveness-tick 100000])
                (state/dispatch [:turn-liveness-tick 101000])
-               (state/dispatch [:turn-liveness-tick 106000])))
+               (state/dispatch [:turn-liveness-tick 115000])))
         (expect (= 2 @calls))))
   (it "defers to the cancel self-heal while a cancel is pending"
       (reset! state/app-db (terminal-test-db {:cancelling? true :cancelling-at-ms 10}))
       (liveness-tick! [{"turn_id" "t1" "status" "completed"}] 100000)
-      (expect (true? (:loading? @state/app-db)))))
+      (expect (true? (:loading? @state/app-db))))
+  ;; The probe read the whole turn list, with content and base64 images, every 5 s
+  ;; for each running tab, also while the stream delivered events.
+  (it "asks nothing while the session stream delivers events"
+      (reset! state/app-db (terminal-test-db))
+      (expect (= {:turn 0 :list 0} (probe-reads! nil 99000 100000)))
+      (expect (true? (:loading? @state/app-db))))
+  (it "reads the one turn, not the turn list, after the stream goes silent"
+      (reset! state/app-db (terminal-test-db))
+      (expect (= {:turn 1 :list 0}
+                 (probe-reads! {"turn_id" "t1" "status" "completed" "idempotency_key" "c1"}
+                               80000
+                               100000)))
+      (expect (false? (:loading? @state/app-db))))
+  (it "lists the turns only when the gateway does not know the turn"
+      (reset! state/app-db (terminal-test-db))
+      (expect (= {:turn 1 :list 1} (probe-reads! nil 80000 100000)))))
 
 (defn- with-gateway-stubs
   "Run `f` with the gateway registry stubbed to `turns` and both worker lanes made
    synchronous, so any probe a dispatch triggers lands inline."
   [turns f]
-  (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
+  (with-redefs-fn {#'vis/gateway-get-turn (constantly nil)
+                   #'vis/gateway-list-turns (fn [_sid]
                                               turns)
                    #'vis/worker-future (fn [_ _]
                                          (future nil))
@@ -5242,9 +5286,10 @@
                  ;; source of truth, so a healthy reconnect costs zero round-trips.
                  (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
                  (let [calls (atom 0)]
-                   (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
-                                                               (swap! calls inc)
-                                                               [])
+                   (with-redefs-fn {#'vis/gateway-get-turn (fn [_sid _tid]
+                                                             (swap! calls inc)
+                                                             nil)
+                                    #'vis/gateway-list-turns (constantly [])
                                     #'vis/worker-future (fn [_ _]
                                                           (future nil))
                                     #'state/gateway-queue-io! (fn [f]
@@ -5272,9 +5317,10 @@
                  ;; client sees N ready frames for the same reconnect.
                  (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
                  (let [calls (atom 0)]
-                   (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
-                                                               (swap! calls inc)
-                                                               [])
+                   (with-redefs-fn {#'vis/gateway-get-turn (fn [_sid _tid]
+                                                             (swap! calls inc)
+                                                             nil)
+                                    #'vis/gateway-list-turns (constantly [])
                                     #'vis/worker-future (fn [_ _]
                                                           (future nil))
                                     #'state/gateway-queue-io! (fn [f]

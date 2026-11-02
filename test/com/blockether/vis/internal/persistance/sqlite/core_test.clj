@@ -339,6 +339,38 @@
         (expect (nil? (persistance/db-latest-turn-prose s (str tid)))
                 "A note of an older retry state never shows"))))
 
+;; A waiting leader checked for new Council messages of a child by reading every iteration of the
+;; child turn, with its code and output, after each step of the child.
+(defdescribe
+  turn-published-after-test
+  (it "answers whether an iteration after a position of the latest state published a message"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            tid
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "work"})
+
+            step!
+            (fn [pubs]
+              (h/store-iteration! s {:session-turn-id tid :code "" :council-publications pubs})
+              (:position (peek (persistance/db-list-session-turn-iterations s tid))))
+
+            quiet
+            (step! nil)
+
+            published
+            (step! [{:entry_id 7}])]
+
+        (expect (not (persistance/db-turn-published-after s nil 0)))
+        (expect (persistance/db-turn-published-after s tid quiet))
+        (expect (not (persistance/db-turn-published-after s (str tid) published)))
+        (persistance/db-retry-session-turn! s tid {:status :running})
+        (expect (not (persistance/db-turn-published-after s tid -1))
+                "A message of an older retry state does not count"))))
+
 (defdescribe
   routing-event-batch-test
   (it

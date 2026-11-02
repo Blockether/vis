@@ -2256,11 +2256,15 @@ export function RunDialog({
  * panel: the running row above the transcript stops saying "Vis is thinking"
  * and names what is on screen instead, and both must read one list.
  */
+/** Waits between rereads of a closed view's record: reads at 0, 0.25, 1, 3 and 8 s. */
+const RECORD_REREAD_MS = [250, 750, 2_000, 5_000];
+
 export function useLiveViews(
   client: GatewayClient,
   subscriptions: SessionSubscriptionHub,
   sid: string,
-  onRecordFiled?: () => void,
+  /** Read the record of a closed view; answer true once the transcript shows it. */
+  onRecordFiled?: (viewId: string) => boolean | void | Promise<boolean | void>,
 ): LiveViewModel[] {
   const [views, setViews] = useState<LiveViewModel[]>([]);
   const reloadRef = useRef<(() => void) | null>(null);
@@ -2315,16 +2319,20 @@ export function useLiveViews(
         setViews((current) => batch.reduce(applyLiveViewEvent, current));
       });
     };
-    const revealRecord = () => {
-      onRecordFiled?.();
+    const revealRecord = (viewId: string) => {
       // A close on the gateway thread files into the running block's collector
       // immediately, but that collector reaches the persisted iteration only when
       // the block returns. The close frame can therefore beat one transcript read.
       // Re-read across that short handoff so the settled picture gives way to
-      // the durable transcript record without a manual refresh.
-      for (const delay of [250, 1_000, 3_000, 8_000]) {
-        recordRefreshTimers.push(setTimeout(() => onRecordFiled?.(), delay));
-      }
+      // the durable transcript record without a manual refresh, and stop at the
+      // first read that shows it: each read is a whole transcript page.
+      let step = 0;
+      const attempt = async () => {
+        const shown = await onRecordFiled?.(viewId);
+        if (cancelled || shown === true || step >= RECORD_REREAD_MS.length) return;
+        recordRefreshTimers.push(setTimeout(() => void attempt(), RECORD_REREAD_MS[step++]));
+      };
+      void attempt();
     };
     const stopEvents = subscriptions.subscribeSession(sid, (event) => {
       if (!isLiveViewEvent(event)) return;
@@ -2346,7 +2354,7 @@ export function useLiveViews(
       }
       flushPatches();
       setViews((current) => applyLiveViewEvent(current, event));
-      if (event.type === VIEW_CLOSE_EVENT) revealRecord();
+      if (event.type === VIEW_CLOSE_EVENT) revealRecord(viewId);
     });
     return () => {
       cancelled = true;

@@ -477,9 +477,8 @@ function voiceTimeoutMs(bytes: number): number {
 const VOICE_STALL_TIMEOUT_MS = 120_000;
 
 /**
- * A synthesis job is polled, not streamed: the client wants the AUDIO and nothing in
- * between, so it asks the job resource where it is rather than opening a second SSE
- * connection for a progress bar nobody renders.
+ * How often a synthesis job is read when its event stream failed. The stream is the
+ * normal path: a 400 ms poll cost a request per tick for the whole synthesis.
  */
 const SPEECH_JOB_POLL_MS = 400;
 const SPEECH_JOB_TIMEOUT_MS = 120_000;
@@ -498,6 +497,11 @@ const SPEECH_JOB_TIMEOUT_MS = 120_000;
  * notice.
  */
 export const VOICE_JOB_EVENT = 'voice.job';
+
+/** SSE `event:` name of every frame on a synthesis job's stream, from the gateway contract. */
+const SPEECH_JOB_EVENT =
+  gatewaySchema.$defs.job_event_type.oneOf.find((type) => type['x-vis-direction'] === 'synthesize')
+    ?.const ?? 'speech.job';
 
 /** Session event types that end a turn, from the gateway contract. */
 const TURN_TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set(
@@ -597,7 +601,10 @@ function withEngine(path: string, engine?: string | null): string {
 }
 
 /** Router rows per gateway base URL, shared by every screen and client instance. */
-const routerCache = new Map<string, { at: number; rows: RouterProvider[] }>();
+const routerCache = new Map<string, { at: number; rows: RouterProvider[]; live: boolean }>();
+
+/** The router reads in flight that ask every provider live. */
+const liveRouterReads = new WeakSet<Promise<RouterProvider[]>>();
 
 /**
  * The router cache key of a gateway, or of one session context on it. A session context
@@ -776,6 +783,11 @@ const transcriptWindows = new Map<string, TranscriptWindow>();
 function transcriptStamp(row: Session | null | undefined): string {
   if (!row) return '';
   return `${row.turn_count}\u0000${row.modified_at ?? ''}`;
+}
+
+/** Does the session row still name this cached running turn as its live turn? */
+function turnStillLive(row: Session | null, turn: TranscriptTurn): boolean {
+  return !!row?.live && !!turn.turn_id && row.current_turn_id === turn.turn_id;
 }
 
 function sessionIsActive(row: Session): boolean {
@@ -2218,7 +2230,11 @@ export class GatewayClient {
     }
   }
 
-  /** Follow one synthesis job to its end, or say why it will never get there. */
+  /**
+   * Follow one synthesis job to its end, or say why it will never get there. The
+   * job's own event stream pushes the terminal frame; a failed stream falls back to
+   * reading the job resource, so an odd proxy cannot strand the audio.
+   */
   private async awaitSpeechJob(
     base: string,
     job: SpeechJob,
@@ -2227,6 +2243,18 @@ export class GatewayClient {
     const path = `${base}/jobs/${encodeURIComponent(job.id)}`;
     const deadline = Date.now() + SPEECH_JOB_TIMEOUT_MS;
     let latest = job;
+    if (!latest.is_done) {
+      try {
+        latest = await this.followJobStream<SpeechJob>(
+          `${path}/events`,
+          { event: SPEECH_JOB_EVENT, stream: 'speech_job', label: 'speech', end: 'the audio' },
+          () => undefined,
+          signal,
+        );
+      } catch (cause) {
+        if (signal?.aborted) throw cause;
+      }
+    }
     while (!latest.is_done) {
       if (Date.now() > deadline) {
         throw new GatewayError(0, 'the machine did not finish speaking in time');
@@ -2334,21 +2362,35 @@ export class GatewayClient {
    * and the closing frame carries the transcript, so the percentage a human
    * reads is never a poll interval stale and there is no "ask again" to time.
    */
-  private async voiceJobStream(
+  private voiceJobStream(
     sid: string,
     jobId: string,
     onJob: (job: VoiceJob) => void,
     signal?: AbortSignal,
   ): Promise<VoiceJob> {
-    const path = `/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}/events`;
+    return this.followJobStream<VoiceJob>(
+      `/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}/events`,
+      { event: VOICE_JOB_EVENT, stream: 'voice_job', label: 'transcription', end: 'the transcript' },
+      onJob,
+      signal,
+    );
+  }
+
+  /** Read one job's event stream to its terminal frame; `voiceJobStream` explains why. */
+  private async followJobStream<J extends { id: string; is_done: boolean }>(
+    path: string,
+    kind: { event: string; stream: 'voice_job' | 'speech_job'; label: string; end: string },
+    onJob: (job: J) => void,
+    signal?: AbortSignal,
+  ): Promise<J> {
     const diagnostic = startRequestDiagnostic(this.base, 'GET', path, {
       transport: 'sse',
-      stream: 'voice_job',
+      stream: kind.stream,
     });
     const watchdog = new AbortController();
     // Released by `watchdog.abort()` when the stream ends.
     const streamSignal = signal ? linkSignals([signal, watchdog.signal]).signal : watchdog.signal;
-    const seen: { job: VoiceJob | null } = { job: null };
+    const seen: { job: J | null } = { job: null };
     let stalled = false;
     let status = 0;
     let failure: { cause: unknown } | undefined;
@@ -2383,12 +2425,12 @@ export class GatewayClient {
         readSseFrames(
           response.body,
           (json, event) => {
-            // This stream carries `voice.job` frames and nothing else. Any other
+            // This stream carries frames of one name and nothing else. Any other
             // name is not this job's progress and must never be reported as it.
-            if (event !== VOICE_JOB_EVENT) return;
-            let job: VoiceJob;
+            if (event !== kind.event) return;
+            let job: J;
             try {
-              job = JSON.parse(json) as VoiceJob;
+              job = JSON.parse(json) as J;
             } catch {
               return;
             }
@@ -2403,7 +2445,7 @@ export class GatewayClient {
       );
       const job = seen.job;
       if (!job?.is_done) {
-        throw new GatewayError(0, 'transcription ended before the transcript');
+        throw new GatewayError(0, `${kind.label} ended before ${kind.end}`);
       }
       return job;
     } catch (cause) {
@@ -2411,7 +2453,7 @@ export class GatewayClient {
         stalled && !signal?.aborted
           ? new GatewayError(
               0,
-              `transcription stopped reporting for ${Math.round(VOICE_STALL_TIMEOUT_MS / 1000)}s`,
+              `${kind.label} stopped reporting for ${Math.round(VOICE_STALL_TIMEOUT_MS / 1000)}s`,
             )
           : cause;
       failure = { cause: error };
@@ -2916,7 +2958,11 @@ export class GatewayClient {
    */
   prefetchRouter(): void {
     if (this.isRouterFresh()) return;
-    void this.router().catch(() => undefined);
+    // A background warm asks live only the providers without a current verdict.
+    // A full read is a live auth and limits call per provider, upstream, and a
+    // sweep of every paired machine paid it every 5 minutes for a panel nobody
+    // opened. The Providers panel asks live when it opens (`live` below).
+    void this.router(undefined, { probe: 'changed' }).catch(() => undefined);
   }
 
   /**
@@ -2942,33 +2988,35 @@ export class GatewayClient {
   /**
    * The provider fleet. `force` asks every provider live. `probe: 'changed'` asks
    * live only the providers without a verdict for their current definition.
+   * `live` accepts a cached or shared answer only when it came from a live read.
    */
   async router(
     signal?: AbortSignal,
-    opts?: { force?: boolean; probe?: 'changed'; contextSessionId?: string },
+    opts?: { force?: boolean; probe?: 'changed'; live?: boolean; contextSessionId?: string },
   ): Promise<RouterProvider[]> {
     const context = opts?.contextSessionId;
     const key = routerKey(this.base, context);
+    const changedOnly = opts?.probe === 'changed';
     if (opts?.force) this.invalidateRouter();
-    else if (!opts?.probe) {
+    else if (!changedOnly) {
       const entry = routerCache.get(key);
-      if (entry && Date.now() - entry.at < ROUTER_TTL_MS) return entry.rows;
+      if (entry && Date.now() - entry.at < ROUTER_TTL_MS && (entry.live || !opts?.live))
+        return entry.rows;
     }
 
     // One shared request per gateway: three screens opening at once cost the
-    // daemon one probe, and an aborted caller never cancels the others.
+    // daemon one probe, and an aborted caller never cancels the others. A live
+    // read does not join a partial one; it replaces it.
     let inflight = routerInflight.get(key);
+    if (inflight && opts?.live && !liveRouterReads.has(inflight)) inflight = undefined;
     if (!inflight) {
-      const path = withContextSession(
-        opts?.probe === 'changed' ? '/v1/router?probe=changed' : '/v1/router',
-        context,
-      );
+      const path = withContextSession(changedOnly ? '/v1/router?probe=changed' : '/v1/router', context);
       const read: Promise<RouterProvider[]> = this.request<{ providers: RouterProvider[] }>('GET', path)
         .then((response) => {
           const rows = response.providers;
           // A newer read replaced this one, for example after an extension reload.
           if (routerInflight.get(key) !== read) return rows;
-          routerCache.set(key, { at: Date.now(), rows });
+          routerCache.set(key, { at: Date.now(), rows, live: !changedOnly });
           // The cold-start seed holds machine rows only.
           if (!context) writeSnapshot(this.snapshotKey('router'), rows);
           return rows;
@@ -2976,6 +3024,7 @@ export class GatewayClient {
         .finally(() => {
           if (routerInflight.get(key) === read) routerInflight.delete(key);
         });
+      if (!changedOnly) liveRouterReads.add(read);
       inflight = read;
       routerInflight.set(key, inflight);
     }
@@ -3395,7 +3444,7 @@ export class GatewayClient {
     const entry = routerCache.get(key);
     if (!entry) return;
     routerCache.set(key, {
-      at: entry.at,
+      ...entry,
       rows: entry.rows.map((row) => (row.id === providerId ? { ...row, ...patch } : row)),
     });
   }
@@ -5048,10 +5097,14 @@ export class GatewayClient {
     const cached = this.cachedTranscript(sid);
     // A cached transcript holding a 'running' row is PROVISIONAL: that row is a
     // placeholder the gateway persists while a turn is in flight, and it carries
-    // no outcome. Never let the stamp short-circuit past one — the turn may have
-    // finished, failed or been cancelled since, and the caller would keep
-    // painting a spinner for work that is long over.
-    const provisional = !!cached?.some((turn) => turn.status === 'running');
+    // no outcome. The stamp cannot see the turn end (`modified_at` is the newest
+    // turn's START), so the row decides: once it no longer names that turn as
+    // live, read again, or the caller paints a spinner for work that is over.
+    // While it still does, the turn's own events drive the reread; reading the
+    // page on every 5 s reconcile tick of a running turn was pure waste.
+    const provisional = !!cached?.some(
+      (turn) => turn.status === 'running' && !turnStillLive(row, turn),
+    );
     // …and the rows we hold have to ACCOUNT for the row we are revalidating
     // against. `total` is the gateway's own count of this session's turns — the
     // same population `turn_count` counts — so a row that counts more turns than

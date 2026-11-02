@@ -29,7 +29,7 @@ export type GatewayRequestDiagnosticStart = {
   transport: 'fetch' | 'sse' | 'xhr';
   session_id?: string;
   session_ids?: readonly string[];
-  stream?: 'fleet' | 'session' | 'sessions' | 'tui' | 'voice_job';
+  stream?: 'fleet' | 'session' | 'sessions' | 'tui' | 'voice_job' | 'speech_job';
   attempt?: number;
   reason?: GatewayStreamReason;
 };

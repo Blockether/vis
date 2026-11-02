@@ -20,7 +20,6 @@ CLONING_ENGINE = "pocket-tts-local"
 """The engine that learns a voice from a recording."""
 
 _UNSET: Any = object()
-_POLL_SECONDS = 0.25
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,17 +272,32 @@ class Speech:
     def _wait(self, direction: str, job: Any, timeout: float) -> dict:
         if not isinstance(job, dict) or not isinstance(job.get("id"), str):
             raise ProtocolError(f"invalid {direction} job")
-        get = (
-            self._layer.get_speech_job
-            if direction == "speech"
-            else self._layer.get_voice_job
-        )
-        deadline = time.monotonic() + timeout
-        while not job.get("is_done"):
-            if time.monotonic() > deadline:
-                raise VisTimeout(f"{direction} job {job['id']} is still running")
-            time.sleep(_POLL_SECONDS)
-            job = get(job["id"])
+        if not job.get("is_done"):
+            follow = (
+                self._layer.speech_events
+                if direction == "speech"
+                else self._layer.voice_events
+            )
+            # The job stream sends the current state first, then each change.
+            events = follow(job["id"])
+            events._deadline = time.monotonic() + timeout
+            try:
+                with events:
+                    for event in events:
+                        if event.is_done:
+                            job = {
+                                **event.data,
+                                "id": event.id,
+                                "phase": event.phase,
+                                "is_done": True,
+                            }
+                            break
+            except VisTimeout:
+                raise VisTimeout(
+                    f"{direction} job {job['id']} is still running"
+                ) from None
+            if not job.get("is_done"):
+                raise ProtocolError(f"{direction} job stream ended before the job")
         if job.get("phase") == "failed":
             raise RuntimeError(str(job.get("error") or f"{direction} job failed"))
         return job

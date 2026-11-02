@@ -388,6 +388,26 @@ def test_local_event_polling_has_a_bounded_idle_timeout(monkeypatch, tmp_path, k
     engine.close()
 
 
+def test_quiet_local_event_polling_backs_off(monkeypatch, tmp_path):
+    # Audit row 3: a quiet stream read a page 10 times a second.
+    from blockether.vis.engine import VisTimeout
+
+    engine = LocalEngine(executable="unused", root=tmp_path, timeout=1.6)
+    polls = []
+
+    def page(*args, **kwargs):
+        polls.append(1)
+        return {"events": []}
+
+    monkeypatch.setattr(engine, "get_session_events_since", page)
+    with engine.session("s").events() as events:
+        with pytest.raises(VisTimeout):
+            next(events)
+    # Waits of 0.1, 0.2, 0.4, 0.8 and then 1 s; a fixed 0.1 s wait polls 16 times.
+    assert len(polls) <= 6
+    engine.close()
+
+
 def test_invalid_local_event_does_not_advance_the_cursor(monkeypatch, tmp_path):
     from blockether.vis.engine import ProtocolError
 

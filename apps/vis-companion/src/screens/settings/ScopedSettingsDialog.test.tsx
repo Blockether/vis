@@ -8,7 +8,15 @@ import type { SettingsResponse, SettingsTarget } from '../../lib/types';
 import { OpenMachineSettings, OpenScopedSettings } from '../../lib/open-settings';
 import { ScopedSettingsDialog } from './ScopedSettingsDialog';
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+/** Leave and return to the app, as a phone resume does. */
+function wake(): void {
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+  document.dispatchEvent(new Event('visibilitychange'));
+  visibility.mockReturnValue('visible');
+  document.dispatchEvent(new Event('visibilitychange'));
+}
 
 it('writes and inherits only the selected owner, without carrying form state to another session', async () => {
   const user = userEvent.setup();
@@ -183,10 +191,32 @@ it('offers a retry after a failed first read and drops the failure when the gate
   await screen.findByText('gateway timed out');
   expect(screen.queryByRole('heading', { name: 'Tools' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-  // The next poll answers, so the failure goes without a tap.
-  await screen.findByRole('heading', { name: 'Agent' }, { timeout: 4500 });
+  // The read on the next wake answers, so the failure goes without a tap.
+  wake();
+  await screen.findByRole('heading', { name: 'Agent' });
   expect(screen.queryByText('gateway timed out')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+});
+
+// Audit of Companion polls: the open dialog read these settings every 3 s, also
+// while the app was hidden, at 27 statements a read. Nothing but a save or another
+// client changes them, so it reads on open and on wake only.
+it('reads the settings on open and on wake, not on a timer', async () => {
+  vi.useFakeTimers();
+  const target: SettingsTarget = { scope: 'session', target_id: 'a' };
+  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
+  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
+  const read = vi.spyOn(client, 'settings').mockResolvedValue({
+    revision: 'scoped-1', scope: 'session', target_id: 'a', groups: [],
+  });
+  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
+  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
+  render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(read).toHaveBeenCalledTimes(1);
+  wake();
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(read).toHaveBeenCalledTimes(2);
 });
 
 // Regression for #373: session settings hid the extension settings that a wider scope

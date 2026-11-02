@@ -564,6 +564,35 @@
                    (expect (empty? (ps/db-automation-due-deliveries db Long/MAX_VALUE 10))))))
              (finally (stop))))))
 
+(defdescribe scheduler-sleep-test
+             ;; Poll audit row 5 (0c273047d): the scheduler read the store every 5 s, also with no
+             ;; automation. It now sleeps until the next fire or callback attempt, at most 60 s.
+             (it "sleeps until the next fire or callback attempt, and at most one minute"
+                 (expect (= 60000 (runner/sleep-ms 1000 nil nil)))
+                 (expect (= 400 (runner/sleep-ms 1000 1400 nil)))
+                 (expect (= 300 (runner/sleep-ms 1000 1400 1300)))
+                 ;; A due callback is still pending, so the next look comes after the tick.
+                 (expect (= 5000 (runner/sleep-ms 1000 nil 900)))
+                 (expect (= 1 (runner/sleep-ms 1000 1000 nil))))
+             (it "wakes on a new automation and starts its trigger on time"
+                 (with-runner (answer "Done.")
+                              (fn [db _]
+                                (with-redefs [ps/db-shared-connection! (constantly db)]
+                                  (let [stop! (runner/start! :memory)]
+                                    (try
+                                      ;; The empty store makes the scheduler sleep for one minute.
+                                      (Thread/sleep 300)
+                                      (let [due (+ (util/now-ms) 500)
+                                            id (create! db {"triggers" [{"kind" "once" "at" due}]})
+                                            run (eventually #(first (ps/db-automation-runs
+                                                                      db
+                                                                      {:automation-id id
+                                                                       :limit 1})))]
+
+                                        (expect (some? run))
+                                        (expect (<= due (:created_at run) (+ due 1500))))
+                                      (finally (stop!)))))))))
+
 (defdescribe start-test
              (it "opens the shared connection for the gateway database spec"
                  ;; The gateway gives start! its database spec, not an open connection.

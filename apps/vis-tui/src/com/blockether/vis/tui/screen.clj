@@ -1496,6 +1496,8 @@
    stream carries the same reload id, so one reload loads the catalog once."
   [session-id reload-id]
   (when (and reload-id (not= reload-id (first (reset-vals! last-extensions-reload reload-id))))
+    ;; A reload can add or drop providers. The next paint reads the router again.
+    (vis/refresh-cached-routers!)
     (start-deferred-gateway-slash-load! session-id)))
 
 (defn- template-slash-commands
@@ -5954,7 +5956,7 @@
     ;; Polling the global router default (resolve-effective-model) made the
     ;; usage row fetch the wrong plan's limits after a per-session switch.
     (when-let [sid (get-in @state/app-db [:session :id])]
-      (some-> (vis/gateway-session-model sid)
+      (some-> (vis/gateway-session-model-cached sid)
               :provider
               not-empty
               keyword))
@@ -6349,7 +6351,8 @@
 
                   ;; Extensions in another client changed the slash commands.
                   :extensions-reloaded
-                  (refresh-slash-commands-after-reload! session-id (:reload-id chunk))
+                  (do (vis/refresh-session-model! session-id)
+                      (refresh-slash-commands-after-reload! session-id (:reload-id chunk)))
 
                   ;; An extension of this session called vis.notify.
                   :notification
@@ -6363,7 +6366,12 @@
                   ;; Model preference changed for THIS session somewhere else —
                   ;; keep the tab's chip in sync with the shared store.
                   :model-sync
-                  (state/dispatch [:sync-session-model tab-id chunk])
+                  (do (vis/note-session-model! session-id
+                                               (when (and (not-empty (str (:provider chunk)))
+                                                          (not-empty (str (:model chunk))))
+                                                 {:provider (str (:provider chunk))
+                                                  :model (str (:model chunk))}))
+                      (state/dispatch [:sync-session-model tab-id chunk]))
 
                   :agent-name-sync
                   (state/dispatch [:sync-agent-name tab-id chunk])
@@ -6419,6 +6427,8 @@
                   ;; Disagreement with the turn painted here is proof of a gap.
                   :gateway-ready
                   (do (agent-team/stream-ready! session-id)
+                      ;; A reconnect can hide a model change; read the pref again.
+                      (vis/refresh-session-model! session-id)
                       (state/dispatch [:sync-agent-name tab-id chunk])
                       (state/dispatch [:sync-gateway-ready tab-id chunk]))
 
@@ -6434,6 +6444,10 @@
         _
         (vis/worker-future "tui-human-input-replay"
                            #(do (replay-human-input! session-id) (replay-live-views! session-id)))
+
+        ;; The footer reads the model pref from this cache and never sends a request.
+        _
+        (vis/refresh-session-model! session-id)
 
         cleanup
         #(do (vis/remove-title-listener! session-id listener)
@@ -6627,10 +6641,6 @@
 (defonce ^:private picker-warming*
   ;; True while a background picker read runs. At most one runs at a time.
   (atom false))
-
-(def ^:private picker-rewarm-ms
-  "The shortest time between two background picker reads that fleet deltas start."
-  5000)
 
 (defn- picker-head!
   "Read the head page of the picker and keep it for the next open."
@@ -7115,6 +7125,20 @@
           #{}
           frames))
 
+(defn- refresh-project-counts!
+  "Read the project counts again and keep the loaded rows. With a kept ETag an
+   unchanged answer is a 304."
+  []
+  (vis/worker-future "tui-project-counts"
+                     (fn []
+                       (try (let [overview (vis/gateway-projects-overview (with-session-drafts {}))]
+                              (state/dispatch [:project-sidebar
+                                               {:items (projects/with-gateway-counts
+                                                         (vec (get-in @state/app-db
+                                                                      [:project-sidebar :items]))
+                                                         overview)}]))
+                            (catch Throwable _ nil)))))
+
 (defn- refresh-created-projects!
   "Show the sessions that `frames` announce as created or forked. Read the project
    counts and the page of each expanded project that holds one, not every project."
@@ -7127,50 +7151,109 @@
 
     (if (nil? pids)
       (refresh-projects! true)
-      (vis/worker-future
-        "tui-project-counts"
-        (fn []
-          (try (let [overview (vis/gateway-projects-overview (with-session-drafts {}))]
-                 (state/dispatch [:project-sidebar
-                                  {:items (projects/with-gateway-counts
-                                            (vec (get-in @state/app-db [:project-sidebar :items]))
-                                            overview)}]))
-               (catch Throwable _ nil))
+      (do (refresh-project-counts!)
           (doseq [pid
                   pids
 
                   :when (contains? (set (:expanded sidebar)) pid)]
 
-            (load-project-page! pid true)))))))
+            (load-project-page! pid true))))))
+
+(defn- refresh-moved-projects!
+  "Read the project counts and each expanded page that shows one of `sids`.
+   With a kept ETag an unchanged page is a 304."
+  [sids]
+  (let [db
+        @state/app-db
+
+        expanded
+        (set (get-in db [:project-sidebar :expanded]))]
+
+    (refresh-project-counts!)
+    (doseq [pid
+            (into #{} (mapcat #(state/session-page-ids db %)) sids)
+
+            :when (contains? expanded pid)]
+
+      (load-project-page! pid true))))
+
+(def ^:private projects-safety-poll-ms
+  "The gap between two full sidebar reads without a fleet frame. The fleet stream
+   carries every change of this gateway; this read only catches a missed frame."
+  60000)
+
+(defn- patch-picker-rows!
+  "Apply `f` to the kept picker row of `sid`. A nil result removes the row. The
+   next C-x s then paints current rows without a background read."
+  [sid f]
+  (swap! picker-cache* (fn [cache]
+                         (cond-> cache
+                           (:page cache)
+                           (update :page state/patch-session-rows sid f))))
+  nil)
+
+(defn- apply-fleet-frame!
+  "Apply one fleet frame to the sidebar and the kept picker rows. Returns
+   `:created` when only a read can show the change, `:status` when the row may
+   also move in its page, `:counts` when only the project counts changed, else
+   nil. The row change itself never reads the gateway."
+  [event]
+  (let [sid (str (get event "session_id"))]
+    (case (get event "type")
+      "session.created"
+      :created
+
+      "session.status"
+      (do (state/dispatch [:project-session-status sid event])
+          (patch-picker-rows! sid (state/status-row-patch event))
+          :status)
+
+      "session.title_updated"
+      (let [title (str (get event "title"))]
+        (state/dispatch [:project-session-retitled sid title])
+        (patch-picker-rows! sid #(assoc % "title" title))
+        nil)
+
+      "session.deleted"
+      (do (state/dispatch [:project-session-removed sid])
+          (patch-picker-rows! sid (constantly nil))
+          :counts)
+
+      nil)))
 
 (defn- start-projects-refresh!
-  "Follow fleet status/title deltas and periodically catch arrivals outside this TUI.
-   A created or forked session reads only its own project. The same deltas keep the
-   kept rows of the C-x s picker current."
+  "Follow fleet deltas and catch a missed frame with a slow full read. A status,
+   title or delete frame changes the loaded rows in place; status and delete then
+   read only the project counts. A created or forked session reads only its own
+   project. The same frames keep the kept rows of the C-x s picker current."
   []
-  (let [dirty?
+  (let [counts?
         (atom false)
+
+        ;; Sessions of `session.status` frames since the last tick. A status change can
+        ;; move a row into the awaiting strip, so the page that shows it is read again.
+        moved
+        (atom #{})
 
         ;; `session.created` frames since the last tick; each names its project.
         created
         (atom [])
-
-        picker-stale?
-        (atom false)
 
         ;; The interrupt below only ends the 1s sleep, so the loop also reads this flag.
         stopped?
         (atom false)
 
         stop
-        (try (vis/gateway-fleet-subscribe!
-               (fn [event]
-                 (case (get event "type")
-                   "session.created"
-                   (do (swap! created conj event) (reset! picker-stale? true))
+        (try (vis/gateway-fleet-subscribe! (fn [event]
+                                             (case (apply-fleet-frame! event)
+                                               :created
+                                               (swap! created conj event)
 
-                   ("session.status" "session.title_updated")
-                   (do (reset! dirty? true) (reset! picker-stale? true))
+                                               :status
+                                               (swap! moved conj (str (get event "session_id")))
+
+                                               :counts
+                                               (reset! counts? true)
 
                    nil)))
              (catch Throwable _
@@ -7187,10 +7270,7 @@
                    (state/session-draft-ids @state/app-db)
 
                    last-picker
-                   nil
-
-                   last-picker-read
-                   0]
+                   nil]
 
               (when-not (or @stopped? (:shutdown? @state/app-db))
                 (let [db
@@ -7215,32 +7295,35 @@
 
                       due?
                       (and ready?
-                           (or @dirty? (not= drafts last-drafts) (>= (- now last-read) 8000)))
+                           (or (not= drafts last-drafts)
+                               (>= (- now last-read) (long projects-safety-poll-ms))))
 
+                      ;; Only a session switch or a draft change reads the picker head. A
+                      ;; fleet frame patches the kept rows, and an open reads them again.
                       picker-key
                       [(str (get-in db [:session :id])) drafts]
 
-                      picker?
-                      (or (not= picker-key last-picker)
-                          (and @picker-stale? (>= (- now last-picker-read) picker-rewarm-ms)))
-
-                      _
-                      (when picker? (reset! picker-stale? false))
-
                       picker-started?
-                      (and picker? (warm-picker-cache! (first picker-key)))]
+                      (and (not= picker-key last-picker) (warm-picker-cache! (first picker-key)))]
 
-                  (cond due? (do (reset! dirty? false) (reset! created []) (refresh-projects! true))
-                        (not (:open? sidebar)) (reset! created [])
-                        (and ready? (seq @created)) (refresh-created-projects!
-                                                      (first (reset-vals! created []))))
-                  ;; A picker read that could not start yet runs at a later tick.
-                  (when (and picker? (not picker-started?)) (reset! picker-stale? true))
+                  (cond due? (do (reset! counts? false)
+                                 (reset! moved #{})
+                                 (reset! created [])
+                                 (refresh-projects! true))
+                        (not (:open? sidebar))
+                        (do (reset! counts? false) (reset! moved #{}) (reset! created []))
+                        (and ready? (seq @created)) (do (reset! counts? false)
+                                                        (reset! moved #{})
+                                                        (refresh-created-projects!
+                                                          (first (reset-vals! created []))))
+                        (and ready? (seq @moved)) (do (reset! counts? false)
+                                                      (refresh-moved-projects!
+                                                        (first (reset-vals! moved #{}))))
+                        (and ready? @counts?) (do (reset! counts? false) (refresh-project-counts!)))
                   (try (Thread/sleep 1000) (catch InterruptedException _ nil))
                   (recur (if due? now last-read)
                          (if due? drafts last-drafts)
-                         (if picker-started? picker-key last-picker)
-                         (if picker-started? now last-picker-read))))))
+                         (if picker-started? picker-key last-picker))))))
           "vis-tui-projects-refresh")]
 
     (.setDaemon thread true)

@@ -1664,7 +1664,7 @@
         (ps/db-agent-update! db (:session_id child) {:status "completed"}))
       (doseq [n (range (inc agents/max-active-children) agents/max-team-children)]
         (ps/db-agent-update! db (fork n) {:status "completed"}))
-      (expect (= :agent-limit (refusal agents/max-team-children)))
+      (expect (= :budget-exceeded (refusal agents/max-team-children)))
       (expect (= agents/max-team-children (count (ps/db-agent-list db leader)))))))
 
 ;; Regression, issue #405: an extension's extend or deny of an open budget request
@@ -1847,6 +1847,12 @@
                           (fn [_ id]
                             (if (= turn (str id)) @steps []))
 
+                          ps/db-turn-published-after
+                          (fn [_ id position]
+                            (boolean (some #(and (seq (:council-publications %))
+                                                 (> (long (:position %)) (long position)))
+                                           (when (= turn (str id)) @steps))))
+
                           ps/db-council-get
                           (fn [_ id]
                             (when (= 7 id) {:entry_id 7 :content "tokenize drops tabs"}))]
@@ -1891,6 +1897,147 @@
                   (expect (>= (- (System/currentTimeMillis) started) 1500))
                   (expect (= "running" (get-in records [busy "status"])))
                   (expect (not (contains? (get records busy) "notes")))))))))))
+
+;; Council wait cost study (round 2 audit): a waiting leader built every team row each second, 47
+;; statements with 3 running children, and a question or a full team polled each second. A wait
+;; now reads the store rows of its team and parks on the signal of a team change or a reply.
+(defdescribe
+  waits-park-on-team-signals-test
+  (it
+    "an idle wait builds no team row and wakes at the signal of a change"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:status "running"})
+
+          reads
+          (atom 0)]
+
+      (with-fake-runtime
+        db
+        leader
+        (atom #{child})
+        (fn [_]
+          (swap! @#'agents/runtime assoc
+            :list
+            (fn [& _]
+              (throw (ex-info "built team rows" {}))))
+          (with-redefs [ps/db-agent-list (let [f ps/db-agent-list]
+                                           (fn [& args]
+                                             (swap! reads inc)
+                                             (apply f args)))]
+            (let [started (System/currentTimeMillis)
+                  waited (future (outcome #(agents/wait-agents {:db-info db :session-id leader}
+                                                               [child]
+                                                               {:timeout_secs 20})))]
+
+              (Thread/sleep 2500)
+              (expect (= 1 @reads) "An idle wait reads its team once for each tick of 5 s")
+              (ps/db-agent-update! db child {:status "failed"})
+              (agents/signal! [:team leader])
+              (let [records (deref waited 2000 ::timeout)]
+                (expect (= "failed" (get (first records) "status")) (pr-str records))
+                (expect (< (- (System/currentTimeMillis) started) 4500)))))))))
+  (it "a question gets its reply at the signal of the reply"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {})]
+
+        (with-fake-runtime
+          db
+          leader
+          (atom #{leader})
+          (fn [entries]
+            (with-redefs [ps/db-council-get (fn [_ id]
+                                              (get @entries id))]
+              (let [asked (future (outcome #(agents/ask {:db-info db :session-id child}
+                                                        "Which parser?"
+                                                        {:timeout_secs 20})))
+                    _ (asking-record {:db-info db :session-id leader} child)
+                    entry-id (some (fn [[id e]]
+                                     (when (= "Which parser?" (:content e)) id))
+                                   @entries)]
+
+                ((:publish @@#'agents/runtime)
+                  {:session-id leader}
+                  {:content "Use the new parser." :reply_to entry-id})
+                (agents/council-inserted! {:thread_id entry-id :reply_to entry-id})
+                (expect (= "Use the new parser." (deref asked 2000 ::timeout)))))))))
+  (it "a task over the active limit starts at the signal of a free slot"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            ended
+            (child! db leader {:status "failed"})
+
+            spawns
+            (atom 0)]
+
+        (with-fake-runtime
+          db
+          leader
+          (atom #{})
+          (fn [_]
+            (with-redefs [agents/runtime-op! (fn [_ op _]
+                                               (when (= :spawn op)
+                                                 (if (= 1 (swap! spawns inc))
+                                                   (agents/fail! :agent-limit "The team is full")
+                                                   {:session_id ended})))]
+              (let [ran (future (outcome #(agents/run {:db-info db :session-id leader}
+                                                      ["Check evidence"]
+                                                      {:timeout_secs 20})))]
+                (Thread/sleep 500)
+                (agents/signal! [:team leader])
+                (let [records (deref ran 3000 ::timeout)]
+                  (expect (= "failed" (get (first records) "status")) (pr-str records))
+                  (expect (= 2 @spawns))))))))))
+
+;; council.run promises that more than 16 tasks start as earlier ones finish. The gateway refused
+;; the next spawn with budget-exceeded, which a run does not retry, so the whole run failed.
+(defdescribe
+  gateway-active-limit-is-retryable-test
+  (it "refuses a spawn over the active limit with agent-limit"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            router
+            {:providers [{:id :p :root "small" :models [{:name "small"}]}]}
+
+            env
+            {:db-info db
+             :session-id leader
+             :router router
+             :turn-state-atom (atom {:council {:activation-id "active"}
+                                     :agent-checkpoint [{:role :user
+                                                         :content "Current context"}]})}]
+
+        (dotimes [_ agents/max-active-children]
+          (child! db leader {:status "running"}))
+        (with-redefs-fn {#'lp/db-info (constantly db)
+                         #'loop-router/get-router (constantly router)
+                         #'council/enabled? (constantly true)
+                         #'council/runtime (constantly {leader {:activation-id "active"}})
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state 'live-env)
+                         (constantly env)}
+          (fn []
+            (expect (= :agent-limit
+                       (try (gateway/agents-operation! leader :spawn {:task "Check evidence"})
+                            (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))))))))
 
 ;; Council orchestration study: the leader gets event waits and independent checks, and each
 ;; subagent reports with evidence.
@@ -2198,7 +2345,8 @@
               (asking-record env child)
               ;; The person cancels the next leader turn instead of an answer.
               (reset! live #{})
-              (expect (nil? (deref asked 5000 ::timeout))
+              ;; A stopped parent sends no signal; the 5 s tick of the question sees it.
+              (expect (nil? (deref asked 8000 ::timeout))
                       "A parent that neither runs nor waits for the person ends the wait"))
             (reset! live #{leader})
             (reset! suspended? true)
@@ -2207,5 +2355,5 @@
               (reset! live #{})
               (ps/db-agent-update! db child {:status "cancelled"})
               (expect
-                (nil? (deref asked 5000 ::timeout))
+                (nil? (deref asked 8000 ::timeout))
                 "A cancelled child ends the wait also while the parent asks the person"))))))))

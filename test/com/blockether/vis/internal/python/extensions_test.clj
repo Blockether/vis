@@ -746,6 +746,62 @@
                                    (pyx/reload-python-extensions! {:dirs []}))))))))
 
 (defdescribe
+  background-load-wait-test
+  ;; Audit B5 (poll audit at 0c273047d): a background load that yields to a waiting
+  ;; foreground load woke every 10 ms until that load got the lock.
+  (it
+    "parks a yielding background load until the foreground load takes the lock"
+    (let [^java.util.concurrent.locks.ReentrantLock lock
+          @#'pyx/ensure-load-lock
+
+          ^java.util.concurrent.atomic.AtomicLong waiting
+          @#'pyx/foreground-loads
+
+          with-load-lock
+          @#'pyx/with-load-lock
+
+          order
+          (atom [])
+
+          release
+          (promise)
+
+          held
+          (promise)
+
+          holder
+          (Thread. ^Runnable
+                   (fn []
+                     (.lock lock)
+                     (try (deliver held true) @release (finally (.unlock lock)))))
+
+          foreground
+          (Thread. ^Runnable
+                   (fn []
+                     (with-load-lock #(swap! order conj :foreground))))
+
+          background
+          (Thread. ^Runnable
+                   (fn []
+                     (with-bindings {#'pyx/*background-load?* true}
+                       (with-load-lock #(swap! order conj :background)))))]
+
+      (try (.start holder)
+           (deref held 5000 nil)
+           (.start foreground)
+           (loop [n 0]
+             (when (and (zero? (.get waiting)) (< n 500)) (Thread/sleep 10) (recur (inc n))))
+           (.start background)
+           (Thread/sleep 100)
+           (expect (= #{Thread$State/WAITING}
+                      (set (repeatedly 20 #(do (Thread/sleep 5) (.getState background))))))
+           (finally (deliver release true)
+                    (.join holder 5000)
+                    (.join foreground 5000)
+                    (.join background 5000)))
+      (expect (= [:foreground :background] @order)))))
+
+(defdescribe
   project-admission-retry-test
   (it "keeps project admission usable and retries failed packages on reload"
       ;; Regression: package preparation aborted startup, doctor and project admission.
