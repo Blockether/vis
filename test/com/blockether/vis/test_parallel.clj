@@ -33,7 +33,7 @@
 
 (def ^:private worker-properties
   "The path properties of the `:test` alias that each worker gets for itself."
-  ["vis.drafts.dir" "vis.db.path" "vis.image-descriptions.dir" "vis.logs.dir"])
+  ["vis.drafts.dir" "vis.db.path" "vis.image-descriptions.dir" "vis.logs.dir" "vis.sandbox.dir"])
 
 ;;; Worker
 
@@ -119,7 +119,8 @@
         {"vis.drafts.dir" (io/file dir "drafts")
          "vis.db.path" (io/file dir "vis-test.mdb")
          "vis.image-descriptions.dir" (io/file dir "image-descriptions")
-         "vis.logs.dir" (io/file dir "logs")}
+         "vis.logs.dir" (io/file dir "logs")
+         "vis.sandbox.dir" (io/file dir "sandbox")}
 
         inherited
         (remove (fn [^String arg]

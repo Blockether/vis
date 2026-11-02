@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Provider: an overload (HTTP 529) that arrives after the model starts to think is sent again on the same provider. The turn no longer fails with "Provider gateway unavailable". Svar is pinned at 0.7.220.
+- Sandbox: a killed process no longer leaves a partial Python session snapshot. Vis replaces the snapshot and its spill files in one atomic step, as owner-only (600) files.
+- Sandbox: when the saved values of a Python session are larger than the snapshot budget, the newest values are kept first. Before, names early in alphabetical order took the budget, so a restart could lose the newest values. The Python runtime is pinned at `dd35c87`.
+- Tests: the test suite writes its sandbox snapshots under `target/`, not into `~/.vis/sandbox`.
 
 ## [v0.4.13] - 2026-11-02
 

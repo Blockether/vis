@@ -194,12 +194,13 @@ def snapshot(namespace, limit, total, base=None):
     """The runtime snapshot text and the values the host can spill.
 
     A candidate is a `bytes` or `str` global that the snapshot did not save. One
-    candidate holds at most `limit` bytes, and all of them at most `total`.
+    candidate holds at most `limit` bytes, and all of them at most `total`. The
+    candidates fill `total` in the snapshot's order, which puts the newest first.
     """
     text = namespace["__vis_defs_snapshot__"]()
     spill = []
     room = total
-    for name in sorted(_unsaved(text) if isinstance(text, str) else {}):
+    for name in _unsaved(text) if isinstance(text, str) else {}:
         value = namespace.get(name)
         kind = KINDS.get(type(value))
         if kind is None:

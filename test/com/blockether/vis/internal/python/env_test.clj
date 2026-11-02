@@ -432,6 +432,60 @@
           (expect (not (.exists spill)))
           (finally (ep/delete-session-defs! sid)))))))
 
+;; Snapshot and spill files hold session values, for example a token in a variable.
+;; A plain `spit` wrote them readable by every local user (mode 644).
+(defdescribe session-defs-private-files-test
+             (it "writes the snapshot, the spill index and the spill files owner-only"
+                 (let [sid
+                       (str "vis-test-defs-private-" (random-uuid))
+
+                       spill
+                       (io/file (paths/sandbox-spill-dir sid))
+
+                       mode
+                       (fn [^java.io.File f]
+                         (java.nio.file.attribute.PosixFilePermissions/toString
+                           (java.nio.file.Files/getPosixFilePermissions
+                             (.toPath f)
+                             (make-array java.nio.file.LinkOption 0))))]
+
+                   (try (tpc/with-own [ctx {} nil {:worker? false}]
+                                      (let [made
+                                            (ep/run-python-block
+                                              ctx
+                                              "token = 'secret'\nblob = bytes(range(256)) * 8192")]
+                                        (expect (nil? (:error made)) (str (:error made))))
+                                      (expect (some? (ep/persist-session-defs! ctx sid))))
+                        (let [files (cons (io/file (paths/sandbox-defs-file sid))
+                                          (filter #(.isFile ^java.io.File %) (file-seq spill)))]
+                          ;; The snapshot, `index.json` and the spill file of `blob`.
+                          (expect (= 3 (count files)) (str (vec files)))
+                          (doseq [f files]
+                            (expect (= "rw-------" (mode f)) (str f)))
+                          (expect (= "rwx------" (mode spill))))
+                        (finally (ep/delete-session-defs! sid))))))
+
+;; Session 19081dce lost its newest results to older values whose names sort first.
+;; The spill files share one cap, so they keep the newest large values first too.
+(defdescribe
+  session-defs-spill-keeps-the-newest-test
+  (it "fills the spill cap with the newest large values first"
+      (tpc/with-own
+        [ctx {} nil {:worker? false}]
+        (let [spilled (fn []
+                        (mapv :name
+                              (:spill (#'ep/guest-value
+                                       ctx
+                                       (str "__import__('vis_snapshot')"
+                                            ".snapshot(globals(), 33554432, 4500000)")))))]
+          ;; Each value is over the 1 MiB limit, and the cap holds two.
+          (expect (nil? (:error (ep/run-python-block ctx
+                                                     "a_1, a_2 = bytes(2000000), bytes(2000000)"))))
+          ;; The host takes a snapshot after each block.
+          (spilled)
+          (expect (nil? (:error (ep/run-python-block ctx "z_1 = bytes(2000000)"))))
+          (expect (= ["z_1" "a_1"] (spilled)))))))
+
 ;; #317: an extension result is a record whose class exists for that result alone.
 ;; It comes back after a restart, with the runtime types inside it. A small result
 ;; keeps its type too, because a literal names only the base type.

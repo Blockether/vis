@@ -275,11 +275,13 @@
        (sort-by #(.getName ^File %) #(compare %2 %1))))
 
 (defn sandbox-defs-dir
-  "Directory for persisted Python sandbox helper definitions — `~/.vis/sandbox`.
-   Its own subdir (not `~/.vis`) for the same reason as `logs-dir`: nothing here
-   needs to sit beside the session DB or the gateway token."
+  "Directory for persisted Python sandbox helper definitions: the `vis.sandbox.dir`
+   system property, else `~/.vis/sandbox`. Its own subdir (not `~/.vis`) for the
+   same reason as `logs-dir`: nothing here needs to sit beside the session DB or
+   the gateway token. The `:test` alias points it at `target/`."
   ^String []
-  (str (System/getProperty "user.home") "/.vis/sandbox"))
+  (or (not-empty (System/getProperty "vis.sandbox.dir"))
+      (str (System/getProperty "user.home") "/.vis/sandbox")))
 
 (defn sandbox-defs-file
   "File holding ONE session's persisted sandbox helper definitions —
@@ -308,12 +310,16 @@
   (Files/createDirectories (.toPath (File. (str dir))) (owner-only "rwx------")))
 
 (defn spit-private!
-  "Write `content` to `path` atomically as an owner-only (600) file. This is the one
-   writer for files that hold a secret. A failure keeps the previous file and leaves
-   no temporary file. A symbolic link path writes its target. Missing parent
-   directories are created owner-only. A filesystem without atomic moves gets a
-   plain replace, which is not atomic."
-  [path ^String content]
+  "Write `content`, a string or a byte array, to `path` atomically as an owner-only
+   (600) file. This is the one writer for files that hold a secret. A failure keeps
+   the previous file and leaves no temporary file. A symbolic link path writes its
+   target. Missing parent directories are created owner-only. A filesystem without
+   atomic moves gets a plain replace, which is not atomic.
+
+   The data goes to the disk before the move, so the file also survives an OS crash
+   or a power loss. `:fsync? false` skips that step for a file that changes often:
+   the file then survives a killed process, but not always an OS crash."
+  [path content & {:keys [fsync?] :or {fsync? true}}]
   (let [^Path given
         (.toPath (File. (str path)))
 
@@ -330,9 +336,11 @@
     (try
       (Files/createFile tmp (owner-only "rw-------"))
       (with-open [ch (FileChannel/open tmp (into-array OpenOption [StandardOpenOption/WRITE]))]
-        (let [buf (ByteBuffer/wrap (.getBytes content StandardCharsets/UTF_8))]
+        (let [buf (ByteBuffer/wrap (if (bytes? content)
+                                     ^bytes content
+                                     (.getBytes ^String content StandardCharsets/UTF_8)))]
           (while (.hasRemaining buf) (.write ch buf)))
-        (.force ch true))
+        (when fsync? (.force ch true)))
       (try (Files/move tmp target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
            (catch AtomicMoveNotSupportedException e
              (tel/log!

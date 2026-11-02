@@ -2388,19 +2388,8 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                                                  "__import__('vis_snapshot').spill_data(globals(), "
                                                  (py-json-literal value-name)
                                                  ")")))]
-    (let [^bytes raw (.decode (java.util.Base64/getDecoder) ^String data)
-          staged (io/file (.getParentFile f) (str (.getName f) ".part"))]
-
-      (when (= (alength raw) (long size))
-        (io/make-parents f)
-        (with-open [out (io/output-stream staged)]
-          (.write out raw))
-        (java.nio.file.Files/move (.toPath staged)
-                                  (.toPath f)
-                                  (into-array java.nio.file.CopyOption
-                                              [java.nio.file.StandardCopyOption/ATOMIC_MOVE
-                                               java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
-        true))))
+    (let [^bytes raw (.decode (java.util.Base64/getDecoder) ^String data)]
+      (when (= (alength raw) (long size)) (paths/spit-private! f raw :fsync? false) true))))
 
 (defn- sync-spill!
   "Keep `session-id`'s spill files in step with `items`, the spill candidates of
@@ -2429,7 +2418,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
                          (.delete f))
           (= new old) nil
           :else (let [kept (into #{"index.json"} (map #(str (get % "digest") ".bin")) (vals new))]
-                  (spit (io/file dir "index.json") (util/json-str new))
+                  (paths/spit-private! (io/file dir "index.json") (util/json-str new) :fsync? false)
                   (doseq [^java.io.File f (.listFiles dir)]
                     (when-not (contains? kept (.getName f)) (.delete f)))))
     nil))
@@ -2486,10 +2475,11 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    gateway restart. Without this file every helper and variable the session
    built is gone while the transcript still shows it, so the next call is a
    NameError against names the model can still read. Large text and bytes values
-   that the snapshot budget leaves out go to spill files ([[sync-spill!]]). Best
-   effort; answers the file when it wrote one. A disposed session is skipped: a
-   call under its name would reach a fresh, empty namespace, and that empty
-   snapshot would erase the saved state."
+   that the snapshot budget leaves out go to spill files ([[sync-spill!]]). Each
+   file is replaced atomically and owner-only, so a killed process keeps the last
+   whole snapshot. Best effort; answers the file when it wrote one. A disposed
+   session is skipped: a call under its name would reach a fresh, empty
+   namespace, and that empty snapshot would erase the saved state."
   [session session-id]
   (when (and session session-id (not (contains? @disposed-sessions session)))
     (try
@@ -2532,7 +2522,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
           (> (count (str src)) (long session-defs-max-bytes)) nil
           :else (let [changed? (not= (str src) (:text held))]
                   (sync-spill! session session-id (:spill snap))
-                  (when changed? (io/make-parents f) (spit f (str src)))
+                  (when changed? (paths/spit-private! f (str src) :fsync? false))
                   ;; Keep the guest's id even when the text did not change.
                   (swap! last-session-defs assoc session-id {:text (str src) :id (:id snap)})
                   (when changed? f))))
