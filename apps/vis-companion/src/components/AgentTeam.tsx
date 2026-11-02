@@ -157,6 +157,11 @@ export function teamTime(agents: readonly Subagent[], now: number): number | und
   return ends.length ? Math.max(0, Math.max(...ends) - start) : undefined;
 }
 
+// A hairline between the parts of a team line.
+function Divider() {
+  return <span aria-hidden="true" className="h-3 w-px shrink-0 bg-dialog-edge" data-team-divider />;
+}
+
 function Counts({ counts, id }: { counts: readonly TeamCount[]; id?: string }) {
   return (
     <span id={id} className="flex flex-wrap gap-x-3">
@@ -168,7 +173,7 @@ function Counts({ counts, id }: { counts: readonly TeamCount[]; id?: string }) {
 }
 
 /**
- * A team on one line: its time, then its counts by status: `TEAM  3m 20s  1 RUNNING  2 DONE`.
+ * A team on one line: its time, then its counts by status: `TEAM | 3m 20s  1 RUNNING  2 DONE`.
  * `action` stands right before the counts. `labelId` names the word, the time and the counts
  * `${labelId}-team`, `${labelId}-time` and `${labelId}-counts`, so a control can take them as its name.
  */
@@ -176,15 +181,17 @@ export function TeamLine({ agents, action, labelId }: { agents: readonly Subagen
   const now = useNow(agents.some(isLive));
   const time = teamTime(agents, now);
   return (
-    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4" data-team-line>
+    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 sm:min-h-5" data-team-line>
       <span id={labelId && `${labelId}-team`} className="font-bold uppercase text-white">team</span>
+      {time !== undefined && <Divider />}
       {time !== undefined && (
         <span id={labelId && `${labelId}-time`} className="whitespace-nowrap text-dialog-hint tabular-nums" data-team-time>
           {formatAgentTime(time)}
         </span>
       )}
-      <span className="flex flex-wrap items-center gap-x-4 sm:ml-auto">
+      <span className="flex flex-wrap items-center gap-x-3 sm:ml-auto">
         {action}
+        {action && <Divider />}
         <Counts counts={teamCounts(agents)} id={labelId && `${labelId}-counts`} />
       </span>
     </span>
@@ -196,11 +203,10 @@ export function hasTimeline(agents: readonly Subagent[]): boolean {
   return agents.length > 1 && !!teamTime(agents, Date.now());
 }
 
-/** The primary control that swaps the notes of a team for its timeline, and back. */
+/** The control that swaps the notes of a team for its timeline, and back. */
 export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
   return (
-    // The negative margin keeps the 20px control inside the 16px text line, so the line keeps its height.
-    <Button density="inline" aria-pressed={isOn} onClick={onToggle} className="pointer-events-auto -my-0.5">
+    <Button variant="secondary" density="inline" aria-pressed={isOn} onClick={onToggle} className="pointer-events-auto">
       {isOn ? 'Close timeline' : 'Open timeline'}
     </Button>
   );
@@ -462,7 +468,7 @@ export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline,
           className="my-3 border border-dialog-edge font-mono text-meta text-white sm:text-ui"
           data-transcript-part
         >
-          <div className="flex border-b border-dialog-edge bg-panel px-3 py-1">
+          <div className="flex border-b border-dialog-edge bg-panel px-3 py-1 sm:py-1.5">
             <TeamLine agents={rows} action={toggle} />
           </div>
           <div className="px-3">{table}</div>
