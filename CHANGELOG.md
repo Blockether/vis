@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.4.13] - 2026-11-02
+
+### Changed
+- Agent team: the session row and the session detail carry the team summary of a leader. The Companion and the TUI show a running team at once, not after the next 3-5 s poll. The Companion keeps the last team of each session between session switches.
+- Agent team: the gateway sends `session.team_updated` on the leader stream when a child starts, ends or is cancelled.
+- Python: the block time includes the checkpoint after each block. Linux native logs keep their timing data when an RSS read fails.
+
+### Fixed
+- Subagent sessions: the TUI and the Companion show no prompt. The Companion shows one header with the path from the leader, and it renders the task as Markdown.
+- Release: the dependency audit lists the current Python runtime pin.
+
 ## [v0.4.12] - 2026-11-01
 
 ### Fixed
