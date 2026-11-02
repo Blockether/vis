@@ -117,16 +117,9 @@ describe('composer response controls', () => {
     );
   });
 
-  it('shows the thinking summary only for Claude adaptive thinking and toggles it', async () => {
-    const user = userEvent.setup();
-    const reasoning = toggle('reasoning_level', 'Reasoning effort', 'balanced', [
-      'low',
-      'balanced',
-      'deep',
-    ]);
+  describe('thinking summary switch', () => {
     const thinking = { id: 'thinking_summary', label: 'Thinking summary', type: 'boolean', enabled: true };
-    const setSetting = vi.fn(() => Promise.resolve({ ...thinking, enabled: false }));
-    const fleet = [
+    const claudeFleet = [
       routerProvider('anthropic', {
         models: ['claude-opus-5'],
         default_model: 'claude-opus-5',
@@ -140,35 +133,89 @@ describe('composer response controls', () => {
         ],
       }),
     ];
-    const setting = (id: string) =>
-      id === 'reasoning_level' ? reasoning : id === 'thinking_summary' ? thinking : null;
-    renderSessionScreen({
-      client: {
-        cachedDefaultModel: () => ({ provider: 'anthropic', model: 'claude-opus-5' }),
-        defaultModel: () => Promise.resolve({ provider: 'anthropic', model: 'claude-opus-5' }),
-        cachedRouter: () => fleet,
-        router: () => Promise.resolve(fleet),
-        cachedSetting: setting,
-        setting: (id: string) => Promise.resolve(setting(id)),
-        setSetting,
-      },
+
+    function renderWithThinking(setSetting: unknown) {
+      const reasoning = toggle('reasoning_level', 'Reasoning effort', 'balanced', ['low', 'balanced', 'deep']);
+      const setting = (id: string) =>
+        id === 'reasoning_level' ? reasoning : id === 'thinking_summary' ? thinking : null;
+      const settingReads = vi.fn((id: string) => Promise.resolve(setting(id)));
+      renderSessionScreen({
+        client: {
+          cachedDefaultModel: () => ({ provider: 'anthropic', model: 'claude-opus-5' }),
+          defaultModel: () => Promise.resolve({ provider: 'anthropic', model: 'claude-opus-5' }),
+          cachedRouter: () => claudeFleet,
+          router: () => Promise.resolve(claudeFleet),
+          cachedSetting: setting,
+          setting: settingReads,
+          setSetting,
+        },
+      });
+      return settingReads;
+    }
+
+    it('shows only for Claude adaptive thinking and writes the exact next value', async () => {
+      const user = userEvent.setup();
+      const setSetting = vi.fn(() => Promise.resolve({ ...thinking, enabled: false }));
+      renderWithThinking(setSetting);
+
+      const thinkingButton = await screen.findByRole('button', { name: /thinking summary — on/i });
+      const reasoningButton = screen.getByRole('button', { name: /reasoning effort — balanced/i });
+      expect(thinkingButton).toHaveTextContent('summarized');
+      expect(
+        reasoningButton.compareDocumentPosition(thinkingButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      await user.click(thinkingButton);
+
+      expect(setSetting).toHaveBeenCalledWith('thinking_summary', 'value', false, {
+        scope: 'session',
+        target_id: 's1',
+      });
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /thinking summary — off/i })).toHaveTextContent('omitted'),
+      );
     });
 
-    const thinkingButton = await screen.findByRole('button', { name: /thinking summary — on/i });
-    const reasoningButton = screen.getByRole('button', { name: /reasoning effort — balanced/i });
-    expect(thinkingButton).toHaveTextContent('summarized');
-    expect(
-      reasoningButton.compareDocumentPosition(thinkingButton) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    await user.click(thinkingButton);
+    // Regression, user report: switching summarized and omitted was very slow. The word
+    // waited for the gateway's answer.
+    it('shows the new state before the gateway answers, and a failed write puts it back', async () => {
+      const user = userEvent.setup();
+      let fail: (reason: Error) => void = () => {};
+      const setSetting = vi.fn(
+        () =>
+          new Promise((_resolve, reject) => {
+            fail = reject;
+          }),
+      );
+      renderWithThinking(setSetting);
 
-    expect(setSetting).toHaveBeenCalledWith('thinking_summary', 'toggle', undefined, {
-      scope: 'session',
-      target_id: 's1',
+      await user.click(await screen.findByRole('button', { name: /thinking summary — on/i }));
+      expect(screen.getByRole('button', { name: /thinking summary — off/i })).toHaveTextContent('omitted');
+
+      await act(async () => fail(new Error('Gateway refused the setting')));
+      expect(screen.getByRole('button', { name: /thinking summary — on/i })).toHaveTextContent('summarized');
+      expect(await screen.findByText('Gateway refused the setting')).toBeInTheDocument();
     });
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /thinking summary — off/i })).toHaveTextContent('omitted'),
-    );
+
+    // Regression, user report: switching summarized and omitted was very slow. Each tap
+    // also read every response control again, and each answer painted the whole screen.
+    it('reads no control again after its own switch write', async () => {
+      const user = userEvent.setup();
+      const off = { ...thinking, enabled: false };
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(JSON.stringify(off), { headers: { 'Content-Type': 'application/json' } })),
+      );
+      const gateway = new GatewayClient({ url: 'http://gateway.example.com' });
+      const settingReads = renderWithThinking(gateway.setSetting.bind(gateway));
+      await user.click(await screen.findByRole('button', { name: /thinking summary — on/i }));
+      await screen.findByRole('button', { name: /thinking summary — off/i });
+      settingReads.mockClear();
+
+      await user.click(screen.getByRole('button', { name: /thinking summary — off/i }));
+      await act(async () => {});
+
+      expect(settingReads).not.toHaveBeenCalled();
+    });
   });
 
   // Simplified modes step with one tap. With them off, the chip lists the exact levels,

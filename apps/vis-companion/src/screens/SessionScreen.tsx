@@ -1481,11 +1481,14 @@ export function SessionScreen({
   const [codexFast, setCodexFast] = useState<Toggle | null>(() =>
     client.cachedSetting('codex_fast_mode', settingsTarget),
   );
-  const [codexFastBusy, setCodexFastBusy] = useState(false);
   const [thinkingSummary, setThinkingSummary] = useState<Toggle | null>(() =>
     client.cachedSetting('thinking_summary', settingsTarget),
   );
-  const [thinkingSummaryBusy, setThinkingSummaryBusy] = useState(false);
+  // Switch writes in flight, by setting id. The screen applies their answers itself, so
+  // their change notice does not read every control again.
+  const ownSwitchWrites = useRef(new Map<string, number>());
+  // The latest tap of each switch. Only its answer replaces what the switch shows.
+  const switchTaps = useRef(new Map<string, number>());
   // The level the user just asked for, shown until the gateway confirms it.
   const [pendingLevel, setPendingLevel] = useState<string | null>(null);
 
@@ -1550,7 +1553,8 @@ export function SessionScreen({
     // Settings can change a response control while this session is open, for example
     // when it turns off simplified thinking modes. Read the controls again at once.
     const stopSettings = onSettingChange(client.base, (updated) => {
-      if (RESPONSE_CONTROL_SETTINGS.has(updated.id)) refresh();
+      if (RESPONSE_CONTROL_SETTINGS.has(updated.id) && !ownSwitchWrites.current.get(updated.id))
+        refresh();
     });
     return () => {
       stopWake();
@@ -1559,27 +1563,29 @@ export function SessionScreen({
     };
   }, [client, controlsReconnects, routerOpen, sid, settingsTarget, settingsOpen]);
 
-  async function toggleCodexFast() {
-    if (!codexFast || codexFastBusy) return;
-    setCodexFastBusy(true);
+  // Optimistic: the switch shows the new state at once. The write names the exact value,
+  // so a repeated tap ends in the state that the switch shows.
+  async function flipSwitch(
+    setting: Toggle,
+    shown: boolean,
+    receive: (toggle: Toggle) => void,
+  ) {
+    const { id } = setting;
+    const tap = (switchTaps.current.get(id) ?? 0) + 1;
+    switchTaps.current.set(id, tap);
+    receive({ ...setting, enabled: !shown });
+    const writes = ownSwitchWrites.current;
+    writes.set(id, (writes.get(id) ?? 0) + 1);
     try {
-      setCodexFast(await client.setSetting(codexFast.id, 'toggle', undefined, settingsTarget));
+      const saved = await client.setSetting(id, 'value', !shown, settingsTarget);
+      if (switchTaps.current.get(id) === tap) receive(saved);
     } catch (e) {
+      if (switchTaps.current.get(id) === tap) receive(setting);
       setComposerNotice((e as Error).message);
     } finally {
-      setCodexFastBusy(false);
-    }
-  }
-
-  async function toggleThinkingSummary() {
-    if (!thinkingSummary || thinkingSummaryBusy) return;
-    setThinkingSummaryBusy(true);
-    try {
-      setThinkingSummary(await client.setSetting(thinkingSummary.id, 'toggle', undefined, settingsTarget));
-    } catch (e) {
-      setComposerNotice((e as Error).message);
-    } finally {
-      setThinkingSummaryBusy(false);
+      const left = (writes.get(id) ?? 1) - 1;
+      if (left > 0) writes.set(id, left);
+      else writes.delete(id);
     }
   }
 
@@ -4618,15 +4624,21 @@ export function SessionScreen({
     thinking: thinkingSummaryAvailable
       ? {
           enabled: thinkingSummaryAvailable.enabled ?? true,
-          busy: thinkingSummaryBusy,
-          toggle: toggleThinkingSummary,
+          busy: false,
+          toggle: () =>
+            flipSwitch(
+              thinkingSummaryAvailable,
+              thinkingSummaryAvailable.enabled ?? true,
+              setThinkingSummary,
+            ),
         }
       : undefined,
     fast: codexFastAvailable
       ? {
           enabled: codexFastAvailable.enabled ?? false,
-          busy: codexFastBusy,
-          toggle: toggleCodexFast,
+          busy: false,
+          toggle: () =>
+            flipSwitch(codexFastAvailable, codexFastAvailable.enabled ?? false, setCodexFast),
         }
       : undefined,
   };
