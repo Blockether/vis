@@ -531,8 +531,8 @@ export function clockTime(at: number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-// The time of the current timeline row, in the accent ink.
-const CURRENT_TIME = 'text-accent';
+// The time of the current timeline row, in the accent ink. `text-accent` fails 4.5:1 on light paper.
+const CURRENT_TIME = 'text-accent-ink';
 
 // The name of a part of the sheet. It is one step smaller than the text that it names.
 const PART_NAME = 'mb-1 text-meta text-dialog-hint sm:text-ui';
