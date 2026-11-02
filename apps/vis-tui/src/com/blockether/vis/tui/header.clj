@@ -25,6 +25,7 @@
    render version for any change, so a `(notify! ...)` from anywhere
    nudges this band to repaint immediately."
   (:require [com.blockether.vis.tui.agent-team :as agent-team]
+            [com.blockether.vis.tui.app-surfaces :as app-surfaces]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -43,11 +44,25 @@
   "Rows reserved by the header: top rule, content row, and bottom rule."
   3)
 
+(defn- app-chip
+  "The header chip of `n` apps, or nil without one. A wide header names the chord."
+  [kind n word verb compact?]
+  (when (pos? (long n))
+    [kind (str " " word " " n (when-not compact? (str " (" (keymap/label-for verb) ")")) " ")]))
+
 (defn- header-action-chips
-  [compact?]
-  (cond-> []
-    (not compact?)
-    (conj [:header-help (str " help (" (keymap/label-for :toggle-help) ") ")])))
+  ([compact?] (header-action-chips compact? nil))
+  ([compact? {:keys [session-apps global-apps]}]
+   (filterv some?
+     [(app-chip :header-session-apps (or session-apps 0) "apps" :session-apps compact?)
+      (app-chip :header-global-apps (or global-apps 0) "global" :global-apps compact?)
+      (when-not compact? [:header-help (str " help (" (keymap/label-for :toggle-help) ") ")])])))
+
+(defn app-counts
+  "The app counts that the header chips show for `db`."
+  [db]
+  {:session-apps (count (app-surfaces/session-apps (:app-views db)))
+   :global-apps (count (app-surfaces/global-apps (:global-apps db)))})
 
 (defn header-actions-component
   "Build the real interactive GUI2 grid used by the header action cluster. With
@@ -60,8 +75,10 @@
   ([root-graphics register? on-action]
    (header-actions-component root-graphics register? on-action false))
   ([root-graphics register? on-action compact?]
+   (header-actions-component root-graphics register? on-action compact? nil))
+  ([root-graphics register? on-action compact? apps]
    (let [chips
-         (header-action-chips compact?)
+         (header-action-chips compact? apps)
 
          gap
          1
@@ -286,7 +303,11 @@
         ;; that positions and paints the action components. Its right margin is
         ;; the one-cell separation from the id badge.
         actions-component
-        (header-actions-component g *register-click-regions?* nil (<= (long cols) 120))
+        (header-actions-component g
+                                  *register-click-regions?*
+                                  nil
+                                  (<= (long cols) 120)
+                                  (app-counts db))
 
         cluster-w
         (long (.getColumns (.getPreferredSize ^Panel actions-component)))

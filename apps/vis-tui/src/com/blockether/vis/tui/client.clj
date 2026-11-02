@@ -1476,15 +1476,24 @@
   [sid view-id]
   (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/views/live/" (enc view-id))) "view"))
 
-(defn app-action!
-  "Send one app action (`draft`, `submit` or `change`) to view `view-id` of `sid`.
-   Never throws: answers the parsed outcome with `:http-status`, or
-   `{:reason \"offline\"}` when the gateway is out of reach. A save or a send
-   counts only when `:is-accepted` is true."
-  [sid view-id action]
+(defn global-apps
+  "The global apps, oldest first, in canonical wire shape. A closed app stays listed.
+   The list is empty while the person turns global apps off."
+  []
+  (vec (get (send-json! "GET" "/v1/apps") "views")))
+
+(defn global-app
+  "The current state of global app `view-id`, also when it is closed, in canonical
+   wire shape. A client reads it again after a gap in patch numbers."
+  [view-id]
+  (get (send-json! "GET" (str "/v1/apps/" (enc view-id))) "view"))
+
+(defn- post-app-action!
+  "POST app `action` to `path`. Never throws; see [[app-action!]]."
+  [path sid view-id action]
   (try (let [response
              (request! :post
-                       (str "/v1/sessions/" (enc sid) "/views/" (enc view-id) "/actions")
+                       path
                        {:body (update action
                                       :action
                                       #(some-> %
@@ -1511,6 +1520,22 @@
                     :data {:session-id sid :view-id view-id :action (:action action)}
                     :msg "App action transport failed"})
          {:is-accepted false :reason "offline" :message (ex-message e)})))
+
+(defn app-action!
+  "Send one app action (`draft`, `submit` or `change`) to view `view-id` of `sid`.
+   Never throws: answers the parsed outcome with `:http-status`, or
+   `{:reason \"offline\"}` when the gateway is out of reach. A save or a send
+   counts only when `:is-accepted` is true."
+  [sid view-id action]
+  (post-app-action! (str "/v1/sessions/" (enc sid) "/views/" (enc view-id) "/actions")
+                    sid
+                    view-id
+                    action))
+
+(defn global-app-action!
+  "Send one app action to global app `view-id`. It answers as [[app-action!]]."
+  [view-id action]
+  (post-app-action! (str "/v1/apps/" (enc view-id) "/actions") nil view-id action))
 
 (defn live-view-log
   "One page of a retained log, searched literally without case sensitivity.
@@ -2346,6 +2371,8 @@
                              (when-not (= 200 (:status response))
                                (throw (ex-info (str "gateway fleet SSE HTTP " (:status response))
                                                {:http-status (:status response)})))
+                             ;; The fleet keeps no replay: a watcher reads its lists again.
+                             (try (sink {"type" "gateway.connected"}) (catch Throwable _ nil))
                              (with-open [^InputStream in (:body response)]
                                (reset! stream* in)
                                (read-sse-frames! in
@@ -2595,6 +2622,12 @@
 (def gateway-live-view-state live-view-state)
 
 (def gateway-app-action! app-action!)
+
+(def gateway-global-apps global-apps)
+
+(def gateway-global-app global-app)
+
+(def gateway-global-app-action! global-app-action!)
 
 (def gateway-mark-session-read! mark-session-read!)
 

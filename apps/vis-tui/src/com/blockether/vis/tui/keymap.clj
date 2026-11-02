@@ -37,6 +37,7 @@
    defined once and stays in sync."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.tui.app-surfaces :as app-surfaces]
             [com.blockether.vis.tui.header-model :as vh])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -595,7 +596,9 @@
    marks it as `:has-images?`), `:image-viewer` also needs a graphical terminal (the
    screen marks it as `:graphical-terminal?`), `:has-panel` needs a panel view,
    `:has-group` needs a current session in a group, `:has-agents` needs a subagent (the
-   screen marks it as `:has-agents?`) and `:child-session` needs a subagent session.
+   screen marks it as `:has-agents?`), `:child-session` needs a subagent session,
+   `:has-apps` needs an app that the session apps picker lists and `:has-global-apps`
+   needs a global app that the global apps picker lists.
    Resolving a chord does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
@@ -625,6 +628,12 @@
 
     :child-session
     (subagent-session? db)
+
+    :has-apps
+    (boolean (seq (app-surfaces/session-apps (:app-views db))))
+
+    :has-global-apps
+    (boolean (seq (app-surfaces/global-apps (:global-apps db))))
 
     true))
 

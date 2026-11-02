@@ -274,6 +274,22 @@
           "x-vis-show-when": "has-panel"
         },
         {
+          "const": "session-apps",
+          "title": "session apps",
+          "description": "Pick an app of this session and open it",
+          "x-vis-key": "o",
+          "x-vis-group": "view",
+          "x-vis-show-when": "has-apps"
+        },
+        {
+          "const": "global-apps",
+          "title": "global apps",
+          "description": "Pick an app that runs outside the sessions and open it",
+          "x-vis-key": "O",
+          "x-vis-group": "view",
+          "x-vis-show-when": "has-global-apps"
+        },
+        {
           "const": "switch-project",
           "title": "project sidebar",
           "description": "Show or hide the project sidebar",
@@ -388,6 +404,14 @@
         {
           "const": "has-panel",
           "description": "The session has a side panel view."
+        },
+        {
+          "const": "has-apps",
+          "description": "The session has an app that the session apps list shows."
+        },
+        {
+          "const": "has-global-apps",
+          "description": "At least one global app is open."
         },
         {
           "const": "image-viewer",

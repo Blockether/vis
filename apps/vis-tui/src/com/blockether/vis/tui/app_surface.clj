@@ -10,10 +10,13 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.tui.app-model :as model]
+            [com.blockether.vis.tui.app-surfaces :as app-surfaces]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.dialogs :as dlg]
+            [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.live-view :as lv]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.state :as state]
@@ -679,7 +682,7 @@
           (conj [(hidden-key view "s" "s") "send"])
 
           true
-          (conj [(hidden-key view "r" "r") "reload"] ["Esc" "close"]))]
+          (conj [(hidden-key view "r" "r") "reload"] ["Esc" (:close-label state "close")]))]
 
     (cond (:editor state) [["Ctrl+S" "save"] ["Esc" "cancel"]]
           (:prefix state) [["C-x" "next key is a surface key"] ["s" "send"] ["r" "reload"]
@@ -714,16 +717,10 @@
   ^long [^long rows-count]
   (max 8 (- rows-count (if (< rows-count 36) 8 12))))
 
-(defn measure
-  "The surface geometry for `state` in a `cols`x`rows` terminal."
-  [state cols rows-count view]
-  (let [content-w
-        (dlg/default-content-width cols)
-
-        bounds
-        (in-app-region #(dlg/dialog-bounds cols rows-count content-w (app-content-h rows-count)))
-
-        {:keys [content-top content-h hint-row]}
+(defn- geom-in
+  "The surface geometry for `state` in the box `bounds`."
+  [state cols rows-count content-w bounds view]
+  (let [{:keys [content-top content-h hint-row]}
         (dlg/dialog-layout bounds)
 
         width
@@ -750,6 +747,47 @@
      :editor-rows editor-rows
      :legend legend
      :list-h (max 1 (- (long content-h) 1 (if legend 1 0) editor-rows))}))
+
+(defn measure
+  "The surface geometry for `state` in a `cols`x`rows` terminal."
+  [state cols rows-count view]
+  (let [content-w (dlg/default-content-width cols)]
+    (geom-in state
+             cols
+             rows-count
+             content-w
+             (in-app-region
+               #(dlg/dialog-bounds cols rows-count content-w (app-content-h rows-count)))
+             view)))
+
+(defn pane-measure
+  "The surface geometry for `state` in a side pane: the box at `left` and `top`,
+   `width` columns wide and `height` rows high."
+  [state left top width height view]
+  (let [left
+        (long left)
+
+        top
+        (long top)
+
+        width
+        (long width)
+
+        height
+        (long height)]
+
+    (assoc (geom-in state
+                    (+ left width)
+                    (+ top height)
+                    width
+                    {:left left
+                     :top top
+                     :right (+ left width -1)
+                     :bottom (+ top height -1)
+                     :inner-w (- width 2)
+                     :inner-h (- height 2)}
+                    view)
+      :pane? true)))
 
 (defn reconcile
   "Keep the cursor on a stop and in view."
@@ -785,10 +823,51 @@
       :cell cell
       :scroll scroll)))
 
+(def ^:private pane-close-label " ✕ ")
+
+(defn- paint-pane-chrome!
+  "Paint the box of a side pane in `bounds`, its title and its close control."
+  [g {:keys [left top right bottom inner-w]} view]
+  (let [left
+        (long left)
+
+        top
+        (long top)
+
+        right
+        (long right)
+
+        close-w
+        (long (p/display-width pane-close-label))
+
+        close-col
+        (- right close-w)]
+
+    (p/set-bg! g t/dialog-bg)
+    (p/fill-rect! g left top (inc (- right left)) (inc (- (long bottom) top)))
+    (p/set-colors! g t/dialog-border t/dialog-bg)
+    (p/draw-box! g left top (inc (- right left)) (inc (- (long bottom) top)))
+    (p/set-colors! g t/dialog-title-bg t/dialog-bg)
+    (p/styled g
+              [p/BOLD]
+              (p/put-str!
+                g
+                (+ left 2)
+                top
+                (str " " (p/ellipsize (title view) (max 0 (- (long inner-w) 6 close-w))) " ")))
+    (when (< (+ left 2) close-col)
+      (p/set-colors! g t/dialog-title-bg t/dialog-title-fg)
+      (p/put-str! g close-col top pane-close-label)
+      (.register interactions/hit-map
+                 {:bounds {:row top :col close-col :width close-w}
+                  :kind :app-pane-close
+                  :label "Close the app"
+                  :enabled? true}))))
+
 (defn- paint!
   [g state
    {:keys [cols rows-count content-w bounds content-top content-h hint-row view rows list-h
-           editor-rows legend]}]
+           editor-rows legend pane?]}]
   (let [{:keys [left inner-w]}
         bounds
 
@@ -801,12 +880,14 @@
         top
         (long content-top)]
 
-    (in-app-region #(dlg/draw-dialog-chrome! g
-                                             cols
-                                             rows-count
-                                             (title view)
-                                             content-w
-                                             (app-content-h rows-count)))
+    (if pane?
+      (paint-pane-chrome! g bounds view)
+      (in-app-region #(dlg/draw-dialog-chrome! g
+                                               cols
+                                               rows-count
+                                               (title view)
+                                               content-w
+                                               (app-content-h rows-count))))
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) top inner-w content-h)
     (if (empty? rows)
@@ -873,7 +954,10 @@
           (and (:is-closed a) (not (:is-closed b))) a
           :else b)))
 
-(defn- held-view [view-id] (get-in @state/app-db [:app-views view-id]))
+(defn- held-view
+  "The held copy of app `view-id`: a session app, or a global app without `session-id`."
+  [session-id view-id]
+  (get-in @state/app-db [(if session-id :app-views :global-apps) view-id]))
 
 (defn- read-view!
   "Read the current state of the app and give it to the session state."
@@ -882,10 +966,12 @@
     (vis/worker-future
       "vis-app-read"
       (fn []
-        (try (when-let [view (view-model/live-view<-wire (vis/gateway-live-view-state session-id
-                                                                                      view-id))]
+        (try (when-let [view (view-model/live-view<-wire (if session-id
+                                                           (vis/gateway-live-view-state session-id
+                                                                                        view-id)
+                                                           (vis/gateway-global-app view-id)))]
                (swap! (:view box) newer view)
-               (state/dispatch [:app-view-loaded view]))
+               (state/dispatch [(if session-id :app-view-loaded :global-app-open) view]))
              (catch Throwable e
                (tel/log! {:level :warn :id ::app-read-failed :error e :data {:view-id view-id}}))
              (finally (reset! (:reading box) false)))))))
@@ -895,8 +981,11 @@
   [box session-id view-id action on-outcome]
   (vis/worker-future "vis-app-action"
                      (fn []
-                       (let [outcome (vis/gateway-app-action! session-id view-id action)]
+                       (let [outcome (if session-id
+                                       (vis/gateway-app-action! session-id view-id action)
+                                       (vis/gateway-global-app-action! view-id action))]
                          (swap! (:outcomes box) conj [on-outcome outcome])
+                         ((:on-change box))
                          (when (and (:is-accepted outcome)
                                     (> (long (or (:seq outcome) 0))
                                        (long (or (:seq @(:view box)) 0))))
@@ -935,15 +1024,25 @@
     st))
 
 (defn component
-  "The `dlg/run-modal!` component of the app `view-id` of `session-id`. `screen`
-   runs the value dialog of an input; without it an input is read-only."
-  [session-id view-id first-view & [screen]]
+  "The `dlg/run-modal!` component of the app `view-id` of `session-id`, or of a global
+   app without `session-id`. `screen` runs the value dialog of an input; without it an
+   input is read-only. `close-label` names what Esc does. `on-change` runs after an
+   action outcome arrives, and `modal!` runs the value dialog of an input."
+  [session-id view-id first-view & [screen close-label {:keys [on-change modal!]}]]
   (let [box
-        {:view (atom first-view) :outcomes (atom []) :reading (atom false)}
+        {:view (atom first-view)
+         :outcomes (atom [])
+         :reading (atom false)
+         :on-change (or on-change (constantly nil))}
+
+        modal!
+        (or modal!
+            (fn [f]
+              (f)))
 
         current
         (fn []
-          (newer @(:view box) (:view (held-view view-id))))
+          (newer @(:view box) (:view (held-view session-id view-id))))
 
         effects
         {:save! (fn [action editor]
@@ -973,8 +1072,8 @@
          :select! (fn [action]
                     (run-action! box session-id view-id action noticed))
          :edit! (fn [node]
-                  (if-let [{:keys [value]} (some-> screen
-                                                   (dlg/live-input-value! node))]
+                  (if-let [{:keys [value]} (when screen
+                                             (modal! #(dlg/live-input-value! screen node)))]
                     (run-action! box
                                  session-id
                                  view-id
@@ -999,9 +1098,15 @@
 
     ;; The stream keeps no app frame, so the copy it holds can be old: read the app.
     (read-view! box session-id view-id)
-    {:init (initial-state)
+    {:init (cond-> (initial-state)
+             close-label
+             (assoc :close-label close-label))
      :measure (fn [st cols rows]
                 (measure st cols rows (or (current) {:id view-id :nodes []})))
+     :measure-pane (fn [st left top width height]
+                     (when (:is-gap (held-view session-id view-id))
+                       (read-view! box session-id view-id))
+                     (pane-measure st left top width height (or (current) {:id view-id :nodes []})))
      :reconcile (fn [st geom]
                   (let [outcomes (first (reset-vals! (:outcomes box) []))]
                     (reconcile (reduce (fn [acc [f outcome]]
@@ -1013,7 +1118,7 @@
      :on-key (fn [st key geom]
                (handle-key st key geom effects))
      :read-key (fn [^TerminalScreen screen]
-                 (when (:is-gap (held-view view-id)) (read-view! box session-id view-id))
+                 (when (:is-gap (held-view session-id view-id)) (read-view! box session-id view-id))
                  (if (dlg/modal-input-pending? screen)
                    (let [key (dlg/read-modal-key! screen)]
                      (if (and key (= KeyType/PasteStart (.getKeyType ^KeyStroke key)))
@@ -1022,9 +1127,29 @@
                    ;; A moving scene paints about 60 times a second, and a key waits less.
                    (do (Thread/sleep (if (lv/scene-moving?) 12 40)) nil)))}))
 
+(defn show-app!
+  "Open app `view-id` of `session-id`, or global app `view-id` without `session-id`,
+   until the human closes it. `band` `{:left :width}` keeps the app in those screen
+   columns; without it the app uses the whole terminal width. `close-label` names
+   what Esc does."
+  [^TerminalScreen screen session-id view-id & [{:keys [band close-label]}]]
+  (let [run! #(dlg/run-modal! screen
+                              (component session-id
+                                         view-id
+                                         (:view (held-view session-id view-id))
+                                         screen
+                                         close-label))]
+    (if band
+      (binding [frame/*column-offset* (long (:left band))
+                dlg/*dialog-region* {:width (fn [cols _rows]
+                                              (app-surfaces/band-width band cols))}]
+
+        (run!))
+      (run!))))
+
 (defn show!
   "Open the app attachment `row` of `session-id` until the human closes it."
   [^TerminalScreen screen session-id row]
   (if-let [view-id (model/row-view-id row)]
-    (dlg/run-modal! screen (component session-id view-id (:view (held-view view-id)) screen))
+    (show-app! screen session-id view-id)
     (vis/notify! "This attachment names no app" :level :warn)))

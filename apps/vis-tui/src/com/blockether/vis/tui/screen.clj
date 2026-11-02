@@ -20,6 +20,7 @@
     [com.blockether.vis.tui.agent-team :as agent-team]
     [com.blockether.vis.tui.app-model :as app-model]
     [com.blockether.vis.tui.app-surface :as app-surface]
+    [com.blockether.vis.tui.app-surfaces :as app-surfaces]
     [com.blockether.vis.tui.human-input :as hi]
     [com.blockether.vis.tui.input :as input]
     [com.blockether.vis.tui.live-view :as lv]
@@ -794,13 +795,24 @@
 (defn- live-panel-layout
   "The side panel on `cols` chat columns, or nil while it is closed or has no view."
   [db cols]
-  (when (get-in db [:live-panel :open?])
-    (when-let [panes (seq (lv/panel-panes (:live-views db)))]
-      (assoc (lv/panel-geometry cols) :panes (vec panes)))))
+  (let [live-panel
+        (:live-panel db)
+
+        panes
+        (lv/panel-panes (:live-views db))]
+
+    (case (app-surfaces/panel-content live-panel (:app-views db) panes)
+      :app
+      (assoc (lv/panel-geometry cols) :app (:app live-panel))
+
+      :views
+      (assoc (lv/panel-geometry cols) :panes (vec panes))
+
+      nil)))
 
 (defn- focus-areas
   "The areas that can hold the keyboard, from left to right: `:sidebar` while the
-   project sidebar is open, `:chat`, and `:panel` while the side panel shows a view."
+   project sidebar is open, `:chat`, and `:panel` while the side panel shows a view or an app."
   [db]
   (cond-> []
     (get-in db [:project-sidebar :open?])
@@ -809,8 +821,28 @@
     true
     (conj :chat)
 
-    (and (get-in db [:live-panel :open?]) (seq (lv/panel-panes (:live-views db))))
+    (app-surfaces/panel-content (:live-panel db) (:app-views db) (lv/panel-panes (:live-views db)))
     (conj :panel)))
+
+(defonce ^:private app-messages-memo
+  ;; `[messages app-views result]` of the last `held-app-messages` call.
+  (atom nil))
+
+(defn- held-app-messages
+  "`messages` with the runs of the held app views of `db`, so a durable app row keeps
+   its surfaces and preview after its block ends. The same inputs give the same vector."
+  [messages db]
+  (let [app-views
+        (:app-views db)
+
+        [m v result]
+        @app-messages-memo]
+
+    (if (and (identical? m messages) (identical? v app-views))
+      result
+      (let [result (render/with-app-runs messages app-views)]
+        (reset! app-messages-memo [messages app-views result])
+        result))))
 
 (defn- focused-area
   "The open area that holds the keyboard: the sidebar or the side panel with the
@@ -2802,6 +2834,100 @@
                        (state/dispatch [:set-dialog-open false])))
          (finally (.unlock ^ReentrantLock draw-lock)))))
 
+(defonce ^:private app-pane
+  ;; The app in the side pane: `{:key [session-id view-id] :component c :state st :geom g}`.
+  ;; The render thread paints it; the input thread gives it keys.
+  (atom nil))
+
+(defn- app-pane-host
+  "The pane host of `app` `{:session-id :view-id}`: the same host while the pane shows
+   the same app, else a new one."
+  [^TerminalScreen screen {:keys [session-id view-id]}]
+  (let [k
+        [session-id view-id]
+
+        host
+        @app-pane]
+
+    (if (= k (:key host))
+      host
+      (let [c
+            (app-surface/component session-id
+                                   view-id
+                                   (get-in @state/app-db [:app-views view-id :view])
+                                   screen
+                                   "back to chat"
+                                   {:on-change #(state/dispatch [:bump-render-version])
+                                    :modal! with-dialog-lock})
+
+            init
+            (:init c)]
+
+        (reset! app-pane {:key k :component c :state (if (fn? init) (init) init)})))))
+
+(defn- paint-app-pane!
+  "Paint the app of the side pane into its box, and place the cursor of its editor
+   while the pane holds the keyboard."
+  [^TerminalScreen screen g db app left top width height]
+  (let [{:keys [component] :as host}
+        (app-pane-host screen app)
+
+        held
+        (:state host)
+
+        geom
+        ((:measure-pane component) held left top width height)
+
+        st
+        ((:reconcile component) held geom)
+
+        cursor
+        ((:paint component) g st geom)]
+
+    ;; A key that arrived during this paint keeps its newer state.
+    (swap! app-pane #(when %
+                       (cond-> (assoc %
+                                 :geom geom
+                                 :box {:left left :top top :width width :height height})
+                         (identical? held (:state %))
+                         (assoc :state st))))
+    (when (= :panel (focused-area db)) (frame/set-cursor! screen cursor))))
+
+(defn- app-pane-key!
+  "Give `key` to the app in the side pane. An Esc that the app does not use itself
+   gives the keyboard back to the chat. Returns true while the pane shows an app."
+  [db key]
+  (when-let [{:keys [component state geom]} (when (get-in db [:live-panel :app]) @app-pane)]
+    (when geom
+      (let [result ((:on-key component) state key geom)]
+        (if (= :chat (app-surfaces/pane-focus-after result))
+          (state/dispatch [:focus-area :chat])
+          (swap! app-pane #(when % (assoc % :state result))))))
+    (state/dispatch [:bump-render-version])
+    true))
+
+(defn- app-pane-point
+  "Where a click at `mx` and `my` lands in the shown side pane app, or nil outside it.
+   The close control keeps its own click."
+  [db mx my]
+  (when (= :app
+           (app-surfaces/panel-content (:live-panel db)
+                                       (:app-views db)
+                                       (lv/panel-panes (:live-views db))))
+    (when-not (= :app-pane-close (:kind (.lookup interactions/hit-map (int mx) (int my))))
+      (let [{:keys [box geom state]} @app-pane]
+        (app-surfaces/pane-click box geom (or (:scroll state) 0) (count (:rows geom)) mx my)))))
+
+(defn- app-pane-click!
+  "A press at `mx` and `my` in the side pane app gives the pane the keyboard, like C-o,
+   and moves the app cursor to the clicked row. Returns true when the press hit the pane."
+  [db mx my]
+  (when-let [{:keys [row]} (app-pane-point db mx my)]
+    (state/dispatch [:focus-area :panel])
+    (when row (swap! app-pane #(when % (assoc-in % [:state :selected] row))))
+    (state/dispatch [:bump-render-version])
+    true))
+
 (defn- edit-live-input!
   "Edit one input of a live view and send the new value at once as a `change`.
    The engine answers with the ordinary patch, so the TUI keeps no private copy."
@@ -2844,6 +2970,59 @@
   (if (seq (lv/panel-panes (:live-views @state/app-db)))
     (do (state/dispatch [:live-panel-focus]) (state/dispatch [:bump-render-version]))
     (vis/notify! "No view uses the side panel in this session." :level :info)))
+
+(defn- read-global-apps!
+  "Read the global apps again: the fleet stream keeps no replay."
+  []
+  (vis/worker-future "vis-global-apps"
+                     (fn []
+                       (try (state/dispatch
+                              [:global-apps-loaded
+                               (into [] (keep hi/live-view<-wire) (vis/gateway-global-apps))])
+                            (catch Throwable e
+                              (tel/log! {:level :debug
+                                         :id ::global-apps-read-failed
+                                         :error e
+                                         :msg "Global apps read failed"}))))))
+
+(defn- apply-global-app-frame!
+  "Apply one fleet frame to the global apps. Return true when it was one of theirs."
+  [event]
+  (when-let [[op a b] (app-surfaces/fleet-app-frame event)]
+    (case op
+      :refetch
+      (read-global-apps!)
+
+      :open
+      (some->> (hi/live-view<-wire a)
+               (vector :global-app-open)
+               state/dispatch)
+
+      :patch
+      (when-let [patch (hi/live-patch<-wire a)]
+        (state/dispatch [:global-app-patch patch b]))
+
+      :close
+      (state/dispatch [:global-app-close a]))
+    (state/dispatch [:bump-render-version])
+    true))
+
+(defn- read-app-settings!
+  "Read the app views of session `sid` and the global apps again. Each view carries its
+   EFFECTIVE surfaces, so a settings save changes where the apps show."
+  [sid]
+  (when sid
+    (vis/worker-future "vis-app-views"
+                       (fn []
+                         (try (doseq [view (keep hi/live-view<-wire (vis/gateway-app-views sid))]
+                                (state/dispatch [:app-view-loaded view]))
+                              (state/dispatch [:bump-render-version])
+                              (catch Throwable e
+                                (tel/log! {:level :debug
+                                           :id ::app-views-read-failed
+                                           :error e
+                                           :msg "Session app views read failed"}))))))
+  (read-global-apps!))
 
 (defn- live-panel-key!
   "Keys of the focused side panel. ↑ and ↓ select a view, ← folds it, → unfolds it,
@@ -3833,23 +4012,19 @@
    Record each pass end in `post-marks`."
   [^TerminalScreen screen db live-panel cols rows screen-cols messages-top messages-bottom now-ms
    post-marks]
-  (let [panel-box (when-let [{:keys [left width is-docked panes]} live-panel]
-                    (let [left (if is-docked cols left)
-                          top (if is-docked 0 messages-top)
-                          height (if is-docked rows (- (long messages-bottom) (long messages-top)))
-                          geom (lv/paint-panel!
-                                 (frame/surface-graphics screen (+ (long left) (long width)) rows)
-                                 left
-                                 top
-                                 width
-                                 height
-                                 panes
-                                 (:live-panel db)
-                                 now-ms)]
+  (let [panel-box
+        (when-let [{:keys [left width is-docked panes app]} live-panel]
+          (let [left (if is-docked cols left)
+                top (if is-docked 0 messages-top)
+                height (if is-docked rows (- (long messages-bottom) (long messages-top)))
+                g (frame/surface-graphics screen (+ (long left) (long width)) rows)]
 
-                      (when (not= (:selected geom) (get-in db [:live-panel :selected]))
-                        (state/dispatch [:live-panel-select (:selected geom)]))
-                      {:col (frame/screen-column left) :row top :width width :height height}))]
+            (if app
+              (paint-app-pane! screen g db app left top width height)
+              (let [geom (lv/paint-panel! g left top width height panes (:live-panel db) now-ms)]
+                (when (not= (:selected geom) (get-in db [:live-panel :selected]))
+                  (state/dispatch [:live-panel-select (:selected geom)]))))
+            {:col (frame/screen-column left) :row top :width width :height height}))]
     (vswap! post-marks assoc :panel (System/nanoTime))
     (let [rail-db (if (project-sidebar-locked? db screen-cols)
                     (assoc-in db [:project-sidebar :open?] false)
@@ -4037,7 +4212,7 @@
         (System/nanoTime)
 
         layout
-        (virtual/layout messages
+        (virtual/layout (held-app-messages messages db)
                         bubble-w
                         settings
                         messages-scroll
@@ -4525,6 +4700,8 @@
      ;; Subagents can change in each settings scope. Read it again for the agent dock.
      (some-> (get-in @state/app-db [:session :id])
              agent-team/settings-changed!)
+     ;; App settings change where each app shows.
+     (read-app-settings! (get-in @state/app-db [:session :id]))
      nil)))
 
 (defn- open-settings-target!
@@ -4563,7 +4740,8 @@
                                   (if (= scope "session") (get row "title") (str target-id))
                                   sid)
            (vis/notify! (str "This session has no " scope) :level :warn))
-         (state/dispatch [:refresh-session-settings sid]))
+         (state/dispatch [:refresh-session-settings sid])
+         (read-app-settings! sid))
        (catch Exception e
          (vis/notify! (str "Settings unavailable: " (ex-message e)) :level :error))))
 
@@ -4751,8 +4929,8 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :header-help :footer-goal :footer-reasoning :footer-thinking :header-tasks
-    :header-search})
+  #{:copy-id :header-help :header-session-apps :header-global-apps :footer-goal :footer-reasoning
+    :footer-thinking :header-tasks :header-search})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 
@@ -4924,7 +5102,7 @@
         (System/nanoTime)
 
         layout
-        (virtual/layout messages
+        (virtual/layout (held-app-messages messages db)
                         bubble-w
                         settings
                         messages-scroll
@@ -5268,7 +5446,7 @@
         (System/nanoTime)
 
         layout
-        (virtual/layout messages
+        (virtual/layout (held-app-messages messages db)
                         bubble-w
                         settings
                         messages-scroll
@@ -6095,6 +6273,67 @@
           :session
           :id
           str))
+
+(defn- app-picker!
+  "List `views` under `title` and return the chosen view, or nil."
+  [screen title views]
+  (when-let [choice (with-dialog-lock #(dlg/list-dialog! screen
+                                                         title
+                                                         (app-surfaces/picker-items
+                                                           views
+                                                           (comp app-model/status-label
+                                                                 app-model/status))
+                                                         {:enter-label "open" :height :content}))]
+    (some #(when (= (:view-id choice) (str (:id %))) %) views)))
+
+(defn- open-session-apps!
+  "C-x b o: pick an app of this session and open it where its `session` surface says:
+   in the side pane next to the chat, or over the whole chat area. A pick of the app
+   that the side pane shows closes the pane."
+  [^TerminalScreen screen]
+  (let [db
+        @state/app-db
+
+        sid
+        (current-session-id)
+
+        views
+        (app-surfaces/session-apps (:app-views db))]
+
+    (cond (:dialog-open? db) nil
+          (or (nil? sid) (empty? views))
+          (vis/notify! "This session has no app to open." :level :info)
+          :else (when-let [view (app-picker! screen "Session apps" views)]
+                  (if (= :sidebar (app-surfaces/session-target view))
+                    (do (if (= :close (app-surfaces/pane-pick (:live-panel @state/app-db) view))
+                          (state/dispatch [:app-pane-close])
+                          (do (reset! app-pane nil)
+                              (state/dispatch [:app-pane-open sid (str (:id view))])))
+                        (state/dispatch [:bump-render-version :full-frame]))
+                    (let [size (.getTerminalSize screen)
+                          chat (chat-pane @state/app-db (.getColumns size) (.getRows size))]
+
+                      (with-dialog-lock #(app-surface/show-app! screen
+                                                                sid
+                                                                (str (:id view))
+                                                                {:band (app-surfaces/chat-band chat)
+                                                                 :close-label
+                                                                 "back to chat"}))))))))
+
+(defn- open-global-apps!
+  "C-x b O: pick a global app and open it over the whole terminal."
+  [^TerminalScreen screen]
+  (let [db
+        @state/app-db
+
+        views
+        (app-surfaces/global-apps (:global-apps db))]
+
+    (cond (:dialog-open? db) nil
+          (empty? views) (do (read-global-apps!)
+                             (vis/notify! "No global app is open." :level :info))
+          :else (when-let [view (app-picker! screen "Global apps" views)]
+                  (with-dialog-lock #(app-surface/show-app! screen nil (str (:id view))))))))
 
 (defn- toggle-agent-dock!
   "Show or hide the agent table under the dock summary line (C-x b a or a click on the line)."
@@ -7236,7 +7475,8 @@
           (patch-picker-rows! sid (constantly nil))
           :counts)
 
-      nil)))
+      ;; A frame of a global app, or a new connection that reads them again.
+      (do (apply-global-app-frame! event) nil))))
 
 (defn- start-projects-refresh!
   "Follow fleet deltas and catch a missed frame with a slow full read. A status,
@@ -7272,7 +7512,7 @@
                                                :counts
                                                (reset! counts? true)
 
-                   nil)))
+                                               nil)))
              (catch Throwable _
                (fn [])))
 
@@ -8587,6 +8827,12 @@
                 :header-help
                 (state/dispatch [:toggle-help])
 
+                :header-session-apps
+                (open-session-apps! screen)
+
+                :header-global-apps
+                (open-global-apps! screen)
+
                 :agent-dock-toggle
                 (toggle-agent-dock!)
 
@@ -8800,6 +9046,12 @@
             :header-help
             (state/dispatch [:toggle-help])
 
+            :header-session-apps
+            (open-session-apps! screen)
+
+            :header-global-apps
+            (open-global-apps! screen)
+
             :agent-dock-toggle
             (toggle-agent-dock!)
 
@@ -8869,6 +9121,10 @@
 
             (:live-panel-toggle :live-panel-tab)
             (activate-live-region! db hit)
+
+            :app-pane-close
+            (do (state/dispatch [:app-pane-close])
+                (state/dispatch [:bump-render-version :full-frame]))
 
             :live-edit
             (edit-live-input! screen db hit)
@@ -8966,6 +9222,12 @@
           :header-help
           (state/dispatch [:toggle-help])
 
+          :header-session-apps
+          (open-session-apps! screen)
+
+          :header-global-apps
+          (open-global-apps! screen)
+
           :agent-dock-toggle
           (toggle-agent-dock!)
 
@@ -9050,6 +9312,10 @@
 
           (:live-panel-toggle :live-panel-tab)
           (activate-live-region! db hit)
+
+          :app-pane-close
+          (do (state/dispatch [:app-pane-close])
+              (state/dispatch [:bump-render-version :full-frame]))
 
           :live-edit
           (edit-live-input! screen db hit)
@@ -9383,6 +9649,13 @@
 
                 nil))))
         ::recur)
+      ;; A click in the side pane app focuses the pane and moves the app cursor there.
+      ;; Its release does nothing more, unless a transcript selection drag ends there.
+      (and (= atype MouseActionType/CLICK_DOWN) (app-pane-click! db mx my)) ::recur
+      (and (= atype MouseActionType/CLICK_RELEASE)
+           (nil? @mouse-selection-anchor)
+           (app-pane-point db mx my))
+      ::recur
       ;; Treat release as a fallback click only when no drag or matching handled
       ;; press exists, avoiding double actions on normal terminals.
       (= atype MouseActionType/CLICK_RELEASE)
@@ -9725,6 +9998,12 @@
                     :live-panel
                     (open-live-panel!)
 
+                    :session-apps
+                    (open-session-apps! screen)
+
+                    :global-apps
+                    (open-global-apps! screen)
+
                     :automations
                     (open-automations! screen)
 
@@ -9968,6 +10247,13 @@
         ;; C-x V — open the side panel or move the focus.
         :live-panel
         (do (open-live-panel!) ::recur)
+
+        ;; C-x b o / C-x b O — pick a session app or a global app and open it.
+        :session-apps
+        (do (open-session-apps! screen) ::recur)
+
+        :global-apps
+        (do (open-global-apps! screen) ::recur)
 
         ;; C-x k — mark the whole queue for the running turn's
         ;; next step (the header's `→ Send now`).
@@ -10249,6 +10535,9 @@
         ::recur
         ;; Forms retain ordinary typing; C-x still reaches global navigation.
         (human-input-owns-key? db key) (do (human-input-key! db key) ::recur)
+        ;; An app in the side pane takes every key while it holds the keyboard.
+        (and (= :panel (focused-area db)) (not (instance? MouseAction key)) (app-pane-key! db key))
+        ::recur
         ;; The side panel takes its navigation keys only after C-x V gave it focus.
         (and (get-in db [:live-panel :open?])
              (get-in db [:live-panel :focused?])

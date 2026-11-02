@@ -4293,6 +4293,37 @@
                 (let [target (session-target-tab db (:session-id view))]
                   (if (= :not-here target) db (update-tab db target #(mount-app-view % view))))))
 
+(defn- on-global-apps
+  "Apply `f` to the global apps held as a workspace: `{:app-views {view-id {:view v}}}`.
+   Global apps belong to no session and no tab, so they live at the db root."
+  [db f & args]
+  (assoc db :global-apps (:app-views (apply f {:app-views (:global-apps db)} args))))
+
+(reg-event-db :global-apps-loaded
+              ;; A full read of `GET /v1/apps`. The stream keeps no replay, so the read
+              ;; replaces the held list: an app that the list does not name is gone.
+              (fn [db [_ views]]
+                (let [ids (into #{} (map #(str (:id %))) views)]
+                  (-> db
+                      (update :global-apps #(select-keys % ids))
+                      (on-global-apps (fn [w]
+                                        (reduce mount-app-view w views)))))))
+
+(reg-event-db :global-app-open
+              ;; A `view.open` fleet frame, or a full read of one global app.
+              (fn [db [_ view]]
+                (on-global-apps db mount-app-view view)))
+
+(reg-event-db :global-app-patch
+              (fn [db [_ patch first-seq]]
+                (on-global-apps db patch-app-view patch first-seq)))
+
+(reg-event-db :global-app-close
+              (fn [db [_ view-id]]
+                (cond-> db
+                  (get-in db [:global-apps view-id])
+                  (assoc-in [:global-apps view-id :view :is-closed] true))))
+
 (reg-event-db :live-view-reopen
               ;; Opening a viewer never changes the transcript or the running pane.
               (fn [db [_ view-id]]
@@ -4308,15 +4339,41 @@
               ;; C-x V: open the panel with the focus, then move the focus between the
               ;; panel and the transcript.
               (fn [db _]
-                (let [{:keys [open? focused?]}
+                (let [{:keys [open? focused? app]}
                       (:live-panel db)
 
+                      ;; An app pane gives the slot back to the views with the focus.
                       focused?
-                      (not (and open? focused?))]
+                      (or (some? app) (not (and open? focused?)))]
 
-                  (cond-> (update db :live-panel assoc :open? true :focused? focused?)
+                  (cond-> (update db
+                                  :live-panel
+                                  #(-> %
+                                       (dissoc :app)
+                                       (assoc :open? true
+                                              :focused? focused?)))
                     (and focused? (:project-sidebar db))
                     (assoc-in [:project-sidebar :focused?] false)))))
+
+(reg-event-db :app-pane-open
+              ;; C-x b o: show session app `view-id` in the side panel slot, with the focus.
+              (fn [db [_ session-id view-id]]
+                (cond-> (update db
+                                :live-panel assoc
+                                :open? true
+                                :focused? true
+                                :app {:session-id session-id :view-id view-id})
+                  (:project-sidebar db)
+                  (assoc-in [:project-sidebar :focused?] false))))
+
+(reg-event-db :app-pane-close
+              (fn [db _]
+                (update db
+                        :live-panel
+                        #(-> %
+                             (dissoc :app)
+                             (assoc :open? false
+                                    :focused? false)))))
 
 (reg-event-db :focus-area
               ;; Tab and Shift+Tab move the keyboard between the open areas: `:sidebar`,
@@ -4333,7 +4390,12 @@
 
 (reg-event-db :live-panel-close
               (fn [db _]
-                (update db :live-panel assoc :open? false :focused? false)))
+                (update db
+                        :live-panel
+                        #(-> %
+                             (dissoc :app)
+                             (assoc :open? false
+                                    :focused? false)))))
 
 (reg-event-db :live-panel-select
               (fn [db [_ view-id]]

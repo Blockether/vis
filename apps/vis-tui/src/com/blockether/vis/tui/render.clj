@@ -4,6 +4,7 @@
             [com.blockether.vis.contract.app :as app]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.tui.app-surfaces :as app-surfaces]
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.format :as fmt]
@@ -1890,8 +1891,6 @@
 
                   (str (p/truncate-cols s head-w) "…" tail)))))
 
-(def ^:private attachment-open-label " Open ")
-
 (defn- attachment-card-target
   "The click target of a file row: its durable artifact or its host document. Nil when unavailable."
   [meta]
@@ -1917,8 +1916,11 @@
         hovered?
         (and target (= (:kind target) (:kind hovered)) (= abs-row (get-in hovered [:bounds :row])))
 
+        button-label
+        (app-surfaces/open-label (:artifact meta))
+
         button-w
-        (if target (long (p/display-width attachment-open-label)) 0)
+        (if target (long (p/display-width button-label)) 0)
 
         button-col
         (- (+ x iw) 2 button-w)
@@ -1953,9 +1955,8 @@
     (when target
       (if hovered?
         (do (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
-            (p/styled g [p/BOLD] (p/put-str! g button-col y attachment-open-label)))
-        (do (p/set-colors! g t/button-fg t/button-bg)
-            (p/put-str! g button-col y attachment-open-label)))
+            (p/styled g [p/BOLD] (p/put-str! g button-col y button-label)))
+        (do (p/set-colors! g t/button-fg t/button-bg) (p/put-str! g button-col y button-label)))
       ;; The button registers after the row region, so it wins its own cells.
       (.register interactions/hit-map
                  (assoc target :bounds {:row abs-row :col button-col :width button-w})))
@@ -2103,6 +2104,10 @@
       (when-let [toggle (:card-toggle meta)]
         (.register interactions/hit-map (assoc toggle :bounds {:row abs-row :col x :width iw}))))
     (when (= :file part) (draw-attachment-file-row! g meta x y iw abs-row))
+    ;; An app that shows in its turn previews what it shows under its row.
+    (when (= :app-preview part)
+      (p/set-colors! g t/footer-fg-muted paper)
+      (p/put-str! g (+ x 4) y (p/ellipsize (str (:card-text meta)) (max 0 (- iw 6)))))
     (when (#{:image-table :image-table-hint} part)
       (draw-image-table-row! g meta part x y iw abs-row))
     (p/clear-styles! g)))
@@ -5768,11 +5773,14 @@
            (str (when foldable? (if open? "▾ " "▸ ")) n " " "files" (when total (str " · " total))))
 
          file-rows
-         (mapv (fn [{:keys [name label target]}]
-                 (attachment-card-row
-                   :file
-                   (str name "  " label)
-                   (merge {:card-name name :card-label label :card-name-col name-col} target)))
+         (mapv (fn [{:keys [name label target preview]}]
+                 (into [(attachment-card-row
+                          :file
+                          (str name "  " label)
+                          (merge {:card-name name :card-label label :card-name-col name-col}
+                                 target))]
+                       (map #(attachment-card-row :app-preview % {:card-text %}))
+                       preview))
                files)
 
          separator
@@ -5790,7 +5798,7 @@
 
          rows
          (when open?
-           (cond-> (into (vec head-rows) (interpose separator file-rows))
+           (cond-> (into (vec head-rows) cat (interpose [separator] file-rows))
              (seq body)
              (into (cons separator body))))]
 
@@ -6177,6 +6185,8 @@
     (get artifact "owner")
     (assoc :owner (wire/->engine (get artifact "owner")))))
 
+(def ^:private app-preview-lines "Most lines that an app shows in its turn." 6)
+
 (defn app-run
   "A transcript row for a held app view `{:view v}` while its block still runs. The
    durable attachment row lands only when the block ends, and `app.run` keeps the block
@@ -6187,10 +6197,34 @@
     (when (and (:owner view) (not (str/blank? view-id)))
       {:view-id view-id
        :owner (:owner view)
-       :app-row {:filename (or (not-empty (str (:title view))) "App")
-                 :media-type app/media-type
-                 :view-id view-id
-                 :owner (:owner view)}})))
+       :app-row (cond-> {:filename (or (not-empty (str (:title view))) "App")
+                         :media-type app/media-type
+                         :view-id view-id
+                         :owner (:owner view)
+                         :inline (app-surfaces/inline? view)}
+                  (app-surfaces/inline? view)
+                  (assoc :preview (app-surfaces/preview-lines view app-preview-lines)))})))
+
+(defn- attached-view-ids
+  "The app view ids that the steps of `message` attach."
+  [message]
+  (into #{} (comp (mapcat :attachments) (keep #(get % "view_id")) (map str)) (:traces message)))
+
+(defn with-app-runs
+  "`messages` with the app runs of the held app views `app-views` that their steps
+   attach. A durable app row then takes the surfaces and the preview from the held
+   view, not from its descriptor. A message without such an app stays the same object."
+  [messages app-views]
+  (if (empty? app-views)
+    messages
+    (mapv (fn [message]
+            (let [runs (keep #(some-> (get app-views %)
+                                      app-run)
+                             (attached-view-ids message))]
+              (if (empty? runs)
+                message
+                (assoc message :runs (into (vec (remove :app-row (:runs message))) runs)))))
+          messages)))
 
 (defn- iteration-artifact-rows
   "Durable document rows from a step's gateway attachment descriptors. Pictures, videos and
@@ -6431,6 +6465,7 @@
                                               [(attachment-type-label media-type filename)
                                                (when (number? size) (fmt/format-bytes size " "))]))
                            :bytes (when (number? size) size)
+                           :preview (:preview artifact)
                            :target {:artifact artifact :session-id session-id}})
                         files)
                   (assoc fold :session-id session-id)))
@@ -8935,8 +8970,14 @@
                                          (mapcat :runs forms))))))))
 
         ;; #429: a running app joins as a row until its durable row lands.
+        ;; A durable row wins, and keeps how its live app shows in the turn.
         iteration-artifacts
-        (into (vec iteration-artifacts)
+        (into (mapv (fn [row]
+                      (if-let [live (and (:view-id row)
+                                         (some #(when (= (:view-id row) (:view-id %)) %) app-rows))]
+                        (merge row (select-keys live [:inline :preview]))
+                        row))
+                    iteration-artifacts)
               (remove (fn [row]
                         (some #(= (:view-id row) (:view-id %)) iteration-artifacts)))
               app-rows)
