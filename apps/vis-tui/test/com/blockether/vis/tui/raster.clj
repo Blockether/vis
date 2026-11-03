@@ -207,37 +207,6 @@
         (conj {:op :rect :x cx :y cy :w t :h (- (+ y0 h) cy) :fill fill})))
     []))
 
-(def ^:private edge-blocks
-  "One-eighth block glyph → the cell edge that it fills. A terminal draws these
-   blocks itself, edge to edge; a font leaves seams, so they are painted as rects."
-  {"▁" :bottom "▔" :top "▏" :left "▕" :right})
-
-(defn- edge-ops
-  "The rect for ONE one-eighth block cell, or `[]` for any other glyph."
-  [c px py cell-w cell-h]
-  (if-let [edge (edge-blocks (:ch c))]
-    (let [w (long cell-w)
-          h (long cell-h)
-          x0 (long px)
-          y0 (long py)
-          tw (max 1 (long (Math/round (/ (double w) 8.0))))
-          th (max 1 (long (Math/round (/ (double h) 8.0))))
-          fill (hex-color (:fg c))]
-
-      [(case edge
-         :bottom
-         {:op :rect :x x0 :y (- (+ y0 h) th) :w w :h th :fill fill}
-
-         :top
-         {:op :rect :x x0 :y y0 :w w :h th :fill fill}
-
-         :left
-         {:op :rect :x x0 :y y0 :w tw :h h :fill fill}
-
-         :right
-         {:op :rect :x (- (+ x0 w) tw) :y y0 :w tw :h h :fill fill})])
-    []))
-
 (def ^:private italic-shear
   "Slant of a synthetic italic, in x per y away from the baseline.
 
@@ -315,15 +284,13 @@
 
             bars
             (mapcat (fn [[x c]]
-                      (concat (box-ops c (* (long x) (long cw)) py cw ch)
-                              (edge-ops c (* (long x) (long cw)) py cw ch)))
+                      (box-ops c (* (long x) (long cw)) py cw ch))
                     (map-indexed vector row))
 
             ;; box cells are already drawn as bars — blank them out so their
             ;; glyph cannot be painted on top
             runs
-            (text-runs
-              (mapv #(cond-> % (or (box-arms (:ch %)) (edge-blocks (:ch %))) (assoc :ch " ")) row))
+            (text-runs (mapv #(cond-> % (box-arms (:ch %)) (assoc :ch " ")) row))
 
             rules
             (for [{:keys [style] :as run}

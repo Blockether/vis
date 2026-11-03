@@ -4,9 +4,8 @@
 
    Every notification shows here: the TUI's own notices and the `vis.notify`
    toasts of extensions. One card shows at a time, like the Companion card. The
-   tinted body fills the card up to its border. The border is drawn with
-   one-eighth blocks on the cell edges, so no strip of paper shows between the
-   body and the border.
+   whole card is tinted, its rounded border cells too, so no strip of paper
+   shows between the body and the border. The border has the level color.
 
    The first row holds the bold title with its source, and the close mark `✕`
    in the top-right corner. A card without a title keeps the `✕` on its first
@@ -165,30 +164,26 @@
           pager-row (dec bottom)
           ;; The counter ends one space before the right border.
           pager-col (- right 1 pager-cols)
-          ;; The border stands on the screen paper; the body is tinted up to it.
-          paper t/dialog-bg
+          ;; The whole card is tinted, its border cells too, so the body reaches the border.
           bg (card-bg)
-          edge (t/legible-ink (level-fg level) paper)
           ink (t/legible-ink (level-fg level) bg)
           muted (t/legible-ink t/footer-fg-muted bg)]
 
       (p/clear-styles! g)
-      (p/set-colors! g t/dialog-fg paper)
-      (p/fill-rect! g col row width height)
       (p/set-colors! g t/dialog-fg bg)
-      (p/fill-rect! g (inc col) first-row inner (- height 2))
-      ;; Border: each one-eighth block lies on the cell edge next to the body.
-      (p/set-colors! g edge paper)
-      (p/put-str! g (inc col) row (rule inner "▁"))
+      (p/fill-rect! g col row width height)
+      ;; Border.
+      (p/set-colors! g ink bg)
+      (p/put-str! g col row (str "╭" (rule inner "─") "╮"))
       (doseq [r (range first-row bottom)]
-        (p/put-str! g col (long r) "▕")
-        (p/put-str! g right (long r) "▏"))
+        (p/put-str! g col (long r) "│")
+        (p/put-str! g right (long r) "│"))
       ;; Countdown: the level color is the time left.
-      (p/put-str! g (inc col) bottom (rule inner "▔"))
+      (p/put-str! g col bottom (str "╰" (rule inner "─") "╯"))
       (when fraction
         (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
-          (p/set-colors! g (t/legible-ink t/footer-fg-muted paper) paper)
-          (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "▔"))))
+          (p/set-colors! g muted bg)
+          (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "─"))))
       ;; Heading.
       (when heading
         (p/set-colors! g muted bg)

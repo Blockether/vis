@@ -40,11 +40,11 @@
                     (expect (some? card))
                     (expect (<= (+ col width) (+ 2 cols)))
                     (expect (<= (+ row height) (+ 3 rows)))
-                    ;; Without a heading, "✕" ends the first text row: "▕ " text " ✕ ▏".
+                    ;; Without a heading, "✕" ends the first text row: "│ " text " ✕ │".
                     (expect (every? #(<= (p/display-width %) (- width (if heading 4 6))) lines))
-                    ;; "▕ " heading " ✕ ▏"
+                    ;; "│ " heading " ✕ │"
                     (expect (<= (+ 6 (p/display-width (or heading ""))) width))
-                    ;; "▕ " pager " ▏"
+                    ;; "│ " pager " │"
                     (expect (<= (+ 4 (p/display-width (or pager ""))) width)))))
             (it "shows no card in an area narrower than the smallest card"
                 (expect (nil? (toasts/layout (page "Copied") {:left 0 :top 0 :cols 27 :rows 20})))))

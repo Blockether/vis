@@ -1,7 +1,6 @@
 ;; Pins the TUI glyph policy: the client draws only the non-ASCII glyphs that
 ;; opencode's TUI draws (packages/tui) plus the opentui single and rounded border
-;; styles that opencode uses. The toast card adds the one-eighth block edges
-;; ▁▔▏▕: they let its tinted body reach the border (user request).
+;; styles that opencode uses.
 (ns com.blockether.vis.tui.glyph-policy-test
   "The TUI source draws only the opencode glyph set."
   (:require [clojure.java.io :as io]
@@ -10,8 +9,8 @@
 
 (def ^:private opencode-glyphs
   "Non-ASCII glyphs that opencode's TUI draws, with the single and rounded
-   opentui border characters and the one-eighth block edges of the toast card."
-  (set "·—•…←↑→↓↳⇆⊙⋯─│┃┌┐└┘├┤┬┴┼╭╮╯╰╹▀▄█▁▔▏▕■▣△▶▸▼▾◆◈◉○●✓✕✗✱⟳⠇⠋⠏⠙⠦⠧⠴⠸⠹⠼⬖⬝⬥⬩⬪"))
+   opentui border characters."
+  (set "·—•…←↑→↓↳⇆⊙⋯─│┃┌┐└┘├┤┬┴┼╭╮╯╰╹▀▄█■▣△▶▸▼▾◆◈◉○●✓✕✗✱⟳⠇⠋⠏⠙⠦⠧⠴⠸⠹⠼⬖⬝⬥⬩⬪"))
 
 (def ^:private input-data
   "Characters that only parse input text and are never drawn, by file name."
