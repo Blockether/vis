@@ -2850,10 +2850,11 @@ export function Banner({
  *
  * The border carries the level, so the text keeps the plain reading colour. The top row
  * holds the bold title with the extension that sent it, and the close mark in the
- * top-right corner, over a grey rule. Long text stops after four lines. When more notices wait, the page
- * counter is in the bottom-right corner. The bar on the bottom edge shrinks for the time
- * that is left over a faint track; it stands still while the notice waits behind another
- * page. A notice without a title or a source keeps the close mark on its first text line.
+ * top-right corner. A grey rule runs under the title, not under the close mark. Long
+ * text stops after four lines. When more notices wait, the page counter is in the
+ * bottom-right corner. The bar on the bottom edge shrinks for the time that is left
+ * over a faint track; it stands still while the notice waits behind another page. A
+ * notice without a title or a source keeps the close mark on its first text line.
  */
 export function Toast({
   kind,
@@ -2892,8 +2893,8 @@ export function Toast({
     >
       {isHeaded ? (
         <>
-          <div className="mb-1 flex items-center gap-1 border-b border-edge-strong">
-            <div className="min-w-0 flex-1 truncate">
+          <div className="mb-1 flex items-center gap-1">
+            <div className="min-w-0 flex-1 truncate border-b border-edge-strong">
               {title ? <span className="font-bold">{title}</span> : null}
               {title && source ? <span className="text-muted"> · </span> : null}
               {source ? <span className="text-muted">{source}</span> : null}
