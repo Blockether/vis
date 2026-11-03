@@ -1559,7 +1559,7 @@
 (defn- run-installer-download
   "Run a copied installer, so it downloads the command, against a fake GitHub.
    The fake command records its arguments instead of installing a runtime."
-  [args {:keys [tag-status sums]} extra-env]
+  [args {:keys [tag-status sums beta-sums]} extra-env]
   (let [root
         (.toFile (Files/createTempDirectory "vis-installer-" (make-array FileAttribute 0)))
 
@@ -1571,6 +1571,9 @@
 
         sums-file
         (io/file root "SHA256SUMS")
+
+        beta-sums-file
+        (io/file root "beta-SHA256SUMS")
 
         calls
         (io/file root "calls")
@@ -1592,17 +1595,23 @@
         (spit sums-file (str (apply str (repeat 64 "0")) "  vis-tui.tar.gz\n"))
 
         nil)
+      ;; A beta published before #434 lists its bundles, but no vis-agent command.
+      (when (= :without-command beta-sums)
+        (spit beta-sums-file (str (apply str (repeat 64 "0")) "  vis-tui.tar.gz\n")))
       (write-executable!
         (io/file tools "curl")
-        (str "#!/usr/bin/env bash\nset -euo pipefail\nurl=''; dest=''; head=0; format=''\n"
-             "while (( $# )); do case $1 in -o|--output) dest=$2; shift;; --head) head=1;;"
-             " --write-out) format=$2; shift;; https:*) url=$1;; esac; shift; done\n"
-             "printf 'curl %s\\n' \"$url\" >> \"$TEST_CALLS\"\n"
-             "if (( head )); then printf '%s' \"${TEST_TAG_STATUS:-302}\"; exit 0; fi\n"
-             "case $url in\n"
-             "  */vis-agent) cp \"$TEST_COMMAND\" \"$dest\" ;;\n"
-             "  */SHA256SUMS) if [[ -f $TEST_SUMS ]]; then cp \"$TEST_SUMS\" \"$dest\"; printf 200;"
-             " else printf 404; fi ;;\n" "  *) exit 22 ;;\nesac\n"))
+        (str
+          "#!/usr/bin/env bash\nset -euo pipefail\nurl=''; dest=''; head=0; format=''\n"
+          "while (( $# )); do case $1 in -o|--output) dest=$2; shift;; --head) head=1;;"
+          " --write-out) format=$2; shift;; https:*) url=$1;; esac; shift; done\n"
+          "printf 'curl %s\\n' \"$url\" >> \"$TEST_CALLS\"\n"
+          "if (( head )); then printf '%s' \"${TEST_TAG_STATUS:-302}\"; exit 0; fi\n"
+          "case $url in\n"
+          "  */vis-agent) cp \"$TEST_COMMAND\" \"$dest\" ;;\n"
+          "  */beta-*/SHA256SUMS) src=$TEST_SUMS; [[ ! -f $TEST_BETA_SUMS ]] || src=$TEST_BETA_SUMS;"
+          " if [[ -f $src ]]; then cp \"$src\" \"$dest\"; printf 200; else printf 404; fi ;;\n"
+          "  */SHA256SUMS) if [[ -f $TEST_SUMS ]]; then cp \"$TEST_SUMS\" \"$dest\"; printf 200;"
+          " else printf 404; fi ;;\n" "  *) exit 22 ;;\nesac\n"))
       (let [result (run-bash
                      (into ["bash" (.getAbsolutePath (io/file root "install-vis-agent"))] args)
                      (merge {"HOME" (.getAbsolutePath root)
@@ -1614,6 +1623,7 @@
                              "TEST_CALLS" (.getAbsolutePath calls)
                              "TEST_COMMAND" (.getAbsolutePath command)
                              "TEST_SUMS" (.getAbsolutePath sums-file)
+                             "TEST_BETA_SUMS" (.getAbsolutePath beta-sums-file)
                              "TEST_TAG_STATUS" (or tag-status "302")}
                             extra-env))]
         (assoc result
@@ -1764,7 +1774,8 @@
                                        (expect (str/includes? output message) output)
                                        (expect (str/blank? urls) urls)
                                        (expect (str/includes? (slurp native) "old-runtime"))))))
-  (it "bootstraps a pinned beta with the verified installer command after the tag check"
+  ;; #434: a beta pin covers the launcher, so it comes from that beta, not a rolling release.
+  (it "downloads a pinned beta's command from that beta and verifies it before it runs"
       (let [{:keys [exit output calls installed?]}
             (run-installer-download ["--version" pinned-beta] {:sums :valid} {})]
         (expect (zero? exit) output)
@@ -1773,18 +1784,34 @@
                                (str "curl https://github.com/Blockether/vis/releases/tag/"
                                     pinned-beta))
                 calls)
+        (expect (str/includes? calls (str "/releases/download/" pinned-beta "/vis-agent")) calls)
+        (expect (not (str/includes? calls "/releases/download/installer/")) calls)
+        (expect (str/includes? output "verified the vis-agent command against SHA256SUMS") output)
+        (expect (str/includes? calls (str "update --track beta " pinned-beta)) calls)))
+  (it "bootstraps a beta published without a command with the verified installer command"
+      (let [{:keys [exit output calls installed?]} (run-installer-download
+                                                     ["--version" pinned-beta]
+                                                     {:sums :valid :beta-sums :without-command}
+                                                     {})]
+        (expect (zero? exit) output)
+        (expect installed? output)
+        (expect (str/includes? output (str pinned-beta " publishes no vis-agent command")) output)
         (expect (str/includes? calls "/releases/download/installer/vis-agent") calls)
         (expect (not (str/includes? calls (str "/releases/download/" pinned-beta "/vis-agent")))
                 calls)
         (expect (str/includes? output "verified the vis-agent command against SHA256SUMS") output)
-        (expect (str/includes? calls (str "update --track beta " pinned-beta)) calls))
-      (let [{:keys [exit output calls installed?]}
-            (run-installer-download ["--version" pinned-beta] {:tag-status "404" :sums :valid} {})]
-        (expect (= 1 exit) output)
-        (expect (str/includes? output (str "has no published release " pinned-beta)) output)
-        (expect (str/includes? output "nothing was installed") output)
-        (expect (not installed?) output)
-        (expect (not (str/includes? calls "update --track")) calls))))
+        (expect (str/includes? calls (str "update --track beta " pinned-beta)) calls)))
+  (it "refuses a missing beta or a beta without SHA256SUMS before it runs anything"
+      (doseq [[options message] [[{:tag-status "404" :sums :valid}
+                                  (str "has no published release " pinned-beta)]
+                                 [{} (str pinned-beta " publishes no SHA256SUMS")]]]
+        (let [{:keys [exit output calls installed?]}
+              (run-installer-download ["--version" pinned-beta] options {})]
+          (expect (= 1 exit) output)
+          (expect (str/includes? output message) output)
+          (expect (str/includes? output "nothing was installed") output)
+          (expect (not installed?) output)
+          (expect (not (str/includes? calls "update --track")) calls)))))
 
 (defdescribe
   distribution-track-test
@@ -2286,7 +2313,9 @@
                       :state "uploaded"
                       :digest digest}))
               (conj {:name "vis-web.tar.gz" :size 123 :state "uploaded" :digest digest})
-              (into installers))
+              (into installers)
+              (into (for [name ["install-vis-agent" "vis-agent"]]
+                      {:name name :size 123 :state "uploaded" :digest digest})))
 
           metadata
           {:tag_name (str "beta-" sha) :draft true :prerelease true :assets assets}]
@@ -2300,6 +2329,8 @@
                [{} {:assets (assoc assets 0 (last assets))} false false]
                [{} {:assets (filterv #(str/ends-with? (:name %) ".tar.gz") assets)} false false]
                [{} {:assets (mapv #(update % :name str/replace version "0") assets)} false false]
+               ;; #434: a beta without its own launcher cannot pin or verify that launcher.
+               [{} {:assets (filterv #(not= "vis-agent" (:name %)) assets)} false false]
                [{} {:draft false} false false] [{} {:prerelease false} false false]
                [{} {:tag_name "v9.9.9"} false false]
                ;; A rerun finds the SHA256SUMS of an earlier attempt and replaces it (#332).
@@ -2317,6 +2348,7 @@
           ;; Installers verify downloads against SHA256SUMS, uploaded before publication.
           (when publish?
             (expect (str/includes? calls (str (subs digest 7) "  vis-web.tar.gz")) calls)
+            (expect (str/includes? calls (str (subs digest 7) "  vis-agent\n")) calls)
             (expect (not (str/includes? calls "  SHA256SUMS")) calls)
             (expect (< (str/index-of calls "SHA256SUMS --repo")
                        (str/index-of calls "--draft=false"))

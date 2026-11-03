@@ -37,8 +37,9 @@ No JDK or Clojure installation is required.
                    or incomplete beta, or one without SHA256SUMS, stops the
                    installation. It never falls back to the latest beta.
   --sha256 HASH    expected SHA-256 of the downloaded vis-agent command. With
-                   --version X.Y.Z, the command comes from that release, so the
-                   hash stays valid. A beta pin uses the rolling installer command.
+                   --version X.Y.Z or beta-<commit>, the command comes from that
+                   release, so the hash stays valid. A beta published without a
+                   command uses the rolling installer command.
                    Any other command stops the installation.
   --components LIST
                    optional parts beside the command, the engine and Python:
@@ -184,9 +185,10 @@ sha256_of() {
 # ── 1. install the vis-agent command ────────────────────────────────────────
 # The rolling installer asset only bootstraps acquisition. The stable bundle
 # replaces it with the launcher built at the same tag as its engine and TUI.
-# A pinned version takes the launcher from its own immutable tag, so a pinned
-# --sha256 stays valid. A beta publishes no separate command, so a pinned beta
-# uses the verified rolling bootstrap; its update installs the beta's launcher.
+# A pinned version or beta takes the launcher from its own immutable tag, so a
+# pinned --sha256 stays valid (#434). A beta published before #434 has no
+# command; it uses the verified rolling bootstrap, and its update installs the
+# launcher of its bundle.
 # A checkout can supply this bootstrap locally; its tracked files stay untouched.
 wrapper=""
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
@@ -197,8 +199,7 @@ else
   wrapper="$(mktemp "${TMPDIR:-/tmp}/vis-agent.XXXXXX")"
   sums="$(mktemp "${TMPDIR:-/tmp}/vis-agent-sums.XXXXXX")"
   trap 'rm -f "$wrapper" "$sums"' EXIT
-  asset_tag=installer
-  [[ "$release_tag" != v* ]] || asset_tag="$release_tag"
+  asset_tag="${release_tag:-installer}"
   base="https://github.com/$repo_slug/releases/download/$asset_tag"
   if [[ -n "$release_tag" ]]; then
     status="$(curl --silent --head --output /dev/null --write-out '%{http_code}' \
@@ -208,6 +209,21 @@ else
       404) fail "$repo_slug has no published release $release_tag; nothing was installed" ;;
       *) fail "could not check release $release_tag on GitHub (HTTP ${status:-000}); nothing was installed" ;;
     esac
+  fi
+  # The update refuses a beta without SHA256SUMS, so the installer stops first.
+  if [[ "$release_tag" == beta-* ]]; then
+    status="$(curl -sSL --output "$sums" --write-out '%{http_code}' \
+      --connect-timeout 10 "$base/SHA256SUMS" 2>/dev/null)" || status=000
+    case "$status" in
+      200) ;;
+      404) fail "$release_tag publishes no SHA256SUMS; nothing was installed" ;;
+      *) fail "could not download SHA256SUMS of $release_tag (HTTP $status); nothing was installed" ;;
+    esac
+    if ! awk '$2 == "vis-agent" || $2 == "*vis-agent" { found = 1 } END { exit !found }' "$sums"; then
+      echo "vis-agent install: $release_tag publishes no vis-agent command; using the installer command"
+      asset_tag=installer
+      base="https://github.com/$repo_slug/releases/download/$asset_tag"
+    fi
   fi
   echo "vis-agent install: downloading the vis-agent command ($repo_slug, $asset_tag assets)"
   if ! curl -fsSL "$base/vis-agent" -o "$wrapper" 2>/dev/null || ! head -1 "$wrapper" | grep -q '^#!'; then

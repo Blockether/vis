@@ -149,10 +149,11 @@ echo "<installer hash>  install-vis-agent" | sha256sum --check
 bash install-vis-agent --version "$tag" --sha256 "<vis-agent hash>"
 ```
 
-With a stable `--version`, the command comes from that release, so its hash does not change.
-A beta publishes no separate command. With a beta tag, the installer uses the command of the
-rolling installer assets, so its hash changes when they refresh. The update then installs the
-command from the beta bundle. A different command stops the installation before it runs.
+With a stable `--version` or a beta tag, the command comes from that release, so its hash
+does not change. The `SHA256SUMS` of the release lists the command. Betas published before
+this change have no separate command. For these, the installer uses the command of the rolling
+installer assets, so its hash changes when they refresh. The update then installs the command
+from the beta bundle. A different command stops the installation before it runs.
 
 To check release assets by hand, download them and `SHA256SUMS` to one directory:
 

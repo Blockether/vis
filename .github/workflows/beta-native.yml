@@ -127,6 +127,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.pick.outputs.sha }}
+      # A beta pin covers the launcher too, as a stable pin does (#434).
+      - uses: ./.github/actions/require-draft-release
+        with:
+          tag: ${{ needs.pick.outputs.tag }}
+      - name: Upload the launcher of this commit to the verified draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.pick.outputs.tag }}
+        run: gh release upload "$TAG" bin/install-vis-agent bin/vis-agent --repo "$REPO" --clobber
+      # Read the draft again, so the asset check and SHA256SUMS include the launcher.
       - uses: ./.github/actions/require-draft-release
         id: draft
         with:
@@ -161,7 +172,7 @@ jobs:
           expected = {f'{name}-{platform}.tar.gz'
                       for name in ('vis-agent', 'vis-tui')
                       for platform in ('linux-x64', 'linux-arm64', 'macos-arm64')}
-          expected.add('vis-web.tar.gz')
+          expected.update(('vis-web.tar.gz', 'install-vis-agent', 'vis-agent'))
           expected.update(f'vis-companion-{version}-{installer}'
                           for installer in ('macos-universal.dmg', 'windows-x64.msi',
                                             'linux-x64.deb', 'linux-x64.AppImage',
