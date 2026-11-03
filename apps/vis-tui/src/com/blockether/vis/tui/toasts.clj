@@ -14,8 +14,8 @@
    the `✕`. A card without a heading keeps the `✕` on its first text line. The
    body holds up to `max-text-lines` lines of wrapped text. When more notices
    wait, the page counter `← 1/3 →` is in the bottom-right corner.
-   The countdown is a thick bar under the body: the level color is the time
-   left over a faint track. A sticky notice has a plain bottom border.
+   The countdown is a thick bar right under the bottom border: the level color
+   is the time left over a faint track. A sticky notice has a plain bottom border.
 
    `layout` is pure: it gives the geometry of the card, and the painter only
    draws that geometry."
@@ -86,9 +86,10 @@
           (when (and remaining-ms ttl (pos? (long ttl)))
             (min 1.0 (/ (double remaining-ms) (double ttl)))))
 
-        ;; Two border rows, the heading row with its rule and the page counter row.
+        ;; Two border rows, the heading row with its rule, the page counter row and
+        ;; the empty row over the countdown.
         line-room
-        (- (long rows) 2 (if head 2 0) (if pages 1 0))]
+        (- (long rows) 2 (if head 2 0) (if pages 1 0) (if fraction 1 0))]
 
     (when (and entry (>= max-cols (long min-card-cols)) (pos? line-room))
       (let [;; Without a heading, the close mark stands at the end of the text rows.
@@ -117,7 +118,7 @@
          :col (long left)
          :row (long top)
          :width (min max-cols (max (long min-card-cols) head-cols pager-cols text-cols))
-         :height (+ 2 (if head 2 0) (count lines) (if pages 1 0))}))))
+         :height (+ 2 (if head 2 0) (count lines) (if pages 1 0) (if fraction 1 0))}))))
 
 (defn- level-fg
   "The border color of a card."
@@ -159,13 +160,15 @@
           row (long row)
           width (long width)
           inner (- width 2)
-          ;; The bottom row stands on the paper and carries the bottom line.
+          ;; The bottom row stands on the paper: the countdown bar or the bottom line.
           bottom (+ row (long height) -1)
           right (+ col width -1)
           first-row (inc row)
           text-row (if heading (+ first-row 2) first-row)
           pager-cols (long (if pager (p/display-width pager) 0))
-          pager-row (dec bottom)
+          ;; Over the countdown, the last body row is empty and carries the bottom line.
+          last-row (if fraction (dec bottom) bottom)
+          pager-row (dec last-row)
           ;; The counter ends one space before the right border.
           pager-col (- right 1 pager-cols)
           ;; The border stands on the screen paper; the body is tinted up to it.
@@ -187,14 +190,15 @@
         (p/put-str! g col (long r) "▕")
         (p/put-str! g right (long r) "▏"))
       (p/set-colors! g edge bg)
-      (doseq [r (range first-row bottom)]
+      (doseq [r (range first-row last-row)]
         (p/put-str! g (inc col) (long r) "▏")
         (p/put-str! g (dec right) (long r) "▕"))
-      ;; The countdown is a bar under the body, four times as thick as the border:
-      ;; the level color is the time left over a faint track. A sticky notice keeps
-      ;; a plain bottom line.
+      ;; The countdown is a bar right under the bottom line, four times as thick:
+      ;; the level color is the time left over a faint track. A sticky notice has
+      ;; only the bottom line.
       (if fraction
         (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
+          (p/put-str! g (inc col) last-row (rule inner "▁"))
           (p/set-colors! g edge paper)
           (p/put-str! g (inc col) bottom (rule left-cols "▀"))
           (p/set-colors! g (t/mix-color paper edge 0.3) paper)
