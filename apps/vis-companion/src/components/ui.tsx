@@ -2849,10 +2849,10 @@ export function Banner({
  * ONE TOAST: a short notice that leaves by itself, in the top-left corner of a session.
  *
  * The border carries the level, so the text keeps the plain reading colour. The top row
- * holds the bold title with the extension that sent it, then the page counter when more
- * notices wait, and the close mark in the top-right corner. Long text stops after four
- * lines. The bar on the bottom edge shrinks for the time that is left; it stands still
- * while the notice waits behind another page.
+ * holds the bold title with the extension that sent it, and the close mark in the
+ * top-right corner. Long text stops after four lines. When more notices wait, the page
+ * counter is in the bottom-right corner. The bar on the bottom edge shrinks for the time
+ * that is left; it stands still while the notice waits behind another page.
  */
 export function Toast({
   kind,
@@ -2893,22 +2893,22 @@ export function Toast({
           {title && source ? <span className="text-muted"> · </span> : null}
           {source ? <span className="text-muted">{source}</span> : null}
         </div>
-        {isPaged ? (
-          <div className="flex shrink-0 items-center text-muted tabular-nums">
-            <button type="button" aria-label="Previous notice" title="Previous notice" className={turn} onClick={page.onPrevious}>
-              ‹
-            </button>
-            <span aria-label={`Notice ${page.index + 1} of ${page.total}`}>
-              {page.index + 1}/{page.total}
-            </span>
-            <button type="button" aria-label="Next notice" title="Next notice" className={turn} onClick={page.onNext}>
-              ›
-            </button>
-          </div>
-        ) : null}
         <CloseButton label="Dismiss" onClick={onDismiss} />
       </div>
       <div className="line-clamp-4 pr-2 whitespace-pre-wrap">{children}</div>
+      {isPaged ? (
+        <div className="flex items-center justify-end text-muted tabular-nums">
+          <button type="button" aria-label="Previous notice" title="Previous notice" className={turn} onClick={page.onPrevious}>
+            ‹
+          </button>
+          <span aria-label={`Notice ${page.index + 1} of ${page.total}`}>
+            {page.index + 1}/{page.total}
+          </span>
+          <button type="button" aria-label="Next notice" title="Next notice" className={turn} onClick={page.onNext}>
+            ›
+          </button>
+        </div>
+      ) : null}
       {countdown ? (
         <div
           key={countdown.remainingMs}

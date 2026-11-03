@@ -18,7 +18,7 @@
   (describe "fit"
             ;; A card wider than the transcript, or below its last row, paints over the
             ;; scrollbar, the composer or the next terminal line.
-            (it "keeps the card, its heading and its controls inside the area, at any width"
+            (it "keeps the card, its heading and its page counter inside the area, at any width"
                 (doseq [cols
                         [28 30 56 80 200]
 
@@ -28,27 +28,28 @@
                         total
                         [1 12]]
 
-                  (let [{:keys [col row width height lines heading controls]}
+                  (let [{:keys [col row width height lines heading pager]}
                         (toasts/layout
                           (page long-text :title "Release" :source "forge" :index 10 :total total)
                           {:left 2 :top 3 :cols cols :rows rows})]
                     (expect (<= (+ col width) (+ 2 cols)))
                     (expect (<= (+ row height) (+ 3 rows)))
                     (expect (every? #(<= (p/display-width %) (- width 4)) lines))
-                    ;; "╭─ " heading " " fill " " controls " ─╮"
-                    (expect (<= (+ 9 (p/display-width (or heading "")) (p/display-width controls))
-                                width)))))
+                    ;; "╭─ " heading " " fill " ✕ ─╮"
+                    (expect (<= (+ 10 (p/display-width (or heading ""))) width))
+                    ;; "╰" countdown " " pager " ─╯"
+                    (expect (<= (+ 6 (p/display-width (or pager ""))) width)))))
             (it "shows no card in an area narrower than the smallest card"
                 (expect (nil? (toasts/layout (page "Copied") {:left 0 :top 0 :cols 27 :rows 20})))))
   (describe "pager"
-            ;; User request: with several notices, show "1/N" and let the user move between them.
+            ;; User request: with several notices, show "1/N" in the bottom-right corner and
+            ;; let the user move between them.
             (it "shows the page counter only when more notices wait"
-                (expect (= "✕"
-                           (:controls (toasts/layout (page "Saved")
+                (expect (nil? (:pager (toasts/layout (page "Saved")
                                                      {:left 0 :top 0 :cols 80 :rows 9}))))
-                (expect (= "← 2/3 → ✕"
-                           (:controls (toasts/layout (page "Saved" :index 1 :total 3)
-                                                     {:left 0 :top 0 :cols 80 :rows 9}))))))
+                (expect (= "← 2/3 →"
+                           (:pager (toasts/layout (page "Saved" :index 1 :total 3)
+                                                  {:left 0 :top 0 :cols 80 :rows 9}))))))
   (describe "countdown"
             ;; User request: a bar shows how long the notice stays.
             (it "gives the part of the time that is left, and none for a sticky notice"

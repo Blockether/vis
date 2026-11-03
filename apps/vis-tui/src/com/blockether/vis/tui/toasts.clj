@@ -4,10 +4,12 @@
 
    Every notification shows here: the TUI's own notices and the `vis.notify`
    toasts of extensions. One card shows at a time. Its border has the level
-   color and stands on the screen paper, around the tinted card. The top border holds the bold title with its source, the page
-   counter `← 1/3 →` when more notices wait, and the close mark `✕` in the
-   top-right corner. The bottom border is the countdown: the bright part is
-   the time left, and the faded part the time used. The body holds up to `max-text-lines` lines of wrapped text.
+   color and stands on the screen paper, around the tinted card. The top border
+   holds the bold title with its source, and the close mark `✕` in the top-right
+   corner. The bottom border is the countdown: the bright part is the time left,
+   and the faded part the time used. When more notices wait, the page counter
+   `← 1/3 →` is in the bottom-right corner. The body holds up to
+   `max-text-lines` lines of wrapped text.
 
    `layout` is pure: it gives the geometry of the card, and the painter only
    draws that geometry."
@@ -46,15 +48,15 @@
   (cond (and title source) (str title " · " source)
         :else (or title source)))
 
-(defn- controls
-  "The top-right controls of a card: the page counter when more pages wait, and the close mark."
+(defn- pager
+  "The bottom-right page counter of a card, or nil when no other page waits."
   [index total]
-  (str (when (> (long total) 1) (str "← " (inc (long index)) "/" total " → ")) "✕"))
+  (when (> (long total) 1) (str "← " (inc (long index)) "/" total " →")))
 
 (defn layout
   "The card of `page`, a `notifications/pager` value, at `left`,`top` of an area of
    `cols` x `rows`, or nil when no card fits. The card is
-   `{:id :level :heading :title :lines :controls :fraction :col :row :width :height}`.
+   `{:id :level :heading :title :lines :pager :fraction :col :row :width :height}`.
    `:fraction` is the part of the time that is left, nil for a sticky notice."
   [{:keys [entry index total remaining-ms]} {:keys [left top cols rows]}]
   (let [max-cols
@@ -64,16 +66,17 @@
         (- (long rows) 2)]
 
     (when (and entry (>= max-cols (long min-card-cols)) (pos? line-room))
-      (let [ctrl
-            (controls index total)
+      (let [pages
+            (pager index total)
 
-            ctrl-cols
-            (long (p/display-width ctrl))
+            ;; "╰" countdown " " pager " ─╯", with at least one countdown column.
+            bottom-cols
+            (if pages (+ 6 (long (p/display-width pages))) 0)
 
-            ;; "╭─ " heading " " fill " " controls " ─╮"
+            ;; "╭─ " heading " " fill " ✕ ─╮"
             head
             (some-> (heading entry)
-                    (p/ellipsize (- max-cols ctrl-cols 9))
+                    (p/ellipsize (- max-cols 10))
                     not-empty)
 
             lines
@@ -82,7 +85,7 @@
                         (min (long max-text-lines) line-room))
 
             top-cols
-            (+ ctrl-cols (if head (+ 9 (long (p/display-width head))) 7))
+            (if head (+ 10 (long (p/display-width head))) 8)
 
             text-cols
             (+ (long side-cols) (long (reduce max 0 (map p/display-width lines))))
@@ -95,12 +98,12 @@
          :title (:title entry)
          :heading head
          :lines lines
-         :controls ctrl
+         :pager pages
          :fraction (when (and remaining-ms ttl (pos? (long ttl)))
                      (min 1.0 (/ (double remaining-ms) (double ttl))))
          :col (long left)
          :row (long top)
-         :width (min max-cols (max (long min-card-cols) top-cols text-cols))
+         :width (min max-cols (max (long min-card-cols) top-cols bottom-cols text-cols))
          :height (+ 2 (count lines))}))))
 
 (defn- level-fg
@@ -138,7 +141,7 @@
    `:toast-prev` click, the counter and `→` are `:toast-next`, and the rest of
    the card is `:toast-dismiss`. Each region carries the notification id as `:text`."
   [g card register?]
-  (when-let [{:keys [id level heading title lines controls fraction col row width height]} card]
+  (when-let [{:keys [id level heading title lines pager fraction col row width height]} card]
     (let [col (long col)
           row (long row)
           width (long width)
@@ -146,10 +149,11 @@
           inner (- width 2)
           bottom (+ row height -1)
           right (+ col width -1)
-          ctrl-cols (long (p/display-width controls))
-          ctrl-col (- (+ col width) 3 ctrl-cols)
-          close-col (+ ctrl-col ctrl-cols -1)
-          paged? (> ctrl-cols 1)
+          close-col (- right 3)
+          pager-cols (long (if pager (p/display-width pager) 0))
+          ;; "╰" countdown " " pager " ─╯"
+          pager-col (- right 2 pager-cols)
+          bar-cols (if pager (- pager-col col 2) inner)
           ;; The border stands on the screen paper, around the tinted card.
           paper t/dialog-bg
           bg (card-bg)
@@ -170,12 +174,15 @@
       ;; Countdown: the bright part is the time left.
       (p/put-str! g col bottom "╰")
       (p/put-str! g right bottom "╯")
-      (if fraction
-        (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
-          (p/put-str! g (inc col) bottom (rule left-cols "─"))
+      (p/put-str! g (inc col) bottom (rule inner "─"))
+      (when fraction
+        (let [left-cols (long (Math/ceil (* (double fraction) bar-cols)))]
           (p/set-colors! g (t/mix-color paper ink 0.3) paper)
-          (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "─")))
-        (p/put-str! g (inc col) bottom (rule inner "─")))
+          (p/put-str! g (+ col 1 left-cols) bottom (rule (- bar-cols left-cols) "─"))))
+      ;; Page counter in the bottom-right corner.
+      (when pager
+        (p/set-colors! g muted paper)
+        (p/put-str! g (dec pager-col) bottom (str " " pager " ")))
       ;; Heading on the top border.
       (when heading
         (p/set-colors! g muted paper)
@@ -185,10 +192,9 @@
           (p/enable! g p/BOLD)
           (p/put-str! g (+ col 3) row (subs heading 0 (min (count heading) (count title))))
           (p/clear-styles! g)))
-      ;; Page counter and close mark in the top-right corner.
-      (p/set-colors! g muted paper)
-      (p/put-str! g (dec ctrl-col) row (str " " (subs controls 0 (dec (count controls)))))
+      ;; Close mark in the top-right corner.
       (p/set-colors! g ink paper)
+      (p/put-str! g (dec close-col) row " ")
       (p/enable! g p/BOLD)
       (p/put-str! g close-col row "✕")
       (p/clear-styles! g)
@@ -200,12 +206,16 @@
         (p/put-str! g (+ col 2) (+ row 1 (long i)) line))
       (p/clear-styles! g)
       (when register?
-        (if paged?
-          (let [next-col (+ ctrl-col 2)]
-            (region! row col (- ctrl-col col) :toast-dismiss id)
-            (region! row ctrl-col 2 :toast-prev id)
-            (region! row next-col (- close-col 1 next-col) :toast-next id)
-            (region! row (dec close-col) (- (inc right) (dec close-col)) :toast-dismiss id))
-          (region! row col width :toast-dismiss id))
-        (doseq [r (range (inc row) (inc bottom))]
-          (region! (long r) col width :toast-dismiss id))))))
+        (doseq [r (range row bottom)]
+          (region! (long r) col width :toast-dismiss id))
+        (if pager
+          (let [next-col (+ pager-col 2)]
+            (region! bottom col (- pager-col col) :toast-dismiss id)
+            (region! bottom pager-col 2 :toast-prev id)
+            (region! bottom next-col (- (+ pager-col pager-cols) next-col) :toast-next id)
+            (region! bottom
+                     (+ pager-col pager-cols)
+                     (- (inc right) pager-col pager-cols)
+                     :toast-dismiss
+                     id))
+          (region! bottom col width :toast-dismiss id))))))

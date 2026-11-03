@@ -1146,8 +1146,9 @@ vis.notify("Index rebuilt", scope="global")  # every open session
 `vis.notify` shows a toast card in the top-left corner of the session. The terminal and the
 Companion app show the same card. One card shows at a time:
 
-- The top border shows the title, the page counter `‹ 1/3 ›` and the close mark `✕`.
-- Click `‹` or `›` to see the other cards that wait.
+- The top border shows the title and the close mark `✕`.
+- The bottom-right corner shows the page counter, for example `1/3`, between two arrows.
+- Click an arrow to see the other cards that wait.
 - The bar on the bottom edge shrinks for the time that is left.
 - Only the card on screen counts down. A card that waits keeps all its time.
 - Click `✕` or the card to close it before its time ends.
