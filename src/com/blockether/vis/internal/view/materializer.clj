@@ -45,7 +45,7 @@
                  (format "\\u%04x" (int (first s))))))
 
 (def ^:private presentation-text-keys
-  #{:title :label :description :placeholder :source :text :detail :summary :error :note
+  #{:title :label :description :placeholder :source :text :detail :summary :error :note :message :alt
     :model-result :target :value :value-text :parent :lines :cells})
 
 (defn redact-presentation
@@ -532,58 +532,53 @@
         (spec/value-in-domain? node value) (assoc node :value value)
         :else (invalid-patch! (:id node) "the value is outside the input domain")))
 
+(def ^:private view-appliers
+  "The operations that change the view itself, not one of its nodes."
+  {:add-node apply-add-node
+   :remove-node apply-remove-node
+   :submission (fn [view op]
+                 (app-rule nil #(app/upsert-submission view (:submission op))))
+   :shortcuts (fn [view op]
+                (app-rule nil #(app/set-shortcuts view (:shortcuts op))))
+   :agent-note (fn [view op]
+                 (app-rule nil #(app/set-agent-note view (:text op))))
+   :log (fn [view op]
+          (app-rule nil #(app/append-log view op)))})
+
+(def ^:private node-appliers
+  "The operations on one node, each answering the node after it."
+  {:set apply-set
+   :append apply-append
+   :remove apply-remove
+   :clear (fn [node _]
+            (apply-clear node))
+   :replace apply-replace
+   :thread (fn [node op]
+             (app-rule (:id node) #(app/upsert-thread node (:thread op))))
+   :set-value apply-set-value})
+
+(defn- apply-node-op
+  "The view after ONE operation on the node that `op` names; an unknown node is
+   refused with the ids the view has."
+  [view op]
+  (let [path
+        (or (node-path view (:node-id op))
+            (invalid-patch! (:node-id op)
+                            (str "the view has no such node; it has "
+                                 (str/join ", " (node-ids view)))))
+
+        apply-node
+        (or (get node-appliers (:op op))
+            (throw (IllegalArgumentException. (str "No matching clause: " (:op op)))))]
+
+    (assoc-in view path (apply-node (get-in view path) op))))
+
 (defn- apply-op
   "The view after ONE operation."
   [view op]
-  (case (:op op)
-    :add-node
-    (apply-add-node view op)
-
-    :remove-node
-    (apply-remove-node view op)
-
-    :submission
-    (app-rule nil #(app/upsert-submission view (:submission op)))
-
-    :shortcuts
-    (app-rule nil #(app/set-shortcuts view (:shortcuts op)))
-
-    :agent-note
-    (app-rule nil #(app/set-agent-note view (:text op)))
-
-    (let [path
-          (or (node-path view (:node-id op))
-              (invalid-patch! (:node-id op)
-                              (str "the view has no such node; it has "
-                                   (str/join ", " (node-ids view)))))
-
-          node
-          (get-in view path)
-
-          patched
-          (case (:op op)
-            :set
-            (apply-set node op)
-
-            :append
-            (apply-append node op)
-
-            :remove
-            (apply-remove node op)
-
-            :clear
-            (apply-clear node)
-
-            :replace
-            (apply-replace node op)
-
-            :thread
-            (app-rule (:id node) #(app/upsert-thread node (:thread op)))
-
-            :set-value
-            (apply-set-value node op))]
-
-      (assoc-in view path patched))))
+  (if-let [apply-view (get view-appliers (:op op))]
+    (apply-view view op)
+    (apply-node-op view op)))
 
 (defn apply-patch
   "`view` after every operation in `patch`, or a refusal naming the first one
@@ -801,6 +796,26 @@
                                           (assoc :new-revision new-revision)))]
                           (update fenced 0 str "diff")
                           (map #(tagged-json "thread" %) threads)))))
+
+(defn- picture-facts
+  "What a reader learns of picture `p` without its bytes: media type, size in
+   bytes and the declared width and height."
+  [{:keys [media-type data width height bytes]}]
+  (let [text (str data)
+        padding (count (take-while #{\=} (reverse text)))]
+    (cond-> {:media-type media-type :bytes (if data (- (quot (* 3 (count text)) 4) padding) bytes)}
+      width (assoc :width width)
+      height (assoc :height height))))
+
+(defn- image-facts
+  "Image node `node` as the model reads it: the picture facts, the alt text and
+   the facts of the `:before` picture. The base64 bytes never reach the model."
+  [{:keys [alt before] :as node}]
+  (cond-> (picture-facts node)
+    alt (assoc :alt alt)
+    before (assoc :before (picture-facts before))))
+
+(defmethod node->markdown :image [node _] (marked-lines :image [(tagged-json "image" (image-facts node))]))
 
 (defmethod node->markdown :thread
   [node _]
@@ -1060,6 +1075,82 @@
           links)
     [(empty-line :link)]))
 
+(defn- budget-log
+  "A log node with only its TAIL: the last `log-tail-lines` lines and their tones."
+  [node {:keys [log-tail-lines]}]
+  (let [lines
+        (:lines node)
+
+        tail
+        (long log-tail-lines)
+
+        shown
+        (if (> (count lines) tail) (into [] (subvec lines (- (count lines) tail))) lines)
+
+        behind
+        (- (long (or (:total-lines node) (count lines))) (count shown))]
+
+    (with-meta (cond-> (assoc node :lines shown)
+                 (:line-tones node)
+                 (update :line-tones #(vec (take-last (count shown) %))))
+      {:elided (max 0 behind)})))
+
+(defn- budget-table
+  "A table node with the head of its rows in PAINT order, and no selection."
+  [node {:keys [table-rows]}]
+  (let [rows
+        (ordered-rows node)
+
+        limit
+        (long table-rows)
+
+        shown
+        (if (> (count rows) limit) (into [] (subvec rows 0 limit)) rows)]
+
+    (with-meta (-> node
+                   (assoc :rows shown
+                          :order :insertion)
+                   (dissoc :is-selectable :selected-ids))
+      {:elided (- (count rows) (count shown))})))
+
+(defn- budget-image
+  "An image node as facts: its pictures never reach the model, and they count as elided."
+  [node _]
+  (with-meta (merge (select-keys node [:id :type :label]) (image-facts node))
+    {:elided (if (:before node) 2 1)}))
+
+(defn- budget-scene
+  "A scene node with the first `table-rows` objects."
+  [node {:keys [table-rows]}]
+  (let [objects
+        (:objects node)
+
+        limit
+        (long table-rows)
+
+        shown
+        (if (> (count objects) limit) (subvec objects 0 limit) objects)]
+
+    (with-meta (assoc node :objects shown) {:elided (- (count objects) (count shown))})))
+
+(defn- budget-node
+  "One node as the model is handed it under `budget`; `:elided` meta counts what it left."
+  [node budget]
+  (case (:type node)
+    :log
+    (budget-log node budget)
+
+    :table
+    (budget-table node budget)
+
+    :image
+    (budget-image node budget)
+
+    :scene
+    (budget-scene node budget)
+
+    node))
+
 (defn picture
   "The finished view as DATA — what the MODEL reads when it ends, and the only
    shape it acts on. Ids come with it, so a node the model read is a node it can
@@ -1082,57 +1173,11 @@
    `opts` may widen the budget with `:log-tail-lines` and `:table-rows`."
   ([view] (picture view nil))
   ([view opts]
-   (let [{:keys [log-tail-lines table-rows]}
+   (let [budget
          (merge model-budget (select-keys opts [:log-tail-lines :table-rows]))
 
          budgeted
-         (mapv
-           (fn [node]
-             (case (:type node)
-               :log
-               (let [lines
-                     (:lines node)
-
-                     tail
-                     (long log-tail-lines)
-
-                     shown
-                     (if (> (count lines) tail)
-                       (into [] (subvec lines (- (count lines) tail)))
-                       lines)
-
-                     behind
-                     (- (long (or (:total-lines node) (count lines))) (count shown))]
-
-                 (with-meta (cond-> (assoc node :lines shown)
-                              (:line-tones node)
-                              (update :line-tones #(vec (take-last (count shown) %))))
-                   {:elided (max 0 behind)}))
-
-               :table
-               (let [rows
-                     (ordered-rows node)
-
-                     limit
-                     (long table-rows)
-
-                     shown
-                     (if (> (count rows) limit) (into [] (subvec rows 0 limit)) rows)]
-
-                 (with-meta (-> node
-                                (assoc :rows shown
-                                       :order :insertion)
-                                (dissoc :is-selectable :selected-ids))
-                   {:elided (- (count rows) (count shown))}))
-
-               :scene
-               (let [objects (:objects node)
-                     limit (long table-rows)
-                     shown (if (> (count objects) limit) (subvec objects 0 limit) objects)]
-                 (with-meta (assoc node :objects shown) {:elided (- (count objects) (count shown))}))
-
-               node))
-           (leaf-nodes (:nodes view)))]
+         (mapv #(budget-node % budget) (leaf-nodes (:nodes view)))]
 
      {:view (cond-> {:title (:title view) :nodes budgeted}
               (:description view)
@@ -1324,7 +1369,7 @@
 
 (def ^:private marked-types
   "The node types whose markdown form starts with a counted `vis:` marker."
-  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene}
+  (into #{:paragraph :heading :divider :code :spinner :button :card :diff :thread :scene :image}
         (vals spec/field-types)))
 
 (def ^:private presentation-marker
@@ -1475,6 +1520,12 @@
 (defmethod markdown->node :thread
   [_ {:keys [at lines]}]
   (merge {:type :thread :messages []} (tagged-value at "thread" (second lines))))
+
+(defmethod markdown->node :image
+  [_ {:keys [at lines]}]
+  (let [facts (tagged-value at "image" (second lines))]
+    (with-meta (merge {:type :image} facts)
+      {:elided (if (:before facts) 2 1)})))
 
 (defmethod markdown->node :scene
   [_ {:keys [at lines]}]

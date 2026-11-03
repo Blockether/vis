@@ -1,0 +1,128 @@
+{
+  "description": "Pictures for an image node. Every Vis side that checks a picture (engine, SDK) reads this file. `accepted` pictures pass and get `width` and `height` from their header. `refused` pictures fail; `rule` names the broken rule for people.",
+  "accepted": [
+    {
+      "name": "png",
+      "picture": {
+        "media_type": "image/png",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAD0lEQVR4nGNgOMEARXAWAC70BLHUAMxFAAAAAElFTkSuQmCC"
+      },
+      "width": 3,
+      "height": 2
+    },
+    {
+      "name": "png with a matching declared size",
+      "picture": {
+        "media_type": "image/png",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAD0lEQVR4nGNgOMEARXAWAC70BLHUAMxFAAAAAElFTkSuQmCC",
+        "width": 3,
+        "height": 2
+      },
+      "width": 3,
+      "height": 2
+    },
+    {
+      "name": "jpeg",
+      "picture": {
+        "media_type": "image/jpeg",
+        "data": "/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAA6ADAAQAAAABAAAAAgAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAAgADAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwUDAwMFBgUFBQUGCAYGBgYGCAoICAgICAgKCgoKCgoKCgwMDAwMDA4ODg4ODw8PDw8PDw8PD//bAEMBAgICBAQEBwQEBxALCQsQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEP/dAAQAAf/aAAwDAQACEQMRAD8A5Oiiiv8APc/yvP/Z"
+      },
+      "width": 3,
+      "height": 2
+    },
+    {
+      "name": "gif",
+      "picture": {
+        "media_type": "image/gif",
+        "data": "R0lGODdhAwACAJEAAAAAAADIAP///wAAACH5BAQAAAAALAAAAAADAAIAAAICjF8AOw=="
+      },
+      "width": 3,
+      "height": 2
+    },
+    {
+      "name": "webp lossless",
+      "picture": {
+        "media_type": "image/webp",
+        "data": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA=="
+      },
+      "width": 1,
+      "height": 1
+    }
+  ],
+  "refused": [
+    {
+      "name": "unknown media type",
+      "rule": "media-type",
+      "picture": {
+        "media_type": "image/tiff",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAD0lEQVR4nGNgOMEARXAWAC70BLHUAMxFAAAAAElFTkSuQmCC"
+      }
+    },
+    {
+      "name": "wav labelled webp",
+      "rule": "magic",
+      "picture": {
+        "media_type": "image/webp",
+        "data": "UklGRiQAAABXQVZFZm10IAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+      }
+    },
+    {
+      "name": "riff with a webp chunk but no WEBP tag",
+      "rule": "magic",
+      "picture": {
+        "media_type": "image/webp",
+        "data": "UklGRhoAAABXQVZFVlA4TA0AAAAvAAAAEAcQERGIiP4HAA=="
+      }
+    },
+    {
+      "name": "short png",
+      "rule": "magic",
+      "picture": {
+        "media_type": "image/png",
+        "data": "iVBORw=="
+      }
+    },
+    {
+      "name": "png labelled jpeg",
+      "rule": "magic",
+      "picture": {
+        "media_type": "image/jpeg",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAD0lEQVR4nGNgOMEARXAWAC70BLHUAMxFAAAAAElFTkSuQmCC"
+      }
+    },
+    {
+      "name": "not base64",
+      "rule": "base64",
+      "picture": {
+        "media_type": "image/png",
+        "data": "%%%"
+      }
+    },
+    {
+      "name": "png without a header",
+      "rule": "size-unreadable",
+      "picture": {
+        "media_type": "image/png",
+        "data": "iVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      }
+    },
+    {
+      "name": "too many pixels",
+      "rule": "pixels",
+      "picture": {
+        "media_type": "image/png",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAJxAAACcQCAIAAAA1LPVwAAAADElEQVR4nGNgOMEAAAGUAMlBGJ3rAAAAAElFTkSuQmCC"
+      }
+    },
+    {
+      "name": "declared size differs from the header",
+      "rule": "declared-size",
+      "picture": {
+        "media_type": "image/png",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAD0lEQVR4nGNgOMEARXAWAC70BLHUAMxFAAAAAElFTkSuQmCC",
+        "width": 4,
+        "height": 2
+      }
+    }
+  ]
+}

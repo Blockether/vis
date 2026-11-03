@@ -34,7 +34,10 @@
    :comments (get-in (definition "submission") ["properties" "comments" "maxItems"])
    :body (get-in (definition "message") ["properties" "body" "maxLength"])
    :note (get-in (definition "submission") ["properties" "note" "maxLength"])
-   :agent-note (get-in (definition "live_view") ["properties" "agent_note" "maxLength"])})
+   :agent-note (get-in (definition "live_view") ["properties" "agent_note" "maxLength"])
+   :log (get-in (definition "live_view") ["properties" "log" "maxItems"])
+   :log-message (get-in (definition "log_entry") ["properties" "message" "maxLength"])
+   :log-detail (get-in (definition "log_entry") ["properties" "detail" "maxLength"])})
 
 ;; Surfaces: where an app shows
 
@@ -484,3 +487,85 @@
   (some-> (agent-note-error view text)
           refuse-view!)
   (if (blank-text? text) (dissoc view :agent-note) (assoc view :agent-note (str/trim text))))
+
+;; Debug log
+
+(def log-levels "How serious an app log entry can be." (set (get (definition "log_level") "enum")))
+
+(def log-sources "Who can write an app log entry." (set (get-in (definition "log_entry") ["properties" "source" "enum"])))
+
+(defn- code-points
+  "How many code points `text` holds; a JSON Schema `maxLength` counts these."
+  ^long [^String text]
+  (.codePointCount text 0 (.length text)))
+
+(defn- head
+  "The first `n` code points of `text`."
+  [^String text n]
+  (subs text 0 (.offsetByCodePoints text 0 (int n))))
+
+(defn- tail
+  "The last `n` code points of `text`."
+  [^String text n]
+  (subs text (.offsetByCodePoints text (.length text) (- (int n)))))
+
+(defn- clip-message
+  "`text` cut to `limit` code points, the last one an ellipsis."
+  [text limit]
+  (let [limit (long limit)]
+    (if (<= (code-points text) limit) text (str (head text (dec limit)) "…"))))
+
+(def ^:private detail-gap "The line that marks the cut middle of a long detail." "\n…\n")
+
+(defn- clip-detail
+  "`text` cut to `limit` code points. A long text keeps its start and its end, so a
+   stack trace keeps both its message and its innermost cause."
+  [text limit]
+  (let [limit (long limit)]
+    (if (<= (code-points text) limit)
+      text
+      (let [kept (- limit (code-points detail-gap))
+            start (quot kept 2)]
+        (str (head text start) detail-gap (tail text (- kept start)))))))
+
+(defn cut-log-texts
+  "Log op or entry `entry` with its texts inside the schema bounds. The message is
+   trimmed and cut at its end. A long detail loses its middle, and a blank detail
+   is dropped. Other values stay as they are."
+  [{:keys [message detail] :as entry}]
+  (cond-> entry
+    (string? message) (assoc :message (clip-message (str/trim message) (:log-message bounds)))
+    (blank-text? detail) (dissoc :detail)
+    (string? detail) (cond-> (not (blank-text? detail)) (assoc :detail (clip-detail detail (:log-detail bounds))))))
+
+(defn log-entry-error
+  "nil when `entry` can go into the log of `view`, otherwise the reason. Only an
+   app takes a log entry, and an entry needs a known level and a message."
+  [view {:keys [level message detail]}]
+  (cond (not (app? view)) "only an app (placement attachment) takes a log entry"
+        (not (contains? log-levels (some-> level name))) (str "a log entry needs a level: " (str/join ", " (sort log-levels)))
+        (blank-text? message) "a log entry needs a message"
+        (not (or (nil? detail) (string? detail))) "the detail of a log entry must be text"))
+
+(defn append-log
+  "App `view` with `entry` at the end of its log. The entry takes the next `seq`.
+   `:at` and `:source` come from the caller. Long texts are cut by
+   [[cut-log-texts]], so an entry is never lost. The log keeps only its newest
+   entries."
+  [view {:keys [level at source] :as entry}]
+  (some-> (log-entry-error view entry)
+          refuse-view!)
+  (when-not (contains? log-sources (some-> source name))
+    (refuse-view! (str "a log entry needs a source: " (str/join ", " (sort log-sources)))))
+  (let [log (vec (:log view))
+        {:keys [message detail]} (cut-log-texts entry)
+        added (cond-> {:seq (inc (long (or (:seq (peek log)) 0)))
+                       :at (long at)
+                       :level (name level)
+                       :source (name source)
+                       :message message}
+                detail (assoc :detail detail))
+        kept (conj log added)
+        extra (- (count kept) (long (:log bounds)))]
+    ;; `into` copies: a subvec would keep every dropped entry alive.
+    (assoc view :log (if (pos? extra) (into [] (subvec kept extra)) kept))))

@@ -1633,6 +1633,53 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "A picture. With `before`, the surface compares the old picture with the new one.",
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "image"
+            },
+            "label": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "alt": {
+              "description": "What the picture shows, for a person who cannot see it.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            "media_type": {
+              "$ref": "#/$defs/picture/properties/media_type"
+            },
+            "data": {
+              "$ref": "#/$defs/picture/properties/data"
+            },
+            "bytes": {
+              "$ref": "#/$defs/picture/properties/bytes"
+            },
+            "width": {
+              "$ref": "#/$defs/picture/properties/width"
+            },
+            "height": {
+              "$ref": "#/$defs/picture/properties/height"
+            },
+            "before": {
+              "description": "The old picture. Absent means a single picture.",
+              "$ref": "#/$defs/picture"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "alt",
+            "media_type"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "description": "A 3D picture that the owner describes and every surface draws. x points right, y up and z to the viewer; the camera fits the rectangle from (0, 0) to (width, height) at z = 0.",
           "x-vis-light": {
             "ambient": 0.35,
@@ -2293,6 +2340,149 @@
         }
       }
     },
+    "picture": {
+      "description": "One picture as base64 data. The data holds at most 2 MiB of picture bytes; JSON makes it 4/3 larger. An app always sends `data`; only the picture that the model reads has `bytes` in its place. `x-vis-magic` lists the first bytes of each media type: a picture matches one list, and each entry of that list is hex bytes at an offset. The header may hold at most `x-vis-max-pixels` pixels.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "media_type": {
+          "type": "string",
+          "enum": [
+            "image/png",
+            "image/jpeg",
+            "image/gif",
+            "image/webp"
+          ]
+        },
+        "bytes": {
+          "description": "Set by the host in the picture that the model reads: the size of the picture in bytes. The model never reads `data`.",
+          "type": "integer",
+          "minimum": 0,
+          "readOnly": true
+        },
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2796204,
+          "contentEncoding": "base64"
+        },
+        "width": {
+          "description": "The picture width in pixels. The host reads it from the picture header; a value from the owner must match.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "height": {
+          "description": "The picture height in pixels. The host reads it from the picture header; a value from the owner must match.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "media_type"
+      ],
+      "x-vis-magic": {
+        "image/png": [
+          [
+            {
+              "offset": 0,
+              "hex": "89504e470d0a1a0a"
+            }
+          ]
+        ],
+        "image/jpeg": [
+          [
+            {
+              "offset": 0,
+              "hex": "ffd8ff"
+            }
+          ]
+        ],
+        "image/gif": [
+          [
+            {
+              "offset": 0,
+              "hex": "474946383761"
+            }
+          ],
+          [
+            {
+              "offset": 0,
+              "hex": "474946383961"
+            }
+          ]
+        ],
+        "image/webp": [
+          [
+            {
+              "offset": 0,
+              "hex": "52494646"
+            },
+            {
+              "offset": 8,
+              "hex": "57454250"
+            }
+          ]
+        ]
+      },
+      "x-vis-max-pixels": 50000000
+    },
+    "log_level": {
+      "description": "How serious one app log entry is.",
+      "type": "string",
+      "enum": [
+        "debug",
+        "info",
+        "warn",
+        "error"
+      ]
+    },
+    "log_entry": {
+      "description": "One entry of the debug log of an app. The host numbers the entries and stamps the time. A writer may send longer text: the host cuts it by code points. A long `message` keeps its start and ends with `…`. A long `detail` keeps its start and its end, joined by a line with `…`. A blank `detail` is dropped.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "at": {
+          "description": "Milliseconds since the epoch when the host took the entry.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "level": {
+          "$ref": "#/$defs/log_level"
+        },
+        "source": {
+          "description": "`app` for an entry that the owner wrote; `host` for an entry that Vis wrote, for example a failed callback.",
+          "type": "string",
+          "enum": [
+            "app",
+            "host"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "detail": {
+          "description": "More text, for example a stack trace.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "level",
+        "source",
+        "message"
+      ]
+    },
     "app_scope": {
       "description": "Who an app belongs to. A `session` app belongs to the session that opened it. A `global` app belongs to no session: only an SDK program opens it, through `POST /v1/apps`.",
       "type": "string",
@@ -2409,6 +2599,15 @@
           "maxItems": 50,
           "readOnly": true
         },
+        "log": {
+          "description": "The newest debug log entries of an app, oldest first. Only an app takes a log.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/log_entry"
+          },
+          "maxItems": 200,
+          "readOnly": true
+        },
         "timeout_ms": {
           "type": "integer",
           "minimum": 0
@@ -2433,7 +2632,8 @@
         "seq",
         "created_at"
       ],
-      "x-vis-max-nodes": 64
+      "x-vis-max-nodes": 64,
+      "x-vis-max-picture-bytes": 8388608
     },
     "live_op": {
       "oneOf": [
@@ -2864,6 +3064,46 @@
           "required": [
             "op",
             "text"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "op": {
+              "const": "log"
+            },
+            "level": {
+              "$ref": "#/$defs/log_level"
+            },
+            "message": {
+              "description": "The message, up to 4 times the entry bound. The host first redacts secrets and then cuts the text to the entry bound, so a cut never splits a labelled secret.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8000
+            },
+            "detail": {
+              "description": "More text, for example a stack trace, up to 4 times the entry bound. The host first redacts secrets and then cuts the text to the entry bound.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64000
+            },
+            "at": {
+              "description": "Set by the host: the time of the entry.",
+              "type": "integer",
+              "minimum": 0,
+              "readOnly": true
+            },
+            "source": {
+              "description": "Set by the host: `app` for an owner patch, `host` for an entry of Vis.",
+              "$ref": "#/$defs/log_entry/properties/source",
+              "readOnly": true
+            }
+          },
+          "required": [
+            "op",
+            "level",
+            "message"
           ]
         }
       ]

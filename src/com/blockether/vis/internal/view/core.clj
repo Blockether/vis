@@ -1157,6 +1157,16 @@
   [fail! patch]
   (if (string? patch) patch (fail! "a diff :patch must be unified diff text")))
 
+(defn- picture
+  "Picture `raw` (`:media-type`, base64 `:data`, optional `:width` and `:height`)
+   with the size from its header. The schema checks the bounds; this check stops a
+   picture that no client can draw or that is too large to decode."
+  [fail! what raw]
+  (when-not (map? raw) (fail! (str what " must be a map")))
+  (let [{:keys [error width height]} (view-spec/read-picture raw)]
+    (when error (fail! (str what " " error)))
+    {:media-type (:media-type raw) :data (:data raw) :width width :height height}))
+
 (defn- live-node
   "One declared component of a form or a live view. `fail!` is the refusal of
    whoever declares it — a view spec, a request, or the `add-node` op that
@@ -1382,6 +1392,11 @@
 
                  (some? (:threads node))
                  (assoc :threads (app-threads node-fail! (:threads node))))
+
+               :image
+               (cond-> (merge base (picture node-fail! "an image" node))
+                 (some? (:alt node)) (assoc :alt (:alt node))
+                 (some? (:before node)) (assoc :before (picture node-fail! "an image :before" (:before node))))
 
                :thread
                (merge base
@@ -1777,17 +1792,42 @@
     (check-keys! (str (name kind) " op") (live-op-decl-keys kind) op op-fail!)
     (when (and (= :replace kind) (not (sequential? (:rows op))))
       (op-fail! "needs :rows, the whole row set — an empty list empties the table"))
-    (if (= :set-value kind)
+    (case kind
       ;; The value domain belongs to the input it lands on, so the materializer
       ;; checks it against that node. Here a nil value is a clear, not a gap.
+      :set-value
       (do (when-not (contains? op :value) (op-fail! "needs :value — nil clears the input"))
           {:op kind :node-id ((live-op-value :node-id) op-fail! (:node-id op)) :value (:value op)})
+
+      ;; A log `:level` names a severity, not a heading level. The host stamps
+      ;; `:at` and `:source` in [[patch-live!]], so a writer never sets them.
+      :log
+      (let [level (some-> (:level op)
+                          name)]
+        (when-not (contains? app/log-levels level)
+          (op-fail! (str "needs :level: " (str/join ", " (sort app/log-levels)))))
+        (when-not (string? (:message op)) (op-fail! "needs :message text"))
+        (when-not (or (nil? (:detail op)) (string? (:detail op))) (op-fail! "needs :detail text"))
+        ;; Long text is cut here, before the schema check, so a deep stack trace
+        ;; still reaches the log. Secrets are redacted first: a cut can drop the
+        ;; label that marks a secret and leave its value.
+        (app/cut-log-texts (cond-> {:op kind :level level :message (util/redact-secret-text (:message op))}
+                             (some? (:detail op)) (assoc :detail (util/redact-secret-text (:detail op))))))
+
       (reduce (fn [acc k]
                 (if-some [value (get op k)]
                   (assoc acc k ((live-op-value k) op-fail! value))
                   acc))
               {:op kind}
               (disj (view-spec/live-op-key-sets kind) :op)))))
+
+(defn- stamped-op
+  "Log op `op` with the time and the writer that the host gives it; any other op
+   unchanged."
+  [op now]
+  (if (= :log (:op op))
+    (assoc op :at now :source (if *host-patch* "host" "app"))
+    op))
 
 (defn normalize-live-op
   "One patch operation, refused where it was BUILT — the seam the `add-node` /
@@ -2882,12 +2922,15 @@
                   (update :ops
                           (fn [ops]
                             (mapv #(owner-op @cell %) ops))))
+                (update :ops (let [now (util/now-ms)] (fn [ops] (mapv #(stamped-op % now) ops))))
                 materializer/redact-presentation
                 checked-live-patch)
 
             patched
             (materializer/apply-patch @cell applied)]
 
+        (some-> (view-spec/picture-budget-error patched)
+                invalid-live-patch!)
         (reset! cell patched)
         (sink/append! (:file entry) applied)
         (some-> (:node-seqs entry)
@@ -3521,8 +3564,31 @@
   "How many events one live view keeps for its owner. The oldest event drops first."
   256)
 
+(defn- stack-text
+  "The stack trace of `t` as text."
+  [^Throwable t]
+  (let [w (java.io.StringWriter.)]
+    (.printStackTrace t (java.io.PrintWriter. w))
+    (str w)))
+
+(defn- host-log!
+  "Write `message` and `detail` at `level` into the debug log of app `entry`, as
+   the host. A view that is no app, or a closed one, takes no entry: the
+   telemetry log still has the failure."
+  [entry level message detail]
+  (when (:is-app entry)
+    (try (binding [*host-patch* true]
+           (patch-live! (:id entry) [(cond-> {:op :log :level level :message message}
+                                       detail (assoc :detail detail))]))
+         (catch Throwable t
+           (tel/log! {:level :debug
+                      :id ::app-log-not-written
+                      :data {:view-id (:id entry) :error (ex-message t)}
+                      :msg "Vis could not add an entry to an app log"})))))
+
 (defn- push-live-event!
-  "Append `event` to the event queue of live `entry` and wake its readers."
+  "Append `event` to the event queue of live `entry` and wake its readers. A
+   failed callback also goes into the debug log of the app."
   [entry event]
   (let [cell (:view entry)]
     (locking cell
@@ -3536,7 +3602,7 @@
                                            extra (- (count items) max-live-events)]
 
                                        {:cursor next-cursor
-                                        :items (if (pos? extra) (subvec items extra) items)})))]
+                                        :items (if (pos? extra) (into [] (subvec items extra)) items)})))]
         (when-let [listener (:listener entry)]
           (let [recorded (peek items)
                 submission-id (:submission-id recorded)]
@@ -3553,6 +3619,7 @@
                                                 :id ::live-callback-failed
                                                 :data {:view-id (:id entry) :error (ex-message t)}
                                                 :msg "A live view callback failed"})
+                                     (host-log! entry "error" (str "A callback failed: " (or (ex-message t) (.getName (class t)))) (stack-text t))
                                      false))
                           ;; The owner has the Send now.
                           (when submission-id

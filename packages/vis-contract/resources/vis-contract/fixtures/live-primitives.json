@@ -542,6 +542,22 @@
         }
       ],
       "draft": "Thanks, this looks good."
+    },
+    {
+      "id": "logo-change",
+      "type": "image",
+      "label": "Logo",
+      "alt": "The logo, blue before and green after",
+      "media_type": "image/png",
+      "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGPQW+AMRAwQCgAdlgRF60sGbAAAAABJRU5ErkJggg==",
+      "width": 2,
+      "height": 2,
+      "before": {
+        "media_type": "image/png",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGOQz38NRAwQCgAmGgXlnPpP5QAAAABJRU5ErkJggg==",
+        "width": 2,
+        "height": 2
+      }
     }
   ],
   "title": "Live view components",

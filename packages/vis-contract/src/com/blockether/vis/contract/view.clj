@@ -129,7 +129,9 @@
   "Wire component name to internal type, for every component in the catalog."
   (keyword-map (keys components)))
 
-(def placements "Wire live-view placement to internal placement." (keyword-map (enum-values "placement")))
+(def placements
+  "Wire live-view placement to internal placement."
+  (keyword-map (enum-values "placement")))
 
 (def button-actions
   "Wire button action to internal action."
@@ -196,8 +198,12 @@
 
 (def scene-defaults
   "Defaults and bounds of a scene node and of one scene object."
-  (let [scene (get-in live-nodes ["scene" "properties"])
-        object (get (definition "scene_object") "properties")]
+  (let [scene
+        (get-in live-nodes ["scene" "properties"])
+
+        object
+        (get (definition "scene_object") "properties")]
+
     {:background (get-in scene ["background" "default"])
      :fov (get-in scene ["fov" "default"])
      :is-wrapping (get-in scene ["is_wrapping" "default"])
@@ -206,7 +212,8 @@
      :max-meshes (get-in scene ["meshes" "maxItems"])
      :object (into {}
                    (keep (fn [[k v]]
-                           (when (contains? v "default") [(keyword (str/replace k "_" "-")) (get v "default")])))
+                           (when (contains? v "default")
+                             [(keyword (str/replace k "_" "-")) (get v "default")])))
                    object)}))
 
 (def scene-meshes
@@ -214,13 +221,16 @@
    one shape looks the same on each screen."
   (into {}
         (map (fn [mesh]
-               [(get mesh "const") {:vertices (get mesh "x-vis-vertices") :faces (get mesh "x-vis-faces")}]))
+               [(get mesh "const")
+                {:vertices (get mesh "x-vis-vertices") :faces (get mesh "x-vis-faces")}]))
         (get (definition "scene_builtin_mesh") "oneOf")))
 
 (def scene-light
   "The fixed light of every scene, in camera space: `:ambient`, `:diffuse` and the unit `:direction`."
   (let [light (get-in live-nodes ["scene" "x-vis-light"])]
-    {:ambient (get light "ambient") :diffuse (get light "diffuse") :direction (get light "direction")}))
+    {:ambient (get light "ambient")
+     :diffuse (get light "diffuse")
+     :direction (get light "direction")}))
 
 (def view-defaults
   "Live node collection bound."
@@ -655,8 +665,15 @@
    leaves out, so a moved object sends only its new place. A new id starts from
    the defaults and keeps its slot after the objects before it."
   [objects changes]
-  (let [fresh (:object scene-defaults)
-        start (into {} (map-indexed (fn [i one] [(:id one) i])) objects)]
+  (let [fresh
+        (:object scene-defaults)
+
+        start
+        (into {}
+              (map-indexed (fn [i one]
+                             [(:id one) i]))
+              objects)]
+
     (first (reduce (fn [[acc idx] change]
                      (if-let [at (get idx (:id change))]
                        [(update acc at merge change) idx]
@@ -675,7 +692,8 @@
           (some->> (repeated-id objects)
                    (str "scene object id repeats: "))
           (some (fn [{:keys [id]}]
-                  (when (contains? scene-meshes id) (str "scene mesh " id " shadows a built-in mesh")))
+                  (when (contains? scene-meshes id)
+                    (str "scene mesh " id " shadows a built-in mesh")))
                 meshes)
           (some (fn [{:keys [id vertices faces]}]
                   (when-not (every? #(< (long %) (count vertices)) (flatten faces))
@@ -692,7 +710,9 @@
   (when (= :timeline type)
     (or (some->> (repeated-id lanes)
                  (str "timeline lane id repeats: "))
-        (when (some (fn [{:keys [start end]}] (and end (< (long end) (long start)))) lanes)
+        (when (some (fn [{:keys [start end]}]
+                      (and end (< (long end) (long start))))
+                    lanes)
           "a lane ends before it starts"))))
 
 (defn live-node-error
@@ -704,12 +724,196 @@
       (when-not (ordered-by-declared-column? node) "table order must name a declared column")
       (when-not (selection-belongs-to-table? node) "selection must belong to a selectable table")))
 
+;; Pictures: the bytes behind an image node
+
+(def ^:private picture-rule (definition "picture"))
+
+(defn- hex-bytes
+  "The bytes that hex text `hex` spells."
+  [^String hex]
+  (mapv (fn [^long at]
+          (Long/parseLong (subs hex at (+ at 2)) 16))
+        (range 0 (count hex) 2)))
+
+(def ^:private picture-magic
+  "Each media type with its lists of `[offset bytes]`; a picture matches one list."
+  (into {}
+        (map (fn [[media-type alternatives]]
+               [media-type
+                (mapv (fn [alternative]
+                        (mapv (fn [{offset "offset" hex "hex"}]
+                                [offset (hex-bytes hex)])
+                              alternative))
+                      alternatives)]))
+        (get picture-rule "x-vis-magic")))
+
+(def picture-media-types "The media types that an image node shows." (set (keys picture-magic)))
+
+(def picture-bounds
+  "The most pixels in one picture, the most base64 characters of its data, and the
+   most picture bytes in one live view."
+  {:pixels (get picture-rule "x-vis-max-pixels")
+   :data-chars (get-in picture-rule ["properties" "data" "maxLength"])
+   :view-bytes (get (definition "live_view") "x-vis-max-picture-bytes")})
+
+(defn- byte-at ^long [^bytes data ^long at] (bit-and 0xFF (long (aget data (int at)))))
+
+(defn- unsigned
+  "The unsigned number in `width` bytes of `data` at `at`; `big?` sets the byte order."
+  ^long [^bytes data ^long at ^long width big?]
+  (reduce (fn [^long acc ^long i]
+            (bit-or (bit-shift-left acc 8) (byte-at data (+ at (if big? i (- width 1 i))))))
+          0
+          (range width)))
+
+(defn- matches-magic?
+  [^bytes data media-type]
+  (some (fn [alternative]
+          (every? (fn [[^long offset expected]]
+                    (and (<= (+ offset (count expected)) (alength data))
+                         (every? (fn [^long i]
+                                   (= (long (nth expected i)) (byte-at data (+ offset i))))
+                                 (range (count expected)))))
+                  alternative))
+        (get picture-magic media-type)))
+
+(defn- ascii-at [^bytes data ^long at ^long width] (String. data (int at) (int width) "ISO-8859-1"))
+
+(defn- webp-size
+  [^bytes data]
+  (case (ascii-at data 12 4)
+    "VP8 "
+    [(bit-and 0x3FFF (unsigned data 26 2 false)) (bit-and 0x3FFF (unsigned data 28 2 false))]
+
+    "VP8L"
+    (let [b0
+          (byte-at data 21)
+
+          b1
+          (byte-at data 22)
+
+          b2
+          (byte-at data 23)
+
+          b3
+          (byte-at data 24)]
+
+      [(inc (bit-or (bit-shift-left (bit-and b1 0x3F) 8) b0))
+       (inc (bit-or (bit-shift-left (bit-and b3 0x0F) 10)
+                    (bit-shift-left b2 2)
+                    (bit-shift-right (bit-and b1 0xC0) 6)))])
+
+    "VP8X"
+    [(inc (unsigned data 24 3 false)) (inc (unsigned data 27 3 false))]
+
+    nil))
+
+(def ^:private jpeg-frames
+  "The JPEG markers of a frame header, which holds the picture size."
+  (disj (set (range 0xC0 0xD0)) 0xC4 0xC8 0xCC))
+
+(defn- jpeg-size
+  [^bytes data]
+  (loop [at 2]
+    (when (<= (+ at 4) (alength data))
+      (let [marker (byte-at data (inc at))]
+        (cond (not= 0xFF (byte-at data at)) nil
+              (= 0xFF marker) (recur (inc at))
+              (or (= 0x01 marker) (<= 0xD0 marker 0xD9)) (recur (+ at 2))
+              (jpeg-frames marker) [(unsigned data (+ at 7) 2 true) (unsigned data (+ at 5) 2 true)]
+              :else (recur (+ at 2 (unsigned data (+ at 2) 2 true))))))))
+
+(defn picture-size
+  "`[width height]` from the header of picture bytes `data` of `media-type`, or nil
+   when the header does not say."
+  [^bytes data media-type]
+  (try (case media-type
+         "image/png"
+         (when (= "IHDR" (ascii-at data 12 4))
+           [(unsigned data 16 4 true) (unsigned data 20 4 true)])
+
+         "image/gif"
+         [(unsigned data 6 2 false) (unsigned data 8 2 false)]
+
+         "image/webp"
+         (webp-size data)
+
+         "image/jpeg"
+         (jpeg-size data)
+
+         nil)
+       (catch IndexOutOfBoundsException _ nil)))
+
+(defn read-picture
+  "`{:width :height}` of picture `raw` (`:media-type`, base64 `:data`, optional
+   `:width` and `:height`), or `{:error reason}`. The bytes must start like the
+   media type, the header must give a size within the pixel bound, and a declared
+   size must match the header. Data over the length bound is refused before it is
+   decoded."
+  [{:keys [media-type data width height]}]
+  (let [too-long? (and (string? data) (> (count data) (long (:data-chars picture-bounds))))
+
+        decoded
+        (when (and (string? data) (not too-long?))
+          (try (.decode (java.util.Base64/getDecoder) ^String data)
+               (catch IllegalArgumentException _ nil)))
+
+        [w h]
+        (when (and decoded (matches-magic? decoded media-type)) (picture-size decoded media-type))]
+
+    (cond (not (picture-media-types media-type))
+          {:error (str "needs a media type: " (str/join ", " (sort picture-media-types)))}
+          too-long?
+          {:error (str "data is " (count data) " characters; the most is " (:data-chars picture-bounds))}
+          (nil? decoded) {:error "data must be base64 text"}
+          (not (matches-magic? decoded media-type)) {:error (str "data is not " media-type " data")}
+          (not (and w h (pos? (long w)) (pos? (long h))))
+          {:error "the picture header does not give its size"}
+          (> (* (long w) (long h)) (long (:pixels picture-bounds)))
+          {:error (str "the picture has " w "x" h " pixels; the most is " (:pixels picture-bounds))}
+          (or (and width (not= (long width) (long w))) (and height (not= (long height) (long h))))
+          {:error
+           (str "the declared size " width "x" height " differs from the header size " w "x" h)}
+          :else {:width w :height h})))
+
+(defn picture-byte-count
+  "How many bytes the base64 `data` of a picture holds."
+  ^long [data]
+  (if (string? data)
+    (let [n
+          (count data)
+
+          pad
+          (count (take-while #{\=} (reverse (subs data (max 0 (- n 2))))))]
+
+      (- (quot (* 3 n) 4) pad))
+    0))
+
+(defn- view-picture-bytes
+  [nodes]
+  (transduce (comp (filter #(= "image"
+                               (some-> (:type %)
+                                       name)))
+                   (map #(+ (picture-byte-count (:data %))
+                            (picture-byte-count (get-in % [:before :data])))))
+             +
+             0
+             nodes))
+
 (defn- live-tree
   [nodes]
   (into []
         (mapcat (fn [node]
                   (cons node (live-tree (:children node)))))
         nodes))
+
+(defn picture-budget-error
+  "nil when the pictures of live `view` fit its byte bound, otherwise the reason."
+  [view]
+  (let [total (long (view-picture-bytes (live-tree (:nodes view))))]
+    (when (> total (long (:view-bytes picture-bounds)))
+      (str "the pictures of this view hold " total
+           " bytes; the most is " (:view-bytes picture-bounds)))))
 
 (defn live-view-error
   "nil when `view` is a valid normalized live view, otherwise a reason."
@@ -729,6 +933,7 @@
                        (:max-nodes view-defaults)
                        ". Put a collection in a table: rows do not count as nodes.")
                   (not= (count ids) (count (set ids))) "live node ids must be unique")
+            (picture-budget-error view)
             (app/shortcuts-error view)))))
 
 (defn live-patch-error

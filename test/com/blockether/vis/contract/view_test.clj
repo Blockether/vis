@@ -2,6 +2,7 @@
   "View wire lifecycle is the same input/live contract in SDK, gateway and UI."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.view :as contract]
@@ -100,7 +101,7 @@
       (expect (= {:min 0 :max 100 :step 1} contract/range-defaults))
       (expect (= {:length 6 :ceiling 12} contract/otp-defaults))
       (expect (= #{:id :seq :created-at :owner :extension :is-stale :submissions :is-closed
-                   :is-archived :settings-key}
+                   :is-archived :settings-key :log}
                  contract/live-view-stamp-keys))
       (expect (= #{:created-at :origin} contract/request-stamp-keys))
       (expect (= #{:is-secret} contract/derived-keys))
@@ -126,3 +127,33 @@
                                 (get actual
                                      (keyword (get-in shape
                                                       ["properties" discriminator "const"])))))))))
+
+(defn- fixture-picture [wire] (into {} (map (fn [[k v]] [(keyword (str/replace k "_" "-")) v])) wire))
+
+(defdescribe
+  picture-test
+  ;; Review audit (goal 4b41c770): the engine and the SDK checked picture bytes
+  ;; differently, and a WAV file passed as WebP. Both read fixtures/app-pictures.json.
+  (let [fixture (json/read-json (slurp (io/resource "vis-contract/fixtures/app-pictures.json")))]
+    (it "reads the size of each accepted picture from its header"
+        (doseq [{:strs [name picture width height]} (get fixture "accepted")]
+          (expect (= {:width width :height height} (contract/read-picture (fixture-picture picture))) name)))
+    (it "refuses each refused picture"
+        (doseq [{:strs [name picture]} (get fixture "refused")]
+          (expect (string? (:error (contract/read-picture (fixture-picture picture)))) name)))
+    (it "refuses a view whose pictures pass the byte bound"
+        (let [most (long (:view-bytes contract/picture-bounds))
+              half (apply str (repeat (* 4 (inc (quot most 6))) "A"))
+              image (fn [id] {:id id :type "image" :data half})]
+          (expect (nil? (contract/picture-budget-error {:nodes [(image "a")]})))
+          (expect (string? (contract/picture-budget-error {:nodes [(image "a") {:id "row" :type "row" :children [(image "b")]}]}))
+                  "a picture inside a layout group counts too")))
+    (it "refuses data over the length bound before it decodes it"
+        ;; Review audit (goal 4b41c770): a valid picture with 4 MB of padding was
+        ;; decoded and accepted.
+        (let [png (some (fn [{:strs [picture]}] (when (= "image/png" (get picture "media_type")) (get picture "data")))
+                        (get fixture "accepted"))
+              most (long (:data-chars contract/picture-bounds))
+              data (str png (apply str (repeat (inc (quot (- most (count png)) 4)) "AAAA")))]
+          (expect (re-find #"characters; the most is"
+                           (str (:error (contract/read-picture {:media-type "image/png" :data data})))))))))

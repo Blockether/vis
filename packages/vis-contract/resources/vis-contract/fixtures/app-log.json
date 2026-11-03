@@ -1,0 +1,213 @@
+{
+  "description": "App debug log rules. The engine (`app/append-log`) and the SDK (`_contracts.append_log`) both read this file. Each case adds `entry` to a log that already holds `prefill` entries (seq 1..prefill, message `e<seq>`, level info, source app, at 0). A text value can be {\"repeat\": text, \"times\": n}. `expect.last` checks the added entry: a value is exact, or an object with `length` (code points), `starts`, `ends` and `contains`. `expect.absent` lists keys the entry must not have.",
+  "cases": [
+    {
+      "name": "numbers the first entry and trims the message",
+      "prefill": 0,
+      "entry": {
+        "level": "info",
+        "message": "  Started  ",
+        "at": 5,
+        "source": "app"
+      },
+      "expect": {
+        "count": 1,
+        "first_seq": 1,
+        "last": {
+          "seq": 1,
+          "at": 5,
+          "level": "info",
+          "source": "app",
+          "message": "Started"
+        }
+      }
+    },
+    {
+      "name": "keeps a short detail as it is",
+      "prefill": 0,
+      "entry": {
+        "level": "error",
+        "message": "Boom",
+        "detail": "  at line 3\n",
+        "at": 7,
+        "source": "host"
+      },
+      "expect": {
+        "count": 1,
+        "first_seq": 1,
+        "last": {
+          "detail": "  at line 3\n",
+          "source": "host",
+          "level": "error"
+        }
+      }
+    },
+    {
+      "name": "drops a blank detail",
+      "prefill": 0,
+      "entry": {
+        "level": "warn",
+        "message": "Slow",
+        "detail": "  \n ",
+        "at": 1,
+        "source": "app"
+      },
+      "expect": {
+        "count": 1,
+        "first_seq": 1,
+        "last": {
+          "message": "Slow"
+        },
+        "absent": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "name": "keeps the newest 200 and continues the seq",
+      "prefill": 200,
+      "entry": {
+        "level": "debug",
+        "message": "Tick",
+        "at": 9,
+        "source": "app"
+      },
+      "expect": {
+        "count": 200,
+        "first_seq": 2,
+        "last": {
+          "seq": 201,
+          "message": "Tick"
+        }
+      }
+    },
+    {
+      "name": "cuts a long message at its end",
+      "prefill": 0,
+      "entry": {
+        "level": "info",
+        "message": {
+          "repeat": "ab",
+          "times": 1500
+        },
+        "at": 1,
+        "source": "app"
+      },
+      "expect": {
+        "count": 1,
+        "first_seq": 1,
+        "last": {
+          "message": {
+            "length": 2000,
+            "starts": "abab",
+            "ends": "a…"
+          }
+        }
+      }
+    },
+    {
+      "name": "keeps a detail under the limit",
+      "prefill": 0,
+      "entry": {
+        "level": "error",
+        "message": "Failed",
+        "detail": {
+          "repeat": "H",
+          "times": 10000
+        },
+        "at": 1,
+        "source": "host"
+      },
+      "expect": {
+        "count": 1,
+        "first_seq": 1,
+        "last": {
+          "detail": {
+            "length": 10000,
+            "starts": "HHH",
+            "ends": "HHH"
+          }
+        }
+      }
+    },
+    {
+      "name": "keeps the start and the end of a long detail",
+      "prefill": 0,
+      "entry": {
+        "level": "error",
+        "message": "Failed",
+        "detail": [
+          {
+            "repeat": "H",
+            "times": 10000
+          },
+          {
+            "repeat": "T",
+            "times": 10000
+          }
+        ],
+        "at": 1,
+        "source": "host"
+      },
+      "expect": {
+        "count": 1,
+        "first_seq": 1,
+        "last": {
+          "detail": {
+            "length": 16000,
+            "starts": "HHH",
+            "ends": "TTT",
+            "contains": "H\n…\nT"
+          }
+        }
+      }
+    },
+    {
+      "name": "counts code points, not UTF-16 units",
+      "prefill": 0,
+      "entry": {
+        "level": "info",
+        "message": {
+          "repeat": "😀",
+          "times": 2000
+        },
+        "at": 1,
+        "source": "app"
+      },
+      "expect": {
+        "count": 1,
+        "first_seq": 1,
+        "last": {
+          "message": {
+            "length": 2000,
+            "starts": "😀😀",
+            "ends": "😀😀"
+          }
+        }
+      }
+    },
+    {
+      "name": "cuts emoji text on a code point",
+      "prefill": 0,
+      "entry": {
+        "level": "info",
+        "message": {
+          "repeat": "😀",
+          "times": 2500
+        },
+        "at": 1,
+        "source": "app"
+      },
+      "expect": {
+        "count": 1,
+        "first_seq": 1,
+        "last": {
+          "message": {
+            "length": 2000,
+            "ends": "😀…"
+          }
+        }
+      }
+    }
+  ]
+}
