@@ -419,10 +419,11 @@ function AxisLabels({ total }: { total: number }) {
   ));
 }
 
-// A faint line at each mark of the axis, through every lane of the chart.
+// A faint line at each mark of the axis, through every lane of the chart. The right and bottom
+// edges close the plot: the axis draws its top, and the 0:00 line its left.
 function GridLines({ total }: { total: number }) {
   return (
-    <span aria-hidden className="pointer-events-none absolute inset-y-0" style={BAR_COLUMN}>
+    <span aria-hidden className="pointer-events-none absolute inset-y-0 border-r border-b border-dialog-edge/50" style={BAR_COLUMN}>
       {axisMarks(total).map((at) => (
         <span key={at} className="absolute inset-y-0 w-px bg-dialog-edge/40" style={{ left: `${(at / total) * 100}%` }} />
       ))}
@@ -611,7 +612,7 @@ function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
           {error && <li role="alert" className="px-3 py-1 text-err-ink">{error}</li>}
         </ul>
       </div>
-      <ul aria-label="Legend" className="mt-1 border-t border-dialog-edge/50 pt-1.5">
+      <ul aria-label="Legend" className="mt-2.5 border-t border-dialog-edge/50 pt-1.5">
         {leader && (
           <li className={LEGEND_ROW}>
             <span className="font-bold text-white">{LEADER_KEY}</span>
