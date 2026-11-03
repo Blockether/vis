@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Provider: conversations on the direct Anthropic API use Message Threads by default. Vis sends only the new messages while a thread is available. Set `extra_body.thread` to `null` to disable threads, for example for zero data retention. Svar is pinned at 0.7.221.
 
+### Fixed
+- Provider: Claude Sonnet 5.5 on GitHub Copilot runs again. Before, each turn stopped with "Model limits unavailable" and sent nothing. The bundled model catalog now has its limits. When a live model list gives no valid limits, the gateway log shows the limit fields of the provider's entry. The configuration guide shows how to set verified limits in `vis.yml`. Svar is pinned at 0.7.222.
+
 ## [v0.5.0] - 2026-11-02
 
 ### Changed

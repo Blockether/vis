@@ -323,8 +323,7 @@
                            first)]
 
                    (expect (= :zai-effort (:reasoning-style model)))
-                   (expect (= [{:type "effort" :values ["high" "max"]}]
-                              (:reasoning-options model))))))
+                   (expect (= ["high" "max"] (:reasoning-effort-options model))))))
 
 (defn- rm-rf! [^java.io.File f] (when (.exists f) (run! rm-rf! (.listFiles f)) (.delete f)))
 

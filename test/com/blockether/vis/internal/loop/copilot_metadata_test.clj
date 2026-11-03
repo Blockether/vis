@@ -40,10 +40,10 @@
 ;; Regression: #304. Exercise discovery, Vis normalization, routing and Svar's real budget.
 (defdescribe
   copilot-first-request-metadata
-  (it "hydrates Sonnet 5.5 before preflight and reuses the account-scoped catalog"
-      (let [original (environment {:name "claude-sonnet-5.5"})]
+  (it "hydrates a Copilot model without catalog limits before preflight and reuses the catalog"
+      (let [original (environment {:name "claude-sonnet-future"})]
         (with-catalog
-          [(catalog-row "claude-sonnet-5.5")]
+          [(catalog-row "claude-sonnet-future")]
           (fn [calls]
             (let [hydrated (router/hydrate-request-model-metadata original {})
                   repeated (router/hydrate-request-model-metadata original {})
@@ -69,6 +69,38 @@
                                :output-reserve (:output-reserve budget)})))
               (expect (identical? hydrated (router/hydrate-request-model-metadata hydrated {})))
               (expect (= 1 @calls)))))))
+  ;; Regression: #433. Copilot Sonnet 5.5 stopped every turn with "Model limits unavailable".
+  (it "runs claude-sonnet-5.5 on its bundled limits when the live catalog has no row"
+      (with-catalog []
+                    (fn [calls]
+                      (let [env
+                            (environment {:name "claude-sonnet-5.5"})
+
+                            hydrated
+                            (router/hydrate-request-model-metadata env {})
+
+                            budget
+                            (svar/context-budget (:router hydrated) {})]
+
+                        (expect (identical? env hydrated))
+                        (expect (= 872000 (:max-input-tokens budget)))
+                        (expect (= 128000 (:output-reserve budget)))
+                        (expect (zero? @calls))))))
+  ;; Regression: #433. A live catalog can repeat an id or dash its version.
+  (it "learns limits from the catalog row with limits for a repeated or dashed id"
+      (doseq [rows [[(catalog-row "claude-sonnet-future-1.5")
+                     {"id" "claude-sonnet-future-1.5"
+                      "capabilities" {"supports" {"tool_calls" true}}}]
+                    [(catalog-row "claude-sonnet-future-1-5")]]]
+        (with-catalog
+          rows
+          (fn [_]
+            (let [hydrated (router/hydrate-request-model-metadata
+                             (environment {:name "claude-sonnet-future-1.5"})
+                             {})]
+              (expect (= 168000 (:max-input-tokens (svar/context-budget (:router hydrated) {}))))
+              (expect (= "claude-sonnet-future-1.5"
+                         (get-in hydrated [:router :providers 0 :models 0 :name]))))))))
   (it "keeps explicit output and vision settings above discovered metadata"
       (with-catalog
         [(catalog-row "claude-sonnet-future")]
@@ -87,7 +119,7 @@
   (it "does not block an unrelated selected provider on Copilot discovery"
       (with-catalog []
                     (fn [calls]
-                      (let [env (update (environment {:name "claude-sonnet-5.5"})
+                      (let [env (update (environment {:name "claude-sonnet-future"})
                                         :router
                                         update
                                         :providers
@@ -103,10 +135,11 @@
                         (expect (zero? @calls))))))
   (it "does not reuse learned limits after the credential identity changes"
       (with-catalog
-        [(catalog-row "claude-sonnet-5.5")]
+        [(catalog-row "claude-sonnet-future")]
         (fn [calls]
           (let [hydrated
-                (router/hydrate-request-model-metadata (environment {:name "claude-sonnet-5.5"}) {})
+                (router/hydrate-request-model-metadata (environment {:name "claude-sonnet-future"})
+                                                       {})
 
                 switched
                 (update-in hydrated
@@ -124,15 +157,15 @@
 
 (defdescribe copilot-unavailable-metadata
              (it "shows a metadata diagnostic for absent, output-only and inconsistent catalogs"
-                 (doseq [rows [[] [{"id" "claude-sonnet-5.5" "max_output_tokens" 8192}]
-                               [(assoc-in (catalog-row "claude-sonnet-5.5")
+                 (doseq [rows [[] [{"id" "claude-sonnet-future" "max_output_tokens" 8192}]
+                               [(assoc-in (catalog-row "claude-sonnet-future")
                                   ["capabilities" "limits" "max_prompt_tokens"]
                                   300000)]]]
                    (with-catalog
                      rows
                      (fn [_]
                        (let [error (try (router/hydrate-request-model-metadata
-                                          (environment {:name "claude-sonnet-5.5"})
+                                          (environment {:name "claude-sonnet-future"})
                                           {})
                                         nil
                                         (catch clojure.lang.ExceptionInfo e e))]

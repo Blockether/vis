@@ -273,7 +273,7 @@ Provider keys: `compatibility`, `base_url`, `api_key`, `api_key_command`,
 `is_vision_supported`. Providers with managed sign-in (Copilot, coding plans)
 need no `api_key`.
 
-Model keys: `context`, `output_limit`, `is_tool_calls_supported`,
+Model keys: `context`, `input_limit`, `output_limit`, `is_tool_calls_supported`,
 `is_vision_supported`, `api_style`. Filling in the limits makes context checks
 and output capping accurate.
 
@@ -283,6 +283,33 @@ names.
 
 Models are offered in the order you list them. Models discovered from the
 provider are appended after them.
+
+### Set verified limits for a model
+
+Vis checks each request against the input and context limits of its model before it sends the request.
+Vis gets these limits from its model catalog or from the live model list of the provider. If neither
+gives valid limits, the turn stops with **Model limits unavailable**. Vis then sends nothing.
+
+To continue, set the limits of that model in `vis.yml`. Use the values that the provider publishes
+for your account. This example sets the limits of Claude Sonnet 5.5 on GitHub Copilot:
+
+```yaml
+providers:
+  - id: github-copilot
+    models:
+      - name: claude-sonnet-5.5
+        context: 1000000         # total window
+        input_limit: 872000      # max input tokens
+        output_limit: 128000     # max output tokens
+```
+
+Your values replace the discovered values of that model only. Keep the output limit below the
+context. Keep the input limit at or below the context.
+
+When the live model list gives no valid limits, the gateway log gets a `model-metadata-unavailable`
+warning. It shows the limit fields of the provider's entry for the model. If no entry matches, it
+shows similar model ids. It contains no credentials, so you can attach it to a bug report. See
+[Logs and diagnostics](logging.md) for the log location.
 
 ### Reduce latency with Anthropic threads
 

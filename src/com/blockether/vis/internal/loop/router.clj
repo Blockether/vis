@@ -1013,6 +1013,66 @@
            #(with-session-llm-headers (hydrate-router-credentials % provider-id)
                                       (:session-llm-headers environment)))))
 
+(defn- catalog-model-key
+  "Match key for a live catalog id: lower-cased, with dotted version digits dashed."
+  [model-name]
+  (str/replace (str/lower-case (str model-name)) #"(\d)\.(\d)" "$1-$2"))
+
+(defn- model-limits?
+  [model]
+  (boolean (or (pos-int? (:input-limit model)) (pos-int? (:context model)))))
+
+(defn- live-models-by-key
+  "Index live catalog rows by `catalog-model-key`. A catalog can list one id twice,
+   so a row with an input or context limit replaces an earlier row without one."
+  [live]
+  (reduce (fn [acc model]
+            (let [m
+                  (config/->svar-model (assoc model :name (or (:id model) (:name model))))
+
+                  k
+                  (some-> (:name m)
+                          catalog-model-key)]
+
+              (if (and k
+                       (or (not (contains? acc k))
+                           (and (model-limits? m) (not (model-limits? (get acc k))))))
+                (assoc acc k m)
+                acc)))
+          {}
+          live))
+
+(defn- catalog-limit-fields
+  "Raw limit fields of the live catalog rows for `model-name`, for a diagnostic log.
+   No exact row gives the ids of the same family, to show a renamed model."
+  [live model-name]
+  (let [k
+        (catalog-model-key model-name)
+
+        row-key
+        #(catalog-model-key (or (:id %) (:name %)))
+
+        family
+        (re-find #"^[a-z]+-[a-z]+" k)
+
+        rows
+        (filter #(= k (row-key %)) live)]
+
+    (if (seq rows)
+      (mapv (fn [row]
+              (into {"id" (or (:id row) (:name row))
+                     "capabilities.limits" (get-in row ["capabilities" "limits"])}
+                    (filter (fn [[field _]]
+                              (and (string? field) (re-find #"(?i)limit|token|context" field))))
+                    row))
+            rows)
+      {"similar_ids" (into []
+                           (comp (map #(or (:id %) (:name %)))
+                                 (filter #(and family
+                                               (str/starts-with? (catalog-model-key %) family)))
+                                 (take 20))
+                           live)})))
+
 (defn hydrate-request-model-metadata
   "Resolve missing or invalid model limits from the selected provider before preflight.
    Discovery uses the current credential and Svar's account-scoped cache. Explicit
@@ -1042,26 +1102,22 @@
                           (assoc (select-keys provider [:api-key :base-url :api-style :llm-headers])
                             :provider-id provider-id))
 
-            by-name
-            (into {}
-                  (keep (fn [model]
-                          (when-let [m (config/->svar-model
-                                         (assoc model :name (or (:id model) (:name model))))]
-                            [(:name m) m])))
-                  live)
+            by-key
+            (live-models-by-key live)
 
             explicit
             (into {} (map (juxt :name identity)) (::configured-models provider))
 
             models
-            (catalog/normalize-models (:priority provider)
-                                      (update provider
-                                              :models
-                                              #(mapv (fn [model]
-                                                       (merge (dissoc model :capabilities)
-                                                              (by-name (:name model))
-                                                              (explicit (:name model))))
-                                                     %)))
+            (catalog/normalize-models
+              (:priority provider)
+              (update provider
+                      :models
+                      #(mapv (fn [model]
+                               (merge (dissoc model :capabilities)
+                                      (dissoc (by-key (catalog-model-key (:name model))) :name)
+                                      (explicit (:name model))))
+                             %)))
 
             updated
             (assoc provider
@@ -1079,7 +1135,19 @@
                                         (if (= provider-id (:id p)) updated p))
                                       %))]
 
-        (svar/context-budget (:router hydrated) {:routing routing})
+        (try (svar/context-budget (:router hydrated) {:routing routing})
+             (catch clojure.lang.ExceptionInfo e
+               (let [data (ex-data e)]
+                 (when (= :svar.llm/model-metadata-unavailable (:type data))
+                   (tel/log! {:level :warn
+                              :id ::model-metadata-unavailable
+                              :data {:provider provider-id
+                                     :model (:model data)
+                                     :reason (:reason data)
+                                     :catalog-size (count live)
+                                     :catalog-rows (catalog-limit-fields live (:model data))}}
+                             "The live model catalog gave no valid limits; request not sent")))
+               (throw e)))
         hydrated))))
 
 (defn try-refresh-provider-token!
