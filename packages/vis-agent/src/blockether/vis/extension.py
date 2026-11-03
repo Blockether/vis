@@ -5125,6 +5125,13 @@ class DiffNode(_Node):
         return self._view.reply(self.node_id, body, **where)
 
 
+class ImageNode(_Node):
+    """A picture, or an old and a new picture to compare.
+
+    It takes no op: drop it and add a new `vis.ui.image(...)` to change it.
+    """
+
+
 class ThreadNode(_Node):
     """One conversation between people and the owner of the app."""
 
@@ -5184,6 +5191,7 @@ _LIVE_NODES = {
     "link": Link,
     "card": Card,
     "diff": DiffNode,
+    "image": ImageNode,
     "thread": ThreadNode,
     "scene": Scene,
     "plaintext": Input,
@@ -5322,9 +5330,20 @@ class LiveView:
         if raw.get("type") == "validate":
             self._judge(raw)
             return
-        event = LiveEvent._from_wire(raw)
+        event = self._wire_event(raw)
         for callback in list(self._listeners):
-            callback(event)
+            try:
+                callback(event)
+            except Exception as error:
+                self._callback_failed(error)
+
+    def _wire_event(self, raw):
+        """The event that `on_event` callbacks get for one pushed wire event."""
+        return LiveEvent._from_wire(raw)
+
+    def _callback_failed(self, error: Exception) -> None:
+        """Answer an exception of an `on_event` callback. A plain view raises it."""
+        raise error
 
     def _settle(self, answer):
         """Learn from every answer whether the view is still open."""
@@ -6213,6 +6232,37 @@ class LiveAttachment(LiveView):
             }
         )
 
+    def log(self, message, level="info", detail=None):
+        """Write one entry to the debug log of this app, for the Log panel.
+
+        `level` is debug, info, warn or error. `detail` holds more text, for
+        example a stack trace. The host stamps the time and keeps the newest
+        entries. A long text is cut. The entry rides the next push, like a patch.
+        """
+        return self._push(_log_op(message, level, detail))
+
+    def _callback_failed(self, error: Exception) -> None:
+        """Log a failed `on_event` callback in the app and keep serving events."""
+        import traceback
+
+        _log.error(
+            "vis app %s: an on_event callback failed", self.view_id, exc_info=error
+        )
+        detail = "".join(traceback.format_exception(error))
+        try:
+            self._push(
+                _log_op(
+                    f"An on_event callback failed: {type(error).__name__}: {error}",
+                    "error",
+                    detail,
+                )
+            )
+            self.flush()
+        except Exception:
+            _log.exception(
+                "vis app %s: the failure did not reach its log", self.view_id
+            )
+
     def set_agent_note(self, text):
         """Tell the model the current state of this app, in plain text.
 
@@ -6435,6 +6485,8 @@ class _LiveRecorder:
                 node["lines"] = [_log_text(line) for line in node.get("lines", [])]
                 node.setdefault("window_lines", 2000)
                 node["total_lines"] = len(node["lines"])
+            elif kind == "image":
+                self._check_image(node)
             elif kind == "heading":
                 node.setdefault("level", 2)
             elif kind == "spinner":
@@ -6478,6 +6530,29 @@ class _LiveRecorder:
         return view
 
     @staticmethod
+    def _check_image(node):
+        # As the engine: the schema, then each picture, which takes its header size.
+        # Vis raises VisToolError, a RuntimeError, so the recorder does too.
+        from blockether.vis import _contracts
+
+        found = _contracts.problems("view", "component", node)
+        try:
+            if found:
+                raise ValueError(" ".join(found))
+            node.update(_contracts.read_picture(node))
+            if node.get("before") is not None:
+                node["before"] = _contracts.read_picture(node["before"])
+        except ValueError as error:
+            raise RuntimeError(f"image {node.get('id')}: {error}") from None
+
+    def _check_pictures(self):
+        from blockether.vis import _contracts
+
+        complaint = _contracts.picture_budget_error(self._open_view().get("nodes"))
+        if complaint:
+            raise RuntimeError(complaint)
+
+    @staticmethod
     def _check_lanes(node):
         from blockether.vis import _contracts
 
@@ -6518,6 +6593,19 @@ class _LiveRecorder:
                 view["shortcuts"] = self._copy(op["shortcuts"])
             else:
                 view.pop("shortcuts", None)
+            return
+        if action == "log":
+            from blockether.vis import _contracts
+
+            found = _contracts.problems("view", "live_op", op)
+            if found:
+                raise RuntimeError("log op: " + " ".join(found))
+            try:
+                _contracts.append_log(
+                    self._open_view(), op, at=int(time.time() * 1000), source="app"
+                )
+            except ValueError as error:
+                raise RuntimeError(str(error)) from None
             return
         if action == "agent-note":
             view = self._open_view()
@@ -6670,6 +6758,7 @@ class _LiveRecorder:
                 if node.get("type") == "group" and not node.get("id"):
                     raise RuntimeError(_LIVE_GROUP_NEEDS_ID)
             self._view = self._materialize(envelope["view"])
+            self._check_pictures()
             self._declared = set(envelope.get("validators") or [])
             self._verdicts = {}
             self._result = None
@@ -6684,8 +6773,17 @@ class _LiveRecorder:
         elif self._result is not None:
             answer = {"view_id": self.view_id, "is_open": False, "result": self._result}
         elif action == "patch":
-            for op in (envelope.get("patch") or {}).get("ops") or []:
-                self._apply(op)
+            import copy
+
+            # As the host does: a refused patch leaves the view as it was.
+            before = copy.deepcopy(self._view)
+            try:
+                for op in (envelope.get("patch") or {}).get("ops") or []:
+                    self._apply(op)
+                self._check_pictures()
+            except Exception:
+                self._view = before
+                raise
             if "validators" in envelope:
                 self._declared = set(envelope["validators"] or [])
             # As the host does: a validator stays only while its input is in the view.
@@ -7300,6 +7398,94 @@ def _ui_diff(node_id, patch, *, old_revision=None, new_revision=None, **spec):
     )
 
 
+def _ui_picture_type(data):
+    """The media type of picture bytes from the magic bytes of the contract, or None."""
+    from blockether.vis import _contracts
+
+    return _contracts.picture_type(bytes(data[:64]))
+
+
+def _picture_data(data_or_path, most):
+    """The bytes of a picture from bytes or a file path, at most `most` of them."""
+    if isinstance(data_or_path, (bytes, bytearray, memoryview)):
+        data = bytes(data_or_path)
+    elif isinstance(data_or_path, (str, os.PathLike)):
+        path = Path(data_or_path)
+        if path.stat().st_size > most:
+            raise ValueError(
+                f"picture {str(path)!r} has {path.stat().st_size} bytes; "
+                f"an image node holds at most {most} bytes"
+            )
+        data = path.read_bytes()
+    else:
+        raise TypeError("a picture is bytes or a file path")
+    if len(data) > most:
+        raise ValueError(
+            f"the picture has {len(data)} bytes; an image node holds at most {most} bytes"
+        )
+    return data
+
+
+def _picture_media_type(data, media_type, types):
+    """The media type of `data` from its magic bytes; a named `media_type` must match."""
+    found = _ui_picture_type(data)
+    if media_type is not None and media_type not in types:
+        raise ValueError(f"media_type must be one of {', '.join(types)}")
+    if found is None:
+        # The engine checks the magic bytes too, so a named type cannot help.
+        raise ValueError(f"the bytes are not a picture of type {', '.join(types)}")
+    if media_type is not None and found != media_type:
+        raise ValueError(f"the bytes are {found}, not {media_type}")
+    return found
+
+
+def _ui_picture(data_or_path, *, media_type=None):
+    """One picture for `vis.ui.image(..., before=...)`, from bytes or a file path.
+
+    The media type comes from the magic bytes; a given `media_type` must match
+    them. Width and height come from the header. Vis refuses a picture that is
+    too large, has too many pixels, has bytes of another type or a header without
+    a size, and so does this builder, with ValueError.
+    """
+    from blockether.vis import _contracts
+
+    rule = _contracts.definition("view", "picture")["properties"]
+    data = _picture_data(data_or_path, rule["data"]["maxLength"] // 4 * 3)
+    media_type = _picture_media_type(data, media_type, rule["media_type"]["enum"])
+    return _contracts.read_picture(
+        {"media_type": media_type, "data": base64.b64encode(data).decode("ascii")}
+    )
+
+
+def _ui_image(node_id, data_or_path, *, alt, label=None, before=None, media_type=None):
+    """A picture in an app, from bytes or a file path.
+
+    `alt` says what it shows, for a person who cannot see it. With `before` (bytes,
+    a path or a `vis.ui.picture(...)`), the surface compares the old picture with
+    the new one. The media type comes from the magic bytes, and width and height
+    from the header. A picture larger than the contract allows raises ValueError.
+    """
+    from blockether.vis import _contracts
+
+    alt_rule = next(
+        branch["properties"]["alt"]
+        for branch in _contracts.definition("view", "component")["oneOf"]
+        if branch["properties"].get("type", {}).get("const") == "image"
+    )
+    if not isinstance(alt, str) or not alt.strip() or len(alt) > alt_rule["maxLength"]:
+        raise ValueError(
+            f"an image needs alt text of 1 to {alt_rule['maxLength']} characters"
+        )
+    node: dict[str, Any] = _ui_picture(data_or_path, media_type=media_type)
+    if before is not None:
+        node["before"] = (
+            _contracts.read_picture(dict(before))
+            if isinstance(before, Mapping)
+            else _ui_picture(before)
+        )
+    return _live_node("image", node_id, dict(node, alt=alt, label=label))
+
+
 def _ui_thread(node_id, *, messages=None, **spec):
     """One conversation in an app: people write and send, the owner replies."""
     return _live_node("thread", node_id, dict(spec, messages=list(messages or [])))
@@ -7473,6 +7659,37 @@ def _ui_shortcut(key, action=None, *, node_id=None, label=None):
     return shortcut
 
 
+def _log_op(message, level, detail):
+    """One `log` op, checked and cut to the bounds of the contract."""
+    from blockether.vis import _contracts
+
+    levels = _contracts.definition("view", "log_level")["enum"]
+    if level not in levels:
+        raise ValueError(f"a log level is one of {', '.join(levels)}, got {level!r}")
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("a log entry needs a nonblank message")
+    if detail is not None and not isinstance(detail, str):
+        raise TypeError("the detail of a log entry must be text")
+    rule = next(
+        branch["properties"]
+        for branch in _contracts.definition("view", "live_op")["oneOf"]
+        if branch.get("properties", {}).get("op", {}).get("const") == "log"
+    )
+    # The op bound is 4 times the entry bound. The host redacts secrets and then
+    # cuts to the entry bound, which drops this seam with the middle, so a cut
+    # here never leaves part of a labelled secret.
+    op = {
+        "op": "log",
+        "level": level,
+        "message": _contracts.clip(message.strip(), rule["message"]["maxLength"]),
+    }
+    if detail is not None and detail.strip():
+        op["detail"] = _contracts.clip(
+            detail, rule["detail"]["maxLength"], is_detail=True
+        )
+    return op
+
+
 def _agent_note_text(text):
     """Check the note of an app for the model before the host sees it."""
     from blockether.vis import _contracts
@@ -7574,6 +7791,9 @@ class _UI:
     app = staticmethod(_ui_app)
     shortcut = staticmethod(_ui_shortcut)
     diff = staticmethod(_ui_diff)
+    image = staticmethod(_ui_image)
+    picture = staticmethod(_ui_picture)
+    picture_type = staticmethod(_ui_picture_type)
     thread = staticmethod(_ui_thread)
     scene = staticmethod(_ui_scene)
     scene_object = staticmethod(_ui_scene_object)

@@ -11,13 +11,17 @@ first node never changes, so each node keeps its place.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import time
+import traceback
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Mapping
 from typing import Any
 
 import blockether.vis.extension as vis
+from blockether.vis import _contracts
 
 from vis_review import ai, checks
 from vis_review.journal import FileDiff, Journal
@@ -35,6 +39,17 @@ EVENT_FIELDS = ("type", "node_id", "values", "submission_id", "comments", "item_
 BUTTONS = ("all", "refresh", "checks", "tests", "ai", "undo-file", "undo", "restore")
 # Buttons that call a tool or a model: they run outside the lock.
 SLOW = ("checks", "tests", "ai")
+# Changed pictures the app shows at most.
+MOST_IMAGES = 8
+# Decoded picture bytes that the app shows together, old and new: the view bound.
+MOST_PICTURE_BYTES = _contracts.definition("view", "live_view")[
+    "x-vis-max-picture-bytes"
+]
+# Decoded picture bytes that the image cache keeps, newest first.
+MOST_CACHED_PICTURE_BYTES = 2 * MOST_PICTURE_BYTES
+MOST_CACHED_IMAGES = 256
+# The name of a checks run, by whether it runs the tests too.
+_RUN_NAMES = {True: "Tests and checks", False: "Checks"}
 
 
 def event_dict(event) -> dict[str, Any]:
@@ -51,12 +66,8 @@ def event_dict(event) -> dict[str, Any]:
 class RawApp(vis.LiveAttachment):
     """A live app handle that gives each event as the raw wire dict."""
 
-    def _host_event(self, raw):
-        if raw.get("type") == "validate":
-            self._judge(raw)
-            return
-        for callback in list(self._listeners):
-            callback(dict(raw))
+    def _wire_event(self, raw):
+        return dict(raw)
 
 
 def extension_opener(declaration: dict, on_event: Callable[[Any], None]) -> RawApp:
@@ -98,6 +109,8 @@ class ReviewApp:
         self._painted: dict[str, dict] = {}
         self._lock = threading.RLock()
         self._busy: str | None = None
+        # Image nodes by (path, old digest, new digest): a paint reads no blob twice.
+        self._images: OrderedDict[tuple, dict | None] = OrderedDict()
 
     # Opening and painting ----------------------------------------------------
 
@@ -137,6 +150,20 @@ class ReviewApp:
                     self.view.add(node, after=before)
                     self._painted[node_id] = node
                 before = node_id
+            # A node that the render no longer has, like the images of an old range.
+            for node_id in set(self._painted) - {node["id"] for node in nodes}:
+                self.view.drop(node_id)
+                del self._painted[node_id]
+
+    def log(self, message: str, level: str = "info", detail: str | None = None) -> None:
+        """Write one entry to the Log panel of the app; a closed app only logs here."""
+        getattr(LOG, {"warn": "warning"}.get(level, level))("vis-review: %s", message)
+        if self.view is None:
+            return
+        try:
+            self.view.log(message, level, detail).flush()
+        except Exception:  # noqa: BLE001 - the log must never break the app
+            LOG.exception("vis-review: the app log did not take an entry")
 
     # Rendering ---------------------------------------------------------------
 
@@ -159,63 +186,54 @@ class ReviewApp:
             self.path = None
         diffs = [d for d in diffs_all if self.path is None or d.path == self.path]
         findings = self.all_findings(diffs)
-        counts = checks.summary(findings)
-        per_file: dict[str, int] = {}
-        for finding in findings:
-            per_file[finding.path] = per_file.get(finding.path, 0) + 1
         end = self.end or self.journal.last
-        scope = (
-            "all changes"
-            if self.start <= 1 and self.end is None
-            else f"#{self.start}..#{end}"
-        )
-        stats = [
-            {"id": "range", "label": "Range", "value_text": scope},
-            {"id": "files", "label": "Files", "value_text": str(len(diffs_all))},
-            {
-                "id": "added",
-                "label": "Added",
-                "value_text": f"+{sum(d.added for d in diffs_all)}",
-                "tone": "ok",
-            },
-            {
-                "id": "removed",
-                "label": "Removed",
-                "value_text": f"-{sum(d.removed for d in diffs_all)}",
-                "tone": "error",
-            },
-            {
-                "id": "errors",
-                "label": "Errors",
-                "value_text": str(counts["error"]),
-                "tone": "error" if counts["error"] else "ok",
-            },
-            {
-                "id": "warnings",
-                "label": "Warnings",
-                "value_text": str(counts["warning"]),
-                "tone": "warn" if counts["warning"] else "ok",
-            },
+        images = self.image_nodes(diffs)
+        return [
+            ui.status("root", text=f"Changes under {self.journal.root}", tone="idle"),
+            ui.stat(
+                "summary", stats=_stats(self._range_text(end), diffs_all, findings)
+            ),
+            self._notice(),
+            self._buttons(bool(diffs)),
+            self._checkpoints(),
+            _files_table(diffs_all, findings, self.path),
+            self._diff(diffs, findings, end),
+            *([ui.group("images", *images, label="Changed images")] if images else []),
+            _findings_table(findings),
         ]
+
+    def _is_all(self) -> bool:
+        """True when the app shows the whole journal: the first range."""
+        return self.start <= 1 and self.end is None
+
+    def _range_text(self, end: int) -> str:
+        return "all changes" if self._is_all() else f"#{self.start}..#{end}"
+
+    def _notice(self) -> dict:
         text, tone = self.notice
-        notice = ui.status("notice", text=text, tone=tone)
         if self.ai_summary:
-            notice = ui.status(
+            return ui.status(
                 "notice", text=text, tone=tone, detail=self.ai_summary[:2000]
             )
+        return ui.status("notice", text=text, tone=tone)
+
+    def _buttons(self, has_diffs: bool) -> dict:
+        """The action buttons; each one is off when it cannot do anything now."""
         has_change = self.selected is not None and self.selected > 1
-        buttons = ui.group(
+        return ui.group(
             ui.button(
-                "all",
-                "All changes",
-                is_disabled=self.start <= 1 and self.end is None and self.path is None,
+                "all", "All changes", is_disabled=self._is_all() and self.path is None
             ),
             ui.button("refresh", "Refresh"),
-            ui.button("checks", "Run checks", variant="primary", is_disabled=not diffs),
             ui.button(
-                "tests", "Run tests", is_disabled=not diffs or self._call is None
+                "checks", "Run checks", variant="primary", is_disabled=not has_diffs
             ),
-            ui.button("ai", "AI review", is_disabled=not diffs or self._ask is None),
+            ui.button(
+                "tests", "Run tests", is_disabled=not has_diffs or self._call is None
+            ),
+            ui.button(
+                "ai", "AI review", is_disabled=not has_diffs or self._ask is None
+            ),
             ui.button(
                 "undo-file",
                 "Undo file",
@@ -237,6 +255,9 @@ class ReviewApp:
             direction="row",
             id="actions",
         )
+
+    def _checkpoints(self) -> dict:
+        """The checkpoint table, newest first, with the chosen checkpoint selected."""
         rows = [
             ui.table_row(
                 str(e.seq),
@@ -250,61 +271,26 @@ class ReviewApp:
             )
             for e in reversed(self.journal.entries[-MOST_CHECKPOINTS:])
         ]
-        checkpoints = ui.table(
+        return ui.table(
             "checkpoints",
-            [
-                ui.table_column(c, label)
-                for c, label in (
-                    ("seq", "#"),
-                    ("kind", "Kind"),
-                    ("label", "Label"),
-                    ("files", "Files"),
-                    ("at", "Time"),
-                )
-            ],
+            _columns(
+                ("seq", "#"),
+                ("kind", "Kind"),
+                ("label", "Label"),
+                ("files", "Files"),
+                ("at", "Time"),
+            ),
             rows=rows,
             is_selectable=True,
             label="Checkpoints",
-            selected_ids=[] if self.selected is None else [str(self.selected)],
+            selected_ids=_selected(self.selected),
         )
-        files = ui.table(
-            "files",
-            [
-                ui.table_column(c, label)
-                for c, label in (
-                    ("path", "File"),
-                    ("status", "Status"),
-                    ("added", "+"),
-                    ("removed", "-"),
-                    ("findings", "Findings"),
-                )
-            ],
-            rows=[
-                ui.table_row(
-                    d.path,
-                    [
-                        d.path,
-                        d.status,
-                        f"+{d.added}",
-                        f"-{d.removed}",
-                        str(per_file.get(d.path, 0)),
-                    ],
-                    **(
-                        {"tone": "error"}
-                        if any(
-                            f.level == "error" and f.path == d.path for f in findings
-                        )
-                        else {}
-                    ),
-                )
-                for d in diffs_all
-            ],
-            is_selectable=True,
-            label="Changed files",
-            selected_ids=[] if self.path is None else [self.path],
-        )
+
+    def _diff(self, diffs: list[FileDiff], findings, end: int) -> dict:
+        """The diff node of `diffs`, with one thread for each finding on a line."""
         patch, cut = _patch_of(diffs)
-        diff = ui.diff(
+        newest = self.journal.entries[-1].at if self.journal.entries else 0
+        return ui.diff(
             "diff",
             patch or "No change in this range.\n",
             old_revision=f"#{max(self.start, 0)}",
@@ -313,56 +299,75 @@ class ReviewApp:
             threads=_threads(
                 findings,
                 {d.path for d in diffs if d.patch},
-                int((self.journal.entries[-1].at if self.journal.entries else 0) * 1000)
-                or 1,
+                int(newest * 1000) or 1,
             ),
         )
-        table = ui.table(
-            "findings",
-            [
-                ui.table_column(c, label)
-                for c, label in (
-                    ("level", "Level"),
-                    ("check", "Check"),
-                    ("where", "Where"),
-                    ("message", "Message"),
+
+    def image_nodes(self, diffs: list[FileDiff]) -> list[dict]:
+        """One image node for each changed picture: old and new side by side."""
+        nodes: list[dict] = []
+        budget = MOST_PICTURE_BYTES
+        for diff in diffs:
+            if not diff.is_binary:
+                continue
+            if len(nodes) == MOST_IMAGES:
+                nodes.append(
+                    ui.status(
+                        "images-more",
+                        label="More images",
+                        text=f"Only the first {MOST_IMAGES} changed images show.",
+                        tone="idle",
+                    )
                 )
-            ],
-            rows=[
-                ui.table_row(
-                    f"f{n}",
-                    [
-                        f.level,
-                        f.check,
-                        f"{f.path}:{f.line}" if f.line else f.path or "-",
-                        f.message[:500],
-                    ],
-                    tone=_TONES[f.level],
+                break
+            node = self._image((diff.path, diff.before, diff.after), diff)
+            if node is None:
+                continue
+            size = _contracts.node_picture_bytes(node)
+            if size > budget:
+                node = ui.status(
+                    node["id"],
+                    label=node.get("label"),
+                    text=f"{diff.path}: no preview",
+                    detail="The changed images of this range are too large together.",
+                    tone="warn",
                 )
-                for n, f in enumerate(findings)
-            ],
-            label="Findings",
+            else:
+                budget -= size
+            nodes.append(node)
+        return nodes
+
+    def _image(self, key: tuple, diff: FileDiff) -> dict | None:
+        """The image node of `diff` from the cache, which keeps the newest bytes."""
+        if key in self._images:
+            self._images.move_to_end(key)
+            return self._images[key]
+        node = image_node(diff, self.journal.store.get)
+        self._images[key] = node
+        cached = sum(
+            _contracts.node_picture_bytes(n or {}) for n in self._images.values()
         )
-        root = ui.status("root", text=f"Changes under {self.journal.root}", tone="idle")
-        return [
-            root,
-            ui.stat("summary", stats=stats),
-            notice,
-            buttons,
-            checkpoints,
-            files,
-            diff,
-            table,
-        ]
+        while len(self._images) > 1 and (
+            cached > MOST_CACHED_PICTURE_BYTES or len(self._images) > MOST_CACHED_IMAGES
+        ):
+            _, old = self._images.popitem(last=False)
+            cached -= _contracts.node_picture_bytes(old or {})
+        return node
 
     # Events ------------------------------------------------------------------
 
     def on_event(self, event) -> None:
         """The `on_event` callback: one event from a person, from any thread."""
+        fields = event_dict(event)
         try:
-            self.dispatch(event_dict(event))
+            self.dispatch(fields)
         except Exception as error:  # noqa: BLE001 - one bad event must not end the app
-            LOG.exception("vis-review: event %r failed", event)
+            what = fields.get("node_id") or fields.get("type") or "an event"
+            self.log(
+                f"{what} failed: {type(error).__name__}: {error}",
+                "error",
+                traceback.format_exc(),
+            )
             self.refresh((f"{type(error).__name__}: {error}"[:300], "error"))
 
     def dispatch(self, event: dict) -> None:
@@ -421,22 +426,23 @@ class ReviewApp:
         )
 
     def _checks(self, *, is_tested: bool = False) -> None:
+        name = _RUN_NAMES[is_tested]
         with self._lock:
             diffs, scope = self.diffs(), self._scope()
-            self.refresh(
-                (
-                    "Running tests and checks" if is_tested else "Running checks",
-                    "running",
-                )
-            )
-        found: list[checks.Finding] = []
-        if self._call is not None:
-            paths = [d.path for d in diffs if d.status != "deleted"]
-            found = checks.language_checks(
-                self.journal.root, paths, self._call, is_tested=is_tested
-            )
-        else:
-            found = [
+            self.refresh((f"Running {name.lower()}", "running"))
+        started = time.perf_counter()
+        found = self._language_findings(diffs, is_tested)
+        with self._lock:
+            if scope != self._scope():
+                return
+            self._take_checks(found, diffs, f"{name} ran in {_ms(started)} ms")
+
+    def _language_findings(
+        self, diffs: list[FileDiff], is_tested: bool
+    ) -> list[checks.Finding]:
+        """The findings of the language tools on `diffs`, or a note that none are here."""
+        if self._call is None:
+            return [
                 checks.Finding(
                     "tool",
                     "info",
@@ -446,18 +452,30 @@ class ReviewApp:
                     "language",
                 )
             ]
-        with self._lock:
-            if scope != self._scope():
-                return
-            self.findings = [f for f in self.findings if f.source == "ai"] + found
-            counts = checks.summary(self.all_findings(diffs))
-            tone = "error" if counts["error"] else "warn" if counts["warning"] else "ok"
-            self.refresh(
-                (
-                    f"Checks done: {counts['error']} errors, {counts['warning']} warnings",
-                    tone,
-                )
+        paths = [d.path for d in diffs if d.status != "deleted"]
+        return checks.language_checks(
+            self.journal.root, paths, self._call, is_tested=is_tested
+        )
+
+    def _take_checks(
+        self, found: list[checks.Finding], diffs: list[FileDiff], ran: str
+    ) -> None:
+        """Keep the findings of one checks run, log the run and paint its result."""
+        self.findings = [f for f in self.findings if f.source == "ai"] + found
+        counts = checks.summary(self.all_findings(diffs))
+        for finding in found:
+            if finding.check == "tool":
+                self.log(finding.message, "warn")
+        self.log(
+            f"{ran} on {len(diffs)} files: {counts['error']} errors, "
+            f"{counts['warning']} warnings"
+        )
+        self.refresh(
+            (
+                f"Checks done: {counts['error']} errors, {counts['warning']} warnings",
+                _tone(counts),
             )
+        )
 
     def _tests(self) -> None:
         self._checks(is_tested=True)
@@ -467,7 +485,9 @@ class ReviewApp:
             diffs, scope = self.diffs(), self._scope()
             known = self.all_findings(diffs)
             self.refresh(("The AI review is running", "running"))
+        started = time.perf_counter()
         summary, found = ai.review(self.journal.root, diffs, self._ask, known)
+        self.log(f"The AI review ran in {_ms(started)} ms: {len(found)} findings")
         with self._lock:
             if scope != self._scope():
                 return
@@ -485,6 +505,7 @@ class ReviewApp:
         """Run a slow button outside the lock, so a block hook never waits for it."""
         with self._lock:
             if self._busy:
+                self.log(f"Refused {node}: {self._busy} is still running", "warn")
                 self.refresh((f"Wait: {self._busy} is still running", "warn"))
                 return
             self._busy = node
@@ -518,6 +539,8 @@ class ReviewApp:
         if done.missing:
             parts.append("too large to keep: " + ", ".join(done.missing[:5]))
         tone = "warn" if done.conflicts or done.missing else "ok"
+        if tone == "warn":
+            self.log("Undo kept some files: " + "; ".join(parts[1:]), "warn")
         self.start, self.end, self.selected = 1, None, None
         self._clear()
         self.refresh(
@@ -542,6 +565,7 @@ class ReviewApp:
             + "\n".join(lines)
         )
         if self._send is None:
+            self.log("Refused the comments: this app cannot send to a session", "warn")
             if submission:
                 self.view.set_status(
                     submission, "failed", note="This app cannot send to a session."
@@ -551,6 +575,54 @@ class ReviewApp:
         if submission:
             self.view.set_status(submission, "answered", note="Sent to the session.")
         self.refresh(("Sent the comments to the session", "ok"))
+
+
+def image_node(diff: FileDiff, blob: Callable[[str], bytes | None]) -> dict | None:
+    """The image node of one changed picture, a note when it cannot show, or None.
+
+    A modified picture compares its old and new version. An added or deleted one
+    shows one picture. None means that the file is no picture that a surface draws.
+    """
+    old = blob(diff.before) if diff.before else None
+    new = blob(diff.after) if diff.after else None
+    is_old = bool(old) and ui.picture_type(old) is not None
+    is_new = bool(new) and ui.picture_type(new) is not None
+    if not (is_old or is_new):
+        return None
+    node_id = "image-" + hashlib.sha1(diff.path.encode()).hexdigest()[:12]
+    label = f"{diff.path} ({diff.status})"
+    try:
+        if is_new:
+            return ui.image(
+                node_id,
+                new,
+                alt=f"The new version of {diff.path}"[:300],
+                label=label,
+                before=old if is_old else None,
+            )
+        return ui.image(
+            node_id, old, alt=f"The deleted file {diff.path}"[:300], label=label
+        )
+    except ValueError as error:
+        return ui.status(
+            node_id,
+            label=label,
+            text=f"{diff.path}: no preview",
+            detail=str(error),
+            tone="warn",
+        )
+
+
+def _tone(counts: Mapping[str, int]) -> str:
+    """The tone of a result: error, warn or ok, by its worst finding."""
+    if counts["error"]:
+        return "error"
+    return "warn" if counts["warning"] else "ok"
+
+
+def _ms(started: float) -> int:
+    """Whole milliseconds since `started`, a `time.perf_counter()` value."""
+    return round((time.perf_counter() - started) * 1000)
 
 
 def _patch_of(diffs: list[FileDiff]) -> tuple[str, list[str]]:
@@ -567,6 +639,111 @@ def _patch_of(diffs: list[FileDiff]) -> tuple[str, list[str]]:
         parts.append(text)
         size += len(text)
     return "".join(parts), cut
+
+
+def _columns(*pairs: tuple[str, str]) -> list[dict]:
+    """Table columns from `(id, label)` pairs."""
+    return [ui.table_column(column, label) for column, label in pairs]
+
+
+def _selected(item) -> list[str]:
+    """The selected ids of a table: none, or the one chosen item."""
+    return [] if item is None else [str(item)]
+
+
+def _stats(scope: str, diffs: list[FileDiff], findings) -> list[dict]:
+    """The summary numbers: range, files, lines and the findings by level."""
+    counts = checks.summary(findings)
+    return [
+        {"id": "range", "label": "Range", "value_text": scope},
+        {"id": "files", "label": "Files", "value_text": str(len(diffs))},
+        {
+            "id": "added",
+            "label": "Added",
+            "value_text": f"+{sum(d.added for d in diffs)}",
+            "tone": "ok",
+        },
+        {
+            "id": "removed",
+            "label": "Removed",
+            "value_text": f"-{sum(d.removed for d in diffs)}",
+            "tone": "error",
+        },
+        {
+            "id": "errors",
+            "label": "Errors",
+            "value_text": str(counts["error"]),
+            "tone": "error" if counts["error"] else "ok",
+        },
+        {
+            "id": "warnings",
+            "label": "Warnings",
+            "value_text": str(counts["warning"]),
+            "tone": "warn" if counts["warning"] else "ok",
+        },
+    ]
+
+
+def _files_table(diffs: list[FileDiff], findings, path: str | None) -> dict:
+    """The changed files, each with its findings; a file with an error is red."""
+    per_file = Counter(finding.path for finding in findings)
+    failed = {finding.path for finding in findings if finding.level == "error"}
+    return ui.table(
+        "files",
+        _columns(
+            ("path", "File"),
+            ("status", "Status"),
+            ("added", "+"),
+            ("removed", "-"),
+            ("findings", "Findings"),
+        ),
+        rows=[
+            ui.table_row(
+                d.path,
+                [
+                    d.path,
+                    d.status,
+                    f"+{d.added}",
+                    f"-{d.removed}",
+                    str(per_file[d.path]),
+                ],
+                **({"tone": "error"} if d.path in failed else {}),
+            )
+            for d in diffs
+        ],
+        is_selectable=True,
+        label="Changed files",
+        selected_ids=_selected(path),
+    )
+
+
+def _where(finding) -> str:
+    """Where a finding is: `path:line`, the path, or `-`."""
+    if finding.line:
+        return f"{finding.path}:{finding.line}"
+    return finding.path or "-"
+
+
+def _findings_table(findings) -> dict:
+    """Every finding, toned by its level."""
+    return ui.table(
+        "findings",
+        _columns(
+            ("level", "Level"),
+            ("check", "Check"),
+            ("where", "Where"),
+            ("message", "Message"),
+        ),
+        rows=[
+            ui.table_row(
+                f"f{n}",
+                [f.level, f.check, _where(f), f.message[:500]],
+                tone=_TONES[f.level],
+            )
+            for n, f in enumerate(findings)
+        ],
+        label="Findings",
+    )
 
 
 def _threads(findings, paths, now: int) -> list[dict]:
@@ -598,20 +775,38 @@ def _threads(findings, paths, now: int) -> list[dict]:
     return threads
 
 
-def _picture(view, nodes: list[dict]) -> dict[str, dict]:
-    """The nodes that an opened or adopted app shows, cut to the keys the render sets."""
+def _shown_nodes(view) -> dict[str, dict] | None:
+    """The nodes that `view` shows by id, or None when it has no picture yet."""
     try:
         picture = view.state() or {}
     except Exception:  # noqa: BLE001 - an app without a picture is new
-        return {node["id"]: node for node in nodes}
-    shown = {
-        node.get("id"): node
-        for node in picture.get("nodes") or []
-        if isinstance(node, dict)
+        return None
+    nodes = picture.get("nodes") or []
+    return {node.get("id"): node for node in nodes if isinstance(node, dict)}
+
+
+def _painted_from(shown: dict[str, dict], nodes: list[dict]) -> dict[str, dict]:
+    """The shown nodes, each cut to the keys that its rendered node sets.
+
+    A shown node that this render does not have stays whole: the first paint drops it.
+    """
+    rendered = {node["id"]: node for node in nodes}
+    painted = {
+        node_id: {key: shown[node_id].get(key) for key in node}
+        for node_id, node in rendered.items()
+        if node_id in shown
     }
-    painted = {}
-    for node in nodes:
-        old = shown.get(node["id"])
-        if old is not None:
-            painted[node["id"]] = {key: old.get(key) for key in node}
+    painted.update(
+        (node_id, old)
+        for node_id, old in shown.items()
+        if node_id and node_id not in rendered
+    )
     return painted
+
+
+def _picture(view, nodes: list[dict]) -> dict[str, dict]:
+    """The nodes that an opened or adopted app shows, cut to the keys the render sets."""
+    shown = _shown_nodes(view)
+    if shown is None:
+        return {node["id"]: node for node in nodes}
+    return _painted_from(shown, nodes)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import blockether.vis.extension as vis
 import pytest
-from blockether.vis import _outside
+from blockether.vis import _contracts, _outside
 
 
 def presentation():
@@ -69,6 +69,46 @@ def test_an_app_keeps_its_note_for_the_model(monkeypatch, host_kind):
     app.set_agent_note(" ")
     assert "agent_note" not in app.state()
     app.close()
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_an_app_log_keeps_its_newest_entries_in_order(monkeypatch, host_kind):
+    # The Log panel of the TUI and the Companion reads `live_view.log`.
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    most = _contracts.definition("view", "live_view")["properties"]["log"]["maxItems"]
+    app = vis.attach(vis.ui.app("Board", vis.ui.button("go", "Go")))
+    app.log("  Checks failed  ", level="error", detail="Traceback ...")
+    for n in range(most):
+        app.log(f"step {n}", level="debug")
+    log = app.state()["log"]
+    assert len(log) == most
+    assert [e["seq"] for e in log] == list(range(2, most + 2))
+    assert log[-1]["message"] == f"step {most - 1}" and log[-1]["source"] == "app"
+    for entry in log:
+        _contracts.validate("view", "log_entry", entry)
+    app.close()
+
+
+def test_the_log_rule_cuts_long_text_and_takes_only_app_entries():
+    rule = _contracts.definition("view", "log_entry")["properties"]
+    most = rule["message"]["maxLength"]
+    app = {"placement": "attachment"}
+    entry = _contracts.append_log(
+        app, {"level": "warn", "message": "x" * (most + 5)}, at=7, source="host"
+    )
+    assert len(entry["message"]) == most and entry["message"].endswith("\u2026")
+    assert (entry["seq"], entry["at"], entry["source"]) == (1, 7, "host")
+    with pytest.raises(ValueError, match="only an app"):
+        _contracts.append_log({}, {"level": "info", "message": "m"}, at=1, source="app")
+    with pytest.raises(ValueError, match="level"):
+        _contracts.append_log(
+            app, {"level": "loud", "message": "m"}, at=1, source="app"
+        )
+    with pytest.raises(ValueError, match="log level"):
+        vis.attach(vis.ui.app("Board", vis.ui.button("go", "Go"))).log("m", "loud")
 
 
 def test_operator_presses_wake_the_producer_and_are_counted(monkeypatch):
@@ -743,3 +783,49 @@ def test_timeline_hosts_refuse_what_the_engine_refuses(monkeypatch, host_kind):
             "Jobs", [{"id": "j", "type": "timeline", "lanes": [late]}], flush_ms=0
         ):
             pass
+
+
+LOG_CASES = json.loads(
+    (
+        Path(__file__).parents[2]
+        / "vis-contract/resources/vis-contract/fixtures/app-log.json"
+    ).read_text()
+)["cases"]
+
+
+def _fixture_text(value):
+    if isinstance(value, list):
+        return "".join(_fixture_text(part) for part in value)
+    if isinstance(value, dict):
+        return value["repeat"] * value["times"]
+    return value
+
+
+@pytest.mark.parametrize("case", LOG_CASES, ids=lambda c: c["name"])
+def test_the_app_log_follows_the_shared_fixture(case):
+    # One cut rule for the engine and the SDK (audit M5): app-log.json.
+    view = {
+        "placement": "attachment",
+        "log": [
+            {"seq": n, "at": 0, "level": "info", "source": "app", "message": f"e{n}"}
+            for n in range(1, case["prefill"] + 1)
+        ],
+    }
+    entry = {k: _fixture_text(v) for k, v in case["entry"].items()}
+    _contracts.append_log(view, entry, at=entry.pop("at"), source=entry.pop("source"))
+    expect, last = case["expect"], view["log"][-1]
+    assert (len(view["log"]), view["log"][0]["seq"]) == (
+        expect["count"],
+        expect["first_seq"],
+    )
+    for key, want in expect.get("last", {}).items():
+        if not isinstance(want, dict):
+            assert last[key] == want, key
+            continue
+        text = last[key]
+        assert len(text) == want.get("length", len(text)), key
+        assert text.startswith(want.get("starts", "")), key
+        assert text.endswith(want.get("ends", "")), key
+        assert want.get("contains", "") in text, key
+    assert not set(expect.get("absent", [])) & set(last)
+    _contracts.validate("view", "log_entry", last)

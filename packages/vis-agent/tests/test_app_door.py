@@ -150,6 +150,72 @@ def test_a_failing_callback_is_logged_and_polling_goes_on(caplog):
     assert wait_for(lambda: len(seen) == 2)
     assert "on_event callback failed" in caplog.text
     assert "first event breaks" in caplog.text
+    # The person sees the failure in the Log panel of the app, with its trace.
+    (entry,) = gateway.engine._view["log"]
+    assert entry["level"] == "error" and "first event breaks" in entry["message"]
+    assert "Traceback" in entry["detail"] and "callback" in entry["detail"]
+    validate("view", "log_entry", entry)
+    handle.close()
+
+
+class LogRefusingGateway(Gateway):
+    """Refuse each patch that carries a log entry, as a gateway that went away."""
+
+    def _request(self, method, route, *, path=None, body=None, timeout=None, **_):
+        envelope = body["envelope"]
+        ops = (envelope.get("patch") or {}).get("ops") or []
+        if any(op.get("op") == "log" for op in ops):
+            raise ConnectionError("gateway is away")
+        return super()._request(method, route, path=path, body=body, timeout=timeout)
+
+
+def test_a_failing_callback_whose_log_cannot_be_sent_stops_no_other_callback(caplog):
+    # CRAP audit A13: a failed log push must not raise out of the failure handler.
+    gateway = LogRefusingGateway()
+    second = []
+
+    def breaks(event):
+        raise RuntimeError("callback breaks")
+
+    handle = Session(gateway, "s-1").attach(app(), owner="bot", on_event=breaks)
+    handle.on_event(second.append)
+    gateway.engine.press_shortcut("r")
+    assert wait_for(lambda: second)
+    gateway.engine.press_shortcut("r")
+    assert wait_for(lambda: len(second) == 2)
+    assert "did not reach its log" in caplog.text
+    handle.close()
+
+
+def test_an_app_log_entry_crosses_the_door_as_a_log_op():
+    gateway = Gateway()
+    handle = Session(gateway, "s-1").attach(app(), owner="bot")
+    handle.log("Checks ran in 12 ms", detail="ruff: 0 findings").flush()
+    op = gateway.envelopes("patch")[-1]["patch"]["ops"][-1]
+    assert op == {
+        "op": "log",
+        "level": "info",
+        "message": "Checks ran in 12 ms",
+        "detail": "ruff: 0 findings",
+    }
+    validate("view", "live_op", op)
+    assert gateway.engine._view["log"][0]["seq"] == 1
+    handle.close()
+
+
+def test_a_long_log_detail_reaches_the_host_before_any_cut():
+    # Review audit (goal 4b41c770): the SDK cut the detail to the entry bound and
+    # dropped a `password=` label; the host then could not redact the value tail.
+    gateway = Gateway()
+    handle = Session(gateway, "s-1").attach(app(), owner="bot")
+    detail = "a" * 7990 + "password=" + "Z" * 400 + "b" * 7700
+    handle.log("Failed", level="error", detail=detail).flush()
+    op = gateway.envelopes("patch")[-1]["patch"]["ops"][-1]
+    assert op["detail"] == detail
+    validate("view", "live_op", op)
+    handle.log("Huge", level="error", detail="c" * 100_000).flush()
+    op = gateway.envelopes("patch")[-1]["patch"]["ops"][-1]
+    validate("view", "live_op", op)
     handle.close()
 
 

@@ -349,3 +349,32 @@ def test_a_sandbox_door_carries_every_envelope_of_its_app(monkeypatch):
     app = vis.LiveAttachment._from(declaration, door=door.live)
     app.reply("general", "Done.")
     assert [envelope["op"] for envelope in door.sent] == ["open", "reply"]
+
+
+def test_a_failed_callback_at_the_extension_door_logs_an_error_and_goes_on(
+    monkeypatch,
+):
+    # The host pushes app events to `on_event`; one bad event must not stop the app.
+    recorder = vis._LiveRecorder(object())
+    monkeypatch.setattr(vis._host, "live", recorder.live)
+    seen = []
+
+    def callback(event):
+        seen.append(event.node_id)
+        if len(seen) == 1:
+            raise RuntimeError("first press breaks")
+
+    app = vis.attach(
+        vis.ui.app("Board", vis.ui.button("go", "Go"), flush_ms=60_000),
+        on_event=callback,
+    )
+    # A fresh push opens the batch window: the failure must still cross at once.
+    app.log("ready").flush()
+    recorder.activate("go")
+    recorder.activate("go")
+    assert seen == ["go", "go"]
+    ready, entry = recorder._view["log"]
+    assert entry["level"] == "error" and "first press breaks" in entry["message"]
+    assert "Traceback" in entry["detail"]
+    validate("view", "log_entry", entry)
+    app.close()

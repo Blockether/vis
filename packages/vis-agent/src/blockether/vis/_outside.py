@@ -1288,6 +1288,15 @@ def _live_apply(view, op):
         else:
             view.pop("shortcuts", None)
         return f"shortcuts: {len(shortcuts)}"
+    if name == "log":
+        # Outside Vis the transcript is the Log panel: each entry gets one line.
+        try:
+            entry = _contracts.append_log(
+                view, op, at=int(time.time() * 1000), source="app"
+            )
+        except ValueError as error:
+            raise Refused(str(error)) from None
+        return f"log {entry['level']}: {entry['message']}"
     if name == "agent-note":
         # Outside Vis no model reads the note: the transcript shows it instead.
         text = op.get("text")

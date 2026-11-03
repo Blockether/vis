@@ -20,6 +20,8 @@ The view appears in the terminal or Companion app and can be stopped at any time
   in the [side panel](#choose-a-placement).
 - **People must review a change or answer you after your code returns.** Attach an
   [app](#apps). They save drafts and send them when they are ready.
+- **You need to know why your app failed or what it did.** Write to the
+  [app log](#write-to-the-app-log).
 - **People must act in an app with single keys.** Add [shortcuts](#add-shortcuts-to-an-app).
 - **Your program must show a moving 3D world, such as a game.** Draw a [scene](#draw-a-3d-scene).
 - **The model must know what people do in an app or an HTML page.** Give it a
@@ -827,6 +829,10 @@ app = vis.attach(vis.ui.app(
 - `vis.ui.diff(node_id, patch)` shows a unified diff. People comment on one line of it.
   `old_revision` and `new_revision` name the compared versions.
 - `vis.ui.thread(node_id)` shows one conversation.
+- `vis.ui.image(node_id, data_or_path, alt=..., label=None, before=None)` shows a PNG, JPEG, GIF
+  or WebP picture from bytes or a file. Vis reads the type and the size from the bytes. With
+  `before`, the surface compares the old picture with the new one. A picture holds at most 2 MiB.
+  To change a picture, drop the node and add a new one.
 - `vis.attach(...)` opens the app and returns a `vis.LiveAttachment` handle. `app.id` is the id of
   the app. An app takes no other argument of `vis.attach`.
 - With `key`, `vis.attach` returns the open app of your extension with the same key in the same
@@ -967,6 +973,26 @@ app.set_agent_note("Card 3 of 7 is open. Cards 1 and 2 are done.")
 - Write the current state, not a history. Each note replaces the note before it.
 - A closed or archived app gives no note.
 
+### Write to the app log
+
+People open the Log panel of an app to see what it did and why something failed. Write an entry
+when a step ends, takes long or fails.
+
+```python
+app.log("Checks ran in 840 ms: 0 errors, 2 warnings")
+app.log("The AI review failed", level="error", detail=trace)
+```
+
+- `app.log(message, level="info", detail=None)` adds one entry. `level` is `debug`, `info`,
+  `warn` or `error`. `detail` holds more text, for example a stack trace.
+- Vis adds the time of each entry and keeps the newest 200 entries.
+- Vis cuts a message over 2000 characters to its start and adds `…`.
+- Vis cuts a detail over 16000 characters to its start and its end. A line with `…` joins them.
+- Vis drops a blank detail and trims the message.
+- When an `on_event` callback raises an exception, the SDK writes an `error` entry with the stack
+  trace. The callback error does not raise in your program. The app continues to get its events.
+- Only an app has a log. A live view without `vis.ui.app` has none.
+
 A script in an HTML page that you attach sets the note of that page with `vis.setAgentNote(text)`.
 Only the Companion app runs this script. The terminal opens the page in the system viewer, where
 `vis` does not exist. Check for it before the call:
@@ -1012,8 +1038,8 @@ app.run(handle_event)
 - `owner` names your program, with 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`. Only
   this owner can change the app.
 - With `key`, a restarted program gets its open app back with the same state.
-- `on_event=callback` runs the callback on a background thread until the app closes. Vis logs an
-  error of the callback and continues.
+- `on_event=callback` runs the callback on a background thread until the app closes. A callback
+  error goes to the [app log](#write-to-the-app-log) and does not raise. The app continues.
 - Inside a tool of `Agent(extensions=[...])`, `vis.attach(vis.ui.app(...))` opens the app in the
   session of that call. The name of the extension is the owner.
 - [Sessions API](sessions-api.md#run-an-app-from-a-program) shows the same steps over HTTP.

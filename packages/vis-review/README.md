@@ -33,6 +33,8 @@ Data is under `$VIS_HOME/review/`, else `~/.vis/review/`:
 - The changed files with their added and removed line counts. Pick one to see only its diff.
 - The diff. A comment on a line becomes a review thread. When you send the review, the session gets the threads.
 - The findings of the checks and of the AI review, on their lines.
+- The changed pictures (PNG, JPEG, GIF and WebP). A changed picture shows its old and new version side by side. A picture over 2 MiB shows a note instead.
+- The log of the app: how long each check and AI review took, each failure with its stack trace, and each refused action.
 
 The buttons:
 

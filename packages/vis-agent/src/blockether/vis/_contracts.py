@@ -327,3 +327,246 @@ def validate(name: str, definition: str, value: Any) -> Any:
             f"invalid {name}.{definition} contract" + (f": {detail}" if detail else "")
         )
     return value
+
+
+# -- App debug log ---------------------------------------------------------------
+# The Python form of `com.blockether.vis.contract.app/append-log`. The test
+# recorder and the outside-Vis transcript keep a log as the engine keeps it.
+
+
+def clip(text: str, limit: int, *, is_detail: bool = False) -> str:
+    """`text` cut to `limit` code points, as the engine cuts a log entry.
+
+    A message keeps its start and ends with an ellipsis. A detail keeps its start
+    and its end, joined by a line with an ellipsis, so a stack trace keeps both
+    its first frame and its cause.
+    """
+    if len(text) <= limit:
+        return text
+    if not is_detail:
+        return text[: limit - 1] + "\u2026"
+    start = (limit - 3) // 2
+    return text[:start] + "\n\u2026\n" + text[len(text) - (limit - 3 - start) :]
+
+
+def log_entry_error(view: dict[str, Any], entry: dict[str, Any]) -> str | None:
+    """Answer why `entry` cannot go into the log of `view`, or None.
+
+    Only an app takes a log entry, and an entry needs a known level and a message.
+    """
+    levels = definition("view", "log_level")["enum"]
+    if view.get("placement") != "attachment":
+        return "only an app (placement attachment) takes a log entry"
+    if entry.get("level") not in levels:
+        return "a log entry needs a level: " + ", ".join(sorted(levels))
+    message = entry.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return "a log entry needs a message"
+    detail = entry.get("detail")
+    if detail is not None and not isinstance(detail, str):
+        return "the detail of a log entry must be text"
+    return None
+
+
+def append_log(
+    view: dict[str, Any], entry: dict[str, Any], *, at: int, source: str
+) -> dict[str, Any]:
+    """Put `entry` at the end of the log of app `view` and answer the new entry.
+
+    The entry takes the next `seq`. A long message or detail is cut, so an entry
+    is never lost. The log keeps only its newest entries. Raises ValueError for
+    an entry that the engine refuses.
+    """
+    complaint = log_entry_error(view, entry)
+    sources = _log_rule("source")["enum"]
+    if complaint is None and source not in sources:
+        complaint = "a log entry needs a source: " + ", ".join(sorted(sources))
+    if complaint is not None:
+        raise ValueError(complaint)
+    log = list(view.get("log") or [])
+    added = {
+        "seq": int(log[-1]["seq"] if log else 0) + 1,
+        "at": int(at),
+        "level": entry["level"],
+        "source": source,
+        "message": clip(entry["message"].strip(), _log_rule("message")["maxLength"]),
+    }
+    detail = entry.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        added["detail"] = clip(detail, _log_rule("detail")["maxLength"], is_detail=True)
+    log.append(added)
+    view["log"] = log[
+        -definition("view", "live_view")["properties"]["log"]["maxItems"] :
+    ]
+    return added
+
+
+def _log_rule(key: str) -> dict[str, Any]:
+    return definition("view", "log_entry")["properties"][key]
+
+
+# -- Pictures --------------------------------------------------------------------
+# The Python form of `com.blockether.vis.contract.view/read-picture`. The magic
+# bytes and the bounds come from `$defs.picture`, so the SDK and the engine judge
+# a picture the same way.
+
+
+def picture_type(data: bytes) -> str | None:
+    """The media type whose `x-vis-magic` the first bytes of `data` match, or None."""
+    for media_type in definition("view", "picture")["x-vis-magic"]:
+        if matches_magic(data, media_type):
+            return media_type
+    return None
+
+
+def matches_magic(data: bytes, media_type: str) -> bool:
+    """True when `data` starts like one magic of `media_type` in the contract."""
+    choices = definition("view", "picture")["x-vis-magic"].get(media_type) or []
+    return any(
+        all(
+            data[part["offset"] : part["offset"] + len(part["hex"]) // 2]
+            == bytes.fromhex(part["hex"])
+            for part in choice
+        )
+        for choice in choices
+    )
+
+
+def picture_size(data: bytes, media_type: str) -> tuple[int, int] | None:
+    """`(width, height)` from the header of picture `data`, or None when it does not say."""
+    import struct
+
+    try:
+        if media_type == "image/png":
+            return struct.unpack(">II", data[16:24]) if data[12:16] == b"IHDR" else None
+        if media_type == "image/gif":
+            return struct.unpack("<HH", data[6:10])
+        if media_type == "image/webp":
+            return _webp_size(data)
+        if media_type == "image/jpeg":
+            return _jpeg_size(data)
+    except (struct.error, IndexError):
+        return None
+    return None
+
+
+def _webp_size(data: bytes) -> tuple[int, int] | None:
+    import struct
+
+    chunk = data[12:16]
+    if chunk == b"VP8 ":
+        width, height = struct.unpack("<HH", data[26:30])
+        return width & 0x3FFF, height & 0x3FFF
+    if chunk == b"VP8L":
+        b0, b1, b2, b3 = data[21:25]
+        width = 1 + (((b1 & 0x3F) << 8) | b0)
+        height = 1 + (((b3 & 0x0F) << 10) | (b2 << 2) | ((b1 & 0xC0) >> 6))
+        return width, height
+    if chunk == b"VP8X" and len(data) >= 30:
+        return (
+            1 + int.from_bytes(data[24:27], "little"),
+            1 + int.from_bytes(data[27:30], "little"),
+        )
+    return None
+
+
+# The JPEG markers of a frame header, which holds the picture size.
+_JPEG_FRAMES = frozenset(range(0xC0, 0xD0)) - {0xC4, 0xC8, 0xCC}
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int] | None:
+    import struct
+
+    at = 2
+    while at + 4 <= len(data):
+        marker = data[at + 1]
+        if data[at] != 0xFF:
+            return None
+        if marker == 0xFF:
+            at += 1
+        elif marker == 0x01 or 0xD0 <= marker <= 0xD9:
+            at += 2
+        elif marker in _JPEG_FRAMES:
+            height, width = struct.unpack(">HH", data[at + 5 : at + 9])
+            return width, height
+        else:
+            at += 2 + struct.unpack(">H", data[at + 2 : at + 4])[0]
+    return None
+
+
+def read_picture(picture: Any) -> dict[str, Any]:
+    """`picture` with `width` and `height` from its header; ValueError when Vis refuses it.
+
+    The bytes must start like the media type, the header must give a size within
+    the pixel bound, and a declared size must match the header.
+    """
+    import base64
+    import binascii
+
+    rule = definition("view", "picture")
+    types = sorted(rule["x-vis-magic"])
+    if not isinstance(picture, dict) or picture.get("media_type") not in types:
+        raise ValueError("a picture needs a media type: " + ", ".join(types))
+    media_type, data = picture["media_type"], picture.get("data")
+    longest = rule["properties"]["data"]["maxLength"]
+    if isinstance(data, str) and len(data) > longest:
+        raise ValueError(
+            f"picture data is {len(data)} characters; the most is {longest}"
+        )
+    try:
+        decoded = (
+            base64.b64decode(data, validate=True) if isinstance(data, str) else None
+        )
+    except (binascii.Error, ValueError):
+        decoded = None
+    if decoded is None:
+        raise ValueError("picture data must be base64 text")
+    if not matches_magic(decoded, media_type):
+        raise ValueError(f"picture data is not {media_type} data")
+    size = picture_size(decoded, media_type)
+    if not size or size[0] < 1 or size[1] < 1:
+        raise ValueError("the picture header does not give its size")
+    width, height = int(size[0]), int(size[1])
+    most = rule["x-vis-max-pixels"]
+    if width * height > most:
+        raise ValueError(f"the picture has {width}x{height} pixels; the most is {most}")
+    declared = (picture.get("width"), picture.get("height"))
+    if (declared[0] is not None and declared[0] != width) or (
+        declared[1] is not None and declared[1] != height
+    ):
+        raise ValueError(
+            f"the declared size {declared[0]}x{declared[1]} differs from the "
+            f"header size {width}x{height}"
+        )
+    return dict(picture, width=width, height=height)
+
+
+def picture_byte_count(data: Any) -> int:
+    """How many bytes the base64 `data` of a picture holds."""
+    if not isinstance(data, str):
+        return 0
+    return len(data) * 3 // 4 - (len(data[-2:]) - len(data[-2:].rstrip("=")))
+
+
+def node_picture_bytes(node: dict[str, Any]) -> int:
+    """The picture bytes of one image node, its `before` picture included."""
+    if node.get("type") != "image":
+        return 0
+    return picture_byte_count(node.get("data")) + picture_byte_count(
+        (node.get("before") or {}).get("data")
+    )
+
+
+def picture_budget_error(nodes: list[dict[str, Any]]) -> str | None:
+    """None when the pictures of live `nodes` (a tree) fit the view bound, else why."""
+
+    def tree(items):
+        for node in items or []:
+            yield node
+            yield from tree(node.get("children"))
+
+    total = sum(node_picture_bytes(node) for node in tree(nodes))
+    most = definition("view", "live_view")["x-vis-max-picture-bytes"]
+    if total > most:
+        return f"the pictures of this view hold {total} bytes; the most is {most}"
+    return None
