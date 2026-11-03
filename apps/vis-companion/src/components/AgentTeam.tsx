@@ -13,7 +13,7 @@ import {
 } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
-import type { AgentTimeline, AgentTimelineItem, Subagent } from '../lib/types';
+import type { AgentTimeline, AgentTimelineItem, Subagent, TranscriptIteration, TranscriptTurn } from '../lib/types';
 import { councilLine, councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
 import { useClampMotion } from '../lib/clamp-motion';
@@ -193,9 +193,12 @@ export function TeamLine({ agents, action, labelId }: { agents: readonly Subagen
   );
 }
 
-/** Whether the team of `agents` has a timeline to show: two agents or more, with a team time. */
-export function hasTimeline(agents: readonly Subagent[]): boolean {
-  return agents.length > 1 && !!teamTime(agents, Date.now());
+/**
+ * Whether the team of `agents` has a timeline to show: two agents or more, or one agent beside
+ * its leader, with a time to draw.
+ */
+export function hasTimeline(agents: readonly Subagent[], leader?: LeaderLane): boolean {
+  return (agents.length > 1 || (agents.length > 0 && leader != null)) && !!chartSpan(agents, Date.now(), leader);
 }
 
 /** The control that swaps the notes of a team for its timeline, and back. */
@@ -235,33 +238,116 @@ export function useWide(): boolean {
   );
 }
 
-/** Where the current task of an agent stands on the team time: its start and end, from 0 to 1. */
+/** A time in epoch ms. An open end runs to now. */
+export interface Span {
+  start: number;
+  end?: number;
+}
+
+/** The leader turn of a team: its own time, and the steps in which it waited for its agents. */
+export interface LeaderLane extends Span {
+  waits: readonly Span[];
+}
+
+// A leader step that waits for its agents. `council.run` and `council.wait` return only when an
+// agent ends, asks or writes, so the time of such a block is the time that the leader waited.
+const WAITS_FOR_AGENTS = /\bcouncil\s*\.\s*(?:run|wait)\s*\(/;
+
+/**
+ * The leader lane of a turn from its steps. A step that runs or waits for agents is a wait from
+ * its start for its duration; a running step of a live turn waits to now. A step that the client
+ * did not load counts as work. Undefined without a start.
+ */
+export function leaderLane(
+  start: number | null | undefined,
+  end: number | null | undefined,
+  iterations: readonly TranscriptIteration[] = [],
+): LeaderLane | undefined {
+  if (start == null) return undefined;
+  const waits: Span[] = [];
+  for (const form of iterations.flatMap((iteration) => iteration.forms ?? [])) {
+    const at = form.started_at_ms;
+    if (typeof at !== 'number' || !WAITS_FOR_AGENTS.test(form.code ?? '')) continue;
+    if (typeof form.duration_ms === 'number') waits.push({ start: at, end: at + form.duration_ms });
+    else if (end == null) waits.push({ start: at });
+  }
+  return { start, end: end ?? undefined, waits: waits.sort((a, b) => a.start - b.start) };
+}
+
+/** The leader lane of a stored turn. Undefined when the turn gives no start or no end. */
+export function storedLeaderLane(turn: TranscriptTurn): LeaderLane | undefined {
+  const start = turn.created_at;
+  const end = turn.completed_at ?? (start != null && turn.duration_ms != null ? start + turn.duration_ms : undefined);
+  return end == null ? undefined : leaderLane(start, end, turn.iterations);
+}
+
+/**
+ * The time of the chart of a team, in epoch ms: from the first current task or the start of the
+ * leader, to now while anything works, else to the last end. A resumed agent counts from its
+ * resume, so an old spawn does not push the current work to the end of the axis.
+ */
+export function chartSpan(rows: readonly Subagent[], now: number, leader?: LeaderLane): Required<Span> | undefined {
+  const starts = marks([...rows.map((agent) => (agent.status === 'queued' ? agent.created_at : startOf(agent))), leader?.start]);
+  if (starts.length === 0) return undefined;
+  const start = Math.min(...starts);
+  const ends = marks([...rows.map((agent) => agent.finished_at), leader?.end]);
+  const isWorking = rows.some(isLive) || (leader != null && leader.end == null);
+  const end = isWorking ? Math.max(now, ...ends) : ends.length ? Math.max(...ends) : undefined;
+  return end != null && end > start ? { start, end } : undefined;
+}
+
+/** Where a part of a lane stands on the chart: its start and end, from 0 to 1. */
 export interface AgentBar {
   start: number;
   end: number;
   isWaiting: boolean;
 }
 
+const shareOf = ({ start, end }: Required<Span>) => (at: number) => Math.min(1, Math.max(0, (at - start) / (end - start)));
+
 /**
- * The bar of each agent on the time of its team, by session id. A task goes from its start to
- * its end, or to now while it runs. A queued agent waits from its spawn to the end of the team.
+ * The bar of each agent on the chart of its team, by session id. A task goes from its start to
+ * its end, or to now while it runs. A queued agent waits from its spawn to the end of the chart.
  * An agent without the marks of its task has no bar.
  */
-export function agentBars(rows: readonly Subagent[], now: number): Map<string, AgentBar> {
+export function agentBars(rows: readonly Subagent[], now: number, leader?: LeaderLane): Map<string, AgentBar> {
   const bars = new Map<string, AgentBar>();
-  const starts = marks(rows.map((agent) => agent.created_at));
-  const total = teamTime(rows, now);
-  if (starts.length === 0 || !total) return bars;
-  const from = Math.min(...starts);
-  const share = (at: number) => Math.min(1, Math.max(0, (at - from) / total));
+  const span = chartSpan(rows, now, leader);
+  if (!span) return bars;
+  const share = shareOf(span);
   for (const agent of rows) {
     const start = agent.status === 'queued' ? agent.created_at : startOf(agent);
-    const end = agent.status === 'queued' ? from + total : agent.status === 'running' ? now : agent.finished_at;
+    const end = agent.status === 'queued' ? span.end : agent.status === 'running' ? now : agent.finished_at;
     if (start == null || end == null) continue;
     bars.set(agent.session_id, { start: share(start), end: share(end), isWaiting: agent.status === 'queued' });
   }
   return bars;
 }
+
+/**
+ * The parts of a leader lane in epoch ms, in time order: its work, and its waits for its agents.
+ * A wait is cut to the time of the lane, and an overlap counts once.
+ */
+export function leaderParts(leader: LeaderLane, now: number): { start: number; end: number; isWaiting: boolean }[] {
+  const end = leader.end ?? now;
+  const parts: { start: number; end: number; isWaiting: boolean }[] = [];
+  let at = leader.start;
+  for (const wait of leader.waits) {
+    const from = Math.max(at, wait.start);
+    const to = Math.min(end, wait.end ?? now);
+    if (to <= from) continue;
+    if (from > at) parts.push({ start: at, end: from, isWaiting: false });
+    parts.push({ start: from, end: to, isWaiting: true });
+    at = to;
+  }
+  if (end > at) parts.push({ start: at, end, isWaiting: false });
+  return parts;
+}
+
+/** The key of an agent on the chart: `A1`, `A2`, by spawn order. The leader is `L`. */
+export const agentKey = (index: number) => `A${index + 1}`;
+const LEADER_KEY = 'L';
+const LEADER_ROLE = 'leader';
 
 // The bar ink of each status word.
 const BAR_INK: Record<string, string> = {
@@ -301,14 +387,43 @@ function columnWidths(rows: readonly Subagent[]): CSSProperties {
   } as CSSProperties;
 }
 
-// The time axis above the bars, as a ruler: a label over a tick at each mark.
-function AxisMarks({ total }: { total: number }) {
+// The columns of the chart of a team: the KEY of each lane, its time BAR, its TIME and its status
+// mark. The legend under the chart gives each KEY its ROLE and TITLE.
+const CHART_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_minmax(0,1fr)_7ch_1rem] items-baseline gap-x-3 px-3';
+const LEGEND_ROW = 'grid w-full min-w-0 grid-cols-[var(--key)_var(--role)_minmax(0,1fr)] items-baseline gap-x-3 px-3';
+
+// The bar column of a chart row: the inset of the row, the KEY and one gap on the left; one gap,
+// TIME, one gap, the mark and the inset on the right. The grid lines stand there behind the bars.
+const BAR_COLUMN: CSSProperties = { left: 'calc(1.5rem + var(--key))', right: 'calc(3.25rem + 7ch)' };
+
+// The time axis above the bars: a label at each mark.
+function AxisLabels({ total }: { total: number }) {
   return axisMarks(total).map((at, index) => (
-    <span key={at} className="absolute inset-y-0" style={{ left: `${(at / total) * 100}%` }}>
-      <span className={`absolute top-0 ${index === 0 ? '' : '-translate-x-1/2'}`}>{axisLabel(at)}</span>
-      <span className="absolute bottom-0 h-1 w-px bg-dialog-edge/50" />
+    <span key={at} className={`absolute top-0 ${index === 0 ? '' : '-translate-x-1/2'}`} style={{ left: `${(at / total) * 100}%` }}>
+      {axisLabel(at)}
     </span>
   ));
+}
+
+// A faint line at each mark of the axis, through every lane of the chart.
+function GridLines({ total }: { total: number }) {
+  return (
+    <span aria-hidden className="pointer-events-none absolute inset-y-0" style={BAR_COLUMN}>
+      {axisMarks(total).map((at) => (
+        <span key={at} className="absolute inset-y-0 w-px bg-dialog-edge/40" style={{ left: `${(at / total) * 100}%` }} />
+      ))}
+    </span>
+  );
+}
+
+// One part of a lane: a solid bar for work, a dashed line for a wait.
+function LanePart({ bar, ink }: { bar: AgentBar; ink: string }) {
+  return (
+    <span
+      className={`absolute ${bar.isWaiting ? 'inset-y-1/2 border-t border-dashed border-dialog-hint' : `inset-y-0 ${ink}`}`}
+      style={{ left: `${bar.start * 100}%`, width: `max(2px, ${(bar.end - bar.start) * 100}%)` }}
+    />
+  );
 }
 
 // The task of an agent in the note of its row: the text as its leader wrote it.
@@ -323,6 +438,8 @@ interface TableProps {
   onSelect: (sid: string) => void;
   /** A wide screen shows the time bars of the team instead of the notes. */
   isTimeline?: boolean;
+  /** The leader turn, drawn as the first lane of the chart. */
+  leader?: LeaderLane;
 }
 
 // The table of one team. A row opens the sheet of its agent. A wide screen shows the note of
@@ -364,24 +481,17 @@ function PhoneAgentTable({ rows, now, error, onSelect }: TableProps) {
   );
 }
 
-function WideAgentTable({ rows, now, error, onSelect, isTimeline = false }: TableProps) {
-  const total = teamTime(rows, now);
-  const showsBars = isTimeline && rows.length > 1 && !!total;
-  const bars = showsBars ? agentBars(rows, now) : new Map<string, AgentBar>();
+function WideAgentTable(props: TableProps) {
+  const { rows, now, error, onSelect, isTimeline = false, leader } = props;
+  if (isTimeline && hasTimeline(rows, leader)) return <TeamChart {...props} />;
   return (
     <div style={columnWidths(rows)}>
-      {showsBars && (
-        <div aria-hidden className={`pt-1 text-dialog-hint ${WIDE_ROW}`}>
-          <span className="relative col-start-3 h-[calc(1lh+0.5rem)] border-b border-dialog-edge/50"><AxisMarks total={total} /></span>
-        </div>
-      )}
       <ul>
         {rows.map((agent) => {
           const role = agentRole(agent);
           const status = agentStatus(agent);
           const update = agentUpdate(agent);
           const time = agentTime(agent, now);
-          const bar = bars.get(agent.session_id);
           return (
             <li key={agent.session_id}>
               <button
@@ -394,20 +504,9 @@ function WideAgentTable({ rows, now, error, onSelect, isTimeline = false }: Tabl
                 <HoverNote className="min-w-0" note={taskNote(agent.task)}>
                   <span className="font-bold [overflow-wrap:anywhere] group-hover:underline">{agentLabel(agent, rows)}</span>
                 </HoverNote>
-                {showsBars ? (
-                  <span aria-hidden className="relative h-2 self-center">
-                    {bar && (
-                      <span
-                        className={`absolute inset-y-0 ${bar.isWaiting ? 'top-1/2 border-t border-dashed border-dialog-hint' : BAR_INK[status.text]}`}
-                        style={{ left: `${bar.start * 100}%`, width: `max(2px, ${(bar.end - bar.start) * 100}%)` }}
-                      />
-                    )}
-                  </span>
-                ) : (
-                  <HoverNote className="min-w-0" note={update}>
-                    <span className="block truncate text-dialog-hint">{update ?? ''}</span>
-                  </HoverNote>
-                )}
+                <HoverNote className="min-w-0" note={update}>
+                  <span className="block truncate text-dialog-hint">{update ?? ''}</span>
+                </HoverNote>
                 <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
                 <span className={`text-center ${status.ink}`}>
                   <span className="sr-only">{status.text}</span>
@@ -423,6 +522,102 @@ function WideAgentTable({ rows, now, error, onSelect, isTimeline = false }: Tabl
   );
 }
 
+// The chart of a team on a wide screen: the time axis, the lane of the leader, then one lane for
+// each agent in spawn order, on one scale. A lane shows only its key; the legend under the rule
+// gives each key its role and title. An agent lane opens the sheet of its agent.
+function TeamChart({ rows, now, error, onSelect, leader }: TableProps) {
+  const span = chartSpan(rows, now, leader);
+  if (!span) return null;
+  const total = span.end - span.start;
+  const share = shareOf(span);
+  const bars = agentBars(rows, now, leader);
+  const parts = leader ? leaderParts(leader, now) : [];
+  const waited = parts.reduce((sum, part) => sum + (part.isWaiting ? part.end - part.start : 0), 0);
+  const leaderTime = leader ? (leader.end ?? now) - leader.start : 0;
+  const keys = rows.map((_, index) => agentKey(index));
+  const roles = rows.map((agent) => agentRole(agent).text);
+  const widths = {
+    '--key': `${Math.max(2, ...keys.map((key) => key.length))}ch`,
+    '--role': `${Math.max(leader ? LEADER_ROLE.length : 0, ...roles.map((role) => role.length))}ch`,
+  } as CSSProperties;
+  return (
+    <div style={widths} className="pb-1" data-team-chart>
+      <div aria-hidden className={`pt-1 text-dialog-hint ${CHART_ROW}`}>
+        <span className="relative col-start-2 h-[calc(1lh+0.25rem)] border-b border-dialog-edge/50"><AxisLabels total={total} /></span>
+      </div>
+      <div className="relative">
+        <GridLines total={total} />
+        <ul aria-label="Timeline">
+          {leader && (
+            <li className={`py-1 ${CHART_ROW}`} data-leader-lane>
+              <span className="font-bold text-white">{LEADER_KEY}<span className="sr-only"> {LEADER_ROLE}</span></span>
+              <span aria-hidden className="relative h-2 self-center">
+                {parts.map((part) => (
+                  <LanePart key={part.start} bar={{ start: share(part.start), end: share(part.end), isWaiting: part.isWaiting }} ink="bg-white" />
+                ))}
+              </span>
+              <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{formatAgentTime(leaderTime)}</span>
+              <span className="text-center">
+                <span className="sr-only">{leader.end == null ? 'running' : 'done'}</span>
+                <span aria-hidden className="inline-flex"><StatusMark status={leader.end == null ? 'running' : 'done'} /></span>
+              </span>
+            </li>
+          )}
+          {rows.map((agent, index) => {
+            const role = agentRole(agent);
+            const status = agentStatus(agent);
+            const time = agentTime(agent, now);
+            const bar = bars.get(agent.session_id);
+            return (
+              <li key={agent.session_id}>
+                <button
+                  type="button"
+                  data-agent-row={agent.session_id}
+                  onClick={() => onSelect(agent.session_id)}
+                  className={`group py-1 text-left hover:bg-white/5 ${FOCUS} ${CHART_ROW}`}
+                >
+                  <span className={`group-hover:underline ${role.ink}`}>
+                    {keys[index]}
+                    <span className="sr-only"> {agentLabel(agent, rows)}</span>
+                  </span>
+                  <span aria-hidden className="relative h-2 self-center">{bar && <LanePart bar={bar} ink={BAR_INK[status.text]} />}</span>
+                  <span className="whitespace-nowrap text-right text-dialog-hint tabular-nums">{time === undefined ? '' : formatAgentTime(time)}</span>
+                  <span className={`text-center ${status.ink}`}>
+                    <span className="sr-only">{status.text}</span>
+                    <span aria-hidden className="inline-flex"><StatusMark status={status.text} /></span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+          {error && <li role="alert" className="px-3 py-1 text-err-ink">{error}</li>}
+        </ul>
+      </div>
+      <ul aria-label="Legend" className="mt-1 border-t border-dialog-edge/50 pt-1.5">
+        {leader && (
+          <li className={LEGEND_ROW}>
+            <span className="font-bold text-white">{LEADER_KEY}</span>
+            <span className="font-bold uppercase text-white">{LEADER_ROLE}</span>
+            <span className="text-dialog-hint">{`waited ${formatAgentTime(waited)} of ${formatAgentTime(leaderTime)}`}</span>
+          </li>
+        )}
+        {rows.map((agent, index) => {
+          const role = agentRole(agent);
+          return (
+            <li key={agent.session_id} className={LEGEND_ROW}>
+              <span className={role.ink}>{keys[index]}</span>
+              <span className={`uppercase ${role.ink}`}>{role.text}</span>
+              <HoverNote className="min-w-0" note={taskNote(agent.task)}>
+                <span className="font-bold [overflow-wrap:anywhere]">{agentLabel(agent, rows)}</span>
+              </HoverNote>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 /** The props of a team block. `timeline` reads the steps of one child. */
 export interface TeamProps {
   agents: readonly Subagent[];
@@ -431,6 +626,8 @@ export interface TeamProps {
   onOpen: (sid: string) => void;
   onCancel: (sid: string) => void;
   timeline: (child: string) => Promise<AgentTimeline>;
+  /** The leader turn of the team, for the first lane of its chart. */
+  leader?: LeaderLane;
 }
 
 /**
@@ -439,7 +636,7 @@ export interface TeamProps {
  * agent. The dock shows the table without the frame. A subagent never asks a person: its
  * leader answers it, so a row has no question and no control for one.
  */
-export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline, placement = 'transcript', isTimeline }: TeamProps & {
+export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline, leader, placement = 'transcript', isTimeline }: TeamProps & {
   /** The dock above the composer while the team works, or the turn of the transcript after. */
   placement?: 'dock' | 'transcript';
   /** The dock owns the timeline switch of its teams; the transcript owns its own. */
@@ -448,12 +645,12 @@ export function TurnAgents({ agents, pending, error, onOpen, onCancel, timeline,
   const [selected, setSelected] = useState<string | null>(null);
   const [isOwnTimeline, setOwnTimeline] = useState(false);
   const isWide = useWide();
-  const now = useNow(agents.some((agent) => agent.status === 'running'));
+  const now = useNow(agents.some((agent) => agent.status === 'running') || (leader != null && leader.end == null));
   if (agents.length === 0) return null;
   const rows = spawnOrder(agents);
   const chosen = rows.find((agent) => agent.session_id === selected);
-  const table = <AgentTable rows={rows} now={now} error={error} onSelect={setSelected} isTimeline={isTimeline ?? isOwnTimeline} />;
-  const toggle = isWide && hasTimeline(rows)
+  const table = <AgentTable rows={rows} now={now} error={error} onSelect={setSelected} isTimeline={isTimeline ?? isOwnTimeline} leader={leader} />;
+  const toggle = isWide && hasTimeline(rows, leader)
     ? <TimelineToggle isOn={isOwnTimeline} onToggle={() => setOwnTimeline((value) => !value)} />
     : undefined;
   return (
