@@ -6,7 +6,7 @@
  * with a modifier, a held key and a key typed into a field never reach the app.
  */
 
-import { isLiveShortcutKey, type LiveNode, type LiveShortcut } from './live-view';
+import { isLiveShortcutKey, nestedLiveNodes, type LiveNode, type LiveShortcut } from './live-view';
 
 /** The shortcut name of one key press, or null when no app can bind it. */
 export function shortcutKey(event: Pick<KeyboardEvent, 'key'>): string | null {
@@ -135,7 +135,7 @@ export function nodeShortcuts(shortcuts: readonly LiveShortcut[]): Map<string, L
 function capNodeIds(nodes: readonly LiveNode[], into: Set<string> = new Set()): Set<string> {
   for (const node of nodes) {
     if (node.type === 'button' || node.type === 'card') into.add(node.id);
-    if (node.type === 'group') capNodeIds(node.children, into);
+    capNodeIds(nestedLiveNodes(node), into);
   }
   return into;
 }

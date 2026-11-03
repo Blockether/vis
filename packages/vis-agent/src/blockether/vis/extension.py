@@ -7383,17 +7383,25 @@ def _ui_link(node_id, links=None, **spec):
     return _live_node("link", node_id, dict(spec, links=links))
 
 
-def _ui_diff(node_id, patch, *, old_revision=None, new_revision=None, **spec):
+def _ui_diff(
+    node_id, patch, *, old_revision=None, new_revision=None, children=None, **spec
+):
     """A unified diff that people review line by line in an app.
 
     People comment on a line and send their comments. The owner answers in the same
     thread. `old_revision` and `new_revision` name the compared versions.
+    `children` is the toolbar of the diff. Each button is one action. Each
+    `vis.ui.group(...)` of buttons is one menu, and its label names the current choice.
     """
     return _live_node(
         "diff",
         node_id,
         dict(
-            spec, patch=str(patch), old_revision=old_revision, new_revision=new_revision
+            spec,
+            patch=str(patch),
+            old_revision=old_revision,
+            new_revision=new_revision,
+            children=None if children is None else list(children),
         ),
     )
 

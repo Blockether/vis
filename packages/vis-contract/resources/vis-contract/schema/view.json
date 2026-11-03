@@ -1622,6 +1622,28 @@
                 "$ref": "#/$defs/thread"
               },
               "maxItems": 200
+            },
+            "children": {
+              "description": "The toolbar of the diff. A button is one action. A group of buttons is one menu, and its label names the current choice.",
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/component"
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "button",
+                          "group"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "maxItems": 24
             }
           },
           "required": [

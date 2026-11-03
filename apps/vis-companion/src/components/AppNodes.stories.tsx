@@ -287,6 +287,56 @@ export const T3Fixture: Story = {
   },
 };
 
+/** One toolbar button of the review app. */
+const command = (id: string, label: string, variant: 'primary' | 'secondary' | 'destructive' = 'secondary') => ({
+  id,
+  type: 'button' as const,
+  label,
+  action: 'activate' as const,
+  variant,
+  is_disabled: false,
+  clicks: 0,
+});
+
+/** The toolbar that the review app puts in its diff: scope, file and actions menus. */
+const REVIEW_TOOLBAR: LiveDiffNode['children'] = [
+  {
+    id: 'scope',
+    type: 'group',
+    label: 'This session',
+    direction: 'row',
+    children: [
+      command('session', 'This session'),
+      command('all', 'All changes'),
+      command('uncommitted', 'Uncommitted'),
+      command('branch', 'Against base branch'),
+      command('checkpoint-2', 'Checkpoint #2'),
+    ],
+  },
+  {
+    id: 'file',
+    type: 'group',
+    label: 'All files',
+    direction: 'row',
+    children: [command('file-all', 'All files'), command('file:src/app.ts', 'src/app.ts')],
+  },
+  {
+    id: 'actions',
+    type: 'group',
+    label: 'Actions',
+    direction: 'row',
+    children: [
+      command('refresh', 'Refresh'),
+      command('checks', 'Run checks', 'primary'),
+      command('tests', 'Run tests'),
+      command('ai', 'AI review'),
+      command('full', 'Show full files'),
+      command('undo-file', 'Undo file', 'destructive'),
+      command('undo', 'Undo checkpoint', 'destructive'),
+    ],
+  },
+];
+
 /** An interactive review fixture: save a draft, send it, and keep its anchored card. */
 function T3FixturePanel() {
   const [node, setNode] = useState<LiveDiffNode>({
@@ -294,6 +344,7 @@ function T3FixturePanel() {
     type: 'diff',
     patch: T3_REVIEW_PATCH,
     threads: [],
+    children: REVIEW_TOOLBAR,
   });
   const actions: AppNodeActions = {
     isReadOnly: false,
@@ -331,7 +382,7 @@ function T3FixturePanel() {
       return { status: 'saved', seq: 5 };
     },
   };
-  return <DiffNodeView node={node} actions={actions} />;
+  return <DiffNodeView node={node} actions={actions} commands={{ onActivate: () => {}, isSettled: false }} />;
 }
 
 /** The T3 empty selection has no file headers or line controls. */

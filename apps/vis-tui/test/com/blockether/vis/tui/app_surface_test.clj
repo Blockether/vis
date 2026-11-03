@@ -806,6 +806,33 @@
         (expect (seq rows))
         (expect (not-any? #(= "covered" (:node-id %)) rows))
         (expect (some #(= "visible" (:node-id %)) rows))))
+  ;; The review app moved its controls into the diff toolbar: covered keys must not
+  ;; take the diff with them, and a choice with no key still needs a row.
+  (it
+    "keeps a diff whose toolbar keys cover every button and shows unkeyed toolbar buttons"
+    (let [toolbar
+          (fn [& extra]
+            (assoc-in view
+              [:nodes 0 :children]
+              (into [{:id "refresh" :type :button :label "Refresh"}] extra)))
+
+          covered
+          (surface/surface-rows (assoc (toolbar) :shortcuts [{:key "r" :node-id "refresh"}]) 50 #{})
+
+          menu
+          (surface/surface-rows
+            (assoc (toolbar {:id "scope"
+                             :type :group
+                             :label "This session"
+                             :children [{:id "checkpoint-2" :type :button :label "#2 edit"}]})
+              :shortcuts [{:key "r" :node-id "refresh"}])
+            50
+            #{})]
+
+      (expect (some #(= :diff-head (:kind %)) covered))
+      (expect (not-any? #(= "refresh" (:node-id %)) covered))
+      (expect (some #(= :diff-head (:kind %)) menu))
+      (expect (some #(= "checkpoint-2" (get-in % [:entry :node-id] (:node-id %))) menu))))
   (it "uses the current button label and leaves disabled keys out of the legend"
       (let [v (assoc game :shortcuts [{:key "g" :node-id "go"} {:key "o" :node-id "off"}])]
         (expect (= [["g" "Go"]] (surface/shortcut-legend v)))

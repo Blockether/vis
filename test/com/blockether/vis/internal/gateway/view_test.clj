@@ -28,7 +28,7 @@
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as hi-spec]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [defdescribe expect it throws?]]
             [reitit.ring :as ring]
             [ring.adapter.jetty9 :as jetty])
   (:import [java.net URLEncoder]
@@ -1323,6 +1323,54 @@
        "@@ -1,2 +1,2 @@\n x = 1\n-y = 2\n+y = 3\n"))
 
 (def ^:private app-line {"path" "src/a.py" "side" "new" "line" 2})
+
+;; T18 user report: the review app needs its scope menu and actions in the diff
+;; toolbar, as in T3 Code, and each of them must still press.
+(defdescribe
+  diff-toolbar-buttons-use-the-shared-http-action-test
+  (it "buttons in a diff toolbar and its menu use the shared http action"
+      (gw-hi/install!)
+      (recorded
+        (fn []
+          (let [sid
+                (str (random-uuid))
+
+                id
+                (:id (hi/open-live! {:title "Review"
+                                     :session-id sid
+                                     :nodes [{:id "change"
+                                              :type "diff"
+                                              :patch app-patch
+                                              :children
+                                              [{:id "scope"
+                                                :type "group"
+                                                :direction "column"
+                                                :label "This session"
+                                                :children
+                                                [{:id "all" :type "button" :label "All changes"}]}
+                                               {:id "refresh" :type "button" :label "Refresh"}]}]}))
+
+                clicks
+                (fn [path]
+                  (get-in (gw-hi/live-view-of sid id) (into [:nodes 0 :children] path)))]
+
+            (try (doseq [node-id ["refresh" "all"]]
+                   (expect (true? (get (json-body (view-action-response sid
+                                                                        id
+                                                                        {:action "activate"
+                                                                         :node_id node-id}))
+                                       "is_accepted"))))
+                 (expect (= 1 (clicks [1 :clicks])))
+                 (expect (= 1 (clicks [0 :children 0 :clicks])))
+                 (expect (throws? Exception
+                                  #(hi/open-live!
+                                     {:title "Bad"
+                                      :session-id sid
+                                      :nodes [{:id "d2"
+                                               :type "diff"
+                                               :patch app-patch
+                                               :children [{:id "s" :type "status" :text "no"}]}]})))
+                 (finally (hi/close-live! id))))))))
 
 (defn- app-op!
   "Cross one owner envelope of the python_execution sandbox through the live seam."

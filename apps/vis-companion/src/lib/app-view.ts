@@ -3,7 +3,14 @@
  * stream, and the actions that its controls send.
  */
 
-import { applyLivePatch, liveViewFromWire, upsertSubmission, type LiveNode, type LiveView } from './live-view';
+import {
+  applyLivePatch,
+  liveViewFromWire,
+  nestedLiveNodes,
+  upsertSubmission,
+  type LiveNode,
+  type LiveView,
+} from './live-view';
 import type { SseEvent } from './types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction, type ViewAnchor } from './view';
 import type { LiveSubmission } from './live-view';
@@ -54,10 +61,8 @@ export function withSubmission(view: LiveView, submission: LiveSubmission): Live
 function findNode(nodes: readonly LiveNode[], id: string): LiveNode | undefined {
   for (const node of nodes) {
     if (node.id === id) return node;
-    if (node.type === 'group') {
-      const found = findNode(node.children, id);
-      if (found) return found;
-    }
+    const found = findNode(nestedLiveNodes(node), id);
+    if (found) return found;
   }
   return undefined;
 }

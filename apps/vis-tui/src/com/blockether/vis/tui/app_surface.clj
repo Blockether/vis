@@ -114,7 +114,10 @@
 
 (defn- node-rows
   [view node width folded opts]
-  (cond (= :diff (:type node)) (model/diff-rows node width folded opts)
+  (cond (= :diff (:type node))
+        ;; Toolbar buttons that no key covers stand above the diff as rows.
+        (into (into [] (mapcat #(plan-rows view % width)) (:children node))
+              (model/diff-rows (dissoc node :children) width folded opts))
         (= :thread (:type node))
         (into [{:kind :thread-node
                 :node-id (:id node)
@@ -136,7 +139,10 @@
               (keep (fn [node]
                       (if (seq (:children node))
                         (let [children (keyed-buttons (:children node) covered)]
-                          (when (seq children) (assoc node :children children)))
+                          (cond (seq children) (assoc node :children children)
+                                ;; A diff toolbar is optional; the diff stays without it.
+                                (= :diff (:type node)) (dissoc node :children)
+                                :else nil))
                         node))))
         nodes))
 

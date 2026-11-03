@@ -156,6 +156,42 @@ describe('DiffNodeView', () => {
     expect(screen.getByRole('button', { name: 'Fold a.txt' })).toHaveAttribute('aria-expanded', 'true');
   });
 
+  // The review app moved its scope and file pickers into the diff toolbar: a menu
+  // item must press the button it names, never the group that holds it.
+  it('presses the button that a toolbar menu item names', async () => {
+    const onActivate = vi.fn(async () => {});
+    const button = (id: string, label: string) => ({
+      id,
+      type: 'button' as const,
+      label,
+      action: 'activate' as const,
+      variant: 'secondary' as const,
+      is_disabled: false,
+      clicks: 0,
+    });
+    const node: LiveDiffNode = {
+      ...DIFF,
+      children: [
+        {
+          id: 'scope',
+          type: 'group',
+          label: 'This session',
+          direction: 'row',
+          children: [button('session', 'This session'), button('checkpoint-2', 'Checkpoint #2')],
+        },
+        button('refresh', 'Refresh'),
+      ],
+    };
+    render(<DiffNodeView node={node} commands={{ onActivate, isSettled: false }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'This session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Checkpoint #2' }));
+    await waitFor(() => expect(onActivate).toHaveBeenCalledWith('checkpoint-2'));
+    expect(screen.queryByRole('dialog', { name: 'This session' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(onActivate).toHaveBeenLastCalledWith('refresh'));
+    expect(onActivate).toHaveBeenCalledTimes(2);
+  });
+
   it('is read only without app actions and when the app is closed', () => {
     const { unmount } = render(<DiffNodeView node={DIFF} />);
     expect(screen.queryByRole('button', { name: /Comment on/ })).toBeNull();

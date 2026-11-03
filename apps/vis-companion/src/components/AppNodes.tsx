@@ -4,7 +4,8 @@
  * `draft` and `submit` actions. Without an app the threads are read only.
  */
 
-import { Fragment, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   APP_ACTION_WORDS,
@@ -33,6 +34,8 @@ import {
   LIVE_MESSAGE_CHARS,
   type LiveDiffNode,
   type LiveMessage,
+  type LiveNode,
+  type LiveShortcut,
   type LiveSubmission,
   type LiveThread,
   type LiveThreadNode,
@@ -54,6 +57,8 @@ import {
   WrapIcon,
 } from './icons';
 import { DiffSearch, useDiffSearch } from './AppDiffSearch';
+import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
+import { ariaShortcut } from '../lib/app-shortcuts';
 import { Button, CopyChip } from './ui';
 import { useReviewState } from '../lib/review-memory';
 
@@ -752,7 +757,16 @@ function ContextBand({ label, title }: { label: string; title: string }) {
 }
 
 /** Unified and split diffs share anchored comments, file controls and one scroller per file. */
-export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: AppNodeActions }) {
+export function DiffNodeView({
+  node,
+  actions,
+  commands,
+}: {
+  node: LiveDiffNode;
+  actions?: AppNodeActions;
+  /** The click and keys of the toolbar buttons. Absent, they are read only. */
+  commands?: DiffCommandActions;
+}) {
   const {
     files: sourceFiles,
     words,
@@ -837,6 +851,11 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
         count={files.length}
         total={total}
         revisions={revisions}
+        commands={
+          node.children?.length ? (
+            <DiffCommands nodes={node.children} isSettled={commands?.isSettled ?? true} {...commands} />
+          ) : undefined
+        }
         hideTests={hideTests}
         hideWhitespace={hideWhitespace}
         onTests={() => setHideTests(!hideTests)}
@@ -976,7 +995,179 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
   );
 }
 
+
+/** What the toolbar of a diff needs from its view: the click and the key of each button. */
+export interface DiffCommandActions {
+  onActivate?: (id: string) => Promise<void> | void;
+  keys?: ReadonlyMap<string, LiveShortcut>;
+  isSettled: boolean;
+}
+
+/**
+ * The commands an app puts in the toolbar of its diff (`view.json` `diff` `children`).
+ * A button is one action. A group of buttons is one menu, and its label names the
+ * current choice, like the `Changes ▾` picker of a code review.
+ */
+function DiffCommands({
+  nodes,
+  onActivate,
+  keys,
+  isSettled,
+}: { nodes: readonly LiveNode[] } & DiffCommandActions) {
+  const [pending, setPending] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ id: string; at: MenuPosition } | null>(null);
+  // Escape belongs to the open menu, not to the screen under it.
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setMenu(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [menu]);
+  const press = async (id: string) => {
+    setMenu(null);
+    if (!onActivate || pending) return;
+    setPending(id);
+    try {
+      await onActivate(id);
+    } finally {
+      setPending(null);
+    }
+  };
+  const inert = isSettled || !onActivate || pending !== null;
+  const open = menu ? nodes.find((node) => node.id === menu.id) : undefined;
+  return (
+    <span className="diff-commands" role="group" aria-label="Review commands">
+      {nodes.map((node) => {
+        if (node.type === 'group') {
+          const label = node.label ?? 'More';
+          return (
+            <button
+              key={node.id}
+              type="button"
+              className="diff-command app-focus-ring"
+              data-node-id={node.id}
+              aria-haspopup="dialog"
+              aria-expanded={menu?.id === node.id}
+              title={label}
+              disabled={inert}
+              onClick={(event) => {
+                const at = diffMenuAt(event.currentTarget);
+                if (at) setMenu({ id: node.id, at });
+              }}
+            >
+              <span className="min-w-0 truncate">{label}</span>
+              <ChevronIcon open className="size-3 shrink-0" />
+            </button>
+          );
+        }
+        if (node.type !== 'button') return null;
+        const shortcut = keys?.get(node.id);
+        return (
+          <button
+            key={node.id}
+            type="button"
+            className="diff-command app-focus-ring"
+            data-node-id={node.id}
+            data-variant={node.variant}
+            title={shortcut ? `${node.label} (${shortcut.key})` : node.label}
+            aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
+            aria-busy={pending === node.id}
+            disabled={inert || node.is_disabled}
+            onClick={() => void press(node.id)}
+          >
+            <span className="min-w-0 truncate">{node.label}</span>
+          </button>
+        );
+      })}
+      {open?.type === 'group' && menu && (
+        <DiffMenu
+          label={open.label ?? 'More'}
+          at={menu.at}
+          items={open.children}
+          keys={keys}
+          onPress={(id) => void press(id)}
+          onDismiss={() => setMenu(null)}
+        />
+      )}
+
+    </span>
+  );
+}
+
+/** The width of a toolbar menu, in px. It matches `.diff-menu`. */
+const DIFF_MENU_WIDTH = 224;
+
+/** Where a toolbar menu hangs: its left edge under its trigger, kept on the screen. */
+function diffMenuAt(trigger: HTMLElement): MenuPosition | null {
+  const box = trigger.getBoundingClientRect();
+  return menuPosition({ top: box.top, bottom: box.bottom, right: box.left + DIFF_MENU_WIDTH }, DIFF_MENU_WIDTH);
+}
+
+/**
+ * The compact popover of a toolbar menu. It is drawn like the rest of the review
+ * surface, after the T3 Code pickers, not like the app menus around it.
+ */
+function DiffMenu({
+  label,
+  at,
+  items,
+  keys,
+  onPress,
+  onDismiss,
+}: {
+  label: string;
+  at: MenuPosition;
+  items: readonly LiveNode[];
+  keys?: ReadonlyMap<string, LiveShortcut>;
+  onPress: (id: string) => void;
+  onDismiss: () => void;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  // A keyboard opened this menu as often as a pointer did: focus its first choice.
+  useEffect(() => {
+    panel.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }, []);
+  return createPortal(
+    <div className="fixed inset-0 z-50" role="presentation" onClick={onDismiss}>
+      <div
+        ref={panel}
+        role="dialog"
+        aria-label={label}
+        className="diff-menu"
+        style={{ left: at.left, top: at.top, bottom: at.bottom, maxHeight: at.maxHeight }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {items.map((item) => {
+          if (item.type !== 'button') return null;
+          const shortcut = keys?.get(item.id);
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className="diff-menu-item"
+              data-node-id={item.id}
+              data-variant={item.variant}
+              aria-keyshortcuts={shortcut ? ariaShortcut(shortcut.key) : undefined}
+              disabled={item.is_disabled}
+              onClick={() => onPress(item.id)}
+            >
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              {shortcut && <kbd>{shortcut.key}</kbd>}
+            </button>
+          );
+        })}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function DiffToolbar({
+  commands,
   onFind,
   split,
   wrap,
@@ -994,6 +1185,8 @@ function DiffToolbar({
   onTests,
   onWhitespace,
 }: {
+  /** The app's own commands, first in the row. */
+  commands?: ReactNode;
   onFind: () => void;
   split: boolean;
   wrap: boolean;
@@ -1014,9 +1207,12 @@ function DiffToolbar({
   return (
     <div className="diff-toolbar" role="toolbar" aria-label="Diff display">
       <span className="diff-toolbar-summary" title={revisions || undefined}>
-        <span className="shrink-0">
-          {count} {count === 1 ? 'file' : 'files'}
-        </span>
+        {commands}
+        {!commands && (
+          <span className="shrink-0">
+            {count} {count === 1 ? 'file' : 'files'}
+          </span>
+        )}
         <DiffStat {...total} />
         {revisions && <span className="diff-revisions min-w-0 truncate">{revisions}</span>}
       </span>

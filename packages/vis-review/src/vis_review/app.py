@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 import traceback
-from collections import Counter, OrderedDict
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -34,9 +34,8 @@ MOST_PATCH_CHARS = 900_000
 # Unchanged lines around each change; full files show every line, like T3 "Expand all".
 CONTEXT_LINES = 3
 FULL_CONTEXT = 1_000_000
-# Rows the checkpoint table shows, newest first.
-MOST_CHECKPOINTS = 200
-_TONES = {"error": "error", "warning": "warn", "info": "idle"}
+# Checkpoints and files that a toolbar menu lists, newest checkpoint first.
+MOST_MENU_ITEMS = 40
 _AUTHOR = {"kind": "extension", "name": "vis-review"}
 EVENT_FIELDS = ("type", "node_id", "values", "submission_id", "comments", "item_ids")
 BUTTONS = (
@@ -224,7 +223,7 @@ class ReviewApp:
         return found + [f for f in self.findings if not f.path or f.path in shown]
 
     def render(self) -> list[dict]:
-        """Every node of the app for the current state."""
+        """Every node of the app for the current state: the diff first, like T3 Code."""
         diffs_all = self._scope_diffs()
         if all(d.path != self.path for d in diffs_all):
             # An undo or a new range can take the chosen file out of the list.
@@ -233,18 +232,11 @@ class ReviewApp:
         findings = self.all_findings(diffs)
         end = self.end or self.journal.last
         images = self.image_nodes(diffs)
+        notice = self._notice(_off_lines(findings, diffs))
         return [
-            ui.status("root", text=f"Changes under {self.journal.root}", tone="idle"),
-            ui.stat(
-                "summary", stats=_stats(self._range_text(end), diffs_all, findings)
-            ),
-            self._notice(),
-            self._buttons(bool(diffs)),
-            self._checkpoints(),
-            _files_table(diffs_all, findings, self.path),
-            self._diff(diffs, findings, end),
+            self._diff(diffs, diffs_all, findings, end),
+            *([notice] if notice else []),
             *([ui.group("images", *images, label="Changed images")] if images else []),
-            _findings_table(findings),
         ]
 
     def _context(self) -> int:
@@ -283,12 +275,17 @@ class ReviewApp:
             return "this session"
         return "all changes" if self._is_all() else f"#{self.start}..#{end}"
 
-    def _notice(self) -> dict:
+    def _notice(self, off_lines: list[str]) -> dict | None:
+        """The result of the last action, or None while there is nothing to tell.
+
+        A finding on a shown line is a thread of the diff; the others are listed here.
+        """
         text, tone = self.notice
-        if self.ai_summary:
-            return ui.status(
-                "notice", text=text, tone=tone, detail=self.ai_summary[:2000]
-            )
+        detail = "\n\n".join(part for part in (self.ai_summary, *off_lines) if part)
+        if tone == "idle" and not detail:
+            return None
+        if detail:
+            return ui.status("notice", text=text, tone=tone, detail=detail[:2000])
         return ui.status("notice", text=text, tone=tone)
 
     def _shortcuts(self) -> list[dict]:
@@ -299,95 +296,117 @@ class ReviewApp:
             if button != "session" or self.is_session_scoped
         ]
 
-    def _buttons(self, has_diffs: bool) -> dict:
-        """The action buttons; each one is off when it cannot do anything now."""
+    def _scope_label(self) -> str:
+        """The name of the shown range: the label of the scope menu."""
+        if self.against is not None:
+            return {"HEAD": "Uncommitted", "base": "Against base branch"}[self.against]
+        if self.end is not None:
+            return f"Checkpoint #{self.selected or self.end}"
+        if self._is_own_range():
+            return "This session"
+        return "All changes" if self._is_all() else f"#{self.start} to now"
+
+    def _toolbar(self, diffs_all: list[FileDiff], has_diffs: bool) -> list[dict]:
+        """The diff toolbar: the scope, file and actions menus.
+
+        Each control is off when it cannot do anything now.
+        """
         has_change = self.selected is not None and self.selected > 1
         own = self._is_own_range() and self.against is None
         session = [
             ui.button("session", "This session", is_disabled=own and self.path is None)
         ]
-        return ui.group(
-            *(session if self.is_session_scoped else []),
+        checkpoints = [
             ui.button(
-                "all", "All changes", is_disabled=self._is_all() and self.path is None
-            ),
-            ui.button(
-                "latest",
-                "Latest change",
-                is_disabled=self.journal.last <= 1
-                or self.selected == self.journal.last,
-            ),
-            ui.button("uncommitted", "Uncommitted", is_disabled=self.against == "HEAD"),
-            ui.button(
-                "branch", "Against base branch", is_disabled=self.against == "base"
-            ),
-            ui.button(
-                "full", "Show changes only" if self.is_full else "Show full files"
-            ),
-            ui.button("refresh", "Refresh"),
-            ui.button(
-                "checks", "Run checks", variant="primary", is_disabled=not has_diffs
-            ),
-            ui.button(
-                "tests", "Run tests", is_disabled=not has_diffs or self._call is None
-            ),
-            ui.button(
-                "ai", "AI review", is_disabled=not has_diffs or self._ask is None
-            ),
-            ui.button(
-                "undo-file",
-                "Undo file",
-                variant="destructive",
-                is_disabled=self.path is None or self.against is not None,
-            ),
-            ui.button(
-                "undo",
-                "Undo checkpoint",
-                variant="destructive",
-                is_disabled=not has_change,
-            ),
-            ui.button(
-                "restore",
-                "Restore to here",
-                variant="destructive",
-                is_disabled=self.selected is None,
-            ),
-            direction="row",
-            id="actions",
-        )
-
-    def _checkpoints(self) -> dict:
-        """The checkpoint table, newest first, with the chosen checkpoint selected."""
-        rows = [
-            ui.table_row(
-                str(e.seq),
-                [
-                    f"#{e.seq}",
-                    e.kind,
-                    e.label or "-",
-                    str(len(e.files)),
-                    time.strftime("%H:%M:%S", time.localtime(e.at)),
-                ],
+                f"checkpoint-{e.seq}",
+                f"#{e.seq} {e.label or e.kind}",
+                is_disabled=e.seq == self.selected,
             )
-            for e in reversed(self.journal.entries[-MOST_CHECKPOINTS:])
+            for e in reversed(self.journal.entries[-MOST_MENU_ITEMS:])
         ]
-        return ui.table(
-            "checkpoints",
-            _columns(
-                ("seq", "#"),
-                ("kind", "Kind"),
-                ("label", "Label"),
-                ("files", "Files"),
-                ("at", "Time"),
+        files = [
+            ui.button(f"file:{d.path}", d.path, is_disabled=d.path == self.path)
+            for d in diffs_all[:MOST_MENU_ITEMS]
+        ]
+        return [
+            ui.group(
+                *(session if self.is_session_scoped else []),
+                ui.button(
+                    "all",
+                    "All changes",
+                    is_disabled=self._is_all() and self.path is None,
+                ),
+                ui.button(
+                    "latest",
+                    "Latest change",
+                    is_disabled=self.journal.last <= 1
+                    or self.selected == self.journal.last,
+                ),
+                ui.button(
+                    "uncommitted", "Uncommitted", is_disabled=self.against == "HEAD"
+                ),
+                ui.button(
+                    "branch", "Against base branch", is_disabled=self.against == "base"
+                ),
+                *checkpoints,
+                id="scope",
+                label=self._scope_label(),
             ),
-            rows=rows,
-            is_selectable=True,
-            label="Checkpoints",
-            selected_ids=_selected(self.selected),
-        )
+            *(
+                [
+                    ui.group(
+                        ui.button(
+                            "file-all", "All files", is_disabled=self.path is None
+                        ),
+                        *files,
+                        id="file",
+                        label=self.path or "All files",
+                    )
+                ]
+                if files
+                else []
+            ),
+            ui.group(
+                ui.button("refresh", "Refresh"),
+                ui.button(
+                    "checks", "Run checks", variant="primary", is_disabled=not has_diffs
+                ),
+                ui.button(
+                    "tests",
+                    "Run tests",
+                    is_disabled=not has_diffs or self._call is None,
+                ),
+                ui.button(
+                    "ai", "AI review", is_disabled=not has_diffs or self._ask is None
+                ),
+                ui.button(
+                    "full", "Show changes only" if self.is_full else "Show full files"
+                ),
+                ui.button(
+                    "undo-file",
+                    "Undo file",
+                    variant="destructive",
+                    is_disabled=self.path is None or self.against is not None,
+                ),
+                ui.button(
+                    "undo",
+                    "Undo checkpoint",
+                    variant="destructive",
+                    is_disabled=not has_change,
+                ),
+                ui.button(
+                    "restore",
+                    "Restore to here",
+                    variant="destructive",
+                    is_disabled=self.selected is None,
+                ),
+                id="actions",
+                label="Actions",
+            ),
+        ]
 
-    def _diff(self, diffs: list[FileDiff], findings, end: int) -> dict:
-        """The diff node of `diffs`, with one thread for each finding on a line."""
+    def _diff(self, diffs: list[FileDiff], diffs_all, findings, end: int) -> dict:
+        """The diff node of `diffs` with its toolbar and one thread for each finding on a line."""
         patch, cut = _patch_of(diffs)
         newest = self.journal.entries[-1].at if self.journal.entries else 0
         return ui.diff(
@@ -397,12 +416,13 @@ class ReviewApp:
             new_revision=f"#{end}"
             if self.end is not None and not self.against
             else "now",
-            label=("Diff, cut to fit: " + ", ".join(cut[:5])) if cut else "Diff",
+            label=("Cut to fit: " + ", ".join(cut[:5])) if cut else None,
             threads=_threads(
                 findings,
                 {d.path for d in diffs if d.patch},
                 int(newest * 1000) or 1,
             ),
+            children=self._toolbar(diffs_all, bool(diffs)),
         )
 
     def image_nodes(self, diffs: list[FileDiff]) -> list[dict]:
@@ -479,11 +499,13 @@ class ReviewApp:
             self._slow(node)
             return
         with self._lock:
-            if kind == "select" and node == "checkpoints":
-                self._choose_checkpoint(event.get("item_ids") or [])
-            elif kind == "select" and node == "files":
-                ids = event.get("item_ids") or []
-                self.path = None if not ids or ids[0] == self.path else str(ids[0])
+            if kind == "activate" and str(node).startswith("checkpoint-"):
+                self._choose_checkpoint([str(node).removeprefix("checkpoint-")])
+            elif kind == "activate" and (
+                node == "file-all" or str(node).startswith("file:")
+            ):
+                path = str(node).removeprefix("file:")
+                self.path = None if node == "file-all" or path == self.path else path
                 self.refresh()
             elif kind == "activate" and node in BUTTONS:
                 getattr(self, "_" + node.replace("-", "_"))()
@@ -779,82 +801,6 @@ def _patch_of(diffs: list[FileDiff]) -> tuple[str, list[str]]:
     return "".join(parts), cut
 
 
-def _columns(*pairs: tuple[str, str]) -> list[dict]:
-    """Table columns from `(id, label)` pairs."""
-    return [ui.table_column(column, label) for column, label in pairs]
-
-
-def _selected(item) -> list[str]:
-    """The selected ids of a table: none, or the one chosen item."""
-    return [] if item is None else [str(item)]
-
-
-def _stats(scope: str, diffs: list[FileDiff], findings) -> list[dict]:
-    """The summary numbers: range, files, lines and the findings by level."""
-    counts = checks.summary(findings)
-    return [
-        {"id": "range", "label": "Range", "value_text": scope},
-        {"id": "files", "label": "Files", "value_text": str(len(diffs))},
-        {
-            "id": "added",
-            "label": "Added",
-            "value_text": f"+{sum(d.added for d in diffs)}",
-            "tone": "ok",
-        },
-        {
-            "id": "removed",
-            "label": "Removed",
-            "value_text": f"-{sum(d.removed for d in diffs)}",
-            "tone": "error",
-        },
-        {
-            "id": "errors",
-            "label": "Errors",
-            "value_text": str(counts["error"]),
-            "tone": "error" if counts["error"] else "ok",
-        },
-        {
-            "id": "warnings",
-            "label": "Warnings",
-            "value_text": str(counts["warning"]),
-            "tone": "warn" if counts["warning"] else "ok",
-        },
-    ]
-
-
-def _files_table(diffs: list[FileDiff], findings, path: str | None) -> dict:
-    """The changed files, each with its findings; a file with an error is red."""
-    per_file = Counter(finding.path for finding in findings)
-    failed = {finding.path for finding in findings if finding.level == "error"}
-    return ui.table(
-        "files",
-        _columns(
-            ("path", "File"),
-            ("status", "Status"),
-            ("added", "+"),
-            ("removed", "-"),
-            ("findings", "Findings"),
-        ),
-        rows=[
-            ui.table_row(
-                d.path,
-                [
-                    d.path,
-                    d.status,
-                    f"+{d.added}",
-                    f"-{d.removed}",
-                    str(per_file[d.path]),
-                ],
-                **({"tone": "error"} if d.path in failed else {}),
-            )
-            for d in diffs
-        ],
-        is_selectable=True,
-        label="Changed files",
-        selected_ids=_selected(path),
-    )
-
-
 def _where(finding) -> str:
     """Where a finding is: `path:line`, the path, or `-`."""
     if finding.line:
@@ -862,26 +808,14 @@ def _where(finding) -> str:
     return finding.path or "-"
 
 
-def _findings_table(findings) -> dict:
-    """Every finding, toned by its level."""
-    return ui.table(
-        "findings",
-        _columns(
-            ("level", "Level"),
-            ("check", "Check"),
-            ("where", "Where"),
-            ("message", "Message"),
-        ),
-        rows=[
-            ui.table_row(
-                f"f{n}",
-                [f.level, f.check, _where(f), f.message[:500]],
-                tone=_TONES[f.level],
-            )
-            for n, f in enumerate(findings)
-        ],
-        label="Findings",
-    )
+def _off_lines(findings, diffs: list[FileDiff]) -> list[str]:
+    """The findings that no diff line holds, one text each: the notice lists them."""
+    shown = {d.path for d in diffs if d.patch}
+    return [
+        f"{f.level} {f.check} {_where(f)}: {f.message[:500]}"
+        for f in findings
+        if f.line < 1 or f.path not in shown
+    ]
 
 
 def _threads(findings, paths, now: int) -> list[dict]:

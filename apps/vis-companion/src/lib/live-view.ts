@@ -402,6 +402,8 @@ export interface LiveDiffNode extends LiveNodeBase {
   old_revision?: string;
   new_revision?: string;
   threads: LiveThread[];
+  /** The toolbar: each button is one action, each group of buttons is one menu. */
+  children?: LiveNode[];
 }
 
 /** A 3D world that the owner describes as data (`view.json` `scene`). */
@@ -1201,6 +1203,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         ...(oldRevision ? { old_revision: oldRevision } : {}),
         ...(newRevision ? { new_revision: newRevision } : {}),
         threads: keyed(node.threads, threadFromWire),
+        ...diffToolbarFromWire(node.children),
       };
     }
     case 'thread':
@@ -1246,6 +1249,28 @@ function sceneSettings(raw: Record<string, unknown>, held: SceneSettings): Scene
     is_wrapping: typeof raw.is_wrapping === 'boolean' ? raw.is_wrapping : held.is_wrapping,
     tick_ms: tick !== undefined && tick >= 0 ? Math.min(2000, Math.round(tick)) : held.tick_ms,
   };
+}
+
+/** The toolbar of a diff: buttons and groups of buttons, the rest dropped (`view.json` `diff`). */
+function diffToolbarFromWire(raw: unknown): { children?: LiveNode[] } {
+  const children = liveNodesFromWire(raw).filter(
+    (node) =>
+      node.type === 'button' ||
+      (node.type === 'group' && node.children.every((child) => child.type === 'button')),
+  );
+  return children.length > 0 ? { children } : {};
+}
+
+/** The nodes that `node` holds: the children of a group, or the toolbar of a diff. */
+export function nestedLiveNodes(node: LiveNode): LiveNode[] {
+  if (node.type === 'group') return node.children;
+  if (node.type === 'diff') return node.children ?? [];
+  return [];
+}
+
+/** `node` holding `children` in place of its nested nodes. */
+function withNestedNodes(node: LiveNode, children: LiveNode[]): LiveNode {
+  return node.type === 'group' || node.type === 'diff' ? { ...node, children } : node;
 }
 
 /** The nodes of a view or of a group, unpaintable ones dropped. */
@@ -1667,9 +1692,7 @@ function applyThread(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
 
 /** Every id in the tree, groups included (`live/node-ids`). */
 function treeIds(nodes: LiveNode[]): string[] {
-  return nodes.flatMap((node) =>
-    node.type === 'group' ? [node.id, ...treeIds(node.children)] : [node.id],
-  );
+  return nodes.flatMap((node) => [node.id, ...treeIds(nestedLiveNodes(node))]);
 }
 
 /**
@@ -1685,11 +1708,11 @@ function mapNode(nodes: LiveNode[], id: string, rewrite: (node: LiveNode) => Liv
       changed = changed || patched !== node;
       return patched;
     }
-    if (node.type !== 'group') return node;
-    const children = mapNode(node.children, id, rewrite);
-    if (children === node.children) return node;
+    const nested = nestedLiveNodes(node);
+    const children = mapNode(nested, id, rewrite);
+    if (children === nested) return node;
     changed = true;
-    return { ...node, children };
+    return withNestedNodes(node, children);
   });
   return changed ? next : nodes;
 }
@@ -1708,11 +1731,10 @@ function insertAfter(nodes: LiveNode[], after: string, node: LiveNode): LiveNode
   }
   for (let index = 0; index < nodes.length; index += 1) {
     const child = nodes[index];
-    if (child.type !== 'group') continue;
-    const children = insertAfter(child.children, after, node);
+    const children = insertAfter(nestedLiveNodes(child), after, node);
     if (!children) continue;
     const next = nodes.slice();
-    next[index] = { ...child, children };
+    next[index] = withNestedNodes(child, children);
     return next;
   }
   return null;
@@ -1724,11 +1746,11 @@ function dropNode(nodes: LiveNode[], id: string): LiveNode[] {
   if (kept.length !== nodes.length) return kept;
   let changed = false;
   const next = nodes.map((node) => {
-    if (node.type !== 'group') return node;
-    const children = dropNode(node.children, id);
-    if (children === node.children) return node;
+    const nested = nestedLiveNodes(node);
+    const children = dropNode(nested, id);
+    if (children === nested) return node;
     changed = true;
-    return { ...node, children };
+    return withNestedNodes(node, children);
   });
   return changed ? next : nodes;
 }

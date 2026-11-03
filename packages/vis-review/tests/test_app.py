@@ -37,8 +37,17 @@ def wait_for(check, timeout=2.0):
     return check()
 
 
-def rows(recorder, node_id):
-    return [row["id"] for row in recorder.node(node_id)["rows"]]
+def items(recorder, menu_id):
+    return [child["id"] for child in recorder.node(menu_id)["children"]]
+
+
+def controls(recorder):
+    """Every button of the diff toolbar by id, the buttons in its menus included."""
+    found = {}
+    for child in recorder.node("diff")["children"]:
+        for button in child.get("children") or [child]:
+            found[button["id"]] = button["is_disabled"]
+    return found
 
 
 def test_a_new_change_shows_after_a_checkpoint_and_nodes_keep_their_place(
@@ -49,7 +58,7 @@ def test_a_new_change_shows_after_a_checkpoint_and_nodes_keep_their_place(
     edit(root, "a.py", "a = 2\n")
     journal.checkpoint("block", "edit a")
     app.refresh()
-    assert rows(recorder, "files") == ["a.py"]
+    assert items(recorder, "file") == ["file-all", "file:a.py"]
     assert "+a = 2" in recorder.node("diff")["patch"]
     assert recorder.ids() == order
 
@@ -60,14 +69,15 @@ def test_choosing_a_checkpoint_shows_only_its_own_change(tmp_path, recorder):
     journal.checkpoint("block")
     edit(root, "b.py", "b = 1\n")
     second = journal.checkpoint("block")
-    recorder.send("select", "checkpoints", item_ids=[str(second.seq)])
+    recorder.send("activate", f"checkpoint-{second.seq}")
     assert wait_for(
         lambda: (
             "b.py" in recorder.node("diff")["patch"]
             and "a.py" not in recorder.node("diff")["patch"]
         )
     )
-    recorder.send("select", "checkpoints", item_ids=[str(second.seq)])
+    assert recorder.node("scope")["label"] == f"Checkpoint #{second.seq}"
+    recorder.send("activate", f"checkpoint-{second.seq}")
     assert wait_for(lambda: "a.py" in recorder.node("diff")["patch"])
 
 
@@ -75,7 +85,7 @@ def test_undo_checkpoint_changes_the_files_back(tmp_path, recorder):
     root, journal, app = setup(tmp_path, recorder)
     edit(root, "a.py", "a = 2\n")
     second = journal.checkpoint("block")
-    recorder.send("select", "checkpoints", item_ids=[str(second.seq)])
+    recorder.send("activate", f"checkpoint-{second.seq}")
     recorder.send("activate", "undo")
     assert wait_for(lambda: (root / "a.py").read_text() == "a = 1\n")
     assert wait_for(lambda: journal.entries[-1].kind == "undo")
@@ -87,18 +97,17 @@ def test_undo_file_brings_back_only_the_chosen_file(tmp_path, recorder):
     edit(root, "b.py", "b = 1\n")
     journal.checkpoint("block")
     app.refresh()
-    recorder.send("select", "files", item_ids=["b.py"])
+    recorder.send("activate", "file:b.py")
     recorder.send("activate", "undo-file")
     assert wait_for(lambda: not (root / "b.py").exists())
     assert (root / "a.py").read_text() == "a = 2\n"
     # vis-review e2e: the gateway refused the repaint, because b.py stayed selected.
     assert wait_for(lambda: journal.entries[-1].kind == "undo")
     assert wait_for(lambda: recorder.node("notice")["tone"] == "ok")
-    files = recorder.node("files")
-    assert set(files.get("selected_ids", [])) <= {row["id"] for row in files["rows"]}
+    assert recorder.node("file")["label"] == "All files"
 
 
-def test_checks_show_findings_as_rows_and_as_threads_on_their_lines(tmp_path, recorder):
+def test_checks_show_findings_as_threads_on_their_lines(tmp_path, recorder):
     lint = SimpleNamespace(
         diagnostics=[
             SimpleNamespace(
@@ -118,7 +127,7 @@ def test_checks_show_findings_as_rows_and_as_threads_on_their_lines(tmp_path, re
     edit(root, "a.py", "a = 2  \n")
     journal.checkpoint("block")
     recorder.send("activate", "checks")
-    assert wait_for(lambda: len(rows(recorder, "findings")) == 2)
+    assert wait_for(lambda: len(recorder.node("diff").get("threads") or []) == 2)
     threads = recorder.node("diff")["threads"]
     assert {
         (t["anchor"]["line"], t["messages"][0]["body"].split(":")[0]) for t in threads
@@ -139,7 +148,8 @@ def test_the_ai_review_shows_its_summary_and_findings(tmp_path, recorder):
     journal.checkpoint("block")
     recorder.send("activate", "ai")
     assert wait_for(lambda: recorder.node("notice").get("detail") == "Looks risky.")
-    assert rows(recorder, "findings") == ["f0"]
+    [thread] = recorder.node("diff")["threads"]
+    assert thread["messages"][0]["body"].endswith("Check this.")
 
 
 def test_sent_comments_go_to_the_session_and_answer_the_submission(tmp_path, recorder):
@@ -171,7 +181,7 @@ def test_controls_that_need_a_door_feature_are_off_without_it(tmp_path, recorder
     edit(root, "a.py", "a = 2\n")
     journal.checkpoint("block")
     app.refresh()
-    buttons = {b["id"]: b["is_disabled"] for b in recorder.node("actions")["children"]}
+    buttons = controls(recorder)
     assert buttons["ai"] and buttons["tests"] and not buttons["checks"]
 
 
@@ -252,7 +262,7 @@ def test_a_changed_picture_shows_its_old_and_new_version(tmp_path, recorder):
     assert "before" not in shown["logo.png (added)"]
     assert "no preview" in shown["huge.png (added)"]["text"]
     last = journal.entries[-1].seq
-    recorder.send("select", "checkpoints", item_ids=[str(last)])
+    recorder.send("activate", f"checkpoint-{last}")
     assert wait_for(lambda: "logo.png (modified)" in images(recorder))
     changed = images(recorder)["logo.png (modified)"]
     assert (changed["width"], changed["before"]["width"]) == (3, 2)
@@ -284,7 +294,7 @@ def test_the_images_go_away_when_the_range_has_no_picture(tmp_path, recorder):
     text = journal.checkpoint("block")
     app.refresh()
     assert "images" in recorder.ids()
-    recorder.send("select", "checkpoints", item_ids=[str(text.seq)])
+    recorder.send("activate", f"checkpoint-{text.seq}")
     assert wait_for(lambda: "images" not in recorder.ids())
 
 
@@ -363,7 +373,7 @@ def test_the_image_cache_also_bounds_changes_without_a_picture(
 
 def buttons_of(recorder):
     """Each action button id with its is_disabled flag."""
-    return {b["id"]: b["is_disabled"] for b in recorder.node("actions")["children"]}
+    return controls(recorder)
 
 
 def test_show_full_files_puts_every_unchanged_line_in_the_diff(tmp_path, recorder):
@@ -375,7 +385,7 @@ def test_show_full_files_puts_every_unchanged_line_in_the_diff(tmp_path, recorde
     lines[2], lines[37] = "first change\n", "last change\n"
     edit(root, "a.py", "".join(lines))
     journal.checkpoint("block")
-    recorder.send("select", "checkpoints", item_ids=["3"])
+    recorder.send("activate", "checkpoint-3")
     assert wait_for(lambda: recorder.node("diff")["patch"].count("@@ -") == 2)
     recorder.send("activate", "full")
     assert wait_for(lambda: recorder.node("diff")["patch"].count("@@ -") == 1)
@@ -395,7 +405,7 @@ def test_latest_change_shows_only_the_newest_checkpoint(tmp_path, recorder):
     app.refresh()
     assert not buttons_of(recorder)["latest"]
     recorder.send("activate", "latest")
-    assert wait_for(lambda: rows(recorder, "files") == ["b.py"])
+    assert wait_for(lambda: items(recorder, "file") == ["file-all", "file:b.py"])
 
 
 def test_uncommitted_compares_with_the_commit_and_falls_back_without_git(
@@ -421,7 +431,7 @@ def test_uncommitted_compares_with_the_commit_and_falls_back_without_git(
     recorder.send("activate", "uncommitted")
     assert wait_for(lambda: recorder.node("diff")["old_revision"] == "HEAD")
     assert "-a = 1\n+a = 2" in recorder.node("diff")["patch"]
-    recorder.send("select", "files", item_ids=["a.py"])
+    recorder.send("activate", "file:a.py")
     assert wait_for(lambda: app.path == "a.py")
     assert buttons_of(recorder)["undo-file"] is True
     recorder.send("activate", "all")
@@ -441,15 +451,17 @@ def test_a_session_review_shows_only_its_own_changes_by_default(tmp_path, record
     edit(root, "a.py", "a = 2\n")
     journal.checkpoint("block", "edit a")
     app.refresh()
-    assert rows(recorder, "files") == ["a.py"]
+    assert items(recorder, "file") == ["file-all", "file:a.py"]
     assert buttons_of(recorder)["session"] is True
     recorder.send("activate", "all")
-    assert wait_for(lambda: rows(recorder, "files") == ["a.py", "theirs.py"])
+    assert wait_for(
+        lambda: items(recorder, "file") == ["file-all", "file:a.py", "file:theirs.py"]
+    )
     recorder.send("activate", "session")
-    assert wait_for(lambda: rows(recorder, "files") == ["a.py"])
+    assert wait_for(lambda: items(recorder, "file") == ["file-all", "file:a.py"])
     edit(root, "a.py", "a = 3 by them\n")
     journal.checkpoint("outside", "Changes between blocks")
-    recorder.send("select", "files", item_ids=["a.py"])
+    recorder.send("activate", "file:a.py")
     assert wait_for(lambda: app.path == "a.py")
     recorder.send("activate", "undo-file")
     assert wait_for(lambda: (root / "a.py").read_text() == "a = 1 by them\n")
@@ -475,3 +487,28 @@ def test_each_key_presses_a_button_that_the_app_shows(tmp_path, recorder):
         pressed = [shortcut["node_id"] for shortcut in view["shortcuts"]]
         assert pressed and set(pressed) <= shown
         assert ("session" in pressed) == scoped
+
+
+def test_a_finding_on_no_line_shows_in_the_notice(tmp_path, recorder):
+    # T18 user report: the findings table went away with the T3 layout, so a finding
+    # that no diff line holds must still reach the person.
+    root, journal, app = setup(tmp_path, recorder)
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block")
+    recorder.send("activate", "checks")
+    assert wait_for(
+        lambda: (
+            "notice" in recorder.ids()
+            and "No language tools here" in recorder.node("notice").get("detail", "")
+        )
+    )
+    assert not recorder.node("diff").get("threads")
+
+
+def test_an_idle_app_shows_only_the_diff(tmp_path, recorder):
+    # T18 user report: the app must look like the T3 Code diff panel, with no status rows.
+    root, journal, app = setup(tmp_path, recorder)
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block")
+    app.refresh()
+    assert recorder.ids() == ["diff"]

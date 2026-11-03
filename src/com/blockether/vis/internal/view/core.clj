@@ -1167,6 +1167,24 @@
     (when error (fail! (str what " " error)))
     {:media-type (:media-type raw) :data (:data raw) :width width :height height}))
 
+(declare live-node)
+
+(defn- diff-toolbar
+  "The toolbar `children` of a diff: buttons, and groups of buttons that a
+   surface paints as one menu each. Anything else is refused by name."
+  [fail! context children]
+  (when-not (sequential? children) (fail! ":children must be a sequence of buttons and groups"))
+  (letfn [(button? [node] (= "button" (raw-type-name node)))]
+    (mapv (fn [node]
+            (when-not (and (map? node)
+                           (or (button? node)
+                               (and (group-node? node)
+                                    (sequential? (:children node))
+                                    (every? #(and (map? %) (button? %)) (:children node)))))
+              (fail! "a diff toolbar holds only buttons and groups of buttons"))
+            (live-node fail! context node))
+          children)))
+
 (defn- live-node
   "One declared component of a form or a live view. `fail!` is the refusal of
    whoever declares it — a view spec, a request, or the `add-node` op that
@@ -1183,7 +1201,9 @@
      (input-node fail! context node)
      (let [is-group (group-node? node)]
        (check-keys! (if is-group "group" "node")
-                    (if is-group live-group-decl-keys live-node-decl-keys)
+                    (cond is-group live-group-decl-keys
+                          (= "diff" (raw-type-name node)) (conj live-node-decl-keys :children)
+                          :else live-node-decl-keys)
                     node
                     fail!)
        (if is-group
@@ -1391,7 +1411,10 @@
                  (assoc :new-revision (live-text node-fail! ":new-revision" (:new-revision node)))
 
                  (some? (:threads node))
-                 (assoc :threads (app-threads node-fail! (:threads node))))
+                 (assoc :threads (app-threads node-fail! (:threads node)))
+
+                 (some? (:children node))
+                 (assoc :children (diff-toolbar node-fail! context (:children node))))
 
                :image
                (cond-> (merge base (picture node-fail! "an image" node))

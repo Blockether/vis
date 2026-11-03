@@ -262,6 +262,31 @@ describe('a patch frame', () => {
     expect(status.detail).toBe('host 2 of 3');
   });
 
+  // The review app keeps its toolbar inside the diff: a frame that renames one of
+  // those buttons must reach it, and a toolbar holds no other node kind.
+  it('patches a button in the toolbar of a diff and drops other toolbar nodes', () => {
+    const raw = liveViewFromWire({
+      id: 'review-view',
+      title: 'Review',
+      nodes: [
+        {
+          id: 'diff',
+          type: 'diff',
+          patch: '',
+          children: [
+            { id: 'full', type: 'button', label: 'Full files' },
+            { id: 'note', type: 'text', text: 'not a command' },
+          ],
+        },
+      ],
+    });
+    if (!raw) throw new Error('the diff must be paintable');
+    const diff = nodeOfType(raw, 'diff', 'diff');
+    expect(diff.children?.map((node) => node.id)).toEqual(['full']);
+    const renamed = patched(raw, 1, [{ op: 'set', node_id: 'full', label: 'Changes only' }]);
+    expect(nodeOfType(renamed, 'diff', 'diff').children?.[0]).toMatchObject({ label: 'Changes only' });
+  });
+
   it('keeps selected table ids inside the rows that still exist', () => {
     const raw = liveViewFromWire({
       id: 'selection-view',

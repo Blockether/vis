@@ -104,7 +104,12 @@
   [nodes]
   (into []
         (mapcat (fn [node]
-                  (if (seq (:children node)) (leaf-nodes (:children node)) [node])))
+                  (cond
+                    ;; A diff paints itself; its toolbar buttons follow it.
+                    (= "diff" (name (:type node ""))) (cons (dissoc node :children)
+                                                            (leaf-nodes (:children node)))
+                    (seq (:children node)) (leaf-nodes (:children node))
+                    :else [node])))
         nodes))
 
 (defn- node-ids

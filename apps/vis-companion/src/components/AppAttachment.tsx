@@ -21,7 +21,7 @@ import { onSettingChange, type GatewayClient } from '../lib/gateway';
 import { appFrameStep, appSurfaces, isAppSurfaceSetting, shownAppFrame } from '../lib/app-surfaces';
 import { foldGlobalAppView, globalAppStateWord } from '../lib/global-apps';
 import type { HumanInputValue } from '../lib/human-input';
-import { liveViewFromWire, type LiveShortcut, type LiveView as LiveViewModel, type LiveNode } from '../lib/live-view';
+import { liveViewFromWire, nestedLiveNodes, type LiveShortcut, type LiveView as LiveViewModel, type LiveNode } from '../lib/live-view';
 import {
   ariaShortcut,
   isAppKeyTarget,
@@ -193,10 +193,8 @@ function nodeLabel(nodes: readonly LiveNode[], id: string): string | undefined {
       if (node.type === 'card') return node.title;
       return node.label;
     }
-    if (node.type === 'group') {
-      const found = nodeLabel(node.children, id);
-      if (found !== undefined) return found;
-    }
+    const found = nodeLabel(nestedLiveNodes(node), id);
+    if (found !== undefined) return found;
   }
   return undefined;
 }

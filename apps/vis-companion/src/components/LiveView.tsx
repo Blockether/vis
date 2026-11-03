@@ -66,6 +66,7 @@ import {
   liveInputNodes,
   liveFraction,
   livePercent,
+  nestedLiveNodes,
   orderedRows,
   timelineGeometry,
   timelineStill,
@@ -1875,7 +1876,17 @@ function NodeCell({
           )}
           {node.type === 'table' && <TableRows node={node} onSelect={onSelect} />}
           {node.type === 'link' && <LinkRows node={node} />}
-          {node.type === 'diff' && <DiffNodeView node={node} actions={presentation.app} />}
+          {node.type === 'diff' && (
+            <DiffNodeView
+              node={node}
+              actions={presentation.app}
+              commands={{
+                onActivate: presentation.onActivate,
+                keys: presentation.keys,
+                isSettled: presentation.isSettled,
+              }}
+            />
+          )}
           {node.type === 'thread' && <ThreadNodeView node={node} actions={presentation.app} />}
           {node.type === 'scene' && <LiveScene node={node} />}
           {node.type === 'image' && <ImageNodeView node={node} />}
@@ -1914,10 +1925,8 @@ function findNode<T extends LiveNode>(
 ): T | undefined {
   for (const node of nodes) {
     if (pick(node)) return node;
-    if (node.type === 'group') {
-      const inner = findNode(node.children, pick);
-      if (inner) return inner;
-    }
+    const inner = findNode(nestedLiveNodes(node), pick);
+    if (inner) return inner;
   }
   return undefined;
 }

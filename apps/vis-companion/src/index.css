@@ -824,6 +824,91 @@ ol.markdown-list > li::before {
   border-radius: 8px;
   color: var(--dialog-hint);
 }
+.diff-commands {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+.diff-toolbar-summary > :not(.diff-commands),
+.diff-toolbar .diff-commands > button:first-child,
+.diff-toolbar .diff-commands > button:last-child {
+  flex-shrink: 0;
+}
+.diff-toolbar button.diff-command {
+  display: inline-flex;
+  width: auto;
+  max-width: 16rem;
+  min-width: 2.5rem;
+  flex-shrink: 1;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  color: var(--fg);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.diff-toolbar button.diff-command:hover:not(:disabled),
+.diff-toolbar button.diff-command[aria-expanded='true'] {
+  background: var(--hover);
+}
+.diff-toolbar button.diff-command[data-variant='primary'] {
+  color: var(--color-accent-ink);
+}
+.diff-toolbar button.diff-command[data-variant='destructive'] {
+  color: var(--color-err-ink);
+}
+.diff-toolbar button.diff-command:disabled {
+  opacity: 0.5;
+}
+.diff-menu {
+  position: absolute;
+  display: flex;
+  width: min(14rem, calc(100vw - 24px));
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  line-height: 18px;
+}
+.diff-menu-item {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: var(--fg);
+  text-align: left;
+}
+.diff-menu-item:hover:not(:disabled),
+.diff-menu-item:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.diff-menu-item[data-variant='destructive'] {
+  color: var(--color-err-ink);
+}
+.diff-menu-item:disabled {
+  opacity: 0.45;
+}
+.diff-menu-item kbd {
+  color: var(--dialog-hint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+@media (pointer: coarse) {
+  .diff-menu-item {
+    min-height: 44px;
+  }
+}
 .diff-toolbar button[aria-pressed='true'] {
   background: var(--hover);
   color: var(--fg);
