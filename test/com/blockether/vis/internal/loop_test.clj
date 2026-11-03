@@ -4005,7 +4005,9 @@
         [pc (extension/builtin-sandbox-bindings (constantly env))]
         (let [events (atom [])
               close-attempts (atom 0)
-              close-live! hi/close-live!]
+              close-live! hi/close-live!
+              ;; Other tests in this JVM can still hold a view; judge only this run.
+              before (hi/open-live-ids)]
 
           (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
                            (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
@@ -4048,7 +4050,7 @@
                                                                                           result)
                                                                                         "grep")))
                (expect (not (str/includes? (:stdout result) "[running]")))
-               (expect (empty? (hi/open-live-ids))))))))))
+               (expect (empty? (remove before (hi/open-live-ids)))))))))))
 
 (defdescribe
   end-only-activity-publication-test

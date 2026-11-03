@@ -394,6 +394,9 @@
                     (swap! entries assoc id (assoc opts :author (str (:session-id env))))
                     (when-let [to (:reply_to opts)]
                       (swap! entries update-in [to :replies] (fnil conj []) {:reply_entry_id id}))
+                    ;; The gateway store wakes the waiting question, as here. Without it the
+                    ;; question woke only on the 5 s tick, the bound of the test's deref (CI).
+                    (agents/council-inserted! opts)
                     {:entry_id id :replies [{:state "delivered"}]}))})
     (try (f entries)
          (finally (agents/install-runtime! saved)
