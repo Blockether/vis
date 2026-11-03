@@ -6,6 +6,8 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.app-surface :as app-surface]
             [com.blockether.vis.tui.client :as client]
+            [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
@@ -491,3 +493,121 @@
              (expect (= {:left 0 :top 0 :width 80 :height 40}
                         (get-in @held [["A" "review-A"] :box])))
              (finally (reset! held saved))))))
+
+;; User report: a cached review must return without waiting for the gateway.
+(defdescribe
+  review-session-offline-return-test
+  (it
+    "restores the retained pane before deferred metadata refresh"
+    (let [step
+          (fn [db event]
+            (:db ((:fn (get @@#'state/event-registry (first event))) db event)))
+
+          pane
+          {:open? true :focused? true :app {:session-id "A" :view-id "review-A"}}
+
+          a
+          (step {:session {:id "A"} :render-version 0} [:open-session-tab {:id "A"} [] nil])
+
+          b
+          (step (assoc a :live-panel pane) [:open-session-tab {:id "B"} [] nil])
+
+          seen
+          (atom nil)]
+
+      (with-redefs [state/app-db
+                    (atom b)
+
+                    chat/resume-session
+                    (constantly nil)
+
+                    client/notify!
+                    (fn [& _])]
+
+        (#'screen/select-session-target!
+         "A"
+         (fn [& _])
+         (fn [_]
+           (reset! seen (select-keys @state/app-db [:session :live-panel]))))
+        (expect (= "A" (get-in @state/app-db [:session :id])))
+        (expect (= pane (:live-panel @state/app-db)))
+        (expect (= {:session {:id "A"} :live-panel pane} @seen))))))
+
+(defdescribe review-session-load-test
+             (describe
+               "a session without a retained view"
+               (doseq [pending? [false true]]
+                 (it (if pending?
+                       "hydrates a pending tab before showing its pane"
+                       "loads a session that has not been opened")
+                     (let [db {:session {:id "B"}
+                               :active-tab-id :b
+                               :tabs (cond-> [{:id :b :active? true}]
+                                       pending?
+                                       (conj {:id :a :pending? true :session-id "A"}))
+                               :tab-locals (cond-> {}
+                                             pending?
+                                             (assoc :a {:session {:id "A"}}))
+                               :render-version 0}
+                           history [{:id "loaded" :role :user :content "Saved review work"}]]
+
+                       (with-redefs [state/app-db (atom db)
+                                     chat/resume-session (fn [_]
+                                                           {:id "A" :history history})]
+
+                         (#'screen/select-session-target!
+                          "A"
+                          (fn [session _]
+                            (state/dispatch [:open-session-tab (dissoc session :history)
+                                             (:history session) nil]))
+                          (fn [& _]))
+                         (expect (= "A" (get-in @state/app-db [:session :id])))
+                         (expect (= history (:messages @state/app-db)))
+                         (expect (not (:pending?
+                                        (some #(when (= (:active-tab-id @state/app-db) (:id %)) %)
+                                              (:tabs @state/app-db)))))))))))
+
+;; User report: returning to A must not repaint B after the picker closes.
+(defdescribe
+  review-picker-close-frame-test
+  (it
+    "restores the selected pane before the dialog releases its drawing lock"
+    (let [step
+          (fn [db event]
+            (:db ((:fn (get @@#'state/event-registry (first event))) db event)))
+
+          pane
+          {:open? true :focused? true :app {:session-id "A" :view-id "review-A"}}
+
+          a
+          (step {:session {:id "A"} :render-version 0} [:open-session-tab {:id "A"} [] nil])
+
+          b
+          (step (assoc a :live-panel pane) [:open-session-tab {:id "B"} [] nil])
+
+          closing
+          (atom nil)]
+
+      (with-redefs [state/app-db
+                    (atom b)
+
+                    dlg/navigator-dialog!
+                    (fn [& _]
+                      {:action :switch :id "A"})]
+
+        (with-redefs-fn {#'screen/with-dialog-lock
+                         (fn [f]
+                           (let [choice (f)]
+                             (reset! closing (select-keys @state/app-db [:session :live-panel]))
+                             choice))}
+          (fn []
+            (#'screen/show-session-picker!
+             nil
+             "B"
+             b
+             (fn [choice]
+               (#'screen/select-session-target!
+                (:id choice)
+                (fn [& _])
+                (fn [& _]))))))
+        (expect (= {:session {:id "A"} :live-panel pane} @closing))))))

@@ -6889,6 +6889,22 @@
     (let [title (get session "title")]
       (when-not (str/blank? (str title)) (state/dispatch [:set-title (str title) session-id])))))
 
+(defn- retained-session?
+  "True when the session has a hydrated tab in this TUI."
+  [db session-id]
+  (when-let [tab-id (state/tab-id-for-session db session-id)]
+    (not (:pending? (some #(when (= tab-id (:id %)) %) (:tabs db))))))
+
+(defn- select-session-target!
+  "Focus a retained tab before scheduling its metadata refresh. Resume new sessions normally."
+  [target-id open! refresh!]
+  (when-not (= (str target-id) (current-session-id))
+    (if (retained-session? @state/app-db target-id)
+      (do (state/dispatch [:select-tab-by-session target-id]) (refresh! true))
+      (if-let [session-result (chat/resume-session target-id)]
+        (open! session-result true)
+        (vis/notify! "Session no longer exists" :level :warn :ttl-ms copy-success-ttl-ms)))))
+
 (defn- session-workspace
   "Workspace metadata pinned to `session-id`."
   [session-id]
@@ -7031,57 +7047,61 @@
   "Open the navigator without gateway I/O on the input thread. Rows and the catalog of
    the last read paint at once; the dialog then reads its head page again. The dialog
    owns page loading, retry and cancellation; a search answers its hits WITH their rows."
-  [screen active-id db]
-  (let [{:keys [page catalog]} @picker-cache*]
-    (with-dialog-lock
-      #(dlg/navigator-dialog!
-         screen
-         {:sessions (:sessions page)
-          :next-cursor (:next-cursor page)
-          :groups (:groups catalog)
-          :projects (:projects catalog)
-          :load-initial (fn []
-                          (picker-head! active-id))
-          :load-more (fn [cursor scope]
-                       (tui-session-page (assoc scope
-                                           :limit picker-page-size
-                                           :after cursor)))
-          :load-catalog picker-catalog!
-          :watch-fleet (fn [sink]
-                         (try (vis/gateway-fleet-subscribe! sink)
-                              (catch Throwable _
-                                (fn []))))
-          :active-session-id active-id
-          :db db
-          :drafts (state/session-drafts db)
-          :recent-messages vis/fork-points
-          :search-sessions
-          (fn [q scope]
-            (try
-              (let [answer (vis/gateway-search-sessions
-                             q
-                             (cond-> (with-session-drafts (assoc scope :limit picker-search-rows))
-                               (and (not (str/blank? q)) (nil? (:archived scope)))
-                               (assoc :archived :include)))]
-                {:sessions (mapv enrich-session-row (map session-summary (:sessions answer)))
-                 :next-cursor (:next-cursor answer)
-                 :total (:total answer)
-                 :matches (into {}
-                                (map (fn [{:keys [id rank in-title? in-request? in-reply?
-                                                  in-thinking? request-snippet reply-snippet hits]}]
-                                       [id
-                                        {:rank rank
-                                         :kind (cond in-title? :title
-                                                     (and in-request? in-reply?) :both
-                                                     in-request? :request
-                                                     in-reply? :reply
-                                                     in-thinking? :thinking
-                                                     :else :both)
-                                         :request-snippet request-snippet
-                                         :reply-snippet reply-snippet
-                                         :hits hits}]))
-                                (:matches answer))})
-              (catch Throwable _ nil)))}))))
+  ([screen active-id db] (show-session-picker! screen active-id db identity))
+  ([screen active-id db selected!]
+   (let [{:keys [page catalog]} @picker-cache*]
+     (with-dialog-lock
+       #(let [choice
+              (dlg/navigator-dialog!
+                screen
+                {:sessions (:sessions page)
+                 :next-cursor (:next-cursor page)
+                 :groups (:groups catalog)
+                 :projects (:projects catalog)
+                 :load-initial (fn []
+                                 (picker-head! active-id))
+                 :load-more (fn [cursor scope]
+                              (tui-session-page (assoc scope
+                                                  :limit picker-page-size
+                                                  :after cursor)))
+                 :load-catalog picker-catalog!
+                 :watch-fleet (fn [sink]
+                                (try (vis/gateway-fleet-subscribe! sink)
+                                     (catch Throwable _
+                                       (fn []))))
+                 :active-session-id active-id
+                 :db db
+                 :drafts (state/session-drafts db)
+                 :recent-messages vis/fork-points
+                 :search-sessions
+                 (fn [q scope]
+                   (try (let [answer (vis/gateway-search-sessions
+                                       q
+                                       (cond-> (with-session-drafts (assoc scope
+                                                                      :limit picker-search-rows))
+                                         (and (not (str/blank? q)) (nil? (:archived scope)))
+                                         (assoc :archived :include)))]
+                          {:sessions (mapv enrich-session-row
+                                           (map session-summary (:sessions answer)))
+                           :next-cursor (:next-cursor answer)
+                           :total (:total answer)
+                           :matches (into {}
+                                          (map (fn [{:keys [id rank in-title? in-request? in-reply?
+                                                            in-thinking? request-snippet
+                                                            reply-snippet hits]}]
+                                                 [id
+                                                  {:rank rank
+                                                   :kind (cond in-title? :title
+                                                               (and in-request? in-reply?) :both
+                                                               in-request? :request
+                                                               in-reply? :reply
+                                                               in-thinking? :thinking
+                                                               :else :both)
+                                                   :request-snippet request-snippet
+                                                   :reply-snippet reply-snippet
+                                                   :hits hits}]))
+                                          (:matches answer))})
+                        (catch Throwable _ nil)))})] (selected! choice) choice)))))
 
 (def ^:private startup-session-window
   "How many newest rows a STARTUP lookup reads from the gateway. The gateway owns the
@@ -11417,17 +11437,9 @@
                                         :level :success
                                         :ttl-ms copy-success-ttl-ms))))
                      (= :switch (:action choice))
-                     ;; Focus the tab already bound to this session, or open a
-                     ;; new one — `:open-session-tab` decides. Switching to a
-                     ;; session whose turn is mid-flight just brings its tab to
-                     ;; the front; the turn was never paused.
-                     (let [target-id (:id choice)]
-                       (when-not (= (str target-id) (current-session-id))
-                         (if-let [session-result (chat/resume-session target-id)]
-                           (open-session-tab! session-result true)
-                           (vis/notify! "Session no longer exists"
-                                        :level :warn
-                                        :ttl-ms copy-success-ttl-ms))))))
+                     ;; A retained tab focuses locally. New sessions resume normally.
+                     ;; A running turn in another tab keeps running.
+                     (select-session-target! (:id choice) open-session-tab! refresh-active-tab!)))
                  show-agent-team! (fn []
                                     (when (and (agent-team/enabled? (current-session-id))
                                                (not (:dialog-open? @state/app-db)))
@@ -11476,8 +11488,15 @@
                  show-sessions!
                  (fn show-sessions! []
                    (when-not (:dialog-open? @state/app-db)
-                     (when-let [choice
-                                (show-session-picker! screen (current-session-id) @state/app-db)]
+                     (when-let [choice (show-session-picker!
+                                         screen
+                                         (current-session-id)
+                                         @state/app-db
+                                         (fn [choice]
+                                           (when (and (= :switch (:action choice))
+                                                      (retained-session? @state/app-db
+                                                                         (:id choice)))
+                                             (switch-session! choice))))]
                        (switch-session! choice)
                        ;; Refresh after mutations so pruning can continue.
                        (when (#{:delete :favorite :project :reorder} (:action choice))
