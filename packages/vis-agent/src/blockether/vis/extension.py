@@ -106,15 +106,8 @@ class Host(Protocol):
         """Emit one engine log line at a level."""
         ...
 
-    def notify(
-        self,
-        text: str,
-        level: str,
-        title: str | None,
-        duration_ms: int | None,
-        notice_id: str | None,
-    ) -> Any:
-        """Show one toast to the people of the session, or of every open session."""
+    def notify(self, text: str, level: str) -> Any:
+        """Show one notification on the user's channel."""
         ...
 
     def request(self, frame: str) -> str:
@@ -3889,31 +3882,8 @@ def log(level, msg):
     _host.log(str(level), str(msg))
 
 
-def notify(
-    text,
-    level="info",
-    *,
-    title: str | None = None,
-    duration_ms: int | None = None,
-    notice_id: str | None = None,
-) -> None:
-    """Show one toast in the terminal and the Companion app.
-
-    `level` is `info`, `success`, `warn` or `error`. `title` adds one bold line
-    of at most 120 characters. `duration_ms`, from 1000 to 60000, sets how long
-    the toast stays; without it, the client chooses by level. A later call with
-    the same `notice_id` replaces the shown toast, for example "Deploying" with
-    "Deployed". When the call runs for a session, each client of that session
-    shows the toast. Without a session, every open session shows it. A value
-    outside these bounds raises an error.
-    """
-    _host.notify(
-        str(text),
-        str(level),
-        None if title is None else str(title),
-        None if duration_ms is None else int(duration_ms),
-        None if notice_id is None else str(notice_id),
-    )
+def notify(text, level="info"):
+    _host.notify(str(text), str(level))
 
 
 def write_private_file(path: str | PathLike[str], text: str) -> None:
