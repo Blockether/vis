@@ -201,13 +201,10 @@ export function hasTimeline(agents: readonly Subagent[], leader?: LeaderLane): b
   return (agents.length > 1 || (agents.length > 0 && leader != null)) && !!chartSpan(agents, Date.now(), leader);
 }
 
-/**
- * The control that swaps the notes of a team for its timeline, and back. Its ink stays the page
- * ink: the pointer rests on it after a click, and a hover accent read as a changed state.
- */
+/** The control that swaps the notes of a team for its timeline, and back. */
 export function TimelineToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
   return (
-    <Button variant="secondary" density="inline" aria-pressed={isOn} onClick={onToggle} className="pointer-events-auto text-white!">
+    <Button variant="secondary" density="inline" aria-pressed={isOn} onClick={onToggle} className="pointer-events-auto">
       {isOn ? 'Close timeline' : 'Open timeline'}
     </Button>
   );

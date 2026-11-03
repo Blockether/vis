@@ -180,10 +180,11 @@ export const Button = forwardRef<
   const dimmed = 'disabled:border-edge disabled:bg-panel-2 disabled:text-muted';
   // Desktop hover changes foreground only. Base/selected surfaces, press feedback
   // and keyboard focus are independent states. Filled primary and inverse controls
-  // keep their contrast pair when no stronger foreground is available.
+  // keep their contrast pair when no stronger foreground is available. Secondary keeps
+  // the page ink: after a click the pointer rests on it, and an accent read as a new state.
   const styles = {
     primary: `border-accent bg-accent text-accent-foreground ${dimmed}`,
-    secondary: `border-edge-strong bg-transparent text-white enabled:hover:text-accent-ink ${dimmed}`,
+    secondary: `border-edge-strong bg-transparent text-white ${dimmed}`,
     // Quiet text actions stay frameless beside the primary.
     quiet:
       'border-transparent bg-transparent text-dialog-hint enabled:hover:text-white disabled:border-transparent disabled:bg-transparent disabled:text-muted',
