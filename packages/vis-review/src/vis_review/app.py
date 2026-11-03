@@ -31,12 +31,26 @@ ui = vis.ui
 
 # Characters of patch text the diff node shows; the contract allows 1 MB.
 MOST_PATCH_CHARS = 900_000
+# Unchanged lines around each change; full files show every line, like T3 "Expand all".
+CONTEXT_LINES = 3
+FULL_CONTEXT = 1_000_000
 # Rows the checkpoint table shows, newest first.
 MOST_CHECKPOINTS = 200
 _TONES = {"error": "error", "warning": "warn", "info": "idle"}
 _AUTHOR = {"kind": "extension", "name": "vis-review"}
 EVENT_FIELDS = ("type", "node_id", "values", "submission_id", "comments", "item_ids")
-BUTTONS = ("all", "refresh", "checks", "tests", "ai", "undo-file", "undo", "restore")
+BUTTONS = (
+    "all",
+    "latest",
+    "full",
+    "refresh",
+    "checks",
+    "tests",
+    "ai",
+    "undo-file",
+    "undo",
+    "restore",
+)
 # Buttons that call a tool or a model: they run outside the lock.
 SLOW = ("checks", "tests", "ai")
 # Changed pictures the app shows at most.
@@ -102,6 +116,7 @@ class ReviewApp:
         self.end: int | None = None
         self.selected: int | None = None
         self.path: str | None = None
+        self.is_full = False
         self.findings: list[checks.Finding] = []
         self.ai_summary = ""
         self.notice = ("Ready", "idle")
@@ -169,7 +184,7 @@ class ReviewApp:
 
     def diffs(self) -> list[FileDiff]:
         """The diffs of the chosen range and file."""
-        diffs = self.journal.diff(self.start, self.end)
+        diffs = self.journal.diff(self.start, self.end, context=self._context())
         return [d for d in diffs if self.path is None or d.path == self.path]
 
     def all_findings(self, diffs: list[FileDiff]) -> list[checks.Finding]:
@@ -180,7 +195,7 @@ class ReviewApp:
 
     def render(self) -> list[dict]:
         """Every node of the app for the current state."""
-        diffs_all = self.journal.diff(self.start, self.end)
+        diffs_all = self.journal.diff(self.start, self.end, context=self._context())
         if all(d.path != self.path for d in diffs_all):
             # An undo or a new range can take the chosen file out of the list.
             self.path = None
@@ -201,6 +216,9 @@ class ReviewApp:
             *([ui.group("images", *images, label="Changed images")] if images else []),
             _findings_table(findings),
         ]
+
+    def _context(self) -> int:
+        return FULL_CONTEXT if self.is_full else CONTEXT_LINES
 
     def _is_all(self) -> bool:
         """True when the app shows the whole journal: the first range."""
@@ -223,6 +241,15 @@ class ReviewApp:
         return ui.group(
             ui.button(
                 "all", "All changes", is_disabled=self._is_all() and self.path is None
+            ),
+            ui.button(
+                "latest",
+                "Latest change",
+                is_disabled=self.journal.last <= 1
+                or self.selected == self.journal.last,
+            ),
+            ui.button(
+                "full", "Show changes only" if self.is_full else "Show full files"
             ),
             ui.button("refresh", "Refresh"),
             ui.button(
@@ -415,6 +442,14 @@ class ReviewApp:
         self.start, self.end, self.selected, self.path = 1, None, None, None
         self._clear()
         self.refresh(("Showing all changes", "idle"))
+
+    def _latest(self) -> None:
+        self._choose_checkpoint([str(self.journal.last)])
+
+    def _full(self) -> None:
+        self.is_full = not self.is_full
+        text = "Showing full files" if self.is_full else "Showing changes only"
+        self.refresh((text, "idle"))
 
     def _refresh(self) -> None:
         entry = self.journal.checkpoint("manual", "Refresh")

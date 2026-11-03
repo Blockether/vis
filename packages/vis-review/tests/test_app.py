@@ -358,3 +358,40 @@ def test_the_image_cache_also_bounds_changes_without_a_picture(
         diff = FileDiff(f"d{n}.bin", "modified", 0, 0, True, "", "b-old", "b-new")
         assert app._image((n, n + 1, diff.path), diff) is None
     assert len(app._images) == 3
+
+
+def buttons_of(recorder):
+    """Each action button id with its is_disabled flag."""
+    return {b["id"]: b["is_disabled"] for b in recorder.node("actions")["children"]}
+
+
+def test_show_full_files_puts_every_unchanged_line_in_the_diff(tmp_path, recorder):
+    # T3 Code "Expand all" (scenario S15): the far apart changes join in one hunk.
+    root, journal, app = setup(tmp_path, recorder)
+    lines = [f"line {n}\n" for n in range(40)]
+    edit(root, "a.py", "".join(lines))
+    journal.checkpoint("block")
+    lines[2], lines[37] = "first change\n", "last change\n"
+    edit(root, "a.py", "".join(lines))
+    journal.checkpoint("block")
+    recorder.send("select", "checkpoints", item_ids=["3"])
+    assert wait_for(lambda: recorder.node("diff")["patch"].count("@@ -") == 2)
+    recorder.send("activate", "full")
+    assert wait_for(lambda: recorder.node("diff")["patch"].count("@@ -") == 1)
+    assert " line 20" in recorder.node("diff")["patch"]
+    recorder.send("activate", "full")
+    assert wait_for(lambda: recorder.node("diff")["patch"].count("@@ -") == 2)
+
+
+def test_latest_change_shows_only_the_newest_checkpoint(tmp_path, recorder):
+    # T3 Code "Latest turn" scope (scenario S08).
+    root, journal, app = setup(tmp_path, recorder)
+    assert buttons_of(recorder)["latest"]
+    edit(root, "a.py", "a = 2\n")
+    journal.checkpoint("block")
+    edit(root, "b.py", "b = 1\n")
+    journal.checkpoint("block")
+    app.refresh()
+    assert not buttons_of(recorder)["latest"]
+    recorder.send("activate", "latest")
+    assert wait_for(lambda: rows(recorder, "files") == ["b.py"])

@@ -262,9 +262,16 @@ class Journal:
     # Diffs -------------------------------------------------------------------
 
     def diff(
-        self, start: int, end: int | None = None, paths: Iterable[str] | None = None
+        self,
+        start: int,
+        end: int | None = None,
+        paths: Iterable[str] | None = None,
+        context: int = 3,
     ) -> list[FileDiff]:
-        """How each file differs from checkpoint `start` to `end` (default: the newest)."""
+        """How each file differs from checkpoint `start` to `end` (default: the newest).
+
+        `context` is the number of unchanged lines around each change.
+        """
         before = self.state_at(start)
         after = self.state if end is None else self.state_at(end)
         wanted = None if paths is None else set(paths)
@@ -273,14 +280,19 @@ class Journal:
             for rel in set(before) | set(after)
             if before.get(rel) != after.get(rel) and (wanted is None or rel in wanted)
         )
-        return [self.file_diff(rel, before.get(rel), after.get(rel)) for rel in changed]
+        return [
+            self.file_diff(rel, before.get(rel), after.get(rel), context)
+            for rel in changed
+        ]
 
     def changes_of(self, seq: int) -> list[FileDiff]:
         """What checkpoint `seq` itself changed."""
         entry = self.entry(seq)
         return self.diff(seq - 1, seq, entry.files)
 
-    def file_diff(self, rel: str, before: str | None, after: str | None) -> FileDiff:
+    def file_diff(
+        self, rel: str, before: str | None, after: str | None, context: int = 3
+    ) -> FileDiff:
         """One file from content `before` to content `after` (digests; None is absent)."""
         status = (
             "added" if before is None else "deleted" if after is None else "modified"
@@ -330,7 +342,7 @@ class Journal:
             added,
             removed,
             False,
-            unified(rel, status, old_text, new_text),
+            unified(rel, status, old_text, new_text, context),
             before,
             after,
         )
