@@ -205,9 +205,9 @@
           (p/enable! g p/BOLD)
           (p/put-str! g (+ col 2) first-row (subs heading 0 (min (count heading) (count title))))
           (p/clear-styles! g))
-        ;; A gray rule under the heading; it stops one space before the close mark.
+        ;; A gray rule under the heading; it stops three cells before the close mark.
         (p/set-colors! g muted bg)
-        (p/put-str! g (+ col 2) (inc first-row) (rule (- width 6) "▔")))
+        (p/put-str! g (+ col 2) (inc first-row) (rule (- width 8) "▔")))
       ;; Close mark in the top-right corner, in the text color.
       (p/set-colors! g t/dialog-fg bg)
       (p/enable! g p/BOLD)
