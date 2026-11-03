@@ -1,17 +1,17 @@
 (ns com.blockether.vis.tui.header
   "Dedicated header band painted above the messages area.
 
-   Three-region layout:
+   Two-region layout:
 
-       [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Session title          d8d6a0a1
-       (notification/status)     (or fallback placeholder)   (id target)
+       [LEFT]                                              [RIGHT]
+       Session title   ● Recording                         d8d6a0a1
+       (or fallback placeholder, then channel status)      (id target)
 
-   - LEFT: live channel status (voice, transcription). Notifications show as
-     toasts in the session view (`toasts`), never here. The session title does NOT live here.
-   - CENTER: session title from app-db (`:title`). When the
-     session has no title yet, falls back to a placeholder so
-     the row never looks broken on a fresh run.
+   - LEFT: session title from app-db (`:title`) at the left edge. When the
+     session has no title yet, it falls back to a placeholder so the row never
+     looks broken on a fresh run. The live channel status (voice,
+     transcription) follows the title. Notifications show as toasts in the
+     session view (`toasts`), never here.
    - RIGHT: short session id (first 8 chars of the UUID) as the clickable
      affordance that drops the FULL UUID onto the system clipboard. No
      notifications or channel statuses render here.
@@ -182,8 +182,8 @@
   (id-copy-block-text id-short))
 
 (defn- draw-header-band!
-  "Paint the header band: channel status on the left, the active session title
-   centered in the available middle slot, and help and ID controls on the right."
+  "Paint the header band: the active session title at the left edge with the
+   channel status after it, and help and ID controls on the right."
   [g db header-top cols]
   (let [header-top
         (long header-top)
@@ -203,7 +203,7 @@
         edge-pad
         1
 
-        {:keys [left-x left-w center-x center-w right-x]}
+        {:keys [left-x left-w right-x]}
         (vh/slot-layout cols)
 
         left-x
@@ -211,12 +211,6 @@
 
         left-w
         (long left-w)
-
-        center-x
-        (long center-x)
-
-        center-w
-        (long center-w)
 
         right-x
         (long right-x)
@@ -277,8 +271,15 @@
         center-limit
         (- cluster-start (long vh/slot-gap-cols))
 
-        center-w
-        (max 0 (min center-w (- center-limit center-x)))
+        title-col
+        (+ left-x edge-pad)
+
+        ;; The channel status follows the title; the title gives it room first.
+        status-room
+        (if left-text (+ (long vh/slot-gap-cols) (long (p/display-width left-text))) 0)
+
+        title-cap
+        (max 0 (- center-limit title-col status-room))
 
         ;; A subagent session shows its path from the leader instead of its title. The `<`
         ;; marks the path as the way back to the parent session.
@@ -287,21 +288,22 @@
           (agent-team/breadcrumb (get-in db [:session :id])))
 
         title-text
-        (ellipsize (if crumb (str "< " (:text crumb)) (title-or-placeholder db)) center-w)
+        (ellipsize (if crumb (str "< " (:text crumb)) (title-or-placeholder db)) title-cap)
 
         title-width
         (p/display-width title-text)
 
-        title-col
-        (max center-x (min (- center-limit title-width) (quot (- cols title-width) 2)))]
+        status-col
+        (+ title-col title-width (if (pos? title-width) (long vh/slot-gap-cols) 0))]
 
     (components/band-rule! g top-rule-row cols)
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
-    ;; LEFT 20%: live channel status. No title and no notifications here.
-    (components/notification-slot! g (+ left-x edge-pad) content-row left-text left-level)
-    ;; The middle of the header shows only the active session title, never tabs.
+    ;; Live channel status after the title. Notifications never show here.
+    (when (<= (+ status-col (long (p/display-width (or left-text "")))) center-limit)
+      (components/notification-slot! g status-col content-row left-text left-level))
+    ;; The left of the header shows only the active session title, never tabs.
     (when (pos? title-width)
       (p/clear-styles! g)
       (p/set-colors! g t/header-fg t/terminal-bg)

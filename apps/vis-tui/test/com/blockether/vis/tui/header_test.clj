@@ -133,7 +133,7 @@
   ;; Notifications are toasts now. The header slot shows the live channel status, so a
   ;; toast never hides that a recording runs.
   (it
-    "renders the channel status on the left also while a notification is active"
+    "renders the channel status after the title also while a notification is active"
     (let [uuid
           "123e4567-e89b-12d3-a456-426614174000"
 
@@ -180,7 +180,7 @@
             copy-hit
             (some #(when (= :copy-id (:kind %)) %) (.current interactions/hit-map))]
 
-        (expect (= 1 (:col (write-by-text status-text))))
+        (expect (= (+ 1 (count "Chat") vh/slot-gap-cols) (:col (write-by-text status-text))))
         (expect (nil? (write-by-text notification)))
         (expect (= {:row 1 :col expected-id-col :width id-w} (:bounds copy-hit))))))
   (it "does not render stale ready voice status forever"
@@ -209,7 +209,8 @@
 ;; even when other sessions remain live in the local state.
 (defdescribe
   single-session-title-test
-  (it "centers one title and registers no tab targets on a wide terminal"
+  ;; User request: the session title stands at the left edge, not in the middle.
+  (it "puts one title at the left edge and registers no tab targets on a wide terminal"
       (let [db
             {:title "Current conversation"
              :session {:id "123e4567-e89b-12d3-a456-426614174000"}
@@ -220,13 +221,10 @@
             {:keys [row tabs]}
             (paint-header-grid 160 db)
 
-            {:keys [center-x center-w]}
-            (vh/slot-layout 160)
-
             start
             (.indexOf ^String row "Current conversation")]
 
-        (expect (= (+ center-x (quot (- center-w (count "Current conversation")) 2)) start))
+        (expect (= 1 start))
         (expect (not (str/includes? row "Other conversation")))
         (expect (not (str/includes? row "Outdated label")))
         (expect (not (str/includes? row " + ")))
@@ -235,7 +233,7 @@
                           (.current interactions/hit-map)))))
   (it "ellipsizes the active title without showing other session names at narrow widths"
       (let [row (:row (paint-header-grid 80
-                                         {:title "A current conversation with a very long title"
+                                         {:title "A current conversation with a very long title that cannot fit in an eighty column header"
                                           :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                                           :tabs [{:id :other :label "Other conversation"}]}))]
         (expect (str/includes? row "A current conversation"))
