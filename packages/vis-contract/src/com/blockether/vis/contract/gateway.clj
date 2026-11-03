@@ -156,6 +156,21 @@
 
 (def voice-job-event "Transcription job stream event name." (:transcribe job-events))
 
+(def ^:private notification-properties
+  (get-in @source ["$defs" "notification_event" "properties"]))
+
+(def notification-levels
+  "Levels of a `notification` toast, in schema order."
+  (vec (get-in notification-properties ["level" "enum"])))
+
+(def notification-limits
+  "Bounds of the optional `notification` toast fields: title and id length in
+   characters, and the `[minimum maximum]` duration in milliseconds."
+  {:title-max-chars (get-in notification-properties ["title" "maxLength"])
+   :notice-id-max-chars (get-in notification-properties ["notice_id" "maxLength"])
+   :duration-ms [(get-in notification-properties ["duration_ms" "minimum"])
+                 (get-in notification-properties ["duration_ms" "maximum"])]})
+
 (def speech-job-event "Speech synthesis job stream event name." (:synthesize job-events))
 
 (def push-event-types

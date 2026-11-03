@@ -572,12 +572,34 @@
                                         #'state/session-entry (constantly entry)}
                          #(#'state/broadcast-notification! notice))
                        @appended))]
-    (it "sends the notice live only, with its extension"
-        (expect (= [["sess-1" "notification" {:text "Deployed" :level "success" :extension "forge"}
+    (it "sends the notice live only, with its extension and toast fields"
+        (expect (= [["sess-1"
+                     "notification"
+                     {:text "Deployed"
+                      :level "success"
+                      :extension "forge"
+                      :title "Release"
+                      :duration-ms 5000
+                      :notice-id "deploy"}
                      {:store? false}]]
-                   (broadcasts
-                     {:session-id "sess-1" :text "Deployed" :level :success :extension "forge"}
-                     {:next-seq 0}))))
+                   (broadcasts {:session-id "sess-1"
+                                :text "Deployed"
+                                :level :success
+                                :extension "forge"
+                                :title "Release"
+                                :duration-ms 5000
+                                :notice-id "deploy"}
+                               {:next-seq 0}))))
+    ;; A notice from a background thread or a startup hook has no session. It was dropped
+    ;; before, so no client showed it.
+    (it "sends a notice without a session to every open session with one notice id"
+        (let [appended
+              (with-redefs [state/registry (atom {"a" {} "b" {}})]
+                (broadcasts {:session-id nil :text "Indexed" :level :info} nil))]
+
+          (expect (= #{"a" "b"} (set (map first appended))))
+          (expect (= 1 (count (set (map #(get-in % [2 :notice-id]) appended)))))
+          (expect (string? (get-in (first appended) [2 :notice-id])))))
     (it "sends nothing for a session that this gateway does not hold"
         (expect (= [] (broadcasts {:session-id "gone" :text "Deployed" :level :info} nil))))
     (it "sends nothing for a blank text"

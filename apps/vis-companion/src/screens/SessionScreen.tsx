@@ -55,7 +55,7 @@ import type { SessionArtifact } from '../lib/artifacts';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { disclosureAnchor, isDisclosureMoving } from '../lib/clamp-motion';
 import { dropOverlayHandovers } from '../lib/sticky-overlay';
-import { Banner, ComposerButton, IconButton, LoadMore, Spinner } from '../components/ui';
+import { Banner, ComposerButton, IconButton, LoadMore, Spinner, Toast } from '../components/ui';
 import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon, ZenIcon } from '../components/icons';
 import { ZenPictures } from '../components/ZenPictures';
 import { setZenMode, useZenMode } from '../lib/transcript-display';
@@ -118,7 +118,7 @@ import {
   queuedTurnFromWire,
   type QueueDelta,
 } from '../lib/gateway';
-import { NOTICE_MS, noticeOf, type SessionNotice } from '../lib/notification';
+import { noticeDuration, noticeOf, pushNotice, type SessionNotice } from '../lib/notification';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   collapsePastePlaceholders,
@@ -893,23 +893,33 @@ export function SessionScreen({
   // being written under the new session's key.
   const draftMessageReadyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  // The last `vis.notify` of an extension of this session. It hides after NOTICE_MS.
-  const [notice, setNotice] = useState<SessionNotice | null>(null);
+  // The `vis.notify` toasts of this session, newest first. Each one leaves after its
+  // own duration; a notice with the same id replaces its toast and restarts the clock.
+  const [notices, setNotices] = useState<SessionNotice[]>([]);
+  const dismissNotice = useCallback((id: string) => {
+    setNotices((shown) => shown.filter((notice) => notice.id !== id));
+  }, []);
   useEffect(() => {
-    let timer: number | null = null;
+    const timers = new Map<string, number>();
     const stop = subscriptions.subscribeSession(sid, (event) => {
       const next = noticeOf(event);
       if (!next) return;
-      setNotice(next);
-      if (timer !== null) window.clearTimeout(timer);
-      timer = window.setTimeout(() => setNotice(null), NOTICE_MS);
+      setNotices((shown) => pushNotice(shown, next));
+      window.clearTimeout(timers.get(next.id));
+      timers.set(
+        next.id,
+        window.setTimeout(() => {
+          timers.delete(next.id);
+          dismissNotice(next.id);
+        }, noticeDuration(next)),
+      );
     });
     return () => {
       stop();
-      if (timer !== null) window.clearTimeout(timer);
-      setNotice(null);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      setNotices([]);
     };
-  }, [subscriptions, sid]);
+  }, [subscriptions, sid, dismissNotice]);
   // The session's provider/model pick. Seeded from the client's snapshot so the
   // header chip names the model on the FIRST frame instead of reading "model"
   // until the gateway answers, then written through by authoritative events and picks.
@@ -5739,6 +5749,24 @@ export function SessionScreen({
           )}
 
           <div className="relative flex min-h-0 flex-1 flex-col">
+            {/* Toasts float over the top-left corner of the transcript rectangle, outside
+            the scroller, so they stay put while the transcript scrolls and never cover the
+            sidebar. */}
+            {notices.length > 0 && (
+              <div className="pointer-events-none absolute top-3 left-3 z-20 flex w-[calc(100%-1.5rem)] max-w-sm flex-col gap-2">
+                {notices.map((notice) => (
+                  <Toast
+                    key={notice.id}
+                    kind={notice.kind}
+                    title={notice.title}
+                    source={notice.source}
+                    onDismiss={() => dismissNotice(notice.id)}
+                  >
+                    {notice.text}
+                  </Toast>
+                ))}
+              </div>
+            )}
             {/* The gallery belongs to this session but not to this transcript rectangle:
             it portals into the viewport-pinned shell, so its full-screen contract includes
             the session header and every detail opened from it inherits the whole glass. */}
@@ -5782,15 +5810,6 @@ export function SessionScreen({
                 }`}
               >
                 {error && <Banner kind="err">{error}</Banner>}
-                {notice && (
-                  <div className="pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top)+4rem)] z-50 flex justify-center px-4">
-                    <div className="pointer-events-auto w-full max-w-md">
-                      <Banner kind={notice.kind} dismiss={{ label: 'Dismiss', onClick: () => setNotice(null) }}>
-                        {notice.text}
-                      </Banner>
-                    </div>
-                  </div>
-                )}
 
                 <>
                   {/* Keep the new-session cue fluid: it shares the scroller's available

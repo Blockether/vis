@@ -213,3 +213,41 @@ export const Outline: Story = {
     });
   },
 };
+
+/**
+ * Three `vis.notify` toasts in the top-left corner of the session: a success with a
+ * title and its extension, a warning and a plain info notice. The newest is on top.
+ */
+export const Toasts: Story = {
+  args: {
+    client: STORY_OUTLINE_CLIENT,
+    sid: STORY_OUTLINE_SESSION.id,
+    subscriptions: {
+      ...subscriptions,
+      subscribeSession: (sid: string, onEvent: (event: Record<string, unknown>) => void) => {
+        const notices = [
+          { notice_id: 'index', level: 'info', extension: 'graphify', text: 'Indexing 1,284 files for search' },
+          {
+            notice_id: 'limit',
+            level: 'warn',
+            title: 'Rate limit',
+            text: 'anthropic-coding-plan is close to its 5-hour limit (92%). New turns may wait.',
+          },
+          {
+            notice_id: 'deploy',
+            level: 'success',
+            title: 'Deploy finished',
+            extension: 'deploy-tools',
+            text: 'staging.docs.blockether.com is live. 214 pages uploaded in 38 s.',
+          },
+        ];
+        const timer = window.setTimeout(() => {
+          notices.forEach((notice, seq) =>
+            onEvent({ type: 'notification', session_id: sid, seq, duration_ms: 60000, ...notice }),
+          );
+        }, 0);
+        return () => window.clearTimeout(timer);
+      },
+    } as unknown as typeof subscriptions,
+  },
+};

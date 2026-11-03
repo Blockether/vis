@@ -17,6 +17,7 @@
             [com.blockether.vis.tui.file-picker :as picker]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.live-view-test :as live-fixture]
+            [com.blockether.vis.tui.notifications :as notifications]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
@@ -825,6 +826,8 @@
 
 (defn- assert-first-frame-before-startup-session!
   [opts overflowing? row-delta & [check-input!]]
+  ;; A toast left by an earlier case would cover the transcript row that this case selects.
+  (notifications/dismiss-all!)
   (let [old-db
         @state/app-db
 
@@ -4597,7 +4600,10 @@ therapy line 2"
 ;; The transcript and the prompt stay in a centred column: cols divided by the golden ratio.
 (defdescribe
   zen-mode-frame-test
-  (let [frame
+  (let [notices
+        (atom [])
+
+        frame
         (fn [cols settings path]
           (let [db {:session {:id "8c1f2a90-0000-4000-8000-000000000001"}
                     :title "Zen title"
@@ -4637,7 +4643,7 @@ therapy line 2"
                 (with-redefs [state/app-db (atom db)
                               timg/images-protocol (constantly nil)
                               screen/paint-terminal-images! #(reset! images %)
-                              vis/notifications (constantly [{:text "Copied zen" :level :success}])]
+                              vis/notifications (fn [& _] @notices)]
 
                   (let [full (#'screen/render-frame! terminal-screen cols 30 db 1000)
                         [layout _]
@@ -4662,7 +4668,6 @@ therapy line 2"
     (it "paints the header and the footer when Zen mode is off"
         (let [{:keys [rows layout]} (frame 80 {} :full)]
           (expect (= 1 (row-of rows "Zen title")))
-          (expect (= 1 (row-of rows "Copied zen")))
           (expect (some? (row-of rows "Limits")))
           (expect (some? (row-of rows "anthropic-coding-plan/claude-opus-5-5")))
           (expect (= 4 (:messages-top layout)))
@@ -4680,9 +4685,22 @@ therapy line 2"
               (expect (= 1 (:messages-top layout)))
               (expect (= (+ 5 (long (:inner-h normal))) (:inner-h layout)))
               ;; The prompt box closes on the last row, where the footer was.
-              (expect (str/includes? (peek rows) "────"))
-              ;; The hidden header's notification moves to the echo row above the prompt.
-              (expect (= (- 30 1 (long (:input-h layout))) (row-of rows "Copied zen")))))))
+              (expect (str/includes? (peek rows) "────"))))))
+    ;; User request: a notification shows as a toast at the top left of the session, also in
+    ;; Zen mode, where the header is hidden.
+    (it "paints a notification as a top-left toast on every repaint path"
+        (reset! notices [{:id "n1" :text "Copied zen" :level :success}])
+        (try
+          (doseq [settings [{} {:zen-mode true}]
+                  path [:full :scroll :input :partial-live :header-hover :header-spinner]]
+            (let [{:keys [rows layout]} (frame 80 settings path)
+                  row (row-of rows "Copied zen")]
+              (expect (some? row))
+              (expect (<= (long (:messages-top layout)) (long row) 6))
+              ;; Zen mode places the card at the left edge of the centred column.
+              (expect (< (long (str/index-of (nth rows row) "Copied zen"))
+                         (+ 8 (long (or (:chat-left layout) 0)))))))
+          (finally (reset! notices []))))
     ;; 120 / 1.618 = 74.2: a 74-cell column with 23 blank cells at each side. A narrow
     ;; terminal keeps a 60-cell column.
     (it "centres the transcript and the prompt in the golden ratio column on every repaint path"

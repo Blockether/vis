@@ -9,7 +9,7 @@
 
      (notify! text)
      (notify! text :level :info|:success|:warn|:error
-                   :ttl-ms <long>|nil)
+                   :ttl-ms <long>|nil :title <string> :id <string> :source <string>)
      (notifications)              ;; vec of currently-active entries
      (dismiss! id)                ;; force-clear by id
      (clear-expired!)             ;; prune; called on every read
@@ -20,8 +20,14 @@
      {:id          <uuid>
       :text        <string>
       :level       :info | :success | :warn | :error
+      :title       <string> | nil     ;; one bold toast line
+      :source      <string> | nil     ;; the extension that sent it
       :created-at  <inst>
       :until       <epoch-ms> | nil   ;; nil = sticky / manual dismiss
+
+   A push with the `:id` of an active entry replaces that entry. The store keeps
+   at most `MAX_ENTRIES`, and it wakes the watchers when an entry expires, so a
+   toast leaves the screen on time also while the user is idle.
 
    Levels are advisory metadata for channels: TUI uses them for
    colour, the CLI could prefix `[notice]` /
@@ -38,10 +44,14 @@
 ;; Defaults
 
 (def ^:private DEFAULT_TTL_MS
-  "Default lifespan when caller doesn't pass `:ttl-ms`. 3 seconds is
-   long enough to read a one-line status, short enough that a stale
-   notice never lingers into the next user action."
-  3000)
+  "Lifespan by level when the caller passes no `:ttl-ms`. A warning or an
+   error stays longer, because the user must read and act on it."
+  {:info 4000 :success 4000 :warn 8000 :error 8000})
+
+(def ^:private MAX_ENTRIES
+  "The most entries the store keeps. The oldest goes first; a toast stack
+   never shows more than a few."
+  5)
 
 (def ^:private VALID_LEVELS #{:info :success :warn :error})
 
@@ -91,6 +101,41 @@
   (let [pruned (swap! notifications-atom prune)]
     pruned))
 
+(defonce ^:private expiry-executor
+  (delay (java.util.concurrent.Executors/newSingleThreadScheduledExecutor
+           (reify
+             java.util.concurrent.ThreadFactory
+               (newThread [_ runnable]
+                 (doto (Thread. ^Runnable runnable "vis-tui-notification-expiry")
+                   (.setDaemon true)))))))
+
+(defn- expire!
+  "Drop expired entries and fire the watchers when one went away."
+  []
+  (let [[before after] (swap-vals! notifications-atom prune)]
+    (when (not= (count before) (count after)) (fire-watchers! after))))
+
+(defn- schedule-expiry!
+  "Run `expire!` just after `until`, so the screen drops the entry on time."
+  [until]
+  (let [delay-ms (max 0 (+ 20 (- (long until) (util/now-ms))))]
+    (.schedule ^java.util.concurrent.ScheduledExecutorService @expiry-executor
+               ^Runnable expire!
+               (long delay-ms)
+               java.util.concurrent.TimeUnit/MILLISECONDS)))
+
+(defn- push-entry
+  "`coll` with `entry` as its newest entry. An entry with the same id goes away first.
+   Expired entries and the oldest beyond `MAX_ENTRIES` go away too."
+  [coll entry]
+  (let [kept
+        (filterv #(not= (:id entry) (:id %)) (prune coll))
+
+        added
+        (conj kept entry)]
+
+    (subvec added (max 0 (- (count added) MAX_ENTRIES)))))
+
 (defn notifications
   "Vec of currently-active notifications, oldest first. Implicitly
    prunes expired entries before returning so a paint loop reading
@@ -106,33 +151,48 @@
      :level   one of #{:info :success :warn :error} - default :info.
               Channels use the level for visual treatment (color,
               emoji prefix, etc.).
-     :ttl-ms  lifespan in ms. Default 3000. nil = sticky / no auto
-              expiry; the notification stays until `dismiss!`d.
+     :ttl-ms  lifespan in ms. Default by level, see `DEFAULT_TTL_MS`.
+              nil = sticky / no auto expiry; the notification stays
+              until `dismiss!`d.
+     :title   one bold line above the text.
+     :id      the entry identity. A push with an active id replaces it.
+     :source  the extension that sent the notification.
 
    The notification is appended to the in-memory vec and every
    registered watcher is fired with the new full vec."
-  [text & {:keys [level ttl-ms] :or {level :info ttl-ms DEFAULT_TTL_MS}}]
+  [text & {:keys [level title source] :or {level :info} :as opts}]
   (when-not (string? text)
     (throw (ex-info "notify! text must be a String" {:type :vis/notify-bad-text :text text})))
   (when-not (VALID_LEVELS level)
     (throw (ex-info (str "notify! level must be one of " VALID_LEVELS)
                     {:type :vis/notify-bad-level :level level})))
   (let [id
-        (str (java.util.UUID/randomUUID))
+        (or (some-> (:id opts)
+                    str
+                    not-empty)
+            (str (java.util.UUID/randomUUID)))
 
         now
         (util/now-ms)
+
+        ttl-ms
+        (if (contains? opts :ttl-ms) (:ttl-ms opts) (DEFAULT_TTL_MS level))
 
         until
         (when ttl-ms (+ now (long ttl-ms)))
 
         entry
-        {:id id :text text :level level :created-at now :until until}
+        (cond-> {:id id :text text :level level :created-at now :until until}
+          (not-empty title)
+          (assoc :title title)
+
+          (not-empty source)
+          (assoc :source source))
 
         snapshot
-        (swap! notifications-atom (fn [coll]
-                                    (conj (prune coll) entry)))]
+        (swap! notifications-atom push-entry entry)]
 
+    (when until (schedule-expiry! until))
     (fire-watchers! snapshot)
     id))
 

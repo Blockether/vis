@@ -7,8 +7,8 @@
        ✓ Copied!                 Session title          d8d6a0a1
        (notification/status)     (or fallback placeholder)   (id target)
 
-   - LEFT: latest active host notification (`com.blockether.vis.tui.client/notify!`),
-     otherwise live channel status. The session title does NOT live here.
+   - LEFT: live channel status (voice, transcription). Notifications show as
+     toasts in the session view (`toasts`), never here. The session title does NOT live here.
    - CENTER: session title from app-db (`:title`). When the
      session has no title yet, falls back to a placeholder so
      the row never looks broken on a fresh run.
@@ -16,16 +16,9 @@
      affordance that drops the FULL UUID onto the system clipboard. No
      notifications or channel statuses render here.
 
-   Pure draw: reads `:title` and `:session` from app-db, the
-   active notifications list from `vis.core/notifications`, writes
-   cells, registers ONE click region for the copy affordance.
-
-   Repaint: the banner updates as notifications come and go.
-   `screen.clj` registers a watcher on screen mount that bumps the
-   render version for any change, so a `(notify! ...)` from anywhere
-   nudges this band to repaint immediately."
+   Pure draw: reads `:title`, `:session` and `:channel-status` from app-db,
+   writes cells, registers ONE click region for the copy affordance."
   (:require [com.blockether.vis.tui.agent-team :as agent-team]
-            [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
@@ -149,14 +142,6 @@
 
 (defn- ellipsize [text max-cols] (p/ellipsize text max-cols))
 
-(defn- latest-notification
-  "Most-recently-pushed active notification, or nil. We display ONE
-   at a time in the header - the LEFT slot is a single row. If
-   multiple are active simultaneously, the freshest wins; older ones
-   stay in the queue and surface as the freshest one expires."
-  []
-  (last (vis/notifications)))
-
 (defn- status-expired?
   [status now-ms]
   (when-let [until (:until status)]
@@ -197,7 +182,7 @@
   (id-copy-block-text id-short))
 
 (defn- draw-header-band!
-  "Paint the header band: notifications on the left, the active session title
+  "Paint the header band: channel status on the left, the active session title
    centered in the available middle slot, and help and ID controls on the right."
   [g db header-top cols]
   (let [header-top
@@ -248,14 +233,8 @@
         action-text
         (right-block-text id-short)
 
-        banner
-        (latest-notification)
-
-        status
-        (latest-channel-status db)
-
         left-message
-        (or banner status)
+        (latest-channel-status db)
 
         left-raw
         (some-> left-message
@@ -320,7 +299,7 @@
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
-    ;; LEFT 20%: latest notification, otherwise channel status. No title here.
+    ;; LEFT 20%: live channel status. No title and no notifications here.
     (components/notification-slot! g (+ left-x edge-pad) content-row left-text left-level)
     ;; The middle of the header shows only the active session title, never tabs.
     (when (pos? title-width)

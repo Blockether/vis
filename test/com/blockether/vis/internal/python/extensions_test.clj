@@ -3428,6 +3428,53 @@ vis.register_extension(vis.Extension(
           (expect (= [{:key "d" :label "Deploy" :group "Release" :run true :extension "deploy"}]
                      (filterv #(= "deploy" (:extension %)) (extension/keybindings))))))))
 
+(def ^:private toast-py
+  "import blockether.vis.extension as vis
+
+def _toast(ctx):
+    vis.notify('Deployed', 'success', title='Release', duration_ms=5000, notice_id='deploy')
+    try:
+        vis.notify('Too short', duration_ms=10)
+    except Exception as error:
+        return vis.ok(str(error))
+    return vis.ok('accepted')
+
+vis.register_extension(vis.Extension(
+    name='toast',
+    description='Toast fixture.',
+    keybindings=[vis.Keybinding('t', run=_toast, label='Toast', group='Release')],))
+")
+
+(defdescribe
+  notify-toast-test
+  ;; The toast fields of vis.notify cross the host boundary. A notice without a session
+  ;; still reaches the gateway, which sends it to every open session. A duration outside
+  ;; the contract bounds fails in the extension instead of showing a wrong toast.
+  (it "announces title, duration and id, and refuses a duration below the contract minimum"
+      (with-loaded {"toast.py" toast-py}
+                   (fn [_ _]
+                     (let [notices
+                           (atom [])
+
+                           run!
+                           (:run-fn (first (:ext/keybindings (registered "toast"))))]
+
+                       (pyx/add-notification-listener! ::toasts #(swap! notices conj %))
+                       (try (expect (str/includes? (get (run! {:key "t" :group "Release" :channel :tui})
+                                                        "title")
+                                                   "duration_ms must be an integer from 1000 to 60000"))
+                            (expect (= [{:session-id nil
+                                         :text "Deployed"
+                                         :level :success
+                                         :extension "toast"
+                                         :title "Release"
+                                         :duration-ms 5000
+                                         :notice-id "deploy"}]
+                                       @notices))
+                            (finally (pyx/add-notification-listener! ::toasts
+                                                                     (fn [_]
+                                                                       nil)))))))))
+
 (defdescribe prompt-and-slash-test
              (it "a string prompt normalizes into :ext/prompt-fn"
                  (with-loaded {"counter.py" counter-py}

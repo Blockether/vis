@@ -1135,13 +1135,24 @@ key.
 ```python
 vis.log("info", "loaded 3 rules")        # trace, debug, info, warn, error
 vis.notify("Rules reloaded", "success")  # info, success, warn, error
+vis.notify("Uploading 3 of 10", title="Deploy", notice_id="deploy", duration_ms=10000)
+vis.notify("Deploy finished", "success", title="Deploy", notice_id="deploy")
 ```
 
 `vis.log` writes to the gateway log in `~/.vis/logs/YYYY-MM-DD/`. See
 [Logs and diagnostics](logging.md) for filenames, retention and sharing.
-`vis.notify` shows a toast in the active channel. When the extension runs for a session, each
-client that shows the session also gets the toast: the terminal and the Companion app. The toast
-is live only, and the transcript does not keep it.
+
+`vis.notify` shows a toast card in the top-left corner of the session. The terminal and the
+Companion app show the same card. The newest card is on top, and at most three cards show.
+
+- Give `title` for a bold first line of at most 120 characters.
+- Give `duration_ms` to keep the card from 1000 to 60000 milliseconds.
+- Without `duration_ms`, an info or success card stays 4 seconds, and a warning or error card 8 seconds.
+- Give the same `notice_id` again to replace a card, for example to update progress.
+- Click the card to close it before its time ends.
+
+When the extension runs for a session, each client of that session shows the card. Outside a
+session, each open session shows it. The card is live only, and the transcript does not keep it.
 
 To save a secret file, such as OAuth tokens, use `vis.write_private_file(path, text)`.
 [Provider extensions](provider-extensions.md#store-and-renew-tokens-safely) shows it with token renewal.

@@ -670,13 +670,54 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
 (def ^:private notify-levels {"info" :info "success" :success "warn" :warn "error" :error})
 
-;; Notification listeners — fired for each `vis.notify` that runs for a session. The gateway
-;; sends the notice to every client of that session.
+(defn- char-count ^long [^String s] (.codePointCount s 0 (.length s)))
+
+(defn- sdk-notice
+  "The notice of one `vis.notify` call. An unknown level shows as info. A title, id
+   or duration outside the `notification_event` bounds throws, so the caller sees it."
+  [text level title duration-ms notice-id]
+  (let [{:keys [title-max-chars notice-id-max-chars] [low high] :duration-ms}
+        gateway-contract/notification-limits
+
+        title
+        (some-> title
+                str
+                str/trim
+                not-empty)
+
+        notice-id
+        (some-> notice-id
+                str
+                not-empty)]
+
+    (when (and title (> (char-count title) (long title-max-chars)))
+      (throw (ex-info (str "vis.notify: title is longer than " title-max-chars " characters")
+                      {:error :notify-title :max title-max-chars})))
+    (when (and notice-id (> (char-count notice-id) (long notice-id-max-chars)))
+      (throw (ex-info (str "vis.notify: notice_id is longer than " notice-id-max-chars " characters")
+                      {:error :notify-notice-id :max notice-id-max-chars})))
+    (when (and (some? duration-ms)
+               (not (and (integer? duration-ms) (<= (long low) (long duration-ms) (long high)))))
+      (throw (ex-info (str "vis.notify: duration_ms must be an integer from " low " to " high)
+                      {:error :notify-duration :duration-ms duration-ms})))
+    (cond-> {:text (str text) :level (get notify-levels (str level) :info)}
+      title
+      (assoc :title title)
+
+      duration-ms
+      (assoc :duration-ms (long duration-ms))
+
+      notice-id
+      (assoc :notice-id notice-id))))
+
+;; Notification listeners — fired for each `vis.notify`. The gateway sends the notice to every
+;; client of its session, or of every open session when no session is bound.
 (defonce ^:private notification-listeners (atom {}))
 
 (defn add-notification-listener!
-  "Subscribe `f` to session notifications. `f` receives `{:session-id :text :level
-   :extension}`. Re-registering the same `listener-id` replaces the old listener."
+  "Subscribe `f` to notifications. `f` receives `{:session-id :text :level :extension}` and
+   the optional `:title :duration-ms :notice-id`. `:session-id` is nil when no session is
+   bound. Re-registering the same `listener-id` replaces the old listener."
   [listener-id f]
   (swap! notification-listeners assoc listener-id f)
   listener-id)
@@ -1175,17 +1216,16 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             nil))
     (put! g
           "__vis_host_notify__"
-          (fn [text level]
-            (let [level (get notify-levels (str level) :info)]
-              (notifications/notify! (str text) :level level)
-              (when-let [sid (some-> (or (:session-id extension/*current-environment*)
-                                         (:session-id bound-session))
-                                     str)]
-                (announce-notification! {:session-id sid
-                                         :text (str text)
-                                         :level level
-                                         :extension (or (:ext/name extension/*current-extension*)
-                                                        label)})))
+          (fn [text level title duration-ms notice-id]
+            (let [notice (sdk-notice text level title duration-ms notice-id)]
+              (notifications/notify! (:text notice) :level (:level notice))
+              (announce-notification! (assoc notice
+                                             :session-id (some-> (or (:session-id
+                                                                       extension/*current-environment*)
+                                                                     (:session-id bound-session))
+                                                                 str)
+                                             :extension (or (:ext/name extension/*current-extension*)
+                                                            label))))
             nil))
     (put! g
           "__vis_host_call_tool__"

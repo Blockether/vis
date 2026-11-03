@@ -2846,6 +2846,53 @@ export function Banner({
 }
 
 /**
+ * ONE TOAST: a short notice that leaves by itself, in the top-left corner of a session.
+ *
+ * The left bar carries the level, so the text keeps the plain reading colour. A title is
+ * one bold line, with the extension that sent it muted beside it. Long text stops after
+ * four lines. The close mark is the one way out before the toast leaves.
+ */
+export function Toast({
+  kind,
+  title,
+  source,
+  onDismiss,
+  children,
+}: {
+  kind: 'neutral' | 'ok' | 'warn' | 'err';
+  title?: string;
+  source?: string;
+  onDismiss: () => void;
+  children: ReactNode;
+}) {
+  const bar = {
+    neutral: 'border-l-link',
+    ok: 'border-l-ok',
+    warn: 'border-l-warn-strong',
+    err: 'border-l-err',
+  }[kind];
+
+  return (
+    <div
+      role="status"
+      className={`pointer-events-auto flex items-start gap-2 border border-l-4 border-dialog-edge ${bar} bg-panel py-2 pr-1 pl-3 font-mono text-body text-dialog-foreground shadow-float [overflow-wrap:anywhere] transition-[opacity,translate] duration-200 starting:-translate-x-2 starting:opacity-0 motion-reduce:transition-none`}
+    >
+      <div className="min-w-0 flex-1 py-0.5">
+        {title || source ? (
+          <div className="truncate">
+            {title ? <span className="font-bold">{title}</span> : null}
+            {title && source ? <span className="text-muted"> · </span> : null}
+            {source ? <span className="text-muted">{source}</span> : null}
+          </div>
+        ) : null}
+        <div className="line-clamp-4 whitespace-pre-wrap">{children}</div>
+      </div>
+      <CloseButton label="Dismiss" onClick={onDismiss} />
+    </div>
+  );
+}
+
+/**
  * ONE DESKTOP BOX for every dialog: the same height, whatever is inside it.
  *
  * A dialog that sizes itself to its content makes the scrim jump — "Manage projects"

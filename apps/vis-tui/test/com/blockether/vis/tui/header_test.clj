@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.header :as header]
+            [com.blockether.vis.tui.notifications :as notifications]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.header-model :as vh]
             [lazytest.core :refer [defdescribe expect it]])
@@ -129,8 +130,10 @@
           (header/draw-header! g db 0 80))
         (.commitFrame interactions/hit-map)
         (expect (= [] (.current interactions/hit-map)))))
+  ;; Notifications are toasts now. The header slot shows the live channel status, so a
+  ;; toast never hides that a recording runs.
   (it
-    "renders notifications only on the left and suppresses duplicate channel status text"
+    "renders the channel status on the left also while a notification is active"
     (let [uuid
           "123e4567-e89b-12d3-a456-426614174000"
 
@@ -165,12 +168,11 @@
           (atom [])]
 
       (.reset interactions/hit-map)
-      (with-redefs-fn {#'header/latest-notification (fn []
-                                                      {:text notification :level :success})}
-        (fn []
-          (.beginFrame interactions/hit-map)
-          (header/draw-header! (dummy-text-graphics writes) db 0 cols)
-          (.commitFrame interactions/hit-map)))
+      (let [id (notifications/notify! notification :level :success)]
+        (try (.beginFrame interactions/hit-map)
+             (header/draw-header! (dummy-text-graphics writes) db 0 cols)
+             (.commitFrame interactions/hit-map)
+             (finally (notifications/dismiss! id))))
       (let [write-by-text
             (fn [text]
               (some #(when (= text (:text %)) %) @writes))
@@ -178,8 +180,8 @@
             copy-hit
             (some #(when (= :copy-id (:kind %)) %) (.current interactions/hit-map))]
 
-        (expect (= 1 (:col (write-by-text notification))))
-        (expect (nil? (write-by-text status-text)))
+        (expect (= 1 (:col (write-by-text status-text))))
+        (expect (nil? (write-by-text notification)))
         (expect (= {:row 1 :col expected-id-col :width id-w} (:bounds copy-hit))))))
   (it "does not render stale ready voice status forever"
       (let [uuid
@@ -198,12 +200,9 @@
                               {:text status :phase :ready :level :info :updated-at-ms 1}}}]
 
         (.reset interactions/hit-map)
-        (with-redefs-fn {#'header/latest-notification (fn []
-                                                        nil)}
-          (fn []
-            (.beginFrame interactions/hit-map)
-            (header/draw-header! (dummy-text-graphics writes) db 0 80)
-            (.commitFrame interactions/hit-map)))
+        (.beginFrame interactions/hit-map)
+        (header/draw-header! (dummy-text-graphics writes) db 0 80)
+        (.commitFrame interactions/hit-map)
         (expect (not-any? #(= status (:text %)) @writes)))))
 
 ;; Regression: removing the numbered strip must leave only the active session title,

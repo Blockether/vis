@@ -1388,9 +1388,15 @@
       "extensions.reloaded"
       {:phase :extensions-reloaded :reload-id (event-get event :reload-id)}
 
-      ;; `vis.notify` of an extension that ran for this session, live only.
+      ;; `vis.notify` of an extension, live only. It shows as a toast.
       "notification"
-      {:phase :notification :text (event-get event :text) :level (event-get event :level)}
+      {:phase :notification
+       :text (event-get event :text)
+       :level (event-get event :level)
+       :title (event-get event :title)
+       :extension (event-get event :extension)
+       :notice-id (event-get event :notice-id)
+       :duration-ms (event-get event :duration-ms)}
 
       ;; The session's model preference was changed in ANOTHER channel (the
       ;; companion app, a sibling TUI, an embedded caller). Project it so the

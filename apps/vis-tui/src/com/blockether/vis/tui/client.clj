@@ -3269,6 +3269,8 @@
 
 (def notify! notifications/notify!)
 
+(def dismiss-notification! notifications/dismiss!)
+
 (def watch-notifications! notifications/watch!)
 
 (def unwatch-notifications! notifications/unwatch!)

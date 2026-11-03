@@ -233,8 +233,9 @@ def log(level, message):
     return None
 
 
-def notify(text, level="info"):
-    print(f"[vis notify/{str(level).lower()}] {text}", file=sys.stderr, flush=True)
+def notify(text, level="info", title=None, duration_ms=None, notice_id=None):
+    head = f"{title}: " if title else ""
+    print(f"[vis notify/{str(level).lower()}] {head}{text}", file=sys.stderr, flush=True)
     return None
 
 

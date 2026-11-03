@@ -2589,7 +2589,7 @@
     },
     "notification_event": {
       "type": "object",
-      "description": "A short live notice for the people of one session. Extensions send it with vis.notify. The gateway never replays it.",
+      "description": "A short live notice that clients show as a toast. Extensions send it with vis.notify. A notice without a session goes to every open session. A client keeps one toast for each notice_id: a later notice with the same id replaces it. The gateway never replays it.",
       "properties": {
         "schema": {
           "type": "integer",
@@ -2625,6 +2625,24 @@
         "extension": {
           "type": "string",
           "minLength": 1
+        },
+        "notice_id": {
+          "type": "string",
+          "description": "The toast identity. A later notice with the same id replaces the shown toast.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "One short bold line above the text.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "duration_ms": {
+          "type": "integer",
+          "description": "How long the toast stays. Without it, the client chooses by level.",
+          "minimum": 1000,
+          "maximum": 60000
         }
       },
       "required": [

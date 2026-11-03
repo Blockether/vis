@@ -39,6 +39,7 @@ import {
   Switch,
   Text,
   TextButton,
+  Toast,
   ViewHeading,
   ViewLayout,
   ViewParagraph,
@@ -504,6 +505,30 @@ export const Feedback: Story = {
       </Group>
       <Group of="Icon-only copy">
         <CopyChip value="done" label="Copy the id" density="compact" />
+      </Group>
+    </Sheet>
+  ),
+};
+
+export const Toasts: Story = {
+  render: () => (
+    <Sheet>
+      <Group of="Toast stack, newest on top">
+        <div className="flex w-full max-w-sm flex-col gap-2">
+          <Toast kind="ok" title="Deployed" source="forge" onDismiss={() => undefined}>
+            acme/widgets 2.4.1 is live on production.
+          </Toast>
+          <Toast kind="neutral" onDismiss={() => undefined}>
+            Copied session ID
+          </Toast>
+          <Toast kind="warn" title="Quota" source="openai" onDismiss={() => undefined}>
+            90% of this month's budget is spent.
+          </Toast>
+          <Toast kind="err" title="Tests failed" source="ci" onDismiss={() => undefined}>
+            3 of 412 tests failed in vis-tui. The first failure is toast-layout-test: a card is wider than the
+            transcript at 24 columns. Open the run to see the other two.
+          </Toast>
+        </div>
       </Group>
     </Sheet>
   ),

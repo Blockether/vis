@@ -9430,16 +9430,27 @@
   (python-extensions/add-reload-listener! ::extensions-reloaded #'broadcast-extensions-reload!))
 
 (defn- broadcast-notification!
-  "Send one `vis.notify` of a session to every client of that session. The notice is
-   live only: the replay ring and a reconnect never show it again."
-  [{:keys [session-id text level extension]}]
-  (when (and (session-entry session-id) (not (str/blank? text)))
-    (append-event! session-id
-                   "notification"
-                   (cond-> {:text text :level (name level)}
-                     extension
-                     (assoc :extension (str extension)))
-                   {:store? false})))
+  "Send one `vis.notify` to every client of its session. A notice with no session goes to
+   every open session with one `notice_id`, so a client that shows several sessions keeps
+   one toast. The notice is live only: the replay ring and a reconnect never show it again."
+  [{:keys [session-id text level extension title duration-ms notice-id]}]
+  (when-not (str/blank? text)
+    (let [event
+          (cond-> {:text text :level (name level) :notice-id (or notice-id (str (random-uuid)))}
+            extension
+            (assoc :extension (str extension))
+
+            title
+            (assoc :title title)
+
+            duration-ms
+            (assoc :duration-ms duration-ms))
+
+          targets
+          (if session-id (when (session-entry session-id) [session-id]) (keys @registry))]
+
+      (doseq [sid targets]
+        (append-event! sid "notification" event {:store? false})))))
 
 (defonce notification-listener
   (python-extensions/add-notification-listener! ::notification #'broadcast-notification!))
