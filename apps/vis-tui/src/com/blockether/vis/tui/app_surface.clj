@@ -24,7 +24,8 @@
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.view-model :as view-model]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextColor$RGB]
+           [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]))
 
@@ -111,36 +112,9 @@
                                   :description nil))
                      width))))
 
-(defn- diff-toolbar
-  [view width opts]
-  (let [key-label
-        (fn [k]
-          (if (some #(= k (:key %)) (:shortcuts view)) (str "C-x " k) k))
-
-        groups
-        [(str (key-label "u") " " (if (:unified? opts) "stacked" "split"))
-         (str (key-label "w") " wrap:" (if (:wrap? opts) "on" "off"))
-         (str (key-label "f") " files:" (if (:files? opts) "on" "off"))
-         (str (key-label "t") " tests:" (if (:hide-tests? opts) "off" "on"))
-         (str (key-label "i") " spaces:" (if (:hide-whitespace? opts) "off" "on"))
-         (str (key-label "a") " fold all") (str (key-label "c") " copy path")
-         (str (key-label "/") "/C-f find")]
-
-        lines
-        (reduce (fn [lines group]
-                  (let [joined (str (peek lines) "  " group)]
-                    (if (<= (long (p/display-width joined)) (long width))
-                      (conj (pop lines) joined)
-                      (conj lines group))))
-                [(first groups)]
-                (rest groups))]
-
-    (mapv #(hash-map :kind :diff-tools :text %) lines)))
-
 (defn- node-rows
   [view node width folded opts]
-  (cond (= :diff (:type node)) (let [[head & rows] (model/diff-rows node width folded opts)]
-                                 (into [head] (concat (diff-toolbar view width opts) rows)))
+  (cond (= :diff (:type node)) (model/diff-rows node width folded opts)
         (= :thread (:type node))
         (into [{:kind :thread-node
                 :node-id (:id node)
@@ -178,7 +152,12 @@
          view
          (update view :nodes keyed-buttons (set (keep :node-id (:shortcuts view))))]
 
-     (cond-> (into [] (mapcat #(node-rows view % width folded opts)) (:nodes view))
+     (cond-> (into []
+                   (comp (map #(seq (node-rows view % width folded opts)))
+                         (filter some?)
+                         (interpose [{:kind :section-gap :text ""}])
+                         cat)
+                   (:nodes view))
        (seq receipts)
        (into (cons {:kind :receipts-head :text "Send receipts"} receipts))))))
 
@@ -635,9 +614,12 @@
                                  :else text)]
                   (find-code (assoc-in state [:search :text] text) rows text -1)))))
 
+(declare open-key-menu menu-key)
+
 (defn- character-key
   [state ch geom effects]
-  (let [actions {\< #(horizontal-key state -8)
+  (let [actions {\? #(open-key-menu state geom)
+                 \< #(horizontal-key state -8)
                  \> #(horizontal-key state 8)
                  \u #(diff-mode-key state geom :unified?)
                  \w #(diff-mode-key state geom :wrap?)
@@ -736,6 +718,7 @@
                             (dissoc state :prefix)
                             (surface-key (dissoc state :prefix) key geom effects))
           (= \x ctrl-ch) (assoc state :prefix true)
+          (= \h ctrl-ch) (open-key-menu state geom)
           (= \f ctrl-ch) (assoc state
                            :search {:text ""}
                            :notice "Find: ")
@@ -796,6 +779,7 @@
         (not (instance? KeyStroke key)) state
         (log-chip-click? key (:log-chip geom)) (do ((:log! effects)) state)
         (instance? MouseAction key) (mouse-key state key geom effects)
+        (:key-menu state) (menu-key state key geom effects)
         (:editor state) (editor-key state key view effects)
         (:search state) (search-key state key (:rows geom))
         :else (command-key state key geom effects)))
@@ -1096,28 +1080,32 @@
 (defn- paint-focus!
   "Mark the control `entry` that the cursor is on: its text takes the accent
    fill, the colour of a focused button. A control without text gets a mark."
-  [g left row-y inner-w entry]
-  (let [indent
-        (min (long (or (:indent entry) 0)) (max 0 (long inner-w)))
+  [g left row-y inner-w view-id entry]
+  (if (#{:trow :tparent} (:kind entry))
+    (lv/paint-plan-entry! g left row-y inner-w view-id (assoc entry :is-focused true))
+    (let [indent
+          (min (long (or (:indent entry) 0)) (max 0 (long inner-w)))
 
-        left
-        (+ (long left) indent)
+          left
+          (+ (long left) indent)
 
-        text
-        (str (:text entry))]
+          text
+          (str (:text entry))]
 
-    (p/set-colors! g t/header-active-tab-fg t/header-active-tab-bg)
-    (if (str/blank? text)
-      (p/put-str! g (inc left) row-y "▸")
-      (p/styled
-        g
-        [p/BOLD]
-        (p/put-str! g (+ left 2) row-y (p/ellipsize text (max 1 (- (long inner-w) indent 3))))))))
+      (p/set-colors! g t/header-active-tab-fg t/header-active-tab-bg)
+      (if (str/blank? text)
+        (p/put-str! g (inc left) row-y "▸")
+        (p/styled g
+                  [p/BOLD]
+                  (p/put-str! g
+                              (+ left 2)
+                              row-y
+                              (p/ellipsize text (max 1 (- (long inner-w) indent 3)))))))))
 
 (defn- paint-row-focus!
   "Mark the focused control of plan `row`: the whole entry, or cell `cell` at
    the place where the live view paints that cell."
-  [g left row-y inner-w row cell]
+  [g left row-y inner-w view-id row cell]
   (let [entry (:entry row)]
     (if (and (some? cell) (seq (:cells row)))
       (let [indent (min (long (or (:indent entry) 0)) (max 0 (long inner-w)))
@@ -1128,8 +1116,13 @@
             [x w] (nth places cell nil)]
 
         (when (and x (pos? (long w)))
-          (paint-focus! g (+ (long left) indent (long x)) row-y w (nth (:cells entry) cell))))
-      (paint-focus! g left row-y inner-w entry))))
+          (paint-focus! g
+                        (+ (long left) indent (long x))
+                        row-y
+                        w
+                        view-id
+                        (nth (:cells entry) cell))))
+      (paint-focus! g left row-y inner-w view-id entry))))
 
 (defn- paint-plain-row!
   [g left row-y inner-w row text]
@@ -1234,13 +1227,22 @@
     ((get paints (:kind row) #(paint-plain-row! g left row-y inner-w row text)))))
 
 (defn- paint-selected-plan!
-  [g left row-y inner-w row cell]
-  (when (:is-selectable row) (paint-row-focus! g left row-y inner-w row cell)))
+  [g left row-y inner-w view-id row cell]
+  (when (:is-selectable row) (paint-row-focus! g left row-y inner-w view-id row cell)))
 
 (defn- paint-plan-row!
   [g left row-y inner-w view-id selected? cell row]
-  (lv/paint-plan-entry! g left row-y inner-w view-id (:entry row))
-  (when selected? (paint-selected-plan! g left row-y inner-w row cell)))
+  (let [table?
+        (#{:trow :tparent} (get-in row [:entry :kind]))
+
+        entry
+        (cond-> (:entry row)
+          table?
+          (assoc :is-focused selected?))]
+
+    (lv/paint-plan-entry! g left row-y inner-w view-id entry)
+    (when (and selected? (not table?))
+      (paint-selected-plan! g left row-y inner-w view-id row cell))))
 
 (defn- selected-source-row
   [row]
@@ -1299,55 +1301,207 @@
 
     (when (editor-target view row) "comment")))
 
-(defn- diff-mode-footer
-  [state view rows]
-  [[(hidden-key view "u" "u") (if (some #(= :split (:kind %)) rows) "unified" "split")]
-   [(hidden-key view "w" "w") (if (:wrap? state) "cut" "wrap")]])
+(defn- named-stroke
+  [key]
+  (cond (= key "Space") (KeyStroke. \space false false)
+        (= 1 (count key)) (KeyStroke. (Character/valueOf (char (first key))) false false false)
+        :else (KeyStroke. (KeyType/valueOf key))))
 
-(defn- file-footer
-  [state view]
-  (into (mapv (fn [[key flag yes no]]
-                [(hidden-key view key key) (get {true yes false no} (boolean (get state flag)))])
-              [["f" :files? "hide files" "files"] ["t" :hide-tests? "show tests" "hide tests"]
-               ["i" :hide-whitespace? "show spaces" "hide spaces"]])
-        [[(hidden-key view "a" "a") "fold all"] [(hidden-key view "c" "c") "copy path"]]))
+(defn- menu-label
+  [label]
+  (let [label (str label)]
+    (if (seq label) (str (str/upper-case (subs label 0 1)) (subs label 1)) label)))
 
-(defn- review-footer
-  [state view rows row]
-  (into []
-        (concat (when (seq (:log view)) [[(hidden-key view "l" "l") "log"]])
-                (when (compare-image view row) [[(hidden-key view "v" "v") "Before/After"]])
-                (when (diff-view? rows) (diff-mode-footer state view rows))
-                (when (some #(= :file (:kind %)) rows) (file-footer state view)))))
+(defn- menu-action
+  [view key label]
+  {:label (menu-label label)
+   :hint (str (hidden-key view (get key-glyphs key key) key) (when (= key "/") ", C-f"))
+   :stroke (named-stroke key)
+   :surface? true
+   :prefixed? (boolean (shortcut-for view key))})
+
+(defn key-menu-items
+  "App actions first, then surface actions with their current local state."
+  [state {:keys [view rows pane?]}]
+  (let [app-items
+        (when-not (or (model/read-only? view) (model/stale? view))
+          (for [s
+                (:shortcuts view)
+
+                :when (not (some-> (model/find-node view (:node-id s))
+                                   button-refusal))]
+
+            {:label (menu-label (shortcut-label view s))
+             :hint (get key-glyphs (:key s) (:key s))
+             :stroke (named-stroke (:key s))
+             :shortcut s}))
+
+        pane-items
+        (mapv (fn [[key label]]
+                (menu-action view key label))
+              [["ArrowUp" "Previous row"] ["ArrowDown" "Next row"] ["PageUp" "Previous page"]
+               ["PageDown" "Next page"] ["Home" "First row"] ["End" "Last row"]
+               ["ArrowLeft" "Fold file"] ["ArrowRight" "Expand file"]
+               ["Enter"
+                (or (enter-label state view (nth rows (:selected state) nil))
+                    "Press selected control")] ["/" "Find code"] ["r" "Reload"]])
+
+        diff-items
+        (when (diff-view? rows)
+          (mapv (fn [[key label]]
+                  (menu-action view key label))
+                [["u" (str "Diff: " (if (:unified? state) "stacked" "split"))]
+                 ["w" (str "Wrap: " (if (:wrap? state) "on" "off"))]
+                 ["f" (str "Files: " (if (:files? state) "on" "off"))]
+                 ["t" (str "Tests: " (if (:hide-tests? state) "hidden" "shown"))]
+                 ["i"
+                  (str "Whitespace-only files: " (if (:hide-whitespace? state) "hidden" "shown"))]
+                 ["a" "Fold / expand all files"] ["c" "Copy file path"]
+                 ["Tab" (str "Comment side: " (name (:diff-side state :right)))]]))]
+
+    (vec (concat app-items
+                 [{:section? true :label "Pane"}]
+                 pane-items
+                 (when-not (:wrap? state)
+                   [(menu-action view "<" "Scroll code left")
+                    (menu-action view ">" "Scroll code right")])
+                 (when-not (model/read-only? view) [(menu-action view "s" "Send review")])
+                 (when (seq (:log view)) [(menu-action view "l" "Open app log")])
+                 (when (compare-image view (nth rows (:selected state) nil))
+                   [(menu-action view "v" "Compare before / after")])
+                 [(menu-action view "Escape" (:close-label state "Close app"))]
+                 (when pane? [{:label "Hide pane" :hint "C-x b p" :hide? true}])
+                 (when (seq diff-items) (cons {:section? true :label "Diff"} diff-items))))))
+
+(defn- menu-component
+  [items]
+  (dlg/select-modal-component "App keys" items {:enter-label "run" :min-width 44}))
+
+(defn- menu-layout
+  [state {:keys [cols rows-count bounds pane?]}]
+  (let [{:keys [items menu-state]}
+        (:key-menu state)
+
+        {:keys [left top right bottom]}
+        bounds
+
+        [x y width height]
+        (if pane?
+          [left top (inc (- (long right) (long left))) (inc (- (long bottom) (long top)))]
+          [0 0 cols rows-count])
+
+        region
+        (when pane?
+          {:width (fn [cols _rows]
+                    cols)})
+
+        component
+        (menu-component items)
+
+        geom
+        (binding [dlg/*dialog-region* region]
+          ((:measure component) menu-state width height))]
+
+    {:component component
+     :geom geom
+     :region region
+     :origin [x y]
+     :width width
+     :height height
+     :state ((:reconcile component) menu-state geom)}))
+
+(defn- paint-key-menu!
+  [^TextGraphics graphics state geom]
+  (let [{:keys [component state geom region origin width height]}
+        (menu-layout state geom)
+
+        [x y]
+        origin
+
+        g
+        (.newTextGraphics graphics
+                          (TerminalPosition. (int x) (int y))
+                          (TerminalSize. (int width) (int height)))]
+
+    (p/clear-styles! g)
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (binding [dlg/*dialog-region* region]
+      ((:paint component) g state geom))))
+
+(defn- open-key-menu
+  [state geom]
+  (let [items
+        (key-menu-items state geom)
+
+        component
+        (menu-component items)]
+
+    (assoc state :key-menu {:items items :menu-state (:init component)})))
+
+(defn- menu-choice
+  [state item geom effects]
+  (let [state (dissoc state :key-menu)]
+    (cond (:shortcut item) (press-shortcut state (:view geom) (:shortcut item) effects)
+          (:hide? item) (do ((:hide! effects)) state)
+          (:stroke item) (surface-key state (:stroke item) geom effects)
+          :else state)))
+
+(defn- menu-accelerator
+  [items key prefixed?]
+  (let [name (shortcut-key key)]
+    (some #(when (and (:stroke %)
+                      (not= KeyType/Enter (.getKeyType ^KeyStroke key))
+                      (or (= key (:stroke %)) (and name (= name (shortcut-key (:stroke %)))))
+                      (or (:shortcut %) (= KeyType/Character (.getKeyType ^KeyStroke key)))
+                      (= prefixed? (boolean (:prefixed? %))))
+             %)
+          items)))
+
+(defn- menu-key
+  [state ^KeyStroke key geom effects]
+  (let [ch
+        (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))
+
+        ctrl?
+        (.isCtrlDown key)
+
+        prefixed?
+        (boolean (get-in state [:key-menu :prefix]))
+
+        choice
+        (menu-accelerator (get-in state [:key-menu :items]) key prefixed?)]
+
+    (cond (or (= KeyType/Escape (.getKeyType key)) (= \? ch) (and ctrl? (= \h ch))) (dissoc state
+                                                                                      :key-menu)
+          (and ctrl? (= \x ch)) (assoc-in state [:key-menu :prefix] true)
+          (and ctrl? (= \f ch)) (command-key (dissoc state :key-menu) key geom effects)
+          (and prefixed? (:pane? geom) (= \b ch)) (-> state
+                                                      (assoc-in [:key-menu :pane-prefix] true)
+                                                      (update :key-menu dissoc :prefix))
+          (and (get-in state [:key-menu :pane-prefix]) (= \p ch))
+          (menu-choice state {:hide? true} geom effects)
+          choice (menu-choice state choice geom effects)
+          :else (let [layout
+                      (menu-layout state geom)
+
+                      next
+                      ((:on-key (:component layout)) (:state layout) key (:geom layout))]
+
+                  (if (contains? next ::dlg/done)
+                    (menu-choice state (::dlg/done next) geom effects)
+                    (-> state
+                        (assoc-in [:key-menu :menu-state] next)
+                        (update :key-menu dissoc :prefix :pane-prefix)))))))
 
 (defn- footer
   [state view rows]
-  (let [row
-        (nth rows (:selected state) nil)
-
-        enter
-        (enter-label state view row)
-
-        verbs
-        (cond-> [[(hidden-key view "↑/↓" "ArrowUp") "move"]
-                 [(hidden-key view "←/→" "ArrowLeft") "fold"]]
-          (not (:wrap? state))
-          (conj [(hidden-key view "</>" "<") "scroll"])
-
-          (and enter (not (model/read-only? view)))
-          (conj [(hidden-key view "Enter" "Enter") enter])
-
-          (not (model/read-only? view))
-          (conj [(hidden-key view "s" "s") "send"]))]
-
-    (cond (:editor state) [["Ctrl+Enter/C-s" "save"] ["Esc" "cancel"]]
-          (:search state) [["Enter" "next match"] ["S-Enter" "previous match"]
-                           ["Esc" "leave search"]]
-          (:prefix state) [["C-x" "next key is a surface key"] ["s" "send"] ["r" "reload"]
-                           ["Esc" "cancel"]]
-          :else (into (into verbs (review-footer state view rows row))
-                      [[(hidden-key view "r" "r") "reload"]
-                       ["Esc" (:close-label state "close")]]))))
+  (cond (:editor state) [["C-Enter/C-s" "save"] ["Esc" "cancel"]]
+        (:search state) [["Enter/S-Enter" "find"] ["Esc" "back"]]
+        (:prefix state) [["C-x" "surface key"] ["?" "keys"]]
+        :else (cond-> [[(hidden-key view "?" "?") "keys"]]
+                (enter-label state view (nth rows (:selected state) nil))
+                (conj [(hidden-key view "Enter" "Enter")
+                       (enter-label state view (nth rows (:selected state) nil))]))))
 
 (def ^:private editor-h "Rows of the editor field." 5)
 
@@ -1377,34 +1531,6 @@
   ^long [^long rows-count]
   (max 8 (- rows-count (if (< rows-count 36) 8 12))))
 
-(defn legend-lines
-  "Wrap the key legend within width. Keep at most three rows and mark omitted keys."
-  [legend width]
-  (let [width
-        (max 1 (long width))
-
-        tokens
-        (if (string? legend) [legend] (map #(str/join " " %) legend))]
-
-    (loop [tokens
-           (seq tokens)
-
-           lines
-           []
-
-           line
-           ""]
-
-      (if-let [token (first tokens)]
-        (let [candidate (if (empty? line) token (str line "  ·  " token))]
-          (cond (<= (p/display-width candidate) width) (recur (next tokens) lines candidate)
-                (empty? line) (recur (next tokens) lines (p/ellipsize token width))
-                (= 2 (count lines)) (conj lines (str (p/ellipsize line (dec width)) "…"))
-                :else (recur tokens (conj lines line) "")))
-        (cond-> lines
-          (seq line)
-          (conj line))))))
-
 (defn- geom-in
   "The surface geometry for `state` in the box `bounds`."
   [state cols rows-count content-w bounds view]
@@ -1427,7 +1553,7 @@
         (shortcut-legend view)
 
         lines
-        (legend-lines legend (max 1 (- (long (:inner-w bounds)) 3)))]
+        []]
 
     {:cols cols
      :rows-count rows-count
@@ -1618,15 +1744,6 @@
     t/footer-warning-fg
     t/dialog-hint))
 
-(defn- paint-legend!
-  [g left row inner-w lines]
-  (p/set-colors! g t/dialog-hint t/dialog-bg)
-  (doseq [[i line] (map-indexed vector lines)]
-    (p/put-str! g
-                (+ (long left) 2)
-                (+ (long row) (long i))
-                (p/ellipsize line (max 1 (- (long inner-w) 3))))))
-
 (defn- paint-status!
   [g state {:keys [bounds content-top list-h legend-lines]}]
   (let [{:keys [left inner-w]}
@@ -1638,7 +1755,6 @@
         row
         (+ (long content-top) (long list-h))]
 
-    (paint-legend! g left row inner-w legend-lines)
     (p/set-colors! g (status-ink state) t/dialog-bg)
     (p/put-str! g
                 (+ left 2)
@@ -1685,7 +1801,7 @@
     cursor))
 
 (defn- paint!
-  [g state {:keys [bounds hint-row view rows pane?] :as geom}]
+  [g state {:keys [bounds hint-row view rows] :as geom}]
   (paint-chrome! g geom)
   (paint-body! g state geom)
   (paint-status! g state geom)
@@ -1700,11 +1816,9 @@
                         left
                         hint-row
                         inner-w
-                        (dlg/fit-hint-keeping-last (cond-> (footer state view rows)
-                                                     pane?
-                                                     (conj ["C-x b p" "hide"]))
+                        (dlg/fit-hint-keeping-last (footer state view rows)
                                                    (max 0 (- (long inner-w) 2))))
-    cursor))
+    (if (:key-menu state) (paint-key-menu! g state geom) cursor)))
 
 ;;; ── Driver ─────────────────────────────────────────────────────────────────
 
@@ -1871,6 +1985,7 @@
    :inspect! (partial inspect-effect! box open-picture!)
    :log! (partial log-effect! screen modal! current)
    :copy! input/clipboard-copy!
+   :hide! #(state/dispatch [:live-panel-toggle-open])
    :paste identity})
 
 (defn- paste-start?

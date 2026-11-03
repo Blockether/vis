@@ -1,13 +1,16 @@
 (ns com.blockether.vis.tui.app-surface-test
-  (:require [clojure.string :as str]
-            [com.blockether.vis.tui.app-model :as model]
+  (:require [com.blockether.vis.tui.app-model :as model]
+            [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.app-surface :as surface]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.input :as input]
-            [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.state :as state]
+            [com.blockether.vis.tui.screen :as screen]
+            [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.theme :as t]
             [lazytest.core :refer [defdescribe describe expect it]])
-  (:import [com.googlecode.lanterna TerminalPosition]
+  (:import [com.googlecode.lanterna TerminalPosition TextColor$RGB]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
 
 (def ^:private view
@@ -813,29 +816,383 @@
 
           (expect (empty? @calls))
           (expect (seq (:notice st))))))
-  (it "wraps the legend to at most three rows within the available width"
+  (it "keeps every action reachable when the app has more keys than the pane has rows"
       (let [v
             (assoc game
-              :shortcuts (mapv (fn [i]
-                                 {:key (str i) :label (str "Long action label " i) :action (str i)})
-                               (range 12)))
+              :shortcuts (mapv (fn [c]
+                                 {:key (str c) :action (str c) :label (str "Long action label " c)})
+                               "abcdefghijkl"))
+
+            {:keys [press start calls]}
+            (game-harness v)
+
+            opened
+            (press start (ch \?))
+
+            selected
+            (assoc-in opened [:key-menu :menu-state :selected] 11)
+
+            result
+            (press selected (k KeyType/Enter))]
+
+        (expect (nil? (:key-menu result)))
+        (expect (= [[:shortcut {:action :shortcut :key "l"} "l"]] @calls)))))
+
+;; User report, Council #9635: table focus painted over the rails and past the table.
+(defdescribe
+  table-focus-bounds
+  (it
+    "keeps all rails and outside cells unchanged while highlighting the choice mark"
+    (doseq [nested? [false true]]
+      (let [v (assoc game :nodes [(nth (:nodes game) 3)])
+            table-row (first (filter #(= :trow (get-in % [:entry :kind]))
+                                     (surface/surface-rows v 38 #{})))
+            row (if nested?
+                  (assoc table-row
+                    :cells [0]
+                    :entry {:kind :columns :cells [(:entry table-row)]})
+                  table-row)
+            paint
+            (fn [selected?]
+              (binding [interactions/hit-map (interactions/create-hit-map)]
+                (let [capture
+                      (cap/capture!
+                        {:cols 60
+                         :rows 5
+                         :paint!
+                         (fn [{:keys [g]}]
+                           (.beginFrame interactions/hit-map)
+                           (#'surface/paint-plan-row! g 4 2 42 "app" selected? (when nested? 0) row)
+                           (.commitFrame interactions/hit-map))})
+                      targets (.current interactions/hit-map)]
+
+                  (expect (nil? (:error capture)))
+                  (expect (seq targets))
+                  (expect (every? #(= "app" (:view-id %)) targets))
+                  (get-in capture [:frames 0 2]))))
+            plain (paint false)
+            focused (paint true)
+            rails (keep-indexed #(when (= "│" (:ch %2)) %1) plain)
+            mark (first (keep-indexed #(when (= "○" (:ch %2)) %1) plain))]
+
+        (expect (<= 2 (count rails)))
+        (expect (some? mark))
+        (doseq [x (concat rails (range 0 (first rails)) (range (inc (last rails)) 60))]
+          (expect (= (nth plain x) (nth focused x))))
+        (expect (not= (:bg (nth plain mark)) (:bg (nth focused mark))))))))
+
+;; User report, Council #9635: review sections ran together and legends consumed the pane.
+(defdescribe app-section-spacing
+             (it "puts one gap between top-level nodes but none inside a table or diff"
+                 (let [v
+                       (assoc view
+                         :submissions []
+                         :nodes [{:id "title" :type :heading :level 1 :text "Review"}
+                                 (nth (:nodes game) 3) (first (:nodes view))])
+
+                       rows
+                       (surface/surface-rows v 60 #{})
+
+                       gaps
+                       (keep-indexed #(when (= :section-gap (:kind %2)) %1) rows)]
+
+                   (expect (= 2 (count gaps)))
+                   (expect (not= :section-gap (:kind (first rows))))
+                   (expect (not= :section-gap (:kind (last rows))))
+                   (expect (not-any? #(= :diff-tools (:kind %)) rows)))))
+
+(defdescribe app-key-menu
+             (it "opens from ? or C-h, lists app actions first, and runs a menu key"
+                 (let [{:keys [press start calls]}
+                       (game-harness game)
+
+                       opened
+                       (press start (ch \?))
+
+                       ctrl
+                       (press start (k \h true))
+
+                       chosen
+                       (press opened (ch \g))]
+
+                   (expect (seq (get-in opened [:key-menu :items])))
+                   (expect (= (get-in opened [:key-menu :items]) (get-in ctrl [:key-menu :items])))
+                   (expect (= "New game" (get-in opened [:key-menu :items 0 :label])))
+                   (expect (nil? (:key-menu chosen)))
+                   (expect (= [[:activate {:action :activate :node-id "go"}]] @calls))))
+             (it "uses Enter on the selected action and closes on ? without running anything"
+                 (let [{:keys [press start calls]}
+                       (game-harness game)
+
+                       opened
+                       (press start (ch \?))
+
+                       closed
+                       (press opened (ch \?))
+
+                       selected
+                       (press opened (k KeyType/Enter))]
+
+                   (expect (nil? (:key-menu closed)))
+                   (expect (nil? (:key-menu selected)))
+                   (expect (= [[:shortcut {:action :shortcut :key "n"} "new"]] @calls))))
+             (it "keeps app ? and hidden surface keys available with C-x"
+                 (let [v
+                       (assoc game
+                         :nodes (into (:nodes game) (:nodes view))
+                         :shortcuts [{:key "?" :node-id "go"} {:key "w" :node-id "go"}])
+
+                       {:keys [press start calls]}
+                       (game-harness v)
+
+                       app
+                       (press start (ch \?))
+
+                       opened
+                       (press (press start (k \x true)) (ch \?))
+
+                       hidden
+                       (press (press opened (k \x true)) (ch \w))]
+
+                   (expect (= 1 (count @calls)))
+                   (expect (nil? (:key-menu app)))
+                   (expect (seq (get-in opened [:key-menu :items])))
+                   (expect (nil? (:key-menu hidden)))
+                   (expect (false? (:wrap? hidden)))))
+             (it "runs diff toggles from the menu and exposes their current state"
+                 (let [{:keys [press start]}
+                       (harness view)
+
+                       opened
+                       (press start (ch \?))
+
+                       wrapped
+                       (press opened (ch \w))
+
+                       again
+                       (press wrapped (ch \?))]
+
+                   (expect (false? (:wrap? wrapped)))
+                   (expect (some #(= "Wrap: off" (:label %)) (get-in again [:key-menu :items])))
+                   (expect (empty? (:legend-lines (surface/measure start 100 40 game)))))))
+
+;; Council #9635 CUA: macOS reports uppercase app keys with the Shift modifier.
+(defdescribe app-menu-shifted-shortcut
+             (it "runs an uppercase producer key from a real shifted keystroke"
+                 (let [v
+                       (assoc game :shortcuts [{:key "F" :node-id "go"}])
+
+                       {:keys [press start calls]}
+                       (game-harness v)
+
+                       opened
+                       (press start (ch \?))
+
+                       result
+                       (press opened (KeyStroke. (Character/valueOf \F) false false true))]
+
+                   (expect (nil? (:key-menu result)))
+                   (expect (= [[:activate {:action :activate :node-id "go"}]] @calls)))))
+
+(defdescribe app-menu-navigation
+             (it "moves the menu cursor without moving the review cursor, then runs that row"
+                 (let [{:keys [press start calls]}
+                       (game-harness game)
+
+                       opened
+                       (press start (ch \?))
+
+                       next
+                       (press opened (k KeyType/ArrowDown))
+
+                       done
+                       (press next (k KeyType/Enter))]
+
+                   (expect (= (:selected start) (:selected next)))
+                   (expect (= 1 (get-in next [:key-menu :menu-state :selected])))
+                   (expect (nil? (:key-menu done)))
+                   (expect (= [[:activate {:action :activate :node-id "go"}]] @calls)))))
+
+(defdescribe app-menu-reserved-keys
+             (it "keeps Enter for the selected menu row when the app also binds Enter"
+                 (let [v
+                       (assoc game
+                         :shortcuts [{:key "n" :action "new" :label "New"}
+                                     {:key "Enter" :node-id "go"}])
+
+                       {:keys [press start calls]}
+                       (game-harness v)
+
+                       done
+                       (press (press start (ch \?)) (k KeyType/Enter))]
+
+                   (expect (nil? (:key-menu done)))
+                   (expect (= [[:shortcut {:action :shortcut :key "n"} "new"]] @calls))))
+             (it "opens search with C-f from the key menu"
+                 (let [{:keys [press start]}
+                       (harness view)
+
+                       done
+                       (press (press start (ch \?)) (k \f true))]
+
+                   (expect (nil? (:key-menu done)))
+                   (expect (= "" (get-in done [:search :text])))))
+             (it "hides the pane with its advertised C-x b p chord while the menu is open"
+                 (let [state
+                       (surface/initial-state)
+
+                       geom
+                       (surface/pane-measure state 60 0 60 40 view)
+
+                       hidden
+                       (atom false)
+
+                       effects
+                       {:hide! #(reset! hidden true)}
+
+                       step
+                       (fn [st key]
+                         (surface/handle-key st key geom effects))
+
+                       done
+                       (-> state
+                           (step (ch \?))
+                           (step (k \x true))
+                           (step (ch \b))
+                           (step (ch \p)))]
+
+                   (expect @hidden)
+                   (expect (nil? (:key-menu done))))))
+
+;; Council #9635 CUA: the live component lacked Hide even though the key driver had it.
+(defdescribe app-component-menu-hide
+             (it "hides the actual retained pane when its component runs the menu chord"
+                 (let [saved @state/app-db]
+                   (try (reset! state/app-db (assoc saved
+                                               :live-panel {:open? true
+                                                            :focused? true
+                                                            :app {:session-id "A" :view-id "v"}}))
+                        (with-redefs-fn {#'surface/read-view! (fn [& _])}
+                          (fn []
+                            (let [component (surface/component "A" "v" view)
+                                  initial (:init component)
+                                  geom ((:measure-pane component) initial 60 0 60 40)
+                                  step (fn [st key]
+                                         ((:on-key component) st key geom))
+                                  result (-> initial
+                                             (step (ch \?))
+                                             (step (k \x true))
+                                             (step (ch \b))
+                                             (step (ch \p)))]
+
+                              (expect (nil? (:key-menu result)))
+                              (expect (false? (get-in @state/app-db [:live-panel :open?])))
+                              (expect (= {:session-id "A" :view-id "v"}
+                                         (get-in @state/app-db [:live-panel :app]))))))
+                        (finally (reset! state/app-db saved))))))
+
+;; User report, Council #9648: the app menu crossed the pane and inherited focus ink.
+(defdescribe
+  app-menu-paint-bounds
+  (it
+    "keeps pane menus inside their area with uniform focus and unchanged outside cells"
+    (doseq [theme
+            ["blockether-light" "blockether-dark"]
+
+            width
+            [60 32]]
+
+      (t/apply-theme! theme)
+      (let [left
+            (- 120 width)
+
+            initial
+            (surface/initial-state)
 
             geom
-            (surface/pane-measure (surface/initial-state) 0 0 60 35 v)
+            (surface/pane-measure initial left 3 width 40 game)
 
-            lines
-            (:legend-lines geom)]
+            opened
+            (surface/handle-key initial (ch \?) geom {})
 
-        (expect (= 3 (count lines)))
-        (expect (every? #(<= (count %) 55) lines))
-        (expect (str/ends-with? (last lines) "…")))))
+            layout
+            (#'surface/menu-layout opened geom)
 
-(defdescribe
-  shortcut-legend-width-boundaries
-  (it "keeps empty and narrow legends within their column budget"
-      (expect (= [] (surface/legend-lines nil 20)))
-      (doseq [width [1 2 20 55]]
-        (let [lines (surface/legend-lines [["F" "A very long action label"] ["R" "Reload"]] width)]
-          (expect (seq lines))
-          (expect (<= (count lines) 3))
-          (expect (every? #(<= (p/display-width %) width) lines))))))
+            [ox oy]
+            (get layout :origin [0 0])
+
+            bounds
+            (get-in layout [:geom :bounds])
+
+            l
+            (+ ox (:left bounds))
+
+            r
+            (+ ox (:right bounds))
+
+            top
+            (+ oy (:top bounds))
+
+            bottom
+            (+ oy (:bottom bounds))
+
+            paint
+            (fn [st]
+              (cap/capture!
+                {:cols 120
+                 :rows 46
+                 :paint! (fn [{:keys [g screen]}]
+                           (p/set-colors! g t/dialog-fg t/dialog-bg)
+                           (p/fill-rect! g 0 0 120 46)
+                           (p/enable! g p/REVERSE)
+                           (#'surface/paint! g st geom)
+                           (with-redefs-fn {#'screen/focused-area (constantly :panel)
+                                            #'screen/focus-areas (constantly [:chat :panel])}
+                             #(#'screen/fade-unfocused-areas!
+                                screen
+                                {}
+                                120
+                                46
+                                0
+                                {:col left :row 3 :width width :height 40})))}))
+
+            plain
+            (paint initial)
+
+            menu
+            (paint opened)
+
+            before
+            (first (:frames plain))
+
+            after
+            (first (:frames menu))
+
+            title
+            (inc top)
+
+            selected
+            (+ oy (get-in layout [:geom :list-top]))]
+
+        (expect (nil? (:error plain)))
+        (expect (nil? (:error menu)))
+        (expect (<= left l r 119))
+        (expect (<= 3 top bottom 42))
+        (expect (< l r))
+        (expect (re-find #"App keys" (apply str (map :ch (nth after title)))))
+        (expect (some #(not= " " (:ch %)) (subvec (nth after selected) (inc l) r)))
+        (doseq [[y end] [[title (- r 3)] [selected r]]]
+          (expect (= 1 (count (set (map :bg (subvec (nth after y) (inc l) end)))))))
+        (expect (= [(.getRed ^TextColor$RGB t/dialog-shadow)
+                    (.getGreen ^TextColor$RGB t/dialog-shadow)
+                    (.getBlue ^TextColor$RGB t/dialog-shadow)]
+                   (:bg (get-in after [(inc bottom) r]))))
+        (doseq [y
+                (range 46)
+
+                x
+                (range 120)
+
+                :when (not (and (<= l x (min 119 (+ r 2))) (<= top y (min 45 (inc bottom)))))]
+
+          (expect (= (get-in before [y x]) (get-in after [y x]))))))))

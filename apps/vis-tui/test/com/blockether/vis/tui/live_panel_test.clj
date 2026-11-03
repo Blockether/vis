@@ -630,3 +630,41 @@
                      (expect (true? (get-in @state/app-db [:live-panel :open?])))
                      (expect (true? (get-in @state/app-db [:live-panel :focused?])))
                      (expect (= "review" (get-in @state/app-db [:live-panel :app :view-id])))))))
+
+;; User report, Council #9635: app help must work in the docked pane too.
+(defdescribe
+  review-pane-menu-prefix
+  (it "lets an open key menu receive its hidden surface prefix"
+      (let [held
+            (var-get #'screen/app-pane)
+
+            saved
+            @held
+
+            db
+            {:app-views {"v" {:view {:id "v" :nodes []}}}
+             :session {:id "A"}
+             :live-panel {:open? true :focused? true :app {:session-id "A" :view-id "v"}}}]
+
+        (try (reset! held {["A" "v"] {:state {:key-menu {:items []}}}})
+             (expect (true? (#'screen/app-pane-owns-key? db (KeyStroke. \x true false))))
+             (finally (reset! held saved)))))
+  (it "routes C-x ? to the pane instead of dropping the hidden help key"
+      (let [calls
+            (atom [])
+
+            db
+            {:app-views {"v" {:view {:id "v" :nodes []}}}
+             :session {:id "A"}
+             :live-panel {:open? true :focused? true :app {:session-id "A" :view-id "v"}}}]
+
+        (with-redefs-fn {#'screen/app-pane-key! (fn [_ key]
+                                                  (swap! calls conj key)
+                                                  true)
+                         #'screen/with-band-lock (fn [_ f]
+                                                   (f))
+                         #'dlg/prefix-band! (fn [& _]
+                                              (KeyStroke. \? false false))
+                         #'screen/session-band-anchor (constantly {})}
+          #(#'screen/resolve-prefix! nil db {:action :continue :state {:prefix :cx}}))
+        (expect (= [(KeyStroke. \x true false) (KeyStroke. \? false false)] @calls)))))

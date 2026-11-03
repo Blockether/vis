@@ -2926,7 +2926,10 @@
   (and key
        (= :panel (focused-area db))
        (not (instance? MouseAction key))
-       (not (and (.isCtrlDown key) (:prefix (:state (input/handle-key key (input/empty-input))))))))
+       (or (boolean (get-in @app-pane
+                            [(app-pane-id (get-in db [:live-panel :app])) :state :key-menu]))
+           (not (and (.isCtrlDown key)
+                     (:prefix (:state (input/handle-key key (input/empty-input)))))))))
 
 (defn- app-pane-key!
   "Give `key` to the app in the side pane. An Esc that the app does not use itself
@@ -8653,7 +8656,15 @@
 
             (if-let [key (with-band-lock (band-top-row db spec)
                                          #(dlg/prefix-band! screen (session-band-anchor db) spec))]
-              (recur (input/resolve-prefix-key key (:state r)))
+              (if (and (nil? group)
+                       (= :panel (focused-area db))
+                       (get-in db [:live-panel :app])
+                       (= KeyType/Character (.getKeyType ^KeyStroke key))
+                       (= \? (.getCharacter ^KeyStroke key)))
+                (do (app-pane-key! db (KeyStroke. \x true false))
+                    (app-pane-key! db key)
+                    {:action :continue :state (dissoc (:state r) :prefix :prefix-group)})
+                (recur (input/resolve-prefix-key key (:state r))))
               {:action :continue :state (dissoc (:state r) :prefix :prefix-group)})))))))
 
 (defn- terminal-ctrl-c-behaviour

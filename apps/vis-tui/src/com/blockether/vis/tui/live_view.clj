@@ -757,13 +757,13 @@
    every edge, all of it in the chrome's own dim ink so a toned row does not drag
    the box along with it."
   [widths cells aligns fg styles]
-  (conj (into [{:text "│ " :fg t/dialog-hint}]
+  (conj (into [{:text "│ " :fg t/dialog-hint :is-table-border true}]
               (comp (map (fn [[runs w align]]
                            (cell-segments runs w align fg styles)))
-                    (interpose [{:text " │ " :fg t/dialog-hint}])
+                    (interpose [{:text " │ " :fg t/dialog-hint :is-table-border true}])
                     cat)
               (map vector cells widths aligns))
-        {:text " │" :fg t/dialog-hint}))
+        {:text " │" :fg t/dialog-hint :is-table-border true}))
 
 (defn- span-inner
   "The columns a line spanning the whole table gets INSIDE its frame: every
@@ -776,9 +776,9 @@
    holds nothing yet."
   [widths text fg styles]
   (let [inner (span-inner widths)]
-    [{:text "│ " :fg t/dialog-hint}
+    [{:text "│ " :fg t/dialog-hint :is-table-border true}
      {:text (p/pad-right (p/ellipsize (str text) inner) inner) :fg fg :styles (vec styles)}
-     {:text " │" :fg t/dialog-hint}]))
+     {:text " │" :fg t/dialog-hint :is-table-border true}]))
 
 (defn- rule-line
   "One frame line of a table: the corner glyphs `edge` names and a dash for every
@@ -2497,14 +2497,30 @@
    ellipsis instead of in the chrome."
   [g left row inner-w segments]
   (fill! g left row inner-w t/dialog-fg)
-  (reduce (fn [^long used {:keys [text fg styles]}]
+  (reduce (fn [^long used {:keys [text fg bg styles]}]
             (let [shown (p/ellipsize (p/expand-tabs text) (max 0 (- (long inner-w) 3 used)))]
               (when (seq shown)
-                (p/set-colors! g (or fg t/dialog-fg) t/dialog-bg)
+                (p/set-colors! g (or fg t/dialog-fg) (or bg t/dialog-bg))
                 (p/styled g (or styles []) (p/put-str! g (+ (long left) 2 used) row shown)))
               (+ used (long (p/display-width shown)))))
           0
           segments))
+
+(defn- paint-table-row!
+  "Paint table focus inside cell rails without shifting the row or its choice mark."
+  [g left row inner-w entry]
+  (paint-segments! g
+                   left
+                   row
+                   inner-w
+                   (mapv (fn [segment]
+                           (if (and (:is-focused entry) (not (:is-table-border segment)))
+                             (assoc segment
+                               :fg t/header-active-tab-fg
+                               :bg t/header-active-tab-bg
+                               :styles [p/BOLD])
+                             segment))
+                         (:segments entry))))
 
 (defn- rgb-ink
   ^TextColor$RGB [^long rgb]
@@ -2822,7 +2838,7 @@
     ;; A parent is a FOLD, so its head is a control: the whole line opens and shuts
     ;; the rows gathered under it, the way the Companion's disclosure does.
     :tparent
-    (do (paint-segments! g left row inner-w (:segments entry))
+    (do (paint-table-row! g left row inner-w entry)
         (.register interactions/hit-map
                    {:bounds {:row (+ (long row) (long *hit-row-offset*))
                              :col (+ (long left) 2)
@@ -2833,7 +2849,7 @@
                     :enabled? true}))
 
     :trow
-    (do (paint-segments! g left row inner-w (:segments entry))
+    (do (paint-table-row! g left row inner-w entry)
         ;; The full visible table row is the control, not a tiny glyph. Its item id
         ;; is what the shared selection patch names; the next live patch repaints every
         ;; attached TUI and Companion from that one engine state.

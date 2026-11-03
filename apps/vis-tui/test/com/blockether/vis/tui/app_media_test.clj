@@ -334,7 +334,7 @@
         (expect (nil? (surface/compare-image {:nodes [(dissoc node :before)]} row)))
         (expect (nil? (surface/compare-image {:nodes [(assoc node :type :diff)]} row)))
         (expect (nil? (surface/compare-image {:nodes []} row)))))
-  (it "the footer offers only the log and comparison controls that apply"
+  (it "the key menu offers only the log and comparison controls that apply"
       (let [node
             (image-node)
 
@@ -344,13 +344,14 @@
             row
             {:kind :plan :node-id (:id node)}
 
-            verbs
-            (set (#'surface/footer state {:nodes [node] :log entries} [row]))]
+            keys-for
+            (fn [view rows]
+              (set (keep :hint (surface/key-menu-items state {:view view :rows rows}))))]
 
-        (expect (contains? verbs ["l" "log"]))
-        (expect (contains? verbs ["v" "Before/After"]))
-        (expect (= ["Esc" "close"] (peek (#'surface/footer state {} []))))
-        (expect (not (contains? (set (#'surface/footer state {} [])) ["l" "log"]))))))
+        (expect (contains? (keys-for {:nodes [node] :log entries} [row]) "l"))
+        (expect (contains? (keys-for {:nodes [node] :log entries} [row]) "v"))
+        (expect (not (contains? (keys-for {} []) "l")))
+        (expect (not (contains? (keys-for {} []) "v"))))))
 
 (defdescribe
   code-paint-decisions
@@ -443,16 +444,20 @@
           (expect (= 3 (count times)))
           (expect (= 1 (count (distinct columns))))))))
 
-(defdescribe
-  review-footer-modes
-  (it "shows wrap and layout choices for the current diff mode"
-      (doseq [[state rows layout wrap]
-              [[{:unified? false :wrap? false} [{:kind :split}] ["u" "unified"] ["w" "wrap"]]
-               [{:unified? true :wrap? true} [{:kind :add}] ["u" "split"] ["w" "cut"]]]]
-        (let [verbs (set (#'surface/footer (merge (surface/initial-state) state) {} rows))]
-          (expect (contains? verbs layout))
-          (expect (contains? verbs wrap))
-          (expect (= (not (:wrap? state)) (contains? verbs ["</>" "scroll"])))))))
+(defdescribe review-footer-modes
+             (it "shows current wrap and layout state in the key menu"
+                 (doseq [[state rows layout wrap] [[{:unified? false :wrap? false} [{:kind :split}]
+                                                    "Diff: split" "Wrap: off"]
+                                                   [{:unified? true :wrap? true} [{:kind :add}]
+                                                    "Diff: stacked" "Wrap: on"]]]
+                   (let [items (surface/key-menu-items (merge (surface/initial-state) state)
+                                                       {:view {} :rows rows})
+                         labels (into {} (map (juxt :hint :label)) items)]
+
+                     (expect (= layout (get labels "u")))
+                     (expect (= wrap (get labels "w")))
+                     (expect (= (not (:wrap? state)) (contains? labels "<")))
+                     (expect (= (not (:wrap? state)) (contains? labels ">")))))))
 
 ;; Council #9442: comparison labels started at the pane edge, not the centered image.
 (defdescribe picture-caption-alignment
