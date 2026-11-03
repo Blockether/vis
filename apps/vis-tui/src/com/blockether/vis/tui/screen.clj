@@ -2944,7 +2944,7 @@
            (app-surfaces/panel-content (:live-panel db)
                                        (:app-views db)
                                        (lv/panel-panes (:live-views db))))
-    (when-not (#{:app-pane-close :app-log} (:kind (.lookup interactions/hit-map (int mx) (int my))))
+    (when-not (#{:app-log} (:kind (.lookup interactions/hit-map (int mx) (int my))))
       (let [{:keys [box geom state]} (current-app-pane)]
         (app-surfaces/pane-click box geom (or (:scroll state) 0) (count (:rows geom)) mx my)))))
 
@@ -2996,11 +2996,14 @@
          (activate-live-region! @state/app-db choice))))))
 
 (defn- open-live-panel!
-  "C-x b p: open the side panel, then move the focus between it and the transcript."
+  "C-x b p: hide or reopen the side panel without losing its retained app."
   []
-  (if (seq (lv/panel-panes (:live-views @state/app-db)))
-    (do (state/dispatch [:live-panel-focus]) (state/dispatch [:bump-render-version]))
-    (vis/notify! "No view uses the side panel in this session." :level :info)))
+  (let [db @state/app-db]
+    (if (or (contains? (:app-views db) (get-in db [:live-panel :app :view-id]))
+            (seq (lv/panel-panes (:live-views db))))
+      (do (state/dispatch [:live-panel-toggle-open])
+          (state/dispatch [:bump-render-version :full-frame]))
+      (vis/notify! "No view uses the side panel in this session." :level :info))))
 
 (defn- read-global-apps!
   "Read the global apps again: the fleet stream keeps no replay."
@@ -5001,8 +5004,8 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :header-help :header-session-apps :header-global-apps :footer-goal :footer-reasoning
-    :footer-thinking :header-tasks :header-search})
+  #{:copy-id :header-help :footer-goal :footer-reasoning :footer-thinking :header-tasks
+    :header-search})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 
@@ -6387,11 +6390,17 @@
 
 (defn- pick-session-app!
   [screen sid views]
-  (when-let [view (app-picker! screen "Session apps" views)]
-    (open-picked-session-app! screen sid view)))
+  (when-let [view (app-picker! screen "Apps" views)]
+    (if (:picker-global? view)
+      (with-dialog-lock #(app-surface/show-app! screen
+                                                nil
+                                                (str (:id view))
+                                                {:open-picture! (partial open-app-picture!
+                                                                         screen)}))
+      (open-picked-session-app! screen sid view))))
 
 (defn- open-session-apps!
-  "Pick a session app and open it in its declared surface."
+  "Pick a session or global app and open it in its declared surface."
   [screen]
   (let [db
         @state/app-db
@@ -6400,12 +6409,15 @@
         (current-session-id)
 
         views
-        (app-surfaces/session-apps (:app-views db))]
+        (app-surfaces/picker-views db)]
 
     ((get {:blocked (constantly nil)
-           :empty #(vis/notify! "This session has no app to open." :level :info)
+           :empty #(vis/notify! "No app is open." :level :info)
            :ready #(pick-session-app! screen sid views)}
-          (app-surfaces/picker-state (:dialog-open? db) views true sid)))))
+          (app-surfaces/picker-state (:dialog-open? db)
+                                     views
+                                     (boolean (some (complement :picker-global?) views))
+                                     sid)))))
 
 (defn- pick-global-app!
   [screen views]
@@ -8942,12 +8954,6 @@
                 :header-help
                 (state/dispatch [:toggle-help])
 
-                :header-session-apps
-                (open-session-apps! screen)
-
-                :header-global-apps
-                (open-global-apps! screen)
-
                 :agent-dock-toggle
                 (toggle-agent-dock!)
 
@@ -9161,12 +9167,6 @@
             :header-help
             (state/dispatch [:toggle-help])
 
-            :header-session-apps
-            (open-session-apps! screen)
-
-            :header-global-apps
-            (open-global-apps! screen)
-
             :agent-dock-toggle
             (toggle-agent-dock!)
 
@@ -9236,10 +9236,6 @@
 
             (:live-panel-toggle :live-panel-tab)
             (activate-live-region! db hit)
-
-            :app-pane-close
-            (do (state/dispatch [:app-pane-close])
-                (state/dispatch [:bump-render-version :full-frame]))
 
             :app-log
             (open-pane-log! screen)
@@ -9340,12 +9336,6 @@
           :header-help
           (state/dispatch [:toggle-help])
 
-          :header-session-apps
-          (open-session-apps! screen)
-
-          :header-global-apps
-          (open-global-apps! screen)
-
           :agent-dock-toggle
           (toggle-agent-dock!)
 
@@ -9430,10 +9420,6 @@
 
           (:live-panel-toggle :live-panel-tab)
           (activate-live-region! db hit)
-
-          :app-pane-close
-          (do (state/dispatch [:app-pane-close])
-              (state/dispatch [:bump-render-version :full-frame]))
 
           :app-log
           (open-pane-log! screen)

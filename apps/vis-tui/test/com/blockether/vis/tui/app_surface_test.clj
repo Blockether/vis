@@ -1,8 +1,10 @@
 (ns com.blockether.vis.tui.app-surface-test
-  (:require [com.blockether.vis.tui.app-model :as model]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.tui.app-model :as model]
             [com.blockether.vis.tui.app-surface :as surface]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.state :as state]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TerminalPosition]
@@ -468,12 +470,15 @@
 (defdescribe
   app-controls
   (it "presses buttons, cards and table rows and edits inputs with Enter"
-      (let [{:keys [press start calls]}
-            (game-harness game)
+      (let [unkeyed
+            (dissoc game :shortcuts)
+
+            {:keys [press start calls]}
+            (game-harness unkeyed)
 
             on
             (fn [pred]
-              (let [st (select-row press start game pred)]
+              (let [st (select-row press start unkeyed pred)]
                 (press st (k KeyType/Enter))))]
 
         (on #(= "go" (:node-id %)))
@@ -777,3 +782,60 @@
 
                    (expect (= 0 (:selected first-hit)))
                    (expect (= 3 (:selected (previous first-hit)))))))
+
+(defdescribe
+  shortcut-only-controls
+  ;; User report: review buttons consume the TUI pane instead of using keys.
+  (it "removes covered button rows, including nested buttons, but keeps other controls"
+      (let [v
+            {:id "keys"
+             :nodes [{:id "group"
+                      :type :group
+                      :children [{:id "toolbar"
+                                  :type :group
+                                  :children [{:id "covered" :type :button :label "Covered"}]}
+                                 {:id "visible" :type :button :label "Visible"}]}]
+             :shortcuts [{:key "F" :node-id "covered"}]}
+
+            rows
+            (surface/surface-rows v 50 #{})]
+
+        (expect (seq rows))
+        (expect (not-any? #(= "covered" (:node-id %)) rows))
+        (expect (some #(= "visible" (:node-id %)) rows))))
+  (it "uses the current button label and leaves disabled keys out of the legend"
+      (let [v (assoc game :shortcuts [{:key "g" :node-id "go"} {:key "o" :node-id "off"}])]
+        (expect (= [["g" "Go"]] (surface/shortcut-legend v)))
+        (expect (= [["g" "Continue"]]
+                   (surface/shortcut-legend (assoc-in v [:nodes 0 :label] "Continue"))))
+        (let [{:keys [press start calls]} (game-harness v)
+              st (press start (ch \o))]
+
+          (expect (empty? @calls))
+          (expect (seq (:notice st))))))
+  (it "wraps the legend to at most three rows within the available width"
+      (let [v
+            (assoc game
+              :shortcuts (mapv (fn [i]
+                                 {:key (str i) :label (str "Long action label " i) :action (str i)})
+                               (range 12)))
+
+            geom
+            (surface/pane-measure (surface/initial-state) 0 0 60 35 v)
+
+            lines
+            (:legend-lines geom)]
+
+        (expect (= 3 (count lines)))
+        (expect (every? #(<= (count %) 55) lines))
+        (expect (str/ends-with? (last lines) "…")))))
+
+(defdescribe
+  shortcut-legend-width-boundaries
+  (it "keeps empty and narrow legends within their column budget"
+      (expect (= [] (surface/legend-lines nil 20)))
+      (doseq [width [1 2 20 55]]
+        (let [lines (surface/legend-lines [["F" "A very long action label"] ["R" "Reload"]] width)]
+          (expect (seq lines))
+          (expect (<= (count lines) 3))
+          (expect (every? #(<= (p/display-width %) width) lines))))))

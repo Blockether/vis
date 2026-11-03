@@ -597,7 +597,7 @@
    screen marks it as `:graphical-terminal?`), `:has-panel` needs a panel view,
    `:has-group` needs a current session in a group, `:has-agents` needs a subagent (the
    screen marks it as `:has-agents?`), `:child-session` needs a subagent session,
-   `:has-apps` needs an app that the session apps picker lists and `:has-global-apps`
+   `:has-apps` needs an app that the combined apps picker lists and `:has-global-apps`
    needs a global app that the global apps picker lists.
    Resolving a chord does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
@@ -630,7 +630,7 @@
     (subagent-session? db)
 
     :has-apps
-    (boolean (seq (app-surfaces/session-apps (:app-views db))))
+    (boolean (seq (app-surfaces/picker-views db)))
 
     :has-global-apps
     (boolean (seq (app-surfaces/global-apps (:global-apps db))))

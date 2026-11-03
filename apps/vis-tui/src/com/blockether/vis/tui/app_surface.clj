@@ -154,13 +154,30 @@
         (plan-rows view (assoc node :is-flipped (contains? folded [:picture (:id node)])) width)
         :else (plan-rows view node width)))
 
+(defn- keyed-buttons
+  "Remove buttons named by shortcuts before layout, including nested controls."
+  [nodes covered]
+  (into []
+        (comp (remove #(and (= :button (:type %)) (contains? covered (:id %))))
+              (keep (fn [node]
+                      (if (seq (:children node))
+                        (let [children (keyed-buttons (:children node) covered)]
+                          (when (seq children) (assoc node :children children)))
+                        node))))
+        nodes))
+
 (defn surface-rows
   "Every row of the app surface for `view`, `width` columns wide. `folded` holds
    the diff file paths whose lines are hidden. `opts` holds the diff `:unified?`
    and `:wrap?` choices."
   ([view width folded] (surface-rows view width folded nil))
   ([view width folded opts]
-   (let [receipts (model/receipt-rows view)]
+   (let [receipts
+         (model/receipt-rows view)
+
+         view
+         (update view :nodes keyed-buttons (set (keep :node-id (:shortcuts view))))]
+
      (cond-> (into [] (mapcat #(node-rows view % width folded opts)) (:nodes view))
        (seq receipts)
        (into (cons {:kind :receipts-head :text "Send receipts"} receipts))))))
@@ -451,8 +468,14 @@
 
 (defn shortcut-label
   "What the legend says that shortcut `s` does."
-  [s]
-  (or (not-empty (str (:label s))) (:action s) (:node-id s)))
+  ([s] (shortcut-label nil s))
+  ([view s]
+   (or (not-empty (str (:label s)))
+       (some-> (model/find-node view (:node-id s))
+               :label
+               not-empty)
+       (:action s)
+       (:node-id s))))
 
 (defn- merged-pairs
   "`[key label]` pairs with one pair for each label, in first-seen order. Keys of
@@ -476,9 +499,16 @@
    line that says the app waits for its owner."
   [view]
   (when-not (model/read-only? view)
-    (let [pairs (merged-pairs (mapv (fn [s]
-                                      [(get key-glyphs (:key s) (:key s)) (shortcut-label s)])
-                                    (:shortcuts view)))]
+    (let [enabled
+          (remove #(some-> (model/find-node view (:node-id %))
+                           button-refusal)
+            (:shortcuts view))
+
+          pairs
+          (merged-pairs (mapv (fn [s]
+                                [(get key-glyphs (:key s) (:key s)) (shortcut-label view s)])
+                              enabled))]
+
       (if (model/stale? view)
         (str "Disconnected: the controls wait for the owner of the app"
              (when (seq pairs) (str "  ·  " (str/join "  ·  " (map #(str/join " " %) pairs)))))
@@ -489,7 +519,7 @@
   (cond (model/stale? view) (assoc state :notice disconnected-notice)
         (:node-id s) (press state view (:node-id s) nil effects)
         :else (do (shortcut! {:action :shortcut :key (:key s)} s)
-                  (assoc state :notice (str (shortcut-label s) " …")))))
+                  (assoc state :notice (str (shortcut-label view s) " …")))))
 
 (defn compare-image
   "The image node with an old picture that `row` shows, or nil."
@@ -1347,6 +1377,34 @@
   ^long [^long rows-count]
   (max 8 (- rows-count (if (< rows-count 36) 8 12))))
 
+(defn legend-lines
+  "Wrap the key legend within width. Keep at most three rows and mark omitted keys."
+  [legend width]
+  (let [width
+        (max 1 (long width))
+
+        tokens
+        (if (string? legend) [legend] (map #(str/join " " %) legend))]
+
+    (loop [tokens
+           (seq tokens)
+
+           lines
+           []
+
+           line
+           ""]
+
+      (if-let [token (first tokens)]
+        (let [candidate (if (empty? line) token (str line "  ·  " token))]
+          (cond (<= (p/display-width candidate) width) (recur (next tokens) lines candidate)
+                (empty? line) (recur (next tokens) lines (p/ellipsize token width))
+                (= 2 (count lines)) (conj lines (str (p/ellipsize line (dec width)) "…"))
+                :else (recur tokens (conj lines line) "")))
+        (cond-> lines
+          (seq line)
+          (conj line))))))
+
 (defn- geom-in
   "The surface geometry for `state` in the box `bounds`."
   [state cols rows-count content-w bounds view]
@@ -1366,7 +1424,10 @@
         (if (:editor state) (+ 2 (long editor-h)) 0)
 
         legend
-        (shortcut-legend view)]
+        (shortcut-legend view)
+
+        lines
+        (legend-lines legend (max 1 (- (long (:inner-w bounds)) 3)))]
 
     {:cols cols
      :rows-count rows-count
@@ -1379,8 +1440,9 @@
      :rows rows
      :editor-rows editor-rows
      :legend legend
+     :legend-lines lines
      :log-chip (log-chip bounds view)
-     :list-h (max 1 (- (long content-h) 1 (if legend 1 0) editor-rows))}))
+     :list-h (max 1 (- (long content-h) 1 (count lines) editor-rows))}))
 
 (defn measure
   "The surface geometry for `state` in a `cols`x`rows` terminal."
@@ -1457,10 +1519,8 @@
       :cell cell
       :scroll scroll)))
 
-(def ^:private pane-close-label " ✕ ")
-
 (defn- paint-pane-chrome!
-  "Paint the box of a side pane in `bounds`, its title and its close control."
+  "Paint the side pane box and title. The pane key chord hides it."
   [g {:keys [left top right bottom inner-w]} view]
   (let [left
         (long left)
@@ -1469,13 +1529,7 @@
         (long top)
 
         right
-        (long right)
-
-        close-w
-        (long (p/display-width pane-close-label))
-
-        close-col
-        (- right close-w)]
+        (long right)]
 
     (p/set-bg! g t/dialog-bg)
     (p/fill-rect! g left top (inc (- right left)) (inc (- (long bottom) top)))
@@ -1484,19 +1538,10 @@
     (p/set-colors! g t/dialog-title-bg t/dialog-bg)
     (p/styled g
               [p/BOLD]
-              (p/put-str!
-                g
-                (+ left 2)
-                top
-                (str " " (p/ellipsize (title view) (max 0 (- (long inner-w) 6 close-w))) " ")))
-    (when (< (+ left 2) close-col)
-      (p/set-colors! g t/dialog-title-bg t/dialog-title-fg)
-      (p/put-str! g close-col top pane-close-label)
-      (.register interactions/hit-map
-                 {:bounds {:row top :col close-col :width close-w}
-                  :kind :app-pane-close
-                  :label "Close the app"
-                  :enabled? true}))))
+              (p/put-str! g
+                          (+ left 2)
+                          top
+                          (str " " (p/ellipsize (title view) (max 0 (- (long inner-w) 6))) " ")))))
 
 (defn- paint-log-hit!
   [{:keys [row col width]}]
@@ -1563,7 +1608,7 @@
           (p/put-str! g (+ left 2) top "This app shows nothing yet"))
       (paint-body-rows! g state geom))))
 
-(defn- legend-height [legend] (if legend 1 0))
+(defn- legend-height [lines] (count lines))
 
 (defn- status-state [state] (or (get-in state [:save :state]) (get-in state [:send :state])))
 
@@ -1574,11 +1619,16 @@
     t/dialog-hint))
 
 (defn- paint-legend!
-  [g left row inner-w legend]
-  (when legend (dlg/draw-hint-bar! g left row inner-w legend)))
+  [g left row inner-w lines]
+  (p/set-colors! g t/dialog-hint t/dialog-bg)
+  (doseq [[i line] (map-indexed vector lines)]
+    (p/put-str! g
+                (+ (long left) 2)
+                (+ (long row) (long i))
+                (p/ellipsize line (max 1 (- (long inner-w) 3))))))
 
 (defn- paint-status!
-  [g state {:keys [bounds content-top list-h legend]}]
+  [g state {:keys [bounds content-top list-h legend-lines]}]
   (let [{:keys [left inner-w]}
         bounds
 
@@ -1588,16 +1638,16 @@
         row
         (+ (long content-top) (long list-h))]
 
-    (paint-legend! g left row inner-w legend)
+    (paint-legend! g left row inner-w legend-lines)
     (p/set-colors! g (status-ink state) t/dialog-bg)
     (p/put-str! g
                 (+ left 2)
-                (+ row (long (legend-height legend)))
+                (+ row (long (legend-height legend-lines)))
                 (p/ellipsize (status-line state) (max 1 (- (long inner-w) 3))))))
 
 (defn- editor-geometry
   "The editor window keeps its cursor line visible without leaving the app content."
-  [{:keys [input]} {:keys [bounds content-top list-h legend editor-rows content-h]}]
+  [{:keys [input]} {:keys [bounds content-top list-h legend-lines editor-rows content-h]}]
   (let [left
         (long (:left bounds))
 
@@ -1605,7 +1655,7 @@
         (max 1 (- (long (:inner-w bounds)) 3))
 
         top
-        (+ (long content-top) (long list-h) 1 (long (legend-height legend)))
+        (+ (long content-top) (long list-h) 1 (long (legend-height legend-lines)))
 
         first-line
         (max 0 (- (long (:crow input)) (dec (long editor-h))))]
@@ -1635,7 +1685,7 @@
     cursor))
 
 (defn- paint!
-  [g state {:keys [bounds hint-row view rows] :as geom}]
+  [g state {:keys [bounds hint-row view rows pane?] :as geom}]
   (paint-chrome! g geom)
   (paint-body! g state geom)
   (paint-status! g state geom)
@@ -1650,7 +1700,9 @@
                         left
                         hint-row
                         inner-w
-                        (dlg/fit-hint-keeping-last (footer state view rows)
+                        (dlg/fit-hint-keeping-last (cond-> (footer state view rows)
+                                                     pane?
+                                                     (conj ["C-x b p" "hide"]))
                                                    (max 0 (- (long inner-w) 2))))
     cursor))
 

@@ -12,6 +12,7 @@
             [com.blockether.vis.tui.app-surface :as surface]
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.live-view :as lv]
+            [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.picture :as picture]
             [com.blockether.vis.tui.view-materializer :as materializer]
             [lazytest.core :refer [defdescribe describe expect it]])
@@ -531,3 +532,21 @@
 
                    (binding [theme/dialog-bg bg]
                      (expect (>= (theme/contrast-ratio (#'surface/row-ink row) bg) 4.5))))))
+
+(defdescribe
+  pane-close-key-only
+  ;; User report: the pane close icon is misleading; use the pane key chord.
+  (it "does not create a clickable close control in the pane header"
+      (let [result (capture/capture! {:cols 60
+                                      :rows 25
+                                      :paint! (fn [{:keys [g]}]
+                                                (.reset interactions/hit-map)
+                                                (.beginFrame interactions/hit-map)
+                                                (#'surface/paint-pane-chrome!
+                                                 g
+                                                 {:left 0 :top 0 :right 59 :bottom 24 :inner-w 58}
+                                                 {:title "Review"})
+                                                (.commitFrame interactions/hit-map))})]
+        (expect (nil? (:error result)))
+        (expect (not (str/blank? (capture/frame-text result))))
+        (expect (not-any? #(= :app-pane-close (:kind %)) (.current interactions/hit-map))))))

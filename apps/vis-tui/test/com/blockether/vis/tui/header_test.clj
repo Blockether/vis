@@ -242,3 +242,11 @@
         (expect (str/includes? row "A current conversation"))
         (expect (str/includes? row "…"))
         (expect (not (str/includes? row "Other conversation"))))))
+
+(defdescribe app-header-clutter
+             ;; User report: app counts do not belong in the header.
+             (it "does not offer separate session and global app controls"
+                 (let [chips (#'header/header-action-chips false {:session-apps 2 :global-apps 1})]
+                   (expect (seq chips))
+                   (expect (not-any? #{:header-session-apps :header-global-apps}
+                                     (map first chips))))))

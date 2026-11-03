@@ -3357,14 +3357,14 @@
     (if (some #{selected} ids) selected (first ids))))
 
 (defn panel-geometry
-  "The side panel on `cols` chat columns: 40% of them, at least 40. It docks only
+  "The side panel on `cols` chat columns: half of them, at least 48. It docks only
    when 60 chat columns remain; otherwise it covers the right side of the chat."
   [cols]
   (let [cols
         (long cols)
 
         width
-        (min cols (max 40 (quot (* 2 cols) 5)))
+        (min cols (max 48 (quot cols 2)))
 
         docked?
         (>= (- cols width) 60)]

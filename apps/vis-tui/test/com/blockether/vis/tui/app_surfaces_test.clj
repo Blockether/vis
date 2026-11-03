@@ -204,3 +204,27 @@
 
         (expect (= :chat (focus-after (surface/initial-state))))
         (expect (= :panel (focus-after (assoc (surface/initial-state) :prefix true)))))))
+
+(defdescribe combined-app-picker
+             ;; User report: separate app and global header controls are confusing.
+             (it "lists session apps before global apps and identifies global rows"
+                 (let [db
+                       {:app-views {"s" {:view (app "s" "Z session" nil)}}
+                        :global-apps {"g" {:view (app "g" "A global" nil)}}}
+
+                       views
+                       (app-surfaces/picker-views db)
+
+                       rows
+                       (app-surfaces/picker-items views (constantly "Ready"))]
+
+                   (expect (= ["s" "g"] (mapv :id views)))
+                   (expect (true? (keymap/verb-available? (dissoc db :app-views)
+                                                          {:show-when :has-apps})))
+                   (expect (= ["Ready" "global · Ready"] (mapv :hint rows)))))
+             (it "shows a small footer marker only while the app pane is hidden"
+                 (let [db {:app-views {"s" {:view (app "s" "Review" nil)}}}]
+                   (expect (= "1 app C-x b o" (app-surfaces/apps-marker db)))
+                   (expect (nil? (app-surfaces/apps-marker
+                                   (assoc db :live-panel {:open? true :app {:view-id "s"}}))))
+                   (expect (nil? (app-surfaces/apps-marker {}))))))

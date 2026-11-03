@@ -615,3 +615,33 @@
                          "pending" 2
                          "ahead" 0
                          "draft_changes" {"modified" 0 "created" 0 "deleted" 0}}))))))
+
+(defdescribe
+  hidden-app-marker-space
+  ;; User report: apps need a small marker outside the header.
+  (it
+    "keeps the marker visible beside a long model name at 120 columns"
+    (let [frame (cap/capture!
+                  {:cols 120
+                   :rows 2
+                   :paint! (fn [{:keys [g]}]
+                             (with-redefs-fn
+                               {#'footer/model-segments
+                                (fn [_ ^long row]
+                                  (if (zero? row)
+                                    [{:text (apply str (repeat 95 \M)) :region :left :priority 1}]
+                                    []))
+                                #'footer/session-model-info (constantly {:reasoning-effort? false})}
+                               #(footer/draw-footer! g
+                                                     {:session {:id "s"}
+                                                      :settings {}
+                                                      :messages []
+                                                      :app-views {"app" {:view {:id "app"
+                                                                                :title "Review"}}}}
+                                                     0
+                                                     120
+                                                     0)))})]
+      (expect (= nil
+                 (some-> (:error frame)
+                         ex-message)))
+      (expect (str/includes? (second (str/split-lines (cap/frame-text frame))) "1 app C-x b o")))))

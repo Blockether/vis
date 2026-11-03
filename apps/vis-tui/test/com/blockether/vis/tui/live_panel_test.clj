@@ -59,9 +59,10 @@
 
 (defdescribe
   panel-geometry-test
-  (it "takes 40% of the chat columns, at least 40, and docks only with 60 columns left"
-      (expect (= {:left 120 :width 80 :is-docked true :chat-cols 120} (lv/panel-geometry 200)))
-      (expect (= {:left 50 :width 40 :is-docked false :chat-cols 90} (lv/panel-geometry 90)))
+  (it "takes half the chat columns, at least 48, and docks only with 60 columns left"
+      (expect (= {:left 100 :width 100 :is-docked true :chat-cols 100} (lv/panel-geometry 200)))
+      (expect (= {:left 42 :width 48 :is-docked false :chat-cols 90} (lv/panel-geometry 90)))
+      (expect (= {:left 60 :width 60 :is-docked true :chat-cols 60} (lv/panel-geometry 120)))
       (expect (= 30 (:width (lv/panel-geometry 30))))))
 
 (defdescribe panel-paint-test
@@ -182,8 +183,8 @@
                  (binding [interactions/hit-map (interactions/create-hit-map)]
                    (with-redefs [state/app-db (atom (frame-db))]
                      (let [{:keys [layout lines]} (paint-frame! 160 @state/app-db)]
-                       (expect (= 96 (:cols layout)))
-                       (expect (every? #(= \│ (nth % 96)) lines))
+                       (expect (= 80 (:cols layout)))
+                       (expect (every? #(= \│ (nth % 80)) lines))
                        (expect (some #(str/includes? % "▾ Deploy board") lines))
                        (let [toggle (first (filter #(= :live-panel-toggle (:kind %))
                                                    (.current interactions/hit-map)))]
@@ -197,8 +198,8 @@
                            top (long (:messages-top layout))]
 
                        (expect (= 90 (:cols layout)))
-                       (expect (= \│ (nth (nth lines (inc top)) 50)))
-                       (expect (not= \│ (nth (nth lines 1) 50))))))))
+                       (expect (= \│ (nth (nth lines (inc top)) 42)))
+                       (expect (not= \│ (nth (nth lines 1) 42))))))))
 
 (defn- areas-db
   "The frame fixture with the project sidebar open next to the focused side panel."
@@ -611,3 +612,21 @@
                 (fn [& _])
                 (fn [& _]))))))
         (expect (= {:session {:id "A"} :live-panel pane} @closing))))))
+
+(defdescribe app-pane-hide-chord
+             ;; User report: remove the close icon and hide the pane through C-x b p.
+             (it "hides an app-only pane and reopens the same retained app"
+                 (with-db
+                   (fn []
+                     (swap! state/app-db assoc
+                       :app-views {"review" {:view {:id "review"}}}
+                       :live-panel
+                       {:open? true :focused? true :app {:session-id "s1" :view-id "review"}})
+                     (#'screen/open-live-panel!)
+                     (expect (false? (get-in @state/app-db [:live-panel :open?])))
+                     (expect (false? (get-in @state/app-db [:live-panel :focused?])))
+                     (expect (= "review" (get-in @state/app-db [:live-panel :app :view-id])))
+                     (#'screen/open-live-panel!)
+                     (expect (true? (get-in @state/app-db [:live-panel :open?])))
+                     (expect (true? (get-in @state/app-db [:live-panel :focused?])))
+                     (expect (= "review" (get-in @state/app-db [:live-panel :app :view-id])))))))

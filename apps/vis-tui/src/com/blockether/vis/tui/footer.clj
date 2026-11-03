@@ -37,6 +37,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.tui.client :as lp]
+            [com.blockether.vis.tui.app-surfaces :as app-surfaces]
             [com.blockether.vis.tui.limits-fmt :as lfmt]
             [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.keymap :as keymap]
@@ -727,6 +728,13 @@
                     :fg t/footer-fg
                     :region :left
                     :priority 1}]
+            (app-surfaces/apps-marker db)
+            (conj {:text (app-surfaces/apps-marker db)
+                   :fg t/footer-fg-muted
+                   :bold? false
+                   :region :right
+                   :priority 2})
+
             (get-in db [:session :goal])
             (conj {:text (str " Goal: "
                               (get gateway-contract/session-goal-labels

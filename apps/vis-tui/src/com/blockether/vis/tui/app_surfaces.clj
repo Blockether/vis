@@ -70,6 +70,26 @@
        (filter open-view?)
        by-title))
 
+(defn picker-views
+  "The open apps in picker order: session apps, then global apps."
+  [db]
+  (into (session-apps (:app-views db))
+        (map #(assoc % :picker-global? true))
+        (global-apps (:global-apps db))))
+
+(defn apps-marker
+  "The compact footer hint while apps exist and no app pane is visible."
+  [db]
+  (let [n
+        (count (picker-views db))
+
+        pane
+        (:live-panel db)]
+
+    (when (and (pos? n)
+               (not (and (:open? pane) (contains? (:app-views db) (get-in pane [:app :view-id])))))
+      (str n (if (= 1 n) " app " " apps ") "C-x b o"))))
+
 (defn open-label
   "The button of attachment row `row` in the turn: an app opens in full screen unless its
    effective `inline` surface is false, and every other row opens."
@@ -103,8 +123,10 @@
   [views status-label]
   (mapv (fn [view]
           {:label (or (not-empty (str (:title view))) "App")
-           :description (str "Opens in the " (target-label (session-target view)))
-           :hint (status-label view)
+           :description (if (:picker-global? view)
+                          "Opens over the terminal"
+                          (str "Opens in the " (target-label (session-target view))))
+           :hint (str (when (:picker-global? view) "global · ") (status-label view))
            :view-id (str (:id view))})
         views))
 

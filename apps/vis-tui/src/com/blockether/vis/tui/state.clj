@@ -4356,6 +4356,13 @@
                     (and focused? (:project-sidebar db))
                     (assoc-in [:project-sidebar :focused?] false)))))
 
+(reg-event-db :live-panel-toggle-open
+              (fn [db _]
+                (let [open? (not (get-in db [:live-panel :open?]))]
+                  (cond-> (update db :live-panel assoc :open? open? :focused? open?)
+                    (and open? (:project-sidebar db))
+                    (assoc-in [:project-sidebar :focused?] false)))))
+
 (reg-event-db :app-pane-open
               ;; C-x b o: show session app `view-id` in the side panel slot, with the focus.
               (fn [db [_ session-id view-id]]
