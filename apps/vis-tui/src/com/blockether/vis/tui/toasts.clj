@@ -13,8 +13,8 @@
    in the top-right corner. A card without a title keeps the `✕` on its first
    text line. The body holds up to `max-text-lines` lines of wrapped text. When
    more notices wait, the page counter `← 1/3 →` is in the bottom-right corner.
-   A countdown line runs under the bottom border: the level color is the time
-   left, and the muted part the time used.
+   The countdown is the bottom border: the level color is the time left, and
+   the muted part the time used. A sticky notice has a plain bottom border.
 
    `layout` is pure: it gives the geometry of the card, and the painter only
    draws that geometry."
@@ -116,7 +116,7 @@
          :col (long left)
          :row (long top)
          :width (min max-cols (max (long min-card-cols) head-cols pager-cols text-cols))
-         :height (+ 2 (if head 1 0) (count lines) (if pages 1 0) (if fraction 1 0))}))))
+         :height (+ 2 (if head 1 0) (count lines) (if pages 1 0))}))))
 
 (defn- level-fg
   "The border color of a card."
@@ -158,8 +158,8 @@
           row (long row)
           width (long width)
           inner (- width 2)
-          ;; The countdown has its own row under the card.
-          bottom (+ row (long height) -1 (if fraction -1 0))
+          ;; The bottom row stands on the paper and carries the bottom line.
+          bottom (+ row (long height) -1)
           right (+ col width -1)
           first-row (inc row)
           text-row (if heading (inc first-row) first-row)
@@ -178,27 +178,24 @@
       (p/set-colors! g t/dialog-fg paper)
       (p/fill-rect! g col row width height)
       (p/set-colors! g t/dialog-fg bg)
-      (p/fill-rect! g (inc col) first-row inner (- (inc bottom) first-row))
+      (p/fill-rect! g (inc col) first-row inner (- bottom first-row))
       ;; Border: one-eighth blocks on the cell edges around the body. A side line
       ;; is two blocks that meet on one cell edge, so it is as thick as the top line.
-      ;; The last body row is empty, and the bottom line lies on its lower edge.
       (p/set-colors! g edge paper)
       (p/put-str! g (inc col) row (rule inner "▁"))
-      (doseq [r (range first-row (inc bottom))]
+      (doseq [r (range first-row bottom)]
         (p/put-str! g col (long r) "▕")
         (p/put-str! g right (long r) "▏"))
       (p/set-colors! g edge bg)
       (doseq [r (range first-row bottom)]
         (p/put-str! g (inc col) (long r) "▏")
         (p/put-str! g (dec right) (long r) "▕"))
-      (p/put-str! g (inc col) bottom (rule inner "▁"))
-      ;; Countdown right under the border: the level color is the time left.
-      (when fraction
-        (let [left-cols (long (Math/ceil (* (double fraction) inner)))]
-          (p/set-colors! g edge paper)
-          (p/put-str! g (inc col) (inc bottom) (rule left-cols "▔"))
-          (p/set-colors! g (t/legible-ink t/footer-fg-muted paper) paper)
-          (p/put-str! g (+ col 1 left-cols) (inc bottom) (rule (- inner left-cols) "▔"))))
+      ;; The bottom line is the countdown: the level color is the time left.
+      (let [left-cols (if fraction (long (Math/ceil (* (double fraction) inner))) inner)]
+        (p/set-colors! g edge paper)
+        (p/put-str! g (inc col) bottom (rule left-cols "▔"))
+        (p/set-colors! g (t/legible-ink t/footer-fg-muted paper) paper)
+        (p/put-str! g (+ col 1 left-cols) bottom (rule (- inner left-cols) "▔")))
       ;; Heading.
       (when heading
         (p/set-colors! g muted bg)
