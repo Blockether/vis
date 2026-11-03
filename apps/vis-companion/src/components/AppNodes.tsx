@@ -938,7 +938,7 @@ export function DiffNodeView({
               aria-label={file.path}
             >
               <FileHeader file={file} isOpen={!folded.has(file.path)} onToggle={() => toggle(file.path)} />
-              {!folded.has(file.path) && (
+              {!folded.has(file.path) && file.hunks.length > 0 && (
                 <div className="diff-file-scroll" data-diff-scroll>
                   {file.hunks.map((hunk, at) => (
                     <HunkView
@@ -964,7 +964,7 @@ export function DiffNodeView({
                       onClose={() => setOpened(null)}
                     />
                   ))}
-                  {file.hunks.length > 0 && fileChange(file) === 'modified' && (
+                  {fileChange(file) === 'modified' && (
                     <ContextBand
                       label="More unchanged context may be available"
                       title="Source context is not included in this patch"
