@@ -22,7 +22,14 @@ const DIFF: LiveDiffNode = {
     {
       id: 't1',
       anchor: { path: 'a.txt', side: 'new', line: 2 },
-      messages: [{ id: 'm1', author: { kind: 'agent' }, body: 'Renamed it.', created_at: 1 }],
+      messages: [
+        {
+          id: 'm1',
+          author: { kind: 'agent' },
+          body: 'Renamed it.',
+          created_at: 1,
+        },
+      ],
       draft: 'Looks fine',
     },
   ],
@@ -42,10 +49,14 @@ describe('DiffNodeView', () => {
   it('opens an editor on the line that a keyboard activates, on that line side', async () => {
     const app = actions();
     render(<DiffNodeView node={DIFF} actions={app} />);
-    const removed = screen.getByRole('button', { name: 'Comment on a.txt old line 2' });
+    const removed = screen.getByRole('button', {
+      name: 'Comment on a.txt old line 2',
+    });
     removed.focus();
     fireEvent.click(removed);
-    const editor = screen.getByRole('textbox', { name: 'Comment on a.txt line 2' });
+    const editor = screen.getByRole('textbox', {
+      name: 'Comment on a.txt line 2',
+    });
     fireEvent.change(editor, { target: { value: 'Why remove it?' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
@@ -77,9 +88,72 @@ describe('DiffNodeView', () => {
     expect(screen.getByText('Looks fine')).toBeInTheDocument();
   });
 
+  // The T3 parity report requires split mode to preserve comment anchors.
+  it('pairs changed lines in split mode and saves a comment on the old side', async () => {
+    const app = actions();
+    render(<DiffNodeView node={DIFF} actions={app} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Split' }));
+    const old = screen.getByRole('button', {
+      name: 'Comment on a.txt old line 2',
+    });
+    expect(old.closest('tr')).toHaveTextContent('old');
+    expect(old.closest('tr')).toHaveTextContent('new');
+    fireEvent.click(old);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on a.txt line 2' }), {
+      target: { value: 'Keep this?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(app.draft).toHaveBeenCalledWith('review', {
+        anchor: { path: 'a.txt', side: 'old', line: 2 },
+        body: 'Keep this?',
+      }),
+    );
+  });
+
+  // Split mode must not repeat old-side context threads below the diff.
+  it('shows an old-side context thread once in either layout', () => {
+    const node: LiveDiffNode = {
+      ...DIFF,
+      threads: [
+        {
+          id: 'old-context',
+          anchor: { path: 'a.txt', side: 'old', line: 1 },
+          messages: [
+            {
+              id: 'context-message',
+              author: { kind: 'agent' },
+              body: 'Keep this context.',
+              created_at: 1,
+            },
+          ],
+        },
+      ],
+    };
+    render(<DiffNodeView node={node} />);
+    expect(screen.getAllByText('Keep this context.')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Split' }));
+    expect(screen.getAllByText('Keep this context.')).toHaveLength(1);
+  });
+
+  // The T3 parity report requires the file tree to open folded files.
+  it('unfolds a file selected from the tree after Collapse all', () => {
+    const { container } = render(<DiffNodeView node={DIFF} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Files' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }));
+    expect(screen.queryByText('old')).toBeNull();
+    const scroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    fireEvent.click(screen.getByRole('button', { name: 'Open a.txt' }));
+    Element.prototype.scrollIntoView = scroll;
+    expect(container.querySelector('[data-diff-scroll]')).toHaveTextContent('old');
+    expect(screen.getByRole('button', { name: 'Fold a.txt' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
   it('is read only without app actions and when the app is closed', () => {
     const { unmount } = render(<DiffNodeView node={DIFF} />);
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Comment on/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit draft' })).toBeNull();
     unmount();
     render(<DiffNodeView node={DIFF} actions={actions({ isReadOnly: true })} />);
     expect(screen.queryByRole('button', { name: /Comment on/ })).toBeNull();
@@ -134,14 +208,19 @@ describe('Send', () => {
               status: 'answered',
               created_at: 1,
               updated_at: 2,
-              comments: [{ node_id: 'review', thread_id: 't1', message_id: 'm2', body: 'x' }],
+              comments: [
+                {
+                  node_id: 'review',
+                  thread_id: 't1',
+                  message_id: 'm2',
+                  body: 'x',
+                },
+              ],
             },
           ],
         }}
       />,
     );
-    expect(screen.getByRole('list', { name: 'Receipts' }).textContent).toContain(
-      'Answered · 1 comment',
-    );
+    expect(screen.getByRole('list', { name: 'Receipts' }).textContent).toContain('Answered · 1 comment');
   });
 });

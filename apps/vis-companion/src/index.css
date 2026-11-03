@@ -58,6 +58,19 @@
   border: 0;
   border-radius: 0;
 }
+/* Monochrome pages keep their own two inks in a diff: the bar and the words tell
+   an addition from a removal, not a hue. */
+[data-theme='paper'],
+[data-theme='high-contrast-dark'] {
+  --color-diff-add: var(--ok);
+  --color-diff-del: var(--err);
+  --color-diff-add-ink: var(--fg);
+  --color-diff-del-ink: var(--fg);
+  --color-diff-add-row: color-mix(in srgb, var(--ok) 10%, var(--surface));
+  --color-diff-del-row: color-mix(in srgb, var(--err) 10%, var(--surface));
+  --color-diff-add-word: color-mix(in srgb, var(--ok) 15%, transparent);
+  --color-diff-del-word: color-mix(in srgb, var(--err) 15%, transparent);
+}
 /* Monochrome pages change in place. This removes CSS motion, not streamed DOM
    updates or hardware ghosting; those need a separate reader/display policy. */
 :where([data-theme='paper'], [data-theme='high-contrast-dark']) *,
@@ -188,6 +201,37 @@
      ink it stays unmistakably red and reads: light 5.9:1, dark on the dark
      surface the same way, because --fg flips with the palette. */
   --color-err-ink: color-mix(in oklab, var(--err) 68%, var(--fg));
+  /* Diff colours (T3 Code, @pierre/diffs pierre-dark). A dark theme draws a diff on a
+     paper darker than its panel, with T3's own green and red: on pure black the rows
+     are rgb(2,17,11) and rgb(23,7,5), as in T3. The darker paper keeps the red line
+     number at 4.79:1 or more in every shipped dark theme. A light theme keeps its own
+     ink and tints. `light-dark()` follows the `color-scheme` of each theme. */
+  --color-diff-paper: light-dark(var(--surface), #000);
+  --color-diff-add: light-dark(var(--ok), #07c480);
+  --color-diff-del: light-dark(var(--err), #ff2e3f);
+  --color-diff-add-ink: light-dark(color-mix(in oklab, var(--ok) 68%, var(--fg)), #07c480);
+  --color-diff-del-ink: light-dark(color-mix(in oklab, var(--err) 68%, var(--fg)), #ff2e3f);
+  --color-diff-add-row: light-dark(
+    color-mix(in srgb, var(--ok) 10%, var(--surface)),
+    #02110b
+  );
+  --color-diff-del-row: light-dark(
+    color-mix(in srgb, var(--err) 10%, var(--surface)),
+    #170705
+  );
+  --color-diff-add-word: light-dark(
+    color-mix(in srgb, var(--ok) 15%, transparent),
+    color-mix(in srgb, #07c480 20%, transparent)
+  );
+  --color-diff-del-word: light-dark(
+    color-mix(in srgb, var(--err) 15%, transparent),
+    color-mix(in srgb, #ff2e3f 20%, transparent)
+  );
+  --color-diff-hunk: light-dark(
+    color-mix(in srgb, var(--fg) 6%, var(--surface)),
+    color-mix(in srgb, var(--fg) 3%, var(--color-diff-paper))
+  );
+  --color-diff-filler: color-mix(in srgb, var(--fg) 9%, var(--color-diff-paper));
   --color-dialog-title: var(--dialog-title-bg);
   --color-dialog-title-foreground: var(--dialog-title-fg);
   --color-dialog-edge: var(--dialog-border);
@@ -618,4 +662,204 @@ ol.markdown-list > li::before {
   [aria-disabled='true'] {
     @apply cursor-default;
   }
+}
+
+/* Review geometry follows T3 Code. Each file owns its horizontal scroll. */
+.app-diff {
+  --diff-paper: var(--color-diff-paper);
+}
+.diff-file {
+  container-type: inline-size;
+  background: var(--diff-paper);
+}
+.diff-file-scroll {
+  contain: paint;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+.diff-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+}
+.diff-table td {
+  padding-top: 0;
+  padding-bottom: 0;
+  vertical-align: top;
+}
+.diff-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 41px;
+  padding-left: 16px;
+  padding-right: 8px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  background: var(--diff-paper);
+  color: var(--dialog-hint);
+}
+.diff-code {
+  padding-left: 8px;
+  padding-right: 16px;
+  white-space: pre;
+  color: var(--fg);
+}
+.diff-line-button {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  width: 100%;
+  padding: 0 8px 0 16px;
+  line-height: 20px;
+  text-align: right;
+}
+.diff-gutter[data-kind="add"],
+.diff-code[data-kind="add"] {
+  background: var(--color-diff-add-row);
+}
+.diff-gutter[data-kind="remove"],
+.diff-code[data-kind="remove"] {
+  background: var(--color-diff-del-row);
+}
+.diff-gutter[data-kind="add"] {
+  color: var(--color-diff-add-ink);
+  box-shadow: inset 4px 0 var(--color-diff-add);
+}
+.diff-gutter[data-kind="remove"] {
+  color: var(--color-diff-del-ink);
+  background-image: repeating-linear-gradient(
+    180deg,
+    var(--color-diff-del) 0 1px,
+    transparent 1px 2px
+  );
+  background-size: 4px 100%;
+  background-repeat: no-repeat;
+}
+.diff-word {
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  background-image: linear-gradient(var(--diff-word-tint), var(--diff-word-tint));
+  background-position: center;
+  background-size: 100% 15px;
+  background-repeat: no-repeat;
+}
+[data-kind='add'] .diff-word { --diff-word-tint: var(--color-diff-add-word); }
+[data-kind='remove'] .diff-word { --diff-word-tint: var(--color-diff-del-word); }
+.diff-empty {
+  background: var(--color-diff-filler);
+}
+.app-diff[data-wrap="true"] .diff-table {
+  table-layout: fixed;
+}
+.app-diff[data-wrap="true"] .diff-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.app-diff[data-split="true"] .diff-gutter:nth-child(3) {
+  left: 50%;
+  right: calc(50% - var(--diff-number-width, 41px));
+  border-left: 1px solid var(--dialog-border);
+}
+.diff-threads {
+  position: sticky;
+  left: 0;
+  width: 100cqw;
+  box-sizing: border-box;
+  background: var(--diff-paper);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+}
+.diff-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  font-size: 12px;
+  line-height: 16px;
+}
+.diff-toolbar-summary { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; color: var(--dialog-hint); }
+.diff-revisions { display: none; }
+.diff-layout { display: flex; flex-shrink: 0; gap: 2px; border-radius: 8px; background: var(--hover); }
+.diff-toolbar button {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  color: var(--dialog-hint);
+}
+.diff-toolbar button[aria-pressed="true"] { background: var(--hover); color: var(--fg); }
+@media (width >= 40rem) and (pointer: fine) {
+  .diff-toolbar { height: 40px; min-height: 40px; }
+  .diff-toolbar button { width: 28px; height: 28px; }
+  .diff-layout { padding: 2px; }
+  .diff-layout button { width: 32px; height: 24px; border-radius: 6px; }
+  .diff-revisions { display: inline; }
+}
+.diff-file-tree {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--dialog-border);
+  padding: 4px 0;
+}
+.diff-with-tree {
+  display: grid;
+  gap: 12px;
+}
+@media (min-width: 768px) {
+  .diff-with-tree {
+    grid-template-columns: minmax(0, 1fr) 256px;
+    align-items: start;
+  }
+  .diff-with-tree > .diff-file-tree { grid-column: 2; grid-row: 1; }
+  .diff-with-tree > .diff-files { grid-column: 1; grid-row: 1; }
+}
+@media (pointer: coarse), (max-width: 767px) {
+  .diff-file > header {
+    min-height: 44px;
+  }
+  .diff-fold::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    min-height: 44px;
+  }
+  .diff-fold {
+    position: relative;
+  }
+}
+
+.app-diff .diff-fold .truncate,
+.diff-toolbar,
+.diff-file-tree,
+.diff-threads,
+.diff-hunk {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.diff-file > header {
+  background: var(--diff-paper);
+}
+
+/* Black and white rings keep one visible edge against every app surface. */
+.app-focus-ring:focus-visible,
+.app-focus-peer:focus-visible ~ .app-focus-ring {
+  outline: none;
+  box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 4px #000;
+}
+
+.diff-threads p, .diff-threads textarea {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 20px;
 }

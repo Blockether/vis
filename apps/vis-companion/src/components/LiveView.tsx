@@ -35,6 +35,7 @@ import { InlineMarkdown } from './ChatContent';
 import { HumanInputFieldRow } from './HumanInputPrompt';
 import { DiffNodeView, ThreadNodeView, type AppNodeActions } from './AppNodes';
 import { LiveScene } from './LiveScene';
+import { ImageNodeView } from './AppImage';
 import { humanInputDefaultValue, type HumanInputValue } from '../lib/human-input';
 import { ariaShortcut, nodeShortcuts } from '../lib/app-shortcuts';
 import { formatDuration } from '../lib/time-axis';
@@ -1877,6 +1878,7 @@ function NodeCell({
           {node.type === 'diff' && <DiffNodeView node={node} actions={presentation.app} />}
           {node.type === 'thread' && <ThreadNodeView node={node} actions={presentation.app} />}
           {node.type === 'scene' && <LiveScene node={node} />}
+          {node.type === 'image' && <ImageNodeView node={node} />}
         </div>
       )}
     </div>
@@ -2338,6 +2340,7 @@ export function RunDialog({
   footer,
   closeLabel,
   within = 'session',
+  actions,
   onClose,
   children,
 }: {
@@ -2350,6 +2353,8 @@ export function RunDialog({
   closeLabel?: string;
   /** What the dialog stands over: its session pane, or the whole shell for a global app. */
   within?: 'app' | 'session';
+  /** `BandButton` cells in the band, before the way out. */
+  actions?: ReactNode;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -2364,7 +2369,14 @@ export function RunDialog({
   }, [onClose]);
   return (
     <Modal within={within} onDismiss={onClose}>
-      <DialogFrame title={title} subtitle={subtitle} footer={footer} closeLabel={closeLabel} onClose={onClose}>
+      <DialogFrame
+        title={title}
+        subtitle={subtitle}
+        actions={actions}
+        footer={footer}
+        closeLabel={closeLabel}
+        onClose={onClose}
+      >
         {/* The run keeps the band's rail: each node brings its own `--live-view-inset`, so
             a second gutter here doubled the side margin on a phone (user report). */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>

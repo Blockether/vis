@@ -4,7 +4,7 @@
  * `draft` and `submit` actions. Without an app the threads are read only.
  */
 
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import {
   APP_ACTION_WORDS,
@@ -13,7 +13,20 @@ import {
   type AppActionResult,
   type AppActionStatus,
 } from '../lib/app-actions';
-import { anchorKey, parseUnifiedDiff, type AppDiffLine } from '../lib/app-diff';
+import {
+  anchorKey,
+  fileChange,
+  fileStat,
+  hiddenLinesBefore,
+  diffModel,
+  fileTree,
+  splitRows,
+  type AppDiffFile,
+  type AppDiffHunk,
+  type AppDiffLine,
+  type DiffSpan,
+  type SplitRow,
+} from '../lib/app-diff';
 import {
   LIVE_MESSAGE_CHARS,
   type LiveDiffNode,
@@ -23,7 +36,16 @@ import {
   type LiveThreadNode,
 } from '../lib/live-view';
 import type { ViewAnchor } from '../lib/view';
-import { Button } from './ui';
+import {
+  ChevronIcon,
+  CollapseAllIcon,
+  ExpandAllIcon,
+  FileTreeIcon,
+  SideBySideIcon,
+  UnifiedDiffIcon,
+  WrapIcon,
+} from './icons';
+import { Button, CopyChip } from './ui';
 
 /** What an app gives its review nodes. Absent, the nodes are read only. */
 export interface AppNodeActions {
@@ -297,13 +319,7 @@ function savedDrafts(threads: readonly LiveThread[]): number {
 }
 
 /** A thread node: one discussion with its own Send. */
-export function ThreadNodeView({
-  node,
-  actions,
-}: {
-  node: LiveThreadNode;
-  actions?: AppNodeActions;
-}) {
+export function ThreadNodeView({ node, actions }: { node: LiveThreadNode; actions?: AppNodeActions }) {
   const thread: LiveThread = {
     id: node.id,
     messages: node.messages,
@@ -324,81 +340,181 @@ export function ThreadNodeView({
   );
 }
 
-const LINE_TINT: Record<AppDiffLine['kind'], string> = {
-  add: 'bg-ok/10 text-ok',
-  remove: 'bg-err/10 text-error',
-  context: 'text-dialog-foreground',
-};
-
-const LINE_MARK: Record<AppDiffLine['kind'], string> = { add: '+', remove: '-', context: ' ' };
-
-/** One line-number cell. On the anchor side of a line it opens a new thread. */
+/** The number stays visible while the file scrolls sideways. */
 function Gutter({
-  number,
-  isAnchor,
-  label,
+  line,
+  digits,
+  canComment,
+  path,
   onActivate,
+  side = 'new',
 }: {
-  number?: number;
-  isAnchor: boolean;
-  label: string;
-  onActivate: () => void;
+  line: AppDiffLine;
+  digits: number;
+  canComment: boolean;
+  path: string;
+  onActivate: (line: AppDiffLine) => void;
+  side?: 'old' | 'new';
 }) {
   return (
-    <td className="w-0 select-none whitespace-nowrap px-1 text-right text-dialog-hint">
-      {isAnchor ? (
+    <td data-kind={line.kind} className="diff-gutter" style={{ width: Math.max(41, digits * 8 + 25) }}>
+      {canComment ? (
         <button
           type="button"
-          className="min-w-6 px-0.5 text-right hover:text-accent-ink focus-visible:bg-hover focus-visible:text-accent-ink focus-visible:outline-none"
-          aria-label={label}
-          onClick={onActivate}
+          className="diff-line-button app-focus-ring"
+          aria-label={`Comment on ${path} ${line.anchor.side === 'old' ? 'old ' : ''}line ${line.anchor.line}`}
+          onClick={() => onActivate(line)}
         >
-          {number ?? ''}
+          {side === 'old' ? line.old_line : line.anchor.line}
         </button>
+      ) : side === 'old' ? (
+        line.old_line
       ) : (
-        (number ?? '')
+        line.anchor.line
       )}
     </td>
   );
 }
 
-/** Lines that scroll sideways together, between two threads. */
-function LineRun({
-  lines,
-  path,
-  canComment,
-  onActivate,
-}: {
-  lines: AppDiffLine[];
-  path: string;
-  canComment: boolean;
-  onActivate: (line: AppDiffLine) => void;
-}) {
+/** Changed words retain the same line box as the surrounding code. */
+function LineCode({ line, words }: { line: AppDiffLine; words?: readonly DiffSpan[] }) {
   return (
-    <div className="min-w-0 overflow-x-auto" data-diff-lines>
-      <table className="min-w-full border-collapse font-mono text-body">
+    <td data-kind={line.kind} className="diff-code">
+      {line.kind !== 'context' && (
+        <span className="sr-only">{line.kind === 'add' ? 'Added: ' : 'Removed: '}</span>
+      )}
+      {words
+        ? words.map((part, at) =>
+            part.isChanged ? (
+              <span key={at} className="diff-word">
+                {part.text}
+              </span>
+            ) : (
+              part.text
+            ),
+          )
+        : line.text}
+    </td>
+  );
+}
+
+interface HunkProps {
+  hunk: AppDiffHunk;
+  file: AppDiffFile;
+  at: number;
+  digits: number;
+  words: ReadonlyMap<string, DiffSpan[]>;
+  split: boolean;
+  nodeId: string;
+  byAnchor: ReadonlyMap<string, LiveThread[]>;
+  opened: ViewAnchor | null;
+  actions?: AppNodeActions;
+  onActivate: (line: AppDiffLine) => void;
+  onClose: () => void;
+}
+
+/** A thread occupies the file width, rather than the code's scroll width. */
+function LineThreads({ lines, model }: { lines: AppDiffLine[]; model: HunkProps }) {
+  const threads = lines.flatMap((line) => model.byAnchor.get(anchorKey(line.anchor)) ?? []);
+  const selected = lines.find((line) => model.opened && anchorKey(line.anchor) === anchorKey(model.opened));
+  if (!threads.length && !selected) return null;
+  return (
+    <tr>
+      <td colSpan={model.split ? 4 : 2} className="p-0">
+        <div className="diff-threads space-y-2 px-2 py-2">
+          {threads.map((thread) => (
+            <ThreadBlock
+              key={thread.id}
+              thread={thread}
+              nodeId={model.nodeId}
+              actions={model.actions}
+              title={`Thread on ${model.file.path} line ${thread.anchor?.line}`}
+            />
+          ))}
+          {selected && model.actions && (
+            <DraftEditor
+              label={`Comment on ${model.file.path} line ${selected.anchor.line}`}
+              saved=""
+              onSave={(body) =>
+                model.actions!.draft(model.nodeId, {
+                  anchor: selected.anchor,
+                  body,
+                })
+              }
+              onClose={model.onClose}
+            />
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/** Both modes use one table per hunk inside the file's shared scroller. */
+function HunkView(model: HunkProps) {
+  const rows: SplitRow[] = model.split
+    ? splitRows(model.hunk.lines)
+    : model.hunk.lines.map((line) => ({ new: line }));
+  const cell = (line: AppDiffLine | undefined, side: 'old' | 'new') =>
+    line ? (
+      <>
+        <Gutter
+          line={line}
+          digits={model.digits}
+          path={model.file.path}
+          canComment={Boolean(model.actions) && !model.actions?.isReadOnly}
+          onActivate={model.onActivate}
+          side={side}
+        />
+        <LineCode line={line} words={model.words.get(anchorKey(line.anchor))} />
+      </>
+    ) : (
+      <>
+        <td className="diff-gutter diff-empty" style={{ width: Math.max(41, model.digits * 8 + 25) }} />
+        <td className="diff-empty" />
+      </>
+    );
+  return (
+    <div className="min-w-0">
+      <HunkSeparator hunks={model.file.hunks} at={model.at} />
+      <table className="diff-table" data-diff-lines>
         <tbody>
-          {lines.map((line) => {
-            const number = line.anchor.line;
+          {rows.map((row, i) => {
+            const old =
+              row.old?.kind === 'context'
+                ? {
+                    ...row.old,
+                    anchor: {
+                      ...row.old.anchor,
+                      side: 'old' as const,
+                      line: row.old.old_line!,
+                    },
+                  }
+                : row.old;
+            const contextOld =
+              row.new?.kind === 'context'
+                ? {
+                    ...row.new,
+                    anchor: {
+                      ...row.new.anchor,
+                      side: 'old' as const,
+                      line: row.new.old_line!,
+                    },
+                  }
+                : undefined;
+            const lines = [model.split ? old : contextOld, row.new].filter((line): line is AppDiffLine =>
+              Boolean(line),
+            );
             return (
-              <tr key={anchorKey(line.anchor)} className={LINE_TINT[line.kind]} data-anchor={anchorKey(line.anchor)}>
-                <Gutter
-                  number={line.old_line}
-                  isAnchor={canComment && line.anchor.side === 'old'}
-                  label={`Comment on ${path} old line ${number}`}
-                  onActivate={() => onActivate(line)}
-                />
-                <Gutter
-                  number={line.new_line}
-                  isAnchor={canComment && line.anchor.side === 'new'}
-                  label={`Comment on ${path} line ${number}`}
-                  onActivate={() => onActivate(line)}
-                />
-                <td className="w-0 select-none px-1" aria-hidden="true">
-                  {LINE_MARK[line.kind]}
-                </td>
-                <td className="whitespace-pre pr-2">{line.text}</td>
-              </tr>
+              <DiffRow
+                key={i}
+                old={old}
+                next={row.new}
+                split={model.split}
+                lines={lines}
+                model={model}
+                cell={cell}
+              />
             );
           })}
         </tbody>
@@ -407,15 +523,128 @@ function LineRun({
   );
 }
 
+function DiffRow({
+  old,
+  next,
+  split,
+  lines,
+  model,
+  cell,
+}: {
+  old?: AppDiffLine;
+  next?: AppDiffLine;
+  split: boolean;
+  lines: AppDiffLine[];
+  model: HunkProps;
+  cell: (line: AppDiffLine | undefined, side: 'old' | 'new') => ReactNode;
+}) {
+  return (
+    <>
+      <tr
+        data-anchor={next ? anchorKey(next.anchor) : undefined}
+        data-line-kind={!split ? next?.kind : undefined}
+      >
+        {split && cell(old, 'old')}
+        {cell(next, 'new')}
+      </tr>
+      <LineThreads lines={lines} model={model} />
+    </>
+  );
+}
+
+const CHANGE_MARK: Record<ReturnType<typeof fileChange>, { letter: string; word: string; ink: string }> = {
+  added: { letter: 'A', word: 'Added', ink: 'text-ok-ink' },
+  deleted: { letter: 'D', word: 'Deleted', ink: 'text-err-ink' },
+  renamed: { letter: 'R', word: 'Renamed', ink: 'text-link-fg' },
+  modified: { letter: 'M', word: 'Modified', ink: 'text-link-fg' },
+};
+
+/** The +N and -N of a file or a diff: removals first, as T3 puts them. */
+function DiffStat({ additions, deletions }: { additions: number; deletions: number }) {
+  return (
+    <span className="flex shrink-0 items-center gap-2 font-mono text-ui tabular-nums">
+      {deletions > 0 && <span className="text-err-ink">-{deletions}</span>}
+      {(additions > 0 || deletions === 0) && <span className="text-ok-ink">+{additions}</span>}
+    </span>
+  );
+}
+
 /**
- * A unified diff with threads under the lines they name. A line number is a
- * button: Enter or a press opens a new thread on that line. The code scrolls
- * sideways; a thread keeps the full width under its line.
+ * The band of one file: chevron, change mark, path, copy and the line counts. It
+ * stays at the top while its lines scroll by, and a press folds the file.
  */
+function FileHeader({
+  file,
+  isOpen,
+  onToggle,
+}: {
+  file: AppDiffFile;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const change = CHANGE_MARK[fileChange(file)];
+  const name =
+    file.old_path && file.new_path && file.old_path !== file.new_path
+      ? `${file.old_path} → ${file.new_path}`
+      : file.path;
+  return (
+    <header
+      className={`sticky top-0 z-[1] flex h-11 items-center gap-2 bg-panel pl-2 pr-3 mouse:h-8 ${isOpen ? 'border-b border-dialog-edge' : ''}`}
+    >
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        aria-label={`${isOpen ? 'Fold' : 'Unfold'} ${name}`}
+        onClick={onToggle}
+        className="diff-fold app-focus-ring flex min-w-0 flex-1 items-center gap-2 self-stretch text-left hover:text-accent-ink focus-visible:bg-current/10 focus-visible:outline-none"
+      >
+        <ChevronIcon open={isOpen} className="size-4 shrink-0 text-dialog-hint" />
+        <span
+          title={change.word}
+          className={`w-4 shrink-0 text-center font-mono text-ui font-bold ${change.ink}`}
+        >
+          <span aria-hidden>{change.letter}</span>
+          <span className="sr-only">{change.word}</span>
+        </span>
+        <span className="min-w-0 truncate font-sans text-[12px] leading-4 text-white">{name}</span>
+      </button>
+      <CopyChip value={file.path} label={`Copy path ${file.path}`} density="compact" />
+      <DiffStat {...fileStat(file)} />
+    </header>
+  );
+}
+
+/** The quiet bar between two hunks: how many unchanged lines the diff leaves out. */
+function HunkSeparator({ hunks, at }: { hunks: readonly AppDiffHunk[]; at: number }) {
+  const hidden = hiddenLinesBefore(hunks, at);
+  if (hidden === 0) return null;
+  const header = hunks[at].header;
+  const context = header.replace(/^@@[^@]*@@\s*/, '');
+  return (
+    <p
+      title={header}
+      className="diff-hunk mx-2 my-1 flex h-6 min-w-0 items-center gap-2 rounded-[6px] bg-[var(--color-diff-hunk)] px-2 font-sans text-ui text-dialog-hint"
+    >
+      <span className="shrink-0">
+        {hidden === null ? header : `${hidden} unmodified ${hidden === 1 ? 'line' : 'lines'}`}
+      </span>
+      {hidden !== null && context && <span className="min-w-0 truncate text-footer-muted">{context}</span>}
+    </p>
+  );
+}
+
+/** Unified and split diffs share anchored comments, file controls and one scroller per file. */
 export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: AppNodeActions }) {
-  const files = useMemo(() => parseUnifiedDiff(node.patch), [node.patch]);
+  const { files, words, digits, total, elsewhere } = useMemo(
+    () => diffModel(node.patch, node.threads),
+    [node.patch, node.threads],
+  );
   const [opened, setOpened] = useState<ViewAnchor | null>(null);
-  const canComment = Boolean(actions) && !actions?.isReadOnly;
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
+  const [split, setSplit] = useState(false);
+  const [wrap, setWrap] = useState(true);
+  const [tree, setTree] = useState(false);
+  const refs = useRef(new Map<string, HTMLElement>());
   const byAnchor = useMemo(() => {
     const map = new Map<string, LiveThread[]>();
     for (const thread of node.threads) {
@@ -425,82 +654,110 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
     }
     return map;
   }, [node.threads]);
-  const shown = new Set<string>();
-  for (const file of files)
-    for (const hunk of file.hunks) for (const line of hunk.lines) shown.add(anchorKey(line.anchor));
-  const elsewhere = node.threads.filter(
-    (thread) => !thread.anchor || !shown.has(anchorKey(thread.anchor)),
-  );
-  const openedKey = opened ? anchorKey(opened) : null;
+  const toggle = (path: string) =>
+    setFolded((held) => {
+      const next = new Set(held);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   const revisions = [node.old_revision, node.new_revision].filter(Boolean).join(' → ');
+  const allFolded = files.length > 0 && files.every((file) => folded.has(file.path));
   return (
-    <div className="min-w-0 space-y-3">
-      {revisions && <p className="font-mono text-ui text-dialog-hint">{revisions}</p>}
-      {files.length === 0 && <p className="font-mono text-body text-dialog-hint">No changes.</p>}
-      {files.map((file) => (
-        <section key={file.path} className="min-w-0 border border-dialog-edge" aria-label={file.path}>
-          <h4 className="border-b border-dialog-edge bg-panel-2 px-2 py-1 font-mono text-ui font-bold text-white [overflow-wrap:anywhere]">
-            {file.old_path && file.new_path && file.old_path !== file.new_path
-              ? `${file.old_path} → ${file.new_path}`
-              : file.path}
-          </h4>
-          {file.hunks.map((hunk, hunkAt) => {
-            const parts: ReactNode[] = [];
-            let run: AppDiffLine[] = [];
-            const flush = (key: string) => {
-              if (run.length === 0) return;
-              parts.push(
-                <LineRun
-                  key={`lines:${key}`}
-                  lines={run}
-                  path={file.path}
-                  canComment={canComment}
-                  onActivate={(line) => setOpened(line.anchor)}
-                />,
-              );
-              run = [];
-            };
-            for (const line of hunk.lines) {
-              run.push(line);
-              const key = anchorKey(line.anchor);
-              const threads = byAnchor.get(key) ?? [];
-              const isOpen = openedKey === key && actions;
-              if (threads.length === 0 && !isOpen) continue;
-              flush(key);
-              parts.push(
-                <div key={`threads:${key}`} className="space-y-2 px-2 py-2">
-                  {threads.map((thread) => (
-                    <ThreadBlock
-                      key={thread.id}
-                      thread={thread}
+    <div className="app-diff min-w-0 space-y-3" data-wrap={wrap} data-split={split}>
+      <DiffToolbar
+        split={split}
+        wrap={wrap}
+        tree={tree}
+        allFolded={allFolded}
+        count={files.length}
+        total={total}
+        revisions={revisions}
+        onSplit={setSplit}
+        onWrap={() => setWrap(!wrap)}
+        onTree={() => setTree(!tree)}
+        onFold={() => setFolded(allFolded ? new Set() : new Set(files.map((file) => file.path)))}
+      />
+      <div className={`min-w-0 ${tree ? 'diff-with-tree' : ''}`}>
+        {tree && (
+          <nav className="diff-file-tree" aria-label="Changed files">
+            {fileTree(files).map((row) =>
+              row.kind === 'folder' ? (
+                <p
+                  key={row.key}
+                  className="px-2 py-1 text-ui text-dialog-hint"
+                  style={{ paddingLeft: 8 + row.depth * 12 }}
+                >
+                  {row.name}
+                </p>
+              ) : (
+                <button
+                  key={row.key}
+                  type="button"
+                  aria-label={`Open ${row.file.path}`}
+                  className="flex min-h-11 w-full min-w-0 items-center gap-2 px-2 text-left text-[12px] hover:bg-hover app-focus-ring"
+                  style={{ paddingLeft: 8 + row.depth * 12 }}
+                  onClick={() => {
+                    setFolded((held) => {
+                      const next = new Set(held);
+                      next.delete(row.file.path);
+                      return next;
+                    });
+                    refs.current.get(row.file.path)?.scrollIntoView({ block: 'nearest' });
+                  }}
+                >
+                  <span className="min-w-0 flex-1 truncate" title={row.file.path}>
+                    {row.name}
+                  </span>
+                  <DiffStat {...fileStat(row.file)} />
+                </button>
+              ),
+            )}
+          </nav>
+        )}
+        <div className="diff-files min-w-0 space-y-3">
+          {!files.length && <p className="font-mono text-body text-dialog-hint">No changes.</p>}
+          {files.map((file) => (
+            <section
+              key={file.path}
+              ref={(el) => {
+                if (el) refs.current.set(file.path, el);
+                else refs.current.delete(file.path);
+              }}
+              className="diff-file min-w-0 border border-dialog-edge"
+              style={
+                {
+                  '--diff-number-width': `${Math.max(41, (digits.get(file.path) ?? 1) * 8 + 25)}px`,
+                } as CSSProperties
+              }
+              aria-label={file.path}
+            >
+              <FileHeader file={file} isOpen={!folded.has(file.path)} onToggle={() => toggle(file.path)} />
+              {!folded.has(file.path) && (
+                <div className="diff-file-scroll" data-diff-scroll>
+                  {file.hunks.map((hunk, at) => (
+                    <HunkView
+                      key={`${hunk.header}:${at}`}
+                      hunk={hunk}
+                      file={file}
+                      at={at}
+                      digits={digits.get(file.path) ?? 1}
+                      words={words}
+                      split={split}
                       nodeId={node.id}
+                      byAnchor={byAnchor}
+                      opened={opened}
                       actions={actions}
-                      title={`Thread on ${file.path} line ${line.anchor.line}`}
-                    />
-                  ))}
-                  {isOpen && (
-                    <DraftEditor
-                      label={`Comment on ${file.path} line ${line.anchor.line}`}
-                      saved=""
-                      onSave={(body) => actions.draft(node.id, { anchor: line.anchor, body })}
+                      onActivate={(line) => setOpened(line.anchor)}
                       onClose={() => setOpened(null)}
                     />
-                  )}
-                </div>,
-              );
-            }
-            flush(`end:${hunkAt}`);
-            return (
-              <div key={`${hunk.header}:${hunkAt}`} className="min-w-0">
-                <p className="bg-panel-2 px-2 font-mono text-ui text-link-fg [overflow-wrap:anywhere]">
-                  {hunk.header}
-                </p>
-                {parts}
-              </div>
-            );
-          })}
-        </section>
-      ))}
+                  ))}
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+      </div>
       {elsewhere.length > 0 && (
         <div className="space-y-2">
           {elsewhere.map((thread) => (
@@ -516,6 +773,95 @@ export function DiffNodeView({ node, actions }: { node: LiveDiffNode; actions?: 
           label={`Send ${node.label ?? 'review'}`}
         />
       )}
+    </div>
+  );
+}
+
+function DiffToolbar({
+  split,
+  wrap,
+  tree,
+  allFolded,
+  count,
+  total,
+  revisions,
+  onSplit,
+  onWrap,
+  onTree,
+  onFold,
+}: {
+  split: boolean;
+  wrap: boolean;
+  tree: boolean;
+  allFolded: boolean;
+  count: number;
+  total: { additions: number; deletions: number };
+  revisions: string;
+  onSplit: (split: boolean) => void;
+  onWrap: () => void;
+  onTree: () => void;
+  onFold: () => void;
+}) {
+  return (
+    <div className="diff-toolbar" role="toolbar" aria-label="Diff display">
+      <span className="diff-toolbar-summary" title={revisions || undefined}>
+        <span className="shrink-0">
+          {count} {count === 1 ? 'file' : 'files'}
+        </span>
+        <DiffStat {...total} />
+        {revisions && <span className="diff-revisions min-w-0 truncate">{revisions}</span>}
+      </span>
+      <div className="diff-layout" role="group" aria-label="Diff layout">
+        <button
+          type="button"
+          className="app-focus-ring"
+          aria-label="Unified"
+          title="Unified"
+          aria-pressed={!split}
+          onClick={() => onSplit(false)}
+        >
+          <UnifiedDiffIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          className="app-focus-ring"
+          aria-label="Split"
+          title="Split"
+          aria-pressed={split}
+          onClick={() => onSplit(true)}
+        >
+          <SideBySideIcon className="size-4" />
+        </button>
+      </div>
+      <button
+        type="button"
+        className="app-focus-ring"
+        aria-label="Wrap"
+        title="Wrap lines"
+        aria-pressed={wrap}
+        onClick={onWrap}
+      >
+        <WrapIcon className="size-4" />
+      </button>
+      <button
+        type="button"
+        className="app-focus-ring"
+        aria-label="Files"
+        title="File tree"
+        aria-pressed={tree}
+        onClick={onTree}
+      >
+        <FileTreeIcon className="size-4" />
+      </button>
+      <button
+        type="button"
+        className="app-focus-ring"
+        aria-label={allFolded ? 'Expand all' : 'Collapse all'}
+        title={allFolded ? 'Expand all' : 'Collapse all'}
+        onClick={onFold}
+      >
+        {allFolded ? <ExpandAllIcon className="size-4" /> : <CollapseAllIcon className="size-4" />}
+      </button>
     </div>
   );
 }

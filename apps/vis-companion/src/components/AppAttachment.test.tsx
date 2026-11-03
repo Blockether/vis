@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Issue #421: an app attachment opens one surface that reads the host state,
 // follows the session stream and saves through the view actions.
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayClient } from '../lib/gateway';
@@ -703,5 +703,48 @@ describe('a global app', () => {
     expect(screen.queryByText('Closed')).toBeNull();
     emit({ type: VIEW_CLOSE_EVENT, view_id: 'app-1', result: {} });
     expect(await screen.findByText('Closed')).toBeInTheDocument();
+  });
+});
+
+describe('AppSurface log', () => {
+  const logged = (log: unknown[]) => liveViewFromWire({ ...wire(3), log });
+
+  it('shows no Log control for an empty log', async () => {
+    const { client } = fakeClient([logged([]) as LiveView], async () => ({}));
+    open(client, null);
+    await screen.findByText('Bumped it.');
+    expect(screen.queryByRole('button', { name: /^Log of/ })).toBeNull();
+  });
+
+  it('closes the open log on Escape before it closes the app', async () => {
+    const onClose = vi.fn();
+    const view = logged([{ seq: 1, at: 1, level: 'error', source: 'host', message: 'Callback failed' }]);
+    const { client } = fakeClient([view as LiveView], async () => ({}));
+    render(
+      <AppSurface client={client} sid="s1" viewId="app-1" fallbackTitle="code-review" isInline onClose={onClose} />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Log of Code review, 1 error' }));
+    const panel = screen.getByRole('region', { name: 'Log of Code review' });
+    fireEvent.keyDown(panel, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: 'Log of Code review' })).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Log of Code review, 1 error' }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // Audit report (round 2): Escape inside the log hid the focused control and left the
+  // focus on the page body, so the next key no longer belonged to this app.
+  it('gives the focus back to the Log control when Escape closes the log from inside it', async () => {
+    const view = logged([
+      { seq: 1, at: 1, level: 'error', source: 'host', message: 'Callback failed', detail: 'Traceback' },
+    ]);
+    const { client } = fakeClient([view as LiveView], async () => ({}));
+    render(<AppSurface client={client} sid="s1" viewId="app-1" fallbackTitle="code-review" isInline onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Log of Code review, 1 error' }));
+    const inside = within(screen.getByRole('region', { name: 'Log of Code review' })).getAllByRole('button')[0]!;
+    inside.focus();
+    fireEvent.keyDown(inside, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: 'Log of Code review' })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Log of Code review, 1 error' }));
   });
 });

@@ -27,6 +27,8 @@ export type WireApp = {
   scope?: 'global';
   /** The saved picture of an app whose owner is not connected. */
   is_stale?: boolean;
+  /** The debug log of the app, oldest first. */
+  log?: Record<string, unknown>[];
 };
 
 /** What an app does with one action. */

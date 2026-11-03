@@ -56,6 +56,7 @@ export const LIVE_NODE_TYPES = [
   'diff',
   'thread',
   'scene',
+  'image',
 ] as const;
 
 /** The inputs a live view can hold: the form's own input types. */
@@ -95,7 +96,21 @@ export const LIVE_OPS = [
   'submission',
   'shortcuts',
   'agent-note',
+  'log',
 ] as const;
+
+/** The picture formats an `image` node carries (`picture.media_type`). CLOSED. */
+export const LIVE_IMAGE_MEDIA = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+
+/** How serious one app log entry is (`log_level`), least serious first. CLOSED. */
+export const LIVE_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+
+/** An app keeps at most this many log entries (`live_view.log.maxItems`). */
+export const LIVE_APP_LOG_MAX = 200;
+
+/** The longest log message and detail in code points (`log_entry`). */
+export const LIVE_LOG_MESSAGE_MAX = 2000;
+export const LIVE_LOG_DETAIL_MAX = 16000;
 
 /** Where a view stands (`view.spec/placements`). CLOSED. An `attachment` is an app. */
 export const LIVE_PLACEMENTS = ['inline', 'panel', 'attachment'] as const;
@@ -152,6 +167,8 @@ export type LiveAlign = (typeof LIVE_ALIGNS)[number];
 export type LiveSortDir = (typeof LIVE_SORT_DIRS)[number];
 export type LiveGroupDirection = (typeof LIVE_GROUP_DIRECTIONS)[number];
 export type LiveSubmissionStatus = (typeof LIVE_SUBMISSION_STATUSES)[number];
+export type LiveImageMedia = (typeof LIVE_IMAGE_MEDIA)[number];
+export type LiveLogLevel = (typeof LIVE_LOG_LEVELS)[number];
 
 /** `insertion`, `newest-first`, or one DECLARED column, ties kept in insertion order. */
 export type LiveOrder = (typeof LIVE_ORDERS)[number] | { by: string; dir?: LiveSortDir };
@@ -400,6 +417,34 @@ export interface LiveSceneNode extends LiveNodeBase {
   objects: LiveSceneObject[];
 }
 
+/** One picture as base64 data (`view.json` `picture`). */
+export interface LivePicture {
+  media_type: LiveImageMedia;
+  /** The picture as base64. Absent in a picture that only states its facts. */
+  data?: string;
+  /** The size of the picture in bytes, when the host states it instead of the data. */
+  bytes?: number;
+  width?: number;
+  height?: number;
+}
+
+/** A picture. With `before`, the surface compares the old picture with the new one. */
+export interface LiveImageNode extends LiveNodeBase, LivePicture {
+  type: 'image';
+  alt: string;
+  before?: LivePicture;
+}
+
+/** One entry of the debug log of an app (`log_entry`). */
+export interface LiveLogEntry {
+  seq: number;
+  at: number;
+  level: LiveLogLevel;
+  source: 'app' | 'host';
+  message: string;
+  detail?: string;
+}
+
 /** One thread as a node of its own. The node id is the thread id. */
 export interface LiveThreadNode extends LiveNodeBase {
   type: 'thread';
@@ -449,7 +494,8 @@ export type LiveLeafNode =
   | LiveDividerNode
   | LiveDiffNode
   | LiveThreadNode
-  | LiveSceneNode;
+  | LiveSceneNode
+  | LiveImageNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
@@ -520,6 +566,8 @@ export interface LiveView {
   surfaces?: AppSurfaces;
   /** The id prefix of this app's own settings. */
   settings_key?: string;
+  /** The newest debug log entries of an app, oldest first. */
+  log?: readonly LiveLogEntry[];
 }
 
 /**
@@ -862,6 +910,95 @@ export function upsertSubmission(
   return all;
 }
 
+/** One picture read from the wire, or null without a known format. */
+function pictureFromWire(raw: unknown): LivePicture | null {
+  const picture = record(raw);
+  if (!picture) return null;
+  const media = text(picture.media_type);
+  const data = text(picture.data);
+  if (!(LIVE_IMAGE_MEDIA as readonly string[]).includes(media)) return null;
+  const width = optionalNumber(picture.width);
+  const height = optionalNumber(picture.height);
+  const bytes = optionalNumber(picture.bytes);
+  return {
+    media_type: media as LiveImageMedia,
+    ...(data === '' ? {} : { data }),
+    ...(bytes !== undefined && bytes >= 0 ? { bytes } : {}),
+    ...(width && width > 0 ? { width } : {}),
+    ...(height && height > 0 ? { height } : {}),
+  };
+}
+
+/** One log entry read from the wire, or null when a required key is wrong. */
+export function logEntryFromWire(raw: Record<string, unknown>): LiveLogEntry | null {
+  const level = text(raw.level);
+  const message = text(raw.message);
+  const seq = count(raw.seq, 0);
+  if (seq < 1 || message === '' || !(LIVE_LOG_LEVELS as readonly string[]).includes(level)) {
+    return null;
+  }
+  const detail = text(raw.detail).trim() === '' ? undefined : text(raw.detail);
+  return {
+    seq,
+    at: count(raw.at, 0),
+    level: level as LiveLogLevel,
+    source: raw.source === 'host' ? 'host' : 'app',
+    message,
+    ...(detail ? { detail } : {}),
+  };
+}
+
+/**
+ * The `log` op appended to an app log (`app/append-log`). The new entry takes
+ * the next seq, and only the newest `LIVE_APP_LOG_MAX` entries stay. The host
+ * stamps `at` and `source`; `now` stands in for an op without `at`. An op without
+ * a known level or a message leaves the log as it was.
+ */
+export function appendLog(
+  log: readonly LiveLogEntry[],
+  op: Record<string, unknown>,
+  now: number,
+): readonly LiveLogEntry[] {
+  const last = log.length > 0 ? log[log.length - 1].seq : 0;
+  const entry = logEntryFromWire({ ...cutLogTexts(op), seq: last + 1, at: op.at ?? now });
+  if (!entry) return log;
+  const all = [...log, entry];
+  return all.length > LIVE_APP_LOG_MAX ? all.slice(all.length - LIVE_APP_LOG_MAX) : all;
+}
+
+/** `text` cut to `limit` code points, the last one an ellipsis. */
+function clipMessage(text: string, limit: number): string {
+  const points = Array.from(text);
+  return points.length <= limit ? text : `${points.slice(0, limit - 1).join('')}…`;
+}
+
+/** The line that marks the cut middle of a long detail. */
+const DETAIL_GAP = '\n…\n';
+
+/** `text` cut to `limit` code points; a long text keeps its start and its end. */
+function clipDetail(text: string, limit: number): string {
+  const points = Array.from(text);
+  if (points.length <= limit) return text;
+  const kept = limit - Array.from(DETAIL_GAP).length;
+  const start = Math.floor(kept / 2);
+  return `${points.slice(0, start).join('')}${DETAIL_GAP}${points.slice(points.length - (kept - start)).join('')}`;
+}
+
+/**
+ * A log op with its texts inside the schema bounds (`app/cut-log-texts`). The
+ * message is trimmed and cut at its end. A long detail loses its middle.
+ */
+function cutLogTexts(op: Record<string, unknown>): Record<string, unknown> {
+  const { message, detail } = op;
+  return {
+    ...op,
+    ...(typeof message === 'string'
+      ? { message: clipMessage(message.trim(), LIVE_LOG_MESSAGE_MAX) }
+      : {}),
+    ...(typeof detail === 'string' ? { detail: clipDetail(detail, LIVE_LOG_DETAIL_MAX) } : {}),
+  };
+}
+
 /** The threads a node holds: every thread of a diff, or the thread node itself. */
 export function liveThreads(node: LiveNode): LiveThread[] {
   if (node.type === 'diff') return node.threads;
@@ -1068,6 +1205,13 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
     }
     case 'thread':
       return { ...base, type: 'thread', ...threadPartsFromWire(node) };
+    case 'image': {
+      const picture = pictureFromWire(node);
+      const alt = text(node.alt).trim();
+      if (!picture || alt === '') return null;
+      const before = pictureFromWire(node.before);
+      return { ...base, type: 'image', alt, ...picture, ...(before ? { before } : {}) };
+    }
     case 'scene': {
       const width = optionalNumber(node.width);
       const height = optionalNumber(node.height);
@@ -1153,6 +1297,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     ...(Array.isArray(view.shortcuts) ? { shortcuts: liveShortcutsFromWire(view.shortcuts) } : {}),
     ...(view.surfaces === undefined ? {} : { surfaces: appSurfacesFromWire(view.surfaces) }),
     ...(typeof view.settings_key === 'string' ? { settings_key: view.settings_key } : {}),
+    ...(Array.isArray(view.log) ? { log: keyed(view.log, logEntryFromWire) } : {}),
   };
 }
 
@@ -1303,6 +1448,7 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
     case 'spinner':
     case 'button':
     case 'card':
+    case 'image':
       return liveNodeFromWire({ ...node, ...op }) ?? node;
     case 'status':
       return {
@@ -1645,6 +1791,11 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
   if (name === 'shortcuts') {
     // The op REPLACES every binding; an empty list clears them.
     return { ...view, shortcuts: liveShortcutsFromWire(op.shortcuts) };
+  }
+  if (name === 'log') {
+    const held = view.log ?? [];
+    const log = appendLog(held, op, Date.now());
+    return log === held ? view : { ...view, log };
   }
   if (name === 'agent-note') {
     // The note is for the model. The Companion paints nothing for it.

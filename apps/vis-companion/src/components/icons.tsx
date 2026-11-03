@@ -6,6 +6,9 @@
  */
 import {
   AlignLeft,
+  ListTree,
+  Rows2,
+  WrapText,
   Archive,
   ArrowDown,
   ArrowLeft,
@@ -18,6 +21,8 @@ import {
   ChartNoAxesColumn,
   Check,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsLeftRight,
   ChevronsUpDown,
   Circle,
   CircleAlert,
@@ -26,6 +31,7 @@ import {
   CircleDot,
   CircleSlash,
   CircleX,
+  Columns2,
   Copy,
   Crop,
   Download,
@@ -39,6 +45,7 @@ import {
   Image,
   LayoutGrid,
   LoaderCircle,
+  Logs,
   type LucideIcon,
   MessageSquareMore,
   Maximize2,
@@ -58,6 +65,7 @@ import {
   Share2,
   Square,
   SquarePen,
+  SquareSplitHorizontal,
   Star,
   SwatchBook,
   Trash2,
@@ -422,6 +430,51 @@ export function AppsIcon({ className }: { className?: string }) {
 /** Full screen: the app grows from its place to the whole session. */
 export function FullScreenIcon({ className }: { className?: string }) {
   return <Mark icon={Maximize2} className={className} />;
+}
+
+/** The debug log of an app: lines of text with marks at their start. */
+export function LogIcon({ className }: { className?: string }) {
+  return <Mark icon={Logs} className={className} />;
+}
+
+/** Two pictures next to each other. */
+export function SideBySideIcon({ className }: { className?: string }) {
+  return <Mark icon={Columns2} className={className} />;
+}
+
+/** A diff drawn as one column: old and new lines one under the other. */
+export function UnifiedDiffIcon({ className }: { className?: string }) {
+  return <Mark icon={Rows2} className={className} />;
+}
+
+/** Long lines continue on the next row, not past the edge. */
+export function WrapIcon({ className }: { className?: string }) {
+  return <Mark icon={WrapText} className={className} />;
+}
+
+/** Every file folds to its header. */
+export function CollapseAllIcon({ className }: { className?: string }) {
+  return <Mark icon={ChevronsDownUp} className={className} />;
+}
+
+/** Every file opens again. */
+export function ExpandAllIcon({ className }: { className?: string }) {
+  return <Mark icon={ChevronsUpDown} className={className} />;
+}
+
+/** The files of a change as a tree of folders. */
+export function FileTreeIcon({ className }: { className?: string }) {
+  return <Mark icon={ListTree} className={className} />;
+}
+
+/** One picture split by a line that moves: the old part on one side, the new on the other. */
+export function SwipeIcon({ className }: { className?: string }) {
+  return <Mark icon={SquareSplitHorizontal} className={className} />;
+}
+
+/** The handle of a swipe line: it moves left and right. */
+export function SwipeHandleIcon({ className }: { className?: string }) {
+  return <Mark icon={ChevronsLeftRight} className={className} />;
 }
 
 /** The side panel of live views, on the edge where it opens. */

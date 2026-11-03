@@ -7,8 +7,16 @@ import {
   newerAppView,
   sendAction,
 } from './app-view';
-import { applyLivePatch, liveViewFromWire, LIVE_SUBMISSIONS_MAX, type LiveView } from './live-view';
+import {
+  applyLivePatch,
+  LIVE_APP_LOG_MAX,
+  liveViewFromWire,
+  LIVE_SUBMISSIONS_MAX,
+  type LiveView,
+} from './live-view';
 import { VIEW_CLOSE_EVENT, VIEW_PATCH_EVENT } from './view';
+import logRules from '../../../../packages/vis-contract/resources/vis-contract/fixtures/app-log.json';
+import pictures from '../../../../packages/vis-contract/resources/vis-contract/fixtures/app-pictures.json';
 
 const PATCH = '--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new';
 
@@ -188,5 +196,117 @@ describe('app actions', () => {
       base_seq: 3,
       revision: 'bbb',
     });
+  });
+});
+
+describe('the app log op', () => {
+  it('numbers each entry after the last one and keeps the stamped time and source', () => {
+    const view = applyLivePatch(
+      app(),
+      patch(4, [
+        { op: 'log', level: 'info', message: 'Started', at: 10, source: 'app' },
+        { op: 'log', level: 'error', message: 'Callback failed', detail: 'Trace', at: 11, source: 'host' },
+      ]),
+    );
+    expect(view.log).toEqual([
+      { seq: 1, at: 10, level: 'info', source: 'app', message: 'Started' },
+      { seq: 2, at: 11, level: 'error', source: 'host', message: 'Callback failed', detail: 'Trace' },
+    ]);
+  });
+
+  it('keeps only the newest entries past the bound', () => {
+    const ops = Array.from({ length: LIVE_APP_LOG_MAX + 3 }, (_, at) => ({
+      op: 'log',
+      level: 'debug',
+      message: `line ${at + 1}`,
+      at,
+    }));
+    const log = applyLivePatch(app(), patch(4, ops)).log ?? [];
+    expect(log).toHaveLength(LIVE_APP_LOG_MAX);
+    expect(log[0]).toMatchObject({ seq: 4, message: 'line 4' });
+    expect(log[log.length - 1].seq).toBe(LIVE_APP_LOG_MAX + 3);
+  });
+
+  it('leaves the log as it was for an unknown level or a blank message', () => {
+    const view = applyLivePatch(
+      app(),
+      patch(4, [
+        { op: 'log', level: 'fatal', message: 'No such level', at: 1 },
+        { op: 'log', level: 'info', message: '', at: 1 },
+      ]),
+    );
+    expect(view.log).toBeUndefined();
+    expect(view.seq).toBe(4);
+  });
+
+  // The engine, the SDK and the Companion read the same rules in vis-contract fixtures/app-log.json.
+  it('follows the shared log rules of the contract', () => {
+    type Shape = { length?: number; starts?: string; ends?: string; contains?: string };
+    type Rule = {
+      name: string;
+      prefill: number;
+      entry: Record<string, unknown>;
+      expect: { count: number; first_seq: number; last: Record<string, unknown>; absent?: string[] };
+    };
+    const textOf = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(textOf).join('');
+      const repeat = value as { repeat?: string; times?: number } | null;
+      return repeat && typeof repeat === 'object' && typeof repeat.repeat === 'string'
+        ? repeat.repeat.repeat(repeat.times ?? 1)
+        : value;
+    };
+    for (const rule of logRules.cases as unknown as Rule[]) {
+      const prefill = Array.from({ length: rule.prefill }, (_, i) => ({
+        seq: i + 1,
+        at: 0,
+        level: 'info' as const,
+        source: 'app' as const,
+        message: `e${i + 1}`,
+      }));
+      const entry = Object.fromEntries(
+        Object.entries(rule.entry).map(([key, value]) => [key, textOf(value)]),
+      );
+      const log = applyLivePatch({ ...app(), log: prefill }, patch(4, [{ op: 'log', ...entry }])).log ?? [];
+      expect(log, rule.name).toHaveLength(rule.expect.count);
+      expect(log[0].seq, rule.name).toBe(rule.expect.first_seq);
+      const last = log[log.length - 1] as unknown as Record<string, unknown>;
+      for (const [key, want] of Object.entries(rule.expect.last)) {
+        if (want === null || typeof want !== 'object') {
+          expect(last[key], `${rule.name}: ${key}`).toBe(want);
+          continue;
+        }
+        const got = String(last[key]);
+        const shape = want as Shape;
+        if (shape.length !== undefined) expect(Array.from(got).length, rule.name).toBe(shape.length);
+        if (shape.starts) expect(got.startsWith(shape.starts), rule.name).toBe(true);
+        if (shape.ends) expect(got.endsWith(shape.ends), rule.name).toBe(true);
+        if (shape.contains) expect(got.includes(shape.contains), rule.name).toBe(true);
+      }
+      for (const key of rule.expect.absent ?? []) expect(last, rule.name).not.toHaveProperty(key);
+    }
+  });
+});
+
+describe('an image node', () => {
+  const picture = { media_type: 'image/png', data: 'iVBORw0KGgo=' };
+  const read = (node: Record<string, unknown>) =>
+    liveViewFromWire({ id: 'v', title: 'V', nodes: [{ id: 'img', type: 'image', alt: 'Logo', ...node }] });
+
+  it('keeps the old picture of a comparison', () => {
+    const [image] = read({ ...picture, width: 10, height: 5, before: picture })?.nodes ?? [];
+    expect(image.type === 'image' && image.before).toEqual(picture);
+  });
+
+  it('drops a picture without alt text or of an unknown format', () => {
+    expect(read({ ...picture, alt: '' })).toBeNull();
+    expect(read({ ...picture, media_type: 'image/svg+xml' })).toBeNull();
+  });
+
+  // The host accepts these pictures (vis-contract fixtures/app-pictures.json) and fills their size.
+  it('shows every picture that the host accepts, with the size that the host fills', () => {
+    for (const { name, picture: accepted, width, height } of pictures.accepted) {
+      const [image] = read({ ...accepted, width, height })?.nodes ?? [];
+      expect(image, name).toMatchObject({ type: 'image', ...accepted, width, height });
+    }
   });
 });

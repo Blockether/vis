@@ -6,6 +6,7 @@
 
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useAppLog } from '../hooks/useAppLog';
 import { runAppAction, SendKeys, type AppActionResult, type AppActionStatus } from '../lib/app-actions';
 import {
   appFallbackTitle,
@@ -29,6 +30,7 @@ import type { IterationAttachment, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
 import { ActionStatus, type AppNodeActions } from './AppNodes';
 import { LiveViewPanel, RunDialog } from './LiveView';
+import { AppLogButton, AppLogPanel } from './AppLog';
 import { ChevronIcon, FullScreenIcon } from './icons';
 import { BandButton, BandLabel, DialogFrame, DialogHeader, ExecutionAction, KeyCap, ListRow, Modal, closeWith } from './ui';
 
@@ -456,6 +458,9 @@ export function AppSurface({
     return () => window.removeEventListener('keydown', onKey);
   }, [shortcuts, press, isFramed]);
 
+  const log = view?.log;
+  const appLog = useAppLog(log, surface, isFramed);
+
   const title = view?.title || fallbackTitle;
   const state = view ? (sid === null ? globalAppStateWord(view) : appStateWord(view)) : '';
   const subtitle = view ? (
@@ -501,11 +506,17 @@ export function AppSurface({
     </div>
   );
   const leave = closeLabel ?? `Close app ${title}`;
-  const fullScreen = onFullScreen ? (
-    <BandButton label={`Full screen ${title}`} onClick={onFullScreen}>
-      <FullScreenIcon className="size-3.5" />
-    </BandButton>
-  ) : undefined;
+  const bandActions = (
+    <>
+      <AppLogButton log={log} title={title} isOpen={appLog.isOpen} onToggle={appLog.toggle} />
+      {onFullScreen && (
+        <BandButton label={`Full screen ${title}`} onClick={onFullScreen}>
+          <FullScreenIcon className="size-3.5" />
+        </BandButton>
+      )}
+    </>
+  );
+  const logPanel = appLog.isOpen && log ? <AppLogPanel log={log} title={title} isPane={!isFramed} /> : null;
   if (isFramed) {
     return (
       // Escape inside the app closes it, as it closes the dialog. An armed control
@@ -532,9 +543,13 @@ export function AppSurface({
               </BandButton>
             ) : undefined
           }
-          actions={fullScreen}
+          actions={bandActions}
           {...closeWith(backLabel ? undefined : onClose, leave)}
         />
+        {/* In a pane the log takes at most half of the frame and scrolls; the app keeps the rest. */}
+        {logPanel && (
+          <div className={`border-t border-dialog-edge ${isPane ? 'flex max-h-[50%] min-h-0 flex-col' : ''}`}>{logPanel}</div>
+        )}
         <div className={`border-t border-dialog-edge ${isPane ? 'flex min-h-0 flex-1 flex-col' : ''}`}>{body}</div>
         {footer && (
           <footer className="border-t border-dialog-edge bg-panel-2 px-4 py-2 font-mono text-meta text-dialog-hint">
@@ -551,8 +566,10 @@ export function AppSurface({
       footer={footer}
       closeLabel={closeLabel}
       within={sid === null ? 'app' : 'session'}
+      actions={bandActions}
       onClose={onClose}
     >
+      {logPanel}
       {body}
     </RunDialog>
   );
