@@ -60,16 +60,6 @@ function OpenApp<S>({
   );
 }
 
-/** The legend entry labelled `label`, inside the app's key toolbar. Its name also says its key. */
-async function legend(canvasElement: HTMLElement, label: string) {
-  const bar = await within(canvasElement).findByRole('toolbar', { name: 'App keys' });
-  const named = within(bar)
-    .getAllByRole('button')
-    .find((entry) => entry.getAttribute('aria-label')?.startsWith(`${label}, key `));
-  if (!named) throw new Error(`no legend entry ${label}`);
-  return named;
-}
-
 /** The app body, without its key legend: a node and its legend entry share one name. */
 async function body(canvasElement: HTMLElement) {
   await waitFor(() => expect(canvasElement.querySelector('[data-app-surface]')).not.toBeNull());
@@ -134,7 +124,8 @@ export const Dashboard: Story = {
     const lines = canvasElement.textContent?.match(/package-\d+ built/g)?.length ?? 0;
     await new Promise((resolve) => setTimeout(resolve, 900));
     await expect(canvasElement.textContent?.match(/package-\d+ built/g)?.length ?? 0).toBe(lines);
-    await userEvent.click(await legend(canvasElement, 'Resume'));
+    // The pause key sits on the shown Resume button, so the legend omits it.
+    await userEvent.click(canvas.getByRole('button', { name: /Resume/ }));
     await waitFor(() => expect(canvas.getByText('Building release')).toBeVisible());
   },
 };

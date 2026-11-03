@@ -20,6 +20,8 @@ def bootstrap(monkeypatch):
         sys.modules, "blockether.vis.extension", sys.modules["blockether.vis.extension"]
     )
     monkeypatch.delitem(sys.modules, "blockether.vis._outside")
+    # Write no __pycache__ into resources/: the engine's `ls` test lists that directory.
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
     # The engine stages each guest module next to vis_sdk.py, so its imports resolve.
     monkeypatch.syspath_prepend(str(REPOSITORY / "resources/vis-host-python"))
     spec = importlib.util.spec_from_file_location(
