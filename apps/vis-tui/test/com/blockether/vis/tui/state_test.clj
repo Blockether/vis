@@ -17,7 +17,6 @@
 ;; rather than to one vendor. Nothing is registered here: these events resolve
 ;; against the very registry production uses.
 
-
 (defn- await-enqueue!
   "Gateway queue effects post on the FIFO gateway-queue thread and hand back that
    Future. Tests await the round-trip the TUI deliberately does not."
@@ -72,32 +71,31 @@
                      (:fx (handler {:session-model-pref {:provider "github-copilot" :model "gpt"}}
                                    [:toggle-codex-fast-mode]))))))))
 
-(defdescribe
-  thinking-summary-toggle-test
-  (it "toggles the thinking summary for adaptive Claude and refuses other models"
-      (let [handler (-> #'state/event-registry
-                        deref
-                        deref
-                        (get :toggle-thinking-summary)
-                        :fn)]
-        (with-redefs [vis/get-router (constantly :router)
-                      vis/resolve-model-info (fn [_ provider model]
-                                               (cond-> {:provider (keyword provider) :name model}
-                                                 (= "claude-opus-5" model)
-                                                 (assoc :thinking-display-style
-                                                   :anthropic-display)))]
+(defdescribe thinking-summary-toggle-test
+             (it "toggles the thinking summary for adaptive Claude and refuses other models"
+                 (let [handler (-> #'state/event-registry
+                                   deref
+                                   deref
+                                   (get :toggle-thinking-summary)
+                                   :fn)]
+                   (with-redefs [vis/get-router (constantly :router)
+                                 vis/resolve-model-info
+                                 (fn [_ provider model]
+                                   (cond-> {:provider (keyword provider) :name model}
+                                     (= "claude-opus-5" model)
+                                     (assoc :thinking-display-style :anthropic-display)))]
 
-          (expect (= [[:toggle-boolean "s1" "thinking_summary" "Thinking summary"]]
-                     (:fx (handler {:session {:id "s1"}
-                                    :session-model-pref {:provider "anthropic"
-                                                         :model "claude-opus-5"}}
-                                   [:toggle-thinking-summary]))))
-          (expect (= [[:notify "Thinking summary is available only for Claude adaptive thinking"
-                       :warn 1500]]
-                     (:fx (handler {:session-model-pref {:provider "zai-coding-plan"
-                                                         :model "glm-5.3"}}
-                                   [:toggle-thinking-summary]))))))))
-
+                     (expect (= [[:toggle-boolean "s1" "thinking_summary" "Thinking summary"]]
+                                (:fx (handler {:session {:id "s1"}
+                                               :session-model-pref {:provider "anthropic"
+                                                                    :model "claude-opus-5"}}
+                                              [:toggle-thinking-summary]))))
+                     (expect (= [[:notify
+                                  "Thinking summary is available only for Claude adaptive thinking"
+                                  :warn 1500]]
+                                (:fx (handler {:session-model-pref {:provider "zai-coding-plan"
+                                                                    :model "glm-5.3"}}
+                                              [:toggle-thinking-summary]))))))))
 
 (defdescribe
   detail-toggle-test
@@ -738,7 +736,8 @@
   (it "reads the global simplified thinking modes row for a session"
       (reset! state/app-db {:session {:id "s1"} :render-version 0})
       ;; Drain a refresh that an earlier test queued, or it reads during the redef.
-      @((var-get #'state/gateway-queue-io!) (fn []))
+      @((var-get #'state/gateway-queue-io!)
+         (fn []))
       (let [reads (atom [])]
         (with-redefs [vis/gateway-settings (fn [_ target]
                                              (expect (= "session" (:scope target)))
@@ -915,34 +914,34 @@
                      (mapv #(get-in % [2 :target-id]) @calls)))
           (expect (every? #(= ["verbosity" "cycle"] (subvec % 0 2)) @calls))))))
 
-(defdescribe
-  session-model-pref-scope-test
-  ;; The footer chip PREFERS the optimistic `:session-model-pref` over the
-  ;; gateway's stored value. That value belongs to ONE session, so it must not
-  ;; outlive it: leaving it behind made the chip advertise the previous
-  ;; session's model while turns ran on the newly opened session's real
-  ;; preference — "changing the model in the footer didn't reach the session".
-  (it "opening another session in the tab drops the previous session's optimistic pick"
-      (with-redefs [vis/notify! (fn [& _]
-                                  nil)]
-        (reset! state/app-db {:session {:id "sess-1"}
-                              :session-model-pref {:provider "zai" :model "glm-4.6"}
-                              :render-version 0})
-        (state/dispatch [:init-session {:id "sess-2"} [] {}])
-        (expect (= "sess-2" (get-in @state/app-db [:session :id])))
-        (expect (nil? (:session-model-pref @state/app-db)))))
-  (it "a REFUSED switch rolls the optimistic pick back instead of leaving the chip lying"
-      (let [notified (atom [])]
-        (with-redefs [vis/gateway-set-session-model! (fn [_sid _provider _model]
-                                                       (throw (ex-info "unknown provider" {})))
-                      vis/notify! (fn [text & _]
-                                    (swap! notified conj text))]
+(defdescribe session-model-pref-scope-test
+             ;; The footer chip PREFERS the optimistic `:session-model-pref` over the
+             ;; gateway's stored value. That value belongs to ONE session, so it must not
+             ;; outlive it: leaving it behind made the chip advertise the previous
+             ;; session's model while turns ran on the newly opened session's real
+             ;; preference — "changing the model in the footer didn't reach the session".
+             (it "opening another session in the tab drops the previous session's optimistic pick"
+                 (with-redefs [vis/notify! (fn [& _]
+                                             nil)]
+                   (reset! state/app-db {:session {:id "sess-1"}
+                                         :session-model-pref {:provider "zai" :model "glm-4.6"}
+                                         :render-version 0})
+                   (state/dispatch [:init-session {:id "sess-2"} [] {}])
+                   (expect (= "sess-2" (get-in @state/app-db [:session :id])))
+                   (expect (nil? (:session-model-pref @state/app-db)))))
+             (it "a REFUSED switch rolls the optimistic pick back instead of leaving the chip lying"
+                 (let [notified (atom [])]
+                   (with-redefs [vis/gateway-set-session-model! (fn [_sid _provider _model]
+                                                                  (throw (ex-info "unknown provider"
+                                                                                  {})))
+                                 vis/notify! (fn [text & _]
+                                               (swap! notified conj text))]
 
-          (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
-          (state/dispatch [:set-model "openai" "gpt-5"])
-          (flush-queue-io!)
-          (expect (nil? (:session-model-pref @state/app-db)))
-          (expect (some #(re-find #"Model switch failed" (str %)) @notified))))))
+                     (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
+                     (state/dispatch [:set-model "openai" "gpt-5"])
+                     (flush-queue-io!)
+                     (expect (nil? (:session-model-pref @state/app-db)))
+                     (expect (some #(re-find #"Model switch failed" (str %)) @notified))))))
 
 (defdescribe
   model-switch-rollback-test
@@ -5910,28 +5909,27 @@
 ;; height paints over the input box, and a missing chat offset paints over the
 ;; docked project rail.
 
-(defdescribe
-  band-anchor-test
-  (it "keeps the band ABOVE the prompt however tall the prompt grew"
-      (let [rows
-            40
+(defdescribe band-anchor-test
+             (it "keeps the band ABOVE the prompt however tall the prompt grew"
+                 (let [rows
+                       40
 
-            {:keys [content-top prompt-h]}
-            (state/band-anchor {:layout {:messages-top 4 :input-h 7}})
+                       {:keys [content-top prompt-h]}
+                       (state/band-anchor {:layout {:messages-top 4 :input-h 7}})
 
-            {:keys [hint-row min-row]}
-            (tr/band-region 80 rows content-top prompt-h)]
+                       {:keys [hint-row min-row]}
+                       (tr/band-region 80 rows content-top prompt-h)]
 
-        ;; the band's LAST row (its hint bar) still sits above the input box
-        (expect (< (long hint-row) (- rows (long prompt-h))))
-        ;; and it never climbs over the header
-        (expect (= 4 min-row))))
-  (it "keeps the agent dock rows between the header and the band"
-      (let [{:keys [content-top prompt-h dock-h]}
-            (state/band-anchor {:layout {:messages-top 4 :input-h 7 :dock-h 5}})]
-        (expect (= 9 content-top))
-        (expect (= 7 prompt-h))
-        (expect (= 5 dock-h)))))
+                   ;; the band's LAST row (its hint bar) still sits above the input box
+                   (expect (< (long hint-row) (- rows (long prompt-h))))
+                   ;; and it never climbs over the header
+                   (expect (= 4 min-row))))
+             (it "keeps the agent dock rows between the header and the band"
+                 (let [{:keys [content-top prompt-h dock-h]}
+                       (state/band-anchor {:layout {:messages-top 4 :input-h 7 :dock-h 5}})]
+                   (expect (= 9 content-top))
+                   (expect (= 7 prompt-h))
+                   (expect (= 5 dock-h)))))
 
 ;; Reported over the settings screen: the `speech` FEATURE TOGGLE was the wrong shape.
 ;; A machine-wide on/off cannot answer the only question a human asks - should THIS

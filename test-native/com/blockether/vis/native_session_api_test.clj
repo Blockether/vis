@@ -303,7 +303,9 @@
                     original
                     (conj (children sid) sid)]
 
-                (expect (= 200 status) (str (String. ^bytes body "UTF-8") "\n" (slurp (io/file dir "gateway.log"))))
+                (expect
+                  (= 200 status)
+                  (str (String. ^bytes body "UTF-8") "\n" (slurp (io/file dir "gateway.log"))))
                 (Files/write (.toPath snapshot) ^bytes body (make-array java.nio.file.OpenOption 0))
                 (stop-gateway! @process)
                 (reset! client-id nil)

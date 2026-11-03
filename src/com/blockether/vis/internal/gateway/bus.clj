@@ -662,17 +662,19 @@
    it parses only the few lines that hold a marker: a 64 KiB tail full of other
    sessions' renames cost a parse of every line on each subscribe."
   [^String s]
-  (boolean
-    (some (fn [^String marker]
-            (loop [from 0]
-              (let [i (.indexOf s marker (int from))]
-                (when-not (neg? i)
-                  (let [start (inc (.lastIndexOf s "\n" i))
-                        end (let [e (.indexOf s "\n" i)] (if (neg? e) (.length s) e))]
-                    (if (contains? TERMINAL_TYPES (get (wire/parse-json (subs s start end)) "type"))
-                      true
-                      (recur end)))))))
-          terminal-markers)))
+  (boolean (some (fn [^String marker]
+                   (loop [from 0]
+                     (let [i (.indexOf s marker (int from))]
+                       (when-not (neg? i)
+                         (let [start (inc (.lastIndexOf s "\n" i))
+                               end (let [e (.indexOf s "\n" i)]
+                                     (if (neg? e) (.length s) e))]
+
+                           (if (contains? TERMINAL_TYPES
+                                          (get (wire/parse-json (subs s start end)) "type"))
+                             true
+                             (recur end)))))))
+                 terminal-markers)))
 
 (defn- terminal-tail?
   "True when a COMPLETE line in the last `TAIL_SCAN_BYTES` of `f` is a terminal

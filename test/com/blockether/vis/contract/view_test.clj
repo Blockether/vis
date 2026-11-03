@@ -128,7 +128,12 @@
                                      (keyword (get-in shape
                                                       ["properties" discriminator "const"])))))))))
 
-(defn- fixture-picture [wire] (into {} (map (fn [[k v]] [(keyword (str/replace k "_" "-")) v])) wire))
+(defn- fixture-picture
+  [wire]
+  (into {}
+        (map (fn [[k v]]
+               [(keyword (str/replace k "_" "-")) v]))
+        wire))
 
 (defdescribe
   picture-test
@@ -137,23 +142,32 @@
   (let [fixture (json/read-json (slurp (io/resource "vis-contract/fixtures/app-pictures.json")))]
     (it "reads the size of each accepted picture from its header"
         (doseq [{:strs [name picture width height]} (get fixture "accepted")]
-          (expect (= {:width width :height height} (contract/read-picture (fixture-picture picture))) name)))
+          (expect (= {:width width :height height}
+                     (contract/read-picture (fixture-picture picture)))
+                  name)))
     (it "refuses each refused picture"
         (doseq [{:strs [name picture]} (get fixture "refused")]
           (expect (string? (:error (contract/read-picture (fixture-picture picture)))) name)))
     (it "refuses a view whose pictures pass the byte bound"
         (let [most (long (:view-bytes contract/picture-bounds))
               half (apply str (repeat (* 4 (inc (quot most 6))) "A"))
-              image (fn [id] {:id id :type "image" :data half})]
+              image (fn [id]
+                      {:id id :type "image" :data half})]
+
           (expect (nil? (contract/picture-budget-error {:nodes [(image "a")]})))
-          (expect (string? (contract/picture-budget-error {:nodes [(image "a") {:id "row" :type "row" :children [(image "b")]}]}))
+          (expect (string? (contract/picture-budget-error
+                             {:nodes [(image "a")
+                                      {:id "row" :type "row" :children [(image "b")]}]}))
                   "a picture inside a layout group counts too")))
     (it "refuses data over the length bound before it decodes it"
         ;; Review audit (goal 4b41c770): a valid picture with 4 MB of padding was
         ;; decoded and accepted.
-        (let [png (some (fn [{:strs [picture]}] (when (= "image/png" (get picture "media_type")) (get picture "data")))
+        (let [png (some (fn [{:strs [picture]}]
+                          (when (= "image/png" (get picture "media_type")) (get picture "data")))
                         (get fixture "accepted"))
               most (long (:data-chars contract/picture-bounds))
               data (str png (apply str (repeat (inc (quot (- most (count png)) 4)) "AAAA")))]
+
           (expect (re-find #"characters; the most is"
-                           (str (:error (contract/read-picture {:media-type "image/png" :data data})))))))))
+                           (str (:error (contract/read-picture {:media-type "image/png"
+                                                                :data data})))))))))

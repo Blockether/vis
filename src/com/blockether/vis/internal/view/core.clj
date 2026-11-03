@@ -1424,8 +1424,11 @@
 
                :image
                (cond-> (merge base (picture node-fail! "an image" node))
-                 (some? (:alt node)) (assoc :alt (:alt node))
-                 (some? (:before node)) (assoc :before (picture node-fail! "an image :before" (:before node))))
+                 (some? (:alt node))
+                 (assoc :alt (:alt node))
+
+                 (some? (:before node))
+                 (assoc :before (picture node-fail! "an image :before" (:before node))))
 
                :thread
                (merge base
@@ -1840,8 +1843,10 @@
         ;; Long text is cut here, before the schema check, so a deep stack trace
         ;; still reaches the log. Secrets are redacted first: a cut can drop the
         ;; label that marks a secret and leave its value.
-        (app/cut-log-texts (cond-> {:op kind :level level :message (util/redact-secret-text (:message op))}
-                             (some? (:detail op)) (assoc :detail (util/redact-secret-text (:detail op))))))
+        (app/cut-log-texts
+          (cond-> {:op kind :level level :message (util/redact-secret-text (:message op))}
+            (some? (:detail op))
+            (assoc :detail (util/redact-secret-text (:detail op))))))
 
       (reduce (fn [acc k]
                 (if-some [value (get op k)]
@@ -1855,7 +1860,9 @@
    unchanged."
   [op now]
   (if (= :log (:op op))
-    (assoc op :at now :source (if *host-patch* "host" "app"))
+    (assoc op
+      :at now
+      :source (if *host-patch* "host" "app"))
     op))
 
 (defn normalize-live-op
@@ -2951,7 +2958,10 @@
                   (update :ops
                           (fn [ops]
                             (mapv #(owner-op @cell %) ops))))
-                (update :ops (let [now (util/now-ms)] (fn [ops] (mapv #(stamped-op % now) ops))))
+                (update :ops
+                        (let [now (util/now-ms)]
+                          (fn [ops]
+                            (mapv #(stamped-op % now) ops))))
                 materializer/redact-presentation
                 checked-live-patch)
 
@@ -3607,8 +3617,10 @@
   [entry level message detail]
   (when (:is-app entry)
     (try (binding [*host-patch* true]
-           (patch-live! (:id entry) [(cond-> {:op :log :level level :message message}
-                                       detail (assoc :detail detail))]))
+           (patch-live! (:id entry)
+                        [(cond-> {:op :log :level level :message message}
+                           detail
+                           (assoc :detail detail))]))
          (catch Throwable t
            (tel/log! {:level :debug
                       :id ::app-log-not-written
@@ -3621,17 +3633,18 @@
   [entry event]
   (let [cell (:view entry)]
     (locking cell
-      (let [{:keys [items]}
-            (swap! (:events entry) (fn [{:keys [cursor items]}]
-                                     (let [next-cursor (inc (long cursor))
-                                           items (conj items
-                                                       (assoc event
-                                                         :seq next-cursor
-                                                         :at (util/now-ms)))
-                                           extra (- (count items) max-live-events)]
+      (let [{:keys [items]} (swap! (:events entry) (fn [{:keys [cursor items]}]
+                                                     (let [next-cursor (inc (long cursor))
+                                                           items (conj items
+                                                                       (assoc event
+                                                                         :seq next-cursor
+                                                                         :at (util/now-ms)))
+                                                           extra (- (count items) max-live-events)]
 
-                                       {:cursor next-cursor
-                                        :items (if (pos? extra) (into [] (subvec items extra)) items)})))]
+                                                       {:cursor next-cursor
+                                                        :items (if (pos? extra)
+                                                                 (into [] (subvec items extra))
+                                                                 items)})))]
         (when-let [listener (:listener entry)]
           (let [recorded (peek items)
                 submission-id (:submission-id recorded)]
@@ -3648,7 +3661,11 @@
                                                 :id ::live-callback-failed
                                                 :data {:view-id (:id entry) :error (ex-message t)}
                                                 :msg "A live view callback failed"})
-                                     (host-log! entry "error" (str "A callback failed: " (or (ex-message t) (.getName (class t)))) (stack-text t))
+                                     (host-log! entry
+                                                "error"
+                                                (str "A callback failed: "
+                                                     (or (ex-message t) (.getName (class t))))
+                                                (stack-text t))
                                      false))
                           ;; The owner has the Send now.
                           (when submission-id

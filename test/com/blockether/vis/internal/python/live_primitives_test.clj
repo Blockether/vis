@@ -47,24 +47,24 @@
                    (let [work (future (extension/invoke-symbol-wrapper ext entry [] {}))
                          view (deref mounted 10000 nil)]
 
-                     (try (expect (some? view) (pr-str (deref work 0 ::running)))
-                          (when view
-                            (expect (:is-accepted (engine/action! (:id view)
-                                                                  {:action :activate
-                                                                   :node-id "go"}))))
-                          (let [result (deref work 10000 ::timeout)]
-                            (expect (not= ::timeout result))
-                            (expect (= 1 (get result "clicks")))
-                            (expect (= {"id" "section-break" "type" "divider"}
-                                       (last (get-in result ["view" "nodes"]))))
-                            (expect (= "" (get-in result ["view" "nodes" 2 "text"])))
-                            (expect (false? (get-in result ["view" "nodes" 3 "is_active"])))
-                            ;; #209 crosses the bundled SDK, JSON host call and engine materializer.
-                            (expect (= ["ERROR retained"]
-                                       (get-in result ["view" "nodes" 4 "children" 0 "lines"])))
-                            (expect (= ["error"]
-                                       (get-in result ["view" "nodes" 4 "children" 0 "line_tones"]))))
-                          (finally (when view (engine/close-live! (:id view)))
-                                   (future-cancel work))))))))))
+                     (try
+                       (expect (some? view) (pr-str (deref work 0 ::running)))
+                       (when view
+                         (expect (:is-accepted (engine/action! (:id view)
+                                                               {:action :activate :node-id "go"}))))
+                       (let [result (deref work 10000 ::timeout)]
+                         (expect (not= ::timeout result))
+                         (expect (= 1 (get result "clicks")))
+                         (expect (= {"id" "section-break" "type" "divider"}
+                                    (last (get-in result ["view" "nodes"]))))
+                         (expect (= "" (get-in result ["view" "nodes" 2 "text"])))
+                         (expect (false? (get-in result ["view" "nodes" 3 "is_active"])))
+                         ;; #209 crosses the bundled SDK, JSON host call and engine materializer.
+                         (expect (= ["ERROR retained"]
+                                    (get-in result ["view" "nodes" 4 "children" 0 "lines"])))
+                         (expect (= ["error"]
+                                    (get-in result ["view" "nodes" 4 "children" 0 "line_tones"]))))
+                       (finally (when view (engine/close-live! (:id view)))
+                                (future-cancel work))))))))))
         (finally (doseq [file (reverse (file-seq dir))]
                    (io/delete-file file true)))))))

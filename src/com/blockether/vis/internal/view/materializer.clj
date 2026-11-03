@@ -45,8 +45,8 @@
                  (format "\\u%04x" (int (first s))))))
 
 (def ^:private presentation-text-keys
-  #{:title :label :description :placeholder :source :text :detail :summary :error :note :message :alt
-    :model-result :target :value :value-text :parent :lines :cells})
+  #{:title :label :description :placeholder :source :text :detail :summary :error :note :message
+    :alt :model-result :target :value :value-text :parent :lines :cells})
 
 (defn redact-presentation
   "Redact human text in normalized View data, never structural IDs, selections,
@@ -382,36 +382,32 @@
                                " and this one carries "
                                (count items)
                                "; split it"))))
-      (cond
-        (= :scene (:type node))
-        (checked-node (cond-> node
-                        (contains? given :meshes)
-                        (update :meshes upsert (:meshes op))
+      (cond (= :scene (:type node))
+            (checked-node (cond-> node
+                            (contains? given :meshes)
+                            (update :meshes upsert (:meshes op))
 
-                        (contains? given :objects)
-                        (update :objects #(checked-count! node (spec/scene-merge % items)))))
+                            (contains? given :objects)
+                            (update :objects #(checked-count! node (spec/scene-merge % items)))))
+            (= :log (:type node))
+            (let [all (into (:lines node) items)
+                  styled? (or (contains? node :line-tones) (contains? op :tone))
+                  tones (when styled?
+                          (into (or (:line-tones node) (vec (repeat (count (:lines node)) nil)))
+                                (repeat (count items) (:tone op))))]
 
-        (= :log (:type node))
-        (let [all (into (:lines node) items)
-              styled? (or (contains? node :line-tones) (contains? op :tone))
-              tones (when styled?
-                      (into (or (:line-tones node) (vec (repeat (count (:lines node)) nil)))
-                            (repeat (count items) (:tone op))))]
+              (trim-log-window (cond-> (assoc node
+                                         :lines all
+                                         :total-lines (+ (long (:total-lines node)) (count items)))
+                                 styled?
+                                 (assoc :line-tones tones))))
+            :else (cond-> node
+                    (contains? given k)
+                    (update k #(checked-count! node (upsert % items)))
 
-          (trim-log-window (cond-> (assoc node
-                                     :lines all
-                                     :total-lines (+ (long (:total-lines node)) (count items)))
-                             styled?
-                             (assoc :line-tones tones))))
-
-        :else
-        (cond-> node
-          (contains? given k)
-          (update k #(checked-count! node (upsert % items)))
-
-          (contains? given :groups)
-          (assoc :groups
-            (checked-groups node (merge-by-id (or (:groups node) []) (:groups op)))))))))
+                    (contains? given :groups)
+                    (assoc :groups
+                      (checked-groups node (merge-by-id (or (:groups node) []) (:groups op)))))))))
 
 (defn- prune-selected
   "Drop selected ids whose rows no longer exist, without adding selection metadata to a
@@ -806,21 +802,33 @@
   "What a reader learns of picture `p` without its bytes: media type, size in
    bytes and the declared width and height."
   [{:keys [media-type data width height bytes]}]
-  (let [text (str data)
-        padding (count (take-while #{\=} (reverse text)))]
+  (let [text
+        (str data)
+
+        padding
+        (count (take-while #{\=} (reverse text)))]
+
     (cond-> {:media-type media-type :bytes (if data (- (quot (* 3 (count text)) 4) padding) bytes)}
-      width (assoc :width width)
-      height (assoc :height height))))
+      width
+      (assoc :width width)
+
+      height
+      (assoc :height height))))
 
 (defn- image-facts
   "Image node `node` as the model reads it: the picture facts, the alt text and
    the facts of the `:before` picture. The base64 bytes never reach the model."
   [{:keys [alt before] :as node}]
   (cond-> (picture-facts node)
-    alt (assoc :alt alt)
-    before (assoc :before (picture-facts before))))
+    alt
+    (assoc :alt alt)
 
-(defmethod node->markdown :image [node _] (marked-lines :image [(tagged-json "image" (image-facts node))]))
+    before
+    (assoc :before (picture-facts before))))
+
+(defmethod node->markdown :image
+  [node _]
+  (marked-lines :image [(tagged-json "image" (image-facts node))]))
 
 (defmethod node->markdown :thread
   [node _]
@@ -837,9 +845,17 @@
 (defmethod node->markdown :scene
   [{:keys [width height objects] :as node} _]
   (marked-lines :scene
-                [(str "Scene " (plain-number width) " x " (plain-number height) " · " (count objects) " objects")
+                [(str "Scene "
+                      (plain-number width)
+                      " x "
+                      (plain-number height)
+                      " · "
+                      (count objects)
+                      " objects")
                  (tagged-json "scene"
-                              (select-keys node [:width :height :background :fov :is-wrapping :tick-ms :meshes :objects]))]))
+                              (select-keys node
+                                           [:width :height :background :fov :is-wrapping :tick-ms
+                                            :meshes :objects]))]))
 
 (defmethod node->markdown :spinner
   [{:keys [text is-active]} _]
@@ -1529,8 +1545,7 @@
 (defmethod markdown->node :image
   [_ {:keys [at lines]}]
   (let [facts (tagged-value at "image" (second lines))]
-    (with-meta (merge {:type :image} facts)
-      {:elided (if (:before facts) 2 1)})))
+    (with-meta (merge {:type :image} facts) {:elided (if (:before facts) 2 1)})))
 
 (defmethod markdown->node :scene
   [_ {:keys [at lines]}]

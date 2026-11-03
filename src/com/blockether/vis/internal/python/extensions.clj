@@ -694,8 +694,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
       (throw (ex-info (str "vis.notify: title is longer than " title-max-chars " characters")
                       {:error :notify-title :max title-max-chars})))
     (when (and notice-id (> (char-count notice-id) (long notice-id-max-chars)))
-      (throw (ex-info (str "vis.notify: notice_id is longer than " notice-id-max-chars " characters")
-                      {:error :notify-notice-id :max notice-id-max-chars})))
+      (throw (ex-info
+               (str "vis.notify: notice_id is longer than " notice-id-max-chars " characters")
+               {:error :notify-notice-id :max notice-id-max-chars})))
     (when (and (some? duration-ms)
                (not (and (integer? duration-ms) (<= (long low) (long duration-ms) (long high)))))
       (throw (ex-info (str "vis.notify: duration_ms must be an integer from " low " to " high)
@@ -717,14 +718,18 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   (let [scope (some-> scope
                       str
                       not-empty)]
-    (cond (nil? scope) (if session-id "session" "global")
-          (not (contains? gateway-contract/notification-scopes scope))
-          (throw (ex-info (str "vis.notify: scope must be one of " (str/join ", " (sort gateway-contract/notification-scopes)))
-                          {:error :notify-scope :scope scope}))
-          (and (= "session" scope) (nil? session-id))
-          (throw (ex-info "vis.notify: scope=\"session\" needs a session; use scope=\"global\" outside a session"
-                          {:error :notify-scope :scope scope}))
-          :else scope)))
+    (cond
+      (nil? scope) (if session-id "session" "global")
+      (not (contains? gateway-contract/notification-scopes scope))
+      (throw (ex-info (str "vis.notify: scope must be one of "
+                           (str/join ", " (sort gateway-contract/notification-scopes)))
+                      {:error :notify-scope :scope scope}))
+      (and (= "session" scope) (nil? session-id))
+      (throw
+        (ex-info
+          "vis.notify: scope=\"session\" needs a session; use scope=\"global\" outside a session"
+          {:error :notify-scope :scope scope}))
+      :else scope)))
 
 ;; Notification listeners — fired for each `vis.notify`. The gateway sends the notice to every
 ;; client of its session, or of every open session when no session is bound.
@@ -1234,17 +1239,23 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (put! g
           "__vis_host_notify__"
           (fn [text level title duration-ms notice-id scope]
-            (let [notice (sdk-notice text level title duration-ms notice-id)
-                  session-id (some-> (or (:session-id extension/*current-environment*)
-                                         (:session-id bound-session))
-                                     str)
-                  scope (notice-scope scope session-id)]
+            (let [notice
+                  (sdk-notice text level title duration-ms notice-id)
+
+                  session-id
+                  (some-> (or (:session-id extension/*current-environment*)
+                              (:session-id bound-session))
+                          str)
+
+                  scope
+                  (notice-scope scope session-id)]
+
               (notifications/notify! (:text notice) :level (:level notice))
               (announce-notification! (assoc notice
-                                             :scope scope
-                                             :session-id (when (= "session" scope) session-id)
-                                             :extension (or (:ext/name extension/*current-extension*)
-                                                            label))))
+                                        :scope scope
+                                        :session-id (when (= "session" scope) session-id)
+                                        :extension (or (:ext/name extension/*current-extension*)
+                                                       label))))
             nil))
     (put! g
           "__vis_host_call_tool__"

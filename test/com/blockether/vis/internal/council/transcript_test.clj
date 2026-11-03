@@ -393,16 +393,16 @@
                                     {:session-id sid :source "sdk"}
                                     {:content "Actual build result from the SDK"})
 
-                  started
-                  (some (fn [[type payload]]
-                          (when (= "turn.started" type) payload))
-                        @events)
+                     started
+                     (some (fn [[type payload]]
+                             (when (= "turn.started" type) payload))
+                           @events)
 
-                  tid
-                  (:turn_id started)
+                     tid
+                     (:turn_id started)
 
-                  live
-                  (state/get-turn sid tid)]
+                     live
+                     (state/get-turn sid tid)]
 
                  (expect (some? started))
                  (expect (= "council" (:request_kind started)))

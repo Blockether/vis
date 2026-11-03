@@ -31,12 +31,13 @@
 (defn revision
   "Content revision includes ancestors and explicit values, not volatile service state."
   [db target]
-  (util/sha256-hex (util/content-str (walk/postwalk
-                             #(if (map? %) (into (sorted-map) %) %)
-                             {:target target
-                              :toggles (mapv digest-secrets (scoped/settings db target))
-                              :access (policy/settings db target)
-                              :agent (when (= "global" (:scope target)) (config/agent-name))}))))
+  (util/sha256-hex (util/content-str (walk/postwalk #(if (map? %) (into (sorted-map) %) %)
+                                                    {:target target
+                                                     :toggles (mapv digest-secrets
+                                                                    (scoped/settings db target))
+                                                     :access (policy/settings db target)
+                                                     :agent (when (= "global" (:scope target))
+                                                              (config/agent-name))}))))
 
 (defn- prepare-edit
   [target {:strs [id action value]}]

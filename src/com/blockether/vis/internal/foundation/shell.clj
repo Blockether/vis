@@ -2147,7 +2147,11 @@
   (if-let [exit (:exit (bg-entry (:session-id env) (str id)))]
     (let [done (promise)
           k (Object.)]
-      (add-watch exit k (fn [_ _ _ code] (when (some? code) (deliver done true))))
+
+      (add-watch exit
+                 k
+                 (fn [_ _ _ code]
+                   (when (some? code) (deliver done true))))
       (try (or (some? @exit) (deref done (long ms) false)) (finally (remove-watch exit k))))
     (do (Thread/sleep (long ms)) false)))
 
@@ -2268,7 +2272,8 @@
         ((:append! acc) text)
         (cond (>= (util/now-ms) deadline) (finish res nxt)
               (not (get res "is_eof")) (recur nxt 0 exit-seen?)
-              (= "running" (get res "status")) (recur nxt (inc idle) (await-exit env id (wait-idle-poll-ms idle)))
+              (= "running" (get res "status"))
+              (recur nxt (inc idle) (await-exit env id (wait-idle-poll-ms idle)))
               ;; Exited: one more read, with no sleep, unless this read already
               ;; started after the exit. A silent command no longer waits out a
               ;; drain window that only guessed when the pump was done.

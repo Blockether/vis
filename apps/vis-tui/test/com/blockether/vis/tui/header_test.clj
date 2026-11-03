@@ -231,14 +231,20 @@
         (expect (empty? tabs))
         (expect (not-any? #(#{:workspace-entry :close-tab} (:kind %))
                           (.current interactions/hit-map)))))
-  (it "ellipsizes the active title without showing other session names at narrow widths"
-      (let [row (:row (paint-header-grid 80
-                                         {:title "A current conversation with a very long title that cannot fit in an eighty column header"
-                                          :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                                          :tabs [{:id :other :label "Other conversation"}]}))]
-        (expect (str/includes? row "A current conversation"))
-        (expect (str/includes? row "…"))
-        (expect (not (str/includes? row "Other conversation"))))))
+  (it
+    "ellipsizes the active title without showing other session names at narrow widths"
+    (let
+      [row
+       (:row
+         (paint-header-grid
+           80
+           {:title
+            "A current conversation with a very long title that cannot fit in an eighty column header"
+            :session {:id "123e4567-e89b-12d3-a456-426614174000"}
+            :tabs [{:id :other :label "Other conversation"}]}))]
+      (expect (str/includes? row "A current conversation"))
+      (expect (str/includes? row "…"))
+      (expect (not (str/includes? row "Other conversation"))))))
 
 (defdescribe app-header-clutter
              ;; User report: app counts do not belong in the header.

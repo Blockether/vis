@@ -104,55 +104,57 @@
                (let [s
                      (h/store)
 
-                       project
-                       (persistance/db-create-project! s {:name "facts"})
+                     project
+                     (persistance/db-create-project! s {:name "facts"})
 
-                       leader
-                       (h/store-session! s {:channel :api :title "leader"})
+                     leader
+                     (h/store-session! s {:channel :api :title "leader"})
 
-                       child
-                       (h/store-session! s {:channel :tui :title "child"})
+                     child
+                     (h/store-session! s {:channel :tui :title "child"})
 
-                       other
-                       (h/store-session! s {:channel :api})]
+                     other
+                     (h/store-session! s {:channel :api})]
 
-                   (persistance/db-set-session-project! s leader (:id project))
-                   (persistance/db-lock-routing! s child true)
-                   (persistance/db-lock-routing! s other false)
-                   (sqlite-core/execute! s
-                                         {:insert-into :session_agent
-                                          :values [{:session_id (str child)
-                                                    :parent_id (str leader)
-                                                    :leader_id (str leader)
-                                                    :team_id "team"
-                                                    :task "check"
-                                                    :depth 1
-                                                    :inherited_turns 0
-                                                    :files "{\"write\":[\"src/**\"]}"
-                                                    :spawn_key "k"
-                                                    :spawn_fingerprint "f"
-                                                    :checkpoint (byte-array 0)
-                                                    :created_at 1}]})
-                   (let [facts (persistance/db-session-page-facts s
-                                                                  [leader child (str leader)
-                                                                   "missing"])
-                         single (fn [sid]
-                                  (let [state-id (persistance/db-latest-session-state-id s sid)]
-                                    {:session (persistance/db-get-session s sid)
-                                     :state-id state-id
-                                     :workspace (persistance/db-workspace-for-session s state-id)
-                                     :agent (persistance/db-agent-info s sid)
-                                     :team (get (persistance/db-agent-team-counts s [sid]) (str sid))
-                                     :routing-locked? (persistance/db-routing-locked? s sid)}))]
-                     (expect (= #{(str leader) (str child)} (set (keys facts))))
-                     (expect (= {(str leader) (single leader) (str child) (single child)} facts))
-                     (expect (= "facts" (get-in facts [(str leader) :session :project-name])))
-                     (expect (true? (get-in facts [(str child) :routing-locked?])))
-                     (expect (= {:active 1 :total 1} (get-in facts [(str leader) :team])))
-                     (expect (= ["src/**"] (get-in facts [(str child) :agent :files :write])))
-                     (expect (some? (get-in facts [(str child) :workspace :root]))))
-                   (expect (= {} (persistance/db-session-page-facts s [])))
-                   (expect (= {} (persistance/db-session-page-facts nil [leader]))))))
+                 (persistance/db-set-session-project! s leader (:id project))
+                 (persistance/db-lock-routing! s child true)
+                 (persistance/db-lock-routing! s other false)
+                 (sqlite-core/execute! s
+                                       {:insert-into :session_agent
+                                        :values [{:session_id (str child)
+                                                  :parent_id (str leader)
+                                                  :leader_id (str leader)
+                                                  :team_id "team"
+                                                  :task "check"
+                                                  :depth 1
+                                                  :inherited_turns 0
+                                                  :files "{\"write\":[\"src/**\"]}"
+                                                  :spawn_key "k"
+                                                  :spawn_fingerprint "f"
+                                                  :checkpoint (byte-array 0)
+                                                  :created_at 1}]})
+                 (let [facts
+                       (persistance/db-session-page-facts s [leader child (str leader) "missing"])
+
+                       single
+                       (fn [sid]
+                         (let [state-id (persistance/db-latest-session-state-id s sid)]
+                           {:session (persistance/db-get-session s sid)
+                            :state-id state-id
+                            :workspace (persistance/db-workspace-for-session s state-id)
+                            :agent (persistance/db-agent-info s sid)
+                            :team (get (persistance/db-agent-team-counts s [sid]) (str sid))
+                            :routing-locked? (persistance/db-routing-locked? s sid)}))]
+
+                   (expect (= #{(str leader) (str child)} (set (keys facts))))
+                   (expect (= {(str leader) (single leader) (str child) (single child)} facts))
+                   (expect (= "facts" (get-in facts [(str leader) :session :project-name])))
+                   (expect (true? (get-in facts [(str child) :routing-locked?])))
+                   (expect (= {:active 1 :total 1} (get-in facts [(str leader) :team])))
+                   (expect (= ["src/**"] (get-in facts [(str child) :agent :files :write])))
+                   (expect (some? (get-in facts [(str child) :workspace :root]))))
+                 (expect (= {} (persistance/db-session-page-facts s [])))
+                 (expect (= {} (persistance/db-session-page-facts nil [leader]))))))
 
 (defdescribe routing-lock-query-test
              (it "reads current routing locks with bound ids and no SQL recompilation"
@@ -1328,7 +1330,9 @@
             canonical
             @#'sqlite-core/canonical-path]
 
-        (try (with-redefs [sqlite-core/canonical-path (fn [p] (swap! resolved inc) (canonical p))]
+        (try (with-redefs [sqlite-core/canonical-path (fn [p]
+                                                        (swap! resolved inc)
+                                                        (canonical p))]
                (expect (false? (boolean (sqlite-core/db-store-stale? s dir))))
                (expect (false? (boolean (sqlite-core/db-store-stale? s {:path dir}))))
                (expect (zero? @resolved))
@@ -6022,34 +6026,31 @@
   ;; The session list and its turn stats answer from the last read while the file is
   ;; unchanged. A missed commit would show a stale list: a new turn not counted, or
   ;; a rename from another process never shown.
-  (it
-    "answers every commit, from this pool or from another connection"
-    (let [root
-          (fs/create-temp-dir {:prefix "vis-version-read-"})
+  (it "answers every commit, from this pool or from another connection"
+      (let [root
+            (fs/create-temp-dir {:prefix "vis-version-read-"})
 
-          dir
-          (str (fs/path root "store"))
+            dir
+            (str (fs/path root "store"))
 
-          s
-          (persistance/db-create-connection! dir)]
+            s
+            (persistance/db-create-connection! dir)]
 
-      (try (let [sid (h/store-session! s {:channel :api})]
-             (expect (= 0 (get-in (persistance/db-session-turn-stats s) [(str sid) :turn-count] 0)))
-             (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "one"})
-             (expect (= 1 (get-in (persistance/db-session-turn-stats s) [(str sid) :turn-count])))
-             (persistance/db-list-sessions s :all)
-             (with-open [other (java.sql.DriverManager/getConnection (str "jdbc:sqlite:" dir "/vis.db"))]
-               (jdbc/execute! other
-                              ["UPDATE session_soul SET claimed_at = 1 WHERE id = ?" (str sid)])
-               (jdbc/execute! other ["UPDATE session_state SET title = 'renamed elsewhere'"])
-               (jdbc/execute! other ["DELETE FROM session_turn_soul"]))
-             (expect (= ["renamed elsewhere"]
-                        (mapv :title (persistance/db-list-sessions s :all))))
-             (expect (= 0
-                        (get-in (persistance/db-session-turn-stats s)
-                                [(str sid) :turn-count]
-                                0))))
-           (finally (persistance/db-dispose-connection! s) (fs/delete-tree root))))))
+        (try
+          (let [sid (h/store-session! s {:channel :api})]
+            (expect (= 0 (get-in (persistance/db-session-turn-stats s) [(str sid) :turn-count] 0)))
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "one"})
+            (expect (= 1 (get-in (persistance/db-session-turn-stats s) [(str sid) :turn-count])))
+            (persistance/db-list-sessions s :all)
+            (with-open [other (java.sql.DriverManager/getConnection
+                                (str "jdbc:sqlite:" dir "/vis.db"))]
+              (jdbc/execute! other
+                             ["UPDATE session_soul SET claimed_at = 1 WHERE id = ?" (str sid)])
+              (jdbc/execute! other ["UPDATE session_state SET title = 'renamed elsewhere'"])
+              (jdbc/execute! other ["DELETE FROM session_turn_soul"]))
+            (expect (= ["renamed elsewhere"] (mapv :title (persistance/db-list-sessions s :all))))
+            (expect (= 0 (get-in (persistance/db-session-turn-stats s) [(str sid) :turn-count] 0))))
+          (finally (persistance/db-dispose-connection! s) (fs/delete-tree root))))))
 
 (defdescribe
   swept-turn-session-stats-test

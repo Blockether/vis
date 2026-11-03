@@ -402,7 +402,7 @@
                           :type "group"
                           :direction "column"
                           :children [{:id "before" :type "paragraph" :text "Build finished"} divider
-                                   {:id "after" :type "paragraph" :text "Review results"}]}]}))
+                                     {:id "after" :type "paragraph" :text "Review results"}]}]}))
 
             markdown
             (materializer/->markdown view)]

@@ -122,18 +122,19 @@
             (h/store-session! store {})]
 
         (tpc/with-own [pc {}]
-                      (let [result
-                            (#'python-exec/run-python-code
-                             pc
-                             "for i in range(160):\n    ls('resources/vis-host-python')\nprint('done')"
-                             :env
-                             {:db-info store :session-id sid})
+                      (let
+                        [result
+                         (#'python-exec/run-python-code
+                          pc
+                          "for i in range(160):\n    ls('resources/vis-host-python')\nprint('done')"
+                          :env
+                          {:db-info store :session-id sid})
 
-                            page
-                            (:activity result)
+                         page
+                         (:activity result)
 
-                            rows
-                            (all-rows store sid (get-in page [:history :id]))]
+                         rows
+                         (all-rows store sid (get-in page [:history :id]))]
 
                         (expect (nil? (:error result)))
                         (expect (= "done\n" (:stdout result)))

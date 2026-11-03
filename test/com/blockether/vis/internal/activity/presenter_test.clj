@@ -511,14 +511,14 @@
            :after 42
            :has_more true}
 
-            view
-            (result-view {:operation :council.read} value)]
+          view
+          (result-view {:operation :council.read} value)]
 
-        (expect (empty? (get view "content")))
-        (expect (= [{"headline" "Review"
-                     "summary" "Message 42 · Thread 41"
-                     "content" [{"type" "markdown" "text" "Full **message**."}]}]
-                   (get view "sections")))))
+      (expect (empty? (get view "content")))
+      (expect (= [{"headline" "Review"
+                   "summary" "Message 42 · Thread 41"
+                   "content" [{"type" "markdown" "text" "Full **message**."}]}]
+                 (get view "sections")))))
   (it "uses one compact table for member and thread lists"
       (doseq [[operation value summary columns rows]
               [[:council.members

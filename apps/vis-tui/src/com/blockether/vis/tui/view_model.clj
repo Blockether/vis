@@ -29,8 +29,7 @@
   (cond (map? x) (persistent! (reduce-kv (fn [out k v]
                                            (assoc! out
                                                    k
-                                                   (cond (app-data-keys k)
-                                                         v
+                                                   (cond (app-data-keys k) v
                                                          (and (= :line-tones k) (sequential? v))
                                                          (mapv #(get view-spec/live-tones % %) v)
                                                          (and (keyword-value-keys k) (string? v))

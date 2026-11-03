@@ -183,46 +183,47 @@
         string-list?
         #(or (nil? %) (and (sequential? %) (every? string? %)))]
 
-    (cond
-      (and (not (str/blank? (str raw))) (nil? gid))
-      (http/error-response 400 :invalid-request "group_id must be a session group id")
-      (and gid (nil? (state/get-session-group gid))) (http/group-404 (str raw))
-      (not (string-list? sources))
-      (http/error-response 400 :invalid-request "sources must be a list of global and project")
-      (not (string-list? extensions))
-      (http/error-response 400 :invalid-request "extensions must be a list of extension names")
-      (not (string-list? tools))
-      (http/error-response 400 :invalid-request "tools must be a list of tool names")
-      (not= (some? pid) (some? model))
-      (http/error-response 400 :invalid-request "provider and model must be given together")
-      provider-error provider-error
-      (not (or (nil? idempotency-key)
-               (and (string? idempotency-key) (<= 1 (count idempotency-key) 200))))
-      (http/error-response 400
-                           :invalid-request
-                           "idempotency_key must be a string of 1 to 200 characters")
-      :else
-      (try (let [created (state/create-session! (cond-> {:channel (some-> (get body "channel")
-                                                                          keyword)
-                                                         :title (get body "title")
-                                                         :external-id (get body "external_id")
-                                                         :workspace-id (get body "workspace_id")
-                                                         :root (get body "root")
-                                                         :sources sources
-                                                         :extensions extensions
-                                                         :tools tools
-                                                         :idempotency-key idempotency-key}
-                                                  gid
-                                                  (assoc :group-id gid)
+    (cond (and (not (str/blank? (str raw))) (nil? gid))
+          (http/error-response 400 :invalid-request "group_id must be a session group id")
+          (and gid (nil? (state/get-session-group gid))) (http/group-404 (str raw))
+          (not (string-list? sources))
+          (http/error-response 400 :invalid-request "sources must be a list of global and project")
+          (not (string-list? extensions))
+          (http/error-response 400 :invalid-request "extensions must be a list of extension names")
+          (not (string-list? tools))
+          (http/error-response 400 :invalid-request "tools must be a list of tool names")
+          (not= (some? pid) (some? model))
+          (http/error-response 400 :invalid-request "provider and model must be given together")
+          provider-error provider-error
+          (not (or (nil? idempotency-key)
+                   (and (string? idempotency-key) (<= 1 (count idempotency-key) 200))))
+          (http/error-response 400
+                               :invalid-request
+                               "idempotency_key must be a string of 1 to 200 characters")
+          :else (try (let [created (state/create-session!
+                                     (cond-> {:channel (some-> (get body "channel")
+                                                               keyword)
+                                              :title (get body "title")
+                                              :external-id (get body "external_id")
+                                              :workspace-id (get body "workspace_id")
+                                              :root (get body "root")
+                                              :sources sources
+                                              :extensions extensions
+                                              :tools tools
+                                              :idempotency-key idempotency-key}
+                                       gid
+                                       (assoc :group-id gid)
 
-                                                  (:vis.host/origin request)
-                                                  (assoc :origin (:vis.host/origin request))))]
-             (when pid (state/set-session-model! (get created "id") pid model))
-             (http/json-response 201 created))
-           (catch clojure.lang.ExceptionInfo e
-             (if-let [status (:status (ex-data e))]
-               (http/error-response status (or (:type (ex-data e)) :invalid-request) (ex-message e))
-               (throw e)))))))
+                                       (:vis.host/origin request)
+                                       (assoc :origin (:vis.host/origin request))))]
+                       (when pid (state/set-session-model! (get created "id") pid model))
+                       (http/json-response 201 created))
+                     (catch clojure.lang.ExceptionInfo e
+                       (if-let [status (:status (ex-data e))]
+                         (http/error-response status
+                                              (or (:type (ex-data e)) :invalid-request)
+                                              (ex-message e))
+                         (throw e)))))))
 
 (defn- sessions-etag
   "Conditional-GET validator for a session-list ANSWER: SHA-256 over the rows

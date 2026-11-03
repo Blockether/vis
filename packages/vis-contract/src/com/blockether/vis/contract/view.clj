@@ -851,7 +851,8 @@
    size must match the header. Data over the length bound is refused before it is
    decoded."
   [{:keys [media-type data width height]}]
-  (let [too-long? (and (string? data) (> (count data) (long (:data-chars picture-bounds))))
+  (let [too-long?
+        (and (string? data) (> (count data) (long (:data-chars picture-bounds))))
 
         decoded
         (when (and (string? data) (not too-long?))
@@ -863,8 +864,8 @@
 
     (cond (not (picture-media-types media-type))
           {:error (str "needs a media type: " (str/join ", " (sort picture-media-types)))}
-          too-long?
-          {:error (str "data is " (count data) " characters; the most is " (:data-chars picture-bounds))}
+          too-long? {:error (str "data is " (count data)
+                                 " characters; the most is " (:data-chars picture-bounds))}
           (nil? decoded) {:error "data must be base64 text"}
           (not (matches-magic? decoded media-type)) {:error (str "data is not " media-type " data")}
           (not (and w h (pos? (long w)) (pos? (long h))))

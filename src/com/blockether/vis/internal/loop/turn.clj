@@ -801,33 +801,33 @@
                                                                                  (:turn-id resume)))
                                 user-request)
                             loop-opts)
-          :else (if-let [bang (parse-bang user-request)]
-                  (run-bang-turn! env user-request bang loop-opts)
-                  (if (:handled? slash-result)
-                    (if-let [expansion (when (= :unknown (:reason slash-result))
-                                         (extension/with-context
-                                           {:env env}
-                                           (try (prompt-templates/expand env user-request)
-                                                (catch Throwable t
-                                                  (tel/log! {:level :warn
-                                                             :id ::template-expand-threw
-                                                             :data {:user-request user-request
-                                                                    :error (ex-message t)}})
-                                                  nil))))]
-                      (let [turn-env (if-let [root (:project-root expansion)]
-                                       (assoc env
-                                         :workspace/root root
-                                         :workspace (assoc (:workspace env) :root root))
-                                       env)]
-                        (extension/with-context
-                          {:env turn-env}
-                          (run-normal-turn! turn-env (:text expansion) loop-opts)))
-                      (if (and (= ["goal"] (:path slash-result))
-                               (= :ok (get-in slash-result [:result :slash/status]))
-                               (true? (get-in slash-result [:result :slash/data :goal-run?])))
-                        (run-normal-turn! env user-request loop-opts)
-                        (run-slash-turn! env user-request slash-result @slash-attachments loop-opts)))
-                    (run-normal-turn! env user-request loop-opts))))))
+          :else
+          (if-let [bang (parse-bang user-request)]
+            (run-bang-turn! env user-request bang loop-opts)
+            (if (:handled? slash-result)
+              (if-let [expansion (when (= :unknown (:reason slash-result))
+                                   (extension/with-context
+                                     {:env env}
+                                     (try (prompt-templates/expand env user-request)
+                                          (catch Throwable t
+                                            (tel/log! {:level :warn
+                                                       :id ::template-expand-threw
+                                                       :data {:user-request user-request
+                                                              :error (ex-message t)}})
+                                            nil))))]
+                (let [turn-env (if-let [root (:project-root expansion)]
+                                 (assoc env
+                                   :workspace/root root
+                                   :workspace (assoc (:workspace env) :root root))
+                                 env)]
+                  (extension/with-context {:env turn-env}
+                                          (run-normal-turn! turn-env (:text expansion) loop-opts)))
+                (if (and (= ["goal"] (:path slash-result))
+                         (= :ok (get-in slash-result [:result :slash/status]))
+                         (true? (get-in slash-result [:result :slash/data :goal-run?])))
+                  (run-normal-turn! env user-request loop-opts)
+                  (run-slash-turn! env user-request slash-result @slash-attachments loop-opts)))
+              (run-normal-turn! env user-request loop-opts))))))
 
 (defn custom-bindings
   "Current custom sandbox bindings {sym -> value}."

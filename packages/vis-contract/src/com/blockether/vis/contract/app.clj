@@ -492,7 +492,9 @@
 
 (def log-levels "How serious an app log entry can be." (set (get (definition "log_level") "enum")))
 
-(def log-sources "Who can write an app log entry." (set (get-in (definition "log_entry") ["properties" "source" "enum"])))
+(def log-sources
+  "Who can write an app log entry."
+  (set (get-in (definition "log_entry") ["properties" "source" "enum"])))
 
 (defn- code-points
   "How many code points `text` holds; a JSON Schema `maxLength` counts these."
@@ -526,6 +528,7 @@
       text
       (let [kept (- limit (code-points detail-gap))
             start (quot kept 2)]
+
         (str (head text start) detail-gap (tail text (- kept start)))))))
 
 (defn cut-log-texts
@@ -534,16 +537,26 @@
    is dropped. Other values stay as they are."
   [{:keys [message detail] :as entry}]
   (cond-> entry
-    (string? message) (assoc :message (clip-message (str/trim message) (:log-message bounds)))
-    (blank-text? detail) (dissoc :detail)
-    (string? detail) (cond-> (not (blank-text? detail)) (assoc :detail (clip-detail detail (:log-detail bounds))))))
+    (string? message)
+    (assoc :message (clip-message (str/trim message) (:log-message bounds)))
+
+    (blank-text? detail)
+    (dissoc :detail)
+
+    (string? detail)
+    (cond->
+      (not (blank-text? detail))
+      (assoc :detail (clip-detail detail (:log-detail bounds))))))
 
 (defn log-entry-error
   "nil when `entry` can go into the log of `view`, otherwise the reason. Only an
    app takes a log entry, and an entry needs a known level and a message."
   [view {:keys [level message detail]}]
   (cond (not (app? view)) "only an app (placement attachment) takes a log entry"
-        (not (contains? log-levels (some-> level name))) (str "a log entry needs a level: " (str/join ", " (sort log-levels)))
+        (not (contains? log-levels
+                        (some-> level
+                                name)))
+        (str "a log entry needs a level: " (str/join ", " (sort log-levels)))
         (blank-text? message) "a log entry needs a message"
         (not (or (nil? detail) (string? detail))) "the detail of a log entry must be text"))
 
@@ -555,17 +568,30 @@
   [view {:keys [level at source] :as entry}]
   (some-> (log-entry-error view entry)
           refuse-view!)
-  (when-not (contains? log-sources (some-> source name))
+  (when-not (contains? log-sources
+                       (some-> source
+                               name))
     (refuse-view! (str "a log entry needs a source: " (str/join ", " (sort log-sources)))))
-  (let [log (vec (:log view))
-        {:keys [message detail]} (cut-log-texts entry)
-        added (cond-> {:seq (inc (long (or (:seq (peek log)) 0)))
-                       :at (long at)
-                       :level (name level)
-                       :source (name source)
-                       :message message}
-                detail (assoc :detail detail))
-        kept (conj log added)
-        extra (- (count kept) (long (:log bounds)))]
+  (let [log
+        (vec (:log view))
+
+        {:keys [message detail]}
+        (cut-log-texts entry)
+
+        added
+        (cond-> {:seq (inc (long (or (:seq (peek log)) 0)))
+                 :at (long at)
+                 :level (name level)
+                 :source (name source)
+                 :message message}
+          detail
+          (assoc :detail detail))
+
+        kept
+        (conj log added)
+
+        extra
+        (- (count kept) (long (:log bounds)))]
+
     ;; `into` copies: a subvec would keep every dropped entry alive.
     (assoc view :log (if (pos? extra) (into [] (subvec kept extra)) kept))))

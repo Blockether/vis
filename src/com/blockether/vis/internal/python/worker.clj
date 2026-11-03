@@ -990,15 +990,14 @@
    that runs next to an extension load breaks that load. An existing worker, also a
    dead or retired one, is left as it is."
   [k warmup]
-  (with-worker-lock
-    k
-    true
-    (fn []
-      (when-not (or (get @workers k) (get @retired-workers k))
-        (let [started (or (take-spare! k) (start! k))]
-          (try (warm-up! (:peer started) warmup)
-               (catch Throwable t (stop-state! started) (throw t)))
-          (swap! workers assoc k started)))))
+  (with-worker-lock k
+                    true
+                    (fn []
+                      (when-not (or (get @workers k) (get @retired-workers k))
+                        (let [started (or (take-spare! k) (start! k))]
+                          (try (warm-up! (:peer started) warmup)
+                               (catch Throwable t (stop-state! started) (throw t)))
+                          (swap! workers assoc k started)))))
   nil)
 
 (def ^:private INTERRUPT_REPLY_MS

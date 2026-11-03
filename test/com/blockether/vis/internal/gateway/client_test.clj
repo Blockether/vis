@@ -1306,31 +1306,28 @@
                          (expect (= "sk-ant-o..." (get status "oauth_token_preview")))
                          (expect (= 10859960 (get status "expires_in_ms")))))))))
 
-(defdescribe
-  provider-reads-send-one-request
-  ;; Each provider read sent a probe GET of its own path first. Status and router reads
-  ;; ask providers live, so `vis-agent providers` paid every live check twice.
-  (it
-    "sends one request for each provider read and router change"
-    (let [sent (atom [])]
-      (with-redefs-fn {(rv 'ensure-gateway!) (fn [& _]
-                                               fake-entry)
-                       (rv 'ensure-client!) (constantly "client-id")
-                       (rv 'gw-send!) (fn [_ method path _]
-                                        (swap! sent conj [method path])
-                                        {:status 200 :body "{}"})}
-        (fn []
-          (client/provider-status :acme)
-          (client/provider-limits :acme)
-          (client/provider-models :acme false)
-          (client/router)
-          (client/set-router-fallback!)
-          (expect (= [["GET" "/v1/providers/acme/status"]
-                      ["GET" "/v1/providers/acme/limits"]
-                      ["GET" "/v1/providers/acme/models"]
-                      ["GET" "/v1/router"]
-                      ["PATCH" "/v1/router"]]
-                     @sent)))))))
+(defdescribe provider-reads-send-one-request
+             ;; Each provider read sent a probe GET of its own path first. Status and router reads
+             ;; ask providers live, so `vis-agent providers` paid every live check twice.
+             (it "sends one request for each provider read and router change"
+                 (let [sent (atom [])]
+                   (with-redefs-fn {(rv 'ensure-gateway!) (fn [& _]
+                                                            fake-entry)
+                                    (rv 'ensure-client!) (constantly "client-id")
+                                    (rv 'gw-send!) (fn [_ method path _]
+                                                     (swap! sent conj [method path])
+                                                     {:status 200 :body "{}"})}
+                     (fn []
+                       (client/provider-status :acme)
+                       (client/provider-limits :acme)
+                       (client/provider-models :acme false)
+                       (client/router)
+                       (client/set-router-fallback!)
+                       (expect (= [["GET" "/v1/providers/acme/status"]
+                                   ["GET" "/v1/providers/acme/limits"]
+                                   ["GET" "/v1/providers/acme/models"] ["GET" "/v1/router"]
+                                   ["PATCH" "/v1/router"]]
+                                  @sent)))))))
 
 (defn- run-serving!
   "Drive ensure-gateway-serving! with a scripted `probe-route` (a seq of results,

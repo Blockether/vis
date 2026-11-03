@@ -504,10 +504,13 @@
                                     (select-keys op [:level :message :detail :at :source])))))
 
 (def ^:private view-operations
-  {:add-node apply-add-node :remove-node apply-remove-node
-   :submission (fn [view op] (app/upsert-submission view (:submission op)))
+  {:add-node apply-add-node
+   :remove-node apply-remove-node
+   :submission (fn [view op]
+                 (app/upsert-submission view (:submission op)))
    :shortcuts apply-shortcuts
-   :agent-note (fn [view op] (app-rule nil #(app/set-agent-note view (:text op))))
+   :agent-note (fn [view op]
+                 (app-rule nil #(app/set-agent-note view (:text op))))
    :log apply-app-log})
 
 (defn- apply-op

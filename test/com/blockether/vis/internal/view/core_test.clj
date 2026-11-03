@@ -3394,38 +3394,50 @@
   app-log-test
   ;; Review report (goal 4b41c770): an app needs a debug and error log that a
   ;; person can read in the TUI and the Companion.
-  (it "stamps owner entries itself and keeps only the newest entries"
-      (recorded
-        (fn []
-          (let [sid (str (random-uuid))
-                view-id (get (app-seam! sid (sandbox-app sid)) "view_id")
-                log! (fn [ops]
-                       (app-seam! sid {"op" "patch" "view_id" view-id "patch" {"ops" ops}})
-                       (get-in (app-seam! sid {"op" "state" "view_id" view-id}) ["view" "log"]))]
-            (try (let [[entry] (log! [{"op" "log" "level" "info" "message" " Loaded " "at" 1 "source" "host"}])]
-                   (expect (= {"seq" 1 "level" "info" "source" "app" "message" "Loaded"}
-                              (dissoc entry "at"))
-                           "an owner cannot write the source")
-                   (expect (> (long (get entry "at")) 1) "an owner cannot write the time"))
-                 (let [log (log! (vec (repeat 205 {"op" "log" "level" "debug" "message" "tick"})))]
-                   (expect (= 200 (count log)))
-                   (expect (= [7 206] [(get (first log) "seq") (get (peek log) "seq")])))
-                 (doseq [[op reason] [[{"op" "log" "level" "loud" "message" "x"} "needs :level"]
-                                      [{"op" "log" "level" "info"} "needs :message text"]
-                                      [{"op" "log" "level" "info" "message" 7} "needs :message text"]
-                                      [{"op" "log" "level" "info" "message" "x" "detail" 7} "needs :detail text"]]]
-                   (expect (str/includes? (str (live-refusal #(app-seam! sid {"op" "patch"
-                                                                              "view_id" view-id
-                                                                              "patch" {"ops" [op]}})))
-                                          reason)
-                           reason))
-                 (finally (hi/close-live! view-id)))))))
+  (it
+    "stamps owner entries itself and keeps only the newest entries"
+    (recorded
+      (fn []
+        (let [sid
+              (str (random-uuid))
+
+              view-id
+              (get (app-seam! sid (sandbox-app sid)) "view_id")
+
+              log!
+              (fn [ops]
+                (app-seam! sid {"op" "patch" "view_id" view-id "patch" {"ops" ops}})
+                (get-in (app-seam! sid {"op" "state" "view_id" view-id}) ["view" "log"]))]
+
+          (try (let [[entry]
+                     (log!
+                       [{"op" "log" "level" "info" "message" " Loaded " "at" 1 "source" "host"}])]
+                 (expect (= {"seq" 1 "level" "info" "source" "app" "message" "Loaded"}
+                            (dissoc entry "at"))
+                         "an owner cannot write the source")
+                 (expect (> (long (get entry "at")) 1) "an owner cannot write the time"))
+               (let [log (log! (vec (repeat 205 {"op" "log" "level" "debug" "message" "tick"})))]
+                 (expect (= 200 (count log)))
+                 (expect (= [7 206] [(get (first log) "seq") (get (peek log) "seq")])))
+               (doseq [[op reason] [[{"op" "log" "level" "loud" "message" "x"} "needs :level"]
+                                    [{"op" "log" "level" "info"} "needs :message text"]
+                                    [{"op" "log" "level" "info" "message" 7} "needs :message text"]
+                                    [{"op" "log" "level" "info" "message" "x" "detail" 7}
+                                     "needs :detail text"]]]
+                 (expect (str/includes? (str (live-refusal #(app-seam! sid
+                                                                       {"op" "patch"
+                                                                        "view_id" view-id
+                                                                        "patch" {"ops" [op]}})))
+                                        reason)
+                         reason))
+               (finally (hi/close-live! view-id)))))))
   (it "writes a failed callback into the app log as a host error"
       (owned
         (fn []
           (let [view-id (get (owned-open! {:extension "forge"
                                            :context (Object.)
-                                           :listener (fn [_event _sid] (throw (ex-info "boom" {})))}
+                                           :listener (fn [_event _sid]
+                                                       (throw (ex-info "boom" {})))}
                                           {"title" "Board"
                                            "placement" "attachment"
                                            "session_id" "forge-session"
@@ -3435,17 +3447,21 @@
             (expect (true? (:is-accepted (hi/action! view-id {:action :activate :node-id "go"}))))
             (expect (await-true #(seq (:log (hi/live-view view-id)))))
             (let [entry (first (:log (hi/live-view view-id)))]
-              (expect (= ["error" "host" "A callback failed: boom"] ((juxt :level :source :message) entry)))
-              (expect (str/includes? (:detail entry) "boom") "the detail holds the stack trace"))))))
+              (expect (= ["error" "host" "A callback failed: boom"]
+                         ((juxt :level :source :message) entry)))
+              (expect (str/includes? (:detail entry) "boom")
+                      "the detail holds the stack trace"))))))
   (it "cuts a long callback failure instead of losing it"
       (owned
         (fn []
           (let [view-id (get (owned-open! {:extension "forge"
                                            :context (Object.)
-                                           :listener (fn [_event _sid]
-                                                       (throw (ex-info (apply str (repeat 2500 "x"))
-                                                                       {}
-                                                                       (ex-info (apply str (repeat 20000 "c")) {}))))}
+                                           :listener
+                                           (fn [_event _sid]
+                                             (throw (ex-info (apply str (repeat 2500 "x"))
+                                                             {}
+                                                             (ex-info (apply str (repeat 20000 "c"))
+                                                                      {}))))}
                                           {"title" "Board"
                                            "placement" "attachment"
                                            "session_id" "forge-session"
@@ -3461,11 +3477,23 @@
   (it "redacts a secret in a log message"
       (recorded
         (fn []
-          (let [sid (str (random-uuid))
-                view-id (get (app-seam! sid (sandbox-app sid)) "view_id")]
-            (try (app-seam! sid {"op" "patch" "view_id" view-id
-                                 "patch" {"ops" [{"op" "log" "level" "warn" "message" "Authorization: Bearer abcdef0123456789abcdef0123"}]}})
-                 (expect (not (str/includes? (str (get-in (app-seam! sid {"op" "state" "view_id" view-id}) ["view" "log"]))
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid (sandbox-app sid)) "view_id")]
+
+            (try (app-seam! sid
+                            {"op" "patch"
+                             "view_id" view-id
+                             "patch" {"ops"
+                                      [{"op" "log"
+                                        "level" "warn"
+                                        "message"
+                                        "Authorization: Bearer abcdef0123456789abcdef0123"}]}})
+                 (expect (not (str/includes? (str (get-in
+                                                    (app-seam! sid {"op" "state" "view_id" view-id})
+                                                    ["view" "log"]))
                                              "abcdef0123456789abcdef0123")))
                  (finally (hi/close-live! view-id)))))))
   (it "redacts a long detail before it cuts it"
@@ -3473,13 +3501,26 @@
       ;; `password=` label, so the redactor kept the tail of the value.
       (recorded
         (fn []
-          (let [sid (str (random-uuid))
-                view-id (get (app-seam! sid (sandbox-app sid)) "view_id")
-                detail (str (apply str (repeat 7990 "a")) "password=" (apply str (repeat 400 "Z"))
-                            (apply str (repeat 7700 "b")))]
-            (try (app-seam! sid {"op" "patch" "view_id" view-id
-                                 "patch" {"ops" [{"op" "log" "level" "error" "message" "Failed" "detail" detail}]}})
-                 (let [kept (get-in (app-seam! sid {"op" "state" "view_id" view-id}) ["view" "log" 0 "detail"])]
+          (let [sid
+                (str (random-uuid))
+
+                view-id
+                (get (app-seam! sid (sandbox-app sid)) "view_id")
+
+                detail
+                (str (apply str (repeat 7990 "a"))
+                     "password="
+                     (apply str (repeat 400 "Z"))
+                     (apply str (repeat 7700 "b")))]
+
+            (try (app-seam! sid
+                            {"op" "patch"
+                             "view_id" view-id
+                             "patch"
+                             {"ops"
+                              [{"op" "log" "level" "error" "message" "Failed" "detail" detail}]}})
+                 (let [kept (get-in (app-seam! sid {"op" "state" "view_id" view-id})
+                                    ["view" "log" 0 "detail"])]
                    (expect (str/includes? kept "password=[REDACTED]"))
                    (expect (not (str/includes? kept "ZZZ"))))
                  (finally (hi/close-live! view-id))))))))
@@ -3490,13 +3531,18 @@
 (defn- fixture-data
   "The base64 data of accepted fixture picture `named`."
   [named]
-  (some #(when (= named (get % "name")) (get-in % ["picture" "data"])) (get @fixture-pictures "accepted")))
+  (some #(when (= named (get % "name")) (get-in % ["picture" "data"]))
+        (get @fixture-pictures "accepted")))
 
 (defn- padded-png
   "A PNG of `n` bytes: a 1x1 header, then zeros. Only the header is read."
   [n]
-  (let [head (.decode (java.util.Base64/getDecoder) ^String (fixture-data "png"))
-        out (byte-array n)]
+  (let [head
+        (.decode (java.util.Base64/getDecoder) ^String (fixture-data "png"))
+
+        out
+        (byte-array n)]
+
     (System/arraycopy head 0 out 0 (alength head))
     (.encodeToString (java.util.Base64/getEncoder) out)))
 
@@ -3506,18 +3552,30 @@
   (it "opens an image with its header sizes and keeps the bytes away from the model"
       (recorded
         (fn []
-          (let [png (fixture-data "png")
-                jpeg (fixture-data "jpeg")
-                view-id (:id (hi/open-live! (live-spec {:id "shot"
-                                                        :type "image"
-                                                        :alt "Logo"
-                                                        :media-type "image/png"
-                                                        :data png
-                                                        :before {:media-type "image/jpeg" :data jpeg}})))]
-            (try (let [node (first (:nodes (hi/live-view view-id)))
-                       seen (first (get-in (live/picture (hi/live-view view-id)) [:view :nodes]))]
+          (let [png
+                (fixture-data "png")
+
+                jpeg
+                (fixture-data "jpeg")
+
+                view-id
+                (:id (hi/open-live! (live-spec {:id "shot"
+                                                :type "image"
+                                                :alt "Logo"
+                                                :media-type "image/png"
+                                                :data png
+                                                :before {:media-type "image/jpeg" :data jpeg}})))]
+
+            (try (let [node
+                       (first (:nodes (hi/live-view view-id)))
+
+                       seen
+                       (first (get-in (live/picture (hi/live-view view-id)) [:view :nodes]))]
+
                    (expect (= [png jpeg] [(:data node) (get-in node [:before :data])]))
-                   (expect (= [3 2 3 2] [(:width node) (:height node) (get-in node [:before :width]) (get-in node [:before :height])])
+                   (expect (= [3 2 3 2]
+                              [(:width node) (:height node) (get-in node [:before :width])
+                               (get-in node [:before :height])])
                            "the host fills the size from each header")
                    (expect (= {:media-type "image/png" :bytes 72 :width 3 :height 2 :alt "Logo"}
                               (dissoc seen :id :type :before)))
@@ -3526,24 +3584,42 @@
                  (finally (hi/close-live! view-id)))))))
   (it "refuses bytes that are not base64, not of their media type or too large"
       (doseq [[data why] [[(fixture-data "jpeg") "is not image/png data"] ["!!" "base64"]
-                          [(get-in (some #(when (= "too many pixels" (get % "name")) %) (get @fixture-pictures "refused")) ["picture" "data"])
-                           "pixels"]]]
+                          [(get-in (some #(when (= "too many pixels" (get % "name")) %)
+                                         (get @fixture-pictures "refused"))
+                                   ["picture" "data"]) "pixels"]]]
         (expect (str/includes? (str (live-refusal #(hi/open-live! (live-spec {:id "shot"
                                                                               :type "image"
                                                                               :alt "Shot"
-                                                                              :media-type "image/png"
+                                                                              :media-type
+                                                                              "image/png"
                                                                               :data data}))))
                                why)
                 why)))
   (it "refuses an added image that passes the picture bound of the view"
       (recorded
         (fn []
-          (let [big (padded-png (inc (quot (long (:view-bytes hs/picture-bounds)) 4)))
-                image (fn [id] {:id id :type "image" :alt id :media-type "image/png" :data big :before {:media-type "image/png" :data big}})
-                view-id (:id (hi/open-live! (live-spec (image "one"))))]
-            (try (expect (str/includes? (str (live-refusal #(hi/patch-live! view-id [{:op :add-node :node-spec (image "two")}])))
+          (let [big
+                (padded-png (inc (quot (long (:view-bytes hs/picture-bounds)) 4)))
+
+                image
+                (fn [id]
+                  {:id id
+                   :type "image"
+                   :alt id
+                   :media-type "image/png"
+                   :data big
+                   :before {:media-type "image/png" :data big}})
+
+                view-id
+                (:id (hi/open-live! (live-spec (image "one"))))]
+
+            (try (expect (str/includes? (str (live-refusal #(hi/patch-live! view-id
+                                                                            [{:op :add-node
+                                                                              :node-spec
+                                                                              (image "two")}])))
                                         "the pictures of this view hold"))
-                 (expect (= ["one"] (mapv :id (:nodes (hi/live-view view-id)))) "the view keeps its old nodes")
+                 (expect (= ["one"] (mapv :id (:nodes (hi/live-view view-id))))
+                         "the view keeps its old nodes")
                  (finally (hi/close-live! view-id))))))))
 
 (defn- judge-next!

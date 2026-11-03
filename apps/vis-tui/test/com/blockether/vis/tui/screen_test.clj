@@ -1583,13 +1583,12 @@ therapy line 2"
 ;; gives it work.
 (defdescribe
   subagent-session-prompt-test
-  (let [child
-        {:session {:id "child" :agent {:role "subagent" :parent-id "lead" :leader-id "lead"}}
-         :active-tab-id :tab-1
-         :tabs [{:id :tab-1 :session-id "child" :active? true}]
-         :input (input/empty-input)
-         :attachments [{:id "a"}]
-         :loading? false}]
+  (let [child {:session {:id "child" :agent {:role "subagent" :parent-id "lead" :leader-id "lead"}}
+               :active-tab-id :tab-1
+               :tabs [{:id :tab-1 :session-id "child" :active? true}]
+               :input (input/empty-input)
+               :attachments [{:id "a"}]
+               :loading? false}]
     (it "gives the prompt and its attachment rail no rows"
         (let [geometry (#'screen/composer-geometry child 80 30)]
           (expect (= [0 0 0 0] (mapv geometry [:text-rows :input-box-h :rail-h :composer-h])))
@@ -1597,10 +1596,13 @@ therapy line 2"
     (it "keeps typing out of the draft"
         (let [handler (:fn (get @@#'state/event-registry :update-input))]
           (expect (= (input/empty-input)
-                     (:input (handler child [:update-input (input/paste-text (input/empty-input) "hi")]))))))
+                     (:input (handler child
+                                      [:update-input
+                                       (input/paste-text (input/empty-input) "hi")]))))))
     (it "sends nothing on Enter"
         (let [events (atom [])]
-          (with-redefs [state/dispatch (fn [event] (swap! events conj event))]
+          (with-redefs [state/dispatch (fn [event]
+                                         (swap! events conj event))]
             (submit-input! child (input/paste-text (input/empty-input) "hi")))
           (expect (= [] @events))))))
 
@@ -3376,53 +3378,54 @@ therapy line 2"
 ;; The C-x hydra went through the MODAL `with-dialog-lock`, which deletes the
 ;; whole Kitty graphics layer so a full-screen dialog is the top surface; a band
 ;; only ever covers the rows it paints.
-(defdescribe images-above-band-test
-             (let [above
-                   (deref #'screen/images-above-band)
+(defdescribe
+  images-above-band-test
+  (let [above
+        (deref #'screen/images-above-band)
 
-                   region
-                   (fn [row rows]
-                     {:row row :col 2 :img {:path "/tmp/shot.png" :cols 10 :rows rows}})]
+        region
+        (fn [row rows]
+          {:row row :col 2 :img {:path "/tmp/shot.png" :cols 10 :rows rows}})]
 
-               (it "keeps every picture whose box ends above the band's first row"
-                   (expect (= [(region 2 5)] (above [(region 2 5) (region 12 5)] 12))))
-               (it "drops a picture that starts in the band, or that it cannot cut"
-                   (expect (= [] (above [(region 12 1) (region 13 4)] 12)))
-                   ;; Without a pixel size, another protocol cannot cut a picture.
-                   (with-redefs [timg/images-protocol (constantly :iterm2)]
-                     (expect (= [] (above [(region 10 4)] 12)))))
-               ;; User report: the picture that the C-x band partly covered vanished
-               ;; while the band was open. Its rows above the band stay on screen.
-               (it "keeps the rows above the band of a picture that reaches into it"
-                   (with-redefs [timg/images-protocol (constantly :kitty)]
-                     (expect (= [{:row 10
-                                  :col 2
-                                  :img {:path "/tmp/shot.png" :cols 10 :rows 4 :crop-top 0 :crop-bottom 2}}]
-                                (above [(region 10 4)] 12)))
-                     (expect (= [1 1]
-                                (-> (above [(assoc-in (region 10 4) [:img :crop-top] 1)] 12)
-                                    first
-                                    :img
-                                    ((juxt :crop-top :crop-bottom))))))
-                   (with-redefs [timg/images-protocol (constantly :iterm2)]
-                     (let [[kept] (above [(update (region 10 4) :img assoc :width 40 :height 80)] 12)]
-                       (expect (= 2 (get-in kept [:img :rows])))
-                       (expect (= {:x 0 :y 0 :w 40 :h 40} (get-in kept [:img :view]))))))
-               (it "every C-x band's top row leaves room for the transcript above it"
-                   (let [db {:layout {:cols 100 :rows 30 :messages-top 1 :input-h 3}
-                             :messages [{:role :user}]
-                             :codex-session? true
-                             :has-images? true
-                             :graphical-terminal? true}]
-                     ;; A band must not measure tall enough to reach the header and
-                     ;; swallow every picture on screen.
-                     (doseq [spec (cons (keymap/prefix-spec db)
-                                        (keep #(when (keymap/prefix-group-for (:key %))
-                                                 (keymap/prefix-spec db (:id %)))
-                                              keymap/prefix-groups))]
-                       (let [top ((deref #'screen/band-top-row) db spec)]
-                         (expect (> (long top) 10) (:title spec))
-                         (expect (seq (above [(region 3 4)] top)) (:title spec))))))))
+    (it "keeps every picture whose box ends above the band's first row"
+        (expect (= [(region 2 5)] (above [(region 2 5) (region 12 5)] 12))))
+    (it "drops a picture that starts in the band, or that it cannot cut"
+        (expect (= [] (above [(region 12 1) (region 13 4)] 12)))
+        ;; Without a pixel size, another protocol cannot cut a picture.
+        (with-redefs [timg/images-protocol (constantly :iterm2)]
+          (expect (= [] (above [(region 10 4)] 12)))))
+    ;; User report: the picture that the C-x band partly covered vanished
+    ;; while the band was open. Its rows above the band stay on screen.
+    (it "keeps the rows above the band of a picture that reaches into it"
+        (with-redefs [timg/images-protocol (constantly :kitty)]
+          (expect (= [{:row 10
+                       :col 2
+                       :img {:path "/tmp/shot.png" :cols 10 :rows 4 :crop-top 0 :crop-bottom 2}}]
+                     (above [(region 10 4)] 12)))
+          (expect (= [1 1]
+                     (-> (above [(assoc-in (region 10 4) [:img :crop-top] 1)] 12)
+                         first
+                         :img
+                         ((juxt :crop-top :crop-bottom))))))
+        (with-redefs [timg/images-protocol (constantly :iterm2)]
+          (let [[kept] (above [(update (region 10 4) :img assoc :width 40 :height 80)] 12)]
+            (expect (= 2 (get-in kept [:img :rows])))
+            (expect (= {:x 0 :y 0 :w 40 :h 40} (get-in kept [:img :view]))))))
+    (it "every C-x band's top row leaves room for the transcript above it"
+        (let [db {:layout {:cols 100 :rows 30 :messages-top 1 :input-h 3}
+                  :messages [{:role :user}]
+                  :codex-session? true
+                  :has-images? true
+                  :graphical-terminal? true}]
+          ;; A band must not measure tall enough to reach the header and
+          ;; swallow every picture on screen.
+          (doseq [spec (cons (keymap/prefix-spec db)
+                             (keep #(when (keymap/prefix-group-for (:key %))
+                                      (keymap/prefix-spec db (:id %)))
+                                   keymap/prefix-groups))]
+            (let [top ((deref #'screen/band-top-row) db spec)]
+              (expect (> (long top) 10) (:title spec))
+              (expect (seq (above [(region 3 4)] top)) (:title spec))))))))
 
 ;; Regression: a modal hid every transcript picture, also a thumbnail far away from the
 ;; modal box. A modal now hides only the pictures that it covers.
@@ -4643,9 +4646,10 @@ therapy line 2"
                 (with-redefs [state/app-db (atom db)
                               timg/images-protocol (constantly nil)
                               screen/paint-terminal-images! #(reset! images %)
-                              vis/show-notifications! (fn [_]
-                                                        (when-let [entry (first @notices)]
-                                                          {:entry entry :index 0 :total (count @notices)}))]
+                              vis/show-notifications!
+                              (fn [_]
+                                (when-let [entry (first @notices)]
+                                  {:entry entry :index 0 :total (count @notices)}))]
 
                   (let [full (#'screen/render-frame! terminal-screen cols 30 db 1000)
                         [layout _]
@@ -4692,17 +4696,24 @@ therapy line 2"
     ;; Zen mode, where the header is hidden.
     (it "paints a notification as a top-left toast on every repaint path"
         (reset! notices [{:id "n1" :text "Copied zen" :level :success}])
-        (try
-          (doseq [settings [{} {:zen-mode true}]
-                  path [:full :scroll :input :partial-live :header-hover :header-spinner]]
-            (let [{:keys [rows layout]} (frame 80 settings path)
-                  row (row-of rows "Copied zen")]
-              (expect (some? row))
-              (expect (<= (long (:messages-top layout)) (long row) 7))
-              ;; Zen mode places the card at the left edge of the centred column.
-              (expect (< (long (str/index-of (nth rows row) "Copied zen"))
-                         (+ 8 (long (or (:chat-left layout) 0)))))))
-          (finally (reset! notices []))))
+        (try (doseq [settings
+                     [{} {:zen-mode true}]
+
+                     path
+                     [:full :scroll :input :partial-live :header-hover :header-spinner]]
+
+               (let [{:keys [rows layout]}
+                     (frame 80 settings path)
+
+                     row
+                     (row-of rows "Copied zen")]
+
+                 (expect (some? row))
+                 (expect (<= (long (:messages-top layout)) (long row) 7))
+                 ;; Zen mode places the card at the left edge of the centred column.
+                 (expect (< (long (str/index-of (nth rows row) "Copied zen"))
+                            (+ 8 (long (or (:chat-left layout) 0)))))))
+             (finally (reset! notices []))))
     ;; 120 / 1.618 = 74.2: a 74-cell column with 23 blank cells at each side. A narrow
     ;; terminal keeps a 60-cell column.
     (it "centres the transcript and the prompt in the golden ratio column on every repaint path"
