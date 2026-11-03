@@ -227,4 +227,41 @@ describe('HoverNote', () => {
       vi.useRealTimers();
     }
   });
+
+  // Regression, user report (the note still covered the session header): the dock row sits in
+  // the footer of the session, and its note must stay below the header of the session.
+  it('keeps the note of a footer row below the header of its area', () => {
+    vi.useFakeTimers();
+    const boxes: Record<string, DOMRect> = {
+      SECTION: new DOMRect(0, 0, 1000, window.innerHeight),
+      HEADER: new DOMRect(0, 0, 1000, 100),
+      BUTTON: new DOMRect(0, window.innerHeight - 60, 1000, 24),
+    };
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      return boxes[this.tagName] ?? new DOMRect();
+    });
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(5000);
+    try {
+      render(
+        <section data-hover-note-bounds>
+          <header>Session</header>
+          <footer>
+            <button type="button">
+              <HoverNote note="A long task">
+                <span>Row</span>
+              </HoverNote>
+            </button>
+          </footer>
+        </section>,
+      );
+      fireEvent.pointerEnter(screen.getByText('Row'), { pointerType: 'mouse' });
+      act(() => vi.advanceTimersByTime(1000));
+      // The row starts 60px above the foot. Above it: the gap of 6px, then the margin of 12px.
+      expect(screen.getByRole('tooltip').style.maxHeight).toBe(`${window.innerHeight - 60 - 6 - 12 - 100}px`);
+    } finally {
+      rect.mockRestore();
+      height.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });

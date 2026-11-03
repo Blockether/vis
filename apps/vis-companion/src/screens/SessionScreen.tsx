@@ -5642,6 +5642,8 @@ export function SessionScreen({
           // stands in here, so it covers the pane and never the desk beside it. The pane
           // has no entry fade: every switch remounts it, and a fade from blank is a flicker.
           data-session-surface
+          // A hover note, such as the task of an agent, stays in this pane below its header.
+          data-hover-note-bounds
           className={`relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${zen ? 'zen-surface' : 'bg-ink'}`}
         >
           {zen && <ZenPictures />}
@@ -5712,8 +5714,7 @@ export function SessionScreen({
             />
           )}
 
-          {/* A hover note, such as the task of an agent, stays below the header of this session. */}
-          <div data-hover-note-bounds className="relative flex min-h-0 flex-1 flex-col">
+          <div className="relative flex min-h-0 flex-1 flex-col">
             {/* The gallery belongs to this session but not to this transcript rectangle:
             it portals into the viewport-pinned shell, so its full-screen contract includes
             the session header and every detail opened from it inherits the whole glass. */}

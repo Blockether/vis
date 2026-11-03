@@ -2652,8 +2652,18 @@ let hoverNoteClosedAt = -Infinity;
 /** The controls that a note spans when its label sits inside one. */
 const HOVER_NOTE_FRAME = 'button, a[href], [role="button"]';
 
-/** The area that holds a note, such as the body of a session. Without one, the note uses the window. */
+/** The area that holds a note, such as a session. Without one, the note uses the window. */
 const HOVER_NOTE_BOUNDS = '[data-hover-note-bounds]';
+
+/** The room for a note: its area below the own header of that area, else the window. */
+function hoverNoteArea(trigger: HTMLElement): DOMRect {
+  const bounds = trigger.closest(HOVER_NOTE_BOUNDS);
+  if (!bounds) return new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+  const area = bounds.getBoundingClientRect();
+  const head = bounds.querySelector(':scope > header')?.getBoundingClientRect();
+  const top = head ? Math.max(area.top, head.bottom) : area.top;
+  return new DOMRect(area.left, top, area.width, Math.max(area.bottom - top, 0));
+}
 
 /**
  * THE LONG TEXT BEHIND A SHORT LABEL, shown when a mouse rests on the label.
@@ -2662,8 +2672,8 @@ const HOVER_NOTE_BOUNDS = '[data-hover-note-bounds]';
  * font, at any size: a long subagent task covered most of the window. This note uses the
  * floating surface of the app. Inside a control, such as a table row, the note spans that
  * control and shows its whole text under or over it, as tall as its area allows: the
- * nearest `data-hover-note-bounds`, such as the body of a session, else the window. Else it
- * starts at the label. A note that its area cannot hold fades at its foot. A text note keeps its own line breaks. Only a mouse opens it: a finger has no hover, and its press opens the row.
+ * nearest `data-hover-note-bounds` below its own `header`, such as a session, else the
+ * window. Outside a control, the note starts at the label. A note that its area cannot hold fades at its foot. A text note keeps its own line breaks. Only a mouse opens it: a finger has no hover, and its press opens the row.
  * A press, a scroll, Escape or leaving the window closes it. It never takes the pointer
  * or the focus, so the control under it works as before.
  *
@@ -2690,7 +2700,7 @@ export function HoverNote({ note, children, className = '' }: { note: ReactNode;
     let at;
     if (control) {
       const box = control.getBoundingClientRect();
-      const area = trigger.closest(HOVER_NOTE_BOUNDS)?.getBoundingClientRect() ?? new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+      const area = hoverNoteArea(trigger);
       panel.style.maxWidth = 'none';
       panel.style.maxHeight = 'none';
       panel.style.width = `${Math.min(box.width, area.width - 2 * EDGE_MARGIN)}px`;
