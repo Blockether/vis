@@ -1596,20 +1596,20 @@
         (long width)
 
         height
-        (long height)]
+        (long height)
 
-    (assoc (geom-in state
-                    (+ left width)
-                    (+ top height)
-                    width
-                    {:left left
-                     :top top
-                     :right (+ left width -1)
-                     :bottom (+ top height -1)
-                     :inner-w (- width 2)
-                     :inner-h (- height 2)}
-                    view)
-      :pane? true)))
+        bounds
+        {:left left
+         :top top
+         :right (+ left width -1)
+         :bottom (+ top height -1)
+         :inner-w (- width 2)
+         :inner-h (- height 2)}]
+
+    ;; The pane title has its own row, so the log chip sits on that row.
+    (assoc (geom-in state (+ left width) (+ top height) width bounds view)
+      :pane? true
+      :log-chip (log-chip (update bounds :top inc) view))))
 
 (defn reconcile
   "Keep the cursor on a stop and in view."
@@ -1646,28 +1646,41 @@
       :scroll scroll)))
 
 (defn- paint-pane-chrome!
-  "Paint the side pane box and title. The pane key chord hides it."
-  [g {:keys [left top right bottom inner-w]} view]
+  "Paint the side pane like the project sidebar: a box, the title on its own row
+   and rules under the title and over the footer. The pane key chord hides it."
+  [g {:keys [left top right bottom inner-w]} view chip]
   (let [left
         (long left)
 
         top
         (long top)
 
-        right
-        (long right)]
+        bottom
+        (long bottom)
+
+        width
+        (inc (- (long right) left))
+
+        height
+        (inc (- bottom top))]
 
     (p/set-bg! g t/dialog-bg)
-    (p/fill-rect! g left top (inc (- right left)) (inc (- (long bottom) top)))
-    (p/set-colors! g t/dialog-border t/dialog-bg)
-    (p/draw-box! g left top (inc (- right left)) (inc (- (long bottom) top)))
-    (p/set-colors! g t/dialog-title-bg t/dialog-bg)
-    (p/styled g
-              [p/BOLD]
-              (p/put-str! g
-                          (+ left 2)
-                          top
-                          (str " " (p/ellipsize (title view) (max 0 (- (long inner-w) 6))) " ")))))
+    (p/fill-rect! g left top width height)
+    (p/set-colors! g t/dialog-hint t/dialog-bg)
+    (p/draw-box! g left top width height)
+    (doseq [row (distinct (filter #(< top (long %) bottom) [(+ top 2) (- bottom 2)]))]
+      (p/put-str! g left row (str "├" (p/horiz-line (- width 2)) "┤")))
+    (when (> height 3)
+      (p/set-colors! g t/header-fg t/dialog-bg)
+      (p/styled g
+                [p/BOLD]
+                (p/put-str!
+                  g
+                  (+ left 2)
+                  (inc top)
+                  (p/ellipsize
+                    (title view)
+                    (max 0 (if chip (- (long (:col chip)) left 4) (- (long inner-w) 2)))))))))
 
 (defn- paint-log-hit!
   [{:keys [row col width]}]
@@ -1689,9 +1702,9 @@
     (paint-pane-log-hit! pane? log-chip)))
 
 (defn- paint-frame-chrome!
-  [g {:keys [bounds view pane? cols rows-count content-w]}]
+  [g {:keys [bounds view pane? cols rows-count content-w log-chip]}]
   (if pane?
-    (paint-pane-chrome! g bounds view)
+    (paint-pane-chrome! g bounds view log-chip)
     (in-app-region #(dlg/draw-dialog-chrome! g
                                              cols
                                              rows-count

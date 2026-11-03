@@ -550,7 +550,8 @@
                                                 (#'surface/paint-pane-chrome!
                                                  g
                                                  {:left 0 :top 0 :right 59 :bottom 24 :inner-w 58}
-                                                 {:title "Review"})
+                                                 {:title "Review"}
+                                                 nil)
                                                 (.commitFrame interactions/hit-map))})]
         (expect (nil? (:error result)))
         (expect (not (str/blank? (capture/frame-text result))))
