@@ -185,7 +185,7 @@ export function ChordBand({ registry, group }: { registry: CommandRegistry; grou
       className={`pointer-events-none fixed z-50 flex justify-center ${place ? '' : 'inset-x-0 bottom-[max(0.75rem,env(safe-area-inset-bottom))] px-3'}`}
     >
       <div className={`@container w-full border border-dialog-edge bg-panel px-4 py-3 font-mono shadow-float ${place ? '' : 'max-w-4xl'}`}>
-        <div className="mb-3 flex min-w-0 items-center gap-2.5 text-ui mouse:text-title">
+        <div className="-mx-4 mb-3 flex min-w-0 items-center gap-2.5 border-b border-dialog-edge px-4 pb-3 text-ui mouse:text-title">
           <span className="flex shrink-0 gap-1">
             {pressed.map((key) => (
               <KeyCap key={key} keyName={key} size="text" />
