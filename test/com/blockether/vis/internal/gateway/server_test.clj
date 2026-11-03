@@ -3328,9 +3328,9 @@
         (fn []
           ;; a configured provider is accepted
           (let [resp (#'sessions-api/set-session-model-handler
-                      (body {:provider "zai-coding-plan" :model "glm-5.2"}))]
+                      (body {:provider "zai-coding-plan" :model "glm-5.3"}))]
             (expect (= 200 (:status resp)))
-            (expect (= ["zai-coding-plan" "glm-5.2"] @wrote)))
+            (expect (= ["zai-coding-plan" "glm-5.3"] @wrote)))
           ;; a model outside vis.yml is fine — the live catalog offers more
           (expect (= 200
                      (:status (#'sessions-api/set-session-model-handler
@@ -3353,8 +3353,8 @@
           (reset! wrote nil)
           (expect (= 200
                      (:status (#'sessions-api/set-session-model-handler
-                               (body {:provider "  " :model "glm-5.2"})))))
-          (expect (= [nil "glm-5.2"] @wrote)))))))
+                               (body {:provider "  " :model "glm-5.3"})))))
+          (expect (= [nil "glm-5.3"] @wrote)))))))
 
 (defdescribe
   session-model-handler-answers-the-project-default
@@ -3417,10 +3417,10 @@
          [{:id :anthropic-coding-plan
            :base-url "https://api.anthropic.com/v1"
            :models [{:name "claude-opus-4-8"} {:name "claude-sonnet-5"}]}
-          {:id :zai-coding-plan :base-url "https://api.z.ai/v1" :models [{:name "glm-5.2"}]}])
+          {:id :zai-coding-plan :base-url "https://api.z.ai/v1" :models [{:name "glm-5.3"}]}])
        #'providers/default-selection (constantly {:provider-id :anthropic-coding-plan
                                                   :model "claude-sonnet-5"})
-       #'providers/fallback-selection (constantly {:provider-id :zai-coding-plan :model "glm-5.2"})
+       #'providers/fallback-selection (constantly {:provider-id :zai-coding-plan :model "glm-5.3"})
        #'providers/provider-status
        (constantly {:is-authenticated true :auth-state :verified :source :auth-file})
        #'providers/provider-limits-safe
@@ -3449,7 +3449,7 @@
           (expect (false? (get p0 "is_fallback")))
           (expect (nil? (get p0 "fallback_model")))
           (expect (true? (get p1 "is_fallback")))
-          (expect (= "glm-5.2" (get p1 "fallback_model")))
+          (expect (= "glm-5.3" (get p1 "fallback_model")))
           (expect (false? (get p1 "is_default")))
           (expect (nil? (get p1 "default_model")))
           ;; connection verdict is the snake_case STRING key — no keyword restore
@@ -3711,7 +3711,7 @@
 
           fleet
           [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
-           {:id :zai-coding-plan :models [{:name "glm-5.2"}]}]
+           {:id :zai-coding-plan :models [{:name "glm-5.3"}]}]
 
           body
           (fn [m]
@@ -3728,7 +3728,7 @@
                     (constantly {:provider-id :anthropic-coding-plan :model "claude-fable-5"})
 
                     providers/fallback-selection
-                    (constantly {:provider-id :zai-coding-plan :model "glm-5.2"})
+                    (constantly {:provider-id :zai-coding-plan :model "glm-5.3"})
 
                     providers/save-default-selection!
                     (fn [provider model source]
@@ -3738,7 +3738,7 @@
                     providers/save-fallback-selection!
                     (fn [provider model source]
                       (reset! saved [:fallback provider model source])
-                      {:provider-id :zai-coding-plan :model "glm-5.2"})
+                      {:provider-id :zai-coding-plan :model "glm-5.3"})
 
                     providers/clear-fallback-selection!
                     (fn [_source]
@@ -3757,11 +3757,11 @@
           (expect (= "anthropic-coding-plan" (get out "default_provider")))
           (expect (= "claude-fable-5" (get out "default_model")))
           (expect (= "zai-coding-plan" (get out "fallback_provider")))
-          (expect (= "glm-5.2" (get out "fallback_model"))))
+          (expect (= "glm-5.3" (get out "fallback_model"))))
         ;; role fallback writes the FALLBACK tag and never touches the primary one
-        (let [resp (patch! {"provider" "zai-coding-plan" "model" "glm-5.2" "role" " FallBack "})]
+        (let [resp (patch! {"provider" "zai-coding-plan" "model" "glm-5.3" "role" " FallBack "})]
           (expect (= 200 (:status resp)))
-          (expect (= [:fallback "zai-coding-plan" "glm-5.2" :gateway] @saved)))
+          (expect (= [:fallback "zai-coding-plan" "glm-5.3" :gateway] @saved)))
         ;; a blank fallback CLEARS the tag, while a blank primary stays a 400
         (expect (= 200 (:status (patch! {"role" "fallback" "model" "  "}))))
         (expect (= 1 @cleared))
@@ -3769,7 +3769,7 @@
         ;; an unknown role is refused before anything is written
         (reset! saved :untouched)
         (let [resp
-              (patch! {"provider" "zai-coding-plan" "model" "glm-5.2" "role" "tertiary"})
+              (patch! {"provider" "zai-coding-plan" "model" "glm-5.3" "role" "tertiary"})
 
               err
               (get (wire/parse-json (:body resp)) "error")]
@@ -4613,7 +4613,7 @@
                                                         (= :lmstudio pid))}
           (fn []
             (with-stub-fleet!
-              [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]
+              [{:id :zai-coding-plan :models [{:name "glm-5.3"}]}]
               (fn []
                 (let [resp (#'providers-api/remove-provider-handler
                             {:path-params {:provider-id "lmstudio"}})
@@ -4647,7 +4647,7 @@
             (atom [])
 
             fleet
-            [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]]
+            [{:id :zai-coding-plan :models [{:name "glm-5.3"}]}]]
 
         (with-redefs-fn
           {#'providers/picker-fleet (constantly fleet)
@@ -6851,7 +6851,7 @@
           (fn []
             (#'sessions-api/set-session-model-handler
              (merge {:request-method :patch :path-params {:sid sid}}
-                    (json-body {:model "glm-5.2"}))))]
+                    (json-body {:model "glm-5.3"}))))]
 
       ;; a turn aimed at an archived session is refused, and nothing is queued
       (with-redefs-fn refuses
@@ -6881,7 +6881,7 @@
                        #'state/set-session-model! (fn [& _]
                                                     nil)
                        #'state/session-model (fn [_sid]
-                                               {:model "glm-5.2"})}
+                                               {:model "glm-5.3"})}
         (fn []
           (expect (= 202 (:status (submit))))
           (expect (= 200 (:status (pin))))))

@@ -95,7 +95,7 @@
           (expect (= [[:notify "Thinking summary is available only for Claude adaptive thinking"
                        :warn 1500]]
                      (:fx (handler {:session-model-pref {:provider "zai-coding-plan"
-                                                         :model "glm-5.2"}}
+                                                         :model "glm-5.3"}}
                                    [:toggle-thinking-summary]))))))))
 
 

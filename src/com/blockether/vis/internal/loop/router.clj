@@ -1013,17 +1013,12 @@
            #(with-session-llm-headers (hydrate-router-credentials % provider-id)
                                       (:session-llm-headers environment)))))
 
-(defn- catalog-model-key
-  "Match key for a live catalog id: lower-cased, with dotted version digits dashed."
-  [model-name]
-  (str/replace (str/lower-case (str model-name)) #"(\d)\.(\d)" "$1-$2"))
-
 (defn- model-limits?
   [model]
   (boolean (or (pos-int? (:input-limit model)) (pos-int? (:context model)))))
 
-(defn- live-models-by-key
-  "Index live catalog rows by `catalog-model-key`. A catalog can list one id twice,
+(defn- live-models-by-name
+  "Index live catalog rows by their exact id. A catalog can list one id twice,
    so a row with an input or context limit replaces an earlier row without one."
   [live]
   (reduce (fn [acc model]
@@ -1031,8 +1026,7 @@
                   (config/->svar-model (assoc model :name (or (:id model) (:name model))))
 
                   k
-                  (some-> (:name m)
-                          catalog-model-key)]
+                  (:name m)]
 
               (if (and k
                        (or (not (contains? acc k))
@@ -1046,17 +1040,14 @@
   "Raw limit fields of the live catalog rows for `model-name`, for a diagnostic log.
    No exact row gives the ids of the same family, to show a renamed model."
   [live model-name]
-  (let [k
-        (catalog-model-key model-name)
-
-        row-key
-        #(catalog-model-key (or (:id %) (:name %)))
+  (let [row-id
+        #(or (:id %) (:name %))
 
         family
-        (re-find #"^[a-z]+-[a-z]+" k)
+        (re-find #"^[A-Za-z]+-[A-Za-z]+" (str model-name))
 
         rows
-        (filter #(= k (row-key %)) live)]
+        (filter #(= model-name (row-id %)) live)]
 
     (if (seq rows)
       (mapv (fn [row]
@@ -1067,9 +1058,8 @@
                     row))
             rows)
       {"similar_ids" (into []
-                           (comp (map #(or (:id %) (:name %)))
-                                 (filter #(and family
-                                               (str/starts-with? (catalog-model-key %) family)))
+                           (comp (map row-id)
+                                 (filter #(and family (string? %) (str/starts-with? % family)))
                                  (take 20))
                            live)})))
 
@@ -1102,22 +1092,21 @@
                           (assoc (select-keys provider [:api-key :base-url :api-style :llm-headers])
                             :provider-id provider-id))
 
-            by-key
-            (live-models-by-key live)
+            by-name
+            (live-models-by-name live)
 
             explicit
             (into {} (map (juxt :name identity)) (::configured-models provider))
 
             models
-            (catalog/normalize-models
-              (:priority provider)
-              (update provider
-                      :models
-                      #(mapv (fn [model]
-                               (merge (dissoc model :capabilities)
-                                      (dissoc (by-key (catalog-model-key (:name model))) :name)
-                                      (explicit (:name model))))
-                             %)))
+            (catalog/normalize-models (:priority provider)
+                                      (update provider
+                                              :models
+                                              #(mapv (fn [model]
+                                                       (merge (dissoc model :capabilities)
+                                                              (dissoc (by-name (:name model)) :name)
+                                                              (explicit (:name model))))
+                                                     %)))
 
             updated
             (assoc provider

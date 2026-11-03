@@ -91,7 +91,7 @@
   {:message "All providers exhausted"
    :data {:type :svar.llm/all-providers-exhausted
           :attempts [{:provider "zai-coding-plan"
-                      :model "glm-5.2"
+                      :model "glm-5.3"
                       :status 500
                       :reason :transient-error
                       :error "boom"}]}})
@@ -111,7 +111,7 @@
    :data {:type :svar.llm/provider-unavailable
           :status 500
           :attempts [{:provider "zai-coding-plan"
-                      :model "glm-5.2"
+                      :model "glm-5.3"
                       :status 500
                       :reason :transient-error
                       :error "boom"}]}})

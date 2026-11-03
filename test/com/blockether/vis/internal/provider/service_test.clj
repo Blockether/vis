@@ -636,7 +636,7 @@
       ;; and the saved pair must survive the next read.
       (let [fleet
             [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
-             {:id :openrouter :models [{:name "glm-5.2"}]}]
+             {:id :openrouter :models [{:name "glm-5.3"}]}]
 
             saved
             (atom nil)]
@@ -657,7 +657,7 @@
                                    :providers fleet})
 
                       config/load-global-config-raw
-                      (constantly {"providers" [{"id" "openrouter" "models" [{"name" "glm-5.2"}]}]})
+                      (constantly {"providers" [{"id" "openrouter" "models" [{"name" "glm-5.3"}]}]})
 
                       config/save-config!
                       (fn [wire _]
@@ -674,7 +674,7 @@
                   "a model only the live catalog knows is still a valid default")
           (expect (= "openrouter" (get @saved "default_provider")))
           (expect (= "z-ai/glm-4.6v" (get @saved "default_model")))
-          (expect (= ["glm-5.2" "z-ai/glm-4.6v"]
+          (expect (= ["glm-5.3" "z-ai/glm-4.6v"]
                      (mapv :name (:models (first (get @saved "providers")))))
                   "the chosen model joins the persisted catalog")
           (expect (= {:provider-id :openrouter :model "z-ai/glm-4.6v"}
@@ -729,13 +729,13 @@
 
                    (let [provider
                          {:id :fake
-                          :default-models ["glm-5.2" {:name "minimax-m3" :api-style :anthropic}]}
+                          :default-models ["glm-5.3" {:name "minimax-m3" :api-style :anthropic}]}
 
                          defaults
                          (providers/default-model-names provider)]
 
-                     (expect (= ["glm-5.2" "minimax-m3"] defaults))
-                     (expect (= ["minimax-m3" "glm-5.2" "zebra-live"]
+                     (expect (= ["glm-5.3" "minimax-m3"] defaults))
+                     (expect (= ["glm-5.3" "minimax-m3" "zebra-live"]
                                 (:models (providers/model-options provider defaults true))))))))
 
 (defdescribe model-options-leave-hidden-defaults-out
@@ -747,10 +747,10 @@
                                (constantly nil)]
 
                    (let [provider {:id :fake
-                                   :default-models ["glm-5.2" "mimo-v2.5-pro" "gemini-3-pro-preview"
+                                   :default-models ["glm-5.3" "mimo-v2.5-pro" "gemini-3-pro-preview"
                                                     "omen-alpha" "glm-4.7"
                                                     "claude-haiku-4-5-20251001" "mimo-v2.6-pro"]}]
-                     (expect (= ["mimo-v2.6-pro" "glm-5.2"]
+                     (expect (= ["glm-5.3" "mimo-v2.6-pro"]
                                 (:models (providers/model-options provider
                                                                   (providers/default-model-names
                                                                     provider)
@@ -872,7 +872,7 @@
   refreshing-models-appends-only-what-config-does-not-name
   (it "refreshing models appends only what config does not name"
       (let [entry
-            {:id :fake :models [{:name "glm-5.2"} {:name "kimi-k2.6"}]}
+            {:id :fake :models [{:name "kimi-k3"} {:name "kimi-k2.6"}]}
 
             written
             (atom nil)]
@@ -882,7 +882,7 @@
 
                       providers/fetch-model-catalog
                       (constantly {:identity "test-account"
-                                   :models [{:name "glm-5.2"} {:name "glm-5.3"}
+                                   :models [{:name "kimi-k3"} {:name "glm-5.3"}
                                             {:name "minimax-m2.5"} {:name "minimax-m2.5"}]})
 
                       catalog/template
@@ -899,7 +899,7 @@
                     "only the live ids config did not already name")
             (expect (= [:fake :test] [(first @written) (last @written)]))
             (expect
-              (= [{:name "glm-5.2"} {:name "kimi-k2.6"} {:name "glm-5.3"}
+              (= [{:name "kimi-k3"} {:name "kimi-k2.6"} {:name "glm-5.3"}
                   {:name "minimax-m2.5" :api-style :anthropic}]
                  (:models (second @written)))
               "configured models keep their order; a new one carries the preset's own map"))))))
@@ -909,7 +909,7 @@
   (it "refreshing models drops saved models svar hides"
       (let [entry
             {:id :fake
-             :models [{:name "glm-5.2"} {:name "omen-alpha"} "mimo-v2.5-pro" {:name "hy4-preview"}
+             :models [{:name "glm-5.3"} {:name "omen-alpha"} "mimo-v2.5-pro" {:name "hy4-preview"}
                       {:name "glm-4.7"} {:name "claude-haiku-4-5-20251001"}
                       {:name "mimo-v2.6-pro"}]}
 
@@ -921,7 +921,7 @@
 
                       providers/fetch-model-catalog
                       (constantly {:identity "test-account"
-                                   :models [{:name "glm-5.2"} {:name "mimo-v2.6-pro"}]})
+                                   :models [{:name "glm-5.3"} {:name "mimo-v2.6-pro"}]})
 
                       catalog/template
                       (constantly {:id :fake :default-models []})
@@ -932,7 +932,7 @@
 
           (expect (= [] (providers/refresh-models! :fake :test)) "no live id is new")
           (expect
-            (= [{:name "glm-5.2"} {:name "mimo-v2.6-pro"}] (:models (second @written)))
+            (= [{:name "glm-5.3"} {:name "mimo-v2.6-pro"}] (:models (second @written)))
             "stealth, preview and outdated models leave the saved list; the rest keep order")))))
 
 (defdescribe
@@ -966,7 +966,7 @@
              (it "a failed model probe leaves the fleet alone"
                  (let [writes (atom 0)]
                    (with-redefs [providers/configured-providers
-                                 (constantly [{:id :fake :models [{:name "glm-5.2"}]}])
+                                 (constantly [{:id :fake :models [{:name "glm-5.3"}]}])
                                  providers/fetch-model-catalog (constantly nil)
                                  providers/update-config-provider! (fn [& _]
                                                                      (swap! writes inc))]

@@ -86,21 +86,16 @@
                         (expect (= 872000 (:max-input-tokens budget)))
                         (expect (= 128000 (:output-reserve budget)))
                         (expect (zero? @calls))))))
-  ;; Regression: #433. A live catalog can repeat an id or dash its version.
-  (it "learns limits from the catalog row with limits for a repeated or dashed id"
-      (doseq [rows [[(catalog-row "claude-sonnet-future-1.5")
-                     {"id" "claude-sonnet-future-1.5"
-                      "capabilities" {"supports" {"tool_calls" true}}}]
-                    [(catalog-row "claude-sonnet-future-1-5")]]]
-        (with-catalog
-          rows
-          (fn [_]
-            (let [hydrated (router/hydrate-request-model-metadata
-                             (environment {:name "claude-sonnet-future-1.5"})
-                             {})]
-              (expect (= 168000 (:max-input-tokens (svar/context-budget (:router hydrated) {}))))
-              (expect (= "claude-sonnet-future-1.5"
-                         (get-in hydrated [:router :providers 0 :models 0 :name]))))))))
+  ;; Regression: #433. A live catalog can list one id twice, once without limits.
+  (it "learns limits from the catalog row with limits for a repeated id"
+      (with-catalog
+        [{"id" "claude-sonnet-future" "capabilities" {"supports" {"tool_calls" true}}}
+         (catalog-row "claude-sonnet-future")]
+        (fn [_]
+          (let [hydrated (router/hydrate-request-model-metadata (environment
+                                                                  {:name "claude-sonnet-future"})
+                                                                {})]
+            (expect (= 168000 (:max-input-tokens (svar/context-budget (:router hydrated) {}))))))))
   (it "keeps explicit output and vision settings above discovered metadata"
       (with-catalog
         [(catalog-row "claude-sonnet-future")]

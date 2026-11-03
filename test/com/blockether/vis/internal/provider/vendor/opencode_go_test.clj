@@ -47,7 +47,7 @@
              (it "stamps the Anthropic wire on MiniMax/Qwen at router-build time"
                  (let [enriched
                        (#'opencode-go/enrich-models
-                        {:models [{:name "glm-5.2"} {:name "minimax-m3"} {:name "qwen3.8-max"}]}
+                        {:models [{:name "glm-5.3"} {:name "minimax-m3"} {:name "qwen3.8-max"}]}
                         nil)
 
                        by-name
@@ -57,7 +57,7 @@
                    ;; because the wire is a function of the id, not of this file.
                    (expect (= :anthropic (:api-style (by-name "minimax-m3"))))
                    (expect (= :anthropic (:api-style (by-name "qwen3.8-max"))))
-                   (expect (nil? (:api-style (by-name "glm-5.2"))))))
+                   (expect (nil? (:api-style (by-name "glm-5.3"))))))
              (it "never overrides an :api-style that config already decided"
                  (let [enriched (#'opencode-go/enrich-models
                                  {:models [{:name "minimax-m3" :api-style :openai}]}

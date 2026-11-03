@@ -1733,7 +1733,7 @@
   (commandline/stdout! "")
   (commandline/stdout! "Examples:")
   (commandline/stdout!
-    "  vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"Task\"")
+    "  vis-agent --provider zai-coding-plan --model glm-5.3 --reasoning-effort high --json \"Task\"")
   (commandline/stdout! "  vis-agent \"Throwaway one-shot probe\"")
   (commandline/stdout! "  vis-agent --json --model gpt-4o \"Explain auth flow\"")
   (commandline/stdout! "  vis-agent --json-schema @city.json \"Name the capital of Poland\"")
@@ -3131,7 +3131,7 @@
      (help-row "vis-agent providers status" "Show provider auth and model catalogs.")
      (help-row "vis-agent doctor" "Diagnose config, extensions, stale state.") "" "EXAMPLES"
      "vis-agent \"fix failing tests\"" "vis-agent --json \"summarize this repo\""
-     "vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\""
+     "vis-agent --provider zai-coding-plan --model glm-5.3 --reasoning-effort high --json \"task\""
      "vis-agent --toggles reasoning_level=deep \"refactor carefully\""
      "vis-agent --full-trace-json-stream --db :memory \"debug startup\""
      "vis-agent sessions search sqlite"

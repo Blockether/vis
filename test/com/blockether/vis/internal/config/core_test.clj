@@ -310,10 +310,10 @@
                                                          :models [{:name "probe"}]})))))))
 
 (defdescribe svar-model-metadata-test
-             (it "lets svar retain GLM-5.2's catalog-native effort style and values"
+             (it "lets svar retain GLM-5.3's effort style and values"
                  (let [provider
                        (config/->svar-provider
-                         {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
+                         {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.3"}]})
 
                        model
                        (-> (svar/make-router [provider])
@@ -323,7 +323,7 @@
                            first)]
 
                    (expect (= :zai-effort (:reasoning-style model)))
-                   (expect (= ["high" "max"] (:reasoning-effort-options model))))))
+                   (expect (= ["low" "high" "max"] (:reasoning-effort-options model))))))
 
 (defn- rm-rf! [^java.io.File f] (when (.exists f) (run! rm-rf! (.listFiles f)) (.delete f)))
 

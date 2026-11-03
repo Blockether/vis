@@ -523,12 +523,12 @@
 (defdescribe reasoning-effort-cli-parse-test
              (it "parses exact provider-native reasoning effort separately"
                  (expect (= {:provider "zai-coding-plan"
-                             :model "glm-5.2"
+                             :model "glm-5.3"
                              :reasoning-effort "max"
                              :json? true
                              :prompt "task"}
                             (#'main/parse-run-args
-                             ["--provider" "zai-coding-plan" "--model" "glm-5.2"
+                             ["--provider" "zai-coding-plan" "--model" "glm-5.3"
                               "--reasoning-effort" "max" "--json" "task"])))))
 
 (defdescribe

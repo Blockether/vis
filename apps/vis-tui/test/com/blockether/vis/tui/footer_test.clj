@@ -406,15 +406,15 @@
                                                     "verbosity_style" nil
                                                     "thinking_display_style" "anthropic-display"}]}
                                  {"id" "zai-coding-plan"
-                                  "models" ["glm-5.2"]
-                                  "model_details" [{"name" "glm-5.2"
+                                  "models" ["glm-5.3"]
+                                  "model_details" [{"name" "glm-5.3"
                                                     "is_reasoning_effort_configurable" true
                                                     "verbosity_style" nil
                                                     "thinking_display_style" nil}]}])]
         (doseq [[provider model session-settings expected]
                 [["anthropic" "claude-opus-5" nil [" thinking: summarized (C-x m t) "]]
                  ["anthropic" "claude-opus-5" {:thinking-summary false}
-                  [" thinking: omitted (C-x m t) "]] ["zai-coding-plan" "glm-5.2" nil []]]]
+                  [" thinking: omitted (C-x m t) "]] ["zai-coding-plan" "glm-5.3" nil []]]]
           (let [db {:messages []
                     :session {:id "s1"}
                     :session-settings {"s1" session-settings}

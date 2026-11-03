@@ -363,7 +363,7 @@ Picking a model in the UI writes two keys:
 
 ```yaml
 default_provider: zai-coding-plan
-default_model: glm-5.2        # or one line: zai-coding-plan/glm-5.2
+default_model: glm-5.3        # or one line: zai-coding-plan/glm-5.3
 ```
 
 - There is one default pair for the whole config, not one per provider.
@@ -390,8 +390,8 @@ saving anything. The provider does not have to be configured if it has a
 built-in preset with managed sign-in:
 
 ```bash
-vis-agent --model zai-coding-plan/glm-5.2 "task"
-vis-agent --model glm-5.2 "task"          # on the active provider
+vis-agent --model zai-coding-plan/glm-5.3 "task"
+vis-agent --model glm-5.3 "task"          # on the active provider
 ```
 
 ### Default thinking level

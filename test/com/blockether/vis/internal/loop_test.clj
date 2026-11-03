@@ -1093,7 +1093,7 @@
                       :api-key "test"
                       :base-url "http://example.invalid"
                       :api-style :anthropic
-                      :models [{:name "glm-5.2"
+                      :models [{:name "glm-5.3"
                                 :reasoning? true
                                 :reasoning-style :zai-effort
                                 :reasoning-options [{:type "effort" :values ["high" "max"]}]}]}]))
@@ -1204,12 +1204,12 @@
       (let [iteration
             {:iteration 1
              :provider "zai-coding-plan"
-             :model "glm-5.2"
+             :model "glm-5.3"
              :effective "high"
              :wire-style :zai-effort
              :wire-fragment {:thinking {:type "enabled"} :reasoning_effort "high"}
              :fallback? false
-             :selected {:provider "zai-coding-plan" :model "glm-5.2"}
+             :selected {:provider "zai-coding-plan" :model "glm-5.3"}
              :requested "high"}
 
             eval
@@ -1224,11 +1224,11 @@
   (it "a later provider/model fallback invalidates the whole eval"
       (let [base
             {:provider "zai-coding-plan"
-             :model "glm-5.2"
+             :model "glm-5.3"
              :effective "max"
              :wire-style :zai-effort
              :wire-fragment {:thinking {:type "enabled"} :reasoning_effort "max"}
-             :selected {:provider "zai-coding-plan" :model "glm-5.2"}
+             :selected {:provider "zai-coding-plan" :model "glm-5.3"}
              :requested "max"}
 
             eval
@@ -1275,7 +1275,7 @@
                                                     :reasoning-level :quick
                                                     :reasoning-effort "max"
                                                     :resolved-model {:provider :zai-coding-plan
-                                                                     :name "glm-5.2"
+                                                                     :name "glm-5.3"
                                                                      :reasoning? true
                                                                      :reasoning-style
                                                                      :zai-effort}})]
@@ -1304,7 +1304,7 @@
                                          :reasoning-level :quick
                                          :preferred-reasoning-effort "xhigh"
                                          :resolved-model {:provider :zai-coding-plan
-                                                          :name "glm-5.2"
+                                                          :name "glm-5.3"
                                                           :reasoning? true
                                                           :reasoning-effort? true}})
                ;; svar picks the nearest rung of each attempted model; a model
@@ -7692,12 +7692,12 @@
     "honor-config-roots! — explicit primary/fallback pairs are the router's roots"
     (let [f (var-get #'loop-router/honor-config-roots!)]
       (it "honors string-valued defaults without treating provider/model order as configuration"
-          (let [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+          (let [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.3"}]}
                                     {:id :anthropic-coding-plan
                                      :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]}
                 config {:default-provider "anthropic-coding-plan"
                         :default-model "claude-fable-5"
-                        :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                        :providers [{:id :zai-coding-plan :models [{:name "glm-5.3"}]}
                                     {:id :anthropic-coding-plan
                                      :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]}
                 routed (f router config)
@@ -7716,7 +7716,7 @@
 
             (expect (= "claude-sonnet-4-6" (:name (loop-router/resolve-effective-model routed))))))
       (it "leaves the router intact when the explicit pair is not in its catalog"
-          (let [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]}
+          (let [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.3"}]}]}
                 config {:default-provider "anthropic-coding-plan"
                         :default-model "claude-fable-5"
                         :providers [{:id :anthropic-coding-plan
@@ -7725,11 +7725,11 @@
             (expect (= router (f router config)))))
       (it "a resolvable provider still wins when the model name does not match its catalog"
           (let [router {:providers
-                        [{:id :zai-coding-plan :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
+                        [{:id :zai-coding-plan :models [{:name "glm-5.3"} {:name "glm-4.7"}]}
                          {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
                 config {:default-provider "anthropic-coding-plan"
                         :default-model "typo-model"
-                        :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                        :providers [{:id :zai-coding-plan :models [{:name "glm-5.3"}]}
                                     {:id :anthropic-coding-plan
                                      :models [{:name "claude-fable-5"}]}]}
                 routed (f router config)]
@@ -7741,7 +7741,7 @@
           ;; slash asked for provider `:z-ai`, which no fleet has, so the
           ;; default the user picked never became the router's root.
           (let [fleet [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
-                       {:id :openrouter :models [{:name "glm-5.2"} {:name "z-ai/glm-4.6v"}]}]
+                       {:id :openrouter :models [{:name "glm-5.3"} {:name "z-ai/glm-4.6v"}]}]
                 router {:providers fleet}
                 config
                 {:default-provider "openrouter" :default-model "z-ai/glm-4.6v" :providers fleet}
@@ -7753,11 +7753,11 @@
             (expect (= "z-ai/glm-4.6v" (:name (loop-router/resolve-effective-model routed))))))
       (it "default_model accepts the provider/model form and its provider wins"
           (let [router {:providers
-                        [{:id :zai-coding-plan :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
+                        [{:id :zai-coding-plan :models [{:name "glm-5.3"} {:name "glm-4.7"}]}
                          {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
                 config {:default-provider "anthropic-coding-plan"
                         :default-model "zai-coding-plan/glm-4.7"
-                        :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                        :providers [{:id :zai-coding-plan :models [{:name "glm-5.3"}]}
                                     {:id :anthropic-coding-plan
                                      :models [{:name "claude-fable-5"}]}]}
                 routed (f router config)
@@ -7765,7 +7765,7 @@
 
             (expect (= :zai-coding-plan (:id p)))
             (expect (= "glm-4.7" (:root p)))
-            (expect (= ["glm-4.7" "glm-5.2"] (mapv :name (:models p))))
+            (expect (= ["glm-4.7" "glm-5.3"] (mapv :name (:models p))))
             (expect (= "glm-4.7" (:name (loop-router/resolve-effective-model routed)))))))))
 
 (defdescribe

@@ -69,11 +69,11 @@
   ["kimi-k3" "kimi-k2.7-code" "kimi-k2.6" {:name "qwen3.8-max" :api-style :anthropic}
    {:name "qwen3.8-flash" :api-style :anthropic} {:name "qwen3.7-max" :api-style :anthropic}
    {:name "qwen3.7-plus" :api-style :anthropic} {:name "qwen3.6-plus" :api-style :anthropic}
-   "glm-5.3" "glm-5.3-flash" "glm-5.2" "glm-5.1" "deepseek-v4.1-flash" "deepseek-v4-pro"
-   "deepseek-v4-flash" {:name "minimax-m3" :api-style :anthropic}
-   {:name "minimax-m2.7" :api-style :anthropic} "longcat-2.0" "mimo-v2.6-pro" "mimo-v2.6-flash"
-   "hy3" "muse-spark-1.3-contributor" "muse-spark-1.2-contributor" "gpt-5.6-luna" "grok-4.6"
-   "deepseek-v4-flash-vision-exp" "deepseek-flash"])
+   "glm-5.3" "glm-5.3-flash" "glm-5.1" "deepseek-v4.1-flash" "deepseek-v4-pro" "deepseek-v4-flash"
+   {:name "minimax-m3" :api-style :anthropic} {:name "minimax-m2.7" :api-style :anthropic}
+   "longcat-2.0" "mimo-v2.6-pro" "mimo-v2.6-flash" "hy3" "muse-spark-1.3-contributor"
+   "muse-spark-1.2-contributor" "gpt-5.6-luna" "grok-4.6" "deepseek-v4-flash-vision-exp"
+   "deepseek-flash"])
 
 (defn- enrich-models
   "`:provider/enrich-models-fn`: `(svar-provider router-opts) -> models-vec`, run

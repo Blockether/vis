@@ -773,7 +773,7 @@
   "Canonical normalization for model reasoning / thinking text before it is
    rendered as a trace. Reasoning streams carry whitespace-padded blank rows
    (trailing spaces/tabs the model emits) and paragraph-style double newlines
-   that make the compact thinking block look ragged (glm-5.2 especially). Strip
+   that make the compact thinking block look ragged (GLM especially). Strip
    per-line trailing whitespace, collapse every run of newlines down to ONE line
    break, then give the trace BREATHING ROOM: a line that ENDS A SENTENCE
    (`.`/`!`/`?`/`\u2026`, optionally closed by a quote/paren/bracket) and is

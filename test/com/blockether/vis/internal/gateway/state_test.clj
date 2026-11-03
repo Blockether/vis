@@ -750,9 +750,9 @@
                     (constantly nil)
 
                     smodel/pending-pref
-                    (constantly [true {:provider "zai" :model "glm-5.2"}])]
+                    (constantly [true {:provider "zai" :model "glm-5.3"}])]
 
-        (expect (= {"provider" "zai" "model" "glm-5.2"} (get (state/soul "s3") "model_pref")))))
+        (expect (= {"provider" "zai" "model" "glm-5.3"} (get (state/soul "s3") "model_pref")))))
   (it "a pending CLEAR drops the pin instead of repainting the old one"
       (with-redefs [lp/by-id
                     (constantly {:id "s4"

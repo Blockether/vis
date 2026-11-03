@@ -83,7 +83,7 @@
             :base-url "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
             :default-models
             [{:name "qwen3.8-max" :context 1000000 :output-limit 131072 :tool-call? true}
-             "qwen3.7-max" "qwen3.7-plus" "qwen3.6-flash" "glm-5.2" "deepseek-v4-pro"]
+             "qwen3.7-max" "qwen3.7-plus" "qwen3.6-flash" "glm-5.3" "deepseek-v4-pro"]
             :env-keys ["ALIBABA_TOKEN_PLAN_API_KEY"]
             :policy {:preset-rank 8}}}})
 

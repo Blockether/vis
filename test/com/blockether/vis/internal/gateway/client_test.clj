@@ -2060,13 +2060,13 @@
                                                        {"default_provider" "anthropic-coding-plan"
                                                         "default_model" "claude-fable-5"
                                                         "fallback_provider" "zai-coding-plan"
-                                                        "fallback_model" "glm-5.2"})}
+                                                        "fallback_model" "glm-5.3"})}
           (fn []
-            (expect (= {:provider-id :zai-coding-plan :model "glm-5.2"}
-                       (client/set-router-fallback! :zai-coding-plan "glm-5.2"))
+            (expect (= {:provider-id :zai-coding-plan :model "glm-5.3"}
+                       (client/set-router-fallback! :zai-coding-plan "glm-5.3"))
                     "the FALLBACK pair comes back, never the primary one")
             (expect (= ["PATCH" "/v1/router"
-                        {"role" "fallback" "provider" "zai-coding-plan" "model" "glm-5.2"}]
+                        {"role" "fallback" "provider" "zai-coding-plan" "model" "glm-5.3"}]
                        @request))))))
   (it "the zero-arity clear sends role=fallback with NO pair and decodes nil"
       (let [request (atom nil)]
